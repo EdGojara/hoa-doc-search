@@ -18,21 +18,39 @@ app.post('/ask', async (req, res) => {
     .filter(w => w.length > 2 && !stopWords.includes(w));
 
   let chunks = [];
+
   for (const keyword of keywords.slice(0, 5)) {
-    let query = supabase
+    // Search community-specific docs
+    if (community) {
+      const { data } = await supabase
+        .from('documents')
+        .select('content, metadata')
+        .ilike('content', `%${keyword}%`)
+        .eq('metadata->>community', community)
+        .limit(8);
+      if (data) chunks.push(...data);
+    }
+
+    // Always search Law docs
+    const { data: lawData } = await supabase
       .from('documents')
       .select('content, metadata')
       .ilike('content', `%${keyword}%`)
-      .limit(10);
+      .eq('metadata->>community', 'Law')
+      .limit(4);
+    if (lawData) chunks.push(...lawData);
 
-    if (community) {
-      query = query.eq('metadata->>community', community);
-    }
-
-    const { data } = await query;
-    if (data) chunks.push(...data);
+    // Always search General docs
+    const { data: generalData } = await supabase
+      .from('documents')
+      .select('content, metadata')
+      .ilike('content', `%${keyword}%`)
+      .eq('metadata->>community', 'General')
+      .limit(4);
+    if (generalData) chunks.push(...generalData);
   }
 
+  // Deduplicate
   const seen = new Set();
   chunks = chunks.filter(chunk => {
     if (seen.has(chunk.content)) return false;
@@ -40,27 +58,32 @@ app.post('/ask', async (req, res) => {
     return true;
   });
 
+  // Fallback if nothing found
   if (chunks.length === 0) {
-    let query = supabase.from('documents').select('content, metadata').limit(20);
-    if (community) query = query.eq('metadata->>community', community);
-    const { data } = await query;
-    chunks = data || [];
+    const queries = [];
+    if (community) {
+      queries.push(supabase.from('documents').select('content, metadata').eq('metadata->>community', community).limit(12));
+    }
+    queries.push(supabase.from('documents').select('content, metadata').eq('metadata->>community', 'Law').limit(4));
+    queries.push(supabase.from('documents').select('content, metadata').eq('metadata->>community', 'General').limit(4));
+    const results = await Promise.all(queries);
+    results.forEach(({ data }) => { if (data) chunks.push(...data); });
   }
 
-  const context = chunks.map(row => `[From: ${row.metadata?.filename}]\n${row.content}`).join('\n\n---\n\n');
+  const context = chunks.map(row => `[From: ${row.metadata?.filename} - ${row.metadata?.community}]\n${row.content}`).join('\n\n---\n\n');
 
   const messages = [
     ...history.slice(-6),
     {
       role: 'user',
-      content: `Here are relevant sections from the HOA governing documents:\n\n${context}\n\nQuestion: ${question}\n\nAnswer based on the documents. Be specific and cite which document the answer comes from. If not in the documents, say so clearly.`
+      content: `Here are relevant sections from HOA governing documents, law, and general resources:\n\n${context}\n\nQuestion: ${question}\n\nAnswer based on the documents. Be specific and cite which document the answer comes from. If not in the documents, say so clearly.`
     }
   ];
 
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',
     max_tokens: 1500,
-    system: `You are a helpful assistant for Bedrock Association Management. You are currently answering questions about ${community || 'an HOA community'}. Be conversational, clear, and helpful. Cite the specific document when you find information.`,
+    system: `You are a helpful assistant for Bedrock Association Management. You are currently answering questions about ${community || 'an HOA community'}. Be conversational, clear, and helpful. Cite the specific document when you find information. Law and General documents apply to all communities.`,
     messages
   });
 
