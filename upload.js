@@ -1,10 +1,12 @@
 const fs = require('fs');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const OpenAI = require('openai');
 
 require('dotenv').config();
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const filePath = process.argv[2];
 const community = process.argv[3];
@@ -42,6 +44,14 @@ function chunkText(text, chunkSize = 1000, overlap = 200) {
   return chunks;
 }
 
+async function getEmbedding(text) {
+  const response = await openai.embeddings.create({
+    model: 'text-embedding-ada-002',
+    input: text.replace(/\n/g, ' ')
+  });
+  return response.data[0].embedding;
+}
+
 async function upload() {
   console.log(`Processing: ${filePath}`);
   console.log(`Community: ${community}`);
@@ -52,10 +62,11 @@ async function upload() {
 
   for (let i = 0; i < chunks.length; i++) {
     console.log(`Storing chunk ${i + 1} of ${chunks.length}`);
+    const embedding = await getEmbedding(chunks[i]);
     await supabase.from('documents').insert({
       content: chunks[i],
       metadata: { filename, community },
-      embedding: null
+      embedding
     });
   }
 
