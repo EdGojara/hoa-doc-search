@@ -12,7 +12,12 @@
     .header-icon { width: 40px; height: 40px; background: #2d6a9f; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; }
     .header-text h1 { font-size: 18px; font-weight: 600; }
     .header-text p { font-size: 12px; opacity: 0.8; margin-top: 2px; }
-    
+
+    .community-bar { background: #f8f9fa; border-bottom: 1px solid #e0e0e0; padding: 10px 16px; display: flex; align-items: center; gap: 10px; }
+    .community-bar label { font-size: 13px; font-weight: 600; color: #1a3a5c; white-space: nowrap; }
+    .community-bar select { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 12px; font-size: 14px; outline: none; background: white; color: #1a1a1a; cursor: pointer; }
+    .community-bar select:focus { border-color: #2d6a9f; }
+
     .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
     
     .message { display: flex; gap: 10px; max-width: 85%; }
@@ -30,8 +35,9 @@
     .bubble strong { font-weight: 600; }
     .bubble ul { padding-left: 18px; margin-top: 6px; }
     .bubble li { margin-bottom: 4px; }
-    
-    .source-tag { font-size: 11px; color: #888; margin-top: 6px; padding-left: 42px; }
+
+    .no-community { text-align: center; padding: 40px 20px; color: #888; font-size: 14px; }
+    .no-community span { font-size: 32px; display: block; margin-bottom: 12px; }
     
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 12px; }
     .suggestion-btn { background: white; border: 1px solid #d0d7de; border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: #1a3a5c; transition: all 0.2s; }
@@ -40,11 +46,12 @@
     .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; }
     .input-area textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 20px; padding: 10px 16px; font-size: 14px; resize: none; outline: none; max-height: 120px; font-family: inherit; line-height: 1.4; }
     .input-area textarea:focus { border-color: #2d6a9f; }
+    .input-area textarea:disabled { background: #f5f5f5; }
     .send-btn { background: #1a3a5c; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.2s; }
     .send-btn:hover { background: #2d6a9f; }
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
     
-    .typing { display: flex; align-items: center; gap: 4px; padding: 12px 16px; }
+    .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
     .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
     .typing span:nth-child(2) { animation-delay: 0.2s; }
     .typing span:nth-child(3) { animation-delay: 0.4s; }
@@ -65,14 +72,28 @@
   </div>
 </div>
 
+<div class="community-bar">
+  <label>Community:</label>
+  <select id="communitySelect" onchange="onCommunityChange()">
+    <option value="">— Select a community —</option>
+    <option value="Lakes of Pine Forest">Lakes of Pine Forest</option>
+    <option value="Canyon Gate at Cinco Ranch">Canyon Gate at Cinco Ranch</option>
+    <option value="Eaglewood">Eaglewood</option>
+    <option value="Waterview Estates">Waterview Estates</option>
+    <option value="Quail Ridge">Quail Ridge</option>
+    <option value="Still Creek Ranch">Still Creek Ranch</option>
+    <option value="August Meadows">August Meadows</option>
+  </select>
+</div>
+
 <div class="chat-container" id="chat">
-  <div class="welcome">
-    <h2>Hello! How can I help?</h2>
-    <p>I can answer questions about HOA governing documents including CC&Rs, bylaws, and builder guidelines for your communities.</p>
+  <div class="no-community">
+    <span>🏘️</span>
+    Select a community above to get started.
   </div>
 </div>
 
-<div class="suggestions" id="suggestions">
+<div class="suggestions" id="suggestions" style="display:none">
   <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the parking rules?</button>
   <button class="suggestion-btn" onclick="sendSuggestion(this)">Can homeowners have pets?</button>
   <button class="suggestion-btn" onclick="sendSuggestion(this)">What is the quorum for meetings?</button>
@@ -81,8 +102,8 @@
 </div>
 
 <div class="input-area">
-  <textarea id="input" placeholder="Ask a question about HOA documents..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-  <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+  <textarea id="input" placeholder="Select a community first..." rows="1" disabled onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+  <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
   </button>
 </div>
@@ -92,7 +113,31 @@
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('sendBtn');
   const suggestions = document.getElementById('suggestions');
+  const communitySelect = document.getElementById('communitySelect');
   let conversationHistory = [];
+  let currentCommunity = '';
+
+  function onCommunityChange() {
+    currentCommunity = communitySelect.value;
+    conversationHistory = [];
+    chat.innerHTML = '';
+    
+    if (!currentCommunity) {
+      chat.innerHTML = '<div class="no-community"><span>🏘️</span>Select a community above to get started.</div>';
+      input.disabled = true;
+      input.placeholder = 'Select a community first...';
+      sendBtn.disabled = true;
+      suggestions.style.display = 'none';
+      return;
+    }
+
+    chat.innerHTML = `<div class="welcome"><h2>${currentCommunity}</h2><p>Ask me anything about this community's governing documents — CC&Rs, bylaws, rules, and guidelines.</p></div>`;
+    input.disabled = false;
+    input.placeholder = 'Ask a question...';
+    sendBtn.disabled = false;
+    suggestions.style.display = 'flex';
+    input.focus();
+  }
 
   function autoResize(el) {
     el.style.height = 'auto';
@@ -116,10 +161,7 @@
     const div = document.createElement('div');
     div.className = `message ${role}`;
     const avatar = role === 'assistant' ? '🏠' : '👤';
-    div.innerHTML = `
-      <div class="avatar">${avatar}</div>
-      <div class="bubble">${formatText(text)}</div>
-    `;
+    div.innerHTML = `<div class="avatar">${avatar}</div><div class="bubble">${formatText(text)}</div>`;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
     return div;
@@ -150,7 +192,7 @@
 
   async function sendMessage() {
     const question = input.value.trim();
-    if (!question) return;
+    if (!question || !currentCommunity) return;
 
     suggestions.style.display = 'none';
     input.value = '';
@@ -166,7 +208,7 @@
       const res = await fetch('/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, history: conversationHistory })
+        body: JSON.stringify({ question, community: currentCommunity, history: conversationHistory })
       });
       const data = await res.json();
       removeTyping();
