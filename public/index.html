@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bedrock HOA Document Search</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      max-width: 800px;
+      margin: 40px auto;
+      padding: 0 20px;
+      background: #f5f5f5;
+    }
+    h1 {
+      color: #333;
+    }
+    textarea {
+      width: 100%;
+      padding: 12px;
+      font-size: 16px;
+      border: 1px solid #ccc;
+      border-radius: 4px;
+      resize: vertical;
+      box-sizing: border-box;
+    }
+    button {
+      margin-top: 10px;
+      padding: 12px 24px;
+      background: #2563eb;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      font-size: 16px;
+      cursor: pointer;
+    }
+    button:hover {
+      background: #1d4ed8;
+    }
+    #answer {
+      margin-top: 24px;
+      padding: 20px;
+      background: white;
+      border-radius: 4px;
+      border: 1px solid #ddd;
+      white-space: pre-wrap;
+      display: none;
+    }
+    #loading {
+      margin-top: 16px;
+      color: #666;
+      display: none;
+    }
+  </style>
+</head>
+<body>
+  <h1>Bedrock HOA Document Search</h1>
+  <p>Ask a question about your HOA governing documents.</p>
+  <textarea id="question" rows="3" placeholder="e.g. How many board members are allowed?"></textarea>
+  <br>
+  <button onclick="ask()">Ask</button>
+  <div id="loading">Searching documents...</div>
+  <div id="answer"></div>
+
+  <script>
+    async function ask() {
+      const question = document.getElementById('question').value;
+      if (!question) return;
+
+      document.getElementById('loading').style.display = 'block';
+      document.getElementById('answer').style.display = 'none';
+
+      const response = await fetch('/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question })
+      });
+
+      const data = await response.json();
+
+      document.getElementById('loading').style.display = 'none';
+      document.getElementById('answer').style.display = 'block';
+      document.getElementById('answer').textContent = data.answer;
+    }
+  </script>
+</body>
+</html>
