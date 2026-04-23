@@ -3,85 +3,183 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bedrock HOA Document Search</title>
+  <title>Bedrock HOA Assistant</title>
   <style>
-    body {
-      font-family: Arial, sans-serif;
-      max-width: 800px;
-      margin: 40px auto;
-      padding: 0 20px;
-      background: #f5f5f5;
-    }
-    h1 {
-      color: #333;
-    }
-    textarea {
-      width: 100%;
-      padding: 12px;
-      font-size: 16px;
-      border: 1px solid #ccc;
-      border-radius: 4px;
-      resize: vertical;
-      box-sizing: border-box;
-    }
-    button {
-      margin-top: 10px;
-      padding: 12px 24px;
-      background: #2563eb;
-      color: white;
-      border: none;
-      border-radius: 4px;
-      font-size: 16px;
-      cursor: pointer;
-    }
-    button:hover {
-      background: #1d4ed8;
-    }
-    #answer {
-      margin-top: 24px;
-      padding: 20px;
-      background: white;
-      border-radius: 4px;
-      border: 1px solid #ddd;
-      white-space: pre-wrap;
-      display: none;
-    }
-    #loading {
-      margin-top: 16px;
-      color: #666;
-      display: none;
-    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
+    
+    .header { background: #1a3a5c; color: white; padding: 16px 20px; display: flex; align-items: center; gap: 12px; }
+    .header-icon { width: 40px; height: 40px; background: #2d6a9f; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; }
+    .header-text h1 { font-size: 18px; font-weight: 600; }
+    .header-text p { font-size: 12px; opacity: 0.8; margin-top: 2px; }
+    
+    .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+    
+    .message { display: flex; gap: 10px; max-width: 85%; }
+    .message.user { align-self: flex-end; flex-direction: row-reverse; }
+    .message.assistant { align-self: flex-start; }
+    
+    .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; margin-top: 4px; }
+    .assistant .avatar { background: #1a3a5c; color: white; }
+    .user .avatar { background: #2d6a9f; color: white; }
+    
+    .bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.5; font-size: 14px; }
+    .assistant .bubble { background: white; color: #1a1a1a; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
+    .user .bubble { background: #2d6a9f; color: white; border-bottom-right-radius: 4px; }
+    
+    .bubble strong { font-weight: 600; }
+    .bubble ul { padding-left: 18px; margin-top: 6px; }
+    .bubble li { margin-bottom: 4px; }
+    
+    .source-tag { font-size: 11px; color: #888; margin-top: 6px; padding-left: 42px; }
+    
+    .suggestions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 12px; }
+    .suggestion-btn { background: white; border: 1px solid #d0d7de; border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: #1a3a5c; transition: all 0.2s; }
+    .suggestion-btn:hover { background: #1a3a5c; color: white; border-color: #1a3a5c; }
+    
+    .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; }
+    .input-area textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 20px; padding: 10px 16px; font-size: 14px; resize: none; outline: none; max-height: 120px; font-family: inherit; line-height: 1.4; }
+    .input-area textarea:focus { border-color: #2d6a9f; }
+    .send-btn { background: #1a3a5c; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.2s; }
+    .send-btn:hover { background: #2d6a9f; }
+    .send-btn:disabled { background: #ccc; cursor: not-allowed; }
+    
+    .typing { display: flex; align-items: center; gap: 4px; padding: 12px 16px; }
+    .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
+    .typing span:nth-child(2) { animation-delay: 0.2s; }
+    .typing span:nth-child(3) { animation-delay: 0.4s; }
+    @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
+
+    .welcome { text-align: center; padding: 30px 20px; color: #666; }
+    .welcome h2 { color: #1a3a5c; margin-bottom: 8px; font-size: 20px; }
+    .welcome p { font-size: 14px; line-height: 1.6; }
   </style>
 </head>
 <body>
-  <h1>Bedrock HOA Document Search</h1>
-  <p>Ask a question about your HOA governing documents.</p>
-  <textarea id="question" rows="3" placeholder="e.g. How many board members are allowed?"></textarea>
-  <br>
-  <button onclick="ask()">Ask</button>
-  <div id="loading">Searching documents...</div>
-  <div id="answer"></div>
 
-  <script>
-    async function ask() {
-      const question = document.getElementById('question').value;
-      if (!question) return;
+<div class="header">
+  <div class="header-icon">🏠</div>
+  <div class="header-text">
+    <h1>Bedrock HOA Assistant</h1>
+    <p>Ask questions about governing documents</p>
+  </div>
+</div>
 
-      document.getElementById('loading').style.display = 'block';
-      document.getElementById('answer').style.display = 'none';
+<div class="chat-container" id="chat">
+  <div class="welcome">
+    <h2>Hello! How can I help?</h2>
+    <p>I can answer questions about HOA governing documents including CC&Rs, bylaws, and builder guidelines for your communities.</p>
+  </div>
+</div>
 
-      const response = await fetch('/ask', {
+<div class="suggestions" id="suggestions">
+  <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the parking rules?</button>
+  <button class="suggestion-btn" onclick="sendSuggestion(this)">Can homeowners have pets?</button>
+  <button class="suggestion-btn" onclick="sendSuggestion(this)">What is the quorum for meetings?</button>
+  <button class="suggestion-btn" onclick="sendSuggestion(this)">What happens if assessments aren't paid?</button>
+  <button class="suggestion-btn" onclick="sendSuggestion(this)">Can I rent out my home?</button>
+</div>
+
+<div class="input-area">
+  <textarea id="input" placeholder="Ask a question about HOA documents..." rows="1" onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+  <button class="send-btn" id="sendBtn" onclick="sendMessage()">
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+  </button>
+</div>
+
+<script>
+  const chat = document.getElementById('chat');
+  const input = document.getElementById('input');
+  const sendBtn = document.getElementById('sendBtn');
+  const suggestions = document.getElementById('suggestions');
+  let conversationHistory = [];
+
+  function autoResize(el) {
+    el.style.height = 'auto';
+    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
+  }
+
+  function handleKey(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      sendMessage();
+    }
+  }
+
+  function sendSuggestion(btn) {
+    input.value = btn.textContent;
+    suggestions.style.display = 'none';
+    sendMessage();
+  }
+
+  function addMessage(role, text) {
+    const div = document.createElement('div');
+    div.className = `message ${role}`;
+    const avatar = role === 'assistant' ? '🏠' : '👤';
+    div.innerHTML = `
+      <div class="avatar">${avatar}</div>
+      <div class="bubble">${formatText(text)}</div>
+    `;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+    return div;
+  }
+
+  function formatText(text) {
+    return text
+      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/\n\n/g, '<br><br>')
+      .replace(/\n/g, '<br>')
+      .replace(/## (.*?)(<br>|$)/g, '<strong style="font-size:15px">$1</strong><br>')
+      .replace(/\* (.*?)(<br>|$)/g, '• $1<br>');
+  }
+
+  function showTyping() {
+    const div = document.createElement('div');
+    div.className = 'message assistant';
+    div.id = 'typing';
+    div.innerHTML = `<div class="avatar">🏠</div><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
+    chat.appendChild(div);
+    chat.scrollTop = chat.scrollHeight;
+  }
+
+  function removeTyping() {
+    const t = document.getElementById('typing');
+    if (t) t.remove();
+  }
+
+  async function sendMessage() {
+    const question = input.value.trim();
+    if (!question) return;
+
+    suggestions.style.display = 'none';
+    input.value = '';
+    input.style.height = 'auto';
+    sendBtn.disabled = true;
+
+    addMessage('user', question);
+    conversationHistory.push({ role: 'user', content: question });
+
+    showTyping();
+
+    try {
+      const res = await fetch('/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question })
+        body: JSON.stringify({ question, history: conversationHistory })
       });
-
-      const data = await response.json();
-
-      document.getElementById('loading').style.display = 'none';
-      document.getElementById('answer').style.display = 'block';
-      document.getElementById('answer').textContent = data.answer;
+      const data = await res.json();
+      removeTyping();
+      addMessage('assistant', data.answer);
+      conversationHistory.push({ role: 'assistant', content: data.answer });
+    } catch (err) {
+      removeTyping();
+      addMessage('assistant', 'Sorry, something went wrong. Please try again.');
     }
-  </script>
+
+    sendBtn.disabled = false;
+    input.focus();
+  }
+</script>
 </body>
 </html>
