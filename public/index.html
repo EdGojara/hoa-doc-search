@@ -34,7 +34,7 @@
     .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; margin-top: 4px; }
     .assistant .avatar { background: #1a3a5c; color: white; }
     .user .avatar { background: #2d6a9f; color: white; }
-    .bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.5; font-size: 14px; }
+    .bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.6; font-size: 14px; }
     .assistant .bubble { background: white; color: #1a1a1a; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
     .user .bubble { background: #2d6a9f; color: white; border-bottom-right-radius: 4px; }
     .bubble strong { font-weight: 600; }
@@ -55,18 +55,20 @@
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
 
     /* Email drafter styles */
-    .email-container { flex: 1; display: flex; gap: 0; overflow: hidden; }
-    .email-panel { flex: 1; display: flex; flex-direction: column; padding: 20px; gap: 12px; overflow-y: auto; }
+    .email-container { flex: 1; display: flex; overflow: hidden; }
+    .email-panel { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow: hidden; }
     .email-panel:first-child { border-right: 1px solid #e0e0e0; }
-    .email-panel h3 { font-size: 14px; font-weight: 600; color: #1a3a5c; }
-    .email-panel textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; line-height: 1.5; min-height: 300px; }
+    .email-panel h3 { font-size: 14px; font-weight: 600; color: #1a3a5c; flex-shrink: 0; }
+    .email-panel textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; line-height: 1.6; }
     .email-panel textarea:focus { border-color: #2d6a9f; }
-    .draft-btn { background: #1a3a5c; color: white; border: none; border-radius: 8px; padding: 12px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    .draft-btn { background: #1a3a5c; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
     .draft-btn:hover { background: #2d6a9f; }
     .draft-btn:disabled { background: #ccc; cursor: not-allowed; }
-    .copy-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 12px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+    .copy-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
     .copy-btn:hover { background: #f0f4f8; }
-    .draft-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 14px; text-align: center; min-height: 300px; }
+
+    .draft-output { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.8; color: #1a1a1a; overflow-y: auto; font-family: inherit; white-space: pre-wrap; background: white; }
+    .draft-output.placeholder { color: #aaa; display: flex; align-items: center; justify-content: center; white-space: normal; }
 
     .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
     .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
@@ -141,7 +143,7 @@
     </div>
     <div class="email-panel">
       <h3>📤 Suggested Response</h3>
-      <div id="draftOutput" class="draft-placeholder">Your drafted response will appear here...</div>
+      <div class="draft-output placeholder" id="draftOutput">Your drafted response will appear here...</div>
       <button class="copy-btn" id="copyBtn" onclick="copyDraft()" style="display:none">📋 Copy to Clipboard</button>
     </div>
   </div>
@@ -216,10 +218,10 @@
   function formatText(text) {
     return text
       .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+      .replace(/## (.*?)\n/g, '<strong style="font-size:15px">$1</strong><br>')
+      .replace(/\* (.*?)\n/g, '• $1<br>')
       .replace(/\n\n/g, '<br><br>')
-      .replace(/\n/g, '<br>')
-      .replace(/## (.*?)(<br>|$)/g, '<strong style="font-size:15px">$1</strong><br>')
-      .replace(/\* (.*?)(<br>|$)/g, '• $1<br>');
+      .replace(/\n/g, '<br>');
   }
 
   function showTyping() {
@@ -279,6 +281,7 @@
 
     draftBtn.disabled = true;
     draftBtn.textContent = '⏳ Drafting...';
+    draftOutput.className = 'draft-output';
     draftOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
     copyBtn.style.display = 'none';
 
@@ -289,11 +292,11 @@
         body: JSON.stringify({ email, community: currentCommunity })
       });
       const data = await res.json();
-      draftOutput.innerHTML = formatText(data.draft);
-      draftOutput.style.cssText = 'flex:1; font-size:14px; line-height:1.6; color:#1a1a1a; overflow-y:auto; min-height:300px;';
+      draftOutput.className = 'draft-output';
+      draftOutput.textContent = data.draft;
       copyBtn.style.display = 'block';
     } catch (err) {
-      draftOutput.innerHTML = 'Something went wrong. Please try again.';
+      draftOutput.textContent = 'Something went wrong. Please try again.';
     }
 
     draftBtn.disabled = false;
@@ -301,7 +304,7 @@
   }
 
   function copyDraft() {
-    const text = document.getElementById('draftOutput').innerText;
+    const text = document.getElementById('draftOutput').textContent;
     navigator.clipboard.writeText(text).then(() => {
       const btn = document.getElementById('copyBtn');
       btn.textContent = '✅ Copied!';
