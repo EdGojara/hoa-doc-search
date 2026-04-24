@@ -76,82 +76,80 @@ app.post('/draft', async (req, res) => {
   }
 });
 
-app.post('/acc-review', upload.single('pdf'), async (req, res) => {
+app.post('/acc-review', upload.fields([
+  { name: 'pdf', maxCount: 1 }
+]), async (req, res) => {
   try {
-    const { community, notes } = req.body;
-    if (!req.file) return res.status(400).json({ error: 'No PDF uploaded.' });
+    const { community, details } = req.body;
+    const imageCount = parseInt(req.body.image_count) || 0;
 
-    const pdfBase64 = req.file.buffer.toString('base64');
+    if (!details && !req.files?.pdf) {
+      return res.status(400).json({ error: 'Please provide application details or upload a PDF.' });
+    }
 
-    // First pass: extract application details using Claude's native PDF support
-    const extractResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: {
-              type: 'base64',
-              media_type: 'application/pdf',
-              data: pdfBase64
-            }
-          },
-          {
-            type: 'text',
-            text: 'This is an HOA Architectural Control Committee (ACC) application. Please extract: homeowner name, address, phone, email, type of improvement requested, description of the project, materials, colors, dimensions, and any other relevant details. Be thorough.'
+    // Build content blocks for Claude
+    const contentBlocks = [];
+
+    // Add PDF if provided
+    if (req.files?.pdf) {
+      const pdfBase64 = req.files.pdf[0].buffer.toString('base64');
+      contentBlocks.push({
+        type: 'document',
+        source: {
+          type: 'base64',
+          media_type: 'application/pdf',
+          data: pdfBase64
+        }
+      });
+    }
+
+    // Add images if provided
+    for (let i = 0; i < imageCount; i++) {
+      const imgBase64 = req.body[`image_${i}`];
+      const imgType = req.body[`image_type_${i}`];
+      if (imgBase64) {
+        contentBlocks.push({
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: imgType || 'image/jpeg',
+            data: imgBase64
           }
-        ]
-      }]
-    });
+        });
+      }
+    }
 
-    const appDetails = extractResponse.content[0].text;
+    // Get relevant governing document chunks
+    const searchText = details || 'ACC application exterior modification improvement';
+    const context = await getRelevantChunks(searchText, community);
 
-    // Get relevant governing document chunks based on extracted details
-    const context = await getRelevantChunks(appDetails, community);
+    // Build the review prompt
+    const promptText = `Community: ${community}
 
-    // Second pass: full review with governing docs
-    const reviewResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      system: `You are an HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. Review ACC applications against the community's governing documents and design guidelines. Be thorough, cite specific document sections, and provide clear recommendations.`,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: {
-              type: 'base64',
-              media_type: 'application/pdf',
-              data: pdfBase64
-            }
-          },
-          {
-            type: 'text',
-            text: `Community: ${community}
-
-Extracted application details:
-${appDetails}
-
-${notes ? `Additional notes from staff: ${notes}` : ''}
+${details ? `Application Details Provided by Staff:\n${details}\n` : ''}
 
 Relevant governing documents and design guidelines:
 ${context}
 
 Please provide a complete ACC review with:
-1. SUMMARY - What the homeowner is requesting
+1. SUMMARY - What the homeowner is requesting (use details provided and/or extract from any uploaded documents/images)
 2. APPLICATION COMPLETENESS - Is the application complete? What's missing?
 3. DOCUMENT REVIEW - Cite specific sections that apply to this request
-4. RECOMMENDATION - Approve, Approve with Conditions, or Deny with clear reasoning
-5. CONDITIONS - Any conditions that must be met for approval
-6. DRAFT RESPONSE LETTER - Professional letter to the homeowner`
-          }
-        ]
-      }]
+4. VISUAL REVIEW - If photos or color samples were provided, describe what you see and assess compliance with design guidelines
+5. RECOMMENDATION - Approve, Approve with Conditions, or Deny with clear reasoning
+6. CONDITIONS - Any conditions that must be met for approval
+7. DRAFT RESPONSE LETTER - Professional letter to the homeowner`;
+
+    contentBlocks.push({ type: 'text', text: promptText });
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: `You are an HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. Review ACC applications against the community's governing documents and design guidelines. Be thorough, cite specific document sections, and provide clear recommendations. When photos or color samples are provided, assess them against the community's design standards.`,
+      messages: [{ role: 'user', content: contentBlocks }]
     });
 
-    res.json({ review: reviewResponse.content[0].text });
+    res.json({ review: response.content[0].text });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error processing ACC application: ' + err.message });
