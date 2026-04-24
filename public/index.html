@@ -19,7 +19,7 @@
     .community-bar select:focus { border-color: #2d6a9f; }
 
     .tabs { display: flex; background: white; border-bottom: 1px solid #e0e0e0; }
-    .tab { padding: 12px 24px; font-size: 14px; font-weight: 500; cursor: pointer; color: #666; border-bottom: 2px solid transparent; transition: all 0.2s; }
+    .tab { padding: 12px 20px; font-size: 14px; font-weight: 500; cursor: pointer; color: #666; border-bottom: 2px solid transparent; transition: all 0.2s; }
     .tab.active { color: #1a3a5c; border-bottom-color: #1a3a5c; }
     .tab:hover { color: #1a3a5c; background: #f8f9fa; }
 
@@ -54,21 +54,30 @@
     .send-btn:hover { background: #2d6a9f; }
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
 
-    /* Email drafter styles */
-    .email-container { flex: 1; display: flex; overflow: hidden; }
-    .email-panel { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow: hidden; }
-    .email-panel:first-child { border-right: 1px solid #e0e0e0; }
-    .email-panel h3 { font-size: 14px; font-weight: 600; color: #1a3a5c; flex-shrink: 0; }
-    .email-panel textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; line-height: 1.6; }
-    .email-panel textarea:focus { border-color: #2d6a9f; }
-    .draft-btn { background: #1a3a5c; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
-    .draft-btn:hover { background: #2d6a9f; }
-    .draft-btn:disabled { background: #ccc; cursor: not-allowed; }
-    .copy-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
-    .copy-btn:hover { background: #f0f4f8; }
+    /* Email and ACC shared panel styles */
+    .two-panel { flex: 1; display: flex; overflow: hidden; }
+    .panel { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow: hidden; }
+    .panel:first-child { border-right: 1px solid #e0e0e0; }
+    .panel h3 { font-size: 14px; font-weight: 600; color: #1a3a5c; flex-shrink: 0; }
+    .panel textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; line-height: 1.6; min-height: 200px; }
+    .panel textarea:focus { border-color: #2d6a9f; }
+    
+    .output-box { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.8; color: #1a1a1a; overflow-y: auto; font-family: inherit; white-space: pre-wrap; background: white; min-height: 200px; }
+    .output-box.placeholder { color: #aaa; display: flex; align-items: center; justify-content: center; white-space: normal; text-align: center; }
 
-    .draft-output { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.8; color: #1a1a1a; overflow-y: auto; font-family: inherit; white-space: pre-wrap; background: white; }
-    .draft-output.placeholder { color: #aaa; display: flex; align-items: center; justify-content: center; white-space: normal; }
+    .action-btn { background: #1a3a5c; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
+    .action-btn:hover { background: #2d6a9f; }
+    .action-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .secondary-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
+    .secondary-btn:hover { background: #f0f4f8; }
+
+    /* ACC upload area */
+    .upload-area { border: 2px dashed #d0d7de; border-radius: 8px; padding: 30px; text-align: center; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
+    .upload-area:hover { border-color: #2d6a9f; background: #f8f9ff; }
+    .upload-area.has-file { border-color: #2d6a9f; background: #f0f4ff; }
+    .upload-area p { font-size: 14px; color: #666; margin-top: 8px; }
+    .upload-area span { font-size: 28px; }
+    .upload-area input { display: none; }
 
     .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
     .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
@@ -87,7 +96,7 @@
   <div class="header-icon">🏠</div>
   <div class="header-text">
     <h1>Bedrock HOA Assistant</h1>
-    <p>Ask questions and draft responses about governing documents</p>
+    <p>Ask questions, draft responses, and review ACC applications</p>
   </div>
 </div>
 
@@ -107,16 +116,14 @@
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('chat')">💬 Ask a Question</div>
-  <div class="tab" onclick="switchTab('email')">✉️ Draft Email Response</div>
+  <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
+  <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
 </div>
 
 <!-- Chat Tab -->
 <div class="tab-content active" id="tab-chat">
   <div class="chat-container" id="chat">
-    <div class="no-community">
-      <span>🏘️</span>
-      Select a community above to get started.
-    </div>
+    <div class="no-community"><span>🏘️</span>Select a community above to get started.</div>
   </div>
   <div class="suggestions" id="suggestions" style="display:none">
     <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the parking rules?</button>
@@ -135,16 +142,37 @@
 
 <!-- Email Tab -->
 <div class="tab-content" id="tab-email">
-  <div class="email-container">
-    <div class="email-panel">
+  <div class="two-panel">
+    <div class="panel">
       <h3>📥 Homeowner Email</h3>
       <textarea id="incomingEmail" placeholder="Paste the homeowner's email here..."></textarea>
-      <button class="draft-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Response</button>
+      <button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Response</button>
     </div>
-    <div class="email-panel">
+    <div class="panel">
       <h3>📤 Suggested Response</h3>
-      <div class="draft-output placeholder" id="draftOutput">Your drafted response will appear here...</div>
-      <button class="copy-btn" id="copyBtn" onclick="copyDraft()" style="display:none">📋 Copy to Clipboard</button>
+      <div class="output-box placeholder" id="draftOutput">Your drafted response will appear here...</div>
+      <button class="secondary-btn" id="copyEmailBtn" onclick="copyText('draftOutput')" style="display:none">📋 Copy to Clipboard</button>
+    </div>
+  </div>
+</div>
+
+<!-- ACC Tab -->
+<div class="tab-content" id="tab-acc">
+  <div class="two-panel">
+    <div class="panel">
+      <h3>🏗️ ACC Application</h3>
+      <div class="upload-area" id="uploadArea" onclick="document.getElementById('accFile').click()">
+        <span>📄</span>
+        <p id="uploadLabel">Click to upload ACC application PDF</p>
+        <input type="file" id="accFile" accept=".pdf" onchange="handleFileSelect(this)">
+      </div>
+      <textarea id="accNotes" placeholder="Optional: Add any additional notes or context about this application..." style="flex:0; height:100px;"></textarea>
+      <button class="action-btn" id="reviewBtn" onclick="reviewACC()">🔍 Review Application</button>
+    </div>
+    <div class="panel">
+      <h3>📋 ACC Review & Recommendation</h3>
+      <div class="output-box placeholder" id="accOutput">Upload an ACC application PDF and click Review to get a recommendation based on your governing documents.</div>
+      <button class="secondary-btn" id="copyAccBtn" onclick="copyText('accOutput')" style="display:none">📋 Copy to Clipboard</button>
     </div>
   </div>
 </div>
@@ -169,7 +197,6 @@
     currentCommunity = communitySelect.value;
     conversationHistory = [];
     chat.innerHTML = '';
-
     if (!currentCommunity) {
       chat.innerHTML = '<div class="no-community"><span>🏘️</span>Select a community above to get started.</div>';
       chatInput.disabled = true;
@@ -178,8 +205,7 @@
       suggestions.style.display = 'none';
       return;
     }
-
-    chat.innerHTML = `<div class="welcome"><h2>${currentCommunity}</h2><p>Ask me anything about this community's governing documents — CC&Rs, bylaws, rules, and guidelines.</p></div>`;
+    chat.innerHTML = `<div class="welcome"><h2>${currentCommunity}</h2><p>Ask me anything about this community's governing documents.</p></div>`;
     chatInput.disabled = false;
     chatInput.placeholder = 'Ask a question...';
     sendBtn.disabled = false;
@@ -193,10 +219,7 @@
   }
 
   function handleKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) {
-      e.preventDefault();
-      sendMessage();
-    }
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
   }
 
   function sendSuggestion(btn) {
@@ -212,7 +235,6 @@
     div.innerHTML = `<div class="avatar">${avatar}</div><div class="bubble">${formatText(text)}</div>`;
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
-    return div;
   }
 
   function formatText(text) {
@@ -241,16 +263,13 @@
   async function sendMessage() {
     const question = chatInput.value.trim();
     if (!question || !currentCommunity) return;
-
     suggestions.style.display = 'none';
     chatInput.value = '';
     chatInput.style.height = 'auto';
     sendBtn.disabled = true;
-
     addMessage('user', question);
     conversationHistory.push({ role: 'user', content: question });
     showTyping();
-
     try {
       const res = await fetch('/ask', {
         method: 'POST',
@@ -265,7 +284,6 @@
       removeTyping();
       addMessage('assistant', 'Sorry, something went wrong. Please try again.');
     }
-
     sendBtn.disabled = false;
     chatInput.focus();
   }
@@ -274,17 +292,14 @@
     const email = document.getElementById('incomingEmail').value.trim();
     if (!email) { alert('Please paste a homeowner email first.'); return; }
     if (!currentCommunity) { alert('Please select a community first.'); return; }
-
     const draftBtn = document.getElementById('draftBtn');
     const draftOutput = document.getElementById('draftOutput');
-    const copyBtn = document.getElementById('copyBtn');
-
+    const copyBtn = document.getElementById('copyEmailBtn');
     draftBtn.disabled = true;
     draftBtn.textContent = '⏳ Drafting...';
-    draftOutput.className = 'draft-output';
+    draftOutput.className = 'output-box';
     draftOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
     copyBtn.style.display = 'none';
-
     try {
       const res = await fetch('/draft', {
         method: 'POST',
@@ -292,21 +307,62 @@
         body: JSON.stringify({ email, community: currentCommunity })
       });
       const data = await res.json();
-      draftOutput.className = 'draft-output';
+      draftOutput.className = 'output-box';
       draftOutput.textContent = data.draft;
       copyBtn.style.display = 'block';
     } catch (err) {
       draftOutput.textContent = 'Something went wrong. Please try again.';
     }
-
     draftBtn.disabled = false;
     draftBtn.textContent = '✨ Draft Response';
   }
 
-  function copyDraft() {
-    const text = document.getElementById('draftOutput').textContent;
+  function handleFileSelect(input) {
+    if (input.files && input.files[0]) {
+      const file = input.files[0];
+      document.getElementById('uploadLabel').textContent = `✅ ${file.name}`;
+      document.getElementById('uploadArea').classList.add('has-file');
+    }
+  }
+
+  async function reviewACC() {
+    const fileInput = document.getElementById('accFile');
+    const notes = document.getElementById('accNotes').value;
+    if (!fileInput.files || !fileInput.files[0]) { alert('Please upload an ACC application PDF first.'); return; }
+    if (!currentCommunity) { alert('Please select a community first.'); return; }
+    const reviewBtn = document.getElementById('reviewBtn');
+    const accOutput = document.getElementById('accOutput');
+    const copyBtn = document.getElementById('copyAccBtn');
+    reviewBtn.disabled = true;
+    reviewBtn.textContent = '⏳ Reviewing...';
+    accOutput.className = 'output-box';
+    accOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    copyBtn.style.display = 'none';
+    try {
+      const formData = new FormData();
+      formData.append('pdf', fileInput.files[0]);
+      formData.append('community', currentCommunity);
+      if (notes) formData.append('notes', notes);
+      const res = await fetch('/acc-review', {
+        method: 'POST',
+        body: formData
+      });
+      const data = await res.json();
+      accOutput.className = 'output-box';
+      accOutput.textContent = data.review || data.error;
+      copyBtn.style.display = 'block';
+    } catch (err) {
+      accOutput.textContent = 'Something went wrong. Please try again.';
+    }
+    reviewBtn.disabled = false;
+    reviewBtn.textContent = '🔍 Review Application';
+  }
+
+  function copyText(elementId) {
+    const text = document.getElementById(elementId).textContent;
     navigator.clipboard.writeText(text).then(() => {
-      const btn = document.getElementById('copyBtn');
+      const btnId = elementId === 'draftOutput' ? 'copyEmailBtn' : 'copyAccBtn';
+      const btn = document.getElementById(btnId);
       btn.textContent = '✅ Copied!';
       setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000);
     });
