@@ -32,24 +32,6 @@ async function getRelevantChunks(text, community) {
   ).join('\n\n---\n\n');
 }
 
-async function pdfToImages(pdfBuffer) {
-  const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
-  const { createCanvas } = require('canvas');
-  const data = new Uint8Array(pdfBuffer);
-  const pdf = await pdfjsLib.getDocument({ data }).promise;
-  const images = [];
-  for (let i = 1; i <= Math.min(pdf.numPages, 6); i++) {
-    const page = await pdf.getPage(i);
-    const viewport = page.getViewport({ scale: 1.5 });
-    const canvas = createCanvas(viewport.width, viewport.height);
-    const context = canvas.getContext('2d');
-    await page.render({ canvasContext: context, viewport }).promise;
-    const base64 = canvas.toBuffer('image/jpeg', { quality: 0.85 }).toString('base64');
-    images.push(base64);
-  }
-  return images;
-}
-
 app.post('/ask', async (req, res) => {
   try {
     const { question, community, history = [] } = req.body;
@@ -99,27 +81,23 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
     const { community, notes } = req.body;
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded.' });
 
-    // Convert PDF pages to images
-    const images = await pdfToImages(req.file.buffer);
+    const pdfBase64 = req.file.buffer.toString('base64');
 
-    // Build vision content blocks
-    const imageBlocks = images.map(base64 => ({
-      type: 'image',
-      source: {
-        type: 'base64',
-        media_type: 'image/jpeg',
-        data: base64
-      }
-    }));
-
-    // First pass: extract application details using vision
+    // First pass: extract application details using Claude's native PDF support
     const extractResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1000,
       messages: [{
         role: 'user',
         content: [
-          ...imageBlocks,
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: pdfBase64
+            }
+          },
           {
             type: 'text',
             text: 'This is an HOA Architectural Control Committee (ACC) application. Please extract: homeowner name, address, phone, email, type of improvement requested, description of the project, materials, colors, dimensions, and any other relevant details. Be thorough.'
@@ -130,11 +108,8 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
 
     const appDetails = extractResponse.content[0].text;
 
-    // Get relevant governing document chunks
-    const context = await getRelevantChunks(
-      `ACC application front door replacement exterior modification ${appDetails}`,
-      community
-    );
+    // Get relevant governing document chunks based on extracted details
+    const context = await getRelevantChunks(appDetails, community);
 
     // Second pass: full review with governing docs
     const reviewResponse = await anthropic.messages.create({
@@ -144,7 +119,14 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
       messages: [{
         role: 'user',
         content: [
-          ...imageBlocks,
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: pdfBase64
+            }
+          },
           {
             type: 'text',
             text: `Community: ${community}
@@ -161,7 +143,7 @@ Please provide a complete ACC review with:
 1. SUMMARY - What the homeowner is requesting
 2. APPLICATION COMPLETENESS - Is the application complete? What's missing?
 3. DOCUMENT REVIEW - Cite specific sections that apply to this request
-4. RECOMMENDATION - Approve, Approve with Conditions, or Deny (with clear reasoning)
+4. RECOMMENDATION - Approve, Approve with Conditions, or Deny with clear reasoning
 5. CONDITIONS - Any conditions that must be met for approval
 6. DRAFT RESPONSE LETTER - Professional letter to the homeowner`
           }
