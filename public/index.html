@@ -18,39 +18,56 @@
     .community-bar select { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 12px; font-size: 14px; outline: none; background: white; color: #1a1a1a; cursor: pointer; }
     .community-bar select:focus { border-color: #2d6a9f; }
 
+    .tabs { display: flex; background: white; border-bottom: 1px solid #e0e0e0; }
+    .tab { padding: 12px 24px; font-size: 14px; font-weight: 500; cursor: pointer; color: #666; border-bottom: 2px solid transparent; transition: all 0.2s; }
+    .tab.active { color: #1a3a5c; border-bottom-color: #1a3a5c; }
+    .tab:hover { color: #1a3a5c; background: #f8f9fa; }
+
+    .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
+    .tab-content.active { display: flex; }
+
+    /* Chat styles */
     .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
-    
     .message { display: flex; gap: 10px; max-width: 85%; }
     .message.user { align-self: flex-end; flex-direction: row-reverse; }
     .message.assistant { align-self: flex-start; }
-    
     .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; margin-top: 4px; }
     .assistant .avatar { background: #1a3a5c; color: white; }
     .user .avatar { background: #2d6a9f; color: white; }
-    
     .bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.5; font-size: 14px; }
     .assistant .bubble { background: white; color: #1a1a1a; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
     .user .bubble { background: #2d6a9f; color: white; border-bottom-right-radius: 4px; }
-    
     .bubble strong { font-weight: 600; }
-    .bubble ul { padding-left: 18px; margin-top: 6px; }
-    .bubble li { margin-bottom: 4px; }
 
     .no-community { text-align: center; padding: 40px 20px; color: #888; font-size: 14px; }
     .no-community span { font-size: 32px; display: block; margin-bottom: 12px; }
-    
+
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 12px; }
     .suggestion-btn { background: white; border: 1px solid #d0d7de; border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: #1a3a5c; transition: all 0.2s; }
     .suggestion-btn:hover { background: #1a3a5c; color: white; border-color: #1a3a5c; }
-    
-    .input-area { background: white; border-top: 1px solid #e0e0e0; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; }
-    .input-area textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 20px; padding: 10px 16px; font-size: 14px; resize: none; outline: none; max-height: 120px; font-family: inherit; line-height: 1.4; }
-    .input-area textarea:focus { border-color: #2d6a9f; }
-    .input-area textarea:disabled { background: #f5f5f5; }
+
+    .chat-input-area { background: white; border-top: 1px solid #e0e0e0; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; }
+    .chat-input-area textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 20px; padding: 10px 16px; font-size: 14px; resize: none; outline: none; max-height: 120px; font-family: inherit; line-height: 1.4; }
+    .chat-input-area textarea:focus { border-color: #2d6a9f; }
+    .chat-input-area textarea:disabled { background: #f5f5f5; }
     .send-btn { background: #1a3a5c; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.2s; }
     .send-btn:hover { background: #2d6a9f; }
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
-    
+
+    /* Email drafter styles */
+    .email-container { flex: 1; display: flex; gap: 0; overflow: hidden; }
+    .email-panel { flex: 1; display: flex; flex-direction: column; padding: 20px; gap: 12px; overflow-y: auto; }
+    .email-panel:first-child { border-right: 1px solid #e0e0e0; }
+    .email-panel h3 { font-size: 14px; font-weight: 600; color: #1a3a5c; }
+    .email-panel textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; line-height: 1.5; min-height: 300px; }
+    .email-panel textarea:focus { border-color: #2d6a9f; }
+    .draft-btn { background: #1a3a5c; color: white; border: none; border-radius: 8px; padding: 12px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; }
+    .draft-btn:hover { background: #2d6a9f; }
+    .draft-btn:disabled { background: #ccc; cursor: not-allowed; }
+    .copy-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 12px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; }
+    .copy-btn:hover { background: #f0f4f8; }
+    .draft-placeholder { flex: 1; display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 14px; text-align: center; min-height: 300px; }
+
     .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
     .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
     .typing span:nth-child(2) { animation-delay: 0.2s; }
@@ -68,7 +85,7 @@
   <div class="header-icon">🏠</div>
   <div class="header-text">
     <h1>Bedrock HOA Assistant</h1>
-    <p>Ask questions about governing documents</p>
+    <p>Ask questions and draft responses about governing documents</p>
   </div>
 </div>
 
@@ -86,57 +103,86 @@
   </select>
 </div>
 
-<div class="chat-container" id="chat">
-  <div class="no-community">
-    <span>🏘️</span>
-    Select a community above to get started.
+<div class="tabs">
+  <div class="tab active" onclick="switchTab('chat')">💬 Ask a Question</div>
+  <div class="tab" onclick="switchTab('email')">✉️ Draft Email Response</div>
+</div>
+
+<!-- Chat Tab -->
+<div class="tab-content active" id="tab-chat">
+  <div class="chat-container" id="chat">
+    <div class="no-community">
+      <span>🏘️</span>
+      Select a community above to get started.
+    </div>
+  </div>
+  <div class="suggestions" id="suggestions" style="display:none">
+    <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the parking rules?</button>
+    <button class="suggestion-btn" onclick="sendSuggestion(this)">Can homeowners have pets?</button>
+    <button class="suggestion-btn" onclick="sendSuggestion(this)">What is the quorum for meetings?</button>
+    <button class="suggestion-btn" onclick="sendSuggestion(this)">What happens if assessments aren't paid?</button>
+    <button class="suggestion-btn" onclick="sendSuggestion(this)">What is the fine amount for violations?</button>
+  </div>
+  <div class="chat-input-area">
+    <textarea id="chatInput" placeholder="Select a community first..." rows="1" disabled onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
+    <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
+    </button>
   </div>
 </div>
 
-<div class="suggestions" id="suggestions" style="display:none">
-  <button class="suggestion-btn" onclick="sendSuggestion(this)">What are the parking rules?</button>
-  <button class="suggestion-btn" onclick="sendSuggestion(this)">Can homeowners have pets?</button>
-  <button class="suggestion-btn" onclick="sendSuggestion(this)">What is the quorum for meetings?</button>
-  <button class="suggestion-btn" onclick="sendSuggestion(this)">What happens if assessments aren't paid?</button>
-  <button class="suggestion-btn" onclick="sendSuggestion(this)">Can I rent out my home?</button>
-</div>
-
-<div class="input-area">
-  <textarea id="input" placeholder="Select a community first..." rows="1" disabled onkeydown="handleKey(event)" oninput="autoResize(this)"></textarea>
-  <button class="send-btn" id="sendBtn" onclick="sendMessage()" disabled>
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="22" y1="2" x2="11" y2="13"></line><polygon points="22 2 15 22 11 13 2 9 22 2"></polygon></svg>
-  </button>
+<!-- Email Tab -->
+<div class="tab-content" id="tab-email">
+  <div class="email-container">
+    <div class="email-panel">
+      <h3>📥 Homeowner Email</h3>
+      <textarea id="incomingEmail" placeholder="Paste the homeowner's email here..."></textarea>
+      <button class="draft-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Response</button>
+    </div>
+    <div class="email-panel">
+      <h3>📤 Suggested Response</h3>
+      <div id="draftOutput" class="draft-placeholder">Your drafted response will appear here...</div>
+      <button class="copy-btn" id="copyBtn" onclick="copyDraft()" style="display:none">📋 Copy to Clipboard</button>
+    </div>
+  </div>
 </div>
 
 <script>
+  const communitySelect = document.getElementById('communitySelect');
   const chat = document.getElementById('chat');
-  const input = document.getElementById('input');
+  const chatInput = document.getElementById('chatInput');
   const sendBtn = document.getElementById('sendBtn');
   const suggestions = document.getElementById('suggestions');
-  const communitySelect = document.getElementById('communitySelect');
   let conversationHistory = [];
   let currentCommunity = '';
+
+  function switchTab(tab) {
+    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
+    document.getElementById(`tab-${tab}`).classList.add('active');
+  }
 
   function onCommunityChange() {
     currentCommunity = communitySelect.value;
     conversationHistory = [];
     chat.innerHTML = '';
-    
+
     if (!currentCommunity) {
       chat.innerHTML = '<div class="no-community"><span>🏘️</span>Select a community above to get started.</div>';
-      input.disabled = true;
-      input.placeholder = 'Select a community first...';
+      chatInput.disabled = true;
+      chatInput.placeholder = 'Select a community first...';
       sendBtn.disabled = true;
       suggestions.style.display = 'none';
       return;
     }
 
     chat.innerHTML = `<div class="welcome"><h2>${currentCommunity}</h2><p>Ask me anything about this community's governing documents — CC&Rs, bylaws, rules, and guidelines.</p></div>`;
-    input.disabled = false;
-    input.placeholder = 'Ask a question...';
+    chatInput.disabled = false;
+    chatInput.placeholder = 'Ask a question...';
     sendBtn.disabled = false;
     suggestions.style.display = 'flex';
-    input.focus();
+    chatInput.focus();
   }
 
   function autoResize(el) {
@@ -152,7 +198,7 @@
   }
 
   function sendSuggestion(btn) {
-    input.value = btn.textContent;
+    chatInput.value = btn.textContent;
     suggestions.style.display = 'none';
     sendMessage();
   }
@@ -191,17 +237,16 @@
   }
 
   async function sendMessage() {
-    const question = input.value.trim();
+    const question = chatInput.value.trim();
     if (!question || !currentCommunity) return;
 
     suggestions.style.display = 'none';
-    input.value = '';
-    input.style.height = 'auto';
+    chatInput.value = '';
+    chatInput.style.height = 'auto';
     sendBtn.disabled = true;
 
     addMessage('user', question);
     conversationHistory.push({ role: 'user', content: question });
-
     showTyping();
 
     try {
@@ -220,7 +265,48 @@
     }
 
     sendBtn.disabled = false;
-    input.focus();
+    chatInput.focus();
+  }
+
+  async function draftResponse() {
+    const email = document.getElementById('incomingEmail').value.trim();
+    if (!email) { alert('Please paste a homeowner email first.'); return; }
+    if (!currentCommunity) { alert('Please select a community first.'); return; }
+
+    const draftBtn = document.getElementById('draftBtn');
+    const draftOutput = document.getElementById('draftOutput');
+    const copyBtn = document.getElementById('copyBtn');
+
+    draftBtn.disabled = true;
+    draftBtn.textContent = '⏳ Drafting...';
+    draftOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    copyBtn.style.display = 'none';
+
+    try {
+      const res = await fetch('/draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, community: currentCommunity })
+      });
+      const data = await res.json();
+      draftOutput.innerHTML = formatText(data.draft);
+      draftOutput.style.cssText = 'flex:1; font-size:14px; line-height:1.6; color:#1a1a1a; overflow-y:auto; min-height:300px;';
+      copyBtn.style.display = 'block';
+    } catch (err) {
+      draftOutput.innerHTML = 'Something went wrong. Please try again.';
+    }
+
+    draftBtn.disabled = false;
+    draftBtn.textContent = '✨ Draft Response';
+  }
+
+  function copyDraft() {
+    const text = document.getElementById('draftOutput').innerText;
+    navigator.clipboard.writeText(text).then(() => {
+      const btn = document.getElementById('copyBtn');
+      btn.textContent = '✅ Copied!';
+      setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000);
+    });
   }
 </script>
 </body>

@@ -1,6 +1,7 @@
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
+const OpenAI = require('openai');
 
 const app = express();
 app.use(express.json());
@@ -8,69 +9,34 @@ app.use(express.static('public'));
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 app.post('/ask', async (req, res) => {
   const { question, community, history = [] } = req.body;
 
-  const stopWords = ['how', 'what', 'when', 'where', 'who', 'why', 'is', 'are', 'the', 'a', 'an', 'of', 'in', 'on', 'at', 'to', 'for', 'do', 'does', 'can', 'many', 'much', 'long'];
-  const keywords = question.toLowerCase()
-    .split(/\s+/)
-    .filter(w => w.length > 2 && !stopWords.includes(w));
+  const embeddingResponse = await openai.embeddings.create({
+    model: 'text-embedding-ada-002',
+    input: question.replace(/\n/g, ' ')
+  });
+  const queryEmbedding = embeddingResponse.data[0].embedding;
 
-  let chunks = [];
+  const communities = ['Law', 'General'];
+  if (community) communities.push(community);
 
-  for (const keyword of keywords.slice(0, 5)) {
-    // Search community-specific docs
-    if (community) {
-      const { data } = await supabase
-        .from('documents')
-        .select('content, metadata')
-        .ilike('content', `%${keyword}%`)
-        .eq('metadata->>community', community)
-        .limit(8);
-      if (data) chunks.push(...data);
-    }
-
-    // Always search Law docs
-    const { data: lawData } = await supabase
-      .from('documents')
-      .select('content, metadata')
-      .ilike('content', `%${keyword}%`)
-      .eq('metadata->>community', 'Law')
-      .limit(4);
-    if (lawData) chunks.push(...lawData);
-
-    // Always search General docs
-    const { data: generalData } = await supabase
-      .from('documents')
-      .select('content, metadata')
-      .ilike('content', `%${keyword}%`)
-      .eq('metadata->>community', 'General')
-      .limit(4);
-    if (generalData) chunks.push(...generalData);
-  }
-
-  // Deduplicate
-  const seen = new Set();
-  chunks = chunks.filter(chunk => {
-    if (seen.has(chunk.content)) return false;
-    seen.add(chunk.content);
-    return true;
+  const { data: chunks, error } = await supabase.rpc('match_documents', {
+    query_embedding: queryEmbedding,
+    match_count: 15,
+    filter_communities: communities
   });
 
-  // Fallback if nothing found
-  if (chunks.length === 0) {
-    const queries = [];
-    if (community) {
-      queries.push(supabase.from('documents').select('content, metadata').eq('metadata->>community', community).limit(12));
-    }
-    queries.push(supabase.from('documents').select('content, metadata').eq('metadata->>community', 'Law').limit(4));
-    queries.push(supabase.from('documents').select('content, metadata').eq('metadata->>community', 'General').limit(4));
-    const results = await Promise.all(queries);
-    results.forEach(({ data }) => { if (data) chunks.push(...data); });
+  if (error) {
+    console.error('Search error:', error);
+    return res.status(500).json({ answer: 'Search error. Please try again.' });
   }
 
-  const context = chunks.map(row => `[From: ${row.metadata?.filename} - ${row.metadata?.community}]\n${row.content}`).join('\n\n---\n\n');
+  const context = (chunks || []).map(row =>
+    `[From: ${row.metadata?.filename} - ${row.metadata?.community}]\n${row.content}`
+  ).join('\n\n---\n\n');
 
   const messages = [
     ...history.slice(-6),
@@ -90,6 +56,42 @@ app.post('/ask', async (req, res) => {
   res.json({ answer: response.content[0].text });
 });
 
+app.post('/draft', async (req, res) => {
+  const { email, community } = req.body;
+
+  const embeddingResponse = await openai.embeddings.create({
+    model: 'text-embedding-ada-002',
+    input: email.replace(/\n/g, ' ')
+  });
+  const queryEmbedding = embeddingResponse.data[0].embedding;
+
+  const communities = ['Law', 'General'];
+  if (community) communities.push(community);
+
+  const { data: chunks } = await supabase.rpc('match_documents', {
+    query_embedding: queryEmbedding,
+    match_count: 15,
+    filter_communities: communities
+  });
+
+  const context = (chunks || []).map(row =>
+    `[From: ${row.metadata?.filename} - ${row.metadata?.community}]\n${row.content}`
+  ).join('\n\n---\n\n');
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 1500,
+    system: `You are a professional HOA property manager working for Bedrock Association Management. Draft courteous, professional email responses to homeowner inquiries. Always ground your response in the governing documents provided. Be empathetic but clear. Sign off as "Bedrock Association Management."`,
+    messages: [{
+      role: 'user',
+      content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${context}\n\nHomeowner email to respond to:\n\n${email}\n\nDraft a professional response email.`
+    }]
+  });
+
+  res.json({ draft: response.content[0].text });
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
+});
 });
