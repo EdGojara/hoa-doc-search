@@ -63,7 +63,7 @@ app.post('/draft', async (req, res) => {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: `You are a professional HOA property manager working for Bedrock Association Management. Draft courteous, professional email responses to homeowner inquiries. Always ground your response in the governing documents provided. Be empathetic but clear. Sign off as "Bedrock Association Management."`,
+      system: `You are a professional HOA property manager working for Bedrock Association Management. Draft courteous, professional email responses to homeowner inquiries. Always ground your response in the governing documents provided. Be empathetic but clear. Sign off as "Bedrock Association Management." Never use a personal name in the signature.`,
       messages: [{
         role: 'user',
         content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${context}\n\nHomeowner email to respond to:\n\n${email}\n\nDraft a professional response email.`
@@ -107,7 +107,7 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
     const reviewResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
-      system: `You are an HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. Review ACC applications against the community's governing documents and design guidelines. Be thorough, cite specific document sections, and provide clear recommendations.`,
+      system: `You are an HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. Review ACC applications against the community's governing documents and design guidelines. Be thorough, cite specific document sections, and provide clear recommendations. Sign off as "Bedrock Association Management" — never use a personal name.`,
       messages: [{
         role: 'user',
         content: [
@@ -130,33 +130,30 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
   }
 });
 
-// Ask Ed endpoint
 app.post('/ask-ed', async (req, res) => {
   try {
     const { situation, community } = req.body;
 
-    // Search playbook for similar situations
     const { data: playbook } = await supabase
       .from('playbook')
       .select('*')
       .order('created_at', { ascending: false });
 
     const playbookContext = playbook?.length
-      ? `Here are examples of how Ed has handled similar situations:\n\n${playbook.map(p =>
-          `SITUATION: ${p.situation}\nCATEGORY: ${p.category || 'General'}\nED'S RESPONSE: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
+      ? `Here are examples of how Bedrock Association Management has handled similar situations:\n\n${playbook.map(p =>
+          `SITUATION: ${p.situation}\nCATEGORY: ${p.category || 'General'}\nRESPONSE: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
         ).join('\n\n---\n\n')}`
       : 'No playbook examples available yet.';
 
-    // Also get relevant governing doc context
     const docContext = await getRelevantChunks(situation, community);
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: `You are "Ask Ed" — an AI that thinks and responds like Ed Gojara, owner of Bedrock Association Management. Ed is direct, professional, experienced in HOA management, a skilled negotiator, and protective of his clients' interests. He's also empathetic but firm. When answering, respond as Ed would — with his voice, his approach, and his values. Draw from his playbook examples when relevant.`,
+      system: `You are "Ask Ed" — an AI advisor that thinks and responds like an experienced HOA property management professional at Bedrock Association Management. You are direct, professional, empathetic but firm, and skilled at negotiation and conflict resolution. When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`,
       messages: [{
         role: 'user',
-        content: `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation}\n\n${community ? `Community: ${community}` : ''}\n\nHow would Ed handle this? Provide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why Ed would handle it this way\n4. WATCH OUTS - What to be careful about`
+        content: `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation}\n\n${community ? `Community: ${community}` : ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`
       }]
     });
 
@@ -167,7 +164,6 @@ app.post('/ask-ed', async (req, res) => {
   }
 });
 
-// Add to playbook
 app.post('/playbook', async (req, res) => {
   try {
     const { situation, context, response, reasoning, category, tags } = req.body;
@@ -182,7 +178,6 @@ app.post('/playbook', async (req, res) => {
   }
 });
 
-// Get playbook entries
 app.get('/playbook', async (req, res) => {
   try {
     const { data, error } = await supabase
