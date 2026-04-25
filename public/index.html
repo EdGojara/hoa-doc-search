@@ -26,7 +26,6 @@
     .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
     .tab-content.active { display: flex; }
 
-    /* Chat styles */
     .chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 16px; }
     .message { display: flex; gap: 10px; max-width: 85%; }
     .message.user { align-self: flex-end; flex-direction: row-reverse; }
@@ -54,7 +53,6 @@
     .send-btn:hover { background: #2d6a9f; }
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
 
-    /* Two panel layout */
     .two-panel { flex: 1; display: flex; overflow: hidden; }
     .panel { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; }
     .panel:first-child { border-right: 1px solid #e0e0e0; }
@@ -71,7 +69,6 @@
     .secondary-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
     .secondary-btn:hover { background: #f0f4f8; }
 
-    /* Upload areas */
     .upload-area { border: 2px dashed #d0d7de; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
     .upload-area:hover { border-color: #2d6a9f; background: #f8f9ff; }
     .upload-area.has-file { border-color: #2d6a9f; background: #f0f4ff; }
@@ -82,7 +79,6 @@
     .image-preview { width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid #d0d7de; }
     .section-label { font-size: 12px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
 
-    /* Ask Ed styles */
     .ask-ed-container { flex: 1; display: flex; overflow: hidden; }
     .ask-ed-left { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; border-right: 1px solid #e0e0e0; }
     .ask-ed-right { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; }
@@ -168,7 +164,7 @@
     <div class="panel">
       <h3>📥 Homeowner Email</h3>
       <textarea id="incomingEmail" placeholder="Paste the homeowner's email here..." style="flex:1; min-height:300px;"></textarea>
-      <button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Response</button>
+      <button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Email Response</button>
     </div>
     <div class="panel">
       <h3>📤 Suggested Response</h3>
@@ -213,39 +209,45 @@
   <div class="ask-ed-container">
     <div class="ask-ed-left">
       <h3>🧠 Ask Ed</h3>
-      <p style="font-size:13px; color:#666;">Describe a situation and get guidance on how Ed would handle it.</p>
+      <p style="font-size:13px; color:#666;">Describe a situation or paste an email to get guidance on how to handle it.</p>
       
       <div class="section-label" style="margin-top:8px;">Situation or Email</div>
-      <textarea id="edSituation" placeholder="Describe the situation or paste an email here...&#10;&#10;Example: A homeowner is threatening to sue us because we denied their fence application. They say their neighbor has the same fence and was approved. How do I handle this?" style="min-height:200px;"></textarea>
+      <textarea id="edSituation" placeholder="Describe the situation or paste an email here..." style="min-height:200px;"></textarea>
       
-      <button class="action-btn" id="askEdBtn" onclick="askEd()">🧠 Get Ed's Guidance</button>
+      <button class="action-btn" id="askEdBtn" onclick="askEd()">🧠 Get Guidance</button>
 
       <div class="add-playbook">
-        <h4>➕ Add to Ed's Playbook</h4>
-        <input type="text" id="playbookSituation" placeholder="Situation summary (brief)">
-        <select id="playbookCategory">
-          <option value="">Select category</option>
-          <option>Homeowner Complaint</option>
-          <option>Vendor Negotiation</option>
-          <option>Board Relations</option>
-          <option>Collections</option>
-          <option>ACC/Violations</option>
-          <option>Staff Management</option>
-          <option>Legal/Compliance</option>
-          <option>General</option>
-        </select>
-        <textarea id="playbookResponse" placeholder="How Ed handled it / ideal response..." style="min-height:80px;"></textarea>
-        <textarea id="playbookReasoning" placeholder="Why — Ed's reasoning..." style="min-height:60px;"></textarea>
-        <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
+        <h4>🔒 <span id="playbookLockLabel" onclick="unlockPlaybook()" style="cursor:pointer; color:#2d6a9f;">Add to Playbook (Admin Only)</span></h4>
+        <div id="playbookLockForm">
+          <input type="password" id="playbookPassword" placeholder="Enter admin password...">
+          <button class="action-btn" onclick="unlockPlaybook()" style="width:100%">Unlock</button>
+        </div>
+        <div id="playbookForm" style="display:none;">
+          <input type="text" id="playbookSituation" placeholder="Situation summary (brief)">
+          <select id="playbookCategory">
+            <option value="">Select category</option>
+            <option>Homeowner Complaint</option>
+            <option>Vendor Negotiation</option>
+            <option>Board Relations</option>
+            <option>Collections</option>
+            <option>ACC/Violations</option>
+            <option>Staff Management</option>
+            <option>Legal/Compliance</option>
+            <option>General</option>
+          </select>
+          <textarea id="playbookResponse" placeholder="How to handle it / ideal response..." style="min-height:80px;"></textarea>
+          <textarea id="playbookReasoning" placeholder="Why — reasoning behind this approach..." style="min-height:60px;"></textarea>
+          <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
+        </div>
       </div>
     </div>
 
     <div class="ask-ed-right">
-      <h3>📋 Ed's Guidance</h3>
-      <div class="output-box placeholder" id="edOutput">Describe a situation and click "Get Ed's Guidance" to see how Ed would handle it.</div>
+      <h3>📋 Guidance</h3>
+      <div class="output-box placeholder" id="edOutput">Describe a situation and click "Get Guidance" to see how to handle it.</div>
       <button class="secondary-btn" id="copyEdBtn" onclick="copyText('edOutput')" style="display:none">📋 Copy to Clipboard</button>
       
-      <h3 style="margin-top:16px;">📚 Ed's Playbook</h3>
+      <h3 style="margin-top:16px;">📚 Playbook</h3>
       <div id="playbookList" style="display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
         <p style="font-size:13px; color:#888;">Loading playbook...</p>
       </div>
@@ -392,7 +394,7 @@
       draftOutput.textContent = 'Something went wrong. Please try again.';
     }
     draftBtn.disabled = false;
-    draftBtn.textContent = '✨ Draft Response';
+    draftBtn.textContent = '✨ Draft Email Response';
   }
 
   function handlePdfSelect(input) {
@@ -484,7 +486,19 @@
       output.textContent = 'Something went wrong. Please try again.';
     }
     btn.disabled = false;
-    btn.textContent = '🧠 Get Ed\'s Guidance';
+    btn.textContent = '🧠 Get Guidance';
+  }
+
+  function unlockPlaybook() {
+    const pwd = document.getElementById('playbookPassword');
+    if (!pwd) return;
+    if (pwd.value === 'Answer$911') {
+      document.getElementById('playbookLockForm').style.display = 'none';
+      document.getElementById('playbookForm').style.display = 'block';
+    } else if (pwd.value) {
+      alert('Incorrect password.');
+      pwd.value = '';
+    }
   }
 
   async function addToPlaybook() {
@@ -519,7 +533,7 @@
       const data = await res.json();
       const list = document.getElementById('playbookList');
       if (!data.entries?.length) {
-        list.innerHTML = '<p style="font-size:13px; color:#888;">No playbook entries yet. Add your first one below.</p>';
+        list.innerHTML = '<p style="font-size:13px; color:#888;">No playbook entries yet.</p>';
         return;
       }
       list.innerHTML = data.entries.map(e => `
