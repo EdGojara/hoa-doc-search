@@ -18,8 +18,8 @@
     .community-bar select { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 12px; font-size: 14px; outline: none; background: white; color: #1a1a1a; cursor: pointer; }
     .community-bar select:focus { border-color: #2d6a9f; }
 
-    .tabs { display: flex; background: white; border-bottom: 1px solid #e0e0e0; }
-    .tab { padding: 12px 20px; font-size: 14px; font-weight: 500; cursor: pointer; color: #666; border-bottom: 2px solid transparent; transition: all 0.2s; }
+    .tabs { display: flex; background: white; border-bottom: 1px solid #e0e0e0; overflow-x: auto; }
+    .tab { padding: 12px 16px; font-size: 13px; font-weight: 500; cursor: pointer; color: #666; border-bottom: 2px solid transparent; transition: all 0.2s; white-space: nowrap; }
     .tab.active { color: #1a3a5c; border-bottom-color: #1a3a5c; }
     .tab:hover { color: #1a3a5c; background: #f8f9fa; }
 
@@ -76,13 +76,21 @@
     .upload-area:hover { border-color: #2d6a9f; background: #f8f9ff; }
     .upload-area.has-file { border-color: #2d6a9f; background: #f0f4ff; }
     .upload-area p { font-size: 13px; color: #666; margin-top: 4px; }
-    .upload-area span { font-size: 24px; }
     .upload-area input { display: none; }
 
     .image-previews { display: flex; flex-wrap: wrap; gap: 8px; }
     .image-preview { width: 80px; height: 80px; object-fit: cover; border-radius: 6px; border: 1px solid #d0d7de; }
-
     .section-label { font-size: 12px; font-weight: 600; color: #666; text-transform: uppercase; letter-spacing: 0.5px; }
+
+    /* Ask Ed styles */
+    .ask-ed-container { flex: 1; display: flex; overflow: hidden; }
+    .ask-ed-left { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; border-right: 1px solid #e0e0e0; }
+    .ask-ed-right { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; }
+    
+    .playbook-entry { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; font-size: 13px; }
+    .playbook-entry .category { font-size: 11px; font-weight: 600; color: #2d6a9f; text-transform: uppercase; margin-bottom: 4px; }
+    .playbook-entry .situation { font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
+    .playbook-entry .response-preview { color: #555; line-height: 1.5; }
 
     .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
     .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
@@ -93,6 +101,14 @@
     .welcome { text-align: center; padding: 30px 20px; color: #666; }
     .welcome h2 { color: #1a3a5c; margin-bottom: 8px; font-size: 20px; }
     .welcome p { font-size: 14px; line-height: 1.6; }
+
+    .add-playbook { background: #f0f4f8; border-radius: 8px; padding: 16px; margin-top: 10px; }
+    .add-playbook h4 { font-size: 13px; font-weight: 600; color: #1a3a5c; margin-bottom: 10px; }
+    .add-playbook input, .add-playbook textarea, .add-playbook select { 
+      width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px; 
+      font-size: 13px; font-family: inherit; margin-bottom: 8px; outline: none; 
+    }
+    .add-playbook input:focus, .add-playbook textarea:focus { border-color: #2d6a9f; }
   </style>
 </head>
 <body>
@@ -101,7 +117,7 @@
   <div class="header-icon">🏠</div>
   <div class="header-text">
     <h1>Bedrock HOA Assistant</h1>
-    <p>Ask questions, draft responses, and review ACC applications</p>
+    <p>Ask questions, draft responses, review ACC applications, and get Ed's guidance</p>
   </div>
 </div>
 
@@ -123,6 +139,7 @@
   <div class="tab active" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
+  <div class="tab" onclick="switchTab('asked')">🧠 Ask Ed</div>
 </div>
 
 <!-- Chat Tab -->
@@ -166,32 +183,72 @@
   <div class="two-panel">
     <div class="panel">
       <h3>🏗️ ACC Application Details</h3>
-
       <div class="section-label">Application PDF (optional)</div>
       <div class="upload-area" id="pdfUploadArea" onclick="document.getElementById('accPdf').click()">
-        <span>📄</span>
+        <span style="font-size:24px">📄</span>
         <p id="pdfLabel">Click to upload PDF application</p>
         <input type="file" id="accPdf" accept=".pdf" onchange="handlePdfSelect(this)">
       </div>
-
       <div class="section-label">Application Details</div>
-      <textarea id="accDetails" placeholder="Enter or paste application details here:&#10;&#10;Homeowner name:&#10;Address:&#10;Phone:&#10;Type of improvement:&#10;Description:&#10;Materials/Colors:&#10;Dimensions:&#10;Completion timeframe:" style="min-height: 150px;"></textarea>
-
-      <div class="section-label">Photos / Color Samples / Product Images (optional)</div>
+      <textarea id="accDetails" placeholder="Enter application details:&#10;&#10;Homeowner name:&#10;Address:&#10;Type of improvement:&#10;Description:&#10;Materials/Colors:" style="min-height:150px;"></textarea>
+      <div class="section-label">Photos / Color Samples (optional)</div>
       <div class="upload-area" id="imgUploadArea" onclick="document.getElementById('accImages').click()">
-        <span>🖼️</span>
+        <span style="font-size:24px">🖼️</span>
         <p id="imgLabel">Click to upload photos or color samples</p>
         <input type="file" id="accImages" accept="image/*" multiple onchange="handleImageSelect(this)">
       </div>
       <div class="image-previews" id="imagePreviews"></div>
-
       <button class="action-btn" id="reviewBtn" onclick="reviewACC()">🔍 Review Application</button>
     </div>
-
     <div class="panel">
       <h3>📋 ACC Review & Recommendation</h3>
       <div class="output-box placeholder" id="accOutput">Fill in application details and click Review to get a recommendation based on your governing documents.</div>
       <button class="secondary-btn" id="copyAccBtn" onclick="copyText('accOutput')" style="display:none">📋 Copy to Clipboard</button>
+    </div>
+  </div>
+</div>
+
+<!-- Ask Ed Tab -->
+<div class="tab-content" id="tab-asked">
+  <div class="ask-ed-container">
+    <div class="ask-ed-left">
+      <h3>🧠 Ask Ed</h3>
+      <p style="font-size:13px; color:#666;">Describe a situation and get guidance on how Ed would handle it.</p>
+      
+      <div class="section-label" style="margin-top:8px;">Situation or Email</div>
+      <textarea id="edSituation" placeholder="Describe the situation or paste an email here...&#10;&#10;Example: A homeowner is threatening to sue us because we denied their fence application. They say their neighbor has the same fence and was approved. How do I handle this?" style="min-height:200px;"></textarea>
+      
+      <button class="action-btn" id="askEdBtn" onclick="askEd()">🧠 Get Ed's Guidance</button>
+
+      <div class="add-playbook">
+        <h4>➕ Add to Ed's Playbook</h4>
+        <input type="text" id="playbookSituation" placeholder="Situation summary (brief)">
+        <select id="playbookCategory">
+          <option value="">Select category</option>
+          <option>Homeowner Complaint</option>
+          <option>Vendor Negotiation</option>
+          <option>Board Relations</option>
+          <option>Collections</option>
+          <option>ACC/Violations</option>
+          <option>Staff Management</option>
+          <option>Legal/Compliance</option>
+          <option>General</option>
+        </select>
+        <textarea id="playbookResponse" placeholder="How Ed handled it / ideal response..." style="min-height:80px;"></textarea>
+        <textarea id="playbookReasoning" placeholder="Why — Ed's reasoning..." style="min-height:60px;"></textarea>
+        <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
+      </div>
+    </div>
+
+    <div class="ask-ed-right">
+      <h3>📋 Ed's Guidance</h3>
+      <div class="output-box placeholder" id="edOutput">Describe a situation and click "Get Ed's Guidance" to see how Ed would handle it.</div>
+      <button class="secondary-btn" id="copyEdBtn" onclick="copyText('edOutput')" style="display:none">📋 Copy to Clipboard</button>
+      
+      <h3 style="margin-top:16px;">📚 Ed's Playbook</h3>
+      <div id="playbookList" style="display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
+        <p style="font-size:13px; color:#888;">Loading playbook...</p>
+      </div>
     </div>
   </div>
 </div>
@@ -211,6 +268,7 @@
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
     document.getElementById(`tab-${tab}`).classList.add('active');
+    if (tab === 'asked') loadPlaybook();
   }
 
   function onCommunityChange() {
@@ -371,7 +429,6 @@
     const pdfFile = document.getElementById('accPdf').files[0];
     if (!details && !pdfFile) { alert('Please enter application details or upload a PDF.'); return; }
     if (!currentCommunity) { alert('Please select a community first.'); return; }
-
     const reviewBtn = document.getElementById('reviewBtn');
     const accOutput = document.getElementById('accOutput');
     const copyBtn = document.getElementById('copyAccBtn');
@@ -380,7 +437,6 @@
     accOutput.className = 'output-box';
     accOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
     copyBtn.style.display = 'none';
-
     try {
       const formData = new FormData();
       formData.append('community', currentCommunity);
@@ -391,11 +447,7 @@
         formData.append(`image_type_${i}`, img.type);
         formData.append('image_count', selectedImages.length);
       });
-
-      const res = await fetch('/acc-review', {
-        method: 'POST',
-        body: formData
-      });
+      const res = await fetch('/acc-review', { method: 'POST', body: formData });
       const data = await res.json();
       accOutput.className = 'output-box';
       accOutput.textContent = data.review || data.error;
@@ -407,15 +459,91 @@
     reviewBtn.textContent = '🔍 Review Application';
   }
 
+  async function askEd() {
+    const situation = document.getElementById('edSituation').value.trim();
+    if (!situation) { alert('Please describe the situation first.'); return; }
+    const btn = document.getElementById('askEdBtn');
+    const output = document.getElementById('edOutput');
+    const copyBtn = document.getElementById('copyEdBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Getting guidance...';
+    output.className = 'output-box';
+    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    copyBtn.style.display = 'none';
+    try {
+      const res = await fetch('/ask-ed', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ situation, community: currentCommunity })
+      });
+      const data = await res.json();
+      output.className = 'output-box';
+      output.textContent = data.guidance;
+      copyBtn.style.display = 'block';
+    } catch (err) {
+      output.textContent = 'Something went wrong. Please try again.';
+    }
+    btn.disabled = false;
+    btn.textContent = '🧠 Get Ed\'s Guidance';
+  }
+
+  async function addToPlaybook() {
+    const situation = document.getElementById('playbookSituation').value.trim();
+    const response = document.getElementById('playbookResponse').value.trim();
+    const reasoning = document.getElementById('playbookReasoning').value.trim();
+    const category = document.getElementById('playbookCategory').value;
+    if (!situation || !response) { alert('Please fill in situation and response at minimum.'); return; }
+    try {
+      const res = await fetch('/playbook', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ situation, response, reasoning, category })
+      });
+      const data = await res.json();
+      if (data.success) {
+        document.getElementById('playbookSituation').value = '';
+        document.getElementById('playbookResponse').value = '';
+        document.getElementById('playbookReasoning').value = '';
+        document.getElementById('playbookCategory').value = '';
+        loadPlaybook();
+        alert('Added to playbook!');
+      }
+    } catch (err) {
+      alert('Error saving to playbook.');
+    }
+  }
+
+  async function loadPlaybook() {
+    try {
+      const res = await fetch('/playbook');
+      const data = await res.json();
+      const list = document.getElementById('playbookList');
+      if (!data.entries?.length) {
+        list.innerHTML = '<p style="font-size:13px; color:#888;">No playbook entries yet. Add your first one below.</p>';
+        return;
+      }
+      list.innerHTML = data.entries.map(e => `
+        <div class="playbook-entry">
+          <div class="category">${e.category || 'General'}</div>
+          <div class="situation">${e.situation}</div>
+          <div class="response-preview">${e.response?.slice(0, 150)}${e.response?.length > 150 ? '...' : ''}</div>
+        </div>
+      `).join('');
+    } catch (err) {
+      document.getElementById('playbookList').innerHTML = '<p style="color:red; font-size:13px;">Error loading playbook.</p>';
+    }
+  }
+
   function copyText(elementId) {
     const text = document.getElementById(elementId).textContent;
     navigator.clipboard.writeText(text).then(() => {
-      const btnId = elementId === 'draftOutput' ? 'copyEmailBtn' : 'copyAccBtn';
-      const btn = document.getElementById(btnId);
-      btn.textContent = '✅ Copied!';
-      setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000);
+      const btnMap = { draftOutput: 'copyEmailBtn', accOutput: 'copyAccBtn', edOutput: 'copyEdBtn' };
+      const btn = document.getElementById(btnMap[elementId]);
+      if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
     });
   }
+
+  loadPlaybook();
 </script>
 </body>
 </html>

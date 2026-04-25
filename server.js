@@ -76,83 +76,123 @@ app.post('/draft', async (req, res) => {
   }
 });
 
-app.post('/acc-review', upload.fields([
-  { name: 'pdf', maxCount: 1 }
-]), async (req, res) => {
+app.post('/acc-review', upload.single('pdf'), async (req, res) => {
   try {
-    const { community, details } = req.body;
-    const imageCount = parseInt(req.body.image_count) || 0;
+    const { community, notes } = req.body;
+    if (!req.file) return res.status(400).json({ error: 'No PDF uploaded.' });
 
-    if (!details && !req.files?.pdf) {
-      return res.status(400).json({ error: 'Please provide application details or upload a PDF.' });
-    }
+    const pdfBase64 = req.file.buffer.toString('base64');
 
-    // Build content blocks for Claude
-    const contentBlocks = [];
-
-    // Add PDF if provided
-    if (req.files?.pdf) {
-      const pdfBase64 = req.files.pdf[0].buffer.toString('base64');
-      contentBlocks.push({
-        type: 'document',
-        source: {
-          type: 'base64',
-          media_type: 'application/pdf',
-          data: pdfBase64
-        }
-      });
-    }
-
-    // Add images if provided
-    for (let i = 0; i < imageCount; i++) {
-      const imgBase64 = req.body[`image_${i}`];
-      const imgType = req.body[`image_type_${i}`];
-      if (imgBase64) {
-        contentBlocks.push({
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: imgType || 'image/jpeg',
-            data: imgBase64
-          }
-        });
-      }
-    }
-
-    // Get relevant governing document chunks
-    const searchText = details || 'ACC application exterior modification improvement';
-    const context = await getRelevantChunks(searchText, community);
-
-    // Build the review prompt
-    const promptText = `Community: ${community}
-
-${details ? `Application Details Provided by Staff:\n${details}\n` : ''}
-
-Relevant governing documents and design guidelines:
-${context}
-
-Please provide a complete ACC review with:
-1. SUMMARY - What the homeowner is requesting (use details provided and/or extract from any uploaded documents/images)
-2. APPLICATION COMPLETENESS - Is the application complete? What's missing?
-3. DOCUMENT REVIEW - Cite specific sections that apply to this request
-4. VISUAL REVIEW - If photos or color samples were provided, describe what you see and assess compliance with design guidelines
-5. RECOMMENDATION - Approve, Approve with Conditions, or Deny with clear reasoning
-6. CONDITIONS - Any conditions that must be met for approval
-7. DRAFT RESPONSE LETTER - Professional letter to the homeowner`;
-
-    contentBlocks.push({ type: 'text', text: promptText });
-
-    const response = await anthropic.messages.create({
+    const extractResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
-      system: `You are an HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. Review ACC applications against the community's governing documents and design guidelines. Be thorough, cite specific document sections, and provide clear recommendations. When photos or color samples are provided, assess them against the community's design standards.`,
-      messages: [{ role: 'user', content: contentBlocks }]
+      max_tokens: 1000,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+          },
+          {
+            type: 'text',
+            text: 'This is an HOA Architectural Control Committee (ACC) application. Please extract: homeowner name, address, phone, email, type of improvement requested, description of the project, materials, colors, dimensions, and any other relevant details. Be thorough.'
+          }
+        ]
+      }]
     });
 
-    res.json({ review: response.content[0].text });
+    const appDetails = extractResponse.content[0].text;
+    const context = await getRelevantChunks(appDetails, community);
+
+    const reviewResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: `You are an HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. Review ACC applications against the community's governing documents and design guidelines. Be thorough, cite specific document sections, and provide clear recommendations.`,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+          },
+          {
+            type: 'text',
+            text: `Community: ${community}\n\nExtracted application details:\n${appDetails}\n\n${notes ? `Additional notes: ${notes}` : ''}\n\nRelevant governing documents:\n${context}\n\nPlease provide:\n1. SUMMARY\n2. APPLICATION COMPLETENESS\n3. DOCUMENT REVIEW\n4. RECOMMENDATION\n5. CONDITIONS\n6. DRAFT RESPONSE LETTER`
+          }
+        ]
+      }]
+    });
+
+    res.json({ review: reviewResponse.content[0].text });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error processing ACC application: ' + err.message });
+  }
+});
+
+// Ask Ed endpoint
+app.post('/ask-ed', async (req, res) => {
+  try {
+    const { situation, community } = req.body;
+
+    // Search playbook for similar situations
+    const { data: playbook } = await supabase
+      .from('playbook')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    const playbookContext = playbook?.length
+      ? `Here are examples of how Ed has handled similar situations:\n\n${playbook.map(p =>
+          `SITUATION: ${p.situation}\nCATEGORY: ${p.category || 'General'}\nED'S RESPONSE: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
+        ).join('\n\n---\n\n')}`
+      : 'No playbook examples available yet.';
+
+    // Also get relevant governing doc context
+    const docContext = await getRelevantChunks(situation, community);
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: `You are "Ask Ed" — an AI that thinks and responds like Ed Gojara, owner of Bedrock Association Management. Ed is direct, professional, experienced in HOA management, a skilled negotiator, and protective of his clients' interests. He's also empathetic but firm. When answering, respond as Ed would — with his voice, his approach, and his values. Draw from his playbook examples when relevant.`,
+      messages: [{
+        role: 'user',
+        content: `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation}\n\n${community ? `Community: ${community}` : ''}\n\nHow would Ed handle this? Provide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why Ed would handle it this way\n4. WATCH OUTS - What to be careful about`
+      }]
+    });
+
+    res.json({ guidance: response.content[0].text });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ guidance: 'Error getting guidance. Please try again.' });
+  }
+});
+
+// Add to playbook
+app.post('/playbook', async (req, res) => {
+  try {
+    const { situation, context, response, reasoning, category, tags } = req.body;
+    const { data, error } = await supabase.from('playbook').insert({
+      situation, context, response, reasoning, category,
+      tags: tags ? tags.split(',').map(t => t.trim()) : []
+    }).select();
+    if (error) throw error;
+    res.json({ success: true, entry: data[0] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get playbook entries
+app.get('/playbook', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('playbook')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ entries: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
