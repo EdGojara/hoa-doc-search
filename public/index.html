@@ -82,11 +82,22 @@
     .ask-ed-container { flex: 1; display: flex; overflow: hidden; }
     .ask-ed-left { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; border-right: 1px solid #e0e0e0; }
     .ask-ed-right { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; }
-    
+
     .playbook-entry { background: #f8f9fa; border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; font-size: 13px; }
     .playbook-entry .category { font-size: 11px; font-weight: 600; color: #2d6a9f; text-transform: uppercase; margin-bottom: 4px; }
     .playbook-entry .situation { font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
     .playbook-entry .response-preview { color: #555; line-height: 1.5; }
+
+    .admin-panel { background: #f0f4f8; border-radius: 8px; padding: 16px; margin-top: 10px; }
+    .admin-panel h4 { font-size: 13px; font-weight: 600; color: #1a3a5c; margin-bottom: 10px; }
+    .admin-panel input, .admin-panel textarea, .admin-panel select { 
+      width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px; 
+      font-size: 13px; font-family: inherit; margin-bottom: 8px; outline: none; 
+    }
+    .admin-panel input:focus, .admin-panel textarea:focus { border-color: #2d6a9f; }
+
+    .draft-type-select { width: 100%; border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 12px; font-size: 14px; outline: none; background: white; color: #1a1a1a; cursor: pointer; flex-shrink: 0; }
+    .draft-type-select:focus { border-color: #2d6a9f; }
 
     .typing { display: flex; align-items: center; gap: 4px; padding: 4px 0; }
     .typing span { width: 8px; height: 8px; background: #aaa; border-radius: 50%; animation: bounce 1.2s infinite; }
@@ -98,13 +109,9 @@
     .welcome h2 { color: #1a3a5c; margin-bottom: 8px; font-size: 20px; }
     .welcome p { font-size: 14px; line-height: 1.6; }
 
-    .add-playbook { background: #f0f4f8; border-radius: 8px; padding: 16px; margin-top: 10px; }
-    .add-playbook h4 { font-size: 13px; font-weight: 600; color: #1a3a5c; margin-bottom: 10px; }
-    .add-playbook input, .add-playbook textarea, .add-playbook select { 
-      width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px; 
-      font-size: 13px; font-family: inherit; margin-bottom: 8px; outline: none; 
-    }
-    .add-playbook input:focus, .add-playbook textarea:focus { border-color: #2d6a9f; }
+    .review-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
+    .badge-ready { background: #e6f4ea; color: #2d7a3a; }
+    .badge-needs-work { background: #fce8e6; color: #c0392b; }
   </style>
 </head>
 <body>
@@ -113,7 +120,7 @@
   <div class="header-icon">🏠</div>
   <div class="header-text">
     <h1>Bedrock HOA Assistant</h1>
-    <p>Ask questions, draft responses, review ACC applications, and get Ed's guidance</p>
+    <p>Ask questions, draft responses, review ACC applications, and get guidance</p>
   </div>
 </div>
 
@@ -136,6 +143,7 @@
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
   <div class="tab" onclick="switchTab('asked')">🧠 Ask Ed</div>
+  <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
 </div>
 
 <!-- Chat Tab -->
@@ -210,34 +218,45 @@
     <div class="ask-ed-left">
       <h3>🧠 Ask Ed</h3>
       <p style="font-size:13px; color:#666;">Describe a situation or paste an email to get guidance on how to handle it.</p>
-      
       <div class="section-label" style="margin-top:8px;">Situation or Email</div>
       <textarea id="edSituation" placeholder="Describe the situation or paste an email here..." style="min-height:200px;"></textarea>
-      
       <button class="action-btn" id="askEdBtn" onclick="askEd()">🧠 Get Guidance</button>
 
-      <div class="add-playbook">
-        <h4>🔒 <span id="playbookLockLabel" onclick="unlockPlaybook()" style="cursor:pointer; color:#2d6a9f;">Add to Playbook (Admin Only)</span></h4>
-        <div id="playbookLockForm">
-          <input type="password" id="playbookPassword" placeholder="Enter admin password...">
-          <button class="action-btn" onclick="unlockPlaybook()" style="width:100%">Unlock</button>
+      <div style="margin-top:16px;">
+        <div id="adminLockSection">
+          <p style="font-size:11px; color:#bbb; text-align:center; cursor:pointer;" onclick="document.getElementById('adminUnlockArea').style.display='block'; this.style.display='none';">⚙️ Admin</p>
+          <div id="adminUnlockArea" style="display:none;">
+            <input type="password" id="adminPassword" placeholder="Admin password..." style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; margin-bottom:8px; outline:none;">
+            <button class="action-btn" onclick="unlockAdmin()" style="width:100%; font-size:13px; padding:8px;">Unlock</button>
+          </div>
         </div>
-        <div id="playbookForm" style="display:none;">
-          <input type="text" id="playbookSituation" placeholder="Situation summary (brief)">
-          <select id="playbookCategory">
-            <option value="">Select category</option>
-            <option>Homeowner Complaint</option>
-            <option>Vendor Negotiation</option>
-            <option>Board Relations</option>
-            <option>Collections</option>
-            <option>ACC/Violations</option>
-            <option>Staff Management</option>
-            <option>Legal/Compliance</option>
-            <option>General</option>
-          </select>
-          <textarea id="playbookResponse" placeholder="How to handle it / ideal response..." style="min-height:80px;"></textarea>
-          <textarea id="playbookReasoning" placeholder="Why — reasoning behind this approach..." style="min-height:60px;"></textarea>
-          <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
+
+        <div id="adminPanel" style="display:none;">
+          <div class="admin-panel">
+            <h4>➕ Add to Playbook</h4>
+            <input type="text" id="playbookSituation" placeholder="Situation summary (brief)">
+            <select id="playbookCategory">
+              <option value="">Select category</option>
+              <option>Homeowner Complaint</option>
+              <option>Vendor Negotiation</option>
+              <option>Board Relations</option>
+              <option>Collections</option>
+              <option>ACC/Violations</option>
+              <option>Staff Management</option>
+              <option>Legal/Compliance</option>
+              <option>General</option>
+            </select>
+            <textarea id="playbookResponse" placeholder="How to handle it / ideal response..." style="min-height:80px;"></textarea>
+            <textarea id="playbookReasoning" placeholder="Why — reasoning behind this approach..." style="min-height:60px;"></textarea>
+            <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
+          </div>
+
+          <div style="margin-top:16px;">
+            <h4 style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:10px;">📚 Playbook Entries</h4>
+            <div id="playbookList" style="display:flex; flex-direction:column; gap:8px;">
+              <p style="font-size:13px; color:#888;">Loading...</p>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -246,11 +265,34 @@
       <h3>📋 Guidance</h3>
       <div class="output-box placeholder" id="edOutput">Describe a situation and click "Get Guidance" to see how to handle it.</div>
       <button class="secondary-btn" id="copyEdBtn" onclick="copyText('edOutput')" style="display:none">📋 Copy to Clipboard</button>
-      
-      <h3 style="margin-top:16px;">📚 Playbook</h3>
-      <div id="playbookList" style="display:flex; flex-direction:column; gap:8px; overflow-y:auto;">
-        <p style="font-size:13px; color:#888;">Loading playbook...</p>
-      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Review My Draft Tab -->
+<div class="tab-content" id="tab-review">
+  <div class="two-panel">
+    <div class="panel">
+      <h3>✏️ Review My Draft</h3>
+      <p style="font-size:13px; color:#666;">Paste your draft below and get feedback on how to improve it to meet Bedrock's standards.</p>
+      <div class="section-label" style="margin-top:8px;">Draft Type</div>
+      <select class="draft-type-select" id="draftTypeSelect">
+        <option value="board email">Board Email</option>
+        <option value="homeowner response">Homeowner Response</option>
+        <option value="violation notice">Violation Notice</option>
+        <option value="vendor email">Vendor Email</option>
+        <option value="attorney communication">Attorney Communication</option>
+        <option value="internal staff email">Internal Staff Email</option>
+        <option value="general communication">General Communication</option>
+      </select>
+      <div class="section-label" style="margin-top:8px;">Your Draft</div>
+      <textarea id="draftToReview" placeholder="Paste your draft here..." style="flex:1; min-height:300px;"></textarea>
+      <button class="action-btn" id="reviewDraftBtn" onclick="reviewDraft()">✏️ Review My Draft</button>
+    </div>
+    <div class="panel">
+      <h3>📋 Feedback & Improved Version</h3>
+      <div class="output-box placeholder" id="reviewOutput">Paste your draft and click Review to get feedback and an improved version.</div>
+      <button class="secondary-btn" id="copyReviewBtn" onclick="copyText('reviewOutput')" style="display:none">📋 Copy to Clipboard</button>
     </div>
   </div>
 </div>
@@ -270,7 +312,6 @@
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
     document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
     document.getElementById(`tab-${tab}`).classList.add('active');
-    if (tab === 'asked') loadPlaybook();
   }
 
   function onCommunityChange() {
@@ -489,15 +530,44 @@
     btn.textContent = '🧠 Get Guidance';
   }
 
-  function unlockPlaybook() {
-    const pwd = document.getElementById('playbookPassword');
-    if (!pwd) return;
-    if (pwd.value === 'Answer$911') {
-      document.getElementById('playbookLockForm').style.display = 'none';
-      document.getElementById('playbookForm').style.display = 'block';
-    } else if (pwd.value) {
+  async function reviewDraft() {
+    const draft = document.getElementById('draftToReview').value.trim();
+    if (!draft) { alert('Please paste a draft first.'); return; }
+    const draftType = document.getElementById('draftTypeSelect').value;
+    const btn = document.getElementById('reviewDraftBtn');
+    const output = document.getElementById('reviewOutput');
+    const copyBtn = document.getElementById('copyReviewBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Reviewing...';
+    output.className = 'output-box';
+    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    copyBtn.style.display = 'none';
+    try {
+      const res = await fetch('/review-draft', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ draft, draftType, community: currentCommunity })
+      });
+      const data = await res.json();
+      output.className = 'output-box';
+      output.textContent = data.review;
+      copyBtn.style.display = 'block';
+    } catch (err) {
+      output.textContent = 'Something went wrong. Please try again.';
+    }
+    btn.disabled = false;
+    btn.textContent = '✏️ Review My Draft';
+  }
+
+  function unlockAdmin() {
+    const pwd = document.getElementById('adminPassword').value;
+    if (pwd === 'Answer$911') {
+      document.getElementById('adminLockSection').style.display = 'none';
+      document.getElementById('adminPanel').style.display = 'block';
+      loadPlaybook();
+    } else {
       alert('Incorrect password.');
-      pwd.value = '';
+      document.getElementById('adminPassword').value = '';
     }
   }
 
@@ -551,13 +621,16 @@
   function copyText(elementId) {
     const text = document.getElementById(elementId).textContent;
     navigator.clipboard.writeText(text).then(() => {
-      const btnMap = { draftOutput: 'copyEmailBtn', accOutput: 'copyAccBtn', edOutput: 'copyEdBtn' };
+      const btnMap = { 
+        draftOutput: 'copyEmailBtn', 
+        accOutput: 'copyAccBtn', 
+        edOutput: 'copyEdBtn',
+        reviewOutput: 'copyReviewBtn'
+      };
       const btn = document.getElementById(btnMap[elementId]);
       if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
     });
   }
-
-  loadPlaybook();
 </script>
 </body>
 </html>
