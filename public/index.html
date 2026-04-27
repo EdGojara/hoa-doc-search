@@ -173,7 +173,9 @@
     <div class="panel">
       <h3>📥 Homeowner Email</h3>
       <textarea id="incomingEmail" placeholder="Paste the homeowner's email here..." style="flex:1; min-height:300px;"></textarea>
-      <button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Email Response</button>
+      <div class="section-label" style="margin-top:8px;">Additional Context (optional)</div>
+<textarea id="draftContext" placeholder="Add helpful context e.g. Annual meeting is in June, May meeting covers budget, nominations going out next month..." style="min-height:60px;"></textarea>    
+<button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Email Response</button>
     </div>
     <div class="panel">
       <h3>📤 Suggested Response</h3>
@@ -467,7 +469,7 @@
       const res = await fetch('/draft', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, community: currentCommunity })
+        body: JSON.stringify({ email, community: currentCommunity, additionalContext: document.getElementById('draftContext').value })
       });
       const data = await res.json();
       draftOutput.className = 'output-box';

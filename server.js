@@ -58,8 +58,8 @@ app.post('/ask', async (req, res) => {
 
 app.post('/draft', async (req, res) => {
   try {
-    const { email, community } = req.body;
-    const context = await getRelevantChunks(email, community);
+    const { email, community, additionalContext } = req.body;
+    const docContext = await getRelevantChunks(email, community);
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
@@ -77,9 +77,8 @@ CRITICAL RULES:
 - Aim for the shortest response that fully answers the question — edit out unnecessary words`,
       messages: [{
         role: 'user',
-        content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${context}\n\nHomeowner email to respond to:\n\n${email}\n\nDraft a professional response email that directly answers the question asked. Keep it concise and warm.`
+        content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${docContext}\n\n${additionalContext ? `Additional context about this community or situation: ${additionalContext}\n\n` : ''}Homeowner email to respond to:\n\n${email}\n\nDraft a professional response email that directly answers the question asked. Keep it concise and warm. Use any additional context provided to personalize the response.`
       }]
-      
     });
     res.json({ draft: response.content[0].text });
   } catch (err) {
