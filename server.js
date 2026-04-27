@@ -326,6 +326,65 @@ app.get('/playbook', async (req, res) => {
   }
 });
 
+app.post('/generate-agenda', async (req, res) => {
+  try {
+    const { community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting } = req.body;
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 2000,
+      system: `You are an expert HOA meeting coordinator for Bedrock Association Management. You generate professional, legally compliant board meeting agendas for Texas HOA communities. 
+
+You follow Texas Property Code Chapter 209 requirements for board meetings including:
+- Homeowner Forum must be included before Executive Session
+- Executive Session must cite Texas Property Code Section 209.0051
+- All agenda items must be listed for proper notice
+- Meeting must be properly called to order with quorum confirmation
+
+Your agendas follow this exact structure and format:
+1. Confirm Quorum and Call Open Session Meeting to order
+2. Approval of Meeting Minutes
+3. Ratifications between meetings
+4. New Business
+5. Finances
+6. Business in Progress
+7. Committee Reports
+8. Homeowner Forum - Owners may speak, please limit comments to up to 3 minutes per owner so everyone has a chance to be heard before repeating turns
+9. Executive Session
+   - Legal matters and attorney communications
+   - Delinquent accounts and collection actions
+   - Enforcement and compliance issues
+   - Other confidential matters as permitted by Texas Property Code §209.0051
+10. Executive Session Adjournment
+11. Next regularly scheduled Board of Directors meeting
+
+Always produce clean professional output ready to send. Never use placeholder text. If an item has no content write "None" or omit it cleanly.`,
+      messages: [{
+        role: 'user',
+        content: `Generate a complete board meeting agenda for:
+
+Community: ${community}
+Meeting Type: ${meetingType}
+Date: ${date}
+Time: ${time}
+Location: ${location}
+Ratifications since last meeting: ${ratifications || 'None'}
+New Business Items: ${newBusiness || 'None'}
+Business in Progress: ${businessInProgress || 'None'}
+Committee Reports Expected: ${committees || 'None'}
+Next Meeting Date: ${nextMeeting || 'To be determined'}
+
+Generate a complete properly formatted agenda ready to send to the board and post for homeowners. Include the community name, date, time, and location as a header. Follow the exact structure provided.`
+      }]
+    });
+
+    res.json({ agenda: response.content[0].text });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ agenda: 'Error generating agenda. Please try again.' });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });

@@ -20,15 +20,19 @@ const filePath = process.argv[2];
 const community = process.argv[3];
 
 if (!filePath || !community) {
-  console.log('Usage: node upload.js "path/to/file.pdf or .txt" "Community Name"');
+  console.log('Usage: node upload.js "path/to/file" "Community Name"');
+  console.log('Supported formats: .pdf, .txt, .doc, .docx, .xls, .xlsx');
   process.exit(1);
 }
 
 async function extractText(filePath) {
   const ext = path.extname(filePath).toLowerCase();
+  
   if (ext === '.txt') {
     return fs.readFileSync(filePath, 'utf8');
-  } else {
+  } 
+  
+  else if (ext === '.pdf') {
     const pdfjsLib = require('pdfjs-dist/legacy/build/pdf.mjs');
     const data = new Uint8Array(fs.readFileSync(filePath));
     const pdf = await pdfjsLib.getDocument({ data }).promise;
@@ -39,6 +43,28 @@ async function extractText(filePath) {
       text += content.items.map(item => item.str).join(' ') + '\n';
     }
     return text;
+  } 
+  
+  else if (ext === '.docx' || ext === '.doc') {
+    const mammoth = require('mammoth');
+    const result = await mammoth.extractRawText({ path: filePath });
+    return result.value;
+  } 
+  
+  else if (ext === '.xlsx' || ext === '.xls') {
+    const XLSX = require('xlsx');
+    const workbook = XLSX.readFile(filePath);
+    let text = '';
+    workbook.SheetNames.forEach(sheetName => {
+      const sheet = workbook.Sheets[sheetName];
+      const sheetText = XLSX.utils.sheet_to_csv(sheet);
+      text += `Sheet: ${sheetName}\n${sheetText}\n\n`;
+    });
+    return text;
+  } 
+  
+  else {
+    throw new Error(`Unsupported file type: ${ext}. Supported types are .pdf, .txt, .doc, .docx, .xls, .xlsx`);
   }
 }
 

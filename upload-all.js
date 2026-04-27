@@ -1,34 +1,60 @@
 const { execSync } = require('child_process');
 
 const files = [
-  // Lakes of Pine Forest - Core Documents
-  { path: 'docs/Master Declaration of Covenants, Conditions and Restrictions.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/By-Laws.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Amended Bylaws and Builder Guidelines 2015.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Builder Guidelines.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Fence Update to Builder Guidelines.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Amendment to the Builder Guidelines Fencing.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Assessment Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Parking and Towing Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/LOPF Parking Policy notarized.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Books and Records Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Payment Plan Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Articles of Incorporation.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/LOPF Resolutions.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/LOPF Resolution - Fining Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Quorum Amendment to Bylaws.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/LOPF_Fining_Policy_Summary.txt', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Solar Panel and Rain Barrel Regulations.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Records Retention Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Supplemental Deed.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/FILED BOD Resolution - Rental Leasing Policy.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Board Resolution Regarding Dissolution of Fence Assessment.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Amended Recorded [Lakes of Pine Forest] Notice of Filing of Dedicatory Instruments - Policies and Rules.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Recorded [Lakes of Pine Forest] Amended and Restated Management Certificate RP-2025-30596.pdf', community: 'Lakes of Pine Forest' },
-  { path: 'docs/Resolution - Fining Policy.pdf', community: 'Lakes of Pine Forest' },
-  // Law - Applies to all communities
-  { path: 'docs/Texas_Chapter_209_Summary.txt', community: 'Law' },
-  { path: 'docs/texascode209.pdf', community: 'Law' },
+  // Waterview Estates - Core Governing Documents
+  { path: 'docs/Waterview-Covenants-Conditions-Restrictions.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Declaration 2004051859.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Amended Declaration .pdf', community: 'Waterview Estates' },
+  { path: 'docs/Second Amendment to Declaration 2007048797.pdf', community: 'Waterview Estates' },
+  { path: 'docs/ByLaws .pdf', community: 'Waterview Estates' },
+  { path: 'docs/First Amendment to the Bylaws.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Articles, ByLaws & Amendement to Bylaws .pdf', community: 'Waterview Estates' },
+  // Rules and Regulations
+  { path: 'docs/Rules and Regulations 2015-06-22.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Rules and Regulations and Policies .pdf', community: 'Waterview Estates' },
+  { path: 'docs/20151117 Rules and Regulations.docx', community: 'Waterview Estates' },
+  { path: 'docs/Governing Documents.pdf', community: 'Waterview Estates' },
+  // Architectural and Design
+  { path: 'docs/ARC-Guidelines.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Architectural Guidelines - WVE.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Approved Plant List.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Approved-Tree-List.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Master Plant List.pdf', community: 'Waterview Estates' },
+  { path: 'docs/STH.pdf', community: 'Waterview Estates' },
+  // Pool and Amenity Rules
+  { path: 'docs/Final-Pool-Rules.pdf', community: 'Waterview Estates' },
+  { path: 'docs/20200623 Amended Pool Rules.pdf', community: 'Waterview Estates' },
+  { path: 'docs/20200623 Amended Tennis Rules.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Waterview Estates Rules for Tennis Courts.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Waterview Estates View Estates Pool Policy.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Waterview Estates Waiver and Indemnification for use of POA pool and tennis facilities.pdf', community: 'Waterview Estates' },
+  // Basketball
+  { path: 'docs/Basketball Hiatus - Filed .pdf', community: 'Waterview Estates' },
+  // Policies and Resolutions
+  { path: 'docs/DRV Fining Policy .pdf', community: 'Waterview Estates' },
+  { path: 'docs/Payment Plan Policy.pdf', community: 'Waterview Estates' },
+  { path: 'docs/2013 Collection Policy .pdf', community: 'Waterview Estates' },
+  { path: 'docs/Resale Certificate of Compliance Resolution .pdf', community: 'Waterview Estates' },
+  { path: 'docs/Garage Sale Guidelines - Filed.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Waterview Estates DR Violation Hearing Policy.docx', community: 'Waterview Estates' },
+  { path: 'docs/WATERVIEW ESTATES Bid Policy (2).docx', community: 'Waterview Estates' },
+  { path: 'docs/WATERVIEW ESTATES Religious Display Policy.docx', community: 'Waterview Estates' },
+  { path: 'docs/Waterview Estates Security Measures Policy.docx', community: 'Waterview Estates' },
+  { path: 'docs/17200614 Clubhouse Rental Agreement.pdf', community: 'Waterview Estates' },
+  // Legislative Policies
+  { path: 'docs/2012 Legislative Policies .pdf', community: 'Waterview Estates' },
+  { path: 'docs/2012 Legislative Policy - Collection Policy.pdf', community: 'Waterview Estates' },
+  { path: 'docs/2012 Legislative Policy - Open Records Policy.pdf', community: 'Waterview Estates' },
+  { path: 'docs/2012 Legislative Policy - Payment Plan policy.pdf', community: 'Waterview Estates' },
+  { path: 'docs/2012 Legislative Policy - Records Retention Policy.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Supplemental Notice of Dedicatory Instruments_2025 Updates.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Supplemental Notice of Dedictory for 2012 Legislative Policies.pdf', community: 'Waterview Estates' },
+  // MUD Agreements
+  { path: 'docs/Third Amendment to Agreement_Waterview Estates MUD 143 2019.pdf', community: 'Waterview Estates' },
+  { path: 'docs/Third Amendment to Agreement_Waterview Estates.pdf', community: 'Waterview Estates' },
+  // Corporate
+  { path: 'docs/032119 Change of Resident Agent.pdf', community: 'Waterview Estates' },
+  { path: 'docs/2014 Budget and Assessment Resolution .pdf', community: 'Waterview Estates' },
 ];
 
 async function runAll() {

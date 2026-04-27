@@ -144,6 +144,7 @@
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
   <div class="tab" onclick="switchTab('asked')">🧠 Ask Ed</div>
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
+  <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
 </div>
 
 <!-- Chat Tab -->
@@ -293,6 +294,46 @@
       <h3>📋 Feedback & Improved Version</h3>
       <div class="output-box placeholder" id="reviewOutput">Paste your draft and click Review to get feedback and an improved version.</div>
       <button class="secondary-btn" id="copyReviewBtn" onclick="copyText('reviewOutput')" style="display:none">📋 Copy to Clipboard</button>
+    </div>
+  </div>
+</div>
+
+<!-- Agenda Generator Tab -->
+<div class="tab-content" id="tab-agenda">
+  <div class="two-panel">
+    <div class="panel">
+      <h3>📋 Agenda Generator</h3>
+      <p style="font-size:13px; color:#666;">Fill in the meeting details and generate a professionally formatted agenda.</p>
+      <div class="section-label" style="margin-top:8px;">Meeting Type</div>
+      <select class="draft-type-select" id="meetingType">
+        <option value="Regular Board Meeting">Regular Board Meeting</option>
+        <option value="Annual Meeting">Annual Meeting</option>
+        <option value="Budget Meeting">Budget Meeting</option>
+        <option value="Special Meeting">Special Meeting</option>
+        <option value="Emergency Meeting">Emergency Meeting</option>
+      </select>
+      <div class="section-label">Meeting Date</div>
+      <input type="date" id="meetingDate" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <div class="section-label">Meeting Time</div>
+      <input type="text" id="meetingTime" placeholder="e.g. 6:00 PM" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <div class="section-label">Location or Zoom Link</div>
+      <input type="text" id="meetingLocation" placeholder="e.g. Steve Radack Community Center or Zoom link" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <div class="section-label">Ratifications Since Last Meeting</div>
+      <textarea id="agendaRatifications" placeholder="List any actions taken between meetings that need ratification, or leave blank for none..." style="min-height:60px;"></textarea>
+      <div class="section-label">New Business Items</div>
+      <textarea id="agendaNewBusiness" placeholder="List new business items one per line..." style="min-height:80px;"></textarea>
+      <div class="section-label">Business in Progress</div>
+      <textarea id="agendaBusinessInProgress" placeholder="List ongoing items one per line..." style="min-height:80px;"></textarea>
+      <div class="section-label">Committee Reports Expected</div>
+      <textarea id="agendaCommittees" placeholder="e.g. Social Committee, Grounds Committee..." style="min-height:60px;"></textarea>
+      <div class="section-label">Next Meeting Date</div>
+      <input type="text" id="nextMeetingDate" placeholder="e.g. Tuesday, April 21 @ 6:00 PM" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <button class="action-btn" id="generateAgendaBtn" onclick="generateAgenda()" style="margin-top:8px;">📋 Generate Agenda</button>
+    </div>
+    <div class="panel">
+      <h3>📄 Generated Agenda</h3>
+      <div class="output-box placeholder" id="agendaOutput">Fill in the meeting details and click Generate Agenda to create a professionally formatted agenda.</div>
+      <button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
     </div>
   </div>
 </div>
@@ -626,11 +667,48 @@
         accOutput: 'copyAccBtn', 
         edOutput: 'copyEdBtn',
         reviewOutput: 'copyReviewBtn'
+        agendaOutput: 'copyAgendaBtn'
       };
       const btn = document.getElementById(btnMap[elementId]);
       if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
     });
+  }async function generateAgenda() {
+  const community = communitySelect.value;
+  if (!community) { alert('Please select a community first.'); return; }
+  const meetingType = document.getElementById('meetingType').value;
+  const date = document.getElementById('meetingDate').value;
+  const time = document.getElementById('meetingTime').value;
+  const location = document.getElementById('meetingLocation').value;
+  if (!date || !time || !location) { alert('Please fill in the date, time, and location.'); return; }
+  const ratifications = document.getElementById('agendaRatifications').value;
+  const newBusiness = document.getElementById('agendaNewBusiness').value;
+  const businessInProgress = document.getElementById('agendaBusinessInProgress').value;
+  const committees = document.getElementById('agendaCommittees').value;
+  const nextMeeting = document.getElementById('nextMeetingDate').value;
+  const btn = document.getElementById('generateAgendaBtn');
+  const output = document.getElementById('agendaOutput');
+  const copyBtn = document.getElementById('copyAgendaBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  output.className = 'output-box';
+  output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+  copyBtn.style.display = 'none';
+  try {
+    const res = await fetch('/generate-agenda', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting })
+    });
+    const data = await res.json();
+    output.className = 'output-box';
+    output.textContent = data.agenda;
+    copyBtn.style.display = 'block';
+  } catch (err) {
+    output.textContent = 'Something went wrong. Please try again.';
   }
+  btn.disabled = false;
+  btn.textContent = '📋 Generate Agenda';
+}
 </script>
 </body>
 </html>
