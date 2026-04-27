@@ -333,7 +333,7 @@
     <div class="panel">
       <h3>📄 Generated Agenda</h3>
       <div class="output-box placeholder" id="agendaOutput">Fill in the meeting details and click Generate Agenda to create a professionally formatted agenda.</div>
-      <<button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
+      <button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
       <button class="secondary-btn" id="printAgendaBtn" onclick="printAgenda()" style="display:none">🖨️ Print / Save as PDF</button>
     </div>
   </div>
@@ -473,7 +473,6 @@
       draftOutput.className = 'output-box';
       draftOutput.textContent = data.draft;
       copyBtn.style.display = 'block';
-      document.getElementById('printAgendaBtn').style.display = 'block';
     } catch (err) {
       draftOutput.textContent = 'Something went wrong. Please try again.';
     }
@@ -674,67 +673,58 @@
       const btn = document.getElementById(btnMap[elementId]);
       if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
     });
-  }async function generateAgenda() {
-  const community = communitySelect.value;
-  if (!community) { alert('Please select a community first.'); return; }
-  const meetingType = document.getElementById('meetingType').value;
-  const date = document.getElementById('meetingDate').value;
-  const time = document.getElementById('meetingTime').value;
-  const location = document.getElementById('meetingLocation').value;
-  if (!date || !time || !location) { alert('Please fill in the date, time, and location.'); return; }
-  const ratifications = document.getElementById('agendaRatifications').value;
-  const newBusiness = document.getElementById('agendaNewBusiness').value;
-  const businessInProgress = document.getElementById('agendaBusinessInProgress').value;
-  const committees = document.getElementById('agendaCommittees').value;
-  const nextMeeting = document.getElementById('nextMeetingDate').value;
-  const btn = document.getElementById('generateAgendaBtn');
-  const output = document.getElementById('agendaOutput');
-  const copyBtn = document.getElementById('copyAgendaBtn');
-  btn.disabled = true;
-  btn.textContent = '⏳ Generating...';
-  output.className = 'output-box';
-  output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-  copyBtn.style.display = 'none';
-  try {
-    const res = await fetch('/generate-agenda', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting })
-    });
-    const data = await res.json();
-    output.className = 'output-box';
-    output.textContent = data.agenda;
-    copyBtn.style.display = 'block';
-  } catch (err) {
-    output.textContent = 'Something went wrong. Please try again.';
   }
-  btn.disabled = false;
-  btn.textContent = '📋 Generate Agenda';
-}
-function printAgenda() {
-  const content = document.getElementById('agendaOutput').textContent;
-  const community = communitySelect.value || 'HOA';
-  const printWindow = window.open('', '_blank');
-  printWindow.document.write(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>${community} Meeting Agenda</title>
-      <style>
-        body { font-family: Arial, sans-serif; font-size: 12pt; margin: 1in; line-height: 1.6; color: #000; }
-        pre { font-family: Arial, sans-serif; font-size: 12pt; white-space: pre-wrap; line-height: 1.6; }
-        @media print { body { margin: 0.75in; } }
-      </style>
-    </head>
-    <body>
-      <pre>${content}</pre>
-    </body>
-    </html>
-  `);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
-}
+
+  async function generateAgenda() {
+    const community = communitySelect.value;
+    if (!community) { alert('Please select a community first.'); return; }
+    const meetingType = document.getElementById('meetingType').value;
+    const date = document.getElementById('meetingDate').value;
+    const time = document.getElementById('meetingTime').value;
+    const location = document.getElementById('meetingLocation').value;
+    if (!date || !time || !location) { alert('Please fill in the date, time, and location.'); return; }
+    const ratifications = document.getElementById('agendaRatifications').value;
+    const newBusiness = document.getElementById('agendaNewBusiness').value;
+    const businessInProgress = document.getElementById('agendaBusinessInProgress').value;
+    const committees = document.getElementById('agendaCommittees').value;
+    const nextMeeting = document.getElementById('nextMeetingDate').value;
+    const btn = document.getElementById('generateAgendaBtn');
+    const output = document.getElementById('agendaOutput');
+    const copyBtn = document.getElementById('copyAgendaBtn');
+    const printBtn = document.getElementById('printAgendaBtn');
+    btn.disabled = true;
+    btn.textContent = '⏳ Generating...';
+    output.className = 'output-box';
+    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    copyBtn.style.display = 'none';
+    printBtn.style.display = 'none';
+    try {
+      const res = await fetch('/generate-agenda', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting })
+      });
+      const data = await res.json();
+      output.className = 'output-box';
+      output.textContent = data.agenda;
+      copyBtn.style.display = 'block';
+      printBtn.style.display = 'block';
+    } catch (err) {
+      output.textContent = 'Something went wrong. Please try again.';
+    }
+    btn.disabled = false;
+    btn.textContent = '📋 Generate Agenda';
+  }
+
+  function printAgenda() {
+    const content = document.getElementById('agendaOutput').textContent;
+    const community = communitySelect.value || 'HOA';
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>${community} Meeting Agenda</title><style>body{font-family:Arial,sans-serif;font-size:12pt;margin:1in;line-height:1.8;color:#000;}pre{font-family:Arial,sans-serif;font-size:12pt;white-space:pre-wrap;line-height:1.8;}@media print{body{margin:0.75in;}}</style></head><body><pre>${content}</pre></body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  }
 </script>
 </body>
 </html>
