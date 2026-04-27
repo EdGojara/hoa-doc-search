@@ -333,7 +333,7 @@ app.post('/generate-agenda', async (req, res) => {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
-      system: `You are an expert HOA meeting coordinator for Bedrock Association Management. You generate professional, legally compliant board meeting agendas for Texas HOA communities. 
+      system: `You are an expert HOA meeting coordinator for Bedrock Association Management. You generate professional, legally compliant board meeting agendas for Texas HOA communities.
 
 You follow Texas Property Code Chapter 209 requirements for board meetings including:
 - Homeowner Forum must be included before Executive Session
@@ -341,27 +341,46 @@ You follow Texas Property Code Chapter 209 requirements for board meetings inclu
 - All agenda items must be listed for proper notice
 - Meeting must be properly called to order with quorum confirmation
 
-Your agendas follow this exact structure and format:
+CRITICAL FORMATTING RULES:
+- Plain text only — no markdown, no bold with **, no headers with ##, no dashes for bullets
+- Use • for bullet points under each item
+- Use the exact community name provided — never substitute another community name
+- Follow this exact format and spacing:
+
+[Community Name] Homeowners Association, Inc.
+Meeting of the Board of Directors
+[Day of Week], [Month] [Day], [Year]
+[Time]
+[Location]
+
+Meeting Agenda
+
 1. Confirm Quorum and Call Open Session Meeting to order
 2. Approval of Meeting Minutes
+   • Approval of prior Meeting Minutes – [Prior Month Year]
 3. Ratifications between meetings
+   • [items or None]
 4. New Business
+   • [items or omit if none]
 5. Finances
+   • Finance Committee
 6. Business in Progress
+   • [items]
+   • The Board may discuss additional Association matters or routine items that arise during the normal course of operations
 7. Committee Reports
-8. Homeowner Forum - Owners may speak, please limit comments to up to 3 minutes per owner so everyone has a chance to be heard before repeating turns
+   • [committees listed]
+8. Homeowner Forum
+   • Owners may speak, please limit comments to up to 3 minutes per owner so everyone has a chance to be heard before repeating turns
 9. Executive Session
-   - Legal matters and attorney communications
-   - Delinquent accounts and collection actions
-   - Enforcement and compliance issues
-   - Other confidential matters as permitted by Texas Property Code §209.0051
+   • Legal matters and attorney communications
+   • Delinquent accounts and collection actions
+   • Enforcement and compliance issues
+   • Other confidential matters as permitted by Texas Property Code §209.0051
 10. Executive Session Adjournment
-11. Next regularly scheduled Board of Directors meeting
-
-Always produce clean professional output ready to send. Never use placeholder text. If an item has no content write "None" or omit it cleanly.`,
+11. Next regularly scheduled Board of Directors meeting: [date, time, location]`,
       messages: [{
         role: 'user',
-        content: `Generate a complete board meeting agenda for:
+        content: `Generate a complete board meeting agenda using EXACTLY this information:
 
 Community: ${community}
 Meeting Type: ${meetingType}
@@ -374,9 +393,16 @@ Business in Progress: ${businessInProgress || 'None'}
 Committee Reports Expected: ${committees || 'None'}
 Next Meeting Date: ${nextMeeting || 'To be determined'}
 
-Generate a complete properly formatted agenda ready to send to the board and post for homeowners. Include the community name, date, time, and location as a header. Follow the exact structure provided.`
+Use the community name exactly as provided. Plain text only. No markdown formatting.`
       }]
     });
+
+    res.json({ agenda: response.content[0].text });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ agenda: 'Error generating agenda. Please try again.' });
+  }
+});
 
     res.json({ agenda: response.content[0].text });
   } catch (err) {

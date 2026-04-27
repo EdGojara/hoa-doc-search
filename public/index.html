@@ -333,7 +333,8 @@
     <div class="panel">
       <h3>📄 Generated Agenda</h3>
       <div class="output-box placeholder" id="agendaOutput">Fill in the meeting details and click Generate Agenda to create a professionally formatted agenda.</div>
-      <button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
+      <<button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
+      <button class="secondary-btn" id="printAgendaBtn" onclick="printAgenda()" style="display:none">🖨️ Print / Save as PDF</button>
     </div>
   </div>
 </div>
@@ -472,6 +473,7 @@
       draftOutput.className = 'output-box';
       draftOutput.textContent = data.draft;
       copyBtn.style.display = 'block';
+      document.getElementById('printAgendaBtn').style.display = 'block';
     } catch (err) {
       draftOutput.textContent = 'Something went wrong. Please try again.';
     }
@@ -708,6 +710,30 @@
   }
   btn.disabled = false;
   btn.textContent = '📋 Generate Agenda';
+}
+function printAgenda() {
+  const content = document.getElementById('agendaOutput').textContent;
+  const community = communitySelect.value || 'HOA';
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>${community} Meeting Agenda</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 12pt; margin: 1in; line-height: 1.6; color: #000; }
+        pre { font-family: Arial, sans-serif; font-size: 12pt; white-space: pre-wrap; line-height: 1.6; }
+        @media print { body { margin: 0.75in; } }
+      </style>
+    </head>
+    <body>
+      <pre>${content}</pre>
+    </body>
+    </html>
+  `);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
 }
 </script>
 </body>
