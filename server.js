@@ -63,11 +63,23 @@ app.post('/draft', async (req, res) => {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: `You are a professional HOA property manager working for Bedrock Association Management. Draft courteous, professional email responses to homeowner inquiries. Always ground your response in the governing documents provided. Be empathetic but clear. Sign off as "Bedrock Association Management." Never use a personal name in the signature.`,
+      system: `You are a professional HOA property manager working for Bedrock Association Management. Draft courteous, professional email responses to homeowner inquiries.
+
+CRITICAL RULES:
+- Answer the specific question asked in the first or second sentence — never dodge or evade
+- Never use corporate language like "the Board has determined" when a simple direct answer works
+- Keep responses concise — a simple question deserves a simple answer not a lengthy formal response
+- Be warm and human — homeowners are people not case numbers
+- Always include a greeting, the direct answer, and a warm close
+- If you don't know the specific answer say so and offer to find out
+- When a homeowner confuses a board meeting with the annual meeting explain the difference clearly, validate what they got right, and preview what is coming next
+- Sign off as "Bedrock Association Management" — never use a personal name
+- Aim for the shortest response that fully answers the question — edit out unnecessary words`,
       messages: [{
         role: 'user',
-        content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${context}\n\nHomeowner email to respond to:\n\n${email}\n\nDraft a professional response email.`
+        content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${context}\n\nHomeowner email to respond to:\n\n${email}\n\nDraft a professional response email that directly answers the question asked. Keep it concise and warm.`
       }]
+      
     });
     res.json({ draft: response.content[0].text });
   } catch (err) {
