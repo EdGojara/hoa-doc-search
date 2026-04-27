@@ -279,16 +279,7 @@ Format your response as:
 4. QUICK SUMMARY — two or three sentences on the main changes made`,
       messages: [{
         role: 'user',
-        content: `Please review this ${draftType || 'communication'} draft${community ? ` for ${community}` : ''} and provide:
-
-1. OVERALL ASSESSMENT - Is this ready to send or does it need work?
-2. SPECIFIC ISSUES - What needs to be fixed and why
-3. IMPROVED VERSION - Rewrite it the way Ed would write it
-4. KEY CHANGES - Brief summary of what you changed and why
-
-Draft to review:
-
-${draft}`
+        content: `Please review this ${draftType || 'communication'} draft${community ? ` for ${community}` : ''} and provide feedback and an improved version.\n\nDraft to review:\n\n${draft}`
       }]
     });
 
@@ -296,33 +287,6 @@ ${draft}`
   } catch (err) {
     console.error(err);
     res.status(500).json({ review: 'Error reviewing draft. Please try again.' });
-  }
-});
-
-app.post('/playbook', async (req, res) => {
-  try {
-    const { situation, context, response, reasoning, category, tags } = req.body;
-    const { data, error } = await supabase.from('playbook').insert({
-      situation, context, response, reasoning, category,
-      tags: tags ? tags.split(',').map(t => t.trim()) : []
-    }).select();
-    if (error) throw error;
-    res.json({ success: true, entry: data[0] });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
-  }
-});
-
-app.get('/playbook', async (req, res) => {
-  try {
-    const { data, error } = await supabase
-      .from('playbook')
-      .select('*')
-      .order('created_at', { ascending: false });
-    if (error) throw error;
-    res.json({ entries: data });
-  } catch (err) {
-    res.status(500).json({ error: err.message });
   }
 });
 
@@ -343,7 +307,7 @@ You follow Texas Property Code Chapter 209 requirements for board meetings inclu
 
 CRITICAL FORMATTING RULES:
 - Plain text only — no markdown, no bold with **, no headers with ##, no dashes for bullets
-- Use • for bullet points under each item
+- Use bullet points with the character • under each numbered item
 - Use the exact community name provided — never substitute another community name
 - Follow this exact format and spacing:
 
@@ -404,10 +368,30 @@ Use the community name exactly as provided. Plain text only. No markdown formatt
   }
 });
 
-    res.json({ agenda: response.content[0].text });
+app.post('/playbook', async (req, res) => {
+  try {
+    const { situation, context, response, reasoning, category, tags } = req.body;
+    const { data, error } = await supabase.from('playbook').insert({
+      situation, context, response, reasoning, category,
+      tags: tags ? tags.split(',').map(t => t.trim()) : []
+    }).select();
+    if (error) throw error;
+    res.json({ success: true, entry: data[0] });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ agenda: 'Error generating agenda. Please try again.' });
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/playbook', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('playbook')
+      .select('*')
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+    res.json({ entries: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
   }
 });
 
