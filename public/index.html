@@ -120,7 +120,7 @@
   <div class="header-icon">🏠</div>
   <div class="header-text">
     <h1>Bedrock HOA Assistant</h1>
-    <p>Ask questions, draft responses, review ACC applications, and get guidance</p>
+    <p>Powered by Bedrock Intelligence</p>
   </div>
 </div>
 
@@ -223,6 +223,7 @@
       <h3>📋 ACC Review & Recommendation</h3>
       <div class="output-box placeholder" id="accOutput">Fill in application details and click Review to get a recommendation based on your governing documents.</div>
       <button class="secondary-btn" id="copyAccBtn" onclick="copyText('accOutput')" style="display:none">📋 Copy to Clipboard</button>
+<button class="secondary-btn" id="printAccBtn" onclick="printACC()" style="display:none">🖨️ Print / Save as PDF</button>
     </div>
   </div>
 </div>
@@ -486,7 +487,7 @@
       const data = await res.json();
       draftOutput.className = 'output-box';
       draftOutput.textContent = data.draft;
-      copyBtn.style.display = 'block';
+      document.getElementById('printAccBtn').style.display = 'block';
     } catch (err) {
       draftOutput.textContent = 'Something went wrong. Please try again.';
     }
@@ -554,6 +555,7 @@ formData.append('conditions', document.getElementById('accConditions').value);
       accOutput.className = 'output-box';
       accOutput.textContent = data.review || data.error;
       copyBtn.style.display = 'block';
+      document.getElementById('printAccBtn').style.display = 'block';
     } catch (err) {
       accOutput.textContent = 'Something went wrong. Please try again.';
     }
@@ -742,6 +744,18 @@ formData.append('conditions', document.getElementById('accConditions').value);
     printWindow.focus();
     printWindow.print();
   }
+
+  function printACC() {
+  const content = document.getElementById('accOutput').textContent;
+  const community = communitySelect.value || 'HOA';
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const formatted = content.replace('[Date]', today);
+  const printWindow = window.open('', '_blank');
+  printWindow.document.write(`<!DOCTYPE html><html><head><title>${community} ACC Letter</title><style>body{font-family:Arial,sans-serif;font-size:12pt;margin:1in;line-height:1.6;color:#000;}pre{font-family:Arial,sans-serif;font-size:12pt;white-space:pre-wrap;line-height:1.6;}@media print{body{margin:0.75in;}}</style></head><body><pre>${formatted}</pre></body></html>`);
+  printWindow.document.close();
+  printWindow.focus();
+  printWindow.print();
+}
 </script>
 </body>
 </html>
