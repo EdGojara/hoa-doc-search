@@ -205,6 +205,8 @@
         <input type="file" id="accImages" accept="image/*" multiple onchange="handleImageSelect(this)">
       </div>
       <div class="image-previews" id="imagePreviews"></div>
+      <div class="section-label" style="margin-top:8px;">Additional Context (optional)</div>
+<textarea id="accContext" placeholder="Add helpful context e.g. This is a replacement of existing structure. Board member submission. Structure has been there for years and HOA has accepted it..." style="min-height:60px;"></textarea>
       <button class="action-btn" id="reviewBtn" onclick="reviewACC()">🔍 Review Application</button>
     </div>
     <div class="panel">
@@ -527,6 +529,7 @@
     try {
       const formData = new FormData();
       formData.append('community', currentCommunity);
+      formData.append('additionalContext', document.getElementById('accContext').value);
       if (details) formData.append('details', details);
       if (pdfFile) formData.append('pdf', pdfFile);
       selectedImages.forEach((img, i) => {
