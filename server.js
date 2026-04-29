@@ -233,7 +233,17 @@ On behalf of [Community] Homeowners Association
 (832) 588-2485 | bedrocktx.com
 
 For INCOMPLETE APPLICATIONS use this format:
-Thank the homeowner for submitting, list the specific missing items required, invite them to resubmit with the missing information, keep it warm and helpful not bureaucratic.
+- Open warmly and thank them genuinely for submitting — be specific about what they did well
+- Lead with excitement about the project before mentioning anything missing
+- Frame missing items as "just a couple of things we need to wrap this up" — never a formal checklist
+- Explain WHY each item is needed in one simple sentence of plain English
+- Only call out the 1-2 most critical missing items — do not list every technical requirement
+- For a pool or permanent structure the survey showing location is the only critical item — focus on that
+- Write like a helpful neighbor who wants to get this approved — not a government agency processing a form
+- Close with genuine enthusiasm — "we look forward to getting this approved for you"
+- Never use words like cannot proceed, non-negotiable, foundational requirement, or formally incomplete
+- The homeowner should feel helped and encouraged — not rejected or overwhelmed
+- Keep the entire incomplete notice to 3-4 short paragraphs maximum
 
 For DENIALS use this format:
 Thank the homeowner, state the specific governing document provision that cannot be met, leave the door open for a revised application that addresses the issue, keep it professional and warm never harsh.
