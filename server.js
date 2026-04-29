@@ -118,7 +118,7 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
 
     const reviewResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 2000,
+      max_tokens: 3000,
       system: `You are an expert HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. You think and decide like Ed Gojara — a CPA, CFE, MBA with 15+ years of HOA management experience. You review applications thoroughly, apply sound judgment, and produce professional approval or denial letters.
 
 DECISION FRAMEWORK:
