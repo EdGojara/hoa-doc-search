@@ -90,7 +90,7 @@ CRITICAL RULES:
 
 app.post('/acc-review', upload.single('pdf'), async (req, res) => {
   try {
-    const { community, notes, additionalContext } = req.body;
+    const { community, notes, additionalContext, decision, conditions } = req.body;
     if (!req.file) return res.status(400).json({ error: 'No PDF uploaded.' });
 
     const pdfBase64 = req.file.buffer.toString('base64');
@@ -258,7 +258,7 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
           },
           {
             type: 'text',
-            text: `Community: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT — factor this into your review and recommendation: ${additionalContext}\n\n` : ''}${notes ? `Staff notes: ${notes}\n\n` : ''}Relevant governing documents:\n${context}\n\nPlease provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`
+            text: `Community: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${decision ? `STAFF DECISION OVERRIDE — The staff has already made this decision. Skip the review analysis and go directly to generating the appropriate letter:\nDecision: ${decision}\n${conditions ? `Conditions/Notes: ${conditions}\n` : ''}\nGenerate ONLY the complete formatted letter for this decision. Do not second guess or re-review the decision.\n\n` : ''}${notes ? `Staff notes: ${notes}\n\n` : ''}Relevant governing documents:\n${context}\n\n${decision ? `Generate only the complete formatted letter for a ${decision} decision with the conditions noted above.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`
           }
         ]
       }]
