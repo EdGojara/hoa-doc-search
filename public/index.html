@@ -778,6 +778,12 @@ formData.append('conditions', document.getElementById('accConditions').value);
     : `<h2 style="color:#1a3a5c;">${community}</h2>`;
 
   const printWindow = window.open('', '_blank');
+  // Convert plain text to HTML paragraphs
+  const htmlContent = letterContent
+    .split('\n')
+    .map(line => line.trim() === '' ? '<br>' : `<p style="margin:0 0 6px 0;">${line}</p>`)
+    .join('');
+
   printWindow.document.write(`<!DOCTYPE html>
 <html>
 <head>
@@ -786,7 +792,6 @@ formData.append('conditions', document.getElementById('accConditions').value);
     body { font-family: Arial, sans-serif; font-size: 11pt; margin: 1in; line-height: 1.6; color: #000; }
     .letterhead { text-align: center; margin-bottom: 30px; padding-bottom: 16px; border-bottom: 1px solid #ccc; }
     .letterhead p { color: #555; font-size: 9pt; margin: 4px 0; }
-    pre { font-family: Arial, sans-serif; font-size: 11pt; white-space: pre-wrap; line-height: 1.6; }
     @media print { body { margin: 0.75in; } }
   </style>
 </head>
@@ -796,7 +801,7 @@ formData.append('conditions', document.getElementById('accConditions').value);
     <p>${community} Homeowners Association, Inc.</p>
     <p>Managed by Bedrock Association Management &nbsp;|&nbsp; (832) 588-2485 &nbsp;|&nbsp; bedrocktx.com</p>
   </div>
-  <pre>${letterContent}</pre>
+  <div>${htmlContent}</div>
 </body>
 </html>`);
   printWindow.document.close();
