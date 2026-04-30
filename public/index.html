@@ -145,6 +145,7 @@
   <div class="tab" onclick="switchTab('asked')">🧠 Ask Ed</div>
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
   <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
+  <div class="tab" onclick="switchTab('bid')">📊 Bid Request</div>
 </div>
 
 <!-- Chat Tab -->
@@ -353,6 +354,55 @@
     </div>
   </div>
 </div>
+<!-- Bid Request Generator Tab -->
+<div class="tab-content" id="tab-bid">
+  <div class="two-panel">
+    <div class="panel">
+      <h3>📊 Bid Request Generator</h3>
+      <p style="font-size:13px; color:#666;">Upload an existing contract or enter scope manually to generate a professional bid request document.</p>
+      <div class="section-label" style="margin-top:8px;">Vendor Type</div>
+      <select class="draft-type-select" id="bidVendorType">
+        <option value="Landscape Management">Landscape Management</option>
+        <option value="Pool Maintenance">Pool Maintenance</option>
+        <option value="Janitorial and Common Area Cleaning">Janitorial and Common Area Cleaning</option>
+        <option value="Security Services">Security Services</option>
+        <option value="Pest Control">Pest Control</option>
+        <option value="Irrigation Management">Irrigation Management</option>
+        <option value="Tree Service">Tree Service</option>
+        <option value="General Maintenance">General Maintenance</option>
+        <option value="Insurance">Insurance</option>
+        <option value="Other">Other</option>
+      </select>
+      <div class="section-label">Bid Submission Deadline</div>
+      <input type="date" id="bidDeadline" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <div class="section-label">Contract Term</div>
+      <select class="draft-type-select" id="bidContractTerm">
+        <option value="1 year with option to renew annually">1 Year — Renewable</option>
+        <option value="2 years">2 Years</option>
+        <option value="3 years">3 Years</option>
+        <option value="Month to month">Month to Month</option>
+      </select>
+      <div class="section-label" style="margin-top:8px;">Upload Existing Contract (optional)</div>
+      <div class="upload-area" id="bidUploadArea" onclick="document.getElementById('bidContract').click()">
+        <span style="font-size:24px">📄</span>
+        <p id="bidLabel">Click to upload existing vendor contract PDF</p>
+        <input type="file" id="bidContract" accept=".pdf" onchange="handleBidContractSelect(this)">
+      </div>
+      <div class="section-label" style="margin-top:8px;">Manual Scope Entry (if no contract)</div>
+      <textarea id="bidManualScope" placeholder="Describe the scope of work if you don't have an existing contract to upload. Include service frequencies, areas covered, specific requirements..." style="min-height:100px;"></textarea>
+      <div class="section-label">Additional Requirements or Changes</div>
+      <textarea id="bidAdditionalRequirements" placeholder="Any changes from current scope, new requirements, or special instructions for vendors..." style="min-height:60px;"></textarea>
+      <button class="action-btn" id="generateBidBtn" onclick="generateBidRequest()" style="margin-top:8px;">📊 Generate Bid Request</button>
+    </div>
+    <div class="panel">
+      <h3>📄 Bid Request Document</h3>
+      <div class="output-box placeholder" id="bidOutput">Fill in the details and click Generate to create a professional bid request document ready to send to vendors.</div>
+      <button class="secondary-btn" id="copyBidBtn" onclick="copyText('bidOutput')" style="display:none">📋 Copy to Clipboard</button>
+      <button class="secondary-btn" id="printBidBtn" onclick="printBid()" style="display:none">🖨️ Print / Save as PDF</button>
+    </div>
+  </div>
+</div>
+
 
 <script>
   const communitySelect = document.getElementById('communitySelect');
@@ -687,7 +737,8 @@ formData.append('conditions', document.getElementById('accConditions').value);
         accOutput: 'copyAccBtn', 
         edOutput: 'copyEdBtn',
         reviewOutput: 'copyReviewBtn',
-        agendaOutput: 'copyAgendaBtn'
+        agendaOutput: 'copyAgendaBtn',
+bidOutput: 'copyBidBtn'
       };
       const btn = document.getElementById(btnMap[elementId]);
       if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
@@ -816,6 +867,107 @@ ${htmlLines}
     URL.revokeObjectURL(url);
   };
 }
+function handleBidContractSelect(input) {
+  if (input.files && input.files[0]) {
+    document.getElementById('bidLabel').textContent = `✅ ${input.files[0].name}`;
+    document.getElementById('bidUploadArea').classList.add('has-file');
+  }
+}
+
+async function generateBidRequest() {
+  const community = communitySelect.value;
+  const vendorType = document.getElementById('bidVendorType').value;
+  const bidDeadline = document.getElementById('bidDeadline').value;
+  const contractTerm = document.getElementById('bidContractTerm').value;
+  const manualScope = document.getElementById('bidManualScope').value;
+  const additionalRequirements = document.getElementById('bidAdditionalRequirements').value;
+  const contractFile = document.getElementById('bidContract').files[0];
+
+  if (!contractFile && !manualScope) {
+    alert('Please upload a contract or enter scope manually.');
+    return;
+  }
+
+  const btn = document.getElementById('generateBidBtn');
+  const output = document.getElementById('bidOutput');
+  const copyBtn = document.getElementById('copyBidBtn');
+  const printBtn = document.getElementById('printBidBtn');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  output.className = 'output-box';
+  output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+  copyBtn.style.display = 'none';
+  printBtn.style.display = 'none';
+
+  try {
+    const formData = new FormData();
+    if (community) formData.append('community', community);
+    formData.append('vendorType', vendorType);
+    formData.append('bidDeadline', bidDeadline);
+    formData.append('contractTerm', contractTerm);
+    if (manualScope) formData.append('manualScope', manualScope);
+    if (additionalRequirements) formData.append('additionalRequirements', additionalRequirements);
+    if (contractFile) formData.append('contract', contractFile);
+
+    const res = await fetch('/generate-bid', { method: 'POST', body: formData });
+    const data = await res.json();
+    output.className = 'output-box';
+    output.textContent = data.bidRequest || data.error;
+    copyBtn.style.display = 'block';
+    printBtn.style.display = 'block';
+  } catch (err) {
+    output.textContent = 'Something went wrong. Please try again.';
+  }
+
+  btn.disabled = false;
+  btn.textContent = '📊 Generate Bid Request';
+}
+
+function printBid() {
+  const content = document.getElementById('bidOutput').textContent;
+  const community = communitySelect.value || 'HOA';
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  const lines = content.split('\n');
+  const htmlLines = lines.map(line => {
+    if (line.trim() === '') return '<p style="margin:8px 0;"></p>';
+    const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<p style="margin:2px 0;">${escaped}</p>`;
+  }).join('');
+
+  const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${community} Bid Request</title>
+<style>
+body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}
+.lh{text-align:center;margin-bottom:30px;padding-bottom:16px;border-bottom:1px solid #ccc;}
+.lh p{color:#555;font-size:9pt;margin:4px 0;}
+@media print{body{margin:0.75in;}}
+</style>
+</head>
+<body>
+<div class="lh">
+<h2 style="color:#1a3a5c;margin:0;">${community}</h2>
+<p>Homeowners Association, Inc.</p>
+<p>Managed by Bedrock Association Management | (832) 588-2485 | bedrocktx.com</p>
+<p style="font-size:8pt;color:#999;">Generated ${today}</p>
+</div>
+${htmlLines}
+</body>
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const printWindow = window.open(url, '_blank');
+  printWindow.onload = function() {
+    printWindow.print();
+    URL.revokeObjectURL(url);
+  };
+}
+
 </script>
 </body>
 </html>

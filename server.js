@@ -536,6 +536,93 @@ app.get('/playbook', async (req, res) => {
   }
 });
 
+app.post('/generate-bid', upload.single('contract'), async (req, res) => {
+  try {
+    const { community, vendorType, additionalRequirements, manualScope, bidDeadline, contractTerm } = req.body;
+
+    let scopeContent = '';
+
+    if (req.file) {
+      const pdfBase64 = req.file.buffer.toString('base64');
+      const extractResponse = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 2000,
+        messages: [{
+          role: 'user',
+          content: [
+            {
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+            },
+            {
+              type: 'text',
+              text: 'This is a vendor contract or specification document. Please extract: 1) All services provided and their descriptions, 2) Service frequencies and schedules, 3) Current pricing for each service line, 4) Any performance standards or requirements, 5) Insurance or licensing requirements mentioned, 6) Contract terms. Be thorough and specific.'
+            }
+          ]
+        }]
+      });
+      scopeContent = extractResponse.content[0].text;
+    } else if (manualScope) {
+      scopeContent = manualScope;
+    } else {
+      return res.status(400).json({ error: 'Please upload a contract or enter scope manually.' });
+    }
+
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const bidResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      system: `You are an expert HOA property manager and procurement specialist for Bedrock Association Management. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
+
+Your bid requests always include:
+- Professional header and introduction
+- Community background and context
+- Detailed scope of work with specific frequencies and requirements
+- Performance standards and expectations
+- Insurance and licensing requirements
+- Bid submission format requirements — what vendors must include in their response
+- Evaluation criteria — how bids will be scored
+- Submission deadline and instructions
+- Contact information
+
+FORMATTING:
+- Use clear numbered sections
+- Use bullet points for service line items
+- Include a pricing table template vendors must complete
+- Professional and formal tone
+- Sign off as Bedrock Association Management on behalf of the community`,
+      messages: [{
+        role: 'user',
+        content: `Generate a professional bid request document for the following:
+
+Community: ${community || 'HOA Community'}
+Vendor Type: ${vendorType || 'Vendor Services'}
+Date: ${today}
+Bid Submission Deadline: ${bidDeadline || '30 days from date of this request'}
+Desired Contract Term: ${contractTerm || '1 year with option to renew'}
+
+Extracted scope from existing contract or provided scope:
+${scopeContent}
+
+${additionalRequirements ? `Additional requirements or changes from current scope:\n${additionalRequirements}` : ''}
+
+Generate a complete professional bid request document that:
+1. Vendors can use to prepare a complete and comparable bid
+2. Includes a pricing table they must fill out with line items matching the scope
+3. Specifies exactly what must be included in their bid response
+4. Sets clear evaluation criteria
+5. Is ready to send to multiple vendors today`
+      }]
+    });
+
+    res.json({ bidRequest: bidResponse.content[0].text });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'Error generating bid request: ' + err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });
