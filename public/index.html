@@ -745,7 +745,7 @@ formData.append('conditions', document.getElementById('accConditions').value);
     printWindow.print();
   }
 
-  function printACC() {
+ function printACC() {
   const content = document.getElementById('accOutput').textContent;
   const community = communitySelect.value || 'HOA';
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -762,10 +762,8 @@ formData.append('conditions', document.getElementById('accConditions').value);
     }
   }
   
-  // Replace date placeholder
   letterContent = letterContent.replace('[Date]', today);
-  
-  // Logo map
+
   const logoMap = {
     'Canyon Gate at Cinco Ranch': '/logos/canyon_gate_logo.png',
     'Waterview Estates': '/logos/waterview_logo.jpg',
@@ -774,39 +772,49 @@ formData.append('conditions', document.getElementById('accConditions').value);
   
   const logoPath = logoMap[community];
   const logoHtml = logoPath 
-    ? `<img src="${logoPath}" style="max-height:80px; max-width:250px;" />`
+    ? `<img src="${window.location.origin}${logoPath}" style="max-height:80px; max-width:250px;" />`
     : `<h2 style="color:#1a3a5c;">${community}</h2>`;
 
-  const printWindow = window.open('', '_blank');
-  // Convert plain text to HTML paragraphs
-  const htmlContent = letterContent
-    .split('\n')
-    .map(line => line.trim() === '' ? '<br>' : `<p style="margin:0 0 6px 0;">${line}</p>`)
-    .join('');
+  const lines = letterContent.split('\n');
+  const htmlLines = lines.map(line => {
+    if (line.trim() === '') return '<p style="margin:8px 0;"></p>';
+    const escaped = line
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+    return `<p style="margin:2px 0;">${escaped}</p>`;
+  }).join('');
 
-  printWindow.document.write(`<!DOCTYPE html>
+  const html = `<!DOCTYPE html>
 <html>
 <head>
-  <title>${community} ACC Letter</title>
-  <style>
-    body { font-family: Arial, sans-serif; font-size: 11pt; margin: 1in; line-height: 1.6; color: #000; }
-    .letterhead { text-align: center; margin-bottom: 30px; padding-bottom: 16px; border-bottom: 1px solid #ccc; }
-    .letterhead p { color: #555; font-size: 9pt; margin: 4px 0; }
-    @media print { body { margin: 0.75in; } }
-  </style>
+<meta charset="UTF-8">
+<title>${community} ACC Letter</title>
+<style>
+body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}
+.lh{text-align:center;margin-bottom:30px;padding-bottom:16px;border-bottom:1px solid #ccc;}
+.lh p{color:#555;font-size:9pt;margin:4px 0;}
+@media print{body{margin:0.75in;}}
+</style>
 </head>
 <body>
-  <div class="letterhead">
-    ${logoHtml}
-    <p>${community} Homeowners Association, Inc.</p>
-    <p>Managed by Bedrock Association Management &nbsp;|&nbsp; (832) 588-2485 &nbsp;|&nbsp; bedrocktx.com</p>
-  </div>
-  <div>${htmlContent}</div>
+<div class="lh">
+${logoHtml}
+<p>${community} Homeowners Association, Inc.</p>
+<p>Managed by Bedrock Association Management | (832) 588-2485 | bedrocktx.com</p>
+</div>
+${htmlLines}
 </body>
-</html>`);
-  printWindow.document.close();
-  printWindow.focus();
-  printWindow.print();
+</html>`;
+
+  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const printWindow = window.open(url, '_blank');
+  printWindow.onload = function() {
+    printWindow.print();
+    URL.revokeObjectURL(url);
+  };
 }
 </script>
 </body>
