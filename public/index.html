@@ -929,37 +929,68 @@ function printBid() {
   const community = communitySelect.value || 'HOA';
   const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
 
-  const lines = content.split('\n');
-  const htmlLines = lines.map(line => {
-    if (line.trim() === '') return '<p style="margin:8px 0;"></p>';
-    const escaped = line.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-    return `<p style="margin:2px 0;">${escaped}</p>`;
-  }).join('');
+  let html = content
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
+    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
+    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')
+    .replace(/^---+$/gm, '<hr>')
+    .replace(/^\| (.+) \|$/gm, (match) => {
+      const cells = match.split('|').filter(c => c.trim());
+      return '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
+    })
+    .replace(/(<tr>.*<\/tr>\n?)+/g, (match) => `<table>${match}</table>`)
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
+    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/\n/g, '<br>');
 
-  const html = `<!DOCTYPE html>
+  const logoMap = {
+    'Canyon Gate at Cinco Ranch': '/logos/canyon_gate_logo.png',
+    'Waterview Estates': '/logos/waterview_logo.jpg',
+    'Lakes of Pine Forest': '/logos/lakes_of_pine_forest_logo.png'
+  };
+  const logoPath = logoMap[community];
+  const logoHtml = logoPath
+    ? `<img src="${window.location.origin}${logoPath}" style="max-height:80px; max-width:250px;" />`
+    : `<h2 style="color:#1a3a5c;">${community}</h2>`;
+
+  const fullHtml = `<!DOCTYPE html>
 <html>
 <head>
 <meta charset="UTF-8">
 <title>${community} Bid Request</title>
 <style>
 body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}
-.lh{text-align:center;margin-bottom:30px;padding-bottom:16px;border-bottom:1px solid #ccc;}
+h1{font-size:16pt;color:#1a3a5c;margin:20px 0 8px 0;}
+h2{font-size:13pt;color:#1a3a5c;margin:16px 0 6px 0;}
+h3{font-size:11pt;color:#1a3a5c;margin:12px 0 4px 0;}
+table{width:100%;border-collapse:collapse;margin:10px 0;}
+td,th{border:1px solid #ccc;padding:6px 8px;font-size:10pt;}
+tr:first-child td{background:#1a3a5c;color:white;font-weight:bold;}
+ul{margin:4px 0 8px 20px;}
+li{margin:2px 0;}
+hr{border:none;border-top:1px solid #ccc;margin:16px 0;}
+.lh{text-align:center;margin-bottom:30px;padding-bottom:16px;border-bottom:2px solid #1a3a5c;}
 .lh p{color:#555;font-size:9pt;margin:4px 0;}
 @media print{body{margin:0.75in;}}
 </style>
 </head>
 <body>
 <div class="lh">
-<h2 style="color:#1a3a5c;margin:0;">${community}</h2>
-<p>Homeowners Association, Inc.</p>
+${logoHtml}
+<p>${community} Homeowners Association, Inc.</p>
 <p>Managed by Bedrock Association Management | (832) 588-2485 | bedrocktx.com</p>
 <p style="font-size:8pt;color:#999;">Generated ${today}</p>
 </div>
-${htmlLines}
+<p>${html}</p>
 </body>
 </html>`;
 
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+  const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
   const url = URL.createObjectURL(blob);
   const printWindow = window.open(url, '_blank');
   printWindow.onload = function() {
