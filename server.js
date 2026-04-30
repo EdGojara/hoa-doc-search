@@ -587,9 +587,11 @@ Your bid requests always include:
 - Contact information
 
 FORMATTING:
-- Use clear numbered sections
-- Use bullet points for service line items
-- Include a pricing table template vendors must complete
+- Plain text only — no markdown, no pound signs for headers, no asterisks for bold
+- Use numbered sections like "SECTION 1:" not markdown headers
+- Use bullet points with the • character not dashes or asterisks
+- Use ALL CAPS for section headers instead of markdown formatting
+- Include a pricing table using plain text alignment
 - Professional and formal tone
 - Sign off as Bedrock Association Management on behalf of the community`,
       messages: [{
