@@ -693,7 +693,6 @@ const {
   PageBreak,
 } = require('docx');
 async function parseAddressesFromPDF(buffer) {
-  const pdfParse = require('pdf-parse').default || require('pdf-parse');
   const data = await pdfParse(buffer);
   const lines = data.text.split('\n').map(l => l.trim()).filter(l => l);
   const csz = /^.+,\s+[A-Z]{2}\s+\d{5}(-\d{4})?$/;
