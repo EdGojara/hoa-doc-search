@@ -4,6 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
+const pdfParse = require('pdf-parse');
 
 const app = express();
 app.use(express.json());
@@ -692,7 +693,7 @@ const {
   PageBreak,
 } = require('docx');
 async function parseAddressesFromPDF(buffer) {
-  const pdfParse = require('pdf-parse');
+  const pdfParse = require('pdf-parse').default || require('pdf-parse');
   const data = await pdfParse(buffer);
   const lines = data.text.split('\n').map(l => l.trim()).filter(l => l);
   const csz = /^.+,\s+[A-Z]{2}\s+\d{5}(-\d{4})?$/;
