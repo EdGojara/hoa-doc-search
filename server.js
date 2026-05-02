@@ -4,7 +4,7 @@ const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
-const pdfParse = (...args) => require('pdf-parse')(...args);
+const pdfParse = require('pdf-parse');
 
 const app = express();
 app.use(express.json());
