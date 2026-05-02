@@ -681,9 +681,7 @@ const COMMUNITY_HOME_COUNTS = {
 // ============================================================
 // ANNUAL MAILING ENDPOINT
 // ============================================================
-const { execSync } = require('child_process');
-const path = require('path');
-const os = require('os');
+
 const {
   Document,
   Packer,
@@ -693,98 +691,32 @@ const {
   BorderStyle,
   PageBreak,
 } = require('docx');
+async function parseAddressesFromPDF(buffer) {
+  const pdfParse = require('pdf-parse');
+  const data = await pdfParse(buffer);
+  const lines = data.text.split('\n').map(l => l.trim()).filter(l => l);
+  const csz = /^.+,\s+[A-Z]{2}\s+\d{5}(-\d{4})?$/;
+  const owners = [];
+  let i = 0;
 
-function parseAddressesFromPDF(pdfPath) {
-  const script = `
-import pdfplumber
-import re
-import json
-import sys
-
-def parse_addresses(pdf_path):
-    all_owners = []
-    csz_pattern = re.compile(r'^.+,\\s+[A-Z]{2}\\s+\\d{5}(-\\d{4})?$')
-    with pdfplumber.open(pdf_path) as pdf:
-        for page in pdf.pages:
-            words = page.extract_words(x_tolerance=5, y_tolerance=3)
-            if not words:
-                continue
-            col_boundaries = [0, 200, 400, page.width + 1]
-            cols = [[] for _ in range(3)]
-            for w in words:
-                for i in range(3):
-                    if col_boundaries[i] <= w['x0'] < col_boundaries[i+1]:
-                        cols[i].append(w)
-                        break
-            for col_words in cols:
-                if not col_words:
-                    continue
-                col_words.sort(key=lambda w: w['top'])
-                lines = []
-                current_y = None
-                current_words = []
-                for w in col_words:
-                    y = w['top']
-                    if current_y is None or abs(y - current_y) <= 4:
-                        current_words.append(w['text'])
-                        current_y = y if current_y is None else (current_y + y) / 2
-                    else:
-                        if current_words:
-                            lines.append((current_y, ' '.join(current_words)))
-                        current_words = [w['text']]
-                        current_y = y
-                if current_words:
-                    lines.append((current_y, ' '.join(current_words)))
-                blocks = []
-                current_block = []
-                prev_y = None
-                for y, text in lines:
-                    if prev_y is None:
-                        current_block.append(text)
-                    else:
-                        if y - prev_y > 30:
-                            if current_block:
-                                blocks.append(current_block)
-                            current_block = [text]
-                        else:
-                            current_block.append(text)
-                    prev_y = y
-                if current_block:
-                    blocks.append(current_block)
-                for block in blocks:
-                    if len(block) < 2:
-                        continue
-                    csz_idx = None
-                    for i, line in enumerate(block):
-                        if csz_pattern.match(line.strip()):
-                            csz_idx = i
-                            break
-                    if csz_idx is None:
-                        continue
-                    csz = block[csz_idx].strip()
-                    name_street_lines = [l.strip() for l in block[:csz_idx] if l.strip()]
-                    if not name_street_lines:
-                        continue
-                    name = name_street_lines[0].lstrip('.,- ')
-                    if not name:
-                        continue
-                    street = ' '.join(name_street_lines[1:]) if len(name_street_lines) > 1 else ''
-                    all_owners.append({'name': name, 'street': street, 'city_state_zip': csz})
-    return all_owners
-
-owners = parse_addresses(sys.argv[1])
-print(json.dumps(owners))
-`;
-  const tmpScript = path.join(os.tmpdir(), 'parse_mailing.py');
-  require('fs').writeFileSync(tmpScript, script);
-  try {
-    const result = execSync(`python3 ${tmpScript} "${pdfPath}"`, { maxBuffer: 50 * 1024 * 1024 });
-    return JSON.parse(result.toString());
-  } catch (err) {
-    throw new Error('Failed to parse PDF: ' + err.message);
+  while (i < lines.length) {
+    if (csz.test(lines[i])) { i++; continue; }
+    const name = lines[i].replace(/^[.,\- ]+/, '');
+    if (!name) { i++; continue; }
+    let street = '';
+    let cityStateZip = '';
+    if (i + 2 < lines.length && csz.test(lines[i + 2])) {
+      street = lines[i + 1];
+      cityStateZip = lines[i + 2];
+      i += 3;
+    } else if (i + 1 < lines.length && csz.test(lines[i + 1])) {
+      cityStateZip = lines[i + 1];
+      i += 2;
+    } else { i++; continue; }
+    if (name && cityStateZip) owners.push({ name, street, city_state_zip: cityStateZip });
   }
+  return owners;
 }
-
 async function generateMailingDoc(owners) {
   function buildSection(owner, isLast) {
     return {
@@ -832,15 +764,7 @@ app.post('/generate-mailing', upload.single('pdf'), async (req, res) => {
     const { community, expectedCount, force } = req.body;
     if (!req.file) return res.status(400).json({ error: 'Please upload a mailing address PDF from Vantaca.' });
 
-    const tmpPdf = path.join(os.tmpdir(), `mailing_${Date.now()}.pdf`);
-    require('fs').writeFileSync(tmpPdf, req.file.buffer);
-
-    let owners;
-    try {
-      owners = parseAddressesFromPDF(tmpPdf);
-    } finally {
-      try { require('fs').unlinkSync(tmpPdf); } catch {}
-    }
+    const owners = await parseAddressesFromPDF(req.file.buffer);
 
     const parsedCount = owners.length;
     const communityKey = (community || '').toLowerCase().trim();
