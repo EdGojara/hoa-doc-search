@@ -139,6 +139,7 @@
 </div>
 
 <div class="tabs">
+  <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
   <div class="tab active" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
@@ -402,7 +403,39 @@
     </div>
   </div>
 </div>
-
+<!-- Annual Mailing Tab -->
+<div class="tab-content" id="tab-mailing">
+  <div class="two-panel">
+    <div class="panel">
+      <h3>📬 Annual Mailing Generator</h3>
+      <p style="font-size:13px; color:#666;">Upload your Vantaca homeowner mailing address PDF to generate print-ready cover pages for window envelopes.</p>
+      <div class="section-label" style="margin-top:8px;">Mailing Address PDF</div>
+      <div class="upload-area" id="mailingUploadArea" onclick="document.getElementById('mailingPdf').click()">
+        <span style="font-size:24px">📄</span>
+        <p id="mailingPdfLabel">Click to upload Vantaca mailing address PDF</p>
+        <input type="file" id="mailingPdf" accept=".pdf" onchange="handleMailingPdfSelect(this)">
+      </div>
+      <div class="section-label" style="margin-top:8px;">Expected Home Count (optional override)</div>
+      <input type="number" id="mailingExpectedCount" placeholder="Leave blank to use community record e.g. 1171" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <p style="font-size:12px; color:#888; margin-top:4px;">The system will automatically validate against the known home count for the selected community.</p>
+      <button class="action-btn" id="generateMailingBtn" onclick="generateMailing()" style="margin-top:12px;">📬 Generate Mailing</button>
+      <div id="mailingWarning" style="display:none; background:#fff3cd; border:1px solid #ffc107; border-radius:8px; padding:12px; margin-top:10px; font-size:13px; color:#856404;">
+        <strong>⚠️ Count Mismatch</strong>
+        <p id="mailingWarningText" style="margin-top:6px;"></p>
+        <div style="display:flex; gap:8px; margin-top:10px;">
+          <button class="action-btn" onclick="generateMailingForce()" style="font-size:13px; padding:8px 16px;">Proceed Anyway</button>
+          <button class="secondary-btn" onclick="document.getElementById('mailingWarning').style.display='none'" style="font-size:13px; padding:8px 16px;">Cancel — Fix Export</button>
+        </div>
+      </div>
+    </div>
+    <div class="panel">
+      <h3>📄 Output</h3>
+      <div class="output-box placeholder" id="mailingOutput" style="display:flex; align-items:center; justify-content:center; text-align:center; color:#aaa;">
+        Upload your Vantaca PDF and click Generate Mailing to create a print-ready Word document with one address cover page per homeowner.
+      </div>
+    </div>
+  </div>
+</div>
 
 <script>
   const communitySelect = document.getElementById('communitySelect');
@@ -999,6 +1032,83 @@ ${logoHtml}
   };
 }
 
+function handleMailingPdfSelect(input) {
+  if (input.files && input.files[0]) {
+    document.getElementById('mailingPdfLabel').textContent = `✅ ${input.files[0].name}`;
+    document.getElementById('mailingUploadArea').classList.add('has-file');
+  }
+}
+
+async function generateMailing(force = false) {
+  const pdfFile = document.getElementById('mailingPdf').files[0];
+  const community = communitySelect.value;
+  const expectedCount = document.getElementById('mailingExpectedCount').value;
+
+  if (!pdfFile) { alert('Please upload a mailing address PDF from Vantaca.'); return; }
+  if (!community) { alert('Please select a community first.'); return; }
+
+  const btn = document.getElementById('generateMailingBtn');
+  const output = document.getElementById('mailingOutput');
+  const warning = document.getElementById('mailingWarning');
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Processing...';
+  output.className = 'output-box';
+  output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+  warning.style.display = 'none';
+
+  try {
+    const formData = new FormData();
+    formData.append('pdf', pdfFile);
+    formData.append('community', community);
+    if (expectedCount) formData.append('expectedCount', expectedCount);
+    if (force) formData.append('force', 'true');
+
+    const res = await fetch('/generate-mailing', { method: 'POST', body: formData });
+
+    const contentType = res.headers.get('Content-Type');
+    if (contentType && contentType.includes('wordprocessingml')) {
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'Annual_Mailing.docx';
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+      const count = res.headers.get('X-Parsed-Count') || '?';
+      output.className = 'output-box';
+      output.innerHTML = `<div style="text-align:center; padding:20px;">
+        <div style="font-size:40px; margin-bottom:12px;">✅</div>
+        <div style="font-size:16px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Mailing Document Generated</div>
+        <div style="font-size:14px; color:#555;">${count} cover pages ready to print</div>
+        <div style="font-size:13px; color:#888; margin-top:8px;">Your download should start automatically.<br>Fold at the dashed line — address shows through window.</div>
+      </div>`;
+    } else {
+      const data = await res.json();
+      if (data.requiresConfirmation) {
+        document.getElementById('mailingWarningText').textContent = data.message;
+        warning.style.display = 'block';
+        output.className = 'output-box placeholder';
+        output.innerHTML = 'Resolve the count mismatch above before generating.';
+      } else {
+        output.className = 'output-box';
+        output.textContent = data.error || 'Something went wrong. Please try again.';
+      }
+    }
+  } catch (err) {
+    output.className = 'output-box';
+    output.textContent = 'Something went wrong. Please try again.';
+  }
+
+  btn.disabled = false;
+  btn.textContent = '📬 Generate Mailing';
+}
+
+function generateMailingForce() {
+  document.getElementById('mailingWarning').style.display = 'none';
+  generateMailing(true);
+}
 </script>
 </body>
 </html>

@@ -670,7 +670,217 @@ Generate a complete professional bid request document that:
     res.status(500).json({ error: 'Error generating bid request: ' + err.message });
   }
 });
+// ============================================================
+// COMMUNITY HOME COUNTS — update as you add communities
+// ============================================================
+const COMMUNITY_HOME_COUNTS = {
+  'waterview estates': 1171,
+  'canyon gate': 721,
+};
 
+// ============================================================
+// ANNUAL MAILING ENDPOINT
+// ============================================================
+const { execSync } = require('child_process');
+const path = require('path');
+const os = require('os');
+const {
+  Document,
+  Packer,
+  Paragraph,
+  TextRun,
+  AlignmentType,
+  BorderStyle,
+  PageBreak,
+} = require('docx');
+
+function parseAddressesFromPDF(pdfPath) {
+  const script = `
+import pdfplumber
+import re
+import json
+import sys
+
+def parse_addresses(pdf_path):
+    all_owners = []
+    csz_pattern = re.compile(r'^.+,\\s+[A-Z]{2}\\s+\\d{5}(-\\d{4})?$')
+    with pdfplumber.open(pdf_path) as pdf:
+        for page in pdf.pages:
+            words = page.extract_words(x_tolerance=5, y_tolerance=3)
+            if not words:
+                continue
+            col_boundaries = [0, 200, 400, page.width + 1]
+            cols = [[] for _ in range(3)]
+            for w in words:
+                for i in range(3):
+                    if col_boundaries[i] <= w['x0'] < col_boundaries[i+1]:
+                        cols[i].append(w)
+                        break
+            for col_words in cols:
+                if not col_words:
+                    continue
+                col_words.sort(key=lambda w: w['top'])
+                lines = []
+                current_y = None
+                current_words = []
+                for w in col_words:
+                    y = w['top']
+                    if current_y is None or abs(y - current_y) <= 4:
+                        current_words.append(w['text'])
+                        current_y = y if current_y is None else (current_y + y) / 2
+                    else:
+                        if current_words:
+                            lines.append((current_y, ' '.join(current_words)))
+                        current_words = [w['text']]
+                        current_y = y
+                if current_words:
+                    lines.append((current_y, ' '.join(current_words)))
+                blocks = []
+                current_block = []
+                prev_y = None
+                for y, text in lines:
+                    if prev_y is None:
+                        current_block.append(text)
+                    else:
+                        if y - prev_y > 30:
+                            if current_block:
+                                blocks.append(current_block)
+                            current_block = [text]
+                        else:
+                            current_block.append(text)
+                    prev_y = y
+                if current_block:
+                    blocks.append(current_block)
+                for block in blocks:
+                    if len(block) < 2:
+                        continue
+                    csz_idx = None
+                    for i, line in enumerate(block):
+                        if csz_pattern.match(line.strip()):
+                            csz_idx = i
+                            break
+                    if csz_idx is None:
+                        continue
+                    csz = block[csz_idx].strip()
+                    name_street_lines = [l.strip() for l in block[:csz_idx] if l.strip()]
+                    if not name_street_lines:
+                        continue
+                    name = name_street_lines[0].lstrip('.,- ')
+                    if not name:
+                        continue
+                    street = ' '.join(name_street_lines[1:]) if len(name_street_lines) > 1 else ''
+                    all_owners.append({'name': name, 'street': street, 'city_state_zip': csz})
+    return all_owners
+
+owners = parse_addresses(sys.argv[1])
+print(json.dumps(owners))
+`;
+  const tmpScript = path.join(os.tmpdir(), 'parse_mailing.py');
+  require('fs').writeFileSync(tmpScript, script);
+  try {
+    const result = execSync(`python3 ${tmpScript} "${pdfPath}"`, { maxBuffer: 50 * 1024 * 1024 });
+    return JSON.parse(result.toString());
+  } catch (err) {
+    throw new Error('Failed to parse PDF: ' + err.message);
+  }
+}
+
+async function generateMailingDoc(owners) {
+  function buildSection(owner, isLast) {
+    return {
+      properties: {
+        page: {
+          size: { width: 12240, height: 15840 },
+          margin: { top: 720, right: 1440, bottom: 720, left: 1440 },
+        },
+      },
+      children: [
+        new Paragraph({ children: [new TextRun('')], spacing: { before: 0, after: 2520 } }),
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          spacing: { before: 0, after: 40 },
+          children: [new TextRun({ text: owner.name, font: 'Arial', size: 24 })],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          spacing: { before: 0, after: 40 },
+          children: [new TextRun({ text: owner.street, font: 'Arial', size: 24 })],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.LEFT,
+          spacing: { before: 0, after: 600 },
+          children: [new TextRun({ text: owner.city_state_zip, font: 'Arial', size: 24 })],
+        }),
+        new Paragraph({
+          alignment: AlignmentType.CENTER,
+          spacing: { before: 0, after: 0 },
+          border: { bottom: { style: BorderStyle.DASHED, size: 6, color: 'AAAAAA', space: 4 } },
+          children: [new TextRun({ text: '\u2702  fold here', font: 'Arial', size: 16, color: 'AAAAAA', italics: true })],
+        }),
+        ...(isLast ? [] : [new Paragraph({ children: [new PageBreak()], spacing: { before: 0, after: 0 } })]),
+      ],
+    };
+  }
+  const doc = new Document({
+    sections: owners.map((owner, i) => buildSection(owner, i === owners.length - 1)),
+  });
+  return Packer.toBuffer(doc);
+}
+
+app.post('/generate-mailing', upload.single('pdf'), async (req, res) => {
+  try {
+    const { community, expectedCount, force } = req.body;
+    if (!req.file) return res.status(400).json({ error: 'Please upload a mailing address PDF from Vantaca.' });
+
+    const tmpPdf = path.join(os.tmpdir(), `mailing_${Date.now()}.pdf`);
+    require('fs').writeFileSync(tmpPdf, req.file.buffer);
+
+    let owners;
+    try {
+      owners = parseAddressesFromPDF(tmpPdf);
+    } finally {
+      try { require('fs').unlinkSync(tmpPdf); } catch {}
+    }
+
+    const parsedCount = owners.length;
+    const communityKey = (community || '').toLowerCase().trim();
+    const knownCount = COMMUNITY_HOME_COUNTS[communityKey];
+    const checkCount = expectedCount ? parseInt(expectedCount) : knownCount;
+
+    if (checkCount && checkCount !== parsedCount && force !== 'true') {
+      const diff = checkCount - parsedCount;
+      return res.status(200).json({
+        warning: true,
+        requiresConfirmation: true,
+        parsedCount,
+        expected: checkCount,
+        difference: Math.abs(diff),
+        message: `Mailing list has ${parsedCount} entries but ${community} has ${checkCount} homes on record. ${Math.abs(diff)} records may be ${diff > 0 ? 'missing' : 'extra'}. Verify your Vantaca export before printing.`
+      });
+    }
+
+    const docBuffer = await generateMailingDoc(owners);
+    const filename = `${(community || 'HOA').replace(/\s+/g, '_')}_Annual_Mailing_${new Date().getFullYear()}.docx`;
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(docBuffer);
+
+  } catch (err) {
+    console.error('Mailing error:', err);
+    res.status(500).json({ error: 'Error generating mailing: ' + err.message });
+  }
+});
+
+app.get('/community-counts', (req, res) => {
+  res.json({ communities: COMMUNITY_HOME_COUNTS });
+});
+
+app.post('/community-counts', (req, res) => {
+  const { community, homeCount } = req.body;
+  if (!community || !homeCount) return res.status(400).json({ error: 'community and homeCount required' });
+  COMMUNITY_HOME_COUNTS[community.toLowerCase().trim()] = parseInt(homeCount);
+  res.json({ success: true, community, homeCount: parseInt(homeCount) });
+});
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });
