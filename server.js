@@ -99,6 +99,18 @@ app.post('/draft', async (req, res) => {
   try {
     const { email, community, additionalContext } = req.body;
     const docContext = await getRelevantChunks(email, community);
+    const { data: playbookEntries } = await supabase
+  .from('playbook')
+  .select('*')
+  .or('category.eq.Email,category.eq.Communications,category.eq.General,category.is.null')
+  .order('created_at', { ascending: false })
+  .limit(50);
+
+const playbookContext = playbookEntries?.length
+  ? `\n\nINSTITUTIONAL GUIDELINES FROM PAST COMMUNICATIONS:\n\n${playbookEntries.map(p =>
+      `SITUATION: ${p.situation}\nAPPROACH: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
+    ).join('\n\n---\n\n')}\n`
+  : '';
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
@@ -119,7 +131,7 @@ CRITICAL RULES:
 - Aim for the shortest response that fully answers the question — edit out unnecessary words`,
       messages: [{
         role: 'user',
-        content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${docContext}\n\n${additionalContext ? `Additional context about this community or situation: ${additionalContext}\n\n` : ''}Homeowner email to respond to:\n\n${email}\n\nDraft a professional response email that directly answers the question asked. Keep it concise and warm. Use any additional context provided to personalize the response.`
+        content: `You are responding on behalf of ${community || 'the HOA'}.\n\nRelevant governing documents:\n\n${docContext}\n${playbookContext}\n${additionalContext ? `Additional context about this community or situation: ${additionalContext}\n\n` : ''}Homeowner email to respond to:\n\n${email}\n\nDraft a professional response email that directly answers the question asked. Keep it concise and warm. Use any additional context provided to personalize the response.`
       }]
     });
     res.json({ draft: response.content[0].text });
@@ -157,6 +169,18 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
     const appDetails = extractResponse.content[0].text;
     const context = await getRelevantChunks(appDetails, community);
 
+    const { data: playbookEntries } = await supabase
+  .from('playbook')
+  .select('*')
+  .or('category.eq.ACC,category.eq.General,category.is.null')
+  .order('created_at', { ascending: false })
+  .limit(50);
+
+const playbookContext = playbookEntries?.length
+  ? `\n\nINSTITUTIONAL GUIDELINES FROM PAST ACC REVIEWS:\nApply the following principles and patterns from prior cases when reviewing this application. These represent how Bedrock has handled similar situations and what to watch for.\n\n${playbookEntries.map(p =>
+      `SITUATION: ${p.situation}\nAPPROACH: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
+    ).join('\n\n---\n\n')}\n`
+  : '';
     const reviewResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 3000,
@@ -301,7 +325,7 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
           },
           {
             type: 'text',
-            text: `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\nCommunity: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${conditions ? `Staff notes: ${conditions}\n\n` : ''}${notes ? `Additional notes: ${notes}\n\n` : ''}Relevant governing documents:\n${context}\n\n${decision === 'approved with conditions' ? `STAFF DECISION: APPROVED WITH CONDITIONS\n\nThe staff has decided to approve this application. Do NOT second guess this decision.\n\nGenerate a complete professional approval letter. For conditions: search the governing documents and pull the appropriate standard conditions for this specific project type in this community. Use the actual document sections to determine what conditions apply. Do not make up generic conditions — base them on what the governing documents actually require for this type of improvement. Include the standard permit disclaimer. Format as a complete ready to send approval letter.` : decision === 'approved no conditions' ? `STAFF DECISION: APPROVED — NO CONDITIONS\n\nThe staff has decided to approve this application with no conditions. Do NOT second guess this decision.\n\nGenerate a clean simple approval letter confirming the approval. Include only the standard permit disclaimer. Keep it warm and brief.` : decision === 'incomplete' ? `STAFF DECISION: REQUEST MISSING INFORMATION\n\nGenerate a warm helpful letter requesting the missing information. Identify what is missing based on the application and governing document requirements. Keep it encouraging and specific about what is needed and why. Do not make the homeowner feel rejected.` : decision === 'denied' ? `STAFF DECISION: DENIED\n\nGenerate a professional warm denial letter. Cite the specific governing document provision that cannot be met. Leave the door open for a revised application. Never be harsh or cold.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`
+            text: `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\nCommunity: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${conditions ? `Staff notes: ${conditions}\n\n` : ''}${notes ? `Additional notes: ${notes}\n\n` : ''}Relevant Relevant governing documents:\n${context}\n${playbookContext}\n${decision === 'approved with conditions' ? `STAFF DECISION: APPROVED WITH CONDITIONS\n\nThe staff has decided to approve this application. Do NOT second guess this decision.\n\nGenerate a complete professional approval letter. For conditions: search the governing documents and pull the appropriate standard conditions for this specific project type in this community. Use the actual document sections to determine what conditions apply. Do not make up generic conditions — base them on what the governing documents actually require for this type of improvement. Include the standard permit disclaimer. Format as a complete ready to send approval letter.` : decision === 'approved no conditions' ? `STAFF DECISION: APPROVED — NO CONDITIONS\n\nThe staff has decided to approve this application with no conditions. Do NOT second guess this decision.\n\nGenerate a clean simple approval letter confirming the approval. Include only the standard permit disclaimer. Keep it warm and brief.` : decision === 'incomplete' ? `STAFF DECISION: REQUEST MISSING INFORMATION\n\nGenerate a warm helpful letter requesting the missing information. Identify what is missing based on the application and governing document requirements. Keep it encouraging and specific about what is needed and why. Do not make the homeowner feel rejected.` : decision === 'denied' ? `STAFF DECISION: DENIED\n\nGenerate a professional warm denial letter. Cite the specific governing document provision that cannot be met. Leave the door open for a revised application. Never be harsh or cold.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`
           }
         ]
       }]
@@ -318,10 +342,11 @@ app.post('/ask-ed', async (req, res) => {
   try {
     const { situation, community } = req.body;
 
-    const { data: playbook } = await supabase
-      .from('playbook')
-      .select('*')
-      .order('created_at', { ascending: false });
+ const { data: playbook } = await supabase
+  .from('playbook')
+  .select('*')
+  .order('created_at', { ascending: false })
+  .limit(50);
 
     const playbookContext = playbook?.length
       ? `Here are examples of how Bedrock Association Management has handled similar situations:\n\n${playbook.map(p =>
