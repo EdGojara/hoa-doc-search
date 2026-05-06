@@ -825,6 +825,9 @@ Return ONLY valid JSON, no preamble, no markdown fences, no explanation.`,
   "service_contract_details": {
     "is_recurring": "boolean",
     "term_length": "string or null",
+    "term_months": "number or null — total months covered by this proposal (e.g. 7 for a June-Dec contract, 12 for a year). Required for normalization. If unclear, your best estimate based on stated dates.",
+    "term_start_date": "YYYY-MM-DD or null",
+    "term_end_date": "YYYY-MM-DD or null",
     "monthly_pricing_schedule": [{"month": "January", "amount": "number"}],
     "change_order_rates": "string or null",
     "escalation_clauses": "string or null",
@@ -899,6 +902,24 @@ For mixed documents, populate both as relevant.`
       }
     }
 
+    // Capture term_months and compute annualized total for normalization
+    const termMonths = extractedData.service_contract_details?.term_months || null;
+    const statedTotal = extractedData.totals?.total || null;
+    let annualizedTotal = null;
+    let annualizationBasis = null;
+
+    if (statedTotal != null) {
+      if (termMonths && termMonths > 0 && termMonths !== 12) {
+        annualizedTotal = (statedTotal / termMonths) * 12;
+        annualizationBasis = `Annualized from ${termMonths}-month proposal at stated rates`;
+      } else if (termMonths === 12 || !termMonths) {
+        annualizedTotal = statedTotal;
+        annualizationBasis = termMonths === 12 ? 'Stated 12-month total' : 'Term length unclear, treating stated total as annual';
+      }
+    }
+
+    const isIncumbent = req.body.isIncumbent === 'true' || req.body.isIncumbent === true;
+
     const { data: savedProposal, error: proposalError } = await supabase
       .from('vendor_proposals')
       .insert({
@@ -912,11 +933,15 @@ For mixed documents, populate both as relevant.`
         vendor_name_raw: vendorName,
         proposal_date: extractedData.proposal_date || null,
         proposal_number: extractedData.proposal_number,
-        total_amount: extractedData.totals?.total || null,
+        total_amount: statedTotal,
         currency: extractedData.currency || 'USD',
         extracted_data: extractedData,
         raw_extraction_text: rawText,
-        extraction_status: 'extracted'
+        extraction_status: 'extracted',
+        is_incumbent: isIncumbent,
+        term_months: termMonths,
+        annualized_total_amount: annualizedTotal,
+        annualization_basis: annualizationBasis
       })
       .select()
       .single();
@@ -1104,26 +1129,125 @@ app.get('/bid-requests/:id/proposals', async (req, res) => {
   }
 });
 
-// Run a comparison across 2-4 proposals
+// =====================================================================
+// Market value estimate lookup — TrueCar-style data layer
+// Priority: community-specific actuals → cross-community avg → AI estimate
+// =====================================================================
+async function lookupMarketValue(scopeCategory, community) {
+  // Tier 1: community-specific actuals
+  const { data: communitySpecific } = await supabase
+    .from('market_value_estimates')
+    .select('*')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .eq('scope_category', scopeCategory)
+    .eq('community', community)
+    .order('updated_at', { ascending: false })
+    .limit(1)
+    .maybeSingle();
+
+  if (communitySpecific) {
+    return {
+      annual_estimate_usd: Number(communitySpecific.annual_estimate_usd),
+      source: communitySpecific.source,
+      basis_text: `${community} ${communitySpecific.source === 'actuals' ? 'actuals' : 'prior data'} (${communitySpecific.confidence || 'medium'} confidence)`
+    };
+  }
+
+  // Tier 2: cross-community average for this management company + scope
+  const { data: crossCommunity } = await supabase
+    .from('market_value_estimates')
+    .select('annual_estimate_usd')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .eq('scope_category', scopeCategory)
+    .is('community', null);
+
+  if (crossCommunity && crossCommunity.length > 0) {
+    const avg = crossCommunity.reduce((sum, r) => sum + Number(r.annual_estimate_usd), 0) / crossCommunity.length;
+    return {
+      annual_estimate_usd: avg,
+      source: 'cross_community_avg',
+      basis_text: `Cross-community average across ${crossCommunity.length} prior data points`
+    };
+  }
+
+  // Tier 3: caller falls back to AI estimate
+  return null;
+}
+
+// Endpoint for staff to manually save a market value (one-time per community per scope)
+app.post('/market-value', async (req, res) => {
+  try {
+    const { community, scope_category, annual_estimate_usd, source, confidence, notes } = req.body;
+    if (!scope_category || !annual_estimate_usd) {
+      return res.status(400).json({ error: 'scope_category and annual_estimate_usd required.' });
+    }
+    const { data, error } = await supabase
+      .from('market_value_estimates')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community: community || null,
+        scope_category,
+        annual_estimate_usd,
+        source: source || 'actuals',
+        confidence: confidence || 'medium',
+        notes: notes || null
+      })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ success: true, estimate: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Run a comparison across 2-6 proposals (incumbent optional)
 app.post('/run-comparison', async (req, res) => {
   try {
-    const { proposalIds, bidRequestId, community } = req.body;
+    const {
+      proposalIds,
+      bidRequestId,
+      community,
+      incumbentProposalId,
+      materialityThresholdUsd,
+      materialityThresholdPct,
+      switchThresholdPct
+    } = req.body;
 
-    if (!proposalIds || !Array.isArray(proposalIds) || proposalIds.length < 2) {
-      return res.status(400).json({ error: 'Provide at least 2 proposal IDs to compare.' });
+    if (!proposalIds || !Array.isArray(proposalIds) || proposalIds.length < 1) {
+      return res.status(400).json({ error: 'Provide at least 1 proposal ID to compare.' });
     }
 
-    if (proposalIds.length > 4) {
-      return res.status(400).json({ error: 'Maximum 4 proposals per comparison.' });
+    if (proposalIds.length > 6) {
+      return res.status(400).json({ error: 'Maximum 6 proposals per comparison.' });
     }
+
+    // Apply defaults for the materiality + switch thresholds
+    const matUsd = Number(materialityThresholdUsd) || 1000;
+    const matPct = Number(materialityThresholdPct) || 5;
+    const swPct = Number(switchThresholdPct) || 5;
 
     const { data: proposals, error: loadError } = await supabase
       .from('vendor_proposals')
       .select('*, vendors(name)')
       .in('id', proposalIds);
 
-    if (loadError || !proposals || proposals.length < 2) {
+    if (loadError || !proposals || proposals.length < 1) {
       return res.status(500).json({ error: 'Could not load proposals: ' + (loadError?.message || 'not found') });
+    }
+
+    // Reorder proposals to match the order they were submitted in proposalIds
+    const orderedProposals = proposalIds
+      .map(id => proposals.find(p => p.id === id))
+      .filter(Boolean);
+
+    // Identify incumbent (either passed explicitly or flagged on the proposal record)
+    let incumbentIndex = -1;
+    if (incumbentProposalId) {
+      incumbentIndex = orderedProposals.findIndex(p => p.id === incumbentProposalId);
+    }
+    if (incumbentIndex === -1) {
+      incumbentIndex = orderedProposals.findIndex(p => p.is_incumbent === true);
     }
 
     let bidRequestContext = '';
@@ -1133,7 +1257,6 @@ app.post('/run-comparison', async (req, res) => {
         .select('scope_summary, vendor_type, contract_term')
         .eq('id', bidRequestId)
         .single();
-
       if (bidRequest) {
         bidRequestContext = `\n\nORIGINAL BID REQUEST CONTEXT:\nVendor type: ${bidRequest.vendor_type}\nContract term: ${bidRequest.contract_term}\nScope summary: ${bidRequest.scope_summary}\n`;
       }
@@ -1152,90 +1275,167 @@ app.post('/run-comparison', async (req, res) => {
         ).join('\n\n---\n\n')}\n`
       : '';
 
-    const docTypes = proposals.map(p => p.document_type);
+    const docTypes = orderedProposals.map(p => p.document_type);
     const dominantDocType = docTypes.sort((a, b) =>
       docTypes.filter(v => v === a).length - docTypes.filter(v => v === b).length
     ).pop();
 
-    const serviceCategories = proposals.map(p => p.service_category);
+    const serviceCategories = orderedProposals.map(p => p.service_category);
     const dominantCategory = serviceCategories.sort((a, b) =>
       serviceCategories.filter(v => v === a).length - serviceCategories.filter(v => v === b).length
     ).pop();
 
-    const proposalsForPrompt = proposals.map((p, i) => ({
-      label: `Proposal ${i + 1}: ${p.vendors?.name || p.vendor_name_raw}`,
+    // Look up market value for the dominant scope category (used to estimate excluded items)
+    const marketValue = await lookupMarketValue(dominantCategory, community);
+
+    // Build the proposal payload for the prompt — include normalization data
+    const proposalsForPrompt = orderedProposals.map((p, i) => ({
+      label: `Proposal ${i}: ${p.vendors?.name || p.vendor_name_raw}${i === incumbentIndex ? ' [INCUMBENT]' : ''}`,
+      stated_total: p.total_amount,
+      term_months: p.term_months,
+      annualized_total: p.annualized_total_amount,
+      annualization_basis: p.annualization_basis,
       data: p.extracted_data
     }));
 
+    const marketValueContext = marketValue
+      ? `\n\nMARKET VALUE REFERENCE for ${dominantCategory} (used to add back excluded items when normalizing):\n- Annual estimate: $${marketValue.annual_estimate_usd.toLocaleString()}\n- Source: ${marketValue.basis_text}\n`
+      : `\n\nMARKET VALUE REFERENCE: No prior data for ${dominantCategory}. If a proposal excludes items that another includes (e.g. chemicals), estimate the annual market value yourself based on proposal context (pool size, season, etc.) and state your basis explicitly in normalization_basis.add_back_estimates.\n`;
+
+    const incumbentContext = incumbentIndex >= 0
+      ? `\n\nINCUMBENT PRESENT: Proposal ${incumbentIndex} is the incumbent vendor. The board's question is "should I switch?" Apply the switch threshold rule: recommend switching only if normalized annualized savings exceed ${swPct}% AND no material risk increase. If the rule says switch but you disagree, override with reasoning. If the rule says stay but you disagree, override with reasoning. Show the rule + your verdict.\n`
+      : `\n\nNO INCUMBENT: This is a fresh comparison among bids. Recommend the best vendor on normalized cost + risk basis.\n`;
+
     const comparisonResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 12000,
-      system: `You are an expert vendor analyst for Bedrock Association Management. You think and decide like Ed Gojara — a CPA, CFE, MBA with 15+ years of HOA management experience. You produce rigorous apples-to-apples comparisons of vendor proposals.
+      max_tokens: 8000,
+      system: `You are a vendor decision analyst for Bedrock Association Management. You think like Ed Gojara — CPA, CFE, MBA, 15+ years HOA management experience. You produce DECISION SUPPORT, not scope inventories.
 
-YOUR DISCIPLINE:
-- NEVER silently treat different scopes as equivalent. If Vendor A includes X and Vendor B does not, you flag it explicitly.
-- Calculate "comparable subtotals" — the cost of items that exist in all proposals — separately from total prices.
-- Calculate "scope-adjusted totals" by noting items unique to each proposal and what they're worth.
-- Apply Ed's playbook principles when forming a recommendation. Do not invent generic best practices.
-- Be honest about uncertainty. If you don't have enough info to recommend confidently, say so.
-- Never recommend purely on lowest price. Quality, scope completeness, vendor history, and risk all matter.
+YOUR JOB IS DECISION SUPPORT, NOT SCOPE DISPLAY.
+Your output drives a board decision. Boards decide on 2–3 facts. Everything else is liability protection — necessary in your reasoning, harmful in your output.
 
-OUTPUT FORMAT: Return ONLY valid JSON, no preamble, no markdown fences. The JSON must follow this exact structure:
+THE 4-STEP REASONING YOU MUST FOLLOW:
+
+STEP 1 — NORMALIZE EVERYTHING TO A 12-MONTH CONSTANT BASIS
+- Annualize every proposal to 12 months using its term_months and annualized_total fields.
+- Identify the lowest-common-scope denominator. If Proposal A includes chemicals and B doesn't, normalize to "management only" and add back chemicals to A using the market value reference.
+- State each normalization assumption in normalization_basis. Be specific: "Annualized 7-month proposal at stated rates" not "annualized."
+
+STEP 2 — APPLY MATERIALITY FILTER
+- Materiality threshold for THIS comparison: lower of $${matUsd} OR ${matPct}% of annualized contract value.
+- A scope difference, risk, or term clause makes it into the output ONLY if its annualized dollar impact exceeds the threshold.
+- Items below threshold: priced into the normalized number, NOT mentioned in output.
+- Tier the items that pass: "material" (would change the answer) vs "worth_knowing" (above threshold but won't flip the recommendation).
+
+STEP 3 — APPLY SWITCH LOGIC (only if incumbent present)
+- Default rule: recommend switch if normalized annual savings exceed ${swPct}% AND no material risk increase.
+- You may override the rule in either direction with stated reasoning. Boards respect "the rule says switch but here's why we don't" more than ad-hoc judgment.
+
+STEP 4 — OUTPUT ONLY DECISION-RELEVANT CONTENT
+- "What would change your mind" is HARD CAPPED at 3 bullets. Pick the 3 most decision-relevant. If you have a 4th, it doesn't make the cut.
+- The recommendation is one sentence. The rationale that follows is two more sentences MAXIMUM.
+- DO NOT pad. If a section has nothing material, leave its array empty.
+
+RETURN ONLY VALID JSON IN THIS EXACT SHAPE — no preamble, no markdown fences:
 
 {
-  "executive_summary": "string — 1 paragraph summary suitable for a board treasurer with 5 minutes",
-  "recommendation": {
-    "recommended_proposal_index": "number (0-indexed)",
-    "vendor_name": "string",
-    "one_sentence_rationale": "string",
-    "key_reasons": ["array of 3-5 short reasons"],
-    "trade_offs_acknowledged": "string — what the board gives up by choosing this vendor"
+  "schema_version": "v2",
+  "headline_recommendation": "string — ONE sentence. e.g. 'Recommend A-Beautiful Pools at $31,330 annualized over Sweetwater Pools at $42,580 — saves ~$11,250/yr with stronger insurance, contingent on independent chemical procurement.'",
+  "recommended_proposal_index": "number (0-indexed into the proposals array)",
+  "switch_verdict": {
+    "applies": "boolean — true only when incumbent is present",
+    "rule_says": "string or null — 'switch' | 'stay' | 'inconclusive'",
+    "final_verdict": "string or null — 'switch' | 'stay'",
+    "override_reasoning": "string or null — populated only if final_verdict differs from rule_says",
+    "annualized_savings_usd": "number or null",
+    "annualized_savings_pct": "number or null"
   },
-  "comparison_table": {
-    "common_scope_items": [
-      {
-        "item": "string — the scope item",
-        "proposal_amounts": [{"proposal_index": 0, "amount": "number or null", "notes": "string or null"}]
-      }
-    ],
-    "unique_items": [
-      {
-        "proposal_index": "number",
-        "item": "string",
-        "amount": "number or null",
-        "should_count_in_comparison": "boolean — does this item count toward what we're comparing?"
-      }
-    ]
-  },
-  "scope_analysis": {
-    "are_truly_comparable": "boolean",
-    "scope_mismatches": ["array of specific things that differ between proposals"],
-    "comparable_subtotals": [{"proposal_index": 0, "subtotal": "number"}],
-    "scope_adjustment_notes": "string"
-  },
-  "vendor_profiles": [
+  "normalized_costs": [
     {
       "proposal_index": "number",
       "vendor_name": "string",
+      "is_incumbent": "boolean",
       "stated_total": "number",
-      "scope_strengths": ["array"],
-      "scope_concerns": ["array"],
-      "terms_strengths": ["array"],
-      "terms_concerns": ["array"]
+      "stated_term_months": "number or null",
+      "annualized_total": "number — every proposal MUST have this",
+      "scope_adjustments": [
+        {
+          "label": "string — e.g. 'Add back chemicals (excluded)'",
+          "amount_usd": "number — positive = added to this proposal's normalized total"
+        }
+      ],
+      "normalized_annual_total": "number — annualized_total + sum of scope_adjustments. This is the apples-to-apples number."
     }
   ],
-  "playbook_principles_applied": ["array of which Ed-judgment principles informed this analysis"],
-  "questions_for_board": ["array of 2-4 questions the board may want to discuss"]
-}`,
+  "normalization_basis": {
+    "summary": "string — 2-4 sentences max. The 'how we got to apples-to-apples' explainer for the board. Plain English.",
+    "add_back_estimates": [
+      {
+        "scope_category": "string — e.g. 'pool_chemicals'",
+        "annual_estimate_usd": "number",
+        "source_basis": "string — e.g. 'Canyon Gate 2024 actuals' or 'AI estimate from pool size and season'",
+        "applied_to_proposal_indexes": ["array of proposal indexes this was added to"]
+      }
+    ]
+  },
+  "what_would_change_your_mind": [
+    {
+      "factor": "string — short title, e.g. 'Chemical procurement capacity'",
+      "explanation": "string — one sentence on why this could flip the decision"
+    }
+  ],
+  "material_risks": [
+    {
+      "label": "string — short title",
+      "description": "string — one sentence",
+      "applies_to_proposal_indexes": ["array"],
+      "annualized_exposure_usd": "number or null"
+    }
+  ],
+  "worth_knowing": [
+    {
+      "label": "string",
+      "description": "string"
+    }
+  ],
+  "questions_for_board": ["array of 2-4 questions, kept from prior version"],
+  "vendor_summary_table": [
+    {
+      "proposal_index": "number",
+      "vendor_name": "string",
+      "is_incumbent": "boolean",
+      "normalized_annual_total": "number",
+      "key_distinction": "string — one phrase that distinguishes this vendor in the comparison"
+    }
+  ]
+}
+
+CRITICAL OUTPUT RULES:
+- "what_would_change_your_mind" MUST have at most 3 entries. If you have more, cut to 3.
+- "material_risks" includes only risks above the materiality threshold AND that could change the answer.
+- "worth_knowing" includes items above threshold that are real but won't flip the recommendation.
+- Items below the materiality threshold appear NOWHERE in the output.
+- Every "annualized_total" and "normalized_annual_total" must be a number, not null.
+- "normalization_basis.summary" is what shows up to the board — make it readable, not a methodology dump.`,
       messages: [{
         role: 'user',
-        content: `Compare the following vendor proposals for ${community} (${dominantCategory}, ${dominantDocType}):
+        content: `Compare these vendor proposals for ${community} (category: ${dominantCategory}, type: ${dominantDocType}).
 
-${proposalsForPrompt.map(p => `=== ${p.label} ===\n${JSON.stringify(p.data, null, 2)}`).join('\n\n')}
+MATERIALITY THRESHOLD FOR THIS COMPARISON: lower of $${matUsd} OR ${matPct}% of annualized contract value.
+SWITCH THRESHOLD: ${swPct}% normalized annual savings.
+${incumbentContext}${marketValueContext}
+
+PROPOSALS:
+${proposalsForPrompt.map(p => `=== ${p.label} ===
+stated_total: ${p.stated_total}
+term_months: ${p.term_months}
+annualized_total: ${p.annualized_total}
+annualization_basis: ${p.annualization_basis}
+extracted_data: ${JSON.stringify(p.data, null, 2)}`).join('\n\n')}
 ${bidRequestContext}
 ${playbookContext}
 
-Produce a rigorous apples-to-apples comparison. Apply Ed's judgment. Make a recommendation with reasoning. Return only the JSON.`
+Apply the 4-step reasoning. Return only the JSON.`
       }]
     });
 
@@ -1247,28 +1447,20 @@ Produce a rigorous apples-to-apples comparison. Apply Ed's judgment. Make a reco
       analysisData = JSON.parse(rawAnalysis);
     } catch (parseErr) {
       console.error('Failed to parse comparison JSON, attempting repair:', parseErr.message);
-
       try {
         let repaired = rawAnalysis;
-
         let quoteCount = 0;
         for (let i = 0; i < repaired.length; i++) {
           if (repaired[i] === '"' && repaired[i-1] !== '\\') quoteCount++;
         }
-        if (quoteCount % 2 !== 0) {
-          repaired += '"';
-        }
-
+        if (quoteCount % 2 !== 0) repaired += '"';
         const openBraces = (repaired.match(/\{/g) || []).length;
         const closeBraces = (repaired.match(/\}/g) || []).length;
         const openBrackets = (repaired.match(/\[/g) || []).length;
         const closeBrackets = (repaired.match(/\]/g) || []).length;
-
         repaired = repaired.replace(/,\s*$/, '');
-
         for (let i = 0; i < openBrackets - closeBrackets; i++) repaired += ']';
         for (let i = 0; i < openBraces - closeBraces; i++) repaired += '}';
-
         analysisData = JSON.parse(repaired);
         console.log('JSON repair succeeded.');
       } catch (repairErr) {
@@ -1281,25 +1473,37 @@ Produce a rigorous apples-to-apples comparison. Apply Ed's judgment. Make a reco
       }
     }
 
+    // Enforce the 3-bullet cap server-side as a safety net
+    if (Array.isArray(analysisData.what_would_change_your_mind) && analysisData.what_would_change_your_mind.length > 3) {
+      analysisData.what_would_change_your_mind = analysisData.what_would_change_your_mind.slice(0, 3);
+    }
+
+    // Resolve recommended vendor for the FK column
     let recommendedVendorId = null;
-    const recommendedIndex = analysisData.recommendation?.recommended_proposal_index;
-    if (typeof recommendedIndex === 'number' && proposals[recommendedIndex]) {
-      recommendedVendorId = proposals[recommendedIndex].vendor_id;
+    const recommendedIndex = analysisData.recommended_proposal_index;
+    if (typeof recommendedIndex === 'number' && orderedProposals[recommendedIndex]) {
+      recommendedVendorId = orderedProposals[recommendedIndex].vendor_id;
     }
 
     const { data: savedComparison, error: saveError } = await supabase
       .from('vendor_comparisons')
       .insert({
         management_company_id: BEDROCK_MGMT_CO_ID,
-        community: community || proposals[0].community,
+        community: community || orderedProposals[0].community,
         bid_request_id: bidRequestId || null,
         proposal_ids: proposalIds,
         document_type: dominantDocType,
         service_category: dominantCategory,
         recommendation_vendor_id: recommendedVendorId,
-        recommendation_summary: analysisData.recommendation?.one_sentence_rationale || '',
-        reasoning: analysisData.executive_summary || '',
-        analysis_data: analysisData
+        recommendation_summary: analysisData.headline_recommendation || '',
+        reasoning: analysisData.normalization_basis?.summary || '',
+        analysis_data: analysisData,
+        incumbent_proposal_id: incumbentIndex >= 0 ? orderedProposals[incumbentIndex].id : null,
+        materiality_threshold_usd: matUsd,
+        materiality_threshold_pct: matPct,
+        switch_threshold_pct: swPct,
+        normalization_basis: analysisData.normalization_basis || null,
+        schema_version: 'v2'
       })
       .select()
       .single();
