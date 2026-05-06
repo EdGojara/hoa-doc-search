@@ -2,6 +2,7 @@ const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
+
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 const pdfParse = require('pdf-parse');
@@ -13,6 +14,10 @@ app.use(express.static('public'));
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+// Bedrock's management_company_id — matches the seed UUID in the SQL migration.
+// Track 2 discipline: every record uses this for now; later, we look it up
+// from authenticated user instead of hardcoding.
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
 const GLOBAL_RULES = `
 TEXAS LEGAL COMPLIANCE — MANDATORY FOR ALL COMMUNICATIONS:
@@ -102,7 +107,7 @@ app.post('/draft', async (req, res) => {
     const { data: playbookEntries } = await supabase
   .from('playbook')
   .select('*')
-  .or('category.eq.Email,category.eq.Communications,category.eq.General,category.is.null')
+  .or('category.eq.General,category.eq.Homeowner Complaint,category.eq.Board Relations,category.eq.Legal/Compliance,category.eq.Collections,category.is.null')
   .order('created_at', { ascending: false })
   .limit(50);
 
@@ -172,7 +177,7 @@ app.post('/acc-review', upload.single('pdf'), async (req, res) => {
     const { data: playbookEntries } = await supabase
   .from('playbook')
   .select('*')
-  .or('category.eq.ACC,category.eq.General,category.is.null')
+  .or('category.eq.ACC/Violations,category.eq.General,category.eq.Legal/Compliance,category.is.null')
   .order('created_at', { ascending: false })
   .limit(50);
 
@@ -608,13 +613,19 @@ app.get('/playbook', async (req, res) => {
   }
 });
 
+// =====================================================================
+// VENDOR WORKFLOW — Bid Request, Proposal Upload, Comparison
+// =====================================================================
+
 app.post('/generate-bid', upload.single('contract'), async (req, res) => {
   try {
     const { community, vendorType, additionalRequirements, manualScope, bidDeadline, contractTerm } = req.body;
 
     let scopeContent = '';
+    let sourceContractFilename = null;
 
     if (req.file) {
+      sourceContractFilename = req.file.originalname;
       const pdfBase64 = req.file.buffer.toString('base64');
       const extractResponse = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
@@ -690,12 +701,470 @@ Generate a complete professional bid request document that:
       }]
     });
 
-    res.json({ bidRequest: bidResponse.content[0].text });
+    const generatedDocument = bidResponse.content[0].text;
+
+    // Save the bid request to the database so we can link proposals to it later.
+    const { data: savedBidRequest, error: saveError } = await supabase
+      .from('bid_requests')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community: community || 'Unknown',
+        vendor_type: vendorType || 'Other',
+        contract_term: contractTerm,
+        bid_deadline: bidDeadline || null,
+        scope_summary: scopeContent.slice(0, 2000),
+        generated_document: generatedDocument,
+        source_contract_filename: sourceContractFilename,
+        status: 'open'
+      })
+      .select()
+      .single();
+
+    if (saveError) {
+      console.error('Error saving bid request:', saveError);
+      // Don't fail the whole request — still return the document.
+    }
+
+    res.json({
+      bidRequest: generatedDocument,
+      bidRequestId: savedBidRequest?.id || null
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error generating bid request: ' + err.message });
   }
 });
+
+// List open bid requests so user can pick one when uploading a proposal
+app.get('/bid-requests', async (req, res) => {
+  try {
+    const { community } = req.query;
+    let query = supabase
+      .from('bid_requests')
+      .select('id, community, vendor_type, contract_term, bid_deadline, created_at, status')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (community) query = query.eq('community', community);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ bidRequests: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Upload a vendor proposal PDF, extract structured data, save to database
+app.post('/upload-proposal', upload.single('proposal'), async (req, res) => {
+  try {
+    const { community, bidRequestId, serviceCategory, documentType } = req.body;
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No proposal PDF uploaded.' });
+    }
+
+    const pdfBase64 = req.file.buffer.toString('base64');
+    const filename = req.file.originalname;
+
+    const extractionResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 4000,
+      system: `You are a vendor proposal analyst for Bedrock Association Management. Your job is to extract structured data from vendor proposals so they can be compared apples-to-apples.
+
+CRITICAL RULES:
+- Extract ONLY what is explicitly stated in the proposal. Do not infer, guess, or add information.
+- If a field is not present in the proposal, return null for that field.
+- For pricing, capture exactly as written including any tax, discount, or fee notes.
+- Preserve the vendor's own wording for scope items — do not paraphrase.
+- Flag anything ambiguous or unusual in the "extraction_notes" field.
+
+Return ONLY valid JSON, no preamble, no markdown fences, no explanation.`,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
+          },
+          {
+            type: 'text',
+            text: `Extract structured data from this vendor proposal. Return JSON in exactly this shape:
+
+{
+  "vendor_name": "string — exact vendor name as on document",
+  "vendor_contact": {
+    "name": "string or null",
+    "email": "string or null",
+    "phone": "string or null",
+    "address": "string or null"
+  },
+  "proposal_date": "YYYY-MM-DD or null",
+  "proposal_number": "string or null (estimate/quote/proposal number)",
+  "document_type": "project_bid | service_contract | mixed",
+  "service_category_guess": "string — your best guess at category (landscape_construction, landscape_maintenance, tree_service, pool_management, janitorial, pressure_washing, painting, repair, other)",
+  "currency": "USD",
+  "totals": {
+    "subtotal": "number or null",
+    "tax": "number or null",
+    "total": "number or null",
+    "tax_rate_percent": "number or null"
+  },
+  "line_items": [
+    {
+      "description": "string — what the vendor wrote",
+      "category": "string — your best guess (water_feature, lighting, plants, trees, benches, hardscape, labor, equipment, etc.)",
+      "quantity": "number or null",
+      "unit": "string or null (each, sq_ft, linear_ft, hour, etc.)",
+      "unit_price": "number or null",
+      "total_price": "number or null",
+      "inclusions": ["array of bullet points the vendor lists as included"],
+      "exclusions": ["array of items called out as not included or optional"],
+      "notes": "string or null"
+    }
+  ],
+  "service_contract_details": {
+    "is_recurring": "boolean",
+    "term_length": "string or null",
+    "monthly_pricing_schedule": [{"month": "January", "amount": "number"}],
+    "change_order_rates": "string or null",
+    "escalation_clauses": "string or null",
+    "termination_terms": "string or null",
+    "private_event_pricing": "string or null"
+  },
+  "insurance_provided": {
+    "general_liability": "string or null",
+    "umbrella": "string or null",
+    "workers_comp": "string or null",
+    "auto": "string or null"
+  },
+  "payment_terms": "string or null",
+  "validity_period": "string or null",
+  "key_terms_summary": "string — 2-3 sentences summarizing important terms beyond pricing",
+  "extraction_notes": "string — anything ambiguous, unusual, or hard to extract. Be honest about uncertainty."
+}
+
+For project_bid documents (one-time work), service_contract_details fields will mostly be null.
+For service_contract documents (recurring services), line_items may be sparse but service_contract_details should be populated.
+For mixed documents, populate both as relevant.`
+          }
+        ]
+      }]
+    });
+
+    let extractedData;
+    let rawText = extractionResponse.content[0].text;
+    rawText = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim();
+
+    try {
+      extractedData = JSON.parse(rawText);
+    } catch (parseErr) {
+      console.error('Failed to parse extraction JSON:', parseErr);
+      return res.status(500).json({
+        error: 'Could not parse vendor proposal. The PDF may be unusual format.',
+        raw_text: rawText.slice(0, 500)
+      });
+    }
+
+    // Find or create the vendor record
+    const vendorName = extractedData.vendor_name || 'Unknown Vendor';
+    let vendorId = null;
+
+    const { data: existingVendor } = await supabase
+      .from('vendors')
+      .select('id')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .ilike('name', vendorName)
+      .maybeSingle();
+
+    if (existingVendor) {
+      vendorId = existingVendor.id;
+    } else {
+      const { data: newVendor, error: vendorError } = await supabase
+        .from('vendors')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          name: vendorName,
+          contact_name: extractedData.vendor_contact?.name,
+          contact_email: extractedData.vendor_contact?.email,
+          contact_phone: extractedData.vendor_contact?.phone,
+          address: extractedData.vendor_contact?.address
+        })
+        .select('id')
+        .single();
+
+      if (vendorError) {
+        console.error('Error creating vendor:', vendorError);
+      } else {
+        vendorId = newVendor.id;
+      }
+    }
+
+    const { data: savedProposal, error: proposalError } = await supabase
+      .from('vendor_proposals')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community: community || 'Unknown',
+        vendor_id: vendorId,
+        bid_request_id: bidRequestId || null,
+        document_type: documentType || extractedData.document_type || 'project_bid',
+        service_category: serviceCategory || extractedData.service_category_guess || 'other',
+        filename: filename,
+        vendor_name_raw: vendorName,
+        proposal_date: extractedData.proposal_date || null,
+        proposal_number: extractedData.proposal_number,
+        total_amount: extractedData.totals?.total || null,
+        currency: extractedData.currency || 'USD',
+        extracted_data: extractedData,
+        raw_extraction_text: rawText,
+        extraction_status: 'extracted'
+      })
+      .select()
+      .single();
+
+    if (proposalError) {
+      console.error('Error saving proposal:', proposalError);
+      return res.status(500).json({ error: 'Could not save proposal to database: ' + proposalError.message });
+    }
+
+    res.json({
+      success: true,
+      proposal: savedProposal,
+      summary: {
+        vendor: vendorName,
+        total: extractedData.totals?.total,
+        line_items_count: extractedData.line_items?.length || 0,
+        document_type: extractedData.document_type,
+        extraction_notes: extractedData.extraction_notes
+      }
+    });
+  } catch (err) {
+    console.error('Proposal upload error:', err);
+    res.status(500).json({ error: 'Error processing proposal: ' + err.message });
+  }
+});
+
+// Run a comparison across 2-4 proposals
+app.post('/run-comparison', async (req, res) => {
+  try {
+    const { proposalIds, bidRequestId, community } = req.body;
+
+    if (!proposalIds || !Array.isArray(proposalIds) || proposalIds.length < 2) {
+      return res.status(400).json({ error: 'Provide at least 2 proposal IDs to compare.' });
+    }
+
+    if (proposalIds.length > 4) {
+      return res.status(400).json({ error: 'Maximum 4 proposals per comparison.' });
+    }
+
+    const { data: proposals, error: loadError } = await supabase
+      .from('vendor_proposals')
+      .select('*, vendors(name)')
+      .in('id', proposalIds);
+
+    if (loadError || !proposals || proposals.length < 2) {
+      return res.status(500).json({ error: 'Could not load proposals: ' + (loadError?.message || 'not found') });
+    }
+
+    let bidRequestContext = '';
+    if (bidRequestId) {
+      const { data: bidRequest } = await supabase
+        .from('bid_requests')
+        .select('scope_summary, vendor_type, contract_term')
+        .eq('id', bidRequestId)
+        .single();
+
+      if (bidRequest) {
+        bidRequestContext = `\n\nORIGINAL BID REQUEST CONTEXT:\nVendor type: ${bidRequest.vendor_type}\nContract term: ${bidRequest.contract_term}\nScope summary: ${bidRequest.scope_summary}\n`;
+      }
+    }
+
+    const { data: playbookEntries } = await supabase
+      .from('playbook')
+      .select('*')
+      .or('category.eq.Vendor Negotiation,category.eq.General,category.is.null')
+      .order('created_at', { ascending: false })
+      .limit(20);
+
+    const playbookContext = playbookEntries?.length
+      ? `\n\nED'S VENDOR JUDGMENT (PLAYBOOK):\n${playbookEntries.map(p =>
+          `SITUATION: ${p.situation}\nAPPROACH: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
+        ).join('\n\n---\n\n')}\n`
+      : '';
+
+    const docTypes = proposals.map(p => p.document_type);
+    const dominantDocType = docTypes.sort((a, b) =>
+      docTypes.filter(v => v === a).length - docTypes.filter(v => v === b).length
+    ).pop();
+
+    const serviceCategories = proposals.map(p => p.service_category);
+    const dominantCategory = serviceCategories.sort((a, b) =>
+      serviceCategories.filter(v => v === a).length - serviceCategories.filter(v => v === b).length
+    ).pop();
+
+    const proposalsForPrompt = proposals.map((p, i) => ({
+      label: `Proposal ${i + 1}: ${p.vendors?.name || p.vendor_name_raw}`,
+      data: p.extracted_data
+    }));
+
+    const comparisonResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 6000,
+      system: `You are an expert vendor analyst for Bedrock Association Management. You think and decide like Ed Gojara — a CPA, CFE, MBA with 15+ years of HOA management experience. You produce rigorous apples-to-apples comparisons of vendor proposals.
+
+YOUR DISCIPLINE:
+- NEVER silently treat different scopes as equivalent. If Vendor A includes X and Vendor B does not, you flag it explicitly.
+- Calculate "comparable subtotals" — the cost of items that exist in all proposals — separately from total prices.
+- Calculate "scope-adjusted totals" by noting items unique to each proposal and what they're worth.
+- Apply Ed's playbook principles when forming a recommendation. Do not invent generic best practices.
+- Be honest about uncertainty. If you don't have enough info to recommend confidently, say so.
+- Never recommend purely on lowest price. Quality, scope completeness, vendor history, and risk all matter.
+
+OUTPUT FORMAT: Return ONLY valid JSON, no preamble, no markdown fences. The JSON must follow this exact structure:
+
+{
+  "executive_summary": "string — 1 paragraph summary suitable for a board treasurer with 5 minutes",
+  "recommendation": {
+    "recommended_proposal_index": "number (0-indexed)",
+    "vendor_name": "string",
+    "one_sentence_rationale": "string",
+    "key_reasons": ["array of 3-5 short reasons"],
+    "trade_offs_acknowledged": "string — what the board gives up by choosing this vendor"
+  },
+  "comparison_table": {
+    "common_scope_items": [
+      {
+        "item": "string — the scope item",
+        "proposal_amounts": [{"proposal_index": 0, "amount": "number or null", "notes": "string or null"}]
+      }
+    ],
+    "unique_items": [
+      {
+        "proposal_index": "number",
+        "item": "string",
+        "amount": "number or null",
+        "should_count_in_comparison": "boolean — does this item count toward what we're comparing?"
+      }
+    ]
+  },
+  "scope_analysis": {
+    "are_truly_comparable": "boolean",
+    "scope_mismatches": ["array of specific things that differ between proposals"],
+    "comparable_subtotals": [{"proposal_index": 0, "subtotal": "number"}],
+    "scope_adjustment_notes": "string"
+  },
+  "vendor_profiles": [
+    {
+      "proposal_index": "number",
+      "vendor_name": "string",
+      "stated_total": "number",
+      "scope_strengths": ["array"],
+      "scope_concerns": ["array"],
+      "terms_strengths": ["array"],
+      "terms_concerns": ["array"]
+    }
+  ],
+  "playbook_principles_applied": ["array of which Ed-judgment principles informed this analysis"],
+  "questions_for_board": ["array of 2-4 questions the board may want to discuss"]
+}`,
+      messages: [{
+        role: 'user',
+        content: `Compare the following vendor proposals for ${community} (${dominantCategory}, ${dominantDocType}):
+
+${proposalsForPrompt.map(p => `=== ${p.label} ===\n${JSON.stringify(p.data, null, 2)}`).join('\n\n')}
+${bidRequestContext}
+${playbookContext}
+
+Produce a rigorous apples-to-apples comparison. Apply Ed's judgment. Make a recommendation with reasoning. Return only the JSON.`
+      }]
+    });
+
+    let analysisData;
+    let rawAnalysis = comparisonResponse.content[0].text;
+    rawAnalysis = rawAnalysis.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim();
+
+    try {
+      analysisData = JSON.parse(rawAnalysis);
+    } catch (parseErr) {
+      console.error('Failed to parse comparison JSON:', parseErr);
+      return res.status(500).json({
+        error: 'Could not parse comparison output.',
+        raw_text: rawAnalysis.slice(0, 1000)
+      });
+    }
+
+    let recommendedVendorId = null;
+    const recommendedIndex = analysisData.recommendation?.recommended_proposal_index;
+    if (typeof recommendedIndex === 'number' && proposals[recommendedIndex]) {
+      recommendedVendorId = proposals[recommendedIndex].vendor_id;
+    }
+
+    const { data: savedComparison, error: saveError } = await supabase
+      .from('vendor_comparisons')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community: community || proposals[0].community,
+        bid_request_id: bidRequestId || null,
+        proposal_ids: proposalIds,
+        document_type: dominantDocType,
+        service_category: dominantCategory,
+        recommendation_vendor_id: recommendedVendorId,
+        recommendation_summary: analysisData.recommendation?.one_sentence_rationale || '',
+        reasoning: analysisData.executive_summary || '',
+        analysis_data: analysisData
+      })
+      .select()
+      .single();
+
+    if (saveError) {
+      console.error('Error saving comparison:', saveError);
+      return res.status(500).json({ error: 'Could not save comparison: ' + saveError.message });
+    }
+
+    res.json({
+      success: true,
+      comparisonId: savedComparison.id,
+      analysis: analysisData
+    });
+  } catch (err) {
+    console.error('Comparison error:', err);
+    res.status(500).json({ error: 'Error running comparison: ' + err.message });
+  }
+});
+
+// Retrieve a saved comparison
+app.get('/comparison/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { data: comparison, error } = await supabase
+      .from('vendor_comparisons')
+      .select('*')
+      .eq('id', id)
+      .single();
+
+    if (error || !comparison) {
+      return res.status(404).json({ error: 'Comparison not found.' });
+    }
+
+    const { data: proposals } = await supabase
+      .from('vendor_proposals')
+      .select('id, vendor_name_raw, total_amount, filename, vendors(name)')
+      .in('id', comparison.proposal_ids);
+
+    res.json({
+      comparison,
+      proposals: proposals || []
+    });
+  } catch (err) {
+    console.error('Get comparison error:', err);
+    res.status(500).json({ error: 'Error loading comparison: ' + err.message });
+  }
+});
+
+// =====================================================================
+// END VENDOR WORKFLOW
+// =====================================================================
+
 // ============================================================
 // COMMUNITY HOME COUNTS — update as you add communities
 // ============================================================
