@@ -349,7 +349,11 @@
     <div class="ask-ed-right">
       <h3>📋 Guidance</h3>
       <div class="output-box placeholder" id="edOutput">Describe a situation and click "Get Guidance" to see how to handle it.</div>
-      <button class="secondary-btn" id="copyEdBtn" onclick="copyText('edOutput')" style="display:none">📋 Copy to Clipboard</button>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        <button class="secondary-btn" id="copyEdBtn" onclick="copyText('edOutput')" style="display:none">📋 Copy to Clipboard</button>
+        <button class="secondary-btn" id="copyEdEmailBtn" onclick="copyEmailVersion()" style="display:none">📋 Copy Email Text</button>
+        <button class="secondary-btn" id="exportEdEmailBtn" onclick="exportToEmail()" style="display:none">📧 Export to Email</button>
+      </div>
     </div>
   </div>
 </div>
@@ -862,6 +866,8 @@
       output.className = 'output-box';
       output.textContent = data.guidance;
       copyBtn.style.display = 'block';
+      document.getElementById('copyEdEmailBtn').style.display = 'block';
+      document.getElementById('exportEdEmailBtn').style.display = 'block';
     } catch (err) {
       output.textContent = 'Something went wrong. Please try again.';
     }
@@ -1862,6 +1868,87 @@ ${questionsPage}
       w.print();
       URL.revokeObjectURL(url);
     };
+  }
+// ============================================================
+  // EMAIL EXPORT — strip markdown from "HOW TO RESPOND" section
+  // and either copy clean text or download as .eml
+  // ============================================================
+  function markdownToPlainEmail(md) {
+    return md
+      .replace(/^>\s?/gm, '')                          // strip blockquote markers
+      .replace(/\*\*(.+?)\*\*/g, '$1')                 // strip bold
+      .replace(/\*(.+?)\*/g, '$1')                     // strip italic
+      .replace(/^#+\s+/gm, '')                         // strip markdown headers
+      .replace(/^-\s+/gm, '• ')                        // dash bullets to bullet char
+      .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '$1 ($2)')  // links to "text (url)"
+      .replace(/\n{3,}/g, '\n\n')                      // collapse extra blank lines
+      .trim();
+  }
+
+  function extractHowToRespond(guidance) {
+    // Pull only the "HOW TO RESPOND" section — skip Recommended Action, Reasoning, Watch Outs.
+    // Handles formats like "### 2. HOW TO RESPOND", "2. HOW TO RESPOND", "HOW TO RESPOND:"
+    const match = guidance.match(/(?:#{1,4}\s*)?\d?\.?\s*HOW TO RESPOND[:\s]*\n([\s\S]*?)(?=\n\s*(?:#{1,4}\s*)?\d?\.?\s*(?:REASONING|WATCH ?OUTS?|RECOMMENDED|$))/i);
+    if (match && match[1]) {
+      return markdownToPlainEmail(match[1]);
+    }
+    // Fallback — strip markdown from the whole thing
+    return markdownToPlainEmail(guidance);
+  }
+
+  function copyEmailVersion() {
+    const guidance = document.getElementById('edOutput').textContent;
+    if (!guidance) return;
+    const emailText = extractHowToRespond(guidance);
+    navigator.clipboard.writeText(emailText).then(() => {
+      const btn = document.getElementById('copyEdEmailBtn');
+      btn.textContent = '✅ Copied!';
+      setTimeout(() => btn.textContent = '📋 Copy Email Text', 2000);
+    });
+  }
+
+  function exportToEmail() {
+    const guidance = document.getElementById('edOutput').textContent;
+    if (!guidance) return;
+    const emailBody = extractHowToRespond(guidance);
+
+    // Try to extract a subject line — pull first line of original situation if it looks like a "Re:" or use a default
+    const situation = document.getElementById('edSituation').value || '';
+    let subject = 'Bedrock Association Management';
+    const reMatch = situation.match(/(?:^|\n)\s*(?:Subject|Re|RE):\s*(.+?)(?:\n|$)/i);
+    if (reMatch) {
+      subject = 'Re: ' + reMatch[1].trim();
+    } else if (currentCommunity) {
+      subject = `${currentCommunity} - Bedrock Association Management`;
+    }
+
+    // Try to extract recipient email from situation text
+    const emailMatch = situation.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
+    const toAddress = emailMatch ? emailMatch[0] : '';
+
+    // Build .eml file content
+    const emlContent =
+      `To: ${toAddress}\r\n` +
+      `Subject: ${subject}\r\n` +
+      `X-Unsent: 1\r\n` +
+      `Content-Type: text/plain; charset=utf-8\r\n` +
+      `\r\n` +
+      emailBody;
+
+    const blob = new Blob([emlContent], { type: 'message/rfc822' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    const safeSubject = subject.replace(/[^a-z0-9]/gi, '_').slice(0, 50);
+    a.href = url;
+    a.download = `${safeSubject}.eml`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    const btn = document.getElementById('exportEdEmailBtn');
+    btn.textContent = '✅ Downloaded!';
+    setTimeout(() => btn.textContent = '📧 Export to Email', 2000);
   }
 
   function escapeHtml(str) {
