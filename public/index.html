@@ -1912,28 +1912,57 @@ ${questionsPage}
     if (!guidance) return;
     const emailBody = extractHowToRespond(guidance);
 
-    // Try to extract a subject line — pull first line of original situation if it looks like a "Re:" or use a default
+    // Extract a clean subject line from the original situation
     const situation = document.getElementById('edSituation').value || '';
-    let subject = 'Bedrock Association Management';
+    let subject = currentCommunity ? `${currentCommunity} - Bedrock Association Management` : 'Bedrock Association Management';
+
     const reMatch = situation.match(/(?:^|\n)\s*(?:Subject|Re|RE):\s*(.+?)(?:\n|$)/i);
     if (reMatch) {
-      subject = 'Re: ' + reMatch[1].trim();
-    } else if (currentCommunity) {
-      subject = `${currentCommunity} - Bedrock Association Management`;
+      let extractedSubject = reMatch[1].trim();
+      // Strip ticket IDs like [#XN114152] from the front
+      extractedSubject = extractedSubject.replace(/^\[#?\w+\]\s*/i, '').trim();
+      // Strip "Message from [Community] - " prefix that Vantaca adds
+      extractedSubject = extractedSubject.replace(/^Message from .+? - /i, '').trim();
+      // If what's left is reasonable length, use it
+      if (extractedSubject.length > 0 && extractedSubject.length < 80) {
+        subject = 'Re: ' + extractedSubject;
+      }
     }
 
     // Try to extract recipient email from situation text
     const emailMatch = situation.match(/[\w.+-]+@[\w-]+\.[\w.-]+/);
     const toAddress = emailMatch ? emailMatch[0] : '';
 
-    // Build .eml file content
+    // Convert plain text email body to HTML — preserve paragraphs, bullets, line breaks
+    const htmlBody = emailBody
+      .split(/\n\n+/)                                    // split into paragraphs
+      .map(para => {
+        const lines = para.split('\n').map(line => {
+          // Convert "• " bullets to a styled bullet line
+          if (/^•\s/.test(line)) {
+            return `<div style="margin-left:20px;">${escapeHtml(line)}</div>`;
+          }
+          return escapeHtml(line);
+        }).join('<br>');
+        return `<p style="margin:0 0 12px 0;">${lines}</p>`;
+      })
+      .join('\n');
+
+    const fullHtml =
+      `<!DOCTYPE html><html><head><meta charset="utf-8"></head>` +
+      `<body style="font-family: Calibri, Arial, sans-serif; font-size: 11pt; color: #000; line-height: 1.5;">` +
+      htmlBody +
+      `</body></html>`;
+
+    // Build .eml file content as HTML
     const emlContent =
       `To: ${toAddress}\r\n` +
       `Subject: ${subject}\r\n` +
       `X-Unsent: 1\r\n` +
-      `Content-Type: text/plain; charset=utf-8\r\n` +
+      `MIME-Version: 1.0\r\n` +
+      `Content-Type: text/html; charset=utf-8\r\n` +
       `\r\n` +
-      emailBody;
+      fullHtml;
 
     const blob = new Blob([emlContent], { type: 'message/rfc822' });
     const url = URL.createObjectURL(blob);
