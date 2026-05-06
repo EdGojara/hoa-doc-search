@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
@@ -1266,7 +1267,21 @@ app.post('/run-comparison', async (req, res) => {
       }
     }
 
-// Build a query string from the proposal data so semantic retrieval
+
+    const docTypes = orderedProposals.map(p => p.document_type);
+    const dominantDocType = docTypes.sort((a, b) =>
+      docTypes.filter(v => v === a).length - docTypes.filter(v => v === b).length
+    ).pop();
+
+    const serviceCategories = orderedProposals.map(p => p.service_category);
+    const dominantCategory = serviceCategories.sort((a, b) =>
+      serviceCategories.filter(v => v === a).length - serviceCategories.filter(v => v === b).length
+    ).pop();
+
+    // Look up market value for the dominant scope category (used to estimate excluded items)
+    const marketValue = await lookupMarketValue(dominantCategory, community);
+
+   // Build a query string from the proposal data so semantic retrieval
     // can find playbook entries relevant to THIS comparison, not just
     // generic "vendor" entries.
     const playbookQuery = [
@@ -1283,19 +1298,7 @@ app.post('/run-comparison', async (req, res) => {
     const matchedPlaybookEntries = await getRelevantPlaybook(playbookQuery, { matchCount: 8 });
     const playbookContext = formatPlaybookContext(matchedPlaybookEntries, {
       heading: "ED'S VENDOR JUDGMENT (PLAYBOOK)"
-    });
-    const docTypes = orderedProposals.map(p => p.document_type);
-    const dominantDocType = docTypes.sort((a, b) =>
-      docTypes.filter(v => v === a).length - docTypes.filter(v => v === b).length
-    ).pop();
-
-    const serviceCategories = orderedProposals.map(p => p.service_category);
-    const dominantCategory = serviceCategories.sort((a, b) =>
-      serviceCategories.filter(v => v === a).length - serviceCategories.filter(v => v === b).length
-    ).pop();
-
-    // Look up market value for the dominant scope category (used to estimate excluded items)
-    const marketValue = await lookupMarketValue(dominantCategory, community);
+    }); 
 
     // Build the proposal payload for the prompt — include normalization data
     const proposalsForPrompt = orderedProposals.map((p, i) => ({
