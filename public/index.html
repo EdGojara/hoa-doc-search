@@ -623,961 +623,29 @@
       <div class="output-box placeholder" id="mailingOutput" style="display:flex; align-items:center; justify-content:center; text-align:center; color:#aaa;">
         Upload your Vantaca PDF and click Generate Mailing.
       </div>
-    </div>
-  </div>
-</div>
-
-<script>
-  const communitySelect = document.getElementById('communitySelect');
-  const chat = document.getElementById('chat');
-  const chatInput = document.getElementById('chatInput');
-  const sendBtn = document.getElementById('sendBtn');
-  const suggestions = document.getElementById('suggestions');
-  let conversationHistory = [];
-  let currentCommunity = '';
-  let selectedImages = [];
-
-  // Vendor workflow state
-  let vwState = {
-    path: 'A',
-    bidRequestId: null,
-    bidRequestText: null,
-    proposals: [],          // {id, vendorName, total, filename, isOriginating}
-    comparisonId: null,
-    comparisonAnalysis: null
-  };
-
-  function switchTab(tab) {
-    document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-    document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
-  }
-
-  function onCommunityChange() {
-    currentCommunity = communitySelect.value;
-    conversationHistory = [];
-    chat.innerHTML = '';
-    if (!currentCommunity) {
-      chat.innerHTML = '<div class="no-community"><span>🏘️</span>Select a community above to get started.</div>';
-      chatInput.disabled = true;
-      chatInput.placeholder = 'Select a community first...';
-      sendBtn.disabled = true;
-      suggestions.style.display = 'none';
-      return;
-    }
-    chat.innerHTML = `<div class="welcome"><h2>${currentCommunity}</h2><p>Ask me anything about this community's governing documents.</p></div>`;
-    chatInput.disabled = false;
-    chatInput.placeholder = 'Ask a question...';
-    sendBtn.disabled = false;
-    suggestions.style.display = 'flex';
-    chatInput.focus();
-  }
-
-  function autoResize(el) {
-    el.style.height = 'auto';
-    el.style.height = Math.min(el.scrollHeight, 120) + 'px';
-  }
-
-  function handleKey(e) {
-    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); }
-  }
-
-  function sendSuggestion(btn) {
-    chatInput.value = btn.textContent;
-    suggestions.style.display = 'none';
-    sendMessage();
-  }
-
-  function addMessage(role, text) {
-    const div = document.createElement('div');
-    div.className = `message ${role}`;
-    const avatar = role === 'assistant' ? '🏠' : '👤';
-    div.innerHTML = `<div class="avatar">${avatar}</div><div class="bubble">${formatText(text)}</div>`;
-    chat.appendChild(div);
-    chat.scrollTop = chat.scrollHeight;
-  }
-
-  function formatText(text) {
-    return text
-      .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
-      .replace(/## (.*?)\n/g, '<strong style="font-size:15px">$1</strong><br>')
-      .replace(/\* (.*?)\n/g, '• $1<br>')
-      .replace(/\n\n/g, '<br><br>')
-      .replace(/\n/g, '<br>');
-  }
-
-  function showTyping() {
-    const div = document.createElement('div');
-    div.className = 'message assistant';
-    div.id = 'typing';
-    div.innerHTML = `<div class="avatar">🏠</div><div class="bubble"><div class="typing"><span></span><span></span><span></span></div></div>`;
-    chat.appendChild(div);
-    chat.scrollTop = chat.scrollHeight;
-  }
-
-  function removeTyping() {
-    const t = document.getElementById('typing');
-    if (t) t.remove();
-  }
-
-  async function sendMessage() {
-    const question = chatInput.value.trim();
-    if (!question || !currentCommunity) return;
-    suggestions.style.display = 'none';
-    chatInput.value = '';
-    chatInput.style.height = 'auto';
-    sendBtn.disabled = true;
-    addMessage('user', question);
-    conversationHistory.push({ role: 'user', content: question });
-    showTyping();
-    try {
-      const res = await fetch('/ask', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question, community: currentCommunity, history: conversationHistory })
-      });
-      const data = await res.json();
-      removeTyping();
-      addMessage('assistant', data.answer);
-      conversationHistory.push({ role: 'assistant', content: data.answer });
-    } catch (err) {
-      removeTyping();
-      addMessage('assistant', 'Sorry, something went wrong. Please try again.');
-    }
-    sendBtn.disabled = false;
-    chatInput.focus();
-  }
-
-  async function draftResponse() {
-    const email = document.getElementById('incomingEmail').value.trim();
-    if (!email) { alert('Please paste a homeowner email first.'); return; }
-    if (!currentCommunity) { alert('Please select a community first.'); return; }
-    const draftBtn = document.getElementById('draftBtn');
-    const draftOutput = document.getElementById('draftOutput');
-    const copyBtn = document.getElementById('copyEmailBtn');
-    draftBtn.disabled = true;
-    draftBtn.textContent = '⏳ Drafting...';
-    draftOutput.className = 'output-box';
-    draftOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
-    try {
-      const res = await fetch('/draft', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, community: currentCommunity, additionalContext: document.getElementById('draftContext').value })
-      });
-      const data = await res.json();
-      draftOutput.className = 'output-box';
-      draftOutput.textContent = data.draft;
-      copyBtn.style.display = 'block';
-    } catch (err) {
-      draftOutput.textContent = 'Something went wrong. Please try again.';
-    }
-    draftBtn.disabled = false;
-    draftBtn.textContent = '✨ Draft Email Response';
-  }
-
-  function handlePdfSelect(input) {
-    if (input.files && input.files[0]) {
-      document.getElementById('pdfLabel').textContent = `✅ ${input.files[0].name}`;
-      document.getElementById('pdfUploadArea').classList.add('has-file');
-    }
-  }
-
-  function handleImageSelect(input) {
-    if (!input.files || input.files.length === 0) return;
-    const previews = document.getElementById('imagePreviews');
-    previews.innerHTML = '';
-    selectedImages = [];
-    const count = Math.min(input.files.length, 5);
-    document.getElementById('imgLabel').textContent = `✅ ${count} image(s) selected`;
-    document.getElementById('imgUploadArea').classList.add('has-file');
-    for (let i = 0; i < count; i++) {
-      const file = input.files[i];
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        selectedImages.push({ base64: e.target.result.split(',')[1], type: file.type });
-        const img = document.createElement('img');
-        img.src = e.target.result;
-        img.className = 'image-preview';
-        previews.appendChild(img);
-      };
-      reader.readAsDataURL(file);
-    }
-  }
-
-  async function reviewACC() {
-    const details = document.getElementById('accDetails').value.trim();
-    const pdfFile = document.getElementById('accPdf').files[0];
-    if (!details && !pdfFile) { alert('Please enter application details or upload a PDF.'); return; }
-    if (!currentCommunity) { alert('Please select a community first.'); return; }
-    const reviewBtn = document.getElementById('reviewBtn');
-    const accOutput = document.getElementById('accOutput');
-    const copyBtn = document.getElementById('copyAccBtn');
-    reviewBtn.disabled = true;
-    reviewBtn.textContent = '⏳ Reviewing...';
-    accOutput.className = 'output-box';
-    accOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
-    try {
-      const formData = new FormData();
-      formData.append('community', currentCommunity);
-      formData.append('additionalContext', document.getElementById('accContext').value);
-      formData.append('decision', document.getElementById('accDecision').value);
-      formData.append('conditions', document.getElementById('accConditions').value);
-      if (details) formData.append('details', details);
-      if (pdfFile) formData.append('pdf', pdfFile);
-      const res = await fetch('/acc-review', { method: 'POST', body: formData });
-      const data = await res.json();
-      accOutput.className = 'output-box';
-      accOutput.textContent = data.review || data.error;
-      copyBtn.style.display = 'block';
-      document.getElementById('printAccBtn').style.display = 'block';
-    } catch (err) {
-      accOutput.textContent = 'Something went wrong. Please try again.';
-    }
-    reviewBtn.disabled = false;
-    reviewBtn.textContent = '🔍 Review Application';
-  }
-
-  async function askEd() {
-    const situation = document.getElementById('edSituation').value.trim();
-    if (!situation) { alert('Please describe the situation first.'); return; }
-    const btn = document.getElementById('askEdBtn');
-    const output = document.getElementById('edOutput');
-    const copyBtn = document.getElementById('copyEdBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Getting guidance...';
-    output.className = 'output-box';
-    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
-    try {
-      const res = await fetch('/ask-ed', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ situation, community: currentCommunity })
-      });
-      const data = await res.json();
-      output.className = 'output-box';
-      output.textContent = data.guidance;
-      copyBtn.style.display = 'block';
-    } catch (err) {
-      output.textContent = 'Something went wrong. Please try again.';
-    }
-    btn.disabled = false;
-    btn.textContent = '🧠 Get Guidance';
-  }
-
-  async function reviewDraft() {
-    const draft = document.getElementById('draftToReview').value.trim();
-    if (!draft) { alert('Please paste a draft first.'); return; }
-    const draftType = document.getElementById('draftTypeSelect').value;
-    const btn = document.getElementById('reviewDraftBtn');
-    const output = document.getElementById('reviewOutput');
-    const copyBtn = document.getElementById('copyReviewBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Reviewing...';
-    output.className = 'output-box';
-    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
-    try {
-      const res = await fetch('/review-draft', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ draft, draftType, community: currentCommunity })
-      });
-      const data = await res.json();
-      output.className = 'output-box';
-      output.textContent = data.review;
-      copyBtn.style.display = 'block';
-    } catch (err) {
-      output.textContent = 'Something went wrong. Please try again.';
-    }
-    btn.disabled = false;
-    btn.textContent = '✏️ Review My Draft';
-  }
-
-  function unlockAdmin() {
-    const pwd = document.getElementById('adminPassword').value;
-    if (pwd === 'Answer$911') {
-      document.getElementById('adminLockSection').style.display = 'none';
-      document.getElementById('adminPanel').style.display = 'block';
-      loadPlaybook();
-    } else {
-      alert('Incorrect password.');
-      document.getElementById('adminPassword').value = '';
-    }
-  }
-
-  async function addToPlaybook() {
-    const situation = document.getElementById('playbookSituation').value.trim();
-    const response = document.getElementById('playbookResponse').value.trim();
-    const reasoning = document.getElementById('playbookReasoning').value.trim();
-    const category = document.getElementById('playbookCategory').value;
-    if (!situation || !response) { alert('Please fill in situation and response at minimum.'); return; }
-    try {
-      const res = await fetch('/playbook', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ situation, response, reasoning, category })
-      });
-      const data = await res.json();
-      if (data.success) {
-        document.getElementById('playbookSituation').value = '';
-        document.getElementById('playbookResponse').value = '';
-        document.getElementById('playbookReasoning').value = '';
-        document.getElementById('playbookCategory').value = '';
-        loadPlaybook();
-        alert('Added to playbook!');
-      }
-    } catch (err) {
-      alert('Error saving to playbook.');
-    }
-  }
-
-  async function loadPlaybook() {
-    try {
-      const res = await fetch('/playbook');
-      const data = await res.json();
-      const list = document.getElementById('playbookList');
-      if (!data.entries?.length) {
-        list.innerHTML = '<p style="font-size:13px; color:#888;">No playbook entries yet.</p>';
-        return;
-      }
-      list.innerHTML = data.entries.map(e => `
-        <div class="playbook-entry">
-          <div class="category">${e.category || 'General'}</div>
-          <div class="situation">${e.situation}</div>
-          <div class="response-preview">${e.response?.slice(0, 150)}${e.response?.length > 150 ? '...' : ''}</div>
-        </div>
-      `).join('');
-    } catch (err) {
-      document.getElementById('playbookList').innerHTML = '<p style="color:red; font-size:13px;">Error loading playbook.</p>';
-    }
-  }
-
-  function copyText(elementId) {
-    const text = document.getElementById(elementId).textContent;
-    navigator.clipboard.writeText(text).then(() => {
-      const btnMap = {
-        draftOutput: 'copyEmailBtn',
-        accOutput: 'copyAccBtn',
-        edOutput: 'copyEdBtn',
-        reviewOutput: 'copyReviewBtn',
-        agendaOutput: 'copyAgendaBtn'
-      };
-      const btn = document.getElementById(btnMap[elementId]);
-      if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
-    });
-  }
-
-  async function generateAgenda() {
-    const community = communitySelect.value;
-    if (!community) { alert('Please select a community first.'); return; }
-    const meetingType = document.getElementById('meetingType').value;
-    const date = document.getElementById('meetingDate').value;
-    const time = document.getElementById('meetingTime').value;
-    const location = document.getElementById('meetingLocation').value;
-    if (!date || !time || !location) { alert('Please fill in the date, time, and location.'); return; }
-    const ratifications = document.getElementById('agendaRatifications').value;
-    const newBusiness = document.getElementById('agendaNewBusiness').value;
-    const businessInProgress = document.getElementById('agendaBusinessInProgress').value;
-    const committees = document.getElementById('agendaCommittees').value;
-    const nextMeeting = document.getElementById('nextMeetingDate').value;
-    const btn = document.getElementById('generateAgendaBtn');
-    const output = document.getElementById('agendaOutput');
-    const copyBtn = document.getElementById('copyAgendaBtn');
-    const printBtn = document.getElementById('printAgendaBtn');
-    btn.disabled = true;
-    btn.textContent = '⏳ Generating...';
-    output.className = 'output-box';
-    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
-    printBtn.style.display = 'none';
-    try {
-      const res = await fetch('/generate-agenda', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ community, meetingType, date, time, location, newBusiness, businessInProgress, committees, ratifications, nextMeeting })
-      });
-      const data = await res.json();
-      output.className = 'output-box';
-      output.textContent = data.agenda;
-      copyBtn.style.display = 'block';
-      printBtn.style.display = 'block';
-    } catch (err) {
-      output.textContent = 'Something went wrong. Please try again.';
-    }
-    btn.disabled = false;
-    btn.textContent = '📋 Generate Agenda';
-  }
-
-  function printAgenda() {
-    const content = document.getElementById('agendaOutput').textContent;
-    const community = communitySelect.value || 'HOA';
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>${community} Meeting Agenda</title><style>body{font-family:Arial,sans-serif;font-size:12pt;margin:1in;line-height:1.8;color:#000;}pre{font-family:Arial,sans-serif;font-size:12pt;white-space:pre-wrap;line-height:1.8;}@media print{body{margin:0.75in;}}</style></head><body><pre>${content}</pre></body></html>`);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-  }
-
-  function printACC() {
-    const content = document.getElementById('accOutput').textContent;
-    const community = communitySelect.value || 'HOA';
-    const printWindow = window.open('', '_blank');
-    printWindow.document.write(`<!DOCTYPE html><html><head><title>${community} ACC Letter</title><style>body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}@media print{body{margin:0.75in;}}</style></head><body><pre style="white-space:pre-wrap;">${content}</pre></body></html>`);
-    printWindow.document.close();
-    printWindow.focus();
-    printWindow.print();
-  }
-
-  function handleMailingPdfSelect(input) {
-    if (input.files && input.files[0]) {
-      document.getElementById('mailingPdfLabel').textContent = `✅ ${input.files[0].name}`;
-      document.getElementById('mailingUploadArea').classList.add('has-file');
-    }
-  }
-
-  async function generateMailing(force = false) {
-    const pdfFile = document.getElementById('mailingPdf').files[0];
-    const community = communitySelect.value;
-    const expectedCount = document.getElementById('mailingExpectedCount').value;
-    if (!pdfFile) { alert('Please upload a mailing address PDF from Vantaca.'); return; }
-    if (!community) { alert('Please select a community first.'); return; }
-    const btn = document.getElementById('generateMailingBtn');
-    const output = document.getElementById('mailingOutput');
-    const warning = document.getElementById('mailingWarning');
-    btn.disabled = true;
-    btn.textContent = '⏳ Processing...';
-    output.className = 'output-box';
-    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    warning.style.display = 'none';
-    try {
-      const formData = new FormData();
-      formData.append('pdf', pdfFile);
-      formData.append('community', community);
-      if (expectedCount) formData.append('expectedCount', expectedCount);
-      if (force) formData.append('force', 'true');
-      const res = await fetch('/generate-mailing', { method: 'POST', body: formData });
-      const contentType = res.headers.get('Content-Type');
-      if (contentType && contentType.includes('wordprocessingml')) {
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'Annual_Mailing.docx';
-        a.href = url;
-        a.download = filename;
-        a.click();
-        URL.revokeObjectURL(url);
-        output.className = 'output-box';
-        output.innerHTML = `<div style="text-align:center; padding:20px;"><div style="font-size:40px; margin-bottom:12px;">✅</div><div style="font-size:16px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Mailing Document Generated</div><div style="font-size:13px; color:#888; margin-top:8px;">Your download should start automatically.</div></div>`;
-      } else {
-        const data = await res.json();
-        if (data.requiresConfirmation) {
-          document.getElementById('mailingWarningText').textContent = data.message;
-          warning.style.display = 'block';
-          output.className = 'output-box placeholder';
-          output.innerHTML = 'Resolve the count mismatch above before generating.';
-        } else {
-          output.className = 'output-box';
-          output.textContent = data.error || 'Something went wrong. Please try again.';
-        }
-      }
-    } catch (err) {
-      output.className = 'output-box';
-      output.textContent = 'Something went wrong. Please try again.';
-    }
-    btn.disabled = false;
-    btn.textContent = '📬 Generate Mailing';
-  }
-
-  function generateMailingForce() {
-    document.getElementById('mailingWarning').style.display = 'none';
-    generateMailing(true);
-  }
-
-  // ===========================================================
-  // VENDOR WORKFLOW LOGIC
-  // ===========================================================
-
-  function setPath(p) {
-    vwState.path = p;
-    document.getElementById('pathBtnA').classList.toggle('active', p === 'A');
-    document.getElementById('pathBtnB').classList.toggle('active', p === 'B');
-    document.getElementById('pathBtnC').classList.toggle('active', p === 'C');
-    document.getElementById('pathAForm').style.display = p === 'A' ? 'block' : 'none';
-    document.getElementById('pathBForm').style.display = p === 'B' ? 'block' : 'none';
-    document.getElementById('pathCForm').style.display = p === 'C' ? 'block' : 'none';
-    if (p === 'C') {
-      // Path C: enable step 2 immediately
-      vwMarkStepComplete(1);
-    }
-  }
-
-  function vwMarkStepComplete(stepNum) {
-    document.getElementById(`vwStep${stepNum}Num`).classList.remove('disabled');
-    document.getElementById(`vwStep${stepNum}Num`).classList.add('complete');
-    if (stepNum === 1) {
-      document.getElementById('vwStep2Num').classList.remove('disabled');
-    }
-    if (stepNum === 2 && vwState.proposals.length >= 2) {
-      document.getElementById('vwStep3Num').classList.remove('disabled');
-      document.getElementById('vwRunComparisonBtn').disabled = false;
-    }
-  }
-
-  function vwShowStatus(elId, msg, type = 'info') {
-    const el = document.getElementById(elId);
-    const cls = type === 'error' ? 'vw-error-msg' : type === 'success' ? 'vw-success-msg' : 'vw-status-msg';
-    el.innerHTML = `<div class="${cls}">${msg}</div>`;
-  }
-
-  function vwClearStatus(elId) {
-    document.getElementById(elId).innerHTML = '';
-  }
-
-  async function generateRFPPathA() {
-    if (!currentCommunity) { alert('Please select a community first.'); return; }
-    const vendorType = document.getElementById('vwVendorTypeA').value;
-    const contractTerm = document.getElementById('vwContractTermA').value;
-    const bidDeadline = document.getElementById('vwBidDeadlineA').value;
-    const manualScope = document.getElementById('vwManualScopeA').value.trim();
-    const additionalReq = document.getElementById('vwAdditionalReqA').value.trim();
-    const contractFile = document.getElementById('vwContractA').files[0];
-
-    if (!manualScope && !contractFile) {
-      alert('Please enter manual scope or upload an existing contract.');
-      return;
-    }
-
-    vwShowStatus('vwStep1Status', '<span class="vw-spinner"></span> Generating RFP...');
-
-    try {
-      const formData = new FormData();
-      formData.append('community', currentCommunity);
-      formData.append('vendorType', vendorType);
-      formData.append('contractTerm', contractTerm);
-      if (bidDeadline) formData.append('bidDeadline', bidDeadline);
-      if (manualScope) formData.append('manualScope', manualScope);
-      if (additionalReq) formData.append('additionalRequirements', additionalReq);
-      if (contractFile) formData.append('contract', contractFile);
-
-      const res = await fetch('/generate-bid', { method: 'POST', body: formData });
-      const data = await res.json();
-
-      if (data.error) {
-        vwShowStatus('vwStep1Status', 'Error: ' + data.error, 'error');
-        return;
-      }
-
-      vwState.bidRequestId = data.bidRequestId;
-      vwState.bidRequestText = data.bidRequest;
-      vwShowStatus('vwStep1Status', `✓ RFP generated and saved. <span class="vw-bid-pill">Bid Request ID: ${data.bidRequestId?.slice(0, 8) || 'pending'}</span>`, 'success');
-      document.getElementById('vwStep1Output').innerHTML = `
-        <div class="vw-bid-output">${escapeHtml(data.bidRequest)}</div>
-        <div class="vw-actions-row">
-          <button class="secondary-btn" onclick="copyVwBidRequest()">📋 Copy RFP</button>
-          <button class="secondary-btn" onclick="printVwBidRequest()">🖨️ Print RFP</button>
-        </div>
-      `;
-      vwMarkStepComplete(1);
-    } catch (err) {
-      vwShowStatus('vwStep1Status', 'Error: ' + err.message, 'error');
-    }
-  }
-
-  async function generateRFPPathB() {
-    if (!currentCommunity) { alert('Please select a community first.'); return; }
-    const sampleFile = document.getElementById('vwSampleProposalB').files[0];
-    if (!sampleFile) { alert('Please upload a sample vendor proposal first.'); return; }
-
-    const vendorType = document.getElementById('vwVendorTypeB').value;
-    const contractTerm = document.getElementById('vwContractTermB').value;
-    const bidDeadline = document.getElementById('vwBidDeadlineB').value;
-    const additionalReq = document.getElementById('vwAdditionalReqB').value.trim();
-
-    vwShowStatus('vwStep1Status', '<span class="vw-spinner"></span> Step 1 of 2: Extracting scope from sample proposal...');
-
-    try {
-      // First: upload the proposal to extract its scope
-      const uploadFD = new FormData();
-      uploadFD.append('proposal', sampleFile);
-      uploadFD.append('community', currentCommunity);
-
-      const uploadRes = await fetch('/upload-proposal', { method: 'POST', body: uploadFD });
-      const uploadData = await uploadRes.json();
-
-      if (uploadData.error) {
-        vwShowStatus('vwStep1Status', 'Error extracting proposal: ' + uploadData.error, 'error');
-        return;
-      }
-
-      const originatingProposalId = uploadData.proposal.id;
-      const originatingVendorName = uploadData.summary?.vendor || 'Unknown Vendor';
-      const originatingTotal = uploadData.summary?.total;
-
-      vwShowStatus('vwStep1Status', '<span class="vw-spinner"></span> Step 2 of 2: Generating RFP from extracted scope (vendor identity stripped)...');
-
-      // Second: generate the RFP from the proposal
-      const rfpRes = await fetch('/generate-rfp-from-proposal', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          proposalId: originatingProposalId,
-          community: currentCommunity,
-          vendorType,
-          contractTerm,
-          bidDeadline: bidDeadline || null,
-          additionalRequirements: additionalReq
-        })
-      });
-      const rfpData = await rfpRes.json();
-
-      if (rfpData.error) {
-        vwShowStatus('vwStep1Status', 'Error generating RFP: ' + rfpData.error, 'error');
-        return;
-      }
-
-      vwState.bidRequestId = rfpData.bidRequestId;
-      vwState.bidRequestText = rfpData.bidRequest;
-
-      // Auto-add the originating proposal to the proposals list
-      vwState.proposals.push({
-        id: originatingProposalId,
-        vendorName: originatingVendorName,
-        total: originatingTotal,
-        filename: sampleFile.name,
-        isOriginating: true
-      });
-      renderProposalsList();
-
-      vwShowStatus('vwStep1Status',
-        `✓ RFP generated. Originating proposal from <strong>${escapeHtml(originatingVendorName)}</strong> auto-added to comparison.`,
-        'success'
-      );
-      document.getElementById('vwStep1Output').innerHTML = `
-        <div class="vw-bid-output">${escapeHtml(rfpData.bidRequest)}</div>
-        <div class="vw-actions-row">
-          <button class="secondary-btn" onclick="copyVwBidRequest()">📋 Copy RFP</button>
-          <button class="secondary-btn" onclick="printVwBidRequest()">🖨️ Print RFP</button>
-        </div>
-      `;
-      vwMarkStepComplete(1);
-    } catch (err) {
-      vwShowStatus('vwStep1Status', 'Error: ' + err.message, 'error');
-    }
-  }
-
-  function copyVwBidRequest() {
-    if (!vwState.bidRequestText) return;
-    navigator.clipboard.writeText(vwState.bidRequestText);
-  }
-
-  function printVwBidRequest() {
-    if (!vwState.bidRequestText) return;
-    const community = currentCommunity || 'HOA';
-    const w = window.open('', '_blank');
-    w.document.write(`<!DOCTYPE html><html><head><title>${community} Bid Request</title><style>body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}@media print{body{margin:0.75in;}}</style></head><body><pre style="white-space:pre-wrap;">${escapeHtml(vwState.bidRequestText)}</pre></body></html>`);
-    w.document.close();
-    w.print();
-  }
-
-  async function handleProposalUpload(input) {
-    if (!input.files || !input.files[0]) return;
-    if (vwState.proposals.length >= 4) {
-      alert('Maximum 4 proposals per comparison.');
-      input.value = '';
-      return;
-    }
-    if (!currentCommunity) {
-      alert('Please select a community first.');
-      input.value = '';
-      return;
-    }
-
-    const file = input.files[0];
-    input.value = ''; // Allow re-selecting same file later
-
-    vwShowStatus('vwStep2Status', `<span class="vw-spinner"></span> Extracting data from ${escapeHtml(file.name)}...`);
-
-    try {
-      const fd = new FormData();
-      fd.append('proposal', file);
-      fd.append('community', currentCommunity);
-      if (vwState.bidRequestId) fd.append('bidRequestId', vwState.bidRequestId);
-
-      const res = await fetch('/upload-proposal', { method: 'POST', body: fd });
-      const data = await res.json();
-
-      if (data.error) {
-        vwShowStatus('vwStep2Status', 'Error: ' + data.error, 'error');
-        return;
-      }
-
-      vwState.proposals.push({
-        id: data.proposal.id,
-        vendorName: data.summary?.vendor || 'Unknown Vendor',
-        total: data.summary?.total,
-        filename: file.name,
-        isOriginating: false
-      });
-
-      renderProposalsList();
-      vwShowStatus('vwStep2Status',
-        `✓ Extracted: <strong>${escapeHtml(data.summary?.vendor || 'Unknown')}</strong> — ${data.summary?.total ? '$' + data.summary.total.toLocaleString() : 'no total'}`,
-        'success'
-      );
-      vwMarkStepComplete(2);
-    } catch (err) {
-      vwShowStatus('vwStep2Status', 'Error: ' + err.message, 'error');
-    }
-  }
-
-  function renderProposalsList() {
-    const list = document.getElementById('vwProposalsList');
-    if (vwState.proposals.length === 0) {
-      list.innerHTML = '';
-      return;
-    }
-    list.innerHTML = vwState.proposals.map((p, idx) => `
-      <div class="vw-proposal-card ${p.isOriginating ? 'originating' : ''}">
-        <div class="vw-proposal-icon">${p.vendorName.charAt(0).toUpperCase()}</div>
-        <div class="vw-proposal-meta">
-          <div class="vw-proposal-vendor">${escapeHtml(p.vendorName)}${p.isOriginating ? ' <span style="font-size:11px; color:#996; font-weight:normal;">(originating proposal)</span>' : ''}</div>
-          <div class="vw-proposal-detail">${escapeHtml(p.filename)}</div>
-        </div>
-        <div class="vw-proposal-amount">${p.total ? '$' + p.total.toLocaleString() : '—'}</div>
-        <button class="vw-proposal-remove" onclick="removeProposal(${idx})" title="Remove">×</button>
-      </div>
-    `).join('');
-
-    // Update step 3 button state
-    if (vwState.proposals.length >= 2) {
-      document.getElementById('vwStep3Num').classList.remove('disabled');
-      document.getElementById('vwRunComparisonBtn').disabled = false;
-    } else {
-      document.getElementById('vwStep3Num').classList.add('disabled');
-      document.getElementById('vwRunComparisonBtn').disabled = true;
-    }
-  }
-
-  function removeProposal(idx) {
-    vwState.proposals.splice(idx, 1);
-    renderProposalsList();
-  }
-
-  async function runComparison() {
-    if (vwState.proposals.length < 2) {
-      alert('Need at least 2 proposals to compare.');
-      return;
-    }
-
-    const btn = document.getElementById('vwRunComparisonBtn');
-    btn.disabled = true;
-    btn.innerHTML = '<span class="vw-spinner"></span> Analyzing...';
-    vwShowStatus('vwStep3Status', '<span class="vw-spinner"></span> Running apples-to-apples comparison with Ed\'s playbook...');
-
-    try {
-      const res = await fetch('/run-comparison', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          proposalIds: vwState.proposals.map(p => p.id),
-          bidRequestId: vwState.bidRequestId,
-          community: currentCommunity
-        })
-      });
-      const data = await res.json();
-
-      if (data.error) {
-        vwShowStatus('vwStep3Status', 'Error: ' + data.error, 'error');
-        btn.disabled = false;
-        btn.textContent = '⚡ Run Comparison';
-        return;
-      }
-
-      vwState.comparisonId = data.comparisonId;
-      vwState.comparisonAnalysis = data.analysis;
-      vwClearStatus('vwStep3Status');
-      vwMarkStepComplete(3);
-      renderComparison(data.analysis);
-
-      btn.disabled = false;
-      btn.textContent = '⚡ Re-run Comparison';
-    } catch (err) {
-      vwShowStatus('vwStep3Status', 'Error: ' + err.message, 'error');
-      btn.disabled = false;
-      btn.textContent = '⚡ Run Comparison';
-    }
-  }
-
-  function renderComparison(analysis) {
-    const container = document.getElementById('vwComparisonResult');
-    container.style.display = 'block';
-
-    const recIdx = analysis.recommendation?.recommended_proposal_index;
-    const recVendor = analysis.recommendation?.vendor_name || 'No recommendation';
-    const recRationale = analysis.recommendation?.one_sentence_rationale || '';
-
-    // Build comparison table
-    const proposalCount = vwState.proposals.length;
-    const proposalNames = vwState.proposals.map(p => p.vendorName);
-
-    let tableRows = '';
-    (analysis.comparison_table?.common_scope_items || []).forEach(item => {
-      const cells = [];
-      for (let i = 0; i < proposalCount; i++) {
-        const amt = item.proposal_amounts?.find(a => a.proposal_index === i);
-        if (amt && amt.amount != null) {
-          cells.push(`<td class="right">$${Number(amt.amount).toLocaleString()}</td>`);
-        } else {
-          cells.push(`<td class="right missing">Not included</td>`);
-        }
-      }
-      tableRows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
-    });
-
-    const subtotals = analysis.scope_analysis?.comparable_subtotals || [];
-    if (subtotals.length) {
-      const cells = [];
-      for (let i = 0; i < proposalCount; i++) {
-        const sub = subtotals.find(s => s.proposal_index === i);
-        cells.push(`<td class="right">${sub?.subtotal ? '$' + Number(sub.subtotal).toLocaleString() : '—'}</td>`);
-      }
-      tableRows += `<tr class="total-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
-    }
-
-    const totalsCells = vwState.proposals.map(p =>
-      `<td class="right">${p.total ? '$' + p.total.toLocaleString() : '—'}</td>`
-    );
-    tableRows += `<tr class="grand-total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
-
-    // ── Tier suggestion logic ───────────────────────────────────────────
-    const tierRec = suggestTier(analysis);
-    const tierLabel = { quick: 'Quick (1 page)', standard: 'Standard (3-4 pages)', full: 'Full (10 pages)' }[tierRec.tier];
-    const tierIcon = { quick: '📄', standard: '📋', full: '📊' }[tierRec.tier];
-
-    container.innerHTML = `
-      <div class="vw-comparison">
-        <div class="vw-comparison-header">
-          <div>
-            <div class="vw-comparison-title">Comparison Analysis</div>
-            <div style="font-size:13px; color:#888; margin-top:4px;">${currentCommunity || ''} · ${proposalCount} vendors</div>
-          </div>
-        </div>
-
-        <div class="vw-recommendation-box">
-          <div class="vw-recommendation-label">RECOMMENDATION</div>
-          <div class="vw-recommendation-vendor">${escapeHtml(recVendor)}</div>
-          <div class="vw-recommendation-rationale">${escapeHtml(recRationale)}</div>
-        </div>
-
-        <div class="vw-section-title">EXECUTIVE SUMMARY</div>
-        <p style="font-size:14px; line-height:1.7; color:#333;">${escapeHtml(analysis.executive_summary || '')}</p>
-
-        <div class="vw-section-title">APPLES-TO-APPLES COMPARISON</div>
-        <table class="vw-comp-table">
-          <thead>
-            <tr>
-              <th>Scope item</th>
-              ${proposalNames.map(n => `<th class="right">${escapeHtml(n)}</th>`).join('')}
-            </tr>
-          </thead>
-          <tbody>${tableRows}</tbody>
-        </table>
-
-        ${analysis.scope_analysis?.scope_mismatches?.length ? `
-          <div class="vw-section-title">SCOPE ANALYSIS</div>
-          <ul style="font-size:13px; line-height:1.7; color:#333; padding-left:20px;">
-            ${analysis.scope_analysis.scope_mismatches.map(m => `<li>${escapeHtml(m)}</li>`).join('')}
-          </ul>
-        ` : ''}
-
-        <div style="margin-top: 28px; padding: 20px 24px; background: #f7f9fc; border-radius: 12px; border: 1px solid #e3e8ef;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
-            <div>
-              <div style="font-size: 11px; color: #1a3a5c; letter-spacing: 0.08em; font-weight: 600;">SUGGESTED PACKET FORMAT</div>
-              <div style="font-size: 17px; font-weight: 600; color: #1a1a1a; margin-top: 4px;">${tierIcon}&nbsp;&nbsp;${tierLabel}</div>
-              <div style="font-size: 13px; color: #555; margin-top: 4px;">${escapeHtml(tierRec.rationale)}</div>
-            </div>
-          </div>
-          <div style="display: flex; gap: 8px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid #d8e2ed;">
-            <button class="action-btn" onclick="printPacket('${tierRec.tier}')" style="padding: 10px 20px;">
-              ${tierIcon}&nbsp;&nbsp;Generate ${tierLabel.split(' ')[0]} packet
-            </button>
-            ${tierRec.tier !== 'quick' ? `<button class="secondary-btn" onclick="printPacket('quick')">Use Quick instead</button>` : ''}
-            ${tierRec.tier !== 'standard' ? `<button class="secondary-btn" onclick="printPacket('standard')">Use Standard instead</button>` : ''}
-            ${tierRec.tier !== 'full' ? `<button class="secondary-btn" onclick="printPacket('full')">Use Full instead</button>` : ''}
-          </div>
-        </div>
-      </div>
-    `;
-  }
-
-  // ── Tier suggestion logic ───────────────────────────────────────────────
-  function suggestTier(analysis) {
-    const proposals = vwState.proposals;
-    const totals = proposals.map(p => p.total || 0);
-    const maxTotal = Math.max(...totals);
-    const hasServiceContract = proposals.some(p => {
-      const ed = analysis.vendor_profiles?.find((_, i) => i === proposals.indexOf(p));
-      return false; // we don't have document_type here directly; rely on totals + analysis
-    });
-    // Use the analysis's document_type and service contract signals
-    const docType = analysis.scope_analysis?.are_truly_comparable === false ? 'mixed' : null;
-    // Best signal: check if any proposal is over $50K, or service-contract-y by checking analysis's vendor_profiles for monthly mentions
-    const isLikelyServiceContract = (analysis.executive_summary || '').match(/monthly|recurring|annual contract|swim season|month-to-month/i);
-    const flagCount = (analysis.scope_analysis?.scope_mismatches || []).length;
-
-    // Full tier: any proposal over $50K, OR service contract over $25K/year
-    if (maxTotal >= 50000 || (isLikelyServiceContract && maxTotal >= 25000)) {
-      return {
-        tier: 'full',
-        rationale: maxTotal >= 50000
-          ? `Largest proposal is $${maxTotal.toLocaleString()} — high-stakes decision warrants comprehensive review.`
-          : `Recurring service contract over $25K/year — long-term commitment warrants comprehensive review.`
-      };
-    }
-
-    // Quick tier: all proposals under $25K, project bid only, no major scope complications
-    if (maxTotal < 25000 && !isLikelyServiceContract && flagCount < 3) {
-      return {
-        tier: 'quick',
-        rationale: `Simple project bid under $25K with ${flagCount} risk flag${flagCount === 1 ? '' : 's'} — concise one-page summary fits the decision.`
-      };
-    }
-
-    // Standard tier: everything else
-    return {
-      tier: 'standard',
-      rationale: `Mid-complexity comparison with ${flagCount} risk flag${flagCount === 1 ? '' : 's'} — balanced 3-4 page format.`
-    };
-  }
-
-  // ── Packet dispatcher ───────────────────────────────────────────────────
-  function printPacket(tier) {
-    if (!vwState.comparisonAnalysis) return;
-    if (tier === 'quick') return printQuickPacket();
-    if (tier === 'standard') return printStandardPacket();
-    return printFullPacket();
-  }
-
-  // Backward-compatible alias for any old onclick attributes
-  function printBoardPacket() {
-    const tier = suggestTier(vwState.comparisonAnalysis).tier;
-    printPacket(tier);
-  }
-
-  // ── Shared helpers for all packets ──────────────────────────────────────
-  function _packetSetup() {
+// ── V2 packet renderer ──────────────────────────────────────────────────
+  // One renderer, three tiers. Tier controls content density, not structure.
+  function _printV2Packet(tier) {
     const a = vwState.comparisonAnalysis;
     const community = currentCommunity || 'HOA';
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     const todayCaps = today.toUpperCase();
-    const proposalCount = vwState.proposals.length;
-    const proposalNames = vwState.proposals.map(p => p.vendorName);
+
+    const norm = a.normalized_costs || [];
+    const sv = a.switch_verdict || {};
+    const wwcm = (a.what_would_change_your_mind || []).slice(0, 3);
+    const matRisks = a.material_risks || [];
+    const worthKnowing = a.worth_knowing || [];
+    const questions = a.questions_for_board || [];
+    const nbSummary = a.normalization_basis?.summary || '';
+    const addBacks = a.normalization_basis?.add_back_estimates || [];
+
+    // Top-3 by normalized cost ascending; vendors 4–6 collapse to summary line
+    const sorted = [...norm].sort((x, y) =>
+      (x.normalized_annual_total || Infinity) - (y.normalized_annual_total || Infinity)
+    );
+    const top3 = sorted.slice(0, 3);
+    const rest = sorted.slice(3);
 
     const logoMap = {
       'Canyon Gate at Cinco Ranch': '/logos/canyon_gate_logo.png',
@@ -1586,19 +654,10 @@
     };
     const logoPath = logoMap[community];
     const logoHtml = logoPath
-      ? `<img src="${window.location.origin}${logoPath}" style="max-height: 72px; max-width: 220px;" alt="${escapeHtml(community)}" />`
-      : `<div style="width: 64px; height: 64px; background: #1a3a5c; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 11px; letter-spacing: 0.05em; font-weight: 500; text-align: center; line-height: 1.2; padding: 0 8px;">${escapeHtml(community).toUpperCase().split(' ').slice(0,2).join(' ')}</div>`;
+      ? `<img src="${window.location.origin}${logoPath}" style="max-height:64px; max-width:200px;" alt="${escapeHtml(community)}" />`
+      : `<div style="display:inline-block; padding:8px 14px; background:#1a3a5c; color:white; font-size:11px; letter-spacing:0.08em; font-weight:600; border-radius:3px;">${escapeHtml(community).toUpperCase()}</div>`;
 
-    const totals = vwState.proposals.map(p => p.total || 0);
-    const validTotals = totals.filter(t => t > 0);
-    const priceSpread = validTotals.length >= 2 ? Math.max(...validTotals) - Math.min(...validTotals) : 0;
-    const flagCount = (a.scope_analysis?.scope_mismatches || []).length;
-
-    return { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, totals, priceSpread, flagCount };
-  }
-
-  function _commonStyles() {
-    return `
+    const styles = `
       @page { size: letter; margin: 0; }
       * { box-sizing: border-box; }
       body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; line-height: 1.6; -webkit-font-smoothing: antialiased; }
@@ -1606,105 +665,230 @@
       .page:last-of-type { page-break-after: auto; }
       .eyebrow { font-size: 10px; letter-spacing: 0.18em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; }
       .eyebrow-accent { font-size: 10px; letter-spacing: 0.22em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; }
-      .label { font-size: 10px; letter-spacing: 0.14em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; margin-bottom: 6px; }
-      h1.cover { font-size: 32px; font-weight: 400; color: #14283d; margin: 0; letter-spacing: -0.015em; line-height: 1.2; }
-      h2.section { font-size: 11px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; margin: 0 0 14px 0; }
-      h3.profile { font-size: 22px; font-weight: 400; color: #14283d; margin: 0 0 6px 0; letter-spacing: -0.01em; }
-      p.body { font-size: 13.5px; line-height: 1.75; color: #2a2f3a; margin: 0 0 12px 0; }
+      .label { font-size: 10px; letter-spacing: 0.14em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; }
+      h1.headline { font-size: 22px; font-weight: 500; color: #14283d; margin: 14px 0 0 0; line-height: 1.4; letter-spacing: -0.01em; }
+      h2.section { font-size: 11px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; margin: 24px 0 10px 0; }
+      h2.section.warn { color: #8a6818; }
       .num { font-variant-numeric: tabular-nums; }
-      .stat { background: #f7f9fc; padding: 14px 18px; border-radius: 4px; }
-      .stat-label { font-size: 10px; letter-spacing: 0.14em; color: #1a3a5c; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
-      .stat-value { font-size: 19px; font-weight: 400; color: #14283d; font-variant-numeric: tabular-nums; }
-      .rec-box { background: #f7f9fc; border-left: 3px solid #1a3a5c; padding: 22px 26px; border-radius: 0 4px 4px 0; }
-      .rec-box .rec-label-text { font-size: 10px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; }
-      .rec-box .rec-vendor-text { font-size: 20px; font-weight: 500; color: #14283d; margin-bottom: 6px; }
-      .rec-box .rec-rationale-text { font-size: 13.5px; color: #5a6271; line-height: 1.65; }
-      table.comp { width: 100%; border-collapse: collapse; font-size: 12px; }
-      table.comp th { background: #14283d; color: white; text-align: left; padding: 10px 12px; font-weight: 500; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; }
-      table.comp th.num { text-align: right; }
-      table.comp td { padding: 10px 12px; border-bottom: 1px solid #eaecef; }
-      table.comp td.num { text-align: right; font-variant-numeric: tabular-nums; }
-      table.comp tr:nth-child(even) td { background: #fafbfc; }
-      table.comp .missing { color: #c89a3c; font-style: italic; }
-      table.comp tr.subtotal-row td { background: #eef3f9; font-weight: 500; border-top: 1px solid #c8d4e2; }
-      table.comp tr.total-row td { background: #14283d; color: white; font-weight: 500; }
-      table.comp tr.total-row td.num { color: white; }
-      .strength-item, .concern-item { font-size: 12.5px; line-height: 1.6; color: #2a2f3a; padding: 9px 14px; margin-bottom: 4px; }
-      .strength-item { border-left: 2px solid #b6cca5; background: #f6faef; }
-      .concern-item { border-left: 2px solid #ead8a8; background: #fdf9ee; }
-      .pill-strength { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.14em; color: #4a6240; font-weight: 600; text-transform: uppercase; margin-bottom: 12px; }
-      .pill-concern { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.14em; color: #8a6818; font-weight: 600; text-transform: uppercase; margin-bottom: 12px; }
-      .pill-strength::before { content: '●'; color: #6b8e60; font-size: 10px; }
-      .pill-concern::before { content: '●'; color: #c89a3c; font-size: 10px; }
-      .footer-bar { position: absolute; bottom: 0.5in; left: 0.75in; right: 0.75in; padding-top: 14px; border-top: 1px solid #e8eaed; display: flex; justify-content: space-between; font-size: 10px; color: #9aa0a8; letter-spacing: 0.06em; text-transform: uppercase; }
-      .risk-callout { background: #fdf9ee; border-left: 3px solid #c89a3c; padding: 12px 16px; margin-bottom: 8px; }
-      .risk-callout-label { font-size: 11px; font-weight: 600; color: #8a6818; margin-bottom: 4px; }
-      .risk-callout-text { font-size: 12.5px; color: #2a2f3a; line-height: 1.6; }
-      .principle { padding: 12px 0; border-bottom: 1px solid #eaecef; }
-      .principle:last-child { border-bottom: none; }
-      .principle-name { font-size: 12px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
-      .principle-desc { font-size: 12.5px; color: #2a2f3a; line-height: 1.65; }
-      .question-item { padding: 14px 0; border-bottom: 1px solid #eaecef; display: flex; gap: 14px; }
+      table.cost { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
+      table.cost th { background: #14283d; color: white; text-align: left; padding: 9px 12px; font-weight: 500; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; }
+      table.cost th.num { text-align: right; }
+      table.cost td { padding: 10px 12px; border-bottom: 1px solid #eaecef; }
+      table.cost td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      table.cost tr.incumbent td { background: #fff8e7; }
+      table.cost tr td.normalized { font-weight: 600; color: #14283d; }
+      .also-bid { font-size: 11.5px; color: #888; margin-top: 8px; font-style: italic; }
+      .nb-box { background: #f5f8fc; border: 1px solid #d8e2ed; border-radius: 4px; padding: 12px 16px; margin: 18px 0; }
+      .nb-label { font-size: 10px; color: #1a3a5c; letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
+      .nb-summary { font-size: 12.5px; color: #2a2f3a; margin-top: 6px; line-height: 1.6; }
+      .nb-list { margin: 6px 0 0 0; padding-left: 16px; font-size: 11.5px; color: #555; line-height: 1.6; }
+      .switch-box { border-radius: 4px; padding: 14px 18px; margin: 14px 0; border: 2px solid; }
+      .switch-box.switch { border-color: #2d7a3a; background: #f4faf6; }
+      .switch-box.stay { border-color: #8a6818; background: #fdf9ee; }
+      .switch-label { font-size: 10px; letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
+      .switch-verdict { font-size: 17px; font-weight: 600; margin-top: 3px; }
+      .switch-detail { font-size: 12px; color: #555; margin-top: 6px; line-height: 1.55; }
+      .rec-box { background: #f7f9fc; border-left: 3px solid #1a3a5c; padding: 18px 22px; border-radius: 0 4px 4px 0; margin: 18px 0; }
+      .rec-label { font-size: 10px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+      .rec-headline { font-size: 14px; font-weight: 500; color: #14283d; line-height: 1.65; }
+      ul.wwcm { margin: 6px 0 0 0; padding-left: 18px; }
+      ul.wwcm li { font-size: 12.5px; color: #2a2f3a; line-height: 1.65; margin-bottom: 6px; }
+      ul.wwcm li strong { color: #14283d; }
+      .risk-card { background: #fdf9ee; border-left: 3px solid #c89a3c; padding: 10px 14px; margin-bottom: 6px; border-radius: 0 3px 3px 0; }
+      .risk-card-label { font-size: 12px; font-weight: 600; color: #8a6818; }
+      .risk-card-text { font-size: 12px; color: #2a2f3a; margin-top: 2px; line-height: 1.55; }
+      ul.worth { margin: 6px 0 0 0; padding-left: 18px; font-size: 12px; color: #444; line-height: 1.6; }
+      ul.worth li { margin-bottom: 4px; }
+      .question-item { padding: 12px 0; border-bottom: 1px solid #eaecef; display: flex; gap: 12px; }
       .question-item:last-child { border-bottom: none; }
-      .question-num { flex-shrink: 0; width: 28px; height: 28px; background: #14283d; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; }
-      .question-text { font-size: 13px; color: #2a2f3a; line-height: 1.65; padding-top: 4px; }
-      @media print {
-        .page { padding: 0.65in 0.75in; }
-        body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
-      }
+      .question-num { flex-shrink: 0; width: 24px; height: 24px; background: #14283d; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 500; }
+      .question-text { font-size: 12.5px; color: #2a2f3a; line-height: 1.6; padding-top: 2px; }
+      .footer-bar { position: absolute; bottom: 0.5in; left: 0.75in; right: 0.75in; padding-top: 12px; border-top: 1px solid #e8eaed; display: flex; justify-content: space-between; font-size: 10px; color: #9aa0a8; letter-spacing: 0.06em; text-transform: uppercase; }
+      @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
     `;
-  }
 
-  // ── Build the comparison table HTML (shared) ───────────────────────────
-  function _buildCompTable(a, proposalNames, proposalCount) {
-    let rows = '';
-    (a.comparison_table?.common_scope_items || []).forEach(item => {
-      const cells = [];
-      for (let i = 0; i < proposalCount; i++) {
-        const amt = item.proposal_amounts?.find(x => x.proposal_index === i);
-        if (amt && amt.amount != null) {
-          cells.push(`<td class="num">$${Number(amt.amount).toLocaleString()}</td>`);
-        } else {
-          cells.push(`<td class="num missing">Not included</td>`);
-        }
-      }
-      rows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
-    });
+    // Cost table rows
+    const top3Rows = top3.map(n => `
+      <tr ${n.is_incumbent ? 'class="incumbent"' : ''}>
+        <td>${escapeHtml(n.vendor_name)}${n.is_incumbent ? ' <span style="font-size:10px; color:#996; font-weight:600; letter-spacing:0.06em;">INCUMBENT</span>' : ''}</td>
+        <td class="num">${n.stated_total != null ? '$' + Number(n.stated_total).toLocaleString() : '—'}</td>
+        <td class="num">${n.stated_term_months != null ? n.stated_term_months + ' mo' : '—'}</td>
+        <td class="num normalized">$${Number(n.normalized_annual_total || 0).toLocaleString()}</td>
+      </tr>
+    `).join('');
 
-    const subtotals = a.scope_analysis?.comparable_subtotals || [];
-    const totals = vwState.proposals.map(p => p.total || 0);
-    const subtotalsMatchTotals = subtotals.length === totals.length && subtotals.every((s, i) =>
-      s?.subtotal != null && Math.abs(s.subtotal - totals[i]) < 1
-    );
+    const restLine = rest.length
+      ? `<div class="also-bid">Also bid: ${rest.map(r => `${escapeHtml(r.vendor_name)} ($${Number(r.normalized_annual_total || 0).toLocaleString()}/yr)`).join(', ')} — excluded from detailed comparison.</div>`
+      : '';
 
-    if (subtotals.length && !subtotalsMatchTotals) {
-      const cells = [];
-      for (let i = 0; i < proposalCount; i++) {
-        const sub = subtotals.find(s => s.proposal_index === i);
-        cells.push(`<td class="num">${sub?.subtotal ? '$' + Number(sub.subtotal).toLocaleString() : '—'}</td>`);
-      }
-      rows += `<tr class="subtotal-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
+    // Switch verdict block
+    let switchBlock = '';
+    if (sv.applies) {
+      const cls = sv.final_verdict === 'switch' ? 'switch' : 'stay';
+      const label = sv.final_verdict === 'switch' ? 'SWITCH' : 'STAY WITH INCUMBENT';
+      const savings = (sv.annualized_savings_usd != null)
+        ? `<div class="switch-detail">Annualized impact: <strong>${sv.annualized_savings_usd >= 0 ? '+' : ''}$${Math.abs(sv.annualized_savings_usd).toLocaleString()}/yr${sv.annualized_savings_pct != null ? ` (${Number(sv.annualized_savings_pct).toFixed(1)}%)` : ''}</strong></div>`
+        : '';
+      const ruleLine = sv.rule_says
+        ? `<div class="switch-detail">Threshold rule says: <strong>${escapeHtml(sv.rule_says)}</strong>${sv.override_reasoning ? ` — overridden because: ${escapeHtml(sv.override_reasoning)}` : ''}</div>`
+        : '';
+      switchBlock = `
+        <div class="switch-box ${cls}">
+          <div class="switch-label" style="color:${cls === 'switch' ? '#2d7a3a' : '#8a6818'};">SWITCH VERDICT</div>
+          <div class="switch-verdict" style="color:${cls === 'switch' ? '#2d7a3a' : '#8a6818'};">${label}</div>
+          ${savings}
+          ${ruleLine}
+        </div>
+      `;
     }
 
-    const totalsCells = vwState.proposals.map(p =>
-      `<td class="num">${p.total ? '$' + p.total.toLocaleString() : '—'}</td>`
-    );
-    rows += `<tr class="total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
+    // Normalization basis box
+    const addBacksList = addBacks.length
+      ? `<ul class="nb-list">${addBacks.map(ab => `<li>${escapeHtml(ab.scope_category)}: $${Number(ab.annual_estimate_usd).toLocaleString()}/yr — <em>${escapeHtml(ab.source_basis)}</em></li>`).join('')}</ul>`
+      : '';
+    const nbBlock = (nbSummary || addBacks.length)
+      ? `<div class="nb-box">
+          <div class="nb-label">Normalization basis</div>
+          ${nbSummary ? `<div class="nb-summary">${escapeHtml(nbSummary)}</div>` : ''}
+          ${addBacksList}
+        </div>`
+      : '';
 
-    return `
-      <table class="comp">
-        <thead>
-          <tr>
-            <th>Scope item</th>
-            ${proposalNames.map(n => `<th class="num">${escapeHtml(n)}</th>`).join('')}
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+    // What would change your mind
+    const wwcmBlock = wwcm.length
+      ? `<h2 class="section">What would change your mind</h2>
+        <ul class="wwcm">
+          ${wwcm.map(w => `<li><strong>${escapeHtml(w.factor)}.</strong> ${escapeHtml(w.explanation)}</li>`).join('')}
+        </ul>`
+      : '';
+
+    // Material risks
+    const matRisksBlock = matRisks.length
+      ? `<h2 class="section warn">Material risks</h2>
+        ${matRisks.map(r => `
+          <div class="risk-card">
+            <div class="risk-card-label">${escapeHtml(r.label)}${r.annualized_exposure_usd ? ` — $${Number(r.annualized_exposure_usd).toLocaleString()}/yr exposure` : ''}</div>
+            <div class="risk-card-text">${escapeHtml(r.description)}</div>
+          </div>
+        `).join('')}`
+      : '';
+
+    // Worth knowing — included on Standard and Full only
+    const wkBlock = (tier !== 'quick' && worthKnowing.length)
+      ? `<h2 class="section">Worth knowing</h2>
+        <ul class="worth">
+          ${worthKnowing.map(w => `<li><strong>${escapeHtml(w.label)}.</strong> ${escapeHtml(w.description)}</li>`).join('')}
+        </ul>`
+      : '';
+
+    // Page 1 — Decision Page (always present)
+    const decisionPage = `
+      <div class="page">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; margin-bottom:32px;">
+          <div>${logoHtml}</div>
+          <div style="text-align:right;">
+            <div class="eyebrow">Bedrock Association Management</div>
+            <div style="font-size:10px; color:#9aa0a8; letter-spacing:0.06em; margin-top:4px;">${escapeHtml(todayCaps)}</div>
+          </div>
+        </div>
+
+        <div class="eyebrow-accent">Vendor Decision · ${escapeHtml(community)}</div>
+        <h1 class="headline">${escapeHtml(a.headline_recommendation || 'Recommendation pending')}</h1>
+
+        ${switchBlock}
+
+        <h2 class="section">Normalized annual cost</h2>
+        <table class="cost">
+          <thead>
+            <tr>
+              <th>Vendor</th>
+              <th class="num">Stated total</th>
+              <th class="num">Term</th>
+              <th class="num">Normalized annual</th>
+            </tr>
+          </thead>
+          <tbody>${top3Rows}</tbody>
+        </table>
+        ${restLine}
+
+        ${nbBlock}
+
+        ${wwcmBlock}
+
+        ${matRisksBlock}
+
+        <div class="footer-bar">
+          <div>Bedrock Association Management · (832) 588-2485</div>
+          <div>Page 1</div>
+        </div>
+      </div>
     `;
-  }
 
-  function _openPrintWindow(html) {
+    // Page 2 — Detail page (Standard + Full only)
+    const detailPage = (tier !== 'quick' && (wkBlock || matRisksBlock))
+      ? `
+        <div class="page">
+          <div class="eyebrow-accent">Detail</div>
+          <h1 class="headline" style="font-size:18px;">Supporting analysis</h1>
+
+          ${nbBlock}
+
+          ${wkBlock}
+
+          ${matRisks.length ? `<h2 class="section warn">Material risks (full detail)</h2>
+            ${matRisks.map(r => `
+              <div class="risk-card" style="padding:12px 16px; margin-bottom:8px;">
+                <div class="risk-card-label">${escapeHtml(r.label)}${r.annualized_exposure_usd ? ` — $${Number(r.annualized_exposure_usd).toLocaleString()}/yr exposure` : ''}</div>
+                <div class="risk-card-text" style="font-size:12.5px; margin-top:4px;">${escapeHtml(r.description)}</div>
+                ${r.applies_to_proposal_indexes && r.applies_to_proposal_indexes.length ? `<div style="font-size:11px; color:#888; margin-top:4px;">Applies to: ${r.applies_to_proposal_indexes.map(i => escapeHtml(norm[i]?.vendor_name || 'Vendor ' + i)).join(', ')}</div>` : ''}
+              </div>
+            `).join('')}` : ''}
+
+          <div class="footer-bar">
+            <div>${escapeHtml(community)} · Vendor Decision</div>
+            <div>Page 2</div>
+          </div>
+        </div>
+      `
+      : '';
+
+    // Questions for the board (always present if any exist)
+    const questionsPage = questions.length
+      ? `
+        <div class="page">
+          <div class="eyebrow-accent">Questions for the board</div>
+          <h1 class="headline" style="font-size:18px;">Discussion before voting</h1>
+          <p style="font-size:12.5px; color:#555; margin: 14px 0 18px 0;">Items the board should consider before final decision.</p>
+          ${questions.map((q, i) => `
+            <div class="question-item">
+              <div class="question-num">${i + 1}</div>
+              <div class="question-text">${escapeHtml(q)}</div>
+            </div>
+          `).join('')}
+
+          <div style="margin-top:48px; padding-top:14px; border-top:1px solid #e8eaed; font-size:10.5px; color:#9aa0a8; line-height:1.6;">
+            Prepared by Bedrock Association Management · ${escapeHtml(today)}<br>
+            (832) 588-2485 · bedrocktx.com
+          </div>
+
+          <div class="footer-bar">
+            <div>${escapeHtml(community)} · Vendor Decision</div>
+            <div>Final page</div>
+          </div>
+        </div>
+      `
+      : '';
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>${escapeHtml(community)} · Vendor Decision · ${escapeHtml(today)}</title>
+<style>${styles}</style>
+</head><body>
+${decisionPage}
+${detailPage}
+${questionsPage}
+</body></html>`;
+
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
@@ -1712,426 +896,6 @@
       w.print();
       URL.revokeObjectURL(url);
     };
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // QUICK PACKET — 1 page memo-style
-  // ─────────────────────────────────────────────────────────────────────────
-  function printQuickPacket() {
-    const ctx = _packetSetup();
-    const { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, priceSpread } = ctx;
-
-    const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<title>${escapeHtml(community)} · Vendor Comparison · ${escapeHtml(today)}</title>
-<style>${_commonStyles()}</style>
-</head><body>
-
-<div class="page">
-  <div style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 18px; border-bottom: 2px solid #1a3a5c; margin-bottom: 24px;">
-    <div>${logoHtml}</div>
-    <div style="text-align: right;">
-      <div class="eyebrow">Bedrock Association Management</div>
-      <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">${escapeHtml(today)}</div>
-    </div>
-  </div>
-
-  <div class="eyebrow-accent" style="margin-bottom: 8px;">Vendor Comparison Memo</div>
-  <h1 class="cover" style="font-size: 24px; margin-bottom: 6px;">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')} recommended</h1>
-  <div style="font-size: 13px; color: #6b7280; margin-bottom: 22px;">${escapeHtml(community)} · ${proposalCount} vendors evaluated · ${escapeHtml(today)}</div>
-
-  <div class="rec-box" style="margin-bottom: 22px;">
-    <div class="rec-label-text">Recommendation</div>
-    <div class="rec-vendor-text">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
-    <div class="rec-rationale-text">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
-  </div>
-
-  <h2 class="section">Comparison</h2>
-  ${_buildCompTable(a, proposalNames, proposalCount)}
-
-  ${(a.recommendation?.key_reasons || []).length ? `
-    <h2 class="section" style="margin-top: 22px;">Key reasons</h2>
-    <ul style="margin: 0; padding-left: 18px;">
-      ${a.recommendation.key_reasons.map(r => `<li style="font-size: 12.5px; line-height: 1.65; color: #2a2f3a; margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
-    </ul>
-  ` : ''}
-
-  ${a.recommendation?.trade_offs_acknowledged ? `
-    <div style="margin-top: 18px; padding: 12px 16px; background: #fafbfc; border-radius: 4px; border: 1px solid #e8eaed;">
-      <div class="label" style="margin-bottom: 4px;">Trade-offs acknowledged</div>
-      <div style="font-size: 12.5px; color: #555; line-height: 1.6; font-style: italic;">${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>
-    </div>
-  ` : ''}
-
-  <div class="footer-bar">
-    <div>Bedrock Association Management · (832) 588-2485 · bedrocktx.com</div>
-    <div>Page 1 of 1</div>
-  </div>
-</div>
-
-</body></html>`;
-
-    _openPrintWindow(html);
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // STANDARD PACKET — 3-4 pages
-  // ─────────────────────────────────────────────────────────────────────────
-  function printStandardPacket() {
-    const ctx = _packetSetup();
-    const { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, totals, priceSpread, flagCount } = ctx;
-
-    const showStats = [];
-    showStats.push({ label: 'Vendors', value: proposalCount });
-    if (priceSpread > 0) showStats.push({ label: 'Price spread', value: '$' + priceSpread.toLocaleString() });
-    if (flagCount > 0) showStats.push({ label: 'Risks flagged', value: flagCount, accent: '#c89a3c' });
-
-    const statsHtml = showStats.map(s => `
-      <div>
-        <div class="label">${s.label}</div>
-        <div style="font-size: 19px; font-weight: 400; color: ${s.accent || '#14283d'}; font-variant-numeric: tabular-nums;">${s.value}</div>
-      </div>
-    `).join('');
-
-    const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<title>${escapeHtml(community)} · Vendor Comparison · ${escapeHtml(today)}</title>
-<style>${_commonStyles()}</style>
-</head><body>
-
-<!-- COVER -->
-<div class="page">
-  <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 56px;">
-    <div class="eyebrow">Bedrock Association Management</div>
-    <div class="eyebrow">${escapeHtml(todayCaps)}</div>
-  </div>
-
-  <div style="margin-bottom: 40px;">${logoHtml}</div>
-
-  <div class="eyebrow-accent" style="margin-bottom: 12px;">Vendor Comparison</div>
-  <h1 class="cover">${escapeHtml(a.recommendation?.vendor_name || community)}<br>recommended</h1>
-  <div style="font-size: 14px; color: #6b7280; line-height: 1.5; max-width: 480px; margin-top: 14px;">
-    ${escapeHtml(community)} · ${proposalCount} vendors evaluated. Apples-to-apples analysis with material risk assessment.
-  </div>
-
-  ${showStats.length ? `
-    <div style="display: flex; gap: 56px; margin-top: 44px; padding-top: 24px; border-top: 1px solid #e8eaed;">
-      ${statsHtml}
-    </div>
-  ` : ''}
-
-  <div style="margin-top: 40px;">
-    <h2 class="section">Executive Summary</h2>
-    <p class="body">${escapeHtml(a.executive_summary || '')}</p>
-  </div>
-
-  <div class="rec-box" style="margin-top: 24px;">
-    <div class="rec-label-text">Recommendation</div>
-    <div class="rec-vendor-text">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
-    <div class="rec-rationale-text">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
-    ${(a.recommendation?.key_reasons || []).length ? `
-      <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #d8e2ed;">
-        <div class="label" style="color: #1a3a5c; margin-bottom: 8px;">Key reasons</div>
-        <ul style="margin: 0; padding-left: 18px;">
-          ${a.recommendation.key_reasons.map(r => `<li style="font-size: 12.5px; line-height: 1.65; color: #2a2f3a; margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
-        </ul>
-      </div>
-    ` : ''}
-  </div>
-
-  <div class="footer-bar">
-    <div>Bedrock Association Management · (832) 588-2485</div>
-    <div>Page 1</div>
-  </div>
-</div>
-
-<!-- COMPARISON -->
-<div class="page">
-  <div class="eyebrow-accent" style="margin-bottom: 10px;">Apples-to-Apples Comparison</div>
-  <h1 class="cover" style="font-size: 22px; margin-bottom: 24px;">Side-by-side scope and pricing</h1>
-
-  ${_buildCompTable(a, proposalNames, proposalCount)}
-
-  ${(a.scope_analysis?.scope_mismatches || []).length ? `
-    <h2 class="section" style="margin-top: 32px;">Scope Differences Flagged</h2>
-    <p class="body" style="margin-bottom: 14px;">${a.scope_analysis?.are_truly_comparable ? 'The proposals are functionally comparable after scope adjustment.' : 'These proposals have meaningful scope differences. The board should weigh these alongside price.'}</p>
-    ${a.scope_analysis.scope_mismatches.map(m => {
-      const colonIdx = m.indexOf(':');
-      if (colonIdx > 0 && colonIdx < 50) {
-        const label = m.slice(0, colonIdx);
-        const text = m.slice(colonIdx + 1).trim();
-        return `<div class="risk-callout"><div class="risk-callout-label">${escapeHtml(label)}</div><div class="risk-callout-text">${escapeHtml(text)}</div></div>`;
-      }
-      return `<div class="risk-callout"><div class="risk-callout-text">${escapeHtml(m)}</div></div>`;
-    }).join('')}
-  ` : ''}
-
-  ${a.recommendation?.trade_offs_acknowledged ? `
-    <div style="margin-top: 22px; padding: 14px 18px; background: #fafbfc; border-radius: 4px; border: 1px solid #e8eaed;">
-      <div class="label" style="margin-bottom: 4px;">Trade-offs acknowledged</div>
-      <div style="font-size: 12.5px; color: #555; line-height: 1.6; font-style: italic;">${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>
-    </div>
-  ` : ''}
-
-  <div class="footer-bar">
-    <div>${escapeHtml(community)} · Vendor Comparison</div>
-    <div>Page 2</div>
-  </div>
-</div>
-
-${a.questions_for_board && a.questions_for_board.length ? `
-<!-- QUESTIONS FOR THE BOARD -->
-<div class="page">
-  <div class="eyebrow-accent" style="margin-bottom: 10px;">Questions for the Board</div>
-  <h1 class="cover" style="font-size: 22px; margin-bottom: 14px;">Discussion before voting</h1>
-  <p class="body" style="margin-bottom: 24px;">Items the board should consider before final decision.</p>
-  ${a.questions_for_board.map((q, i) => `
-    <div class="question-item">
-      <div class="question-num">${i + 1}</div>
-      <div class="question-text">${escapeHtml(q)}</div>
-    </div>
-  `).join('')}
-
-  <div style="margin-top: 56px; padding-top: 18px; border-top: 1px solid #e8eaed; font-size: 11px; color: #6b7280; line-height: 1.6;">
-    Prepared by Bedrock Association Management · ${escapeHtml(today)}<br>
-    (832) 588-2485 · bedrocktx.com
-  </div>
-
-  <div class="footer-bar">
-    <div>${escapeHtml(community)} · Vendor Comparison</div>
-    <div>Page 3</div>
-  </div>
-</div>
-` : ''}
-
-</body></html>`;
-
-    _openPrintWindow(html);
-  }
-
-  // ─────────────────────────────────────────────────────────────────────────
-  // FULL PACKET — 10 pages, comprehensive
-  // ─────────────────────────────────────────────────────────────────────────
-  function printFullPacket() {
-    const ctx = _packetSetup();
-    const { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, totals, priceSpread, flagCount } = ctx;
-
-    const showStats = [];
-    showStats.push({ label: 'Vendors evaluated', value: proposalCount });
-    if (priceSpread > 0) showStats.push({ label: 'Price spread', value: '$' + priceSpread.toLocaleString() });
-    if (flagCount > 0) showStats.push({ label: 'Risks flagged', value: flagCount, accent: '#c89a3c' });
-
-    const statsHtml = showStats.map(s => `
-      <div>
-        <div class="label">${s.label}</div>
-        <div style="font-size: 22px; font-weight: 400; color: ${s.accent || '#14283d'}; font-variant-numeric: tabular-nums;">${s.value}</div>
-      </div>
-    `).join('');
-
-    let pageNum = 0;
-    const nextPage = () => ++pageNum;
-
-    // Vendor profile pages
-    const vendorProfilesHtml = (a.vendor_profiles || []).map((vp, i) => {
-      const total = vp.stated_total || vwState.proposals[i]?.total;
-      return `
-<div class="page">
-  <div class="eyebrow-accent" style="margin-bottom: 12px;">Vendor Profile · ${i + 1} of ${(a.vendor_profiles || []).length}</div>
-  <h3 class="profile">${escapeHtml(vp.vendor_name || proposalNames[i] || 'Vendor ' + (i+1))}</h3>
-  <div style="font-size: 13px; color: #6b7280;">${escapeHtml(community)}</div>
-
-  <div style="display: flex; gap: 14px; margin-top: 24px; margin-bottom: 28px;">
-    <div class="stat" style="flex: 1;">
-      <div class="stat-label">Stated total</div>
-      <div class="stat-value">${total ? '$' + Number(total).toLocaleString() : '—'}</div>
-    </div>
-  </div>
-
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
-    <div>
-      <div class="pill-strength">Scope strengths</div>
-      ${(vp.scope_strengths || []).length
-        ? vp.scope_strengths.map(s => `<div class="strength-item">${escapeHtml(s)}</div>`).join('')
-        : `<div class="strength-item" style="color: #888; font-style: italic;">None noted</div>`}
-    </div>
-    <div>
-      <div class="pill-concern">Scope concerns</div>
-      ${(vp.scope_concerns || []).length
-        ? vp.scope_concerns.map(s => `<div class="concern-item">${escapeHtml(s)}</div>`).join('')
-        : `<div class="concern-item" style="color: #888; font-style: italic;">None noted</div>`}
-    </div>
-  </div>
-
-  <div style="height: 1px; background: #e8eaed; margin: 28px 0;"></div>
-
-  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
-    <div>
-      <div class="pill-strength">Terms strengths</div>
-      ${(vp.terms_strengths || []).length
-        ? vp.terms_strengths.map(s => `<div class="strength-item">${escapeHtml(s)}</div>`).join('')
-        : `<div class="strength-item" style="color: #888; font-style: italic;">None noted</div>`}
-    </div>
-    <div>
-      <div class="pill-concern">Terms concerns</div>
-      ${(vp.terms_concerns || []).length
-        ? vp.terms_concerns.map(s => `<div class="concern-item">${escapeHtml(s)}</div>`).join('')
-        : `<div class="concern-item" style="color: #888; font-style: italic;">None noted</div>`}
-    </div>
-  </div>
-
-  <div class="footer-bar">
-    <div>${escapeHtml(community)} · Vendor Comparison</div>
-    <div>Page ${nextPage() + 4}</div>
-  </div>
-</div>
-`;
-    }).join('');
-
-    // Reset page counter for accurate numbering — we'll let CSS do its work and not bother
-    // Print previewers don't always honor JS-computed page numbers anyway
-
-    const html = `<!DOCTYPE html>
-<html><head><meta charset="UTF-8">
-<title>${escapeHtml(community)} · Vendor Comparison · ${escapeHtml(today)}</title>
-<style>${_commonStyles()}</style>
-</head><body>
-
-<!-- COVER -->
-<div class="page">
-  <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 60px;">
-    <div class="eyebrow">Bedrock Association Management</div>
-    <div class="eyebrow">${escapeHtml(todayCaps)}</div>
-  </div>
-
-  <div style="margin-bottom: 48px;">${logoHtml}</div>
-
-  <div class="eyebrow-accent" style="margin-bottom: 14px;">Vendor Comparison · ${escapeHtml((a.service_category || 'services').replace(/_/g, ' '))}</div>
-  <h1 class="cover" style="font-size: 36px;">${escapeHtml(a.recommendation?.vendor_name || community)}<br>recommended</h1>
-
-  <div style="font-size: 15px; color: #6b7280; line-height: 1.5; max-width: 480px; margin-top: 16px;">
-    Comparison of ${proposalCount} ${proposalCount === 1 ? 'proposal' : 'proposals'} for ${escapeHtml(community)}. Apples-to-apples analysis with material risk assessment.
-  </div>
-
-  ${showStats.length ? `
-    <div style="display: flex; gap: 56px; margin-top: 48px; padding-top: 24px; border-top: 1px solid #e8eaed;">
-      ${statsHtml}
-    </div>
-  ` : ''}
-
-  <div style="margin-top: 44px;">
-    <h2 class="section">Executive Summary</h2>
-    <p class="body">${escapeHtml(a.executive_summary || '')}</p>
-  </div>
-
-  <div class="rec-box" style="margin-top: 24px;">
-    <div class="rec-label-text">Recommendation</div>
-    <div class="rec-vendor-text">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
-    <div class="rec-rationale-text">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
-    ${(a.recommendation?.key_reasons || []).length ? `
-      <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #d8e2ed;">
-        <div class="label" style="color: #1a3a5c; margin-bottom: 8px;">Key reasons</div>
-        <ul style="margin: 0; padding-left: 18px;">
-          ${a.recommendation.key_reasons.map(r => `<li style="font-size: 12.5px; line-height: 1.65; color: #2a2f3a; margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
-        </ul>
-      </div>
-    ` : ''}
-    ${a.recommendation?.trade_offs_acknowledged ? `
-      <div style="margin-top: 14px; font-size: 12px; color: #6b7280; font-style: italic; line-height: 1.6;">Trade-offs: ${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>
-    ` : ''}
-  </div>
-
-  <div class="footer-bar">
-    <div>Bedrock Association Management · (832) 588-2485</div>
-    <div>Page 1</div>
-  </div>
-</div>
-
-<!-- COMPARISON TABLE -->
-<div class="page">
-  <div class="eyebrow-accent" style="margin-bottom: 10px;">Apples-to-Apples Comparison</div>
-  <h1 class="cover" style="font-size: 22px; margin-bottom: 24px;">Side-by-side scope and pricing</h1>
-
-  ${_buildCompTable(a, proposalNames, proposalCount)}
-
-  ${(a.scope_analysis?.scope_mismatches || []).length ? `
-    <h2 class="section" style="margin-top: 28px;">Scope Differences Flagged</h2>
-    <p class="body" style="margin-bottom: 14px;">${a.scope_analysis?.are_truly_comparable ? 'The proposals are functionally comparable after scope adjustment.' : 'These proposals have meaningful scope differences. The board should weigh these alongside price.'}</p>
-    ${a.scope_analysis.scope_mismatches.map(m => {
-      const colonIdx = m.indexOf(':');
-      if (colonIdx > 0 && colonIdx < 50) {
-        const label = m.slice(0, colonIdx);
-        const text = m.slice(colonIdx + 1).trim();
-        return `<div class="risk-callout"><div class="risk-callout-label">${escapeHtml(label)}</div><div class="risk-callout-text">${escapeHtml(text)}</div></div>`;
-      }
-      return `<div class="risk-callout"><div class="risk-callout-text">${escapeHtml(m)}</div></div>`;
-    }).join('')}
-  ` : ''}
-
-  ${a.scope_analysis?.scope_adjustment_notes ? `
-    <p style="font-size: 12px; color: #6b7280; font-style: italic; margin-top: 16px; line-height: 1.65;">${escapeHtml(a.scope_analysis.scope_adjustment_notes)}</p>
-  ` : ''}
-
-  <div class="footer-bar">
-    <div>${escapeHtml(community)} · Vendor Comparison</div>
-    <div>Page 2</div>
-  </div>
-</div>
-
-${(a.playbook_principles_applied || []).length ? `
-<!-- BEDROCK PRINCIPLES -->
-<div class="page">
-  <div class="eyebrow-accent" style="margin-bottom: 10px;">Analytical Discipline</div>
-  <h1 class="cover" style="font-size: 22px; margin-bottom: 14px;">Bedrock principles applied</h1>
-  <p class="body" style="margin-bottom: 24px;">The following Bedrock principles informed this analysis. They reflect how we approach every vendor evaluation regardless of size or category.</p>
-
-  ${a.playbook_principles_applied.map(p => {
-    const colonIdx = p.indexOf(':');
-    if (colonIdx > 0 && colonIdx < 60) {
-      const name = p.slice(0, colonIdx);
-      const desc = p.slice(colonIdx + 1).trim();
-      return `<div class="principle"><div class="principle-name">${escapeHtml(name)}</div><div class="principle-desc">${escapeHtml(desc)}</div></div>`;
-    }
-    return `<div class="principle"><div class="principle-desc">${escapeHtml(p)}</div></div>`;
-  }).join('')}
-
-  <div class="footer-bar">
-    <div>${escapeHtml(community)} · Vendor Comparison</div>
-    <div>Page 3</div>
-  </div>
-</div>
-` : ''}
-
-${vendorProfilesHtml}
-
-${a.questions_for_board && a.questions_for_board.length ? `
-<!-- QUESTIONS FOR THE BOARD -->
-<div class="page">
-  <div class="eyebrow-accent" style="margin-bottom: 10px;">Questions for the Board</div>
-  <h1 class="cover" style="font-size: 22px; margin-bottom: 14px;">Discussion before voting</h1>
-  <p class="body" style="margin-bottom: 24px;">Items the board should consider before final decision.</p>
-
-  ${a.questions_for_board.map((q, i) => `
-    <div class="question-item">
-      <div class="question-num">${i + 1}</div>
-      <div class="question-text">${escapeHtml(q)}</div>
-    </div>
-  `).join('')}
-
-  <div style="margin-top: 56px; padding-top: 18px; border-top: 1px solid #e8eaed; font-size: 11px; color: #6b7280; line-height: 1.6;">
-    Prepared by Bedrock Association Management · ${escapeHtml(today)}<br>
-    (832) 588-2485 · bedrocktx.com
-  </div>
-
-  <div class="footer-bar">
-    <div>${escapeHtml(community)} · Vendor Comparison</div>
-    <div>Final page</div>
-  </div>
-</div>
-` : ''}
-
-</body></html>`;
-
-    _openPrintWindow(html);
   }
 
 
