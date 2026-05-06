@@ -69,9 +69,11 @@
     .secondary-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
     .secondary-btn:hover { background: #f0f4f8; }
 
-    .upload-area { border: 2px dashed #d0d7de; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
-    .upload-area:hover { border-color: #2d6a9f; background: #f8f9ff; }
-    .upload-area.has-file { border-color: #2d6a9f; background: #f0f4ff; }
+  .upload-area { border: 2px dashed #d0d7de; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
+.upload-area:hover { border-color: #2d6a9f; background: #f8f9ff; }
+.upload-area.has-file { border-color: #2d6a9f; background: #f0f4ff; }
+.upload-area.drag-over { border-color: #1a3a5c; background: #e8f1fb; transform: scale(1.01); border-style: solid; }
+.upload-area.drag-over p { color: #1a3a5c; font-weight: 600; }
     .upload-area p { font-size: 13px; color: #666; margin-top: 4px; }
     .upload-area input { display: none; }
 
@@ -261,17 +263,25 @@
     <div class="panel">
       <h3>🏗️ ACC Application Details</h3>
       <div class="section-label">Application PDF (optional)</div>
-      <div class="upload-area" id="pdfUploadArea" onclick="document.getElementById('accPdf').click()">
+      <div class="upload-area" id="pdfUploadArea"
+           onclick="document.getElementById('accPdf').click()"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event, 'accPdf', handlePdfSelect)">
         <span style="font-size:24px">📄</span>
-        <p id="pdfLabel">Click to upload PDF application</p>
+        <p id="pdfLabel">Click or drag a PDF application here</p>
         <input type="file" id="accPdf" accept=".pdf" onchange="handlePdfSelect(this)">
       </div>
       <div class="section-label">Application Details</div>
       <textarea id="accDetails" placeholder="Enter application details..." style="min-height:150px;"></textarea>
       <div class="section-label">Photos / Color Samples (optional)</div>
-      <div class="upload-area" id="imgUploadArea" onclick="document.getElementById('accImages').click()">
+      <div class="upload-area" id="imgUploadArea"
+           onclick="document.getElementById('accImages').click()"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event, 'accImages', handleImageSelect, {multiple: true})">
         <span style="font-size:24px">🖼️</span>
-        <p id="imgLabel">Click to upload photos or color samples</p>
+        <p id="imgLabel">Click or drag photos or color samples here</p>
         <input type="file" id="accImages" accept="image/*" multiple onchange="handleImageSelect(this)">
       </div>
       <div class="image-previews" id="imagePreviews"></div>
@@ -568,9 +578,13 @@
           </div>
         </div>
 
-        <div class="upload-area" onclick="document.getElementById('vwProposalInput').click()">
+        <div class="upload-area"
+             onclick="document.getElementById('vwProposalInput').click()"
+             ondragover="handleDragOver(event)"
+             ondragleave="handleDragLeave(event)"
+             ondrop="handleDrop(event, 'vwProposalInput', handleProposalUpload)">
           <span style="font-size:24px">📄</span>
-          <p>Click to upload a vendor proposal PDF</p>
+          <p>Click or drag a vendor proposal PDF here</p>
           <input type="file" id="vwProposalInput" accept=".pdf" onchange="handleProposalUpload(this)">
         </div>
 
@@ -605,9 +619,13 @@
       <h3>📬 Annual Mailing Generator</h3>
       <p style="font-size:13px; color:#666;">Upload your Vantaca homeowner mailing address PDF.</p>
       <div class="section-label" style="margin-top:8px;">Mailing Address PDF</div>
-      <div class="upload-area" id="mailingUploadArea" onclick="document.getElementById('mailingPdf').click()">
+      <div class="upload-area" id="mailingUploadArea"
+           onclick="document.getElementById('mailingPdf').click()"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event, 'mailingPdf', handleMailingPdfSelect)">
         <span style="font-size:24px">📄</span>
-        <p id="mailingPdfLabel">Click to upload Vantaca mailing address PDF</p>
+        <p id="mailingPdfLabel">Click or drag the Vantaca mailing address PDF here</p>
         <input type="file" id="mailingPdf" accept=".pdf" onchange="handleMailingPdfSelect(this)">
       </div>
       <div class="section-label" style="margin-top:8px;">Expected Home Count (optional override)</div>
@@ -1978,6 +1996,69 @@ ${questionsPage}
     const btn = document.getElementById('exportEdEmailBtn');
     btn.textContent = '✅ Downloaded!';
     setTimeout(() => btn.textContent = '📧 Export to Email', 2000);
+  }
+
+// ============================================================
+  // DRAG-AND-DROP — universal helpers for all upload zones
+  // Each zone passes its file handler in as a parameter so the
+  // future universal drop zone can route to the same handlers
+  // without any per-zone refactoring.
+  // ============================================================
+  function handleDragOver(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.classList.add('drag-over');
+  }
+
+  function handleDragLeave(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    // Only remove the highlight if we've actually left the zone, not just
+    // moved over a child element inside it
+    if (e.currentTarget.contains(e.relatedTarget)) return;
+    e.currentTarget.classList.remove('drag-over');
+  }
+
+  function handleDrop(e, inputId, handler, options = {}) {
+    e.preventDefault();
+    e.stopPropagation();
+    e.currentTarget.classList.remove('drag-over');
+
+    const files = e.dataTransfer.files;
+    if (files.length === 0) return;
+
+    // Validate file type if the input has an accept attribute
+    const input = document.getElementById(inputId);
+    const accept = input.getAttribute('accept');
+    if (accept) {
+      const acceptedTypes = accept.split(',').map(t => t.trim().toLowerCase());
+      const droppedFile = files[0];
+      const droppedExt = '.' + droppedFile.name.split('.').pop().toLowerCase();
+      const droppedMime = droppedFile.type.toLowerCase();
+      const matches = acceptedTypes.some(t =>
+        t === droppedExt || t === droppedMime || t === droppedMime.split('/')[0] + '/*'
+      );
+      if (!matches) {
+        alert(`This zone accepts ${accept} files only. The file you dropped is ${droppedExt}.`);
+        return;
+      }
+    }
+
+    // Set the file on the hidden input so existing handlers see it as if
+    // it came from the file picker. This preserves all downstream logic.
+    const dataTransfer = new DataTransfer();
+    if (options.multiple) {
+      // Allow multiple files (used by the ACC images zone)
+      for (let i = 0; i < files.length; i++) {
+        dataTransfer.items.add(files[i]);
+      }
+    } else {
+      dataTransfer.items.add(files[0]);
+    }
+    input.files = dataTransfer.files;
+
+    // Call the existing handler exactly the way the file picker would
+    handler(input);
   }
 
   function escapeHtml(str) {
