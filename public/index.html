@@ -1439,7 +1439,6 @@
       tableRows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
     });
 
-    // Comparable subtotals row
     const subtotals = analysis.scope_analysis?.comparable_subtotals || [];
     if (subtotals.length) {
       const cells = [];
@@ -1450,11 +1449,15 @@
       tableRows += `<tr class="total-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
     }
 
-    // Stated totals row
     const totalsCells = vwState.proposals.map(p =>
       `<td class="right">${p.total ? '$' + p.total.toLocaleString() : '—'}</td>`
     );
     tableRows += `<tr class="grand-total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
+
+    // ── Tier suggestion logic ───────────────────────────────────────────
+    const tierRec = suggestTier(analysis);
+    const tierLabel = { quick: 'Quick (1 page)', standard: 'Standard (3-4 pages)', full: 'Full (10 pages)' }[tierRec.tier];
+    const tierIcon = { quick: '📄', standard: '📋', full: '📊' }[tierRec.tier];
 
     container.innerHTML = `
       <div class="vw-comparison">
@@ -1462,9 +1465,6 @@
           <div>
             <div class="vw-comparison-title">Comparison Analysis</div>
             <div style="font-size:13px; color:#888; margin-top:4px;">${currentCommunity || ''} · ${proposalCount} vendors</div>
-          </div>
-          <div class="vw-actions-row" style="margin:0;">
-            <button class="secondary-btn" onclick="printBoardPacket()">🖨️ Print Board Packet</button>
           </div>
         </div>
 
@@ -1494,15 +1494,88 @@
             ${analysis.scope_analysis.scope_mismatches.map(m => `<li>${escapeHtml(m)}</li>`).join('')}
           </ul>
         ` : ''}
+
+        <div style="margin-top: 28px; padding: 20px 24px; background: #f7f9fc; border-radius: 12px; border: 1px solid #e3e8ef;">
+          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
+            <div>
+              <div style="font-size: 11px; color: #1a3a5c; letter-spacing: 0.08em; font-weight: 600;">SUGGESTED PACKET FORMAT</div>
+              <div style="font-size: 17px; font-weight: 600; color: #1a1a1a; margin-top: 4px;">${tierIcon}&nbsp;&nbsp;${tierLabel}</div>
+              <div style="font-size: 13px; color: #555; margin-top: 4px;">${escapeHtml(tierRec.rationale)}</div>
+            </div>
+          </div>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap; padding-top: 12px; border-top: 1px solid #d8e2ed;">
+            <button class="action-btn" onclick="printPacket('${tierRec.tier}')" style="padding: 10px 20px;">
+              ${tierIcon}&nbsp;&nbsp;Generate ${tierLabel.split(' ')[0]} packet
+            </button>
+            ${tierRec.tier !== 'quick' ? `<button class="secondary-btn" onclick="printPacket('quick')">Use Quick instead</button>` : ''}
+            ${tierRec.tier !== 'standard' ? `<button class="secondary-btn" onclick="printPacket('standard')">Use Standard instead</button>` : ''}
+            ${tierRec.tier !== 'full' ? `<button class="secondary-btn" onclick="printPacket('full')">Use Full instead</button>` : ''}
+          </div>
+        </div>
       </div>
     `;
   }
 
-  function printBoardPacket() {
+  // ── Tier suggestion logic ───────────────────────────────────────────────
+  function suggestTier(analysis) {
+    const proposals = vwState.proposals;
+    const totals = proposals.map(p => p.total || 0);
+    const maxTotal = Math.max(...totals);
+    const hasServiceContract = proposals.some(p => {
+      const ed = analysis.vendor_profiles?.find((_, i) => i === proposals.indexOf(p));
+      return false; // we don't have document_type here directly; rely on totals + analysis
+    });
+    // Use the analysis's document_type and service contract signals
+    const docType = analysis.scope_analysis?.are_truly_comparable === false ? 'mixed' : null;
+    // Best signal: check if any proposal is over $50K, or service-contract-y by checking analysis's vendor_profiles for monthly mentions
+    const isLikelyServiceContract = (analysis.executive_summary || '').match(/monthly|recurring|annual contract|swim season|month-to-month/i);
+    const flagCount = (analysis.scope_analysis?.scope_mismatches || []).length;
+
+    // Full tier: any proposal over $50K, OR service contract over $25K/year
+    if (maxTotal >= 50000 || (isLikelyServiceContract && maxTotal >= 25000)) {
+      return {
+        tier: 'full',
+        rationale: maxTotal >= 50000
+          ? `Largest proposal is $${maxTotal.toLocaleString()} — high-stakes decision warrants comprehensive review.`
+          : `Recurring service contract over $25K/year — long-term commitment warrants comprehensive review.`
+      };
+    }
+
+    // Quick tier: all proposals under $25K, project bid only, no major scope complications
+    if (maxTotal < 25000 && !isLikelyServiceContract && flagCount < 3) {
+      return {
+        tier: 'quick',
+        rationale: `Simple project bid under $25K with ${flagCount} risk flag${flagCount === 1 ? '' : 's'} — concise one-page summary fits the decision.`
+      };
+    }
+
+    // Standard tier: everything else
+    return {
+      tier: 'standard',
+      rationale: `Mid-complexity comparison with ${flagCount} risk flag${flagCount === 1 ? '' : 's'} — balanced 3-4 page format.`
+    };
+  }
+
+  // ── Packet dispatcher ───────────────────────────────────────────────────
+  function printPacket(tier) {
     if (!vwState.comparisonAnalysis) return;
+    if (tier === 'quick') return printQuickPacket();
+    if (tier === 'standard') return printStandardPacket();
+    return printFullPacket();
+  }
+
+  // Backward-compatible alias for any old onclick attributes
+  function printBoardPacket() {
+    const tier = suggestTier(vwState.comparisonAnalysis).tier;
+    printPacket(tier);
+  }
+
+  // ── Shared helpers for all packets ──────────────────────────────────────
+  function _packetSetup() {
     const a = vwState.comparisonAnalysis;
     const community = currentCommunity || 'HOA';
     const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const todayCaps = today.toUpperCase();
     const proposalCount = vwState.proposals.length;
     const proposalNames = vwState.proposals.map(p => p.vendorName);
 
@@ -1513,11 +1586,78 @@
     };
     const logoPath = logoMap[community];
     const logoHtml = logoPath
-      ? `<img src="${window.location.origin}${logoPath}" style="max-height:90px; max-width:280px;" />`
-      : `<div style="font-size:22px; font-weight:600; color:#1a3a5c;">${community}</div>`;
+      ? `<img src="${window.location.origin}${logoPath}" style="max-height: 72px; max-width: 220px;" alt="${escapeHtml(community)}" />`
+      : `<div style="width: 64px; height: 64px; background: #1a3a5c; border-radius: 4px; display: inline-flex; align-items: center; justify-content: center; color: white; font-size: 11px; letter-spacing: 0.05em; font-weight: 500; text-align: center; line-height: 1.2; padding: 0 8px;">${escapeHtml(community).toUpperCase().split(' ').slice(0,2).join(' ')}</div>`;
 
-    // Build comparison rows for print
-    let tableRows = '';
+    const totals = vwState.proposals.map(p => p.total || 0);
+    const validTotals = totals.filter(t => t > 0);
+    const priceSpread = validTotals.length >= 2 ? Math.max(...validTotals) - Math.min(...validTotals) : 0;
+    const flagCount = (a.scope_analysis?.scope_mismatches || []).length;
+
+    return { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, totals, priceSpread, flagCount };
+  }
+
+  function _commonStyles() {
+    return `
+      @page { size: letter; margin: 0; }
+      * { box-sizing: border-box; }
+      body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+      .page { padding: 0.65in 0.75in; min-height: 11in; position: relative; page-break-after: always; }
+      .page:last-of-type { page-break-after: auto; }
+      .eyebrow { font-size: 10px; letter-spacing: 0.18em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; }
+      .eyebrow-accent { font-size: 10px; letter-spacing: 0.22em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; }
+      .label { font-size: 10px; letter-spacing: 0.14em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; margin-bottom: 6px; }
+      h1.cover { font-size: 32px; font-weight: 400; color: #14283d; margin: 0; letter-spacing: -0.015em; line-height: 1.2; }
+      h2.section { font-size: 11px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; margin: 0 0 14px 0; }
+      h3.profile { font-size: 22px; font-weight: 400; color: #14283d; margin: 0 0 6px 0; letter-spacing: -0.01em; }
+      p.body { font-size: 13.5px; line-height: 1.75; color: #2a2f3a; margin: 0 0 12px 0; }
+      .num { font-variant-numeric: tabular-nums; }
+      .stat { background: #f7f9fc; padding: 14px 18px; border-radius: 4px; }
+      .stat-label { font-size: 10px; letter-spacing: 0.14em; color: #1a3a5c; font-weight: 600; margin-bottom: 4px; text-transform: uppercase; }
+      .stat-value { font-size: 19px; font-weight: 400; color: #14283d; font-variant-numeric: tabular-nums; }
+      .rec-box { background: #f7f9fc; border-left: 3px solid #1a3a5c; padding: 22px 26px; border-radius: 0 4px 4px 0; }
+      .rec-box .rec-label-text { font-size: 10px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; }
+      .rec-box .rec-vendor-text { font-size: 20px; font-weight: 500; color: #14283d; margin-bottom: 6px; }
+      .rec-box .rec-rationale-text { font-size: 13.5px; color: #5a6271; line-height: 1.65; }
+      table.comp { width: 100%; border-collapse: collapse; font-size: 12px; }
+      table.comp th { background: #14283d; color: white; text-align: left; padding: 10px 12px; font-weight: 500; font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; }
+      table.comp th.num { text-align: right; }
+      table.comp td { padding: 10px 12px; border-bottom: 1px solid #eaecef; }
+      table.comp td.num { text-align: right; font-variant-numeric: tabular-nums; }
+      table.comp tr:nth-child(even) td { background: #fafbfc; }
+      table.comp .missing { color: #c89a3c; font-style: italic; }
+      table.comp tr.subtotal-row td { background: #eef3f9; font-weight: 500; border-top: 1px solid #c8d4e2; }
+      table.comp tr.total-row td { background: #14283d; color: white; font-weight: 500; }
+      table.comp tr.total-row td.num { color: white; }
+      .strength-item, .concern-item { font-size: 12.5px; line-height: 1.6; color: #2a2f3a; padding: 9px 14px; margin-bottom: 4px; }
+      .strength-item { border-left: 2px solid #b6cca5; background: #f6faef; }
+      .concern-item { border-left: 2px solid #ead8a8; background: #fdf9ee; }
+      .pill-strength { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.14em; color: #4a6240; font-weight: 600; text-transform: uppercase; margin-bottom: 12px; }
+      .pill-concern { display: inline-flex; align-items: center; gap: 6px; font-size: 10px; letter-spacing: 0.14em; color: #8a6818; font-weight: 600; text-transform: uppercase; margin-bottom: 12px; }
+      .pill-strength::before { content: '●'; color: #6b8e60; font-size: 10px; }
+      .pill-concern::before { content: '●'; color: #c89a3c; font-size: 10px; }
+      .footer-bar { position: absolute; bottom: 0.5in; left: 0.75in; right: 0.75in; padding-top: 14px; border-top: 1px solid #e8eaed; display: flex; justify-content: space-between; font-size: 10px; color: #9aa0a8; letter-spacing: 0.06em; text-transform: uppercase; }
+      .risk-callout { background: #fdf9ee; border-left: 3px solid #c89a3c; padding: 12px 16px; margin-bottom: 8px; }
+      .risk-callout-label { font-size: 11px; font-weight: 600; color: #8a6818; margin-bottom: 4px; }
+      .risk-callout-text { font-size: 12.5px; color: #2a2f3a; line-height: 1.6; }
+      .principle { padding: 12px 0; border-bottom: 1px solid #eaecef; }
+      .principle:last-child { border-bottom: none; }
+      .principle-name { font-size: 12px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.04em; text-transform: uppercase; margin-bottom: 4px; }
+      .principle-desc { font-size: 12.5px; color: #2a2f3a; line-height: 1.65; }
+      .question-item { padding: 14px 0; border-bottom: 1px solid #eaecef; display: flex; gap: 14px; }
+      .question-item:last-child { border-bottom: none; }
+      .question-num { flex-shrink: 0; width: 28px; height: 28px; background: #14283d; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 12px; font-weight: 500; }
+      .question-text { font-size: 13px; color: #2a2f3a; line-height: 1.65; padding-top: 4px; }
+      @media print {
+        .page { padding: 0.65in 0.75in; }
+        body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      }
+    `;
+  }
+
+  // ── Build the comparison table HTML (shared) ───────────────────────────
+  function _buildCompTable(a, proposalNames, proposalCount) {
+    let rows = '';
     (a.comparison_table?.common_scope_items || []).forEach(item => {
       const cells = [];
       for (let i = 0; i < proposalCount; i++) {
@@ -1528,181 +1668,43 @@
           cells.push(`<td class="num missing">Not included</td>`);
         }
       }
-      tableRows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
+      rows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
     });
 
     const subtotals = a.scope_analysis?.comparable_subtotals || [];
-    if (subtotals.length) {
+    const totals = vwState.proposals.map(p => p.total || 0);
+    const subtotalsMatchTotals = subtotals.length === totals.length && subtotals.every((s, i) =>
+      s?.subtotal != null && Math.abs(s.subtotal - totals[i]) < 1
+    );
+
+    if (subtotals.length && !subtotalsMatchTotals) {
       const cells = [];
       for (let i = 0; i < proposalCount; i++) {
         const sub = subtotals.find(s => s.proposal_index === i);
         cells.push(`<td class="num">${sub?.subtotal ? '$' + Number(sub.subtotal).toLocaleString() : '—'}</td>`);
       }
-      tableRows += `<tr class="subtotal-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
+      rows += `<tr class="subtotal-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
     }
 
     const totalsCells = vwState.proposals.map(p =>
       `<td class="num">${p.total ? '$' + p.total.toLocaleString() : '—'}</td>`
     );
-    tableRows += `<tr class="total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
+    rows += `<tr class="total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
 
-    // Vendor profile pages
-    const vendorProfilesHtml = (a.vendor_profiles || []).map((vp, i) => `
-      <div class="page-break"></div>
-      <h2>Vendor profile · ${escapeHtml(vp.vendor_name || proposalNames[i] || 'Vendor ' + (i+1))}</h2>
-      <div class="profile-grid">
-        <div class="profile-card stated-total">
-          <div class="profile-label">Stated total</div>
-          <div class="profile-value">${vp.stated_total ? '$' + Number(vp.stated_total).toLocaleString() : '—'}</div>
-        </div>
-      </div>
-      <div class="profile-section">
-        <h3>Scope strengths</h3>
-        <ul>${(vp.scope_strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
-      </div>
-      <div class="profile-section">
-        <h3>Scope concerns</h3>
-        <ul>${(vp.scope_concerns || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
-      </div>
-      <div class="profile-section">
-        <h3>Terms strengths</h3>
-        <ul>${(vp.terms_strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
-      </div>
-      <div class="profile-section">
-        <h3>Terms concerns</h3>
-        <ul>${(vp.terms_concerns || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
-      </div>
-    `).join('');
+    return `
+      <table class="comp">
+        <thead>
+          <tr>
+            <th>Scope item</th>
+            ${proposalNames.map(n => `<th class="num">${escapeHtml(n)}</th>`).join('')}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    `;
+  }
 
-    // Questions for the board
-    const questionsHtml = (a.questions_for_board && a.questions_for_board.length) ? `
-      <div class="page-break"></div>
-      <h2>Questions for the board</h2>
-      <p class="lead">Discussion items for the board to consider before voting.</p>
-      <ol class="board-questions">
-        ${a.questions_for_board.map(q => `<li>${escapeHtml(q)}</li>`).join('')}
-      </ol>
-    ` : '';
-
-    const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>${community} · Vendor Comparison Packet</title>
-<style>
-  @page { size: letter; margin: 0.75in; }
-  body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; line-height: 1.6; }
-  .cover { text-align: center; padding: 60px 0 40px 0; border-bottom: 3px solid #1a3a5c; margin-bottom: 30px; }
-  .cover .eyebrow { font-size: 10px; letter-spacing: 0.15em; color: #888; text-transform: uppercase; margin-bottom: 12px; }
-  .cover h1 { font-size: 24px; font-weight: 500; color: #1a3a5c; margin: 0 0 8px 0; letter-spacing: -0.01em; }
-  .cover .meta { font-size: 12px; color: #888; margin-top: 16px; }
-  h2 { font-size: 14px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.06em; text-transform: uppercase; margin: 28px 0 12px 0; }
-  h3 { font-size: 12px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.04em; text-transform: uppercase; margin: 16px 0 6px 0; }
-  p { font-size: 13px; line-height: 1.7; color: #333; margin: 0 0 12px 0; }
-  p.lead { font-size: 14px; color: #555; }
-  .recommendation { background: #f5f8fc; border-left: 4px solid #1a3a5c; padding: 18px 22px; margin: 16px 0; border-radius: 0 4px 4px 0; }
-  .rec-label { font-size: 10px; color: #1a3a5c; letter-spacing: 0.1em; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; }
-  .rec-vendor { font-size: 16px; font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
-  .rec-rationale { font-size: 13px; color: #555; line-height: 1.6; }
-  .rec-key-reasons { margin-top: 12px; padding-top: 12px; border-top: 1px solid #d8e2ed; }
-  .rec-key-reasons ul { margin: 4px 0 0 18px; padding: 0; font-size: 13px; color: #444; }
-  .rec-key-reasons li { margin-bottom: 4px; }
-  .trade-offs { font-size: 12px; color: #666; font-style: italic; margin-top: 10px; }
-  table.comp { width: 100%; border-collapse: collapse; font-size: 11px; margin: 8px 0 16px 0; }
-  table.comp th { background: #1a3a5c; color: white; text-align: left; padding: 10px 10px; font-weight: 500; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
-  table.comp th.num { text-align: right; }
-  table.comp td { padding: 9px 10px; border-bottom: 1px solid #eee; }
-  table.comp td.num { text-align: right; font-variant-numeric: tabular-nums; }
-  table.comp tr:nth-child(even) td { background: #fafafa; }
-  table.comp .missing { color: #c0392b; font-style: italic; }
-  table.comp .subtotal-row td { background: #f5f8fc; font-weight: 600; }
-  table.comp .total-row td { background: #1a3a5c; color: white; font-weight: 600; }
-  table.comp .total-row td.num { color: white; }
-  ul, ol { margin: 6px 0 12px 22px; padding: 0; }
-  ul li, ol li { font-size: 13px; line-height: 1.7; color: #333; margin-bottom: 4px; }
-  .scope-mismatches { background: #fff8e7; border-left: 3px solid #f0c674; padding: 14px 18px; margin: 12px 0; border-radius: 0 4px 4px 0; }
-  .scope-mismatches ul { margin: 4px 0 0 18px; }
-  .scope-mismatches li { font-size: 12px; color: #5c4a14; }
-  .page-break { page-break-before: always; }
-  .profile-grid { display: flex; gap: 12px; margin: 12px 0 18px 0; }
-  .profile-card { background: #f5f8fc; padding: 12px 16px; border-radius: 4px; }
-  .profile-card.stated-total { border-left: 3px solid #1a3a5c; }
-  .profile-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin-bottom: 4px; }
-  .profile-value { font-size: 18px; font-weight: 600; color: #1a3a5c; font-variant-numeric: tabular-nums; }
-  .profile-section { margin: 14px 0; }
-  .profile-section h3 { margin-bottom: 6px; color: #1a3a5c; }
-  .board-questions li { padding: 6px 0; font-size: 13px; color: #333; line-height: 1.6; }
-  .footer { text-align: center; margin-top: 36px; padding-top: 16px; border-top: 1px solid #ddd; font-size: 10px; color: #888; }
-  .principles { font-size: 12px; color: #555; line-height: 1.6; margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
-  .principles strong { color: #1a3a5c; font-weight: 600; }
-</style>
-</head>
-<body>
-
-<div class="cover">
-  ${logoHtml}
-  <div class="eyebrow" style="margin-top:24px;">Vendor Comparison Packet</div>
-  <h1>${escapeHtml(a.recommendation?.vendor_name || community)} recommendation</h1>
-  <div style="font-size: 13px; color: #555; margin-top: 6px;">${escapeHtml(community)} · ${proposalCount} vendors evaluated</div>
-  <div class="meta">Prepared by Bedrock Association Management · ${today}</div>
-</div>
-
-<h2>Executive summary</h2>
-<p>${escapeHtml(a.executive_summary || '')}</p>
-
-<div class="recommendation">
-  <div class="rec-label">Recommendation</div>
-  <div class="rec-vendor">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
-  <div class="rec-rationale">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
-  ${(a.recommendation?.key_reasons || []).length ? `
-    <div class="rec-key-reasons">
-      <strong style="font-size:11px; color:#1a3a5c; letter-spacing:0.06em; text-transform:uppercase;">Key reasons</strong>
-      <ul>${a.recommendation.key_reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
-    </div>
-  ` : ''}
-  ${a.recommendation?.trade_offs_acknowledged ? `<div class="trade-offs">Trade-offs: ${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>` : ''}
-</div>
-
-<h2>Apples-to-apples comparison</h2>
-<table class="comp">
-  <thead>
-    <tr>
-      <th>Scope item</th>
-      ${proposalNames.map(n => `<th class="num">${escapeHtml(n)}</th>`).join('')}
-    </tr>
-  </thead>
-  <tbody>${tableRows}</tbody>
-</table>
-
-${(a.scope_analysis?.scope_mismatches || []).length ? `
-  <h2>Scope analysis</h2>
-  <p>${a.scope_analysis?.are_truly_comparable ? 'The proposals are functionally comparable after scope adjustment.' : 'These proposals have meaningful scope differences. The board should consider these before deciding.'}</p>
-  <div class="scope-mismatches">
-    <strong style="font-size:11px; color:#5c4a14; letter-spacing:0.06em; text-transform:uppercase;">Scope differences flagged</strong>
-    <ul>${a.scope_analysis.scope_mismatches.map(m => `<li>${escapeHtml(m)}</li>`).join('')}</ul>
-  </div>
-  ${a.scope_analysis.scope_adjustment_notes ? `<p style="font-size:12px; color:#555; font-style:italic;">${escapeHtml(a.scope_analysis.scope_adjustment_notes)}</p>` : ''}
-` : ''}
-
-${(a.playbook_principles_applied || []).length ? `
-  <div class="principles">
-    <strong>Bedrock principles applied to this analysis:</strong>
-    <ul style="margin-top:6px;">${a.playbook_principles_applied.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>
-  </div>
-` : ''}
-
-${vendorProfilesHtml}
-
-${questionsHtml}
-
-<div class="footer">
-  Prepared by Bedrock Association Management · ${today}<br>
-  (832) 588-2485 · bedrocktx.com
-</div>
-
-</body>
-</html>`;
-
+  function _openPrintWindow(html) {
     const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const w = window.open(url, '_blank');
@@ -1711,6 +1713,427 @@ ${questionsHtml}
       URL.revokeObjectURL(url);
     };
   }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // QUICK PACKET — 1 page memo-style
+  // ─────────────────────────────────────────────────────────────────────────
+  function printQuickPacket() {
+    const ctx = _packetSetup();
+    const { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, priceSpread } = ctx;
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>${escapeHtml(community)} · Vendor Comparison · ${escapeHtml(today)}</title>
+<style>${_commonStyles()}</style>
+</head><body>
+
+<div class="page">
+  <div style="display: flex; align-items: center; justify-content: space-between; padding-bottom: 18px; border-bottom: 2px solid #1a3a5c; margin-bottom: 24px;">
+    <div>${logoHtml}</div>
+    <div style="text-align: right;">
+      <div class="eyebrow">Bedrock Association Management</div>
+      <div style="font-size: 11px; color: #6b7280; margin-top: 4px;">${escapeHtml(today)}</div>
+    </div>
+  </div>
+
+  <div class="eyebrow-accent" style="margin-bottom: 8px;">Vendor Comparison Memo</div>
+  <h1 class="cover" style="font-size: 24px; margin-bottom: 6px;">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')} recommended</h1>
+  <div style="font-size: 13px; color: #6b7280; margin-bottom: 22px;">${escapeHtml(community)} · ${proposalCount} vendors evaluated · ${escapeHtml(today)}</div>
+
+  <div class="rec-box" style="margin-bottom: 22px;">
+    <div class="rec-label-text">Recommendation</div>
+    <div class="rec-vendor-text">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
+    <div class="rec-rationale-text">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
+  </div>
+
+  <h2 class="section">Comparison</h2>
+  ${_buildCompTable(a, proposalNames, proposalCount)}
+
+  ${(a.recommendation?.key_reasons || []).length ? `
+    <h2 class="section" style="margin-top: 22px;">Key reasons</h2>
+    <ul style="margin: 0; padding-left: 18px;">
+      ${a.recommendation.key_reasons.map(r => `<li style="font-size: 12.5px; line-height: 1.65; color: #2a2f3a; margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
+    </ul>
+  ` : ''}
+
+  ${a.recommendation?.trade_offs_acknowledged ? `
+    <div style="margin-top: 18px; padding: 12px 16px; background: #fafbfc; border-radius: 4px; border: 1px solid #e8eaed;">
+      <div class="label" style="margin-bottom: 4px;">Trade-offs acknowledged</div>
+      <div style="font-size: 12.5px; color: #555; line-height: 1.6; font-style: italic;">${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>
+    </div>
+  ` : ''}
+
+  <div class="footer-bar">
+    <div>Bedrock Association Management · (832) 588-2485 · bedrocktx.com</div>
+    <div>Page 1 of 1</div>
+  </div>
+</div>
+
+</body></html>`;
+
+    _openPrintWindow(html);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // STANDARD PACKET — 3-4 pages
+  // ─────────────────────────────────────────────────────────────────────────
+  function printStandardPacket() {
+    const ctx = _packetSetup();
+    const { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, totals, priceSpread, flagCount } = ctx;
+
+    const showStats = [];
+    showStats.push({ label: 'Vendors', value: proposalCount });
+    if (priceSpread > 0) showStats.push({ label: 'Price spread', value: '$' + priceSpread.toLocaleString() });
+    if (flagCount > 0) showStats.push({ label: 'Risks flagged', value: flagCount, accent: '#c89a3c' });
+
+    const statsHtml = showStats.map(s => `
+      <div>
+        <div class="label">${s.label}</div>
+        <div style="font-size: 19px; font-weight: 400; color: ${s.accent || '#14283d'}; font-variant-numeric: tabular-nums;">${s.value}</div>
+      </div>
+    `).join('');
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>${escapeHtml(community)} · Vendor Comparison · ${escapeHtml(today)}</title>
+<style>${_commonStyles()}</style>
+</head><body>
+
+<!-- COVER -->
+<div class="page">
+  <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 56px;">
+    <div class="eyebrow">Bedrock Association Management</div>
+    <div class="eyebrow">${escapeHtml(todayCaps)}</div>
+  </div>
+
+  <div style="margin-bottom: 40px;">${logoHtml}</div>
+
+  <div class="eyebrow-accent" style="margin-bottom: 12px;">Vendor Comparison</div>
+  <h1 class="cover">${escapeHtml(a.recommendation?.vendor_name || community)}<br>recommended</h1>
+  <div style="font-size: 14px; color: #6b7280; line-height: 1.5; max-width: 480px; margin-top: 14px;">
+    ${escapeHtml(community)} · ${proposalCount} vendors evaluated. Apples-to-apples analysis with material risk assessment.
+  </div>
+
+  ${showStats.length ? `
+    <div style="display: flex; gap: 56px; margin-top: 44px; padding-top: 24px; border-top: 1px solid #e8eaed;">
+      ${statsHtml}
+    </div>
+  ` : ''}
+
+  <div style="margin-top: 40px;">
+    <h2 class="section">Executive Summary</h2>
+    <p class="body">${escapeHtml(a.executive_summary || '')}</p>
+  </div>
+
+  <div class="rec-box" style="margin-top: 24px;">
+    <div class="rec-label-text">Recommendation</div>
+    <div class="rec-vendor-text">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
+    <div class="rec-rationale-text">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
+    ${(a.recommendation?.key_reasons || []).length ? `
+      <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #d8e2ed;">
+        <div class="label" style="color: #1a3a5c; margin-bottom: 8px;">Key reasons</div>
+        <ul style="margin: 0; padding-left: 18px;">
+          ${a.recommendation.key_reasons.map(r => `<li style="font-size: 12.5px; line-height: 1.65; color: #2a2f3a; margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
+        </ul>
+      </div>
+    ` : ''}
+  </div>
+
+  <div class="footer-bar">
+    <div>Bedrock Association Management · (832) 588-2485</div>
+    <div>Page 1</div>
+  </div>
+</div>
+
+<!-- COMPARISON -->
+<div class="page">
+  <div class="eyebrow-accent" style="margin-bottom: 10px;">Apples-to-Apples Comparison</div>
+  <h1 class="cover" style="font-size: 22px; margin-bottom: 24px;">Side-by-side scope and pricing</h1>
+
+  ${_buildCompTable(a, proposalNames, proposalCount)}
+
+  ${(a.scope_analysis?.scope_mismatches || []).length ? `
+    <h2 class="section" style="margin-top: 32px;">Scope Differences Flagged</h2>
+    <p class="body" style="margin-bottom: 14px;">${a.scope_analysis?.are_truly_comparable ? 'The proposals are functionally comparable after scope adjustment.' : 'These proposals have meaningful scope differences. The board should weigh these alongside price.'}</p>
+    ${a.scope_analysis.scope_mismatches.map(m => {
+      const colonIdx = m.indexOf(':');
+      if (colonIdx > 0 && colonIdx < 50) {
+        const label = m.slice(0, colonIdx);
+        const text = m.slice(colonIdx + 1).trim();
+        return `<div class="risk-callout"><div class="risk-callout-label">${escapeHtml(label)}</div><div class="risk-callout-text">${escapeHtml(text)}</div></div>`;
+      }
+      return `<div class="risk-callout"><div class="risk-callout-text">${escapeHtml(m)}</div></div>`;
+    }).join('')}
+  ` : ''}
+
+  ${a.recommendation?.trade_offs_acknowledged ? `
+    <div style="margin-top: 22px; padding: 14px 18px; background: #fafbfc; border-radius: 4px; border: 1px solid #e8eaed;">
+      <div class="label" style="margin-bottom: 4px;">Trade-offs acknowledged</div>
+      <div style="font-size: 12.5px; color: #555; line-height: 1.6; font-style: italic;">${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>
+    </div>
+  ` : ''}
+
+  <div class="footer-bar">
+    <div>${escapeHtml(community)} · Vendor Comparison</div>
+    <div>Page 2</div>
+  </div>
+</div>
+
+${a.questions_for_board && a.questions_for_board.length ? `
+<!-- QUESTIONS FOR THE BOARD -->
+<div class="page">
+  <div class="eyebrow-accent" style="margin-bottom: 10px;">Questions for the Board</div>
+  <h1 class="cover" style="font-size: 22px; margin-bottom: 14px;">Discussion before voting</h1>
+  <p class="body" style="margin-bottom: 24px;">Items the board should consider before final decision.</p>
+  ${a.questions_for_board.map((q, i) => `
+    <div class="question-item">
+      <div class="question-num">${i + 1}</div>
+      <div class="question-text">${escapeHtml(q)}</div>
+    </div>
+  `).join('')}
+
+  <div style="margin-top: 56px; padding-top: 18px; border-top: 1px solid #e8eaed; font-size: 11px; color: #6b7280; line-height: 1.6;">
+    Prepared by Bedrock Association Management · ${escapeHtml(today)}<br>
+    (832) 588-2485 · bedrocktx.com
+  </div>
+
+  <div class="footer-bar">
+    <div>${escapeHtml(community)} · Vendor Comparison</div>
+    <div>Page 3</div>
+  </div>
+</div>
+` : ''}
+
+</body></html>`;
+
+    _openPrintWindow(html);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // FULL PACKET — 10 pages, comprehensive
+  // ─────────────────────────────────────────────────────────────────────────
+  function printFullPacket() {
+    const ctx = _packetSetup();
+    const { a, community, today, todayCaps, proposalCount, proposalNames, logoHtml, totals, priceSpread, flagCount } = ctx;
+
+    const showStats = [];
+    showStats.push({ label: 'Vendors evaluated', value: proposalCount });
+    if (priceSpread > 0) showStats.push({ label: 'Price spread', value: '$' + priceSpread.toLocaleString() });
+    if (flagCount > 0) showStats.push({ label: 'Risks flagged', value: flagCount, accent: '#c89a3c' });
+
+    const statsHtml = showStats.map(s => `
+      <div>
+        <div class="label">${s.label}</div>
+        <div style="font-size: 22px; font-weight: 400; color: ${s.accent || '#14283d'}; font-variant-numeric: tabular-nums;">${s.value}</div>
+      </div>
+    `).join('');
+
+    let pageNum = 0;
+    const nextPage = () => ++pageNum;
+
+    // Vendor profile pages
+    const vendorProfilesHtml = (a.vendor_profiles || []).map((vp, i) => {
+      const total = vp.stated_total || vwState.proposals[i]?.total;
+      return `
+<div class="page">
+  <div class="eyebrow-accent" style="margin-bottom: 12px;">Vendor Profile · ${i + 1} of ${(a.vendor_profiles || []).length}</div>
+  <h3 class="profile">${escapeHtml(vp.vendor_name || proposalNames[i] || 'Vendor ' + (i+1))}</h3>
+  <div style="font-size: 13px; color: #6b7280;">${escapeHtml(community)}</div>
+
+  <div style="display: flex; gap: 14px; margin-top: 24px; margin-bottom: 28px;">
+    <div class="stat" style="flex: 1;">
+      <div class="stat-label">Stated total</div>
+      <div class="stat-value">${total ? '$' + Number(total).toLocaleString() : '—'}</div>
+    </div>
+  </div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
+    <div>
+      <div class="pill-strength">Scope strengths</div>
+      ${(vp.scope_strengths || []).length
+        ? vp.scope_strengths.map(s => `<div class="strength-item">${escapeHtml(s)}</div>`).join('')
+        : `<div class="strength-item" style="color: #888; font-style: italic;">None noted</div>`}
+    </div>
+    <div>
+      <div class="pill-concern">Scope concerns</div>
+      ${(vp.scope_concerns || []).length
+        ? vp.scope_concerns.map(s => `<div class="concern-item">${escapeHtml(s)}</div>`).join('')
+        : `<div class="concern-item" style="color: #888; font-style: italic;">None noted</div>`}
+    </div>
+  </div>
+
+  <div style="height: 1px; background: #e8eaed; margin: 28px 0;"></div>
+
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 22px;">
+    <div>
+      <div class="pill-strength">Terms strengths</div>
+      ${(vp.terms_strengths || []).length
+        ? vp.terms_strengths.map(s => `<div class="strength-item">${escapeHtml(s)}</div>`).join('')
+        : `<div class="strength-item" style="color: #888; font-style: italic;">None noted</div>`}
+    </div>
+    <div>
+      <div class="pill-concern">Terms concerns</div>
+      ${(vp.terms_concerns || []).length
+        ? vp.terms_concerns.map(s => `<div class="concern-item">${escapeHtml(s)}</div>`).join('')
+        : `<div class="concern-item" style="color: #888; font-style: italic;">None noted</div>`}
+    </div>
+  </div>
+
+  <div class="footer-bar">
+    <div>${escapeHtml(community)} · Vendor Comparison</div>
+    <div>Page ${nextPage() + 4}</div>
+  </div>
+</div>
+`;
+    }).join('');
+
+    // Reset page counter for accurate numbering — we'll let CSS do its work and not bother
+    // Print previewers don't always honor JS-computed page numbers anyway
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<title>${escapeHtml(community)} · Vendor Comparison · ${escapeHtml(today)}</title>
+<style>${_commonStyles()}</style>
+</head><body>
+
+<!-- COVER -->
+<div class="page">
+  <div style="display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 60px;">
+    <div class="eyebrow">Bedrock Association Management</div>
+    <div class="eyebrow">${escapeHtml(todayCaps)}</div>
+  </div>
+
+  <div style="margin-bottom: 48px;">${logoHtml}</div>
+
+  <div class="eyebrow-accent" style="margin-bottom: 14px;">Vendor Comparison · ${escapeHtml((a.service_category || 'services').replace(/_/g, ' '))}</div>
+  <h1 class="cover" style="font-size: 36px;">${escapeHtml(a.recommendation?.vendor_name || community)}<br>recommended</h1>
+
+  <div style="font-size: 15px; color: #6b7280; line-height: 1.5; max-width: 480px; margin-top: 16px;">
+    Comparison of ${proposalCount} ${proposalCount === 1 ? 'proposal' : 'proposals'} for ${escapeHtml(community)}. Apples-to-apples analysis with material risk assessment.
+  </div>
+
+  ${showStats.length ? `
+    <div style="display: flex; gap: 56px; margin-top: 48px; padding-top: 24px; border-top: 1px solid #e8eaed;">
+      ${statsHtml}
+    </div>
+  ` : ''}
+
+  <div style="margin-top: 44px;">
+    <h2 class="section">Executive Summary</h2>
+    <p class="body">${escapeHtml(a.executive_summary || '')}</p>
+  </div>
+
+  <div class="rec-box" style="margin-top: 24px;">
+    <div class="rec-label-text">Recommendation</div>
+    <div class="rec-vendor-text">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
+    <div class="rec-rationale-text">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
+    ${(a.recommendation?.key_reasons || []).length ? `
+      <div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid #d8e2ed;">
+        <div class="label" style="color: #1a3a5c; margin-bottom: 8px;">Key reasons</div>
+        <ul style="margin: 0; padding-left: 18px;">
+          ${a.recommendation.key_reasons.map(r => `<li style="font-size: 12.5px; line-height: 1.65; color: #2a2f3a; margin-bottom: 4px;">${escapeHtml(r)}</li>`).join('')}
+        </ul>
+      </div>
+    ` : ''}
+    ${a.recommendation?.trade_offs_acknowledged ? `
+      <div style="margin-top: 14px; font-size: 12px; color: #6b7280; font-style: italic; line-height: 1.6;">Trade-offs: ${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>
+    ` : ''}
+  </div>
+
+  <div class="footer-bar">
+    <div>Bedrock Association Management · (832) 588-2485</div>
+    <div>Page 1</div>
+  </div>
+</div>
+
+<!-- COMPARISON TABLE -->
+<div class="page">
+  <div class="eyebrow-accent" style="margin-bottom: 10px;">Apples-to-Apples Comparison</div>
+  <h1 class="cover" style="font-size: 22px; margin-bottom: 24px;">Side-by-side scope and pricing</h1>
+
+  ${_buildCompTable(a, proposalNames, proposalCount)}
+
+  ${(a.scope_analysis?.scope_mismatches || []).length ? `
+    <h2 class="section" style="margin-top: 28px;">Scope Differences Flagged</h2>
+    <p class="body" style="margin-bottom: 14px;">${a.scope_analysis?.are_truly_comparable ? 'The proposals are functionally comparable after scope adjustment.' : 'These proposals have meaningful scope differences. The board should weigh these alongside price.'}</p>
+    ${a.scope_analysis.scope_mismatches.map(m => {
+      const colonIdx = m.indexOf(':');
+      if (colonIdx > 0 && colonIdx < 50) {
+        const label = m.slice(0, colonIdx);
+        const text = m.slice(colonIdx + 1).trim();
+        return `<div class="risk-callout"><div class="risk-callout-label">${escapeHtml(label)}</div><div class="risk-callout-text">${escapeHtml(text)}</div></div>`;
+      }
+      return `<div class="risk-callout"><div class="risk-callout-text">${escapeHtml(m)}</div></div>`;
+    }).join('')}
+  ` : ''}
+
+  ${a.scope_analysis?.scope_adjustment_notes ? `
+    <p style="font-size: 12px; color: #6b7280; font-style: italic; margin-top: 16px; line-height: 1.65;">${escapeHtml(a.scope_analysis.scope_adjustment_notes)}</p>
+  ` : ''}
+
+  <div class="footer-bar">
+    <div>${escapeHtml(community)} · Vendor Comparison</div>
+    <div>Page 2</div>
+  </div>
+</div>
+
+${(a.playbook_principles_applied || []).length ? `
+<!-- BEDROCK PRINCIPLES -->
+<div class="page">
+  <div class="eyebrow-accent" style="margin-bottom: 10px;">Analytical Discipline</div>
+  <h1 class="cover" style="font-size: 22px; margin-bottom: 14px;">Bedrock principles applied</h1>
+  <p class="body" style="margin-bottom: 24px;">The following Bedrock principles informed this analysis. They reflect how we approach every vendor evaluation regardless of size or category.</p>
+
+  ${a.playbook_principles_applied.map(p => {
+    const colonIdx = p.indexOf(':');
+    if (colonIdx > 0 && colonIdx < 60) {
+      const name = p.slice(0, colonIdx);
+      const desc = p.slice(colonIdx + 1).trim();
+      return `<div class="principle"><div class="principle-name">${escapeHtml(name)}</div><div class="principle-desc">${escapeHtml(desc)}</div></div>`;
+    }
+    return `<div class="principle"><div class="principle-desc">${escapeHtml(p)}</div></div>`;
+  }).join('')}
+
+  <div class="footer-bar">
+    <div>${escapeHtml(community)} · Vendor Comparison</div>
+    <div>Page 3</div>
+  </div>
+</div>
+` : ''}
+
+${vendorProfilesHtml}
+
+${a.questions_for_board && a.questions_for_board.length ? `
+<!-- QUESTIONS FOR THE BOARD -->
+<div class="page">
+  <div class="eyebrow-accent" style="margin-bottom: 10px;">Questions for the Board</div>
+  <h1 class="cover" style="font-size: 22px; margin-bottom: 14px;">Discussion before voting</h1>
+  <p class="body" style="margin-bottom: 24px;">Items the board should consider before final decision.</p>
+
+  ${a.questions_for_board.map((q, i) => `
+    <div class="question-item">
+      <div class="question-num">${i + 1}</div>
+      <div class="question-text">${escapeHtml(q)}</div>
+    </div>
+  `).join('')}
+
+  <div style="margin-top: 56px; padding-top: 18px; border-top: 1px solid #e8eaed; font-size: 11px; color: #6b7280; line-height: 1.6;">
+    Prepared by Bedrock Association Management · ${escapeHtml(today)}<br>
+    (832) 588-2485 · bedrocktx.com
+  </div>
+
+  <div class="footer-bar">
+    <div>${escapeHtml(community)} · Vendor Comparison</div>
+    <div>Final page</div>
+  </div>
+</div>
+` : ''}
+
+</body></html>`;
+
+    _openPrintWindow(html);
+  }
+
 
   function escapeHtml(str) {
     if (str == null) return '';
