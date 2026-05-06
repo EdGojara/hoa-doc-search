@@ -3,17 +3,28 @@
 //
 // Run once after the migration to embed all existing playbook entries.
 // Safe to re-run: only embeds rows where embedding IS NULL by default.
-// Pass --force to re-embed everything (use after schema changes).
-//
-// Usage:
-//   node backfill_playbook_embeddings.js
-//   node backfill_playbook_embeddings.js --force
-//
-// Reads SUPABASE_URL, SUPABASE_KEY, OPENAI_API_KEY from your .env / Render env.
 // ============================================================================
 
+require('dotenv').config();
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
+
+// Sanity check that env vars actually loaded
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY || !process.env.OPENAI_API_KEY) {
+  console.error('\n[ERROR] Missing required env vars in .env file.');
+  console.error(`   SUPABASE_URL:     ${process.env.SUPABASE_URL ? 'OK' : 'MISSING'}`);
+  console.error(`   SUPABASE_KEY:     ${process.env.SUPABASE_KEY ? 'OK' : 'MISSING'}`);
+  console.error(`   OPENAI_API_KEY:   ${process.env.OPENAI_API_KEY ? 'OK' : 'MISSING'}`);
+  console.error('\n   Make sure .env exists in the same folder as this script and contains all three vars.\n');
+  process.exit(1);
+}
+
+// Quick visual check that the OpenAI key isn't placeholder text
+if (!process.env.OPENAI_API_KEY.startsWith('sk-')) {
+  console.error(`\n[ERROR] OPENAI_API_KEY does not start with "sk-" — looks like placeholder text, not a real key.`);
+  console.error(`   First 10 chars: "${process.env.OPENAI_API_KEY.slice(0, 10)}..."\n`);
+  process.exit(1);
+}
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -44,7 +55,6 @@ async function main() {
   console.log(`\n=== Playbook Embedding Backfill ===`);
   console.log(`Mode: ${FORCE ? 'FORCE (re-embed everything)' : 'INCREMENTAL (only null embeddings)'}\n`);
 
-  // Pull entries that need embedding
   let query = supabase.from('playbook').select('id, situation, response, reasoning, category, embedding');
   if (!FORCE) query = query.is('embedding', null);
 
@@ -68,7 +78,7 @@ async function main() {
   for (const entry of entries) {
     const text = buildEmbeddingText(entry);
     if (!text.trim()) {
-      console.log(`  [${entry.id}] SKIP — empty text`);
+      console.log(`  [${entry.id}] SKIP - empty text`);
       skipped++;
       continue;
     }
@@ -81,19 +91,18 @@ async function main() {
         .eq('id', entry.id);
 
       if (updateError) {
-        console.log(`  [${entry.id}] FAIL — ${updateError.message}`);
+        console.log(`  [${entry.id}] FAIL - ${updateError.message}`);
         failed++;
       } else {
         const preview = (entry.situation || '').slice(0, 60).replace(/\n/g, ' ');
-        console.log(`  [${entry.id}] OK    — ${entry.category || 'no category'}: ${preview}...`);
+        console.log(`  [${entry.id}] OK   - ${entry.category || 'no category'}: ${preview}...`);
         success++;
       }
     } catch (err) {
-      console.log(`  [${entry.id}] FAIL — ${err.message}`);
+      console.log(`  [${entry.id}] FAIL - ${err.message}`);
       failed++;
     }
 
-    // Gentle rate limit cushion (OpenAI ada-002 allows plenty, but be polite)
     await new Promise(r => setTimeout(r, 50));
   }
 
@@ -107,7 +116,6 @@ async function main() {
     process.exit(1);
   }
 
-  // Final verification
   const { count: stillNull } = await supabase
     .from('playbook')
     .select('id', { count: 'exact', head: true })
@@ -123,9 +131,9 @@ async function main() {
   console.log(`  Entries still null:     ${stillNull}`);
 
   if (stillNull === 0) {
-    console.log(`\n✓ All entries embedded. Ready to wire up retrieval.\n`);
+    console.log(`\n[OK] All entries embedded. Ready to wire up retrieval.\n`);
   } else {
-    console.log(`\n⚠ ${stillNull} entries still have null embedding. Investigate before proceeding.\n`);
+    console.log(`\n[WARN] ${stillNull} entries still have null embedding. Investigate before proceeding.\n`);
   }
 }
 

@@ -7,6 +7,10 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 const pdfParse = require('pdf-parse');
 
+// Unified playbook retrieval — semantic search across all entries.
+// Replaces per-endpoint category filters.
+const { getRelevantPlaybook, formatPlaybookContext, buildAppliedPlaybookSummary } = require('./playbook');
+
 const app = express();
 app.use(express.json());
 app.use(express.static('public'));
@@ -1262,19 +1266,24 @@ app.post('/run-comparison', async (req, res) => {
       }
     }
 
-    const { data: playbookEntries } = await supabase
-      .from('playbook')
-      .select('*')
-      .or('category.eq.Vendor Negotiation,category.eq.General,category.is.null')
-      .order('created_at', { ascending: false })
-      .limit(20);
+// Build a query string from the proposal data so semantic retrieval
+    // can find playbook entries relevant to THIS comparison, not just
+    // generic "vendor" entries.
+    const playbookQuery = [
+      `Vendor comparison for ${community || 'community'}`,
+      `Service category: ${dominantCategory}`,
+      `Document type: ${dominantDocType}`,
+      orderedProposals.map(p => `Vendor: ${p.vendors?.name || p.vendor_name_raw}`).join('. '),
+      orderedProposals.map(p => {
+        const ex = p.extracted_data || {};
+        return `${p.vendors?.name || p.vendor_name_raw}: ${ex.key_terms_summary || ''} ${(ex.line_items || []).map(li => li.description).join('; ')}`;
+      }).join('\n')
+    ].filter(Boolean).join('\n');
 
-    const playbookContext = playbookEntries?.length
-      ? `\n\nED'S VENDOR JUDGMENT (PLAYBOOK):\n${playbookEntries.map(p =>
-          `SITUATION: ${p.situation}\nAPPROACH: ${p.response}\nREASONING: ${p.reasoning || 'Not specified'}`
-        ).join('\n\n---\n\n')}\n`
-      : '';
-
+    const matchedPlaybookEntries = await getRelevantPlaybook(playbookQuery, { matchCount: 8 });
+    const playbookContext = formatPlaybookContext(matchedPlaybookEntries, {
+      heading: "ED'S VENDOR JUDGMENT (PLAYBOOK)"
+    });
     const docTypes = orderedProposals.map(p => p.document_type);
     const dominantDocType = docTypes.sort((a, b) =>
       docTypes.filter(v => v === a).length - docTypes.filter(v => v === b).length
@@ -1516,7 +1525,8 @@ Apply the 4-step reasoning. Return only the JSON.`
     res.json({
       success: true,
       comparisonId: savedComparison.id,
-      analysis: analysisData
+      analysis: analysisData,
+      applied_playbook_entries: buildAppliedPlaybookSummary(matchedPlaybookEntries)
     });
   } catch (err) {
     console.error('Comparison error:', err);
