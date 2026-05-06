@@ -1169,7 +1169,7 @@ app.post('/run-comparison', async (req, res) => {
 
     const comparisonResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 6000,
+      max_tokens: 12000,
       system: `You are an expert vendor analyst for Bedrock Association Management. You think and decide like Ed Gojara — a CPA, CFE, MBA with 15+ years of HOA management experience. You produce rigorous apples-to-apples comparisons of vendor proposals.
 
 YOUR DISCIPLINE:
@@ -1246,11 +1246,39 @@ Produce a rigorous apples-to-apples comparison. Apply Ed's judgment. Make a reco
     try {
       analysisData = JSON.parse(rawAnalysis);
     } catch (parseErr) {
-      console.error('Failed to parse comparison JSON:', parseErr);
-      return res.status(500).json({
-        error: 'Could not parse comparison output.',
-        raw_text: rawAnalysis.slice(0, 1000)
-      });
+      console.error('Failed to parse comparison JSON, attempting repair:', parseErr.message);
+
+      try {
+        let repaired = rawAnalysis;
+
+        let quoteCount = 0;
+        for (let i = 0; i < repaired.length; i++) {
+          if (repaired[i] === '"' && repaired[i-1] !== '\\') quoteCount++;
+        }
+        if (quoteCount % 2 !== 0) {
+          repaired += '"';
+        }
+
+        const openBraces = (repaired.match(/\{/g) || []).length;
+        const closeBraces = (repaired.match(/\}/g) || []).length;
+        const openBrackets = (repaired.match(/\[/g) || []).length;
+        const closeBrackets = (repaired.match(/\]/g) || []).length;
+
+        repaired = repaired.replace(/,\s*$/, '');
+
+        for (let i = 0; i < openBrackets - closeBrackets; i++) repaired += ']';
+        for (let i = 0; i < openBraces - closeBraces; i++) repaired += '}';
+
+        analysisData = JSON.parse(repaired);
+        console.log('JSON repair succeeded.');
+      } catch (repairErr) {
+        console.error('JSON repair also failed:', repairErr.message);
+        return res.status(500).json({
+          error: 'Could not parse comparison output. Try comparing fewer proposals at once.',
+          raw_text_preview: rawAnalysis.slice(0, 500),
+          raw_text_end: rawAnalysis.slice(-500)
+        });
+      }
     }
 
     let recommendedVendorId = null;
