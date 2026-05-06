@@ -943,6 +943,167 @@ For mixed documents, populate both as relevant.`
   }
 });
 
+// Generate an RFP from an already-uploaded vendor proposal
+// Strips vendor identity and pricing, keeps scope items as the basis for a generic RFP
+app.post('/generate-rfp-from-proposal', async (req, res) => {
+  try {
+    const { proposalId, community, vendorType, contractTerm, bidDeadline, additionalRequirements } = req.body;
+
+    if (!proposalId) {
+      return res.status(400).json({ error: 'proposalId is required.' });
+    }
+
+    const { data: proposal, error: loadError } = await supabase
+      .from('vendor_proposals')
+      .select('*, vendors(name)')
+      .eq('id', proposalId)
+      .single();
+
+    if (loadError || !proposal) {
+      return res.status(404).json({ error: 'Proposal not found.' });
+    }
+
+    const extracted = proposal.extracted_data || {};
+    const lineItems = extracted.line_items || [];
+
+    let scopeText = `Scope of work derived from a sample proposal (vendor identity and pricing removed). The selected vendor will be expected to provide the following:\n\n`;
+
+    if (lineItems.length > 0) {
+      lineItems.forEach((item, idx) => {
+        scopeText += `${idx + 1}. ${item.description || 'Service item'}\n`;
+        if (item.quantity && item.unit) {
+          scopeText += `   Quantity: ${item.quantity} ${item.unit}\n`;
+        }
+        if (item.inclusions && item.inclusions.length > 0) {
+          scopeText += `   Includes: ${item.inclusions.join('; ')}\n`;
+        }
+        if (item.exclusions && item.exclusions.length > 0) {
+          scopeText += `   Notes/Exclusions: ${item.exclusions.join('; ')}\n`;
+        }
+        scopeText += '\n';
+      });
+    }
+
+    if (extracted.service_contract_details?.is_recurring) {
+      scopeText += `\nThis is a recurring service contract. `;
+      if (extracted.service_contract_details.term_length) {
+        scopeText += `Term length: ${extracted.service_contract_details.term_length}. `;
+      }
+    }
+
+    if (extracted.key_terms_summary) {
+      scopeText += `\nKey terms (vendor-specific terms have been removed; vendors should propose their own): ${extracted.key_terms_summary.replace(/\$[\d,]+(\.\d+)?/g, '[pricing TBD]')}\n`;
+    }
+
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+    const bidResponse = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      system: `You are an expert HOA property manager and procurement specialist for Bedrock Association Management. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
+
+You are generating a bid request based on a scope extracted from a sample proposal. Vendor-specific identity and pricing have been removed; you are producing a clean generic RFP based on the underlying scope.
+
+Your bid requests always include:
+- Professional header and introduction
+- Community background and context
+- Detailed scope of work with specific frequencies and requirements
+- Performance standards and expectations
+- Insurance and licensing requirements
+- Bid submission format requirements — what vendors must include in their response
+- Evaluation criteria — how bids will be scored
+- Submission deadline and instructions
+- Contact information
+
+FORMATTING:
+- Plain text only — no markdown, no pound signs for headers, no asterisks for bold
+- Use numbered sections like "SECTION 1:" not markdown headers
+- Use bullet points with the • character not dashes or asterisks
+- Use ALL CAPS for section headers instead of markdown formatting
+- Include a pricing table using plain text alignment
+- Professional and formal tone
+- Sign off as Bedrock Association Management on behalf of the community`,
+      messages: [{
+        role: 'user',
+        content: `Generate a professional bid request document for the following:
+
+Community: ${community || 'HOA Community'}
+Vendor Type: ${vendorType || extracted.service_category_guess || 'Vendor Services'}
+Date: ${today}
+Bid Submission Deadline: ${bidDeadline || '30 days from date of this request'}
+Desired Contract Term: ${contractTerm || '1 year with option to renew'}
+
+Scope of work (derived from a sample proposal — vendor identity and pricing have been stripped):
+${scopeText}
+
+${additionalRequirements ? `Additional requirements or changes:\n${additionalRequirements}` : ''}
+
+Generate a complete professional bid request document that:
+1. Vendors can use to prepare a complete and comparable bid
+2. Includes a pricing table they must fill out with line items matching the scope above
+3. Specifies exactly what must be included in their bid response
+4. Sets clear evaluation criteria
+5. Is ready to send to multiple vendors today
+6. Does not reveal that the scope was derived from a specific vendor's proposal`
+      }]
+    });
+
+    const generatedDocument = bidResponse.content[0].text;
+
+    const { data: savedBidRequest, error: saveError } = await supabase
+      .from('bid_requests')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community: community || proposal.community || 'Unknown',
+        vendor_type: vendorType || extracted.service_category_guess || 'Other',
+        contract_term: contractTerm,
+        bid_deadline: bidDeadline || null,
+        scope_summary: scopeText.slice(0, 2000),
+        generated_document: generatedDocument,
+        source_contract_filename: proposal.filename,
+        status: 'open'
+      })
+      .select()
+      .single();
+
+    if (saveError) {
+      console.error('Error saving bid request from proposal:', saveError);
+    }
+
+    if (savedBidRequest) {
+      await supabase
+        .from('vendor_proposals')
+        .update({ bid_request_id: savedBidRequest.id })
+        .eq('id', proposalId);
+    }
+
+    res.json({
+      bidRequest: generatedDocument,
+      bidRequestId: savedBidRequest?.id || null,
+      originatingProposalId: proposalId
+    });
+  } catch (err) {
+    console.error('RFP from proposal error:', err);
+    res.status(500).json({ error: 'Error generating RFP from proposal: ' + err.message });
+  }
+});
+
+// List proposals attached to a bid request
+app.get('/bid-requests/:id/proposals', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('vendor_proposals')
+      .select('id, vendor_name_raw, total_amount, filename, document_type, service_category, created_at, vendors(name)')
+      .eq('bid_request_id', id)
+      .order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json({ proposals: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Run a comparison across 2-4 proposals
 app.post('/run-comparison', async (req, res) => {
   try {

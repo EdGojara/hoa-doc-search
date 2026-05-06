@@ -7,7 +7,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
-    
+
     .header { background: #1a3a5c; color: white; padding: 16px 20px; display: flex; align-items: center; gap: 12px; }
     .header-icon { width: 40px; height: 40px; background: #2d6a9f; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 20px; }
     .header-text h1 { font-size: 18px; font-weight: 600; }
@@ -90,9 +90,9 @@
 
     .admin-panel { background: #f0f4f8; border-radius: 8px; padding: 16px; margin-top: 10px; }
     .admin-panel h4 { font-size: 13px; font-weight: 600; color: #1a3a5c; margin-bottom: 10px; }
-    .admin-panel input, .admin-panel textarea, .admin-panel select { 
-      width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px; 
-      font-size: 13px; font-family: inherit; margin-bottom: 8px; outline: none; 
+    .admin-panel input, .admin-panel textarea, .admin-panel select {
+      width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px;
+      font-size: 13px; font-family: inherit; margin-bottom: 8px; outline: none;
     }
     .admin-panel input:focus, .admin-panel textarea:focus { border-color: #2d6a9f; }
 
@@ -112,6 +112,74 @@
     .review-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
     .badge-ready { background: #e6f4ea; color: #2d7a3a; }
     .badge-needs-work { background: #fce8e6; color: #c0392b; }
+
+    /* ===== Vendor Workflow specific styles ===== */
+    .vw-container { flex: 1; overflow-y: auto; padding: 24px; background: #f7f9fc; }
+    .vw-inner { max-width: 1100px; margin: 0 auto; }
+    .vw-step { background: white; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border: 1px solid #e3e8ef; }
+    .vw-step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+    .vw-step-num { width: 28px; height: 28px; background: #1a3a5c; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+    .vw-step-num.disabled { background: #c5cdd9; }
+    .vw-step-num.complete { background: #2d7a3a; }
+    .vw-step-title { font-size: 16px; font-weight: 600; color: #1a3a5c; }
+    .vw-step-subtitle { font-size: 13px; color: #888; margin-top: 2px; }
+
+    .vw-path-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
+    .vw-path-btn { flex: 1; padding: 12px 16px; background: white; border: 2px solid #e3e8ef; border-radius: 8px; cursor: pointer; font-size: 13px; color: #555; text-align: left; transition: all 0.15s; }
+    .vw-path-btn:hover { border-color: #2d6a9f; }
+    .vw-path-btn.active { border-color: #1a3a5c; background: #f0f4f8; color: #1a3a5c; }
+    .vw-path-btn .path-title { font-weight: 600; display: block; margin-bottom: 2px; }
+    .vw-path-btn .path-sub { font-size: 12px; color: #888; }
+    .vw-path-btn.active .path-sub { color: #555; }
+
+    .vw-form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 12px; }
+    .vw-field { display: flex; flex-direction: column; gap: 6px; }
+    .vw-field label { font-size: 12px; font-weight: 600; color: #555; text-transform: uppercase; letter-spacing: 0.4px; }
+    .vw-field input, .vw-field select, .vw-field textarea { padding: 9px 12px; border: 1px solid #d0d7de; border-radius: 8px; font-size: 14px; font-family: inherit; outline: none; }
+    .vw-field input:focus, .vw-field select:focus, .vw-field textarea:focus { border-color: #2d6a9f; }
+    .vw-field-full { grid-column: 1 / -1; }
+
+    .vw-bid-pill { display: inline-flex; align-items: center; gap: 8px; background: #e8f1fb; color: #1a3a5c; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-top: 8px; }
+
+    .vw-proposals-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
+    .vw-proposal-card { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e3e8ef; border-radius: 8px; }
+    .vw-proposal-card.originating { background: #fff8e7; border-color: #f0c674; }
+    .vw-proposal-icon { width: 36px; height: 36px; background: #1a3a5c; color: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+    .vw-proposal-meta { flex: 1; min-width: 0; }
+    .vw-proposal-vendor { font-size: 14px; font-weight: 600; color: #1a1a1a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .vw-proposal-detail { font-size: 12px; color: #666; margin-top: 2px; }
+    .vw-proposal-amount { font-size: 14px; font-weight: 600; color: #1a3a5c; font-variant-numeric: tabular-nums; }
+    .vw-proposal-remove { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 18px; padding: 4px 8px; }
+
+    .vw-comparison { background: white; border-radius: 12px; padding: 24px; border: 1px solid #e3e8ef; margin-top: 16px; }
+    .vw-comparison-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #1a3a5c; }
+    .vw-comparison-title { font-size: 18px; font-weight: 600; color: #1a3a5c; }
+    .vw-recommendation-box { background: #f5f8fc; border-left: 4px solid #1a3a5c; padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .vw-recommendation-label { font-size: 11px; color: #1a3a5c; letter-spacing: 0.08em; font-weight: 600; margin-bottom: 6px; }
+    .vw-recommendation-vendor { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
+    .vw-recommendation-rationale { font-size: 14px; color: #555; line-height: 1.6; }
+
+    .vw-section-title { font-size: 13px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.06em; margin: 20px 0 10px 0; }
+    .vw-comp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .vw-comp-table th { background: #1a3a5c; color: white; text-align: left; padding: 10px 12px; font-weight: 500; font-size: 12px; }
+    .vw-comp-table th.right { text-align: right; }
+    .vw-comp-table td { padding: 10px 12px; border-bottom: 1px solid #eee; }
+    .vw-comp-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
+    .vw-comp-table tr:nth-child(even) td { background: #fafafa; }
+    .vw-comp-table .missing { color: #c0392b; font-style: italic; }
+    .vw-comp-table .total-row td { background: #f5f8fc; font-weight: 600; }
+    .vw-comp-table .grand-total-row td { background: #1a3a5c; color: white; font-weight: 600; }
+
+    .vw-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e3e8ef; border-top-color: #1a3a5c; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .vw-status-msg { font-size: 13px; color: #555; padding: 8px 12px; background: #f5f8fc; border-radius: 6px; margin-top: 8px; }
+    .vw-error-msg { font-size: 13px; color: #c0392b; padding: 8px 12px; background: #fce8e6; border-radius: 6px; margin-top: 8px; }
+    .vw-success-msg { font-size: 13px; color: #2d7a3a; padding: 8px 12px; background: #e6f4ea; border-radius: 6px; margin-top: 8px; }
+
+    .vw-bid-output { background: #fafbfc; border: 1px solid #e3e8ef; border-radius: 8px; padding: 16px; margin-top: 12px; max-height: 300px; overflow-y: auto; font-family: 'SF Mono', Consolas, monospace; font-size: 12px; line-height: 1.6; white-space: pre-wrap; color: #333; }
+
+    .vw-actions-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -146,7 +214,7 @@
   <div class="tab" onclick="switchTab('asked')">🧠 Ask Ed</div>
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
   <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
-  <div class="tab" onclick="switchTab('bid')">📊 Bid Request</div>
+  <div class="tab" onclick="switchTab('vendor')">📊 Vendor Workflow</div>
 </div>
 
 <!-- Chat Tab -->
@@ -176,8 +244,8 @@
       <h3>📥 Homeowner Email</h3>
       <textarea id="incomingEmail" placeholder="Paste the homeowner's email here..." style="flex:1; min-height:300px;"></textarea>
       <div class="section-label" style="margin-top:8px;">Additional Context (optional)</div>
-<textarea id="draftContext" placeholder="Add helpful context e.g. Annual meeting is in June, May meeting covers budget, nominations going out next month..." style="min-height:60px;"></textarea>    
-<button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Email Response</button>
+      <textarea id="draftContext" placeholder="Add helpful context e.g. Annual meeting is in June..." style="min-height:60px;"></textarea>
+      <button class="action-btn" id="draftBtn" onclick="draftResponse()">✨ Draft Email Response</button>
     </div>
     <div class="panel">
       <h3>📤 Suggested Response</h3>
@@ -199,7 +267,7 @@
         <input type="file" id="accPdf" accept=".pdf" onchange="handlePdfSelect(this)">
       </div>
       <div class="section-label">Application Details</div>
-      <textarea id="accDetails" placeholder="Enter application details:&#10;&#10;Homeowner name:&#10;Address:&#10;Type of improvement:&#10;Description:&#10;Materials/Colors:" style="min-height:150px;"></textarea>
+      <textarea id="accDetails" placeholder="Enter application details..." style="min-height:150px;"></textarea>
       <div class="section-label">Photos / Color Samples (optional)</div>
       <div class="upload-area" id="imgUploadArea" onclick="document.getElementById('accImages').click()">
         <span style="font-size:24px">🖼️</span>
@@ -208,24 +276,24 @@
       </div>
       <div class="image-previews" id="imagePreviews"></div>
       <div class="section-label" style="margin-top:8px;">Decision Override (optional)</div>
-<select class="draft-type-select" id="accDecision">
-  <option value="">— Let AI review and recommend —</option>
-  <option value="approved with conditions">Approve with Conditions</option>
-  <option value="approved no conditions">Approve — No Conditions</option>
-  <option value="incomplete">Request Missing Information</option>
-  <option value="denied">Deny Application</option>
-</select>
-<div class="section-label" style="margin-top:8px;">Additional Notes (optional)</div>
-<textarea id="accConditions" placeholder="Any special notes for the AI to factor in e.g. replacement of existing structure, board member, HOA has accepted this for years..." style="min-height:60px;"></textarea>
+      <select class="draft-type-select" id="accDecision">
+        <option value="">— Let AI review and recommend —</option>
+        <option value="approved with conditions">Approve with Conditions</option>
+        <option value="approved no conditions">Approve — No Conditions</option>
+        <option value="incomplete">Request Missing Information</option>
+        <option value="denied">Deny Application</option>
+      </select>
+      <div class="section-label" style="margin-top:8px;">Additional Notes (optional)</div>
+      <textarea id="accConditions" placeholder="Any special notes for the AI to factor in..." style="min-height:60px;"></textarea>
       <div class="section-label" style="margin-top:8px;">Additional Context (optional)</div>
-<textarea id="accContext" placeholder="Add helpful context e.g. This is a replacement of existing structure. Board member submission. Structure has been there for years and HOA has accepted it..." style="min-height:60px;"></textarea>
+      <textarea id="accContext" placeholder="Add helpful context..." style="min-height:60px;"></textarea>
       <button class="action-btn" id="reviewBtn" onclick="reviewACC()">🔍 Review Application</button>
     </div>
     <div class="panel">
       <h3>📋 ACC Review & Recommendation</h3>
-      <div class="output-box placeholder" id="accOutput">Fill in application details and click Review to get a recommendation based on your governing documents.</div>
+      <div class="output-box placeholder" id="accOutput">Fill in application details and click Review.</div>
       <button class="secondary-btn" id="copyAccBtn" onclick="copyText('accOutput')" style="display:none">📋 Copy to Clipboard</button>
-<button class="secondary-btn" id="printAccBtn" onclick="printACC()" style="display:none">🖨️ Print / Save as PDF</button>
+      <button class="secondary-btn" id="printAccBtn" onclick="printACC()" style="display:none">🖨️ Print / Save as PDF</button>
     </div>
   </div>
 </div>
@@ -268,7 +336,6 @@
             <textarea id="playbookReasoning" placeholder="Why — reasoning behind this approach..." style="min-height:60px;"></textarea>
             <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
           </div>
-
           <div style="margin-top:16px;">
             <h4 style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:10px;">📚 Playbook Entries</h4>
             <div id="playbookList" style="display:flex; flex-direction:column; gap:8px;">
@@ -292,7 +359,7 @@
   <div class="two-panel">
     <div class="panel">
       <h3>✏️ Review My Draft</h3>
-      <p style="font-size:13px; color:#666;">Paste your draft below and get feedback on how to improve it to meet Bedrock's standards.</p>
+      <p style="font-size:13px; color:#666;">Paste your draft below and get feedback.</p>
       <div class="section-label" style="margin-top:8px;">Draft Type</div>
       <select class="draft-type-select" id="draftTypeSelect">
         <option value="board email">Board Email</option>
@@ -309,7 +376,7 @@
     </div>
     <div class="panel">
       <h3>📋 Feedback & Improved Version</h3>
-      <div class="output-box placeholder" id="reviewOutput">Paste your draft and click Review to get feedback and an improved version.</div>
+      <div class="output-box placeholder" id="reviewOutput">Paste your draft and click Review.</div>
       <button class="secondary-btn" id="copyReviewBtn" onclick="copyText('reviewOutput')" style="display:none">📋 Copy to Clipboard</button>
     </div>
   </div>
@@ -334,9 +401,9 @@
       <div class="section-label">Meeting Time</div>
       <input type="text" id="meetingTime" placeholder="e.g. 6:00 PM" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
       <div class="section-label">Location or Zoom Link</div>
-      <input type="text" id="meetingLocation" placeholder="e.g. Steve Radack Community Center or Zoom link" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
+      <input type="text" id="meetingLocation" placeholder="e.g. Steve Radack Community Center" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
       <div class="section-label">Ratifications Since Last Meeting</div>
-      <textarea id="agendaRatifications" placeholder="List any actions taken between meetings that need ratification, or leave blank for none..." style="min-height:60px;"></textarea>
+      <textarea id="agendaRatifications" placeholder="List any actions taken between meetings..." style="min-height:60px;"></textarea>
       <div class="section-label">New Business Items</div>
       <textarea id="agendaNewBusiness" placeholder="List new business items one per line..." style="min-height:80px;"></textarea>
       <div class="section-label">Business in Progress</div>
@@ -349,66 +416,190 @@
     </div>
     <div class="panel">
       <h3>📄 Generated Agenda</h3>
-      <div class="output-box placeholder" id="agendaOutput">Fill in the meeting details and click Generate Agenda to create a professionally formatted agenda.</div>
+      <div class="output-box placeholder" id="agendaOutput">Fill in the meeting details and click Generate Agenda.</div>
       <button class="secondary-btn" id="copyAgendaBtn" onclick="copyText('agendaOutput')" style="display:none">📋 Copy to Clipboard</button>
       <button class="secondary-btn" id="printAgendaBtn" onclick="printAgenda()" style="display:none">🖨️ Print / Save as PDF</button>
     </div>
   </div>
 </div>
-<!-- Bid Request Generator Tab -->
-<div class="tab-content" id="tab-bid">
-  <div class="two-panel">
-    <div class="panel">
-      <h3>📊 Bid Request Generator</h3>
-      <p style="font-size:13px; color:#666;">Upload an existing contract or enter scope manually to generate a professional bid request document.</p>
-      <div class="section-label" style="margin-top:8px;">Vendor Type</div>
-      <select class="draft-type-select" id="bidVendorType">
-        <option value="Landscape Management">Landscape Management</option>
-        <option value="Pool Maintenance">Pool Maintenance</option>
-        <option value="Janitorial and Common Area Cleaning">Janitorial and Common Area Cleaning</option>
-        <option value="Security Services">Security Services</option>
-        <option value="Pest Control">Pest Control</option>
-        <option value="Irrigation Management">Irrigation Management</option>
-        <option value="Tree Service">Tree Service</option>
-        <option value="General Maintenance">General Maintenance</option>
-        <option value="Insurance">Insurance</option>
-        <option value="Other">Other</option>
-      </select>
-      <div class="section-label">Bid Submission Deadline</div>
-      <input type="date" id="bidDeadline" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
-      <div class="section-label">Contract Term</div>
-      <select class="draft-type-select" id="bidContractTerm">
-        <option value="1 year with option to renew annually">1 Year — Renewable</option>
-        <option value="2 years">2 Years</option>
-        <option value="3 years">3 Years</option>
-        <option value="Month to month">Month to Month</option>
-      </select>
-      <div class="section-label" style="margin-top:8px;">Upload Existing Contract (optional)</div>
-      <div class="upload-area" id="bidUploadArea" onclick="document.getElementById('bidContract').click()">
-        <span style="font-size:24px">📄</span>
-        <p id="bidLabel">Click to upload existing vendor contract PDF</p>
-        <input type="file" id="bidContract" accept=".pdf" onchange="handleBidContractSelect(this)">
+
+<!-- ============================================================ -->
+<!-- VENDOR WORKFLOW TAB — REPLACES OLD BID REQUEST TAB           -->
+<!-- ============================================================ -->
+<div class="tab-content" id="tab-vendor">
+  <div class="vw-container">
+    <div class="vw-inner">
+
+      <!-- STEP 1: Generate or pick the bid request -->
+      <div class="vw-step">
+        <div class="vw-step-header">
+          <div class="vw-step-num" id="vwStep1Num">1</div>
+          <div>
+            <div class="vw-step-title">Start the workflow</div>
+            <div class="vw-step-subtitle">Generate an RFP, build one from a sample proposal, or skip and just compare proposals</div>
+          </div>
+        </div>
+
+        <div class="vw-path-toggle">
+          <button class="vw-path-btn active" id="pathBtnA" onclick="setPath('A')">
+            <span class="path-title">A. Generate RFP from scratch</span>
+            <span class="path-sub">Pick vendor type, enter scope manually or upload existing contract</span>
+          </button>
+          <button class="vw-path-btn" id="pathBtnB" onclick="setPath('B')">
+            <span class="path-title">B. Build RFP from a vendor proposal</span>
+            <span class="path-sub">Upload a vendor's bid first — use it as the scope template</span>
+          </button>
+          <button class="vw-path-btn" id="pathBtnC" onclick="setPath('C')">
+            <span class="path-title">C. Skip — just compare</span>
+            <span class="path-sub">No formal RFP, just compare proposals you already have</span>
+          </button>
+        </div>
+
+        <!-- Path A form -->
+        <div id="pathAForm" style="display:block;">
+          <div class="vw-form-grid">
+            <div class="vw-field">
+              <label>Vendor Type</label>
+              <select id="vwVendorTypeA">
+                <option value="Landscape Management">Landscape Management</option>
+                <option value="Pool Maintenance">Pool Maintenance</option>
+                <option value="Janitorial and Common Area Cleaning">Janitorial and Common Area Cleaning</option>
+                <option value="Security Services">Security Services</option>
+                <option value="Pest Control">Pest Control</option>
+                <option value="Irrigation Management">Irrigation Management</option>
+                <option value="Tree Service">Tree Service</option>
+                <option value="General Maintenance">General Maintenance</option>
+                <option value="Insurance">Insurance</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="vw-field">
+              <label>Contract Term</label>
+              <select id="vwContractTermA">
+                <option value="1 year with option to renew annually">1 Year — Renewable</option>
+                <option value="2 years">2 Years</option>
+                <option value="3 years">3 Years</option>
+                <option value="Month to month">Month to Month</option>
+              </select>
+            </div>
+            <div class="vw-field">
+              <label>Bid Submission Deadline</label>
+              <input type="date" id="vwBidDeadlineA">
+            </div>
+            <div class="vw-field">
+              <label>Existing Contract (optional)</label>
+              <input type="file" id="vwContractA" accept=".pdf">
+            </div>
+            <div class="vw-field vw-field-full">
+              <label>Manual Scope (if no contract)</label>
+              <textarea id="vwManualScopeA" placeholder="Describe scope of work..." rows="4"></textarea>
+            </div>
+            <div class="vw-field vw-field-full">
+              <label>Additional Requirements (optional)</label>
+              <textarea id="vwAdditionalReqA" placeholder="Any changes from current scope, special instructions..." rows="2"></textarea>
+            </div>
+          </div>
+          <button class="action-btn" onclick="generateRFPPathA()">📊 Generate RFP</button>
+        </div>
+
+        <!-- Path B form -->
+        <div id="pathBForm" style="display:none;">
+          <div class="vw-form-grid">
+            <div class="vw-field vw-field-full">
+              <label>Sample Vendor Proposal (PDF)</label>
+              <input type="file" id="vwSampleProposalB" accept=".pdf">
+              <div style="font-size:12px; color:#888; margin-top:4px;">Vendor name and pricing will be stripped before generating the RFP.</div>
+            </div>
+            <div class="vw-field">
+              <label>Vendor Type</label>
+              <select id="vwVendorTypeB">
+                <option value="Landscape Management">Landscape Management</option>
+                <option value="Pool Maintenance">Pool Maintenance</option>
+                <option value="Janitorial and Common Area Cleaning">Janitorial and Common Area Cleaning</option>
+                <option value="Tree Service">Tree Service</option>
+                <option value="General Maintenance">General Maintenance</option>
+                <option value="Other">Other</option>
+              </select>
+            </div>
+            <div class="vw-field">
+              <label>Contract Term</label>
+              <select id="vwContractTermB">
+                <option value="1 year with option to renew annually">1 Year — Renewable</option>
+                <option value="2 years">2 Years</option>
+                <option value="3 years">3 Years</option>
+                <option value="Month to month">Month to Month</option>
+              </select>
+            </div>
+            <div class="vw-field">
+              <label>Bid Submission Deadline</label>
+              <input type="date" id="vwBidDeadlineB">
+            </div>
+            <div class="vw-field vw-field-full">
+              <label>Additional Requirements (optional)</label>
+              <textarea id="vwAdditionalReqB" placeholder="Any changes you want from the sample scope..." rows="2"></textarea>
+            </div>
+          </div>
+          <button class="action-btn" onclick="generateRFPPathB()">📊 Extract & Generate RFP</button>
+          <div style="font-size:12px; color:#888; margin-top:8px;">The originating proposal will be auto-included when you run comparisons later.</div>
+        </div>
+
+        <!-- Path C form -->
+        <div id="pathCForm" style="display:none;">
+          <p style="font-size:14px; color:#555; padding:12px; background:#f5f8fc; border-radius:6px;">
+            No formal RFP. Skip directly to uploading proposals in Step 2.
+          </p>
+        </div>
+
+        <div id="vwStep1Status"></div>
+        <div id="vwStep1Output"></div>
       </div>
-      <div class="section-label" style="margin-top:8px;">Manual Scope Entry (if no contract)</div>
-      <textarea id="bidManualScope" placeholder="Describe the scope of work if you don't have an existing contract to upload. Include service frequencies, areas covered, specific requirements..." style="min-height:100px;"></textarea>
-      <div class="section-label">Additional Requirements or Changes</div>
-      <textarea id="bidAdditionalRequirements" placeholder="Any changes from current scope, new requirements, or special instructions for vendors..." style="min-height:60px;"></textarea>
-      <button class="action-btn" id="generateBidBtn" onclick="generateBidRequest()" style="margin-top:8px;">📊 Generate Bid Request</button>
-    </div>
-    <div class="panel">
-      <h3>📄 Bid Request Document</h3>
-      <div class="output-box placeholder" id="bidOutput">Fill in the details and click Generate to create a professional bid request document ready to send to vendors.</div>
-      <button class="secondary-btn" id="copyBidBtn" onclick="copyText('bidOutput')" style="display:none">📋 Copy to Clipboard</button>
-      <button class="secondary-btn" id="printBidBtn" onclick="printBid()" style="display:none">🖨️ Print / Save as PDF</button>
+
+      <!-- STEP 2: Upload competing proposals -->
+      <div class="vw-step">
+        <div class="vw-step-header">
+          <div class="vw-step-num disabled" id="vwStep2Num">2</div>
+          <div>
+            <div class="vw-step-title">Upload vendor proposals</div>
+            <div class="vw-step-subtitle">Add 2 to 4 proposals. The system will extract scope and pricing automatically.</div>
+          </div>
+        </div>
+
+        <div class="upload-area" onclick="document.getElementById('vwProposalInput').click()">
+          <span style="font-size:24px">📄</span>
+          <p>Click to upload a vendor proposal PDF</p>
+          <input type="file" id="vwProposalInput" accept=".pdf" onchange="handleProposalUpload(this)">
+        </div>
+
+        <div class="vw-proposals-list" id="vwProposalsList"></div>
+        <div id="vwStep2Status"></div>
+      </div>
+
+      <!-- STEP 3: Run comparison -->
+      <div class="vw-step">
+        <div class="vw-step-header">
+          <div class="vw-step-num disabled" id="vwStep3Num">3</div>
+          <div>
+            <div class="vw-step-title">Run comparison & generate board packet</div>
+            <div class="vw-step-subtitle">Apples-to-apples analysis with Ed's judgment applied.</div>
+          </div>
+        </div>
+
+        <button class="action-btn" id="vwRunComparisonBtn" onclick="runComparison()" disabled>⚡ Run Comparison</button>
+        <div id="vwStep3Status"></div>
+
+        <div id="vwComparisonResult" style="display:none;"></div>
+      </div>
+
     </div>
   </div>
 </div>
+
 <!-- Annual Mailing Tab -->
 <div class="tab-content" id="tab-mailing">
   <div class="two-panel">
     <div class="panel">
       <h3>📬 Annual Mailing Generator</h3>
-      <p style="font-size:13px; color:#666;">Upload your Vantaca homeowner mailing address PDF to generate print-ready cover pages for window envelopes.</p>
+      <p style="font-size:13px; color:#666;">Upload your Vantaca homeowner mailing address PDF.</p>
       <div class="section-label" style="margin-top:8px;">Mailing Address PDF</div>
       <div class="upload-area" id="mailingUploadArea" onclick="document.getElementById('mailingPdf').click()">
         <span style="font-size:24px">📄</span>
@@ -416,22 +607,21 @@
         <input type="file" id="mailingPdf" accept=".pdf" onchange="handleMailingPdfSelect(this)">
       </div>
       <div class="section-label" style="margin-top:8px;">Expected Home Count (optional override)</div>
-      <input type="number" id="mailingExpectedCount" placeholder="Leave blank to use community record e.g. 1171" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
-      <p style="font-size:12px; color:#888; margin-top:4px;">The system will automatically validate against the known home count for the selected community.</p>
+      <input type="number" id="mailingExpectedCount" placeholder="Leave blank to use community record" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none; flex-shrink:0;">
       <button class="action-btn" id="generateMailingBtn" onclick="generateMailing()" style="margin-top:12px;">📬 Generate Mailing</button>
       <div id="mailingWarning" style="display:none; background:#fff3cd; border:1px solid #ffc107; border-radius:8px; padding:12px; margin-top:10px; font-size:13px; color:#856404;">
         <strong>⚠️ Count Mismatch</strong>
         <p id="mailingWarningText" style="margin-top:6px;"></p>
         <div style="display:flex; gap:8px; margin-top:10px;">
           <button class="action-btn" onclick="generateMailingForce()" style="font-size:13px; padding:8px 16px;">Proceed Anyway</button>
-          <button class="secondary-btn" onclick="document.getElementById('mailingWarning').style.display='none'" style="font-size:13px; padding:8px 16px;">Cancel — Fix Export</button>
+          <button class="secondary-btn" onclick="document.getElementById('mailingWarning').style.display='none'" style="font-size:13px; padding:8px 16px;">Cancel</button>
         </div>
       </div>
     </div>
     <div class="panel">
       <h3>📄 Output</h3>
       <div class="output-box placeholder" id="mailingOutput" style="display:flex; align-items:center; justify-content:center; text-align:center; color:#aaa;">
-        Upload your Vantaca PDF and click Generate Mailing to create a print-ready Word document with one address cover page per homeowner.
+        Upload your Vantaca PDF and click Generate Mailing.
       </div>
     </div>
   </div>
@@ -446,6 +636,16 @@
   let conversationHistory = [];
   let currentCommunity = '';
   let selectedImages = [];
+
+  // Vendor workflow state
+  let vwState = {
+    path: 'A',
+    bidRequestId: null,
+    bidRequestText: null,
+    proposals: [],          // {id, vendorName, total, filename, isOriginating}
+    comparisonId: null,
+    comparisonAnalysis: null
+  };
 
   function switchTab(tab) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
@@ -570,7 +770,7 @@
       const data = await res.json();
       draftOutput.className = 'output-box';
       draftOutput.textContent = data.draft;
-      document.getElementById('printAccBtn').style.display = 'block';
+      copyBtn.style.display = 'block';
     } catch (err) {
       draftOutput.textContent = 'Something went wrong. Please try again.';
     }
@@ -625,14 +825,9 @@
       formData.append('community', currentCommunity);
       formData.append('additionalContext', document.getElementById('accContext').value);
       formData.append('decision', document.getElementById('accDecision').value);
-formData.append('conditions', document.getElementById('accConditions').value);
+      formData.append('conditions', document.getElementById('accConditions').value);
       if (details) formData.append('details', details);
       if (pdfFile) formData.append('pdf', pdfFile);
-      selectedImages.forEach((img, i) => {
-        formData.append(`image_${i}`, img.base64);
-        formData.append(`image_type_${i}`, img.type);
-        formData.append('image_count', selectedImages.length);
-      });
       const res = await fetch('/acc-review', { method: 'POST', body: formData });
       const data = await res.json();
       accOutput.className = 'output-box';
@@ -765,13 +960,12 @@ formData.append('conditions', document.getElementById('accConditions').value);
   function copyText(elementId) {
     const text = document.getElementById(elementId).textContent;
     navigator.clipboard.writeText(text).then(() => {
-      const btnMap = { 
-        draftOutput: 'copyEmailBtn', 
-        accOutput: 'copyAccBtn', 
+      const btnMap = {
+        draftOutput: 'copyEmailBtn',
+        accOutput: 'copyAccBtn',
         edOutput: 'copyEdBtn',
         reviewOutput: 'copyReviewBtn',
-        agendaOutput: 'copyAgendaBtn',
-bidOutput: 'copyBidBtn'
+        agendaOutput: 'copyAgendaBtn'
       };
       const btn = document.getElementById(btnMap[elementId]);
       if (btn) { btn.textContent = '✅ Copied!'; setTimeout(() => btn.textContent = '📋 Copy to Clipboard', 2000); }
@@ -829,286 +1023,704 @@ bidOutput: 'copyBidBtn'
     printWindow.print();
   }
 
- function printACC() {
-  const content = document.getElementById('accOutput').textContent;
-  const community = communitySelect.value || 'HOA';
-  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  
-  // Extract only the letter section
-  const letterMarkers = ['6. COMPLETE LETTER', 'COMPLETE LETTER', 'Complete Letter', '## 6.'];
-  let letterContent = content;
-  for (const marker of letterMarkers) {
-    const idx = content.indexOf(marker);
-    if (idx !== -1) {
-      letterContent = content.substring(idx + marker.length).trim();
-      letterContent = letterContent.replace(/^[-—]+/m, '').trim();
-      break;
+  function printACC() {
+    const content = document.getElementById('accOutput').textContent;
+    const community = communitySelect.value || 'HOA';
+    const printWindow = window.open('', '_blank');
+    printWindow.document.write(`<!DOCTYPE html><html><head><title>${community} ACC Letter</title><style>body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}@media print{body{margin:0.75in;}}</style></head><body><pre style="white-space:pre-wrap;">${content}</pre></body></html>`);
+    printWindow.document.close();
+    printWindow.focus();
+    printWindow.print();
+  }
+
+  function handleMailingPdfSelect(input) {
+    if (input.files && input.files[0]) {
+      document.getElementById('mailingPdfLabel').textContent = `✅ ${input.files[0].name}`;
+      document.getElementById('mailingUploadArea').classList.add('has-file');
     }
   }
-  
-  letterContent = letterContent.replace('[Date]', today);
 
-  const logoMap = {
-    'Canyon Gate at Cinco Ranch': '/logos/canyon_gate_logo.png',
-    'Waterview Estates': '/logos/waterview_logo.jpg',
-    'Lakes of Pine Forest': '/logos/lakes_of_pine_forest_logo.png'
-  };
-  
-  const logoPath = logoMap[community];
-  const logoHtml = logoPath 
-    ? `<img src="${window.location.origin}${logoPath}" style="max-height:80px; max-width:250px;" />`
-    : `<h2 style="color:#1a3a5c;">${community}</h2>`;
+  async function generateMailing(force = false) {
+    const pdfFile = document.getElementById('mailingPdf').files[0];
+    const community = communitySelect.value;
+    const expectedCount = document.getElementById('mailingExpectedCount').value;
+    if (!pdfFile) { alert('Please upload a mailing address PDF from Vantaca.'); return; }
+    if (!community) { alert('Please select a community first.'); return; }
+    const btn = document.getElementById('generateMailingBtn');
+    const output = document.getElementById('mailingOutput');
+    const warning = document.getElementById('mailingWarning');
+    btn.disabled = true;
+    btn.textContent = '⏳ Processing...';
+    output.className = 'output-box';
+    output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    warning.style.display = 'none';
+    try {
+      const formData = new FormData();
+      formData.append('pdf', pdfFile);
+      formData.append('community', community);
+      if (expectedCount) formData.append('expectedCount', expectedCount);
+      if (force) formData.append('force', 'true');
+      const res = await fetch('/generate-mailing', { method: 'POST', body: formData });
+      const contentType = res.headers.get('Content-Type');
+      if (contentType && contentType.includes('wordprocessingml')) {
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'Annual_Mailing.docx';
+        a.href = url;
+        a.download = filename;
+        a.click();
+        URL.revokeObjectURL(url);
+        output.className = 'output-box';
+        output.innerHTML = `<div style="text-align:center; padding:20px;"><div style="font-size:40px; margin-bottom:12px;">✅</div><div style="font-size:16px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Mailing Document Generated</div><div style="font-size:13px; color:#888; margin-top:8px;">Your download should start automatically.</div></div>`;
+      } else {
+        const data = await res.json();
+        if (data.requiresConfirmation) {
+          document.getElementById('mailingWarningText').textContent = data.message;
+          warning.style.display = 'block';
+          output.className = 'output-box placeholder';
+          output.innerHTML = 'Resolve the count mismatch above before generating.';
+        } else {
+          output.className = 'output-box';
+          output.textContent = data.error || 'Something went wrong. Please try again.';
+        }
+      }
+    } catch (err) {
+      output.className = 'output-box';
+      output.textContent = 'Something went wrong. Please try again.';
+    }
+    btn.disabled = false;
+    btn.textContent = '📬 Generate Mailing';
+  }
 
-  const lines = letterContent.split('\n');
-  const htmlLines = lines.map(line => {
-    if (line.trim() === '') return '<p style="margin:8px 0;"></p>';
-    const escaped = line
+  function generateMailingForce() {
+    document.getElementById('mailingWarning').style.display = 'none';
+    generateMailing(true);
+  }
+
+  // ===========================================================
+  // VENDOR WORKFLOW LOGIC
+  // ===========================================================
+
+  function setPath(p) {
+    vwState.path = p;
+    document.getElementById('pathBtnA').classList.toggle('active', p === 'A');
+    document.getElementById('pathBtnB').classList.toggle('active', p === 'B');
+    document.getElementById('pathBtnC').classList.toggle('active', p === 'C');
+    document.getElementById('pathAForm').style.display = p === 'A' ? 'block' : 'none';
+    document.getElementById('pathBForm').style.display = p === 'B' ? 'block' : 'none';
+    document.getElementById('pathCForm').style.display = p === 'C' ? 'block' : 'none';
+    if (p === 'C') {
+      // Path C: enable step 2 immediately
+      vwMarkStepComplete(1);
+    }
+  }
+
+  function vwMarkStepComplete(stepNum) {
+    document.getElementById(`vwStep${stepNum}Num`).classList.remove('disabled');
+    document.getElementById(`vwStep${stepNum}Num`).classList.add('complete');
+    if (stepNum === 1) {
+      document.getElementById('vwStep2Num').classList.remove('disabled');
+    }
+    if (stepNum === 2 && vwState.proposals.length >= 2) {
+      document.getElementById('vwStep3Num').classList.remove('disabled');
+      document.getElementById('vwRunComparisonBtn').disabled = false;
+    }
+  }
+
+  function vwShowStatus(elId, msg, type = 'info') {
+    const el = document.getElementById(elId);
+    const cls = type === 'error' ? 'vw-error-msg' : type === 'success' ? 'vw-success-msg' : 'vw-status-msg';
+    el.innerHTML = `<div class="${cls}">${msg}</div>`;
+  }
+
+  function vwClearStatus(elId) {
+    document.getElementById(elId).innerHTML = '';
+  }
+
+  async function generateRFPPathA() {
+    if (!currentCommunity) { alert('Please select a community first.'); return; }
+    const vendorType = document.getElementById('vwVendorTypeA').value;
+    const contractTerm = document.getElementById('vwContractTermA').value;
+    const bidDeadline = document.getElementById('vwBidDeadlineA').value;
+    const manualScope = document.getElementById('vwManualScopeA').value.trim();
+    const additionalReq = document.getElementById('vwAdditionalReqA').value.trim();
+    const contractFile = document.getElementById('vwContractA').files[0];
+
+    if (!manualScope && !contractFile) {
+      alert('Please enter manual scope or upload an existing contract.');
+      return;
+    }
+
+    vwShowStatus('vwStep1Status', '<span class="vw-spinner"></span> Generating RFP...');
+
+    try {
+      const formData = new FormData();
+      formData.append('community', currentCommunity);
+      formData.append('vendorType', vendorType);
+      formData.append('contractTerm', contractTerm);
+      if (bidDeadline) formData.append('bidDeadline', bidDeadline);
+      if (manualScope) formData.append('manualScope', manualScope);
+      if (additionalReq) formData.append('additionalRequirements', additionalReq);
+      if (contractFile) formData.append('contract', contractFile);
+
+      const res = await fetch('/generate-bid', { method: 'POST', body: formData });
+      const data = await res.json();
+
+      if (data.error) {
+        vwShowStatus('vwStep1Status', 'Error: ' + data.error, 'error');
+        return;
+      }
+
+      vwState.bidRequestId = data.bidRequestId;
+      vwState.bidRequestText = data.bidRequest;
+      vwShowStatus('vwStep1Status', `✓ RFP generated and saved. <span class="vw-bid-pill">Bid Request ID: ${data.bidRequestId?.slice(0, 8) || 'pending'}</span>`, 'success');
+      document.getElementById('vwStep1Output').innerHTML = `
+        <div class="vw-bid-output">${escapeHtml(data.bidRequest)}</div>
+        <div class="vw-actions-row">
+          <button class="secondary-btn" onclick="copyVwBidRequest()">📋 Copy RFP</button>
+          <button class="secondary-btn" onclick="printVwBidRequest()">🖨️ Print RFP</button>
+        </div>
+      `;
+      vwMarkStepComplete(1);
+    } catch (err) {
+      vwShowStatus('vwStep1Status', 'Error: ' + err.message, 'error');
+    }
+  }
+
+  async function generateRFPPathB() {
+    if (!currentCommunity) { alert('Please select a community first.'); return; }
+    const sampleFile = document.getElementById('vwSampleProposalB').files[0];
+    if (!sampleFile) { alert('Please upload a sample vendor proposal first.'); return; }
+
+    const vendorType = document.getElementById('vwVendorTypeB').value;
+    const contractTerm = document.getElementById('vwContractTermB').value;
+    const bidDeadline = document.getElementById('vwBidDeadlineB').value;
+    const additionalReq = document.getElementById('vwAdditionalReqB').value.trim();
+
+    vwShowStatus('vwStep1Status', '<span class="vw-spinner"></span> Step 1 of 2: Extracting scope from sample proposal...');
+
+    try {
+      // First: upload the proposal to extract its scope
+      const uploadFD = new FormData();
+      uploadFD.append('proposal', sampleFile);
+      uploadFD.append('community', currentCommunity);
+
+      const uploadRes = await fetch('/upload-proposal', { method: 'POST', body: uploadFD });
+      const uploadData = await uploadRes.json();
+
+      if (uploadData.error) {
+        vwShowStatus('vwStep1Status', 'Error extracting proposal: ' + uploadData.error, 'error');
+        return;
+      }
+
+      const originatingProposalId = uploadData.proposal.id;
+      const originatingVendorName = uploadData.summary?.vendor || 'Unknown Vendor';
+      const originatingTotal = uploadData.summary?.total;
+
+      vwShowStatus('vwStep1Status', '<span class="vw-spinner"></span> Step 2 of 2: Generating RFP from extracted scope (vendor identity stripped)...');
+
+      // Second: generate the RFP from the proposal
+      const rfpRes = await fetch('/generate-rfp-from-proposal', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proposalId: originatingProposalId,
+          community: currentCommunity,
+          vendorType,
+          contractTerm,
+          bidDeadline: bidDeadline || null,
+          additionalRequirements: additionalReq
+        })
+      });
+      const rfpData = await rfpRes.json();
+
+      if (rfpData.error) {
+        vwShowStatus('vwStep1Status', 'Error generating RFP: ' + rfpData.error, 'error');
+        return;
+      }
+
+      vwState.bidRequestId = rfpData.bidRequestId;
+      vwState.bidRequestText = rfpData.bidRequest;
+
+      // Auto-add the originating proposal to the proposals list
+      vwState.proposals.push({
+        id: originatingProposalId,
+        vendorName: originatingVendorName,
+        total: originatingTotal,
+        filename: sampleFile.name,
+        isOriginating: true
+      });
+      renderProposalsList();
+
+      vwShowStatus('vwStep1Status',
+        `✓ RFP generated. Originating proposal from <strong>${escapeHtml(originatingVendorName)}</strong> auto-added to comparison.`,
+        'success'
+      );
+      document.getElementById('vwStep1Output').innerHTML = `
+        <div class="vw-bid-output">${escapeHtml(rfpData.bidRequest)}</div>
+        <div class="vw-actions-row">
+          <button class="secondary-btn" onclick="copyVwBidRequest()">📋 Copy RFP</button>
+          <button class="secondary-btn" onclick="printVwBidRequest()">🖨️ Print RFP</button>
+        </div>
+      `;
+      vwMarkStepComplete(1);
+    } catch (err) {
+      vwShowStatus('vwStep1Status', 'Error: ' + err.message, 'error');
+    }
+  }
+
+  function copyVwBidRequest() {
+    if (!vwState.bidRequestText) return;
+    navigator.clipboard.writeText(vwState.bidRequestText);
+  }
+
+  function printVwBidRequest() {
+    if (!vwState.bidRequestText) return;
+    const community = currentCommunity || 'HOA';
+    const w = window.open('', '_blank');
+    w.document.write(`<!DOCTYPE html><html><head><title>${community} Bid Request</title><style>body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}@media print{body{margin:0.75in;}}</style></head><body><pre style="white-space:pre-wrap;">${escapeHtml(vwState.bidRequestText)}</pre></body></html>`);
+    w.document.close();
+    w.print();
+  }
+
+  async function handleProposalUpload(input) {
+    if (!input.files || !input.files[0]) return;
+    if (vwState.proposals.length >= 4) {
+      alert('Maximum 4 proposals per comparison.');
+      input.value = '';
+      return;
+    }
+    if (!currentCommunity) {
+      alert('Please select a community first.');
+      input.value = '';
+      return;
+    }
+
+    const file = input.files[0];
+    input.value = ''; // Allow re-selecting same file later
+
+    vwShowStatus('vwStep2Status', `<span class="vw-spinner"></span> Extracting data from ${escapeHtml(file.name)}...`);
+
+    try {
+      const fd = new FormData();
+      fd.append('proposal', file);
+      fd.append('community', currentCommunity);
+      if (vwState.bidRequestId) fd.append('bidRequestId', vwState.bidRequestId);
+
+      const res = await fetch('/upload-proposal', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      if (data.error) {
+        vwShowStatus('vwStep2Status', 'Error: ' + data.error, 'error');
+        return;
+      }
+
+      vwState.proposals.push({
+        id: data.proposal.id,
+        vendorName: data.summary?.vendor || 'Unknown Vendor',
+        total: data.summary?.total,
+        filename: file.name,
+        isOriginating: false
+      });
+
+      renderProposalsList();
+      vwShowStatus('vwStep2Status',
+        `✓ Extracted: <strong>${escapeHtml(data.summary?.vendor || 'Unknown')}</strong> — ${data.summary?.total ? '$' + data.summary.total.toLocaleString() : 'no total'}`,
+        'success'
+      );
+      vwMarkStepComplete(2);
+    } catch (err) {
+      vwShowStatus('vwStep2Status', 'Error: ' + err.message, 'error');
+    }
+  }
+
+  function renderProposalsList() {
+    const list = document.getElementById('vwProposalsList');
+    if (vwState.proposals.length === 0) {
+      list.innerHTML = '';
+      return;
+    }
+    list.innerHTML = vwState.proposals.map((p, idx) => `
+      <div class="vw-proposal-card ${p.isOriginating ? 'originating' : ''}">
+        <div class="vw-proposal-icon">${p.vendorName.charAt(0).toUpperCase()}</div>
+        <div class="vw-proposal-meta">
+          <div class="vw-proposal-vendor">${escapeHtml(p.vendorName)}${p.isOriginating ? ' <span style="font-size:11px; color:#996; font-weight:normal;">(originating proposal)</span>' : ''}</div>
+          <div class="vw-proposal-detail">${escapeHtml(p.filename)}</div>
+        </div>
+        <div class="vw-proposal-amount">${p.total ? '$' + p.total.toLocaleString() : '—'}</div>
+        <button class="vw-proposal-remove" onclick="removeProposal(${idx})" title="Remove">×</button>
+      </div>
+    `).join('');
+
+    // Update step 3 button state
+    if (vwState.proposals.length >= 2) {
+      document.getElementById('vwStep3Num').classList.remove('disabled');
+      document.getElementById('vwRunComparisonBtn').disabled = false;
+    } else {
+      document.getElementById('vwStep3Num').classList.add('disabled');
+      document.getElementById('vwRunComparisonBtn').disabled = true;
+    }
+  }
+
+  function removeProposal(idx) {
+    vwState.proposals.splice(idx, 1);
+    renderProposalsList();
+  }
+
+  async function runComparison() {
+    if (vwState.proposals.length < 2) {
+      alert('Need at least 2 proposals to compare.');
+      return;
+    }
+
+    const btn = document.getElementById('vwRunComparisonBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="vw-spinner"></span> Analyzing...';
+    vwShowStatus('vwStep3Status', '<span class="vw-spinner"></span> Running apples-to-apples comparison with Ed\'s playbook...');
+
+    try {
+      const res = await fetch('/run-comparison', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          proposalIds: vwState.proposals.map(p => p.id),
+          bidRequestId: vwState.bidRequestId,
+          community: currentCommunity
+        })
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        vwShowStatus('vwStep3Status', 'Error: ' + data.error, 'error');
+        btn.disabled = false;
+        btn.textContent = '⚡ Run Comparison';
+        return;
+      }
+
+      vwState.comparisonId = data.comparisonId;
+      vwState.comparisonAnalysis = data.analysis;
+      vwClearStatus('vwStep3Status');
+      vwMarkStepComplete(3);
+      renderComparison(data.analysis);
+
+      btn.disabled = false;
+      btn.textContent = '⚡ Re-run Comparison';
+    } catch (err) {
+      vwShowStatus('vwStep3Status', 'Error: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '⚡ Run Comparison';
+    }
+  }
+
+  function renderComparison(analysis) {
+    const container = document.getElementById('vwComparisonResult');
+    container.style.display = 'block';
+
+    const recIdx = analysis.recommendation?.recommended_proposal_index;
+    const recVendor = analysis.recommendation?.vendor_name || 'No recommendation';
+    const recRationale = analysis.recommendation?.one_sentence_rationale || '';
+
+    // Build comparison table
+    const proposalCount = vwState.proposals.length;
+    const proposalNames = vwState.proposals.map(p => p.vendorName);
+
+    let tableRows = '';
+    (analysis.comparison_table?.common_scope_items || []).forEach(item => {
+      const cells = [];
+      for (let i = 0; i < proposalCount; i++) {
+        const amt = item.proposal_amounts?.find(a => a.proposal_index === i);
+        if (amt && amt.amount != null) {
+          cells.push(`<td class="right">$${Number(amt.amount).toLocaleString()}</td>`);
+        } else {
+          cells.push(`<td class="right missing">Not included</td>`);
+        }
+      }
+      tableRows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
+    });
+
+    // Comparable subtotals row
+    const subtotals = analysis.scope_analysis?.comparable_subtotals || [];
+    if (subtotals.length) {
+      const cells = [];
+      for (let i = 0; i < proposalCount; i++) {
+        const sub = subtotals.find(s => s.proposal_index === i);
+        cells.push(`<td class="right">${sub?.subtotal ? '$' + Number(sub.subtotal).toLocaleString() : '—'}</td>`);
+      }
+      tableRows += `<tr class="total-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
+    }
+
+    // Stated totals row
+    const totalsCells = vwState.proposals.map(p =>
+      `<td class="right">${p.total ? '$' + p.total.toLocaleString() : '—'}</td>`
+    );
+    tableRows += `<tr class="grand-total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
+
+    container.innerHTML = `
+      <div class="vw-comparison">
+        <div class="vw-comparison-header">
+          <div>
+            <div class="vw-comparison-title">Comparison Analysis</div>
+            <div style="font-size:13px; color:#888; margin-top:4px;">${currentCommunity || ''} · ${proposalCount} vendors</div>
+          </div>
+          <div class="vw-actions-row" style="margin:0;">
+            <button class="secondary-btn" onclick="printBoardPacket()">🖨️ Print Board Packet</button>
+          </div>
+        </div>
+
+        <div class="vw-recommendation-box">
+          <div class="vw-recommendation-label">RECOMMENDATION</div>
+          <div class="vw-recommendation-vendor">${escapeHtml(recVendor)}</div>
+          <div class="vw-recommendation-rationale">${escapeHtml(recRationale)}</div>
+        </div>
+
+        <div class="vw-section-title">EXECUTIVE SUMMARY</div>
+        <p style="font-size:14px; line-height:1.7; color:#333;">${escapeHtml(analysis.executive_summary || '')}</p>
+
+        <div class="vw-section-title">APPLES-TO-APPLES COMPARISON</div>
+        <table class="vw-comp-table">
+          <thead>
+            <tr>
+              <th>Scope item</th>
+              ${proposalNames.map(n => `<th class="right">${escapeHtml(n)}</th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>${tableRows}</tbody>
+        </table>
+
+        ${analysis.scope_analysis?.scope_mismatches?.length ? `
+          <div class="vw-section-title">SCOPE ANALYSIS</div>
+          <ul style="font-size:13px; line-height:1.7; color:#333; padding-left:20px;">
+            ${analysis.scope_analysis.scope_mismatches.map(m => `<li>${escapeHtml(m)}</li>`).join('')}
+          </ul>
+        ` : ''}
+      </div>
+    `;
+  }
+
+  function printBoardPacket() {
+    if (!vwState.comparisonAnalysis) return;
+    const a = vwState.comparisonAnalysis;
+    const community = currentCommunity || 'HOA';
+    const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    const proposalCount = vwState.proposals.length;
+    const proposalNames = vwState.proposals.map(p => p.vendorName);
+
+    const logoMap = {
+      'Canyon Gate at Cinco Ranch': '/logos/canyon_gate_logo.png',
+      'Waterview Estates': '/logos/waterview_logo.jpg',
+      'Lakes of Pine Forest': '/logos/lakes_of_pine_forest_logo.png'
+    };
+    const logoPath = logoMap[community];
+    const logoHtml = logoPath
+      ? `<img src="${window.location.origin}${logoPath}" style="max-height:90px; max-width:280px;" />`
+      : `<div style="font-size:22px; font-weight:600; color:#1a3a5c;">${community}</div>`;
+
+    // Build comparison rows for print
+    let tableRows = '';
+    (a.comparison_table?.common_scope_items || []).forEach(item => {
+      const cells = [];
+      for (let i = 0; i < proposalCount; i++) {
+        const amt = item.proposal_amounts?.find(x => x.proposal_index === i);
+        if (amt && amt.amount != null) {
+          cells.push(`<td class="num">$${Number(amt.amount).toLocaleString()}</td>`);
+        } else {
+          cells.push(`<td class="num missing">Not included</td>`);
+        }
+      }
+      tableRows += `<tr><td>${escapeHtml(item.item)}</td>${cells.join('')}</tr>`;
+    });
+
+    const subtotals = a.scope_analysis?.comparable_subtotals || [];
+    if (subtotals.length) {
+      const cells = [];
+      for (let i = 0; i < proposalCount; i++) {
+        const sub = subtotals.find(s => s.proposal_index === i);
+        cells.push(`<td class="num">${sub?.subtotal ? '$' + Number(sub.subtotal).toLocaleString() : '—'}</td>`);
+      }
+      tableRows += `<tr class="subtotal-row"><td>Comparable subtotal</td>${cells.join('')}</tr>`;
+    }
+
+    const totalsCells = vwState.proposals.map(p =>
+      `<td class="num">${p.total ? '$' + p.total.toLocaleString() : '—'}</td>`
+    );
+    tableRows += `<tr class="total-row"><td>Stated total</td>${totalsCells.join('')}</tr>`;
+
+    // Vendor profile pages
+    const vendorProfilesHtml = (a.vendor_profiles || []).map((vp, i) => `
+      <div class="page-break"></div>
+      <h2>Vendor profile · ${escapeHtml(vp.vendor_name || proposalNames[i] || 'Vendor ' + (i+1))}</h2>
+      <div class="profile-grid">
+        <div class="profile-card stated-total">
+          <div class="profile-label">Stated total</div>
+          <div class="profile-value">${vp.stated_total ? '$' + Number(vp.stated_total).toLocaleString() : '—'}</div>
+        </div>
+      </div>
+      <div class="profile-section">
+        <h3>Scope strengths</h3>
+        <ul>${(vp.scope_strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
+      </div>
+      <div class="profile-section">
+        <h3>Scope concerns</h3>
+        <ul>${(vp.scope_concerns || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
+      </div>
+      <div class="profile-section">
+        <h3>Terms strengths</h3>
+        <ul>${(vp.terms_strengths || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
+      </div>
+      <div class="profile-section">
+        <h3>Terms concerns</h3>
+        <ul>${(vp.terms_concerns || []).map(s => `<li>${escapeHtml(s)}</li>`).join('') || '<li>None noted</li>'}</ul>
+      </div>
+    `).join('');
+
+    // Questions for the board
+    const questionsHtml = (a.questions_for_board && a.questions_for_board.length) ? `
+      <div class="page-break"></div>
+      <h2>Questions for the board</h2>
+      <p class="lead">Discussion items for the board to consider before voting.</p>
+      <ol class="board-questions">
+        ${a.questions_for_board.map(q => `<li>${escapeHtml(q)}</li>`).join('')}
+      </ol>
+    ` : '';
+
+    const html = `<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>${community} · Vendor Comparison Packet</title>
+<style>
+  @page { size: letter; margin: 0.75in; }
+  body { font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; color: #1a1a1a; margin: 0; line-height: 1.6; }
+  .cover { text-align: center; padding: 60px 0 40px 0; border-bottom: 3px solid #1a3a5c; margin-bottom: 30px; }
+  .cover .eyebrow { font-size: 10px; letter-spacing: 0.15em; color: #888; text-transform: uppercase; margin-bottom: 12px; }
+  .cover h1 { font-size: 24px; font-weight: 500; color: #1a3a5c; margin: 0 0 8px 0; letter-spacing: -0.01em; }
+  .cover .meta { font-size: 12px; color: #888; margin-top: 16px; }
+  h2 { font-size: 14px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.06em; text-transform: uppercase; margin: 28px 0 12px 0; }
+  h3 { font-size: 12px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.04em; text-transform: uppercase; margin: 16px 0 6px 0; }
+  p { font-size: 13px; line-height: 1.7; color: #333; margin: 0 0 12px 0; }
+  p.lead { font-size: 14px; color: #555; }
+  .recommendation { background: #f5f8fc; border-left: 4px solid #1a3a5c; padding: 18px 22px; margin: 16px 0; border-radius: 0 4px 4px 0; }
+  .rec-label { font-size: 10px; color: #1a3a5c; letter-spacing: 0.1em; font-weight: 600; margin-bottom: 8px; text-transform: uppercase; }
+  .rec-vendor { font-size: 16px; font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
+  .rec-rationale { font-size: 13px; color: #555; line-height: 1.6; }
+  .rec-key-reasons { margin-top: 12px; padding-top: 12px; border-top: 1px solid #d8e2ed; }
+  .rec-key-reasons ul { margin: 4px 0 0 18px; padding: 0; font-size: 13px; color: #444; }
+  .rec-key-reasons li { margin-bottom: 4px; }
+  .trade-offs { font-size: 12px; color: #666; font-style: italic; margin-top: 10px; }
+  table.comp { width: 100%; border-collapse: collapse; font-size: 11px; margin: 8px 0 16px 0; }
+  table.comp th { background: #1a3a5c; color: white; text-align: left; padding: 10px 10px; font-weight: 500; font-size: 10px; letter-spacing: 0.04em; text-transform: uppercase; }
+  table.comp th.num { text-align: right; }
+  table.comp td { padding: 9px 10px; border-bottom: 1px solid #eee; }
+  table.comp td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  table.comp tr:nth-child(even) td { background: #fafafa; }
+  table.comp .missing { color: #c0392b; font-style: italic; }
+  table.comp .subtotal-row td { background: #f5f8fc; font-weight: 600; }
+  table.comp .total-row td { background: #1a3a5c; color: white; font-weight: 600; }
+  table.comp .total-row td.num { color: white; }
+  ul, ol { margin: 6px 0 12px 22px; padding: 0; }
+  ul li, ol li { font-size: 13px; line-height: 1.7; color: #333; margin-bottom: 4px; }
+  .scope-mismatches { background: #fff8e7; border-left: 3px solid #f0c674; padding: 14px 18px; margin: 12px 0; border-radius: 0 4px 4px 0; }
+  .scope-mismatches ul { margin: 4px 0 0 18px; }
+  .scope-mismatches li { font-size: 12px; color: #5c4a14; }
+  .page-break { page-break-before: always; }
+  .profile-grid { display: flex; gap: 12px; margin: 12px 0 18px 0; }
+  .profile-card { background: #f5f8fc; padding: 12px 16px; border-radius: 4px; }
+  .profile-card.stated-total { border-left: 3px solid #1a3a5c; }
+  .profile-label { font-size: 10px; color: #888; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600; margin-bottom: 4px; }
+  .profile-value { font-size: 18px; font-weight: 600; color: #1a3a5c; font-variant-numeric: tabular-nums; }
+  .profile-section { margin: 14px 0; }
+  .profile-section h3 { margin-bottom: 6px; color: #1a3a5c; }
+  .board-questions li { padding: 6px 0; font-size: 13px; color: #333; line-height: 1.6; }
+  .footer { text-align: center; margin-top: 36px; padding-top: 16px; border-top: 1px solid #ddd; font-size: 10px; color: #888; }
+  .principles { font-size: 12px; color: #555; line-height: 1.6; margin-top: 12px; padding-top: 12px; border-top: 1px solid #eee; }
+  .principles strong { color: #1a3a5c; font-weight: 600; }
+</style>
+</head>
+<body>
+
+<div class="cover">
+  ${logoHtml}
+  <div class="eyebrow" style="margin-top:24px;">Vendor Comparison Packet</div>
+  <h1>${escapeHtml(a.recommendation?.vendor_name || community)} recommendation</h1>
+  <div style="font-size: 13px; color: #555; margin-top: 6px;">${escapeHtml(community)} · ${proposalCount} vendors evaluated</div>
+  <div class="meta">Prepared by Bedrock Association Management · ${today}</div>
+</div>
+
+<h2>Executive summary</h2>
+<p>${escapeHtml(a.executive_summary || '')}</p>
+
+<div class="recommendation">
+  <div class="rec-label">Recommendation</div>
+  <div class="rec-vendor">${escapeHtml(a.recommendation?.vendor_name || 'No recommendation')}</div>
+  <div class="rec-rationale">${escapeHtml(a.recommendation?.one_sentence_rationale || '')}</div>
+  ${(a.recommendation?.key_reasons || []).length ? `
+    <div class="rec-key-reasons">
+      <strong style="font-size:11px; color:#1a3a5c; letter-spacing:0.06em; text-transform:uppercase;">Key reasons</strong>
+      <ul>${a.recommendation.key_reasons.map(r => `<li>${escapeHtml(r)}</li>`).join('')}</ul>
+    </div>
+  ` : ''}
+  ${a.recommendation?.trade_offs_acknowledged ? `<div class="trade-offs">Trade-offs: ${escapeHtml(a.recommendation.trade_offs_acknowledged)}</div>` : ''}
+</div>
+
+<h2>Apples-to-apples comparison</h2>
+<table class="comp">
+  <thead>
+    <tr>
+      <th>Scope item</th>
+      ${proposalNames.map(n => `<th class="num">${escapeHtml(n)}</th>`).join('')}
+    </tr>
+  </thead>
+  <tbody>${tableRows}</tbody>
+</table>
+
+${(a.scope_analysis?.scope_mismatches || []).length ? `
+  <h2>Scope analysis</h2>
+  <p>${a.scope_analysis?.are_truly_comparable ? 'The proposals are functionally comparable after scope adjustment.' : 'These proposals have meaningful scope differences. The board should consider these before deciding.'}</p>
+  <div class="scope-mismatches">
+    <strong style="font-size:11px; color:#5c4a14; letter-spacing:0.06em; text-transform:uppercase;">Scope differences flagged</strong>
+    <ul>${a.scope_analysis.scope_mismatches.map(m => `<li>${escapeHtml(m)}</li>`).join('')}</ul>
+  </div>
+  ${a.scope_analysis.scope_adjustment_notes ? `<p style="font-size:12px; color:#555; font-style:italic;">${escapeHtml(a.scope_analysis.scope_adjustment_notes)}</p>` : ''}
+` : ''}
+
+${(a.playbook_principles_applied || []).length ? `
+  <div class="principles">
+    <strong>Bedrock principles applied to this analysis:</strong>
+    <ul style="margin-top:6px;">${a.playbook_principles_applied.map(p => `<li>${escapeHtml(p)}</li>`).join('')}</ul>
+  </div>
+` : ''}
+
+${vendorProfilesHtml}
+
+${questionsHtml}
+
+<div class="footer">
+  Prepared by Bedrock Association Management · ${today}<br>
+  (832) 588-2485 · bedrocktx.com
+</div>
+
+</body>
+</html>`;
+
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const w = window.open(url, '_blank');
+    w.onload = function() {
+      w.print();
+      URL.revokeObjectURL(url);
+    };
+  }
+
+  function escapeHtml(str) {
+    if (str == null) return '';
+    return String(str)
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;');
-    return `<p style="margin:2px 0;">${escaped}</p>`;
-  }).join('');
-
-  const html = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>${community} ACC Letter</title>
-<style>
-body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}
-.lh{text-align:center;margin-bottom:30px;padding-bottom:16px;border-bottom:1px solid #ccc;}
-.lh p{color:#555;font-size:9pt;margin:4px 0;}
-@media print{body{margin:0.75in;}}
-</style>
-</head>
-<body>
-<div class="lh">
-${logoHtml}
-<p>${community} Homeowners Association, Inc.</p>
-<p>Managed by Bedrock Association Management | (832) 588-2485 | bedrocktx.com</p>
-</div>
-${htmlLines}
-</body>
-</html>`;
-
-  const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const printWindow = window.open(url, '_blank');
-  printWindow.onload = function() {
-    printWindow.print();
-    URL.revokeObjectURL(url);
-  };
-}
-function handleBidContractSelect(input) {
-  if (input.files && input.files[0]) {
-    document.getElementById('bidLabel').textContent = `✅ ${input.files[0].name}`;
-    document.getElementById('bidUploadArea').classList.add('has-file');
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#039;');
   }
-}
-
-async function generateBidRequest() {
-  const community = communitySelect.value;
-  const vendorType = document.getElementById('bidVendorType').value;
-  const bidDeadline = document.getElementById('bidDeadline').value;
-  const contractTerm = document.getElementById('bidContractTerm').value;
-  const manualScope = document.getElementById('bidManualScope').value;
-  const additionalRequirements = document.getElementById('bidAdditionalRequirements').value;
-  const contractFile = document.getElementById('bidContract').files[0];
-
-  if (!contractFile && !manualScope) {
-    alert('Please upload a contract or enter scope manually.');
-    return;
-  }
-
-  const btn = document.getElementById('generateBidBtn');
-  const output = document.getElementById('bidOutput');
-  const copyBtn = document.getElementById('copyBidBtn');
-  const printBtn = document.getElementById('printBidBtn');
-
-  btn.disabled = true;
-  btn.textContent = '⏳ Generating...';
-  output.className = 'output-box';
-  output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-  copyBtn.style.display = 'none';
-  printBtn.style.display = 'none';
-
-  try {
-    const formData = new FormData();
-    if (community) formData.append('community', community);
-    formData.append('vendorType', vendorType);
-    formData.append('bidDeadline', bidDeadline);
-    formData.append('contractTerm', contractTerm);
-    if (manualScope) formData.append('manualScope', manualScope);
-    if (additionalRequirements) formData.append('additionalRequirements', additionalRequirements);
-    if (contractFile) formData.append('contract', contractFile);
-
-    const res = await fetch('/generate-bid', { method: 'POST', body: formData });
-    const data = await res.json();
-    output.className = 'output-box';
-    output.textContent = data.bidRequest || data.error;
-    copyBtn.style.display = 'block';
-    printBtn.style.display = 'block';
-  } catch (err) {
-    output.textContent = 'Something went wrong. Please try again.';
-  }
-
-  btn.disabled = false;
-  btn.textContent = '📊 Generate Bid Request';
-}
-
-function printBid() {
-  const content = document.getElementById('bidOutput').textContent;
-  const community = communitySelect.value || 'HOA';
-  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-
-  let html = content
-    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/^### (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^## (.+)$/gm, '<h2>$1</h2>')
-    .replace(/^# (.+)$/gm, '<h1>$1</h1>')
-    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-    .replace(/\*(.+?)\*/g, '<em>$1</em>')
-    .replace(/^---+$/gm, '<hr>')
-    .replace(/^\| (.+) \|$/gm, (match) => {
-      const cells = match.split('|').filter(c => c.trim());
-      return '<tr>' + cells.map(c => `<td>${c.trim()}</td>`).join('') + '</tr>';
-    })
-    .replace(/(<tr>.*<\/tr>\n?)+/g, (match) => `<table>${match}</table>`)
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, (match) => `<ul>${match}</ul>`)
-    .replace(/^\d+\. (.+)$/gm, '<li>$1</li>')
-    .replace(/\n\n/g, '</p><p>')
-    .replace(/\n/g, '<br>');
-
-  const logoMap = {
-    'Canyon Gate at Cinco Ranch': '/logos/canyon_gate_logo.png',
-    'Waterview Estates': '/logos/waterview_logo.jpg',
-    'Lakes of Pine Forest': '/logos/lakes_of_pine_forest_logo.png'
-  };
-  const logoPath = logoMap[community];
-  const logoHtml = logoPath
-    ? `<img src="${window.location.origin}${logoPath}" style="max-height:80px; max-width:250px;" />`
-    : `<h2 style="color:#1a3a5c;">${community}</h2>`;
-
-  const fullHtml = `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<title>${community} Bid Request</title>
-<style>
-body{font-family:Arial,sans-serif;font-size:11pt;margin:1in;line-height:1.6;color:#000;}
-h1{font-size:16pt;color:#1a3a5c;margin:20px 0 8px 0;}
-h2{font-size:13pt;color:#1a3a5c;margin:16px 0 6px 0;}
-h3{font-size:11pt;color:#1a3a5c;margin:12px 0 4px 0;}
-table{width:100%;border-collapse:collapse;margin:10px 0;}
-td,th{border:1px solid #ccc;padding:6px 8px;font-size:10pt;}
-tr:first-child td{background:#1a3a5c;color:white;font-weight:bold;}
-ul{margin:4px 0 8px 20px;}
-li{margin:2px 0;}
-hr{border:none;border-top:1px solid #ccc;margin:16px 0;}
-.lh{text-align:center;margin-bottom:30px;padding-bottom:16px;border-bottom:2px solid #1a3a5c;}
-.lh p{color:#555;font-size:9pt;margin:4px 0;}
-@media print{body{margin:0.75in;}}
-</style>
-</head>
-<body>
-<div class="lh">
-${logoHtml}
-<p>${community} Homeowners Association, Inc.</p>
-<p>Managed by Bedrock Association Management | (832) 588-2485 | bedrocktx.com</p>
-<p style="font-size:8pt;color:#999;">Generated ${today}</p>
-</div>
-<p>${html}</p>
-</body>
-</html>`;
-
-  const blob = new Blob([fullHtml], { type: 'text/html;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const printWindow = window.open(url, '_blank');
-  printWindow.onload = function() {
-    printWindow.print();
-    URL.revokeObjectURL(url);
-  };
-}
-
-function handleMailingPdfSelect(input) {
-  if (input.files && input.files[0]) {
-    document.getElementById('mailingPdfLabel').textContent = `✅ ${input.files[0].name}`;
-    document.getElementById('mailingUploadArea').classList.add('has-file');
-  }
-}
-
-async function generateMailing(force = false) {
-  const pdfFile = document.getElementById('mailingPdf').files[0];
-  const community = communitySelect.value;
-  const expectedCount = document.getElementById('mailingExpectedCount').value;
-
-  if (!pdfFile) { alert('Please upload a mailing address PDF from Vantaca.'); return; }
-  if (!community) { alert('Please select a community first.'); return; }
-
-  const btn = document.getElementById('generateMailingBtn');
-  const output = document.getElementById('mailingOutput');
-  const warning = document.getElementById('mailingWarning');
-
-  btn.disabled = true;
-  btn.textContent = '⏳ Processing...';
-  output.className = 'output-box';
-  output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-  warning.style.display = 'none';
-
-  try {
-    const formData = new FormData();
-    formData.append('pdf', pdfFile);
-    formData.append('community', community);
-    if (expectedCount) formData.append('expectedCount', expectedCount);
-    if (force) formData.append('force', 'true');
-
-    const res = await fetch('/generate-mailing', { method: 'POST', body: formData });
-
-    const contentType = res.headers.get('Content-Type');
-    if (contentType && contentType.includes('wordprocessingml')) {
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'Annual_Mailing.docx';
-      a.href = url;
-      a.download = filename;
-      a.click();
-      URL.revokeObjectURL(url);
-      const count = res.headers.get('X-Parsed-Count') || '?';
-      output.className = 'output-box';
-      output.innerHTML = `<div style="text-align:center; padding:20px;">
-        <div style="font-size:40px; margin-bottom:12px;">✅</div>
-        <div style="font-size:16px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Mailing Document Generated</div>
-        <div style="font-size:14px; color:#555;">${count} cover pages ready to print</div>
-        <div style="font-size:13px; color:#888; margin-top:8px;">Your download should start automatically.<br>Fold at the dashed line — address shows through window.</div>
-      </div>`;
-    } else {
-      const data = await res.json();
-      if (data.requiresConfirmation) {
-        document.getElementById('mailingWarningText').textContent = data.message;
-        warning.style.display = 'block';
-        output.className = 'output-box placeholder';
-        output.innerHTML = 'Resolve the count mismatch above before generating.';
-      } else {
-        output.className = 'output-box';
-        output.textContent = data.error || 'Something went wrong. Please try again.';
-      }
-    }
-  } catch (err) {
-    output.className = 'output-box';
-    output.textContent = 'Something went wrong. Please try again.';
-  }
-
-  btn.disabled = false;
-  btn.textContent = '📬 Generate Mailing';
-}
-
-function generateMailingForce() {
-  document.getElementById('mailingWarning').style.display = 'none';
-  generateMailing(true);
-}
 </script>
 </body>
 </html>
