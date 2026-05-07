@@ -316,7 +316,17 @@
       <p style="font-size:13px; color:#666;">Describe a situation or paste an email to get guidance on how to handle it.</p>
       <div class="section-label" style="margin-top:8px;">Situation or Email</div>
       <textarea id="edSituation" placeholder="Describe the situation or paste an email here..." style="min-height:200px;"></textarea>
-      <button class="action-btn" id="askEdBtn" onclick="askEd()">🧠 Get Guidance</button>
+      <div class="section-label" style="margin-top:8px;">Attach a File (optional)</div>
+      <div class="upload-area" id="edUploadArea"
+           onclick="document.getElementById('edAttachment').click()"
+           ondragover="handleDragOver(event)"
+           ondragleave="handleDragLeave(event)"
+           ondrop="handleDrop(event, 'edAttachment', handleEdAttachmentSelect)">
+        <span style="font-size:24px">📎</span>
+        <p id="edAttachmentLabel">Click or drag a PDF or image here (homeowner letter, photo, screenshot)</p>
+        <input type="file" id="edAttachment" accept=".pdf,image/*" onchange="handleEdAttachmentSelect(this)">
+      </div>
+      <button class="action-btn" id="askEdBtn" onclick="askEd()" style="margin-top:8px;">🧠 Get Guidance</button>
 
       <div style="margin-top:16px;">
         <div id="adminLockSection">
@@ -863,9 +873,17 @@
     reviewBtn.textContent = '🔍 Review Application';
   }
 
+  function handleEdAttachmentSelect(input) {
+    if (input.files && input.files[0]) {
+      document.getElementById('edAttachmentLabel').textContent = `✅ ${input.files[0].name}`;
+      document.getElementById('edUploadArea').classList.add('has-file');
+    }
+  }
+
   async function askEd() {
     const situation = document.getElementById('edSituation').value.trim();
-    if (!situation) { alert('Please describe the situation first.'); return; }
+    const attachmentFile = document.getElementById('edAttachment').files[0];
+    if (!situation && !attachmentFile) { alert('Please describe the situation or attach a file first.'); return; }
     const btn = document.getElementById('askEdBtn');
     const output = document.getElementById('edOutput');
     const copyBtn = document.getElementById('copyEdBtn');
@@ -875,10 +893,13 @@
     output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
     copyBtn.style.display = 'none';
     try {
+      const formData = new FormData();
+      formData.append('situation', situation);
+      if (currentCommunity) formData.append('community', currentCommunity);
+      if (attachmentFile) formData.append('attachment', attachmentFile);
       const res = await fetch('/ask-ed', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ situation, community: currentCommunity })
+        body: formData
       });
       const data = await res.json();
       output.className = 'output-box';
@@ -1197,6 +1218,7 @@
       document.getElementById('vwStep1Output').innerHTML = `
         <div class="vw-bid-output">${escapeHtml(data.bidRequest)}</div>
         <div class="vw-actions-row">
+          <button class="action-btn" onclick="downloadVwRFP()">📄 Download as Word Doc</button>
           <button class="secondary-btn" onclick="copyVwBidRequest()">📋 Copy RFP</button>
           <button class="secondary-btn" onclick="printVwBidRequest()">🖨️ Print RFP</button>
         </div>
@@ -1276,6 +1298,7 @@
       document.getElementById('vwStep1Output').innerHTML = `
         <div class="vw-bid-output">${escapeHtml(rfpData.bidRequest)}</div>
         <div class="vw-actions-row">
+          <button class="action-btn" onclick="downloadVwRFP()">📄 Download as Word Doc</button>
           <button class="secondary-btn" onclick="copyVwBidRequest()">📋 Copy RFP</button>
           <button class="secondary-btn" onclick="printVwBidRequest()">🖨️ Print RFP</button>
         </div>
@@ -1283,6 +1306,31 @@
       vwMarkStepComplete(1);
     } catch (err) {
       vwShowStatus('vwStep1Status', 'Error: ' + err.message, 'error');
+    }
+  }
+
+async function downloadVwRFP() {
+    if (!vwState.bidRequestId) {
+      alert('No RFP to download. Generate one first.');
+      return;
+    }
+    try {
+      const res = await fetch(`/download-rfp/${vwState.bidRequestId}`);
+      if (!res.ok) {
+        const err = await res.json();
+        alert('Error: ' + (err.error || 'Could not download'));
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      const filename = res.headers.get('Content-Disposition')?.match(/filename="(.+)"/)?.[1] || 'RFP.docx';
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      alert('Error downloading: ' + err.message);
     }
   }
 

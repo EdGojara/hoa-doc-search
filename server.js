@@ -630,9 +630,32 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
   }
 });
 
-app.post('/ask-ed', async (req, res) => {
+app.post('/ask-ed', upload.single('attachment'), async (req, res) => {
   try {
     const { situation, community } = req.body;
+
+    // Build attachment content if a file was uploaded
+    let attachmentContent = null;
+    let attachmentNote = '';
+    if (req.file) {
+      const mimeType = req.file.mimetype;
+      const base64Data = req.file.buffer.toString('base64');
+      if (mimeType === 'application/pdf') {
+        attachmentContent = {
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: base64Data }
+        };
+        attachmentNote = `\n\nNote: A PDF document is attached above. Read it carefully and factor it into your guidance.`;
+      } else if (mimeType.startsWith('image/')) {
+        attachmentContent = {
+          type: 'image',
+          source: { type: 'base64', media_type: mimeType, data: base64Data }
+        };
+        attachmentNote = `\n\nNote: An image is attached above. Look at it carefully (it may be a screenshot, photo of a letter, photo of a property condition, etc.) and factor it into your guidance.`;
+      } else {
+        return res.status(400).json({ guidance: 'Unsupported file type. Please upload a PDF or image (PNG, JPG).' });
+      }
+    }
 
  const { data: playbook } = await supabase
   .from('playbook')
@@ -646,7 +669,7 @@ app.post('/ask-ed', async (req, res) => {
         ).join('\n\n---\n\n')}`
       : 'No playbook examples available yet.';
 
-    const docContext = await getRelevantChunks(situation, community);
+    const docContext = await getRelevantChunks(situation || 'general guidance', community);
 
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
@@ -735,7 +758,13 @@ HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and 
 When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`,
       messages: [{
         role: 'user',
-        content: `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation}\n\n${community ? `Community: ${community}` : ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`
+        content: attachmentContent ? [
+          attachmentContent,
+          {
+            type: 'text',
+            text: `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation || '(no text provided — see attached file above)'}\n\n${community ? `Community: ${community}` : ''}${attachmentNote}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`
+          }
+        ] : `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation}\n\n${community ? `Community: ${community}` : ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`
       }]
     });
 
@@ -990,6 +1019,21 @@ Generate a complete professional bid request document that:
 
     const generatedDocument = bidResponse.content[0].text;
 
+    // Build structured RFP for Word doc download
+    let structuredRfp = null;
+    try {
+      structuredRfp = await buildStructuredRFP({
+        community: community || 'HOA Community',
+        vendorType: vendorType || 'Vendor Services',
+        contractTerm: contractTerm || '1 year with option to renew',
+        bidDeadline,
+        scopeContent,
+        additionalRequirements
+      });
+    } catch (rfpErr) {
+      console.error('Error building structured RFP (non-fatal):', rfpErr.message);
+    }
+
     // Save the bid request to the database so we can link proposals to it later.
     const { data: savedBidRequest, error: saveError } = await supabase
       .from('bid_requests')
@@ -1002,7 +1046,8 @@ Generate a complete professional bid request document that:
         scope_summary: scopeContent.slice(0, 2000),
         generated_document: generatedDocument,
         source_contract_filename: sourceContractFilename,
-        status: 'open'
+        status: 'open',
+        structured_rfp: structuredRfp
       })
       .select()
       .single();
@@ -1362,6 +1407,21 @@ Generate a complete professional bid request document that:
 
     const generatedDocument = bidResponse.content[0].text;
 
+    // Build structured RFP for Word doc download
+    let structuredRfp = null;
+    try {
+      structuredRfp = await buildStructuredRFP({
+        community: community || proposal.community || 'HOA Community',
+        vendorType: vendorType || extracted.service_category_guess || 'Vendor Services',
+        contractTerm: contractTerm || '1 year with option to renew',
+        bidDeadline,
+        scopeContent: scopeText,
+        additionalRequirements
+      });
+    } catch (rfpErr) {
+      console.error('Error building structured RFP (non-fatal):', rfpErr.message);
+    }
+
     const { data: savedBidRequest, error: saveError } = await supabase
       .from('bid_requests')
       .insert({
@@ -1373,7 +1433,8 @@ Generate a complete professional bid request document that:
         scope_summary: scopeText.slice(0, 2000),
         generated_document: generatedDocument,
         source_contract_filename: proposal.filename,
-        status: 'open'
+        status: 'open',
+        structured_rfp: structuredRfp
       })
       .select()
       .single();
@@ -1397,6 +1458,60 @@ Generate a complete professional bid request document that:
   } catch (err) {
     console.error('RFP from proposal error:', err);
     res.status(500).json({ error: 'Error generating RFP from proposal: ' + err.message });
+  }
+});
+
+// Download a polished Word doc RFP for a saved bid request
+app.get('/download-rfp/:bidRequestId', async (req, res) => {
+  try {
+    const { bidRequestId } = req.params;
+
+    const { data: bidRequest, error: loadError } = await supabase
+      .from('bid_requests')
+      .select('*')
+      .eq('id', bidRequestId)
+      .single();
+
+    if (loadError || !bidRequest) {
+      return res.status(404).json({ error: 'Bid request not found.' });
+    }
+
+    let structured = bidRequest.structured_rfp;
+
+    // Fallback: regenerate structured RFP on the fly if it wasn't saved
+    if (!structured || !structured.scopeItems || structured.scopeItems.length === 0) {
+      try {
+        structured = await buildStructuredRFP({
+          community: bidRequest.community || 'HOA Community',
+          vendorType: bidRequest.vendor_type || 'Vendor Services',
+          contractTerm: bidRequest.contract_term || '1 year with option to renew',
+          bidDeadline: bidRequest.bid_deadline,
+          scopeContent: bidRequest.scope_summary || bidRequest.generated_document || '',
+          additionalRequirements: ''
+        });
+
+        await supabase
+          .from('bid_requests')
+          .update({ structured_rfp: structured })
+          .eq('id', bidRequestId);
+      } catch (regenErr) {
+        console.error('Failed to regenerate structured RFP:', regenErr.message);
+        return res.status(500).json({ error: 'Could not build RFP document: ' + regenErr.message });
+      }
+    }
+
+    const docBuffer = await generateRFPDocx(structured);
+
+    const safeCommunity = (bidRequest.community || 'HOA').replace(/[^a-z0-9]/gi, '_');
+    const safeVendorType = (bidRequest.vendor_type || 'RFP').replace(/[^a-z0-9]/gi, '_');
+    const filename = `${safeCommunity}_RFP_${safeVendorType}.docx`;
+
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(docBuffer);
+  } catch (err) {
+    console.error('Download RFP error:', err);
+    res.status(500).json({ error: 'Error generating RFP download: ' + err.message });
   }
 });
 
