@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Bedrock HOA Assistant</title>
+  <title>trustEd — A bEdrock intelligence platform</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
@@ -189,8 +189,8 @@
 <div class="header">
   <div class="header-icon">🏠</div>
   <div class="header-text">
-    <h1>Bedrock HOA Assistant</h1>
-    <p>Powered by Bedrock Intelligence</p>
+    <h1>trustEd</h1>
+    <p>A bEdrock intelligence platform</p>
   </div>
 </div>
 
@@ -213,7 +213,7 @@
   <div class="tab active" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
-  <div class="tab" onclick="switchTab('asked')">🧠 Ask Ed</div>
+  <div class="tab" onclick="switchTab('asked')">🧠 askEd</div>
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
   <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
   <div class="tab" onclick="switchTab('vendor')">📊 Vendor Workflow</div>
@@ -312,8 +312,20 @@
 <div class="tab-content" id="tab-asked">
   <div class="ask-ed-container">
     <div class="ask-ed-left">
-      <h3>🧠 Ask Ed</h3>
+      <h3>🧠 askEd</h3>
       <p style="font-size:13px; color:#666;">Describe a situation or paste an email to get guidance on how to handle it.</p>
+      <div class="section-label" style="margin-top:8px;">Community Context</div>
+      <select id="edCommunitySelect" class="draft-type-select">
+        <option value="">— Use community selected at top —</option>
+        <option value="__GENERAL__">General / Not community-specific</option>
+        <option value="Lakes of Pine Forest">Lakes of Pine Forest</option>
+        <option value="Canyon Gate at Cinco Ranch">Canyon Gate at Cinco Ranch</option>
+        <option value="Eaglewood">Eaglewood</option>
+        <option value="Waterview Estates">Waterview Estates</option>
+        <option value="Quail Ridge">Quail Ridge</option>
+        <option value="Still Creek Ranch">Still Creek Ranch</option>
+        <option value="August Meadows">August Meadows</option>
+      </select>
       <div class="section-label" style="margin-top:8px;">Situation or Email</div>
       <textarea id="edSituation" placeholder="Describe the situation or paste an email here..." style="min-height:200px;"></textarea>
       <div class="section-label" style="margin-top:8px;">Attach a File (optional)</div>
@@ -884,6 +896,22 @@
     const situation = document.getElementById('edSituation').value.trim();
     const attachmentFile = document.getElementById('edAttachment').files[0];
     if (!situation && !attachmentFile) { alert('Please describe the situation or attach a file first.'); return; }
+
+    // Resolve community context: tab-specific dropdown wins, then global, then nothing
+    const edCommunityChoice = document.getElementById('edCommunitySelect').value;
+    let resolvedCommunity = '';
+    if (edCommunityChoice === '__GENERAL__') {
+      resolvedCommunity = '';
+    } else if (edCommunityChoice) {
+      resolvedCommunity = edCommunityChoice;
+    } else if (currentCommunity) {
+      resolvedCommunity = currentCommunity;
+    }
+
+    if (!edCommunityChoice && !currentCommunity) {
+      const proceed = confirm('No community is selected. askEd will give general guidance without community-specific document context. Continue?');
+      if (!proceed) return;
+    }
     const btn = document.getElementById('askEdBtn');
     const output = document.getElementById('edOutput');
     const copyBtn = document.getElementById('copyEdBtn');
@@ -895,7 +923,7 @@
     try {
       const formData = new FormData();
       formData.append('situation', situation);
-      if (currentCommunity) formData.append('community', currentCommunity);
+      if (resolvedCommunity) formData.append('community', resolvedCommunity);
       if (attachmentFile) formData.append('attachment', attachmentFile);
       const res = await fetch('/ask-ed', {
         method: 'POST',
