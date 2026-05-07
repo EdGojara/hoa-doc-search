@@ -10,7 +10,289 @@ const pdfParse = require('pdf-parse');
 
 // Unified playbook retrieval — semantic search across all entries.
 // Replaces per-endpoint category filters.
+
 const { getRelevantPlaybook, formatPlaybookContext, buildAppliedPlaybookSummary } = require('./playbook');
+// =====================================================================
+// RFP DOCX GENERATOR — produces a polished Word doc from structured RFP data
+// =====================================================================
+const {
+  Table: RfpTable, TableRow: RfpTableRow, TableCell: RfpTableCell,
+  Header: RfpHeader, Footer: RfpFooter, LevelFormat: RfpLevelFormat,
+  TabStopType: RfpTabStopType, HeadingLevel: RfpHeadingLevel,
+  WidthType: RfpWidthType, ShadingType: RfpShadingType,
+  VerticalAlign: RfpVerticalAlign, PageNumber: RfpPageNumber
+} = require('docx');
+
+const RFP_NAVY = "1F3A5F";
+const RFP_ACCENT = "2E75B6";
+const RFP_HEADER_FILL = "1F3A5F";
+const RFP_ROW_ALT = "F2F5F9";
+const RFP_BORDER = "BFBFBF";
+
+async function generateRFPDocx(rfp) {
+  const { Document, Packer, Paragraph, TextRun, AlignmentType, BorderStyle } = require('docx');
+  const thinBorder = { style: BorderStyle.SINGLE, size: 4, color: RFP_BORDER };
+  const cellBorders = { top: thinBorder, bottom: thinBorder, left: thinBorder, right: thinBorder };
+
+  const para = (text, opts = {}) => new Paragraph({
+    spacing: { after: opts.after ?? 120, before: opts.before ?? 0, line: 280 },
+    alignment: opts.alignment,
+    children: [new TextRun({ text, bold: opts.bold, italics: opts.italics, size: opts.size ?? 22, color: opts.color })]
+  });
+  const blank = () => new Paragraph({ children: [new TextRun("")] });
+  const h1 = (text) => new Paragraph({
+    heading: RfpHeadingLevel.HEADING_1,
+    spacing: { before: 320, after: 160 },
+    border: { bottom: { style: BorderStyle.SINGLE, size: 12, color: RFP_ACCENT, space: 4 } },
+    children: [new TextRun({ text, bold: true, size: 28, color: RFP_NAVY, font: "Calibri" })]
+  });
+  const bulletPara = (text) => new Paragraph({
+    numbering: { reference: "bullets", level: 0 },
+    spacing: { after: 60, line: 280 },
+    children: [new TextRun({ text, size: 22 })]
+  });
+  const headerCell = (text, width) => new RfpTableCell({
+    borders: cellBorders,
+    width: { size: width, type: RfpWidthType.DXA },
+    shading: { fill: RFP_HEADER_FILL, type: RfpShadingType.CLEAR },
+    margins: { top: 100, bottom: 100, left: 140, right: 140 },
+    verticalAlign: RfpVerticalAlign.CENTER,
+    children: [new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text, bold: true, color: "FFFFFF", size: 22, font: "Calibri" })]
+    })]
+  });
+  const dataCell = (text, width, opts = {}) => new RfpTableCell({
+    borders: cellBorders,
+    width: { size: width, type: RfpWidthType.DXA },
+    shading: opts.shaded ? { fill: RFP_ROW_ALT, type: RfpShadingType.CLEAR } : undefined,
+    margins: { top: 90, bottom: 90, left: 140, right: 140 },
+    verticalAlign: RfpVerticalAlign.CENTER,
+    children: [new Paragraph({
+      alignment: opts.align,
+      children: [new TextRun({ text, size: 21, bold: opts.bold })]
+    })]
+  });
+
+  const headerBlock = [
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 },
+      children: [new TextRun({ text: "BEDROCK ASSOCIATION MANAGEMENT", bold: true, size: 26, color: RFP_NAVY, font: "Calibri" })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 240 },
+      children: [new TextRun({ text: `On behalf of ${rfp.community}`, italics: true, size: 22, color: "555555" })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 80 },
+      children: [new TextRun({ text: "REQUEST FOR PROPOSALS", bold: true, size: 36, color: RFP_NAVY, font: "Calibri" })] }),
+    new Paragraph({ alignment: AlignmentType.CENTER, spacing: { after: 320 },
+      children: [new TextRun({ text: rfp.vendorType + " Services", size: 26, color: RFP_ACCENT, font: "Calibri" })] }),
+    new RfpTable({
+      width: { size: 7200, type: RfpWidthType.DXA },
+      alignment: AlignmentType.CENTER,
+      columnWidths: [2400, 4800],
+      rows: [
+        new RfpTableRow({ children: [dataCell("Issued", 2400, { bold: true, shaded: true }), dataCell(rfp.dateIssued, 4800)] }),
+        new RfpTableRow({ children: [dataCell("Proposals Due", 2400, { bold: true, shaded: true }), dataCell(rfp.dueDate, 4800)] }),
+        new RfpTableRow({ children: [dataCell("Contract Term", 2400, { bold: true, shaded: true }), dataCell(rfp.contractTerm, 4800)] }),
+      ]
+    }),
+    blank(),
+  ];
+
+  const aboutSection = [
+    h1("About the Community"),
+    para(rfp.about || `${rfp.community} is a residential HOA community managed by Bedrock Association Management.`),
+    para("Vendors are encouraged to visit the property before submitting a proposal. Contact Bedrock Association Management to coordinate a site visit.")
+  ];
+
+  const scopeRow = (num, item, freq, notes, alt) => new RfpTableRow({
+    children: [
+      dataCell(String(num), 500, { align: AlignmentType.CENTER, shaded: alt, bold: true }),
+      dataCell(item, 2400, { shaded: alt, bold: true }),
+      dataCell(freq, 1700, { align: AlignmentType.CENTER, shaded: alt }),
+      dataCell(notes || "", 4760, { shaded: alt }),
+    ]
+  });
+  const scopeRows = (rfp.scopeItems || []).map((it, i) =>
+    scopeRow(i + 1, it.service || "", it.frequency || "", it.notes || "", i % 2 === 1));
+  const scopeSection = [
+    h1("Scope of Work"),
+    para("The selected vendor shall provide all labor, equipment, materials, and supervision for the following services in common areas. Vendors must price each item using the pricing table below.", { italics: true }),
+    blank(),
+    new RfpTable({
+      width: { size: 9360, type: RfpWidthType.DXA },
+      columnWidths: [500, 2400, 1700, 4760],
+      rows: [
+        new RfpTableRow({ tableHeader: true, children: [headerCell("#", 500), headerCell("Service", 2400), headerCell("Frequency", 1700), headerCell("Notes / Exclusions", 4760)] }),
+        ...scopeRows
+      ]
+    }),
+  ];
+
+  const priceRow = (num, item, freq, alt) => new RfpTableRow({
+    children: [
+      dataCell(String(num), 600, { align: AlignmentType.CENTER, shaded: alt }),
+      dataCell(item, 4060, { shaded: alt }),
+      dataCell(freq, 1900, { align: AlignmentType.CENTER, shaded: alt }),
+      dataCell("$", 1400, { align: AlignmentType.RIGHT, shaded: alt }),
+      dataCell("$", 1400, { align: AlignmentType.RIGHT, shaded: alt }),
+    ]
+  });
+  const pricingRows = (rfp.scopeItems || []).map((it, i) =>
+    priceRow(i + 1, it.service || "", it.frequency || "", i % 2 === 1));
+  const totalRow = new RfpTableRow({
+    children: [
+      new RfpTableCell({
+        borders: cellBorders, columnSpan: 4,
+        width: { size: 7960, type: RfpWidthType.DXA },
+        shading: { fill: RFP_HEADER_FILL, type: RfpShadingType.CLEAR },
+        margins: { top: 110, bottom: 110, left: 140, right: 140 },
+        children: [new Paragraph({ alignment: AlignmentType.RIGHT,
+          children: [new TextRun({ text: "TOTAL ANNUAL CONTRACT VALUE", bold: true, color: "FFFFFF", size: 22 })] })]
+      }),
+      new RfpTableCell({
+        borders: cellBorders,
+        width: { size: 1400, type: RfpWidthType.DXA },
+        shading: { fill: RFP_HEADER_FILL, type: RfpShadingType.CLEAR },
+        margins: { top: 110, bottom: 110, left: 140, right: 140 },
+        children: [new Paragraph({ alignment: AlignmentType.RIGHT,
+          children: [new TextRun({ text: "$", bold: true, color: "FFFFFF", size: 22 })] })]
+      }),
+    ]
+  });
+  const pricingSection = [
+    h1("Pricing"),
+    para("Complete the pricing table below. All fields required.", { italics: true }),
+    blank(),
+    new RfpTable({
+      width: { size: 9360, type: RfpWidthType.DXA },
+      columnWidths: [600, 4060, 1900, 1400, 1400],
+      rows: [
+        new RfpTableRow({ tableHeader: true, children: [headerCell("#", 600), headerCell("Service", 4060), headerCell("Frequency", 1900), headerCell("Per Occurrence", 1400), headerCell("Annual Total", 1400)] }),
+        ...pricingRows, totalRow
+      ]
+    }),
+    blank(),
+    para(`Either party may terminate the contract with 30 days written notice. ${rfp.contractTerm}.`),
+  ];
+
+  const submissionSection = [
+    h1("How to Submit"),
+    para("Email your proposal as a PDF to the property manager by the due date. Late submissions may not be considered."),
+    blank(),
+    para("Please include in your proposal:", { bold: true }),
+    bulletPara("Completed pricing table above"),
+    bulletPara("Proof of insurance and applicator/professional licenses"),
+    bulletPara("Three (3) HOA or commercial references"),
+    bulletPara("Any clarifications or assumptions made in your pricing"),
+    blank(),
+    new RfpTable({
+      width: { size: 9360, type: RfpWidthType.DXA },
+      columnWidths: [2880, 6480],
+      rows: [
+        new RfpTableRow({ children: [dataCell("Submit To", 2880, { bold: true, shaded: true }), dataCell("Bedrock Association Management", 6480)] }),
+        new RfpTableRow({ children: [dataCell("Email", 2880, { bold: true, shaded: true }), dataCell(rfp.submitTo?.email || "info@bedrocktx.com", 6480)] }),
+        new RfpTableRow({ children: [dataCell("Phone", 2880, { bold: true, shaded: true }), dataCell(rfp.submitTo?.phone || "832-588-2485", 6480)] }),
+        new RfpTableRow({ children: [dataCell("Deadline", 2880, { bold: true, shaded: true }), dataCell(rfp.dueDate, 6480)] }),
+      ]
+    }),
+    blank(),
+    para(`Thank you for your interest in serving ${rfp.community}.`, { italics: true, alignment: AlignmentType.CENTER }),
+  ];
+
+  const doc = new Document({
+    creator: "Bedrock Association Management",
+    title: `${rfp.community} RFP - ${rfp.vendorType}`,
+    styles: {
+      default: { document: { run: { font: "Calibri", size: 22 } } },
+      paragraphStyles: [{
+        id: "Heading1", name: "Heading 1", basedOn: "Normal", next: "Normal", quickFormat: true,
+        run: { size: 28, bold: true, color: RFP_NAVY, font: "Calibri" },
+        paragraph: { spacing: { before: 320, after: 160 }, outlineLevel: 0 }
+      }]
+    },
+    numbering: {
+      config: [{
+        reference: "bullets",
+        levels: [{
+          level: 0, format: RfpLevelFormat.BULLET, text: "•", alignment: AlignmentType.LEFT,
+          style: { paragraph: { indent: { left: 720, hanging: 360 } } }
+        }]
+      }]
+    },
+    sections: [{
+      properties: { page: { size: { width: 12240, height: 15840 }, margin: { top: 1080, right: 1440, bottom: 1080, left: 1440 } } },
+      headers: {
+        default: new RfpHeader({
+          children: [new Paragraph({
+            alignment: AlignmentType.RIGHT,
+            border: { bottom: { style: BorderStyle.SINGLE, size: 6, color: RFP_ACCENT, space: 4 } },
+            children: [new TextRun({ text: `${rfp.community}  |  RFP for ${rfp.vendorType} Services`, size: 18, color: "555555", italics: true })]
+          })]
+        })
+      },
+      footers: {
+        default: new RfpFooter({
+          children: [new Paragraph({
+            tabStops: [{ type: RfpTabStopType.RIGHT, position: 9360 }],
+            children: [
+              new TextRun({ text: "Bedrock Association Management", size: 18, color: "555555", italics: true }),
+              new TextRun({ text: "\tPage " }),
+              new TextRun({ children: [RfpPageNumber.CURRENT], size: 18, color: "555555" }),
+              new TextRun({ text: " of ", size: 18, color: "555555" }),
+              new TextRun({ children: [RfpPageNumber.TOTAL_PAGES], size: 18, color: "555555" }),
+            ]
+          })]
+        })
+      },
+      children: [...headerBlock, ...aboutSection, ...scopeSection, ...pricingSection, ...submissionSection]
+    }]
+  });
+
+  return Packer.toBuffer(doc);
+}
+
+async function buildStructuredRFP({ community, vendorType, contractTerm, bidDeadline, scopeContent, additionalRequirements }) {
+  const today = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  const dueDate = bidDeadline
+    ? new Date(bidDeadline + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+    : '30 days from date of this request';
+
+  const structureResponse = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 3000,
+    system: `You extract structured RFP scope-of-work data from raw scope text. Return ONLY valid JSON, no preamble, no markdown fences.`,
+    messages: [{
+      role: 'user',
+      content: `Extract scope-of-work line items. Return JSON in exactly this shape:
+
+{
+  "about": "string — 2-3 sentence community description for an RFP, neutral tone",
+  "scopeItems": [
+    { "service": "string — short name", "frequency": "string — how often", "notes": "string — short description or exclusions" }
+  ]
+}
+
+Each scopeItem should be ONE distinct service line. Aim for 8-20 line items.
+
+Community: ${community}
+Vendor type: ${vendorType}
+${additionalRequirements ? 'Additional requirements: ' + additionalRequirements : ''}
+
+Raw scope:
+${scopeContent}`
+    }]
+  });
+
+  let structured;
+  let raw = structureResponse.content[0].text.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim();
+  try { structured = JSON.parse(raw); }
+  catch (e) { console.error('Failed to parse structured RFP JSON:', e.message); structured = { about: '', scopeItems: [] }; }
+
+  return {
+    community, vendorType, dateIssued: today, dueDate, contractTerm,
+    about: structured.about || '',
+    scopeItems: structured.scopeItems || [],
+    submitTo: { email: 'info@bedrocktx.com', phone: '832-588-2485' }
+  };
+}
 
 const app = express();
 app.use(express.json());
