@@ -209,18 +209,18 @@
 </div>
 
 <div class="tabs">
-  <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
-  <div class="tab active" onclick="switchTab('chat')">💬 Ask a Question</div>
+  <div class="tab active" onclick="switchTab('asked')">🧠 askEd</div>
+  <div class="tab" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
-  <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
-  <div class="tab" onclick="switchTab('asked')">🧠 askEd</div>
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
-  <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
+  <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
   <div class="tab" onclick="switchTab('vendor')">📊 Vendor Workflow</div>
+  <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
+  <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
 </div>
 
 <!-- Chat Tab -->
-<div class="tab-content active" id="tab-chat">
+<div class="tab-content" id="tab-chat">
   <div class="chat-container" id="chat">
     <div class="no-community"><span>🏘️</span>Select a community above to get started.</div>
   </div>
@@ -309,7 +309,7 @@
 </div>
 
 <!-- Ask Ed Tab -->
-<div class="tab-content" id="tab-asked">
+<div class="tab-content active" id="tab-asked">
   <div class="ask-ed-container">
     <div class="ask-ed-left">
       <h3>🧠 askEd</h3>
