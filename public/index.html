@@ -907,11 +907,55 @@
       copyBtn.style.display = 'block';
       document.getElementById('copyEdEmailBtn').style.display = 'block';
       document.getElementById('exportEdEmailBtn').style.display = 'block';
+      renderScenarioPicker(data.guidance);
     } catch (err) {
       output.textContent = 'Something went wrong. Please try again.';
     }
     btn.disabled = false;
     btn.textContent = '🧠 Get Guidance';
+  }
+
+  function renderScenarioPicker(guidance) {
+    const existing = document.getElementById('scenarioPicker');
+    if (existing) existing.remove();
+
+    const scenarios = detectScenarios(guidance);
+    if (scenarios.length < 2) return;
+
+    const picker = document.createElement('div');
+    picker.id = 'scenarioPicker';
+    picker.style.cssText = 'background:#f5f8fc; border:1px solid #d8e2ed; border-radius:8px; padding:14px 16px; margin-top:12px;';
+    picker.innerHTML = `
+      <div style="font-size:11px; letter-spacing:0.08em; color:#1a3a5c; font-weight:600; margin-bottom:8px;">PICK A SCENARIO TO EXPORT</div>
+      <div style="font-size:13px; color:#555; margin-bottom:10px;">Multiple response options were generated. Choose the one that matches the situation:</div>
+      <div style="display:flex; gap:8px; flex-wrap:wrap;">
+        ${scenarios.map(s => `
+          <div style="flex:1; min-width:200px; background:white; border:1px solid #d0d7de; border-radius:8px; padding:10px 12px;">
+            <div style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:6px;">Scenario ${s.letter}</div>
+            <div style="font-size:12px; color:#666; margin-bottom:10px; line-height:1.4;">${escapeHtml(s.title)}</div>
+            <div style="display:flex; gap:6px; flex-wrap:wrap;">
+              <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="copyScenario('${s.letter}')">📋 Copy</button>
+              <button class="action-btn" style="font-size:12px; padding:6px 10px;" onclick="exportScenarioToEmail('${s.letter}')">📧 Export</button>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+    document.getElementById('edOutput').parentElement.appendChild(picker);
+  }
+
+  function copyScenario(letter) {
+    const body = getScenarioEmailBody(letter);
+    if (!body) { alert('Could not find scenario ' + letter); return; }
+    navigator.clipboard.writeText(body).then(() => {
+      alert(`Scenario ${letter} copied to clipboard.`);
+    });
+  }
+
+  function exportScenarioToEmail(letter) {
+    const body = getScenarioEmailBody(letter);
+    if (!body) { alert('Could not find scenario ' + letter); return; }
+    _buildAndDownloadEml(body, letter);
   }
 
   async function reviewDraft() {
@@ -1962,6 +2006,31 @@ ${questionsPage}
     return markdownToPlainEmail(guidance);
   }
 
+  // Detect if the guidance contains multiple scenario options (Scenario A/B/C, Option A/B/C, etc.)
+  function detectScenarios(guidance) {
+    const scenarios = [];
+    // Match "Scenario A —", "Scenario A -", "Option A —", "Option A:", etc.
+    const regex = /(?:Scenario|Option)\s+([A-Z])\s*[—\-–:]\s*([^\n]+)\n([\s\S]*?)(?=\n\s*(?:Scenario|Option)\s+[A-Z]\s*[—\-–:]|\n\s*(?:#{1,4}\s*)?\d?\.?\s*(?:REASONING|WATCH ?OUTS?|RECOMMENDED|$)|$)/gi;
+    let m;
+    while ((m = regex.exec(guidance)) !== null) {
+      scenarios.push({
+        letter: m[1].toUpperCase(),
+        title: m[2].trim(),
+        body: markdownToPlainEmail(m[3])
+      });
+    }
+    return scenarios;
+  }
+
+  // Get the email body for a specific scenario, or fall back to extracting the full HOW TO RESPOND
+  function getScenarioEmailBody(letter) {
+    const guidance = document.getElementById('edOutput').textContent;
+    const scenarios = detectScenarios(guidance);
+    const match = scenarios.find(s => s.letter === letter);
+    if (match) return match.body;
+    return extractHowToRespond(guidance);
+  }
+
   function copyEmailVersion() {
     const guidance = document.getElementById('edOutput').textContent;
     if (!guidance) return;
@@ -1976,8 +2045,19 @@ ${questionsPage}
   function exportToEmail() {
     const guidance = document.getElementById('edOutput').textContent;
     if (!guidance) return;
-    const emailBody = extractHowToRespond(guidance);
 
+    // If the guidance contains multiple scenarios, prompt the user to use the picker instead
+    const scenarios = detectScenarios(guidance);
+    if (scenarios.length >= 2) {
+      alert('Multiple response scenarios detected. Please pick a scenario from the buttons below the guidance to export the right one.');
+      return;
+    }
+
+    const emailBody = extractHowToRespond(guidance);
+    _buildAndDownloadEml(emailBody, null);
+  }
+
+  function _buildAndDownloadEml(emailBody, scenarioLetter) {
     // Extract a clean subject line from the original situation
     const situation = document.getElementById('edSituation').value || '';
     let subject = currentCommunity ? `${currentCommunity} - Bedrock Association Management` : 'Bedrock Association Management';
@@ -2033,17 +2113,20 @@ ${questionsPage}
     const blob = new Blob([emlContent], { type: 'message/rfc822' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
+    const scenarioSuffix = scenarioLetter ? `_Scenario_${scenarioLetter}` : '';
     const safeSubject = subject.replace(/[^a-z0-9]/gi, '_').slice(0, 50);
     a.href = url;
-    a.download = `${safeSubject}.eml`;
+    a.download = `${safeSubject}${scenarioSuffix}.eml`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
 
-    const btn = document.getElementById('exportEdEmailBtn');
-    btn.textContent = '✅ Downloaded!';
-    setTimeout(() => btn.textContent = '📧 Export to Email', 2000);
+    if (!scenarioLetter) {
+      const btn = document.getElementById('exportEdEmailBtn');
+      btn.textContent = '✅ Downloaded!';
+      setTimeout(() => btn.textContent = '📧 Export to Email', 2000);
+    }
   }
 
 // ============================================================
