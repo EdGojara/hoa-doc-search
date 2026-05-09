@@ -1175,6 +1175,7 @@
   let billingCurrentInvoice = null;
   let billingCurrentInvoiceLineItems = [];   // in-memory editable list
   let billingCurrentRateCard = [];           // dropdown options sourced from contract
+  let billingCurrentRateCardContractId = null;  // contract id the rate card was loaded for (for PATCHing rates)
 
   async function billingShowInvoice(invoiceId) {
     document.getElementById('billing-community-detail').style.display = 'none';
@@ -1247,6 +1248,7 @@
     // The rate card for this invoice is the active contract's reimbursable +
     // owner_charge categories. We fetch via the by-community endpoint, since
     // there's only one active contract per community in v0.
+    billingCurrentRateCardContractId = contractId;
     try {
       // Find the community for this contract via cached communities + contract fetch.
       const community = billingCommunitiesCache.find(c => c.active_contract && c.active_contract.id === contractId);
@@ -1375,7 +1377,7 @@
     billingRenderLineItems();
   }
 
-  function billingUpdateUnitPrice(idx, val, el) {
+  async function billingUpdateUnitPrice(idx, val, el) {
     const li = billingCurrentInvoiceLineItems[idx];
     const newPrice = Number(val || 0);
     const oldPrice = Number(li.unit_price || 0);
@@ -1384,30 +1386,82 @@
     // Look up the rate-card price for this category to detect override.
     const rateEntry = (billingCurrentRateCard || []).find(r => r.source_ref_id === li.source_ref_id);
     const rateCardPrice = rateEntry ? Number(rateEntry.unit_price) : null;
-    const isOverride = rateCardPrice !== null && Math.abs(newPrice - rateCardPrice) > 0.0001;
+    const matchesRateCard = rateCardPrice !== null && Math.abs(newPrice - rateCardPrice) < 0.0001;
 
-    if (isOverride) {
-      // Confirmation with required reason. Audit-trail rule: every override
-      // gets a "why" stored on the line item.
-      const reason = prompt(
-        `Override rate for "${li.description}"?\n\n` +
-        `Rate card: $${rateCardPrice.toFixed(2)}\n` +
-        `New price: $${newPrice.toFixed(2)}\n\n` +
-        `Reason for override (required for audit trail):\n` +
-        `Example: "letter was thicker than usual, postage was $1.03"`
-      );
-      if (reason === null || reason.trim() === '') {
-        // User cancelled or didn't provide reason — revert.
+    if (matchesRateCard) {
+      // Back to rate-card price — clear override flag, no prompt.
+      li.manual_override = false;
+      li.manual_override_reason = null;
+      li.unit_price = newPrice;
+      li.amount = Math.round(Number(li.qty || 0) * newPrice * 100) / 100;
+      billingRenderLineItems();
+      return;
+    }
+
+    // Off rate card — ask for scope: future-too vs one-time.
+    const isPostage = String(li.category || '').startsWith('postage');
+    const scopeMsg =
+      `Override rate for "${li.description}"?\n\n` +
+      `Rate card: $${(rateCardPrice ?? 0).toFixed(2)}  →  New: $${newPrice.toFixed(2)}\n\n` +
+      `▶ OK = APPLY GOING FORWARD (rate change). Updates the contract rate; future invoices will use the new rate.` +
+      (isPostage ? '  Postage is global, so this applies to ALL communities.' : '  Applies to this community only.') +
+      `\n\n` +
+      `▶ Cancel = JUST THIS INVOICE (one-time exception). The line is flagged as an override; next invoice goes back to the rate card.`;
+
+    const isFuture = confirm(scopeMsg);
+
+    const reason = prompt(
+      isFuture
+        ? `Going-forward rate change. Reason?\nExample: "USPS first-class rate increased to $1.03"`
+        : `One-time override. Reason?\nExample: "Letter was thicker than usual, postage was $1.03"`
+    );
+    if (reason === null || reason.trim() === '') {
+      if (el) el.value = oldPrice;
+      return;
+    }
+
+    if (isFuture) {
+      // Update the contract rate via API.
+      try {
+        const r = await fetch(`/api/billing/contracts/${billingCurrentRateCardContractId}/rates`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            category: li.category,
+            unit_price: newPrice,
+            reason: reason.trim(),
+            invoice_id: billingCurrentInvoice ? billingCurrentInvoice.id : null
+          })
+        });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+        // Update local rate card so the line is now considered "matching" the rate card.
+        if (rateEntry) rateEntry.unit_price = newPrice;
+        li.manual_override = false;
+        li.manual_override_reason = null;
+        // Surface what happened.
+        const detailEl = document.getElementById('billing-invoice-detail-result');
+        if (detailEl) {
+          const scopeLabel = data.scope === 'global_postage'
+            ? `global postage rate (${data.rows_updated} contract row(s) updated across all communities)`
+            : `this contract`;
+          detailEl.innerHTML = `
+            <div style="padding:8px; background:#e8f5e9; border-left:3px solid #4c8;">
+              ✓ Rate updated: ${li.description} from $${(data.old_price ?? rateCardPrice ?? 0).toFixed(2)} → $${data.new_price.toFixed(2)} on ${scopeLabel}.
+            </div>
+          `;
+        }
+      } catch (err) {
+        alert(`Failed to update contract rate: ${err.message}`);
         if (el) el.value = oldPrice;
         return;
       }
+    } else {
+      // One-time override on this line only.
       li.manual_override = true;
       li.manual_override_reason = reason.trim();
-    } else {
-      // Back to rate-card price — clear override flag.
-      li.manual_override = false;
-      li.manual_override_reason = null;
     }
+
     li.unit_price = newPrice;
     li.amount = Math.round(Number(li.qty || 0) * newPrice * 100) / 100;
     billingRenderLineItems();

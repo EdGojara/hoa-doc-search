@@ -571,6 +571,129 @@ router.put('/invoices/:invoiceId/line-items', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// PATCH /api/billing/contracts/:contractId/rates
+// body: { category, unit_price, reason, invoice_id? }
+//
+// Updates the rate for a category on the given contract. Postage categories
+// (anything starting with 'postage') propagate to ALL active contracts in
+// the management company since first-class postage is the same regardless
+// of community. Non-postage categories update only this contract.
+//
+// "Going forward" semantics: future invoice line items pulled from the
+// rate card will use the new rate. Existing lines on existing invoices
+// keep their original rate (the line item stored its price at time of
+// generation; we don't retroactively re-bill).
+//
+// invoice_id is optional and used only to record an invoice_events audit
+// row tying the rate change to the invoice that triggered it.
+// ----------------------------------------------------------------------------
+router.patch('/contracts/:contractId/rates', async (req, res) => {
+  const { contractId } = req.params;
+  const { category, unit_price, reason, invoice_id } = req.body || {};
+
+  if (!category || unit_price === undefined || unit_price === null) {
+    return res.status(400).json({ error: 'category and unit_price required' });
+  }
+  if (!reason || !String(reason).trim()) {
+    return res.status(400).json({ error: 'reason required for audit trail' });
+  }
+
+  try {
+    const newPrice = Number(unit_price);
+    if (Number.isNaN(newPrice) || newPrice < 0) {
+      return res.status(400).json({ error: 'unit_price must be a non-negative number' });
+    }
+    const isPostage = String(category).startsWith('postage');
+
+    // Try reimbursables first.
+    const { data: reimb } = await supabase
+      .from('contract_reimbursables')
+      .select('id, contract_id, category, unit_price')
+      .eq('contract_id', contractId)
+      .eq('category', category)
+      .maybeSingle();
+
+    let oldPrice = null;
+    let rowsUpdated = 0;
+    let scope = 'this_contract';
+
+    if (reimb) {
+      oldPrice = Number(reimb.unit_price);
+      const { error: updErr } = await supabase
+        .from('contract_reimbursables')
+        .update({ unit_price: newPrice })
+        .eq('id', reimb.id);
+      if (updErr) throw updErr;
+      rowsUpdated = 1;
+
+      // Postage propagates to all other active contracts in the same management company.
+      if (isPostage) {
+        scope = 'global_postage';
+        const { data: others } = await supabase
+          .from('contract_reimbursables')
+          .select('id, contract_id')
+          .eq('category', category)
+          .neq('contract_id', contractId);
+        if (others && others.length > 0) {
+          const { error: bulkErr } = await supabase
+            .from('contract_reimbursables')
+            .update({ unit_price: newPrice })
+            .in('id', others.map(o => o.id));
+          if (bulkErr) throw bulkErr;
+          rowsUpdated += others.length;
+        }
+      }
+    } else {
+      // Try owner_charges.
+      const { data: oc } = await supabase
+        .from('contract_owner_charges')
+        .select('id, fee_amount')
+        .eq('contract_id', contractId)
+        .eq('category', category)
+        .maybeSingle();
+      if (!oc) {
+        return res.status(404).json({ error: `Category '${category}' not found on this contract` });
+      }
+      oldPrice = Number(oc.fee_amount);
+      const { error: updErr } = await supabase
+        .from('contract_owner_charges')
+        .update({ fee_amount: newPrice })
+        .eq('id', oc.id);
+      if (updErr) throw updErr;
+      rowsUpdated = 1;
+    }
+
+    // Audit: record on the invoice that triggered the change (if provided).
+    if (invoice_id) {
+      await supabase.from('invoice_events').insert({
+        invoice_id,
+        kind: 'note_added',
+        payload: {
+          source: 'rate-change',
+          category,
+          old_price: oldPrice,
+          new_price: newPrice,
+          reason: String(reason).trim(),
+          scope,
+          rows_updated: rowsUpdated
+        }
+      });
+    }
+
+    res.json({
+      category,
+      old_price: oldPrice,
+      new_price: newPrice,
+      scope,
+      rows_updated: rowsUpdated
+    });
+  } catch (err) {
+    console.error('[billing] rate update failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/billing/invoices/:invoiceId/import-vantaca-violations
 // multipart/form-data with field "pdf" containing the Vantaca Violation Report
 //
