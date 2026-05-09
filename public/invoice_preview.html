@@ -56,44 +56,17 @@
     /* ---------- Header ---------- */
     header {
       display: grid;
-      grid-template-columns: 1fr auto;
-      align-items: flex-start;
-      gap: 24px;
-      padding-bottom: 24px;
+      grid-template-columns: auto 1fr;
+      align-items: center;
+      gap: 32px;
+      padding-bottom: 28px;
       border-bottom: 2px solid var(--bedrock-navy);
     }
 
-    .brand {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-    }
-
     .brand img {
-      height: 56px;
+      height: 100px;
       width: auto;
       display: block;
-    }
-
-    .brand-text {
-      display: flex;
-      flex-direction: column;
-      line-height: 1.15;
-    }
-
-    .brand-name {
-      font-weight: 700;
-      font-size: 18px;
-      color: var(--bedrock-navy-deep);
-      letter-spacing: 0.04em;
-    }
-
-    .brand-tagline {
-      font-weight: 400;
-      font-size: 11px;
-      color: var(--ink-muted);
-      letter-spacing: 0.02em;
-      margin-top: 2px;
     }
 
     .doc-title {
@@ -103,17 +76,17 @@
 
     .doc-kind {
       font-weight: 700;
-      font-size: 28px;
-      letter-spacing: 0.18em;
+      font-size: 32px;
+      letter-spacing: 0.22em;
       color: var(--bedrock-navy);
       text-transform: uppercase;
     }
 
     .doc-number {
       font-weight: 500;
-      font-size: 13px;
+      font-size: 14px;
       color: var(--ink-soft);
-      margin-top: 6px;
+      margin-top: 8px;
       font-feature-settings: "tnum" 1;
     }
 
@@ -383,11 +356,7 @@
     <!-- Header -->
     <header>
       <div class="brand">
-        <img src="/logos/bedrock_logo.png" alt="Bedrock Association Management">
-        <div class="brand-text">
-          <span class="brand-name">Bedrock Association Management</span>
-          <span class="brand-tagline">Community. Simplified.</span>
-        </div>
+        <img src="logos/bedrock_logo.png" alt="Bedrock Association Management">
       </div>
       <div class="doc-title">
         <div class="doc-kind">Invoice</div>
@@ -401,8 +370,9 @@
         <div class="label">Billed to</div>
         <div class="body">
           <strong>Waterview Estates Owners Association, Inc.</strong><br>
-          c/o Board of Directors<br>
-          Fort Bend County, TX
+          c/o Bedrock Association Management<br>
+          12808 W Airport Blvd<br>
+          Sugar Land, TX 77478
         </div>
       </div>
       <div class="meta-block">
@@ -457,28 +427,19 @@
       </thead>
       <tbody>
         <tr>
-          <td>
-            <div class="li-description">Monthly Management Fee</div>
-            <div class="li-sub">Per Exhibit A — full-service association management</div>
-          </td>
+          <td><div class="li-description">Monthly Management Fee</div></td>
           <td class="center">1</td>
           <td class="right">$4,102.00</td>
           <td class="right">$4,102.00</td>
         </tr>
         <tr>
-          <td>
-            <div class="li-description">Website &amp; Homeowner Portal</div>
-            <div class="li-sub">Hosting, board portal, member access</div>
-          </td>
+          <td><div class="li-description">Website &amp; Homeowner Portal</div></td>
           <td class="center">1</td>
           <td class="right">$150.00</td>
           <td class="right">$150.00</td>
         </tr>
         <tr>
-          <td>
-            <div class="li-description">On-site Staff (3 days a week)</div>
-            <div class="li-sub">Includes payroll taxes and 10% admin fee</div>
-          </td>
+          <td><div class="li-description">On-site Staff (3 days a week)</div></td>
           <td class="center">1</td>
           <td class="right">$2,460.00</td>
           <td class="right">$2,460.00</td>
@@ -504,20 +465,12 @@
       </table>
     </div>
 
-    <!-- Remit -->
+    <!-- Questions -->
     <div class="remit">
-      <div>
-        <div class="label">Payment instructions</div>
-        <div class="body">
-          Per Article V of the management agreement, this invoice is paid by automatic deduction from the Association operating account. No remittance action required by the Association.
-        </div>
-      </div>
-      <div>
+      <div style="grid-column: 1 / -1;">
         <div class="label">Questions</div>
         <div class="body">
-          Reach out to your community manager or<br>
-          <strong>info@bedrocktx.com</strong> · (832) 588-2485<br>
-          Reference invoice <strong>2510WV</strong>.
+          Reach out to accounting at <strong>info@bedrocktx.com</strong> · (832) 588-2485. Reference invoice <strong>2510WV</strong>.
         </div>
       </div>
     </div>
