@@ -775,6 +775,18 @@
       <div id="billing-line-items-container"></div>
     </div>
 
+    <div class="panel" id="billing-vantaca-upload-panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">📎 Import from Vantaca</h4>
+      <div style="border:2px dashed #d0d7de; border-radius:8px; padding:20px; text-align:center; cursor:pointer; background:#f9f9f9;"
+           onclick="document.getElementById('billing-vantaca-file').click()">
+        <div style="font-size:24px;">📄</div>
+        <p style="margin:6px 0 0 0; color:#444;">Click to upload a Vantaca activity report PDF</p>
+        <p style="margin:4px 0 0 0; font-size:11px; color:#888;">Auto-extracts violation counts and populates billable line items. Replaces existing line items on this invoice.</p>
+        <input type="file" id="billing-vantaca-file" accept=".pdf" style="display:none" onchange="billingImportVantaca(this)">
+      </div>
+      <div id="billing-vantaca-result" style="margin-top:10px; font-size:14px;"></div>
+    </div>
+
     <div class="panel" id="billing-add-line-panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">➕ Add Line Item</h4>
       <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
@@ -1282,6 +1294,43 @@
       }
     } catch (e) {
       result.innerHTML = `<div style="color:#a00;">Failed to save: ${e.message}</div>`;
+    }
+  }
+
+  async function billingImportVantaca(input) {
+    if (!billingCurrentInvoice) return;
+    const file = input.files && input.files[0];
+    if (!file) return;
+    const result = document.getElementById('billing-vantaca-result');
+    result.innerHTML = '<div style="color:#888;">📄 Uploading and parsing… (Claude reading the PDF)</div>';
+    const formData = new FormData();
+    formData.append('pdf', file);
+    try {
+      const r = await fetch(`/api/billing/invoices/${billingCurrentInvoice.id}/import-vantaca-violations`, {
+        method: 'POST',
+        body: formData
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      const ext = data.extracted || {};
+      result.innerHTML = `
+        <div style="padding:10px; background:#e8f5e9; border-left:3px solid #4c8;">
+          <div style="font-weight:600;">✓ Imported · ${data.line_items_count} line items · subtotal ${billingMoney(data.subtotal)}</div>
+          <div style="font-size:12px; color:#444; margin-top:6px;">
+            Extracted from PDF:
+            Certified Letter Notice <b>${ext.certified_letter_notice ?? 0}</b> ·
+            First Notice <b>${ext.first_notice ?? 0}</b> ·
+            Second Notice <b>${ext.second_notice ?? 0}</b>
+            ${ext.report_period_start ? ' · period ' + ext.report_period_start + ' → ' + (ext.report_period_end || '?') : ''}
+          </div>
+          <div style="font-size:11px; color:#666; margin-top:4px;">Replaced existing line items. Edit quantities below if anything looks off, then click Save Changes.</div>
+        </div>
+      `;
+      billingShowInvoice(billingCurrentInvoice.id);
+    } catch (e) {
+      result.innerHTML = `<div style="padding:8px; background:#fee; border-left:3px solid #a00;">Import failed: ${e.message}</div>`;
+    } finally {
+      input.value = '';
     }
   }
 

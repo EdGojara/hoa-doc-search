@@ -30,8 +30,12 @@
 
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
+const Anthropic = require('@anthropic-ai/sdk');
+const multer = require('multer');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
 const router = express.Router();
@@ -562,6 +566,215 @@ router.put('/invoices/:invoiceId/line-items', async (req, res) => {
     res.json({ invoice: updated, line_items_count: lineItems.length, subtotal });
   } catch (err) {
     console.error('[billing] line-items update failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/billing/invoices/:invoiceId/import-vantaca-violations
+// multipart/form-data with field "pdf" containing the Vantaca Violation Report
+//
+// Parses the report's Summary section using Claude (resilient to format
+// drift; PDF goes in as document content type), maps the status counts to
+// billable line items via the contract's rate card, and replaces the
+// invoice's line items with the result.
+//
+// Records an agent_run with the full prompt/response/tokens (P3 trade tape)
+// and an invoice_event kind='edited' with the import provenance so the
+// audit trail shows exactly where each line item came from.
+//
+// Mapping rules (v0):
+//   certified_letter_notice  -> Deed Restriction Certified Demand Letter ($35/each)
+//   first_notice + second_notice + certified_letter_notice
+//                            -> Postage (description notes "DRV notices")
+//
+// Only allowed when invoice.status = 'draft' or 'review'.
+// ----------------------------------------------------------------------------
+router.post('/invoices/:invoiceId/import-vantaca-violations', upload.single('pdf'), async (req, res) => {
+  const { invoiceId } = req.params;
+  const t0 = Date.now();
+
+  if (!req.file) return res.status(400).json({ error: 'No PDF uploaded (expected field "pdf")' });
+  if (req.file.mimetype !== 'application/pdf') {
+    return res.status(400).json({ error: `Unsupported file type: ${req.file.mimetype}. PDF expected.` });
+  }
+
+  try {
+    // Get invoice + verify it's editable.
+    const { data: invoice, error: findErr } = await supabase
+      .from('invoices')
+      .select('id, status, invoice_type, contract_id, community_id')
+      .eq('id', invoiceId)
+      .single();
+    if (findErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
+    if (!['draft', 'review'].includes(invoice.status)) {
+      return res.status(400).json({ error: `Cannot import into invoice with status '${invoice.status}'` });
+    }
+
+    // Get contract rate card so we can map.
+    const { data: reimb } = await supabase
+      .from('contract_reimbursables')
+      .select('id, category, description, unit_price')
+      .eq('contract_id', invoice.contract_id);
+    const { data: ownerCharges } = await supabase
+      .from('contract_owner_charges')
+      .select('id, category, description, fee_amount')
+      .eq('contract_id', invoice.contract_id);
+
+    const findReimb = (cat) => (reimb || []).find(r => r.category === cat);
+    const findOwner = (cat) => (ownerCharges || []).find(r => r.category === cat);
+
+    // Call Claude to extract the summary counts.
+    const promptText = `Extract the SUMMARY status counts from this Vantaca Violation Report PDF.
+
+Return ONLY a JSON object with these keys (use 0 if a status is not present in the summary):
+{
+  "certified_letter_notice": <int>,
+  "first_notice": <int>,
+  "second_notice": <int>,
+  "closed": <int>,
+  "owner_response": <int>,
+  "pending_hearing": <int>,
+  "resolved": <int>,
+  "void": <int>,
+  "report_period_start": "<YYYY-MM-DD or null>",
+  "report_period_end": "<YYYY-MM-DD or null>",
+  "community_name": "<string or null>"
+}
+
+Return ONLY the JSON. No markdown, no preamble, no commentary.`;
+
+    const aiResp = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 800,
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: req.file.buffer.toString('base64')
+            }
+          },
+          { type: 'text', text: promptText }
+        ]
+      }]
+    });
+
+    const rawText = (aiResp.content[0] && aiResp.content[0].text) || '';
+    const cleanText = rawText.replace(/^```json\s*/i, '').replace(/\s*```$/, '').trim();
+    let parsed;
+    try {
+      parsed = JSON.parse(cleanText);
+    } catch (e) {
+      console.error('[billing] Failed to parse Vantaca extraction:', cleanText);
+      throw new Error(`AI returned non-JSON: ${cleanText.slice(0, 200)}`);
+    }
+
+    // Build line items from the parsed counts.
+    const newLines = [];
+    let sortIdx = 0;
+
+    const certCount = Number(parsed.certified_letter_notice || 0);
+    const firstCount = Number(parsed.first_notice || 0);
+    const secondCount = Number(parsed.second_notice || 0);
+    const totalNotices = certCount + firstCount + secondCount;
+
+    // 1. Certified letter fee (DRV).
+    if (certCount > 0) {
+      const owner = findOwner('deed_restriction_certified_demand_letter');
+      if (owner) {
+        const rate = Number(owner.fee_amount);
+        newLines.push({
+          source: 'owner_charge',
+          source_ref_id: owner.id,
+          category: owner.category,
+          description: `${owner.description} (from Vantaca Violation Report — ${certCount} letters)`,
+          qty: certCount,
+          unit_price: rate,
+          amount: Math.round(certCount * rate * 100) / 100,
+          sort_order: (sortIdx += 10)
+        });
+      }
+    }
+
+    // 2. Postage for DRV notices (first + second + certified mail).
+    if (totalNotices > 0) {
+      const postage = findReimb('postage');
+      if (postage) {
+        const rate = Number(postage.unit_price || 0);
+        newLines.push({
+          source: 'reimbursable',
+          source_ref_id: postage.id,
+          category: postage.category,
+          description: `Postage — DRV notices (${firstCount} first, ${secondCount} second, ${certCount} certified)`,
+          qty: totalNotices,
+          unit_price: rate,
+          amount: Math.round(totalNotices * rate * 100) / 100,
+          sort_order: (sortIdx += 10)
+        });
+      }
+    }
+
+    // Replace invoice line items with the imported set.
+    await supabase.from('invoice_line_items').delete().eq('invoice_id', invoiceId);
+    if (newLines.length > 0) {
+      const itemsToInsert = newLines.map(li => ({ ...li, invoice_id: invoiceId }));
+      const { error: insErr } = await supabase.from('invoice_line_items').insert(itemsToInsert);
+      if (insErr) throw insErr;
+    }
+    const subtotal = Math.round(newLines.reduce((s, li) => s + Number(li.amount || 0), 0) * 100) / 100;
+    const { data: updatedInvoice, error: updErr } = await supabase
+      .from('invoices')
+      .update({ subtotal, total: subtotal })
+      .eq('id', invoiceId)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    // Persist the AI call (P3 trade tape).
+    const { data: agentRun } = await supabase.from('agent_runs').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: invoice.community_id,
+      module: 'billing',
+      endpoint: 'POST /api/billing/invoices/:id/import-vantaca-violations',
+      request_input: { invoice_id: invoiceId, file_name: req.file.originalname, file_size: req.file.size },
+      retrieved_context: {
+        contract_reimbursables: (reimb || []).map(r => r.category),
+        contract_owner_charges: (ownerCharges || []).map(r => r.category)
+      },
+      prompt: promptText,
+      model: 'claude-sonnet-4-6',
+      response: { extracted: parsed, line_items_created: newLines.length, subtotal },
+      input_tokens: aiResp.usage ? aiResp.usage.input_tokens : null,
+      output_tokens: aiResp.usage ? aiResp.usage.output_tokens : null,
+      duration_ms: Date.now() - t0
+    }).select().single();
+
+    await supabase.from('invoice_events').insert({
+      invoice_id: invoiceId,
+      kind: 'edited',
+      payload: {
+        source: 'vantaca-violation-import',
+        file_name: req.file.originalname,
+        extracted: parsed,
+        line_count: newLines.length,
+        subtotal
+      },
+      agent_run_id: agentRun ? agentRun.id : null
+    });
+
+    res.json({
+      invoice: updatedInvoice,
+      extracted: parsed,
+      line_items_count: newLines.length,
+      subtotal,
+      duration_ms: Date.now() - t0
+    });
+  } catch (err) {
+    console.error('[billing] vantaca import failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
