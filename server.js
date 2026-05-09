@@ -311,6 +311,16 @@ app.use('/api/billing', billingRouter);
 const { router: financialReviewRouter } = require('./api/financial_review');
 app.use('/api/financial-review', financialReviewRouter);
 
+// Bedrock Office > Vendor Master + Invoice Intake module (Push 1)
+// Endpoints under /api/vendors/*. See api/vendors.js and
+// migrations/009_vendor_master.sql for the schema.
+// Drop a vendor invoice PDF -> Claude parses identity + dates + amounts,
+// fuzzy-matches against existing vendor master (token Jaccard + EIN exact),
+// persists invoice + agent_runs trade tape. Push 2 will add GL reconciliation
+// with accrual-aware service_period matching.
+const { router: vendorsRouter } = require('./api/vendors');
+app.use('/api/vendors', vendorsRouter);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

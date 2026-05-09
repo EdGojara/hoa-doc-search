@@ -219,6 +219,7 @@
   <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
   <div class="tab" onclick="switchTab('billing')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
+  <div class="tab" onclick="switchTab('vendors')">🏢 Vendors</div>
 </div>
 
 <!-- Chat Tab -->
@@ -1875,6 +1876,133 @@
     <div class="panel">
       <h4 style="margin-top:0;">🔍 Findings</h4>
       <div id="finrev-findings-list"></div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     VENDORS TAB — Vendor Master + Invoice Intake (Push 1)
+     Drop a vendor invoice PDF -> Claude parses identity + dates + amounts ->
+     fuzzy-match against vendor master (token Jaccard, EIN exact) -> persist
+     invoice + agent_runs trade tape. Push 2: GL reconciliation with
+     accrual-aware service_period matching. Push 3: COI expiry + 1099 + bench.
+     ========================================================================= -->
+<div class="tab-content" id="tab-vendors" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1200px;">
+    <h2 style="margin:0 0 4px 0;">🏢 Vendors — Master & Invoice Intake</h2>
+    <p style="color:#888; margin:0 0 20px 0; font-size:13px;">
+      Drop any vendor invoice PDF — Bedrock parses, deduplicates the vendor, files the invoice, and starts building your audit-ready vendor master.
+      <span style="color:#315A87; font-weight:500;">Layer 3 in the making.</span>
+    </p>
+
+    <!-- Drop a Vendor Invoice -->
+    <div class="panel" id="vendors-upload-panel" style="margin-bottom: 20px;">
+      <h3 style="margin-top:0;">📥 Drop a Vendor Invoice</h3>
+      <p style="color:#666; font-size:12px; margin:0 0 12px 0;">
+        PDF only. Claude extracts vendor identity, invoice number, dates (including service period for accrual-aware matching), and line items.
+        New vendors are added to the master automatically with fuzzy dedup.
+      </p>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div>
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community (which HOA paid this?)</label>
+          <select id="vendors-upload-community" style="padding:8px; width:100%; font-size:14px;">
+            <option value="">— Select community —</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Default category (optional, AI may override)</label>
+          <select id="vendors-upload-category" style="padding:8px; width:100%; font-size:14px;">
+            <option value="">— Auto-detect from invoice —</option>
+            <option value="landscaping">Landscaping</option>
+            <option value="pool">Pool / Aquatics</option>
+            <option value="janitorial">Janitorial</option>
+            <option value="utilities">Utilities</option>
+            <option value="insurance">Insurance</option>
+            <option value="legal">Legal</option>
+            <option value="accounting">Accounting / Audit</option>
+            <option value="repairs_maintenance">Repairs &amp; Maintenance</option>
+            <option value="security">Security / Access Control</option>
+            <option value="management">Management Fees</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="vendors-drop-area"
+           style="border:2px dashed #d0d7de; border-radius:8px; padding:32px; text-align:center; background:#f9f9f9; cursor:pointer;"
+           onclick="document.getElementById('vendors-file').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+           ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+           ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files[0]) vendorsStageFile(event.dataTransfer.files[0]);">
+        <div id="vendors-drop-prompt">
+          <div style="font-size:32px; margin-bottom:8px;">📄</div>
+          <div style="font-weight:500; color:#315A87;">Click or drop a vendor invoice PDF</div>
+          <div style="font-size:12px; color:#888; margin-top:4px;">Vantaca AP screen, AppFolio bill, Quickbooks export — anything readable</div>
+        </div>
+        <input type="file" id="vendors-file" accept=".pdf" style="display:none" onchange="vendorsStageFile(this.files[0])">
+      </div>
+
+      <div id="vendors-staged-row" style="display:none; margin-top:12px;"></div>
+
+      <div style="margin-top:12px; display:flex; gap:8px;">
+        <button class="action-btn" onclick="vendorsUploadInvoice()">⚡ Upload &amp; Parse</button>
+        <button class="secondary-btn" onclick="vendorsClearStaged()">Clear</button>
+      </div>
+
+      <div id="vendors-upload-result" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Vendor Master list -->
+    <div id="vendors-list-view">
+      <div class="panel" style="margin-bottom: 16px;">
+        <h3 style="margin-top:0;">🗂️ Vendor Master</h3>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr auto; gap:8px; margin-bottom:12px; align-items:end;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Filter by community</label>
+            <select id="vendors-filter-community" onchange="vendorsLoadList()" style="padding:8px; width:100%; font-size:14px;">
+              <option value="">All communities</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Category</label>
+            <select id="vendors-filter-category" onchange="vendorsLoadList()" style="padding:8px; width:100%; font-size:14px;">
+              <option value="">All categories</option>
+              <option value="landscaping">Landscaping</option>
+              <option value="pool">Pool / Aquatics</option>
+              <option value="janitorial">Janitorial</option>
+              <option value="utilities">Utilities</option>
+              <option value="insurance">Insurance</option>
+              <option value="legal">Legal</option>
+              <option value="accounting">Accounting / Audit</option>
+              <option value="repairs_maintenance">Repairs &amp; Maintenance</option>
+              <option value="security">Security / Access Control</option>
+              <option value="management">Management Fees</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Search by name</label>
+            <input type="text" id="vendors-filter-q" placeholder="ABC Landscaping..." style="padding:8px; width:100%; font-size:14px;" onkeyup="if(event.key==='Enter') vendorsLoadList()">
+          </div>
+          <button class="secondary-btn" onclick="vendorsLoadList()">Apply</button>
+        </div>
+
+        <div id="vendors-table-container" style="font-size:13px; color:#888;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Vendor detail view -->
+    <div id="vendors-detail-view" style="display:none;">
+      <button class="secondary-btn" onclick="vendorsBackToList()">← Back to vendor list</button>
+      <div id="vendors-detail-body" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Invoice detail view (drilled in from vendor detail) -->
+    <div id="vendors-invoice-view" style="display:none;">
+      <button class="secondary-btn" onclick="vendorsBackToVendor()">← Back to vendor</button>
+      <div id="vendors-invoice-body" style="margin-top:12px;"></div>
     </div>
   </div>
 </div>
@@ -3801,6 +3929,446 @@ ${questionsPage}
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+
+  // ==========================================================================
+  // VENDORS TAB — Vendor Master + Invoice Intake (Push 1)
+  // ==========================================================================
+  let vendorsCommunitiesCache = [];
+  let vendorsPendingFile = null;
+  let vendorsCurrentVendorId = null;
+
+  function vendorsMoney(n) {
+    if (n == null || isNaN(n)) return '—';
+    return '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function vendorsFmtDate(s) {
+    if (!s) return '—';
+    const d = new Date(s);
+    if (isNaN(d.getTime())) return s;
+    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+  }
+
+  function vendorsCoiBadge(expiresAt) {
+    if (!expiresAt) return '<span style="background:#eee; color:#888; padding:2px 8px; border-radius:4px; font-size:11px;">no COI</span>';
+    const d = new Date(expiresAt);
+    const now = new Date();
+    const days = Math.floor((d - now) / (1000 * 60 * 60 * 24));
+    if (days < 0) return `<span style="background:#fde7e7; color:#a00; padding:2px 8px; border-radius:4px; font-size:11px;">EXPIRED ${vendorsFmtDate(expiresAt)}</span>`;
+    if (days <= 30) return `<span style="background:#fff4e0; color:#a06400; padding:2px 8px; border-radius:4px; font-size:11px;">expires in ${days}d</span>`;
+    return `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 8px; border-radius:4px; font-size:11px;">good thru ${vendorsFmtDate(expiresAt)}</span>`;
+  }
+
+  async function vendorsLoadCommunities() {
+    try {
+      const res = await fetch('/api/billing/communities');
+      const data = await res.json();
+      vendorsCommunitiesCache = (data.communities || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+
+      const upload = document.getElementById('vendors-upload-community');
+      const filter = document.getElementById('vendors-filter-community');
+      [upload, filter].forEach(sel => {
+        if (!sel) return;
+        const first = sel.options[0];
+        sel.innerHTML = '';
+        sel.appendChild(first);
+        vendorsCommunitiesCache.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name + (c.vantaca_code ? ` (${c.vantaca_code})` : '');
+          sel.appendChild(opt);
+        });
+      });
+
+      vendorsLoadList();
+    } catch (e) {
+      console.error('[vendors] loadCommunities failed', e);
+      document.getElementById('vendors-table-container').innerHTML =
+        `<div style="color:#a00;">Failed to load communities: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function vendorsStageFile(file) {
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please drop a PDF.');
+      return;
+    }
+    vendorsPendingFile = file;
+    document.getElementById('vendors-staged-row').style.display = 'block';
+    document.getElementById('vendors-staged-row').innerHTML = `
+      <div style="background:#eef3f9; border:1px solid #c8d6e8; border-radius:6px; padding:8px 12px; font-size:13px;">
+        📎 <strong>${escapeHtml(file.name)}</strong>
+        <span style="color:#666;">(${(file.size / 1024).toFixed(0)} KB)</span>
+        — staged. Click <strong>Upload &amp; Parse</strong> to send.
+      </div>`;
+  }
+
+  function vendorsClearStaged() {
+    vendorsPendingFile = null;
+    document.getElementById('vendors-file').value = '';
+    document.getElementById('vendors-staged-row').style.display = 'none';
+    document.getElementById('vendors-staged-row').innerHTML = '';
+    document.getElementById('vendors-upload-result').innerHTML = '';
+  }
+
+  async function vendorsUploadInvoice() {
+    if (!vendorsPendingFile) {
+      alert('Drop a PDF first.');
+      return;
+    }
+    const communityId = document.getElementById('vendors-upload-community').value;
+    if (!communityId) {
+      alert('Pick a community — which HOA paid this invoice?');
+      return;
+    }
+    const category = document.getElementById('vendors-upload-category').value;
+
+    const result = document.getElementById('vendors-upload-result');
+    result.innerHTML = `<div style="background:#fff7d6; border:1px solid #e0d089; border-radius:6px; padding:10px; font-size:13px;">⚙️ Parsing invoice with Claude… (this can take 10–30s for multi-page PDFs)</div>`;
+
+    try {
+      const fd = new FormData();
+      fd.append('pdf', vendorsPendingFile);
+      fd.append('community_id', communityId);
+      if (category) fd.append('category_hint', category);
+
+      const res = await fetch('/api/vendors/invoices/upload', { method: 'POST', body: fd });
+      const data = await res.json();
+
+      if (!res.ok) {
+        result.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(data.error || 'Upload failed')}</div>`;
+        return;
+      }
+
+      const v = data.vendor || {};
+      const inv = data.invoice || {};
+      const method = data.vendor_match_method;
+      const score = data.vendor_match_score;
+      const matchBadge = method === 'created_new'
+        ? `<span style="background:#e3f2fd; color:#1565c0; padding:2px 8px; border-radius:4px; font-size:11px;">NEW VENDOR</span>`
+        : method === 'ein_exact'
+          ? `<span style="background:#e8f5e9; color:#2e7d32; padding:2px 8px; border-radius:4px; font-size:11px;">EIN match</span>`
+          : method === 'name_fuzzy'
+            ? `<span style="background:#fff4e0; color:#a06400; padding:2px 8px; border-radius:4px; font-size:11px;">name fuzzy match${score != null ? ` (${Number(score).toFixed(2)})` : ''}</span>`
+            : '';
+      const conf = inv.parse_confidence;
+
+      result.innerHTML = `
+        <div style="background:#e8f5e9; border:1px solid #b8d8b8; border-radius:6px; padding:12px; font-size:13px;">
+          <div style="font-weight:600; margin-bottom:6px;">✅ Invoice filed</div>
+          <div style="margin-bottom:4px;">
+            Vendor: <strong>${escapeHtml(v.name || '—')}</strong>
+            ${matchBadge}
+            <a href="#" onclick="event.preventDefault(); vendorsShowVendor('${v.id}')" style="margin-left:8px; color:#1976d2;">→ open vendor</a>
+          </div>
+          <div style="color:#555; font-size:12px;">
+            Invoice ${escapeHtml(inv.invoice_number || '(no number)')} · ${vendorsFmtDate(inv.invoice_date)} · <strong>${vendorsMoney(inv.total_amount)}</strong>
+            ${inv.service_period_start ? ` · service ${vendorsFmtDate(inv.service_period_start)} – ${vendorsFmtDate(inv.service_period_end)}` : ''}
+          </div>
+          ${conf ? `<div style="color:#888; font-size:11px; margin-top:4px;">Parse confidence: <strong>${escapeHtml(conf)}</strong> · ${data.duration_ms || 0}ms</div>` : ''}
+        </div>`;
+
+      vendorsClearStaged();
+      // give DB rollup a tick, then refresh the master
+      setTimeout(() => vendorsLoadList(), 400);
+    } catch (e) {
+      console.error('[vendors] upload failed', e);
+      result.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function vendorsLoadList() {
+    const container = document.getElementById('vendors-table-container');
+    container.innerHTML = `<div style="color:#888;">Loading…</div>`;
+    const params = new URLSearchParams();
+    const communityId = document.getElementById('vendors-filter-community')?.value;
+    const category = document.getElementById('vendors-filter-category')?.value;
+    const q = document.getElementById('vendors-filter-q')?.value?.trim();
+    if (communityId) params.append('community_id', communityId);
+    if (category) params.append('category', category);
+    if (q) params.append('q', q);
+
+    try {
+      const res = await fetch(`/api/vendors?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Load failed');
+
+      const vendors = data.vendors || [];
+      if (vendors.length === 0) {
+        container.innerHTML = `<div style="color:#888; padding:24px; text-align:center;">
+          No vendors yet. Drop an invoice above to start populating the master.
+        </div>`;
+        return;
+      }
+
+      const rows = vendors.map(v => `
+        <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="vendorsShowVendor('${v.id}')">
+          <td style="padding:10px 8px;">
+            <div style="font-weight:500; color:#315A87;">${escapeHtml(v.name || '—')}</div>
+            ${v.dba ? `<div style="font-size:11px; color:#888;">dba ${escapeHtml(v.dba)}</div>` : ''}
+          </td>
+          <td style="padding:10px 8px; font-size:12px; color:#555;">${escapeHtml(v.category || '—')}</td>
+          <td style="padding:10px 8px; text-align:right; font-variant-numeric: tabular-nums;">${vendorsMoney(v.total_invoiced_lifetime)}</td>
+          <td style="padding:10px 8px; text-align:right; font-variant-numeric: tabular-nums; color:#666;">${v.invoice_count || 0}</td>
+          <td style="padding:10px 8px; font-size:12px; color:#666;">${vendorsFmtDate(v.last_invoice_at)}</td>
+          <td style="padding:10px 8px;">${vendorsCoiBadge(v.earliest_coi_expiry)}</td>
+          <td style="padding:10px 8px; font-size:11px;">${v.w9_on_file ? '<span style="color:#2e7d32;">✓ W-9</span>' : '<span style="color:#a00;">no W-9</span>'}</td>
+        </tr>
+      `).join('');
+
+      container.innerHTML = `
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f5; border-bottom:2px solid #ddd;">
+                <th style="padding:10px 8px; text-align:left;">Vendor</th>
+                <th style="padding:10px 8px; text-align:left;">Category</th>
+                <th style="padding:10px 8px; text-align:right;">Lifetime $</th>
+                <th style="padding:10px 8px; text-align:right;"># Inv</th>
+                <th style="padding:10px 8px; text-align:left;">Last invoice</th>
+                <th style="padding:10px 8px; text-align:left;">COI</th>
+                <th style="padding:10px 8px; text-align:left;">1099</th>
+              </tr>
+            </thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div style="margin-top:8px; font-size:11px; color:#888;">${vendors.length} vendor${vendors.length === 1 ? '' : 's'}. Click a row to drill in.</div>
+      `;
+    } catch (e) {
+      console.error('[vendors] list failed', e);
+      container.innerHTML = `<div style="color:#a00;">Failed to load vendors: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function vendorsShowVendor(vendorId) {
+    vendorsCurrentVendorId = vendorId;
+    document.getElementById('vendors-list-view').style.display = 'none';
+    document.getElementById('vendors-invoice-view').style.display = 'none';
+    document.getElementById('vendors-detail-view').style.display = 'block';
+    const body = document.getElementById('vendors-detail-body');
+    body.innerHTML = `<div style="color:#888;">Loading…</div>`;
+
+    try {
+      const res = await fetch(`/api/vendors/${vendorId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Load failed');
+
+      const v = data.vendor;
+      const invoices = data.invoices || [];
+      const documents = data.documents || [];
+
+      const invoiceRows = invoices.length === 0
+        ? `<tr><td colspan="7" style="padding:16px; text-align:center; color:#888;">No invoices on file.</td></tr>`
+        : invoices.map(inv => `
+            <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="vendorsShowInvoice('${inv.id}')">
+              <td style="padding:8px;">${escapeHtml(inv.invoice_number || '—')}</td>
+              <td style="padding:8px;">${escapeHtml(inv.community?.name || '—')}</td>
+              <td style="padding:8px;">${vendorsFmtDate(inv.invoice_date)}</td>
+              <td style="padding:8px; font-size:11px; color:#666;">${inv.service_period_start ? `${vendorsFmtDate(inv.service_period_start)} – ${vendorsFmtDate(inv.service_period_end)}` : '—'}</td>
+              <td style="padding:8px; text-align:right; font-variant-numeric: tabular-nums;">${vendorsMoney(inv.total_amount)}</td>
+              <td style="padding:8px; font-size:11px;">${escapeHtml(inv.status || '—')}</td>
+              <td style="padding:8px; font-size:11px; color:${inv.gl_match_status === 'matched' ? '#2e7d32' : '#a06400'};">${escapeHtml(inv.gl_match_status || 'unmatched')}</td>
+            </tr>
+          `).join('');
+
+      const docRows = documents.length === 0
+        ? `<div style="color:#888; padding:8px; font-size:13px;">No documents (COI / W-9 / contract) on file yet.</div>`
+        : `<table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead><tr style="background:#f5f5f5;">
+              <th style="padding:8px; text-align:left;">Type</th>
+              <th style="padding:8px; text-align:left;">Description</th>
+              <th style="padding:8px; text-align:left;">Expires</th>
+              <th style="padding:8px; text-align:left;">Uploaded</th>
+            </tr></thead>
+            <tbody>
+              ${documents.map(d => `
+                <tr style="border-bottom:1px solid #eee;">
+                  <td style="padding:8px;">${escapeHtml(d.doc_type || '—')}</td>
+                  <td style="padding:8px;">${escapeHtml(d.description || '—')}</td>
+                  <td style="padding:8px;">${d.expires_at ? vendorsFmtDate(d.expires_at) : '—'}</td>
+                  <td style="padding:8px; color:#666;">${vendorsFmtDate(d.uploaded_at)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`;
+
+      body.innerHTML = `
+        <h3 style="margin:0 0 4px 0; color:#315A87;">${escapeHtml(v.name)}</h3>
+        ${v.dba ? `<div style="color:#888; font-size:13px;">dba ${escapeHtml(v.dba)}</div>` : ''}
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin:16px 0;">
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Lifetime invoiced</div>
+            <div style="font-size:20px; font-weight:600; color:#315A87;">${vendorsMoney(v.total_invoiced_lifetime)}</div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Invoices on file</div>
+            <div style="font-size:20px; font-weight:600;">${invoices.length}</div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Category</div>
+            <div style="font-size:14px; font-weight:500;">${escapeHtml(v.category || '—')}</div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Status</div>
+            <div style="font-size:14px; font-weight:500;">${escapeHtml(v.status || 'active')}</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <h4 style="margin-top:0;">📄 Identity</h4>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; font-size:13px;">
+            <div><strong>EIN:</strong> ${escapeHtml(v.ein || '—')}</div>
+            <div><strong>Phone:</strong> ${escapeHtml(v.phone || '—')}</div>
+            <div><strong>Email:</strong> ${escapeHtml(v.email || '—')}</div>
+            <div><strong>W-9:</strong> ${v.w9_on_file ? '✓ on file' : 'not on file'}</div>
+            <div style="grid-column: 1 / -1;"><strong>Address:</strong> ${escapeHtml(v.address || '—')}</div>
+            ${v.notes ? `<div style="grid-column: 1 / -1;"><strong>Notes:</strong> ${escapeHtml(v.notes)}</div>` : ''}
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <h4 style="margin-top:0;">🧾 Invoices (${invoices.length})</h4>
+          <div style="overflow-x:auto;">
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+              <thead><tr style="background:#f5f5f5;">
+                <th style="padding:8px; text-align:left;">Invoice #</th>
+                <th style="padding:8px; text-align:left;">Community</th>
+                <th style="padding:8px; text-align:left;">Invoice date</th>
+                <th style="padding:8px; text-align:left;">Service period</th>
+                <th style="padding:8px; text-align:right;">Amount</th>
+                <th style="padding:8px; text-align:left;">Status</th>
+                <th style="padding:8px; text-align:left;">GL match</th>
+              </tr></thead>
+              <tbody>${invoiceRows}</tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h4 style="margin-top:0;">📎 Documents</h4>
+          ${docRows}
+        </div>
+      `;
+    } catch (e) {
+      console.error('[vendors] showVendor failed', e);
+      body.innerHTML = `<div style="color:#a00;">Failed to load vendor: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function vendorsBackToList() {
+    document.getElementById('vendors-detail-view').style.display = 'none';
+    document.getElementById('vendors-invoice-view').style.display = 'none';
+    document.getElementById('vendors-list-view').style.display = 'block';
+    vendorsCurrentVendorId = null;
+    vendorsLoadList();
+  }
+
+  async function vendorsShowInvoice(invoiceId) {
+    document.getElementById('vendors-list-view').style.display = 'none';
+    document.getElementById('vendors-detail-view').style.display = 'none';
+    document.getElementById('vendors-invoice-view').style.display = 'block';
+    const body = document.getElementById('vendors-invoice-body');
+    body.innerHTML = `<div style="color:#888;">Loading…</div>`;
+
+    try {
+      const res = await fetch(`/api/vendors/invoices/${invoiceId}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Load failed');
+
+      const inv = data.invoice;
+      const lineItems = inv.line_items || [];
+
+      const liRows = (Array.isArray(lineItems) ? lineItems : []).map(li => `
+        <tr style="border-bottom:1px solid #eee;">
+          <td style="padding:6px 8px;">${escapeHtml(li.description || '—')}</td>
+          <td style="padding:6px 8px; text-align:right; font-variant-numeric: tabular-nums;">${li.quantity != null ? li.quantity : '—'}</td>
+          <td style="padding:6px 8px; text-align:right; font-variant-numeric: tabular-nums;">${li.unit_price != null ? vendorsMoney(li.unit_price) : '—'}</td>
+          <td style="padding:6px 8px; text-align:right; font-variant-numeric: tabular-nums;">${li.amount != null ? vendorsMoney(li.amount) : '—'}</td>
+        </tr>
+      `).join('');
+
+      body.innerHTML = `
+        <h3 style="margin:0 0 4px 0; color:#315A87;">Invoice ${escapeHtml(inv.invoice_number || '(no number)')}</h3>
+        <div style="color:#888; font-size:13px; margin-bottom:16px;">
+          Vendor: <a href="#" onclick="event.preventDefault(); vendorsShowVendor('${inv.vendor_id}')" style="color:#1976d2;">${escapeHtml(inv.vendor?.name || '—')}</a>
+          · Community: ${escapeHtml(inv.community?.name || '—')}
+        </div>
+
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:16px;">
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Invoice date</div>
+            <div style="font-weight:500;">${vendorsFmtDate(inv.invoice_date)}</div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Due date</div>
+            <div style="font-weight:500;">${vendorsFmtDate(inv.due_date)}</div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Service period</div>
+            <div style="font-weight:500; font-size:12px;">${inv.service_period_start ? `${vendorsFmtDate(inv.service_period_start)} – ${vendorsFmtDate(inv.service_period_end)}` : '—'}</div>
+          </div>
+          <div class="panel" style="margin:0;">
+            <div style="font-size:11px; color:#888;">Total</div>
+            <div style="font-size:20px; font-weight:600; color:#315A87;">${vendorsMoney(inv.total_amount)}</div>
+          </div>
+        </div>
+
+        <div class="panel" style="margin-bottom:16px;">
+          <h4 style="margin-top:0;">Line items</h4>
+          ${liRows ? `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead><tr style="background:#f5f5f5;">
+              <th style="padding:8px; text-align:left;">Description</th>
+              <th style="padding:8px; text-align:right;">Qty</th>
+              <th style="padding:8px; text-align:right;">Unit price</th>
+              <th style="padding:8px; text-align:right;">Amount</th>
+            </tr></thead>
+            <tbody>${liRows}</tbody>
+          </table>` : '<div style="color:#888; font-size:13px;">No line items extracted.</div>'}
+        </div>
+
+        <div class="panel">
+          <h4 style="margin-top:0;">Audit trail</h4>
+          <div style="font-size:12px; color:#666;">
+            <div><strong>Status:</strong> ${escapeHtml(inv.status || '—')}</div>
+            <div><strong>GL match:</strong> ${escapeHtml(inv.gl_match_status || 'unmatched')} <span style="color:#888;">(populated by Push 2 reconciliation engine)</span></div>
+            <div><strong>Parse confidence:</strong> ${escapeHtml(inv.parse_confidence || '—')}</div>
+            <div><strong>Filed:</strong> ${vendorsFmtDate(inv.created_at)}</div>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.error('[vendors] showInvoice failed', e);
+      body.innerHTML = `<div style="color:#a00;">Failed to load invoice: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function vendorsBackToVendor() {
+    document.getElementById('vendors-invoice-view').style.display = 'none';
+    if (vendorsCurrentVendorId) {
+      vendorsShowVendor(vendorsCurrentVendorId);
+    } else {
+      vendorsBackToList();
+    }
+  }
+
+  // Auto-load vendors the first time the Vendors tab is opened.
+  let vendorsHasLoaded = false;
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('vendors')") {
+        t.addEventListener('click', () => {
+          if (!vendorsHasLoaded) {
+            vendorsHasLoaded = true;
+            vendorsLoadCommunities();
+          }
+        });
+      }
+    });
+  });
 </script>
 </body>
 </html>
