@@ -917,6 +917,17 @@
           result.innerHTML = `<div style="padding:8px; background:#fee; border-left:3px solid #a00;">Billing module halted: ${data.reason || '(no reason given)'}</div>`;
           return;
         }
+        if (r.status === 409) {
+          // Duplicate — a draft already exists for this period.
+          const existingTotal = data.existing ? billingMoney(data.existing.total) : '';
+          result.innerHTML = `
+            <div style="padding:10px; background:#fff3cd; border-left:3px solid #f5a623;">
+              <b>Draft ${data.invoice_number} already exists</b> for this period${existingTotal ? ' · ' + existingTotal : ''}.<br>
+              <span style="font-size:12px; color:#666;">Scroll down to see it in Recent Invoices. To regenerate, change the period or void the existing draft first.</span>
+            </div>
+          `;
+          return;
+        }
         throw new Error(data.error || `HTTP ${r.status}`);
       }
       result.innerHTML = `

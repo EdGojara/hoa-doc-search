@@ -340,7 +340,25 @@ router.post('/communities/:communityId/draft-invoice', async (req, res) => {
       })
       .select()
       .single();
-    if (insErr) throw insErr;
+    if (insErr) {
+      // 23505 = unique_violation. Most common cause: a draft already exists
+      // for (community, type, period). Return 409 with the existing invoice
+      // so the UI can offer to view it instead of silently failing.
+      if (insErr.code === '23505') {
+        const { data: existing } = await supabase
+          .from('invoices')
+          .select('id, invoice_number, invoice_type, status, subtotal, total, created_at, service_period_start, service_period_end')
+          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+          .eq('invoice_number', invoiceNumber)
+          .single();
+        return res.status(409).json({
+          error: `Invoice ${invoiceNumber} already exists for this period.`,
+          invoice_number: invoiceNumber,
+          existing
+        });
+      }
+      throw insErr;
+    }
 
     // Insert line items.
     if (lineItems.length > 0) {
