@@ -217,6 +217,7 @@
   <div class="tab" onclick="switchTab('vendor')">📊 Vendor Workflow</div>
   <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
   <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
+  <div class="tab" onclick="switchTab('billing')">💼 Bedrock Office</div>
 </div>
 
 <!-- Chat Tab -->
@@ -670,6 +671,282 @@
     </div>
   </div>
 </div>
+
+<!-- ===========================================================================
+     Bedrock Office — Client Billing
+     Internal back-office module: prepare and send monthly invoices to HOA
+     clients. Pulls fee schedule from the active management contract; future
+     additions: Vantaca activity import, PDF render, leakage detection,
+     Financial Review, Board Packet.
+     ========================================================================= -->
+<div class="tab-content" id="tab-billing">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">💼 Bedrock Office — Client Billing</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Generate fixed and activity invoices to HOA clients. Rates come from the active management contract.
+    </p>
+  </div>
+
+  <!-- Communities list view -->
+  <div id="billing-communities-view">
+    <div id="billing-communities-loading" style="padding:20px; text-align:center; color:#888;">
+      Loading communities…
+    </div>
+    <div id="billing-communities-grid" style="display:none; gap:12px; flex-wrap:wrap;"></div>
+    <div id="billing-communities-error" style="display:none; padding:16px; background:#fee; border:1px solid #fcc; border-radius:4px; color:#800;"></div>
+  </div>
+
+  <!-- Community detail view -->
+  <div id="billing-community-detail" style="display:none;">
+    <button class="secondary-btn" onclick="billingBackToList()">← Back to communities</button>
+    <h3 id="billing-detail-name" style="margin-top:16px; margin-bottom:4px;"></h3>
+    <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
+
+    <div class="panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">📜 Active Contract</h4>
+      <div id="billing-contract-summary" style="font-size:14px;"></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">✨ Generate Draft Invoice</h4>
+      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+        <div>
+          <div class="section-label">Type</div>
+          <select id="billing-draft-type" style="padding:6px;">
+            <option value="fixed">Fixed (recurring, billed in advance)</option>
+            <option value="activity">Activity (variable, billed in arrears)</option>
+          </select>
+        </div>
+        <div>
+          <div class="section-label">Service period</div>
+          <input type="month" id="billing-draft-period" style="padding:6px;">
+        </div>
+        <button class="action-btn" onclick="billingGenerateDraft()">Generate</button>
+      </div>
+      <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
+    </div>
+
+    <div class="panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">📋 Fee Schedule</h4>
+      <h5 style="margin:8px 0 4px 0;">Fixed Monthly</h5>
+      <div id="billing-fee-fixed"></div>
+      <h5 style="margin:16px 0 4px 0;">Reimbursables (billed to Association as-used)</h5>
+      <div id="billing-fee-reimbursables"></div>
+      <h5 style="margin:16px 0 4px 0;">Owner Charges (billed to Association, collected from Owner where legal)</h5>
+      <div id="billing-fee-owner-charges"></div>
+    </div>
+
+    <div class="panel">
+      <h4 style="margin-top:0;">🧾 Recent Invoices</h4>
+      <div id="billing-recent-invoices" style="font-size:14px; color:#888;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Bedrock Office helpers (separate <script> so the existing main script
+     block stays untouched). All functions are global. -->
+<script>
+  let billingCurrentCommunityId = null;
+  let billingCommunitiesCache = [];
+
+  function billingMoney(n) {
+    if (n === null || n === undefined || n === '') return '—';
+    return '$' + Number(n).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  }
+
+  function billingTable(rows, cols) {
+    if (!rows || rows.length === 0) return '<div style="color:#888; font-size:13px;">(none)</div>';
+    const headers = cols.map(c => `<th style="text-align:${c.align || 'left'}; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">${c.label}</th>`).join('');
+    const body = rows.map(r => `<tr>${cols.map(c => `<td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:${c.align || 'left'};">${c.render(r)}</td>`).join('')}</tr>`).join('');
+    return `<table style="width:100%; border-collapse:collapse;"><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table>`;
+  }
+
+  async function billingLoadCommunities() {
+    const grid = document.getElementById('billing-communities-grid');
+    const loading = document.getElementById('billing-communities-loading');
+    const error = document.getElementById('billing-communities-error');
+    loading.style.display = 'block';
+    grid.style.display = 'none';
+    error.style.display = 'none';
+    try {
+      const r = await fetch('/api/billing/communities');
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      billingCommunitiesCache = data.communities || [];
+      grid.innerHTML = '';
+      if (billingCommunitiesCache.length === 0) {
+        grid.innerHTML = '<div style="color:#888;">No communities found.</div>';
+      } else {
+        billingCommunitiesCache.forEach(c => {
+          const card = document.createElement('div');
+          card.style.cssText = 'cursor:pointer; padding:16px; border:1px solid #ddd; border-radius:6px; min-width:240px; background:#f9f9f9; transition:background 0.1s;';
+          card.onmouseover = () => card.style.background = '#f0f0f0';
+          card.onmouseout = () => card.style.background = '#f9f9f9';
+          card.innerHTML = `
+            <div style="font-weight:600; font-size:16px; margin-bottom:4px;">${c.name}</div>
+            <div style="color:#888; font-size:13px; margin-bottom:8px;">${c.legal_name || ''}</div>
+            <div style="font-size:13px; color:#444;">
+              ${c.active_contract
+                ? `📜 Contract v${c.active_contract.version} · effective ${c.active_contract.effective_date}`
+                : '<span style="color:#a00;">⚠ No active contract</span>'}
+            </div>
+          `;
+          card.onclick = () => billingShowCommunity(c.id);
+          grid.appendChild(card);
+        });
+      }
+      loading.style.display = 'none';
+      grid.style.display = 'flex';
+    } catch (e) {
+      loading.style.display = 'none';
+      error.textContent = `Failed to load communities: ${e.message}`;
+      error.style.display = 'block';
+    }
+  }
+
+  async function billingShowCommunity(communityId) {
+    billingCurrentCommunityId = communityId;
+    document.getElementById('billing-communities-view').style.display = 'none';
+    document.getElementById('billing-community-detail').style.display = 'block';
+
+    const community = billingCommunitiesCache.find(c => c.id === communityId);
+    document.getElementById('billing-detail-name').textContent = community ? community.name : '(loading…)';
+    document.getElementById('billing-detail-meta').textContent = community
+      ? `${community.legal_name || ''} · Vantaca code: ${community.vantaca_code || '?'}`
+      : '';
+
+    document.getElementById('billing-contract-summary').textContent = 'Loading…';
+    document.getElementById('billing-fee-fixed').textContent = '';
+    document.getElementById('billing-fee-reimbursables').textContent = '';
+    document.getElementById('billing-fee-owner-charges').textContent = '';
+    document.getElementById('billing-draft-result').textContent = '';
+
+    try {
+      const r = await fetch(`/api/billing/communities/${communityId}/contract`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const c = data.contract;
+
+      document.getElementById('billing-contract-summary').innerHTML = `
+        <div><b>Version:</b> ${c.version}</div>
+        <div><b>Effective:</b> ${c.effective_date}${c.end_date ? ' to ' + c.end_date : ' (auto-renewing)'}</div>
+        <div><b>Escalator:</b> ${c.escalator_kind}${c.escalator_pct ? ' · ' + c.escalator_pct + '%' : ''}</div>
+        <div><b>Payment terms:</b> ${c.payment_terms || '—'}</div>
+        ${c.notes ? `<div style="margin-top:8px; padding:8px; background:#fffbe6; border-left:3px solid #fc0; font-size:12px;">📝 ${c.notes}</div>` : ''}
+      `;
+
+      document.getElementById('billing-fee-fixed').innerHTML = billingTable(data.fee_schedule.fixed, [
+        { label: 'Item', render: r => r.description },
+        { label: 'Monthly', align: 'right', render: r => billingMoney(r.amount) }
+      ]);
+
+      document.getElementById('billing-fee-reimbursables').innerHTML = billingTable(data.fee_schedule.reimbursables, [
+        { label: 'Category', render: r => r.description },
+        { label: 'Method', render: r => r.billing_method || '—' },
+        { label: 'Rate', align: 'right', render: r => r.unit_price !== null ? billingMoney(r.unit_price) : 'at cost' }
+      ]);
+
+      document.getElementById('billing-fee-owner-charges').innerHTML = billingTable(data.fee_schedule.owner_charges, [
+        { label: 'Category', render: r => r.description },
+        { label: 'Fee', align: 'right', render: r => billingMoney(r.amount) }
+      ]);
+
+      // Default the period picker to current month.
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      document.getElementById('billing-draft-period').value = `${yyyy}-${mm}`;
+
+      billingLoadInvoicesForCommunity(communityId);
+    } catch (e) {
+      document.getElementById('billing-contract-summary').innerHTML = `<div style="color:#a00;">Failed to load contract: ${e.message}</div>`;
+    }
+  }
+
+  function billingBackToList() {
+    document.getElementById('billing-community-detail').style.display = 'none';
+    document.getElementById('billing-communities-view').style.display = 'block';
+    billingCurrentCommunityId = null;
+  }
+
+  async function billingLoadInvoicesForCommunity(communityId) {
+    const el = document.getElementById('billing-recent-invoices');
+    el.innerHTML = '<div style="color:#888;">Loading…</div>';
+    try {
+      const r = await fetch(`/api/billing/invoices?community_id=${communityId}&limit=20`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      if (!data.invoices || data.invoices.length === 0) {
+        el.innerHTML = '<div style="color:#888;">No invoices yet for this community.</div>';
+        return;
+      }
+      el.innerHTML = billingTable(data.invoices, [
+        { label: 'Number', render: r => `<span style="font-family:monospace;">${r.invoice_number}</span>` },
+        { label: 'Type', render: r => r.invoice_type },
+        { label: 'Period', render: r => `${r.service_period_start} → ${r.service_period_end}` },
+        { label: 'Status', render: r => r.status },
+        { label: 'Total', align: 'right', render: r => billingMoney(r.total) }
+      ]);
+    } catch (e) {
+      el.innerHTML = `<div style="color:#a00;">Failed to load invoices: ${e.message}</div>`;
+    }
+  }
+
+  async function billingGenerateDraft() {
+    if (!billingCurrentCommunityId) return;
+    const type = document.getElementById('billing-draft-type').value;
+    const period = document.getElementById('billing-draft-period').value;
+    const result = document.getElementById('billing-draft-result');
+
+    if (!period) {
+      result.innerHTML = '<div style="color:#a00;">Service period is required.</div>';
+      return;
+    }
+
+    result.innerHTML = '<div style="color:#888;">Generating draft…</div>';
+
+    try {
+      const r = await fetch(`/api/billing/communities/${billingCurrentCommunityId}/draft-invoice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type, period })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        if (r.status === 423) {
+          result.innerHTML = `<div style="padding:8px; background:#fee; border-left:3px solid #a00;">Billing module halted: ${data.reason || '(no reason given)'}</div>`;
+          return;
+        }
+        throw new Error(data.error || `HTTP ${r.status}`);
+      }
+      result.innerHTML = `
+        <div style="padding:8px; background:#e8f5e9; border-left:3px solid #4c8;">
+          ✓ Draft invoice created: <b style="font-family:monospace;">${data.invoice_number}</b><br>
+          Subtotal ${billingMoney(data.subtotal)} · ${data.line_items_count} line items · status: draft
+        </div>
+      `;
+      billingLoadInvoicesForCommunity(billingCurrentCommunityId);
+    } catch (e) {
+      result.innerHTML = `<div style="color:#a00;">Failed: ${e.message}</div>`;
+    }
+  }
+
+  // Auto-load communities the first time the Bedrock Office tab is opened.
+  let billingHasLoaded = false;
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('billing')") {
+        t.addEventListener('click', () => {
+          if (!billingHasLoaded) {
+            billingHasLoaded = true;
+            billingLoadCommunities();
+          }
+        });
+      }
+    });
+  });
+</script>
 
 
 <script>
