@@ -298,6 +298,13 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
+// Bedrock Office > Client Billing module
+// Endpoints under /api/billing/*. See api/billing.js for the router definition
+// and migrations/001_foundation.sql + migrations/002_bedrock_billing.sql for
+// the schema this depends on.
+const { router: billingRouter } = require('./api/billing');
+app.use('/api/billing', billingRouter);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
