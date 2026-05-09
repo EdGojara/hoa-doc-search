@@ -849,6 +849,8 @@
 
     <div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
       <button class="action-btn" onclick="billingSaveLineItems()">💾 Save Changes</button>
+      <button class="secondary-btn" onclick="billingViewPdf()">📄 View PDF</button>
+      <button class="secondary-btn" onclick="billingDownloadPdf()">⬇ Download PDF</button>
       <button class="secondary-btn" id="billing-void-btn" onclick="billingVoidInvoice()" style="border-color:#a00; color:#a00;">⊘ Void Invoice</button>
     </div>
 
@@ -1686,6 +1688,22 @@
     } catch (e) {
       result.innerHTML = `<div style="color:#a00;">Failed to save: ${e.message}</div>`;
     }
+  }
+
+  function billingViewPdf() {
+    if (!billingCurrentInvoice) return;
+    window.open(`/api/billing/invoices/${billingCurrentInvoice.id}/pdf?inline=1`, '_blank', 'noopener');
+  }
+
+  function billingDownloadPdf() {
+    if (!billingCurrentInvoice) return;
+    const a = document.createElement('a');
+    a.href = `/api/billing/invoices/${billingCurrentInvoice.id}/pdf`;
+    a.target = '_blank';
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
   }
 
   async function billingImportVantaca(input) {

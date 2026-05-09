@@ -32,6 +32,8 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
+const puppeteer = require('puppeteer');
+const { renderInvoiceHTML } = require('./invoice_template');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -944,6 +946,74 @@ router.get('/invoices/:invoiceId', async (req, res) => {
   } catch (err) {
     console.error('[billing] /invoices/:id failed:', err.message);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/billing/invoices/:invoiceId/pdf
+// query: ?inline=1 (open in browser) | omit (force download)
+//
+// Renders the invoice via the brand-aligned HTML template and converts to PDF
+// with Puppeteer. Bedrock-styled, never a forwarded vendor template — per the
+// brand-the-output rule. Logo is base64-embedded into the HTML so the PDF
+// renders without network access.
+// ----------------------------------------------------------------------------
+router.get('/invoices/:invoiceId/pdf', async (req, res) => {
+  const { invoiceId } = req.params;
+  let browser;
+  try {
+    const { data: invoice, error: iErr } = await supabase
+      .from('invoices')
+      .select('*, community:communities(*)')
+      .eq('id', invoiceId)
+      .single();
+    if (iErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
+
+    const { data: lineItems } = await supabase
+      .from('invoice_line_items')
+      .select('*')
+      .eq('invoice_id', invoiceId)
+      .order('sort_order');
+
+    const { data: managementCo } = await supabase
+      .from('management_companies')
+      .select('*')
+      .eq('id', invoice.management_company_id)
+      .single();
+
+    const html = renderInvoiceHTML({
+      invoice,
+      lineItems: lineItems || [],
+      community: invoice.community || {},
+      managementCo: managementCo || {}
+    });
+
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true
+    });
+
+    const filename = `invoice_${invoice.invoice_number || invoiceId}.pdf`;
+    const dispo = req.query.inline === '1' ? 'inline' : 'attachment';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `${dispo}; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[billing] PDF gen failed:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (browser) {
+      try { await browser.close(); } catch (_) { /* swallow */ }
+    }
   }
 });
 
