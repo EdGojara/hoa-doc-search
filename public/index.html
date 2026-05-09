@@ -692,7 +692,15 @@
     <div id="billing-communities-loading" style="padding:20px; text-align:center; color:#888;">
       Loading communities…
     </div>
-    <div id="billing-communities-grid" style="display:none; gap:12px; flex-wrap:wrap;"></div>
+    <div id="billing-communities-picker" style="display:none; max-width:560px;">
+      <div class="section-label" style="margin-bottom:6px;">Choose a client</div>
+      <select id="billing-community-select" onchange="billingPickerChanged()" style="padding:8px; width:100%; font-size:14px;">
+        <option value="">— Select a community —</option>
+      </select>
+      <div id="billing-picker-hint" style="font-size:12px; color:#888; margin-top:6px;">
+        Select a community to view its contract, generate invoices, or edit drafts.
+      </div>
+    </div>
     <div id="billing-communities-error" style="display:none; padding:16px; background:#fee; border:1px solid #fcc; border-radius:4px; color:#800;"></div>
   </div>
 
@@ -801,46 +809,54 @@
   }
 
   async function billingLoadCommunities() {
-    const grid = document.getElementById('billing-communities-grid');
+    const picker = document.getElementById('billing-communities-picker');
+    const select = document.getElementById('billing-community-select');
     const loading = document.getElementById('billing-communities-loading');
     const error = document.getElementById('billing-communities-error');
     loading.style.display = 'block';
-    grid.style.display = 'none';
+    picker.style.display = 'none';
     error.style.display = 'none';
     try {
       const r = await fetch('/api/billing/communities');
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      billingCommunitiesCache = data.communities || [];
-      grid.innerHTML = '';
-      if (billingCommunitiesCache.length === 0) {
-        grid.innerHTML = '<div style="color:#888;">No communities found.</div>';
-      } else {
-        billingCommunitiesCache.forEach(c => {
-          const card = document.createElement('div');
-          card.style.cssText = 'cursor:pointer; padding:16px; border:1px solid #ddd; border-radius:6px; min-width:240px; background:#f9f9f9; transition:background 0.1s;';
-          card.onmouseover = () => card.style.background = '#f0f0f0';
-          card.onmouseout = () => card.style.background = '#f9f9f9';
-          card.innerHTML = `
-            <div style="font-weight:600; font-size:16px; margin-bottom:4px;">${c.name}</div>
-            <div style="color:#888; font-size:13px; margin-bottom:8px;">${c.legal_name || ''}</div>
-            <div style="font-size:13px; color:#444;">
-              ${c.active_contract
-                ? `📅 Effective ${c.active_contract.effective_date}`
-                : '<span style="color:#a60;">⚠ Add fee schedule to enable billing</span>'}
-            </div>
-          `;
-          card.onclick = () => billingShowCommunity(c.id);
-          grid.appendChild(card);
+      billingCommunitiesCache = (data.communities || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+
+      // Build the dropdown — communities with a contract first, then those needing setup.
+      const ready = billingCommunitiesCache.filter(c => c.active_contract);
+      const setup = billingCommunitiesCache.filter(c => !c.active_contract);
+
+      let html = '<option value="">— Select a community —</option>';
+      if (ready.length > 0) {
+        html += '<optgroup label="Active">';
+        ready.forEach(c => {
+          html += `<option value="${c.id}">${c.name} · effective ${c.active_contract.effective_date}</option>`;
         });
+        html += '</optgroup>';
       }
+      if (setup.length > 0) {
+        html += '<optgroup label="Needs fee schedule">';
+        setup.forEach(c => {
+          html += `<option value="${c.id}">${c.name} (add fee schedule)</option>`;
+        });
+        html += '</optgroup>';
+      }
+      select.innerHTML = html;
+
       loading.style.display = 'none';
-      grid.style.display = 'flex';
+      picker.style.display = 'block';
     } catch (e) {
       loading.style.display = 'none';
       error.textContent = `Failed to load communities: ${e.message}`;
       error.style.display = 'block';
     }
+  }
+
+  function billingPickerChanged() {
+    const select = document.getElementById('billing-community-select');
+    const id = select.value;
+    if (!id) return;
+    billingShowCommunity(id);
   }
 
   async function billingShowCommunity(communityId) {
@@ -935,6 +951,9 @@
   function billingBackToList() {
     document.getElementById('billing-community-detail').style.display = 'none';
     document.getElementById('billing-communities-view').style.display = 'block';
+    // Reset the picker to the placeholder so re-selecting works.
+    const sel = document.getElementById('billing-community-select');
+    if (sel) sel.value = '';
     billingCurrentCommunityId = null;
   }
 
