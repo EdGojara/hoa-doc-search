@@ -434,6 +434,139 @@ router.get('/invoices', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/billing/invoices/:invoiceId/void
+// body: { reason?: string }
+// Marks a draft invoice as void. Records an invoice_event with the reason.
+// Once voided, the invoice_number can be reused for a fresh draft (the
+// partial unique index from migration 005 only enforces uniqueness for
+// non-void rows). Voided invoices stay in the audit trail forever.
+// ----------------------------------------------------------------------------
+router.post('/invoices/:invoiceId/void', async (req, res) => {
+  const { invoiceId } = req.params;
+  const reason = (req.body && req.body.reason) || 'Voided by user';
+  try {
+    const { data: existing, error: findErr } = await supabase
+      .from('invoices')
+      .select('id, status, invoice_number, sent_at')
+      .eq('id', invoiceId)
+      .single();
+    if (findErr || !existing) return res.status(404).json({ error: 'Invoice not found' });
+    if (existing.status === 'void') {
+      return res.status(400).json({ error: 'Invoice is already void' });
+    }
+    if (existing.status === 'paid') {
+      return res.status(400).json({ error: 'Cannot void a paid invoice. Issue a credit instead.' });
+    }
+
+    const { data: updated, error: updErr } = await supabase
+      .from('invoices')
+      .update({ status: 'void', void_reason: reason, voided_at: new Date().toISOString() })
+      .eq('id', invoiceId)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    await supabase.from('invoice_events').insert({
+      invoice_id: invoiceId,
+      kind: 'voided',
+      payload: { reason, prior_status: existing.status, was_sent: !!existing.sent_at }
+    });
+
+    res.json({ invoice: updated, voided: true });
+  } catch (err) {
+    console.error('[billing] void failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// PUT /api/billing/invoices/:invoiceId/line-items
+// body: { line_items: [{ source_ref_id, description, qty, unit_price, ... }] }
+//
+// Replaces all line items for a draft invoice with the supplied list.
+// Recomputes subtotal + total. Records an invoice_event with kind='edited'.
+//
+// Only allowed when invoice.status = 'draft' or 'review'. Anything sent or
+// past sent stage requires an explicit edit_after_send flow (not yet built).
+// ----------------------------------------------------------------------------
+router.put('/invoices/:invoiceId/line-items', async (req, res) => {
+  const { invoiceId } = req.params;
+  const lineItems = (req.body && req.body.line_items) || [];
+  if (!Array.isArray(lineItems)) {
+    return res.status(400).json({ error: 'line_items must be an array' });
+  }
+
+  try {
+    const { data: invoice, error: findErr } = await supabase
+      .from('invoices')
+      .select('id, status, invoice_type, contract_id')
+      .eq('id', invoiceId)
+      .single();
+    if (findErr || !invoice) return res.status(404).json({ error: 'Invoice not found' });
+    if (!['draft', 'review'].includes(invoice.status)) {
+      return res.status(400).json({
+        error: `Cannot edit line items on invoice with status '${invoice.status}'. Only 'draft' or 'review' invoices are editable.`
+      });
+    }
+
+    // Replace existing items. Simpler than diffing — invoice is in draft state.
+    const { error: delErr } = await supabase
+      .from('invoice_line_items')
+      .delete()
+      .eq('invoice_id', invoiceId);
+    if (delErr) throw delErr;
+
+    let subtotal = 0;
+    if (lineItems.length > 0) {
+      const itemsToInsert = lineItems.map((li, idx) => {
+        const qty = Number(li.qty || 0);
+        const unitPrice = Number(li.unit_price || 0);
+        const amount = money(qty * unitPrice);
+        subtotal += amount;
+        return {
+          invoice_id: invoiceId,
+          source: li.source || 'adhoc',
+          source_ref_id: li.source_ref_id || null,
+          category: li.category || null,
+          description: li.description || '(no description)',
+          qty,
+          unit_price: unitPrice,
+          amount,
+          vantaca_source_ref: li.vantaca_source_ref || null,
+          manual_override: !!li.manual_override,
+          manual_override_reason: li.manual_override_reason || null,
+          sort_order: li.sort_order != null ? li.sort_order : idx * 10
+        };
+      });
+      const { error: insErr } = await supabase
+        .from('invoice_line_items')
+        .insert(itemsToInsert);
+      if (insErr) throw insErr;
+    }
+
+    subtotal = money(subtotal);
+    const { data: updated, error: updErr } = await supabase
+      .from('invoices')
+      .update({ subtotal, total: subtotal })
+      .eq('id', invoiceId)
+      .select()
+      .single();
+    if (updErr) throw updErr;
+
+    await supabase.from('invoice_events').insert({
+      invoice_id: invoiceId,
+      kind: 'edited',
+      payload: { line_count: lineItems.length, subtotal }
+    });
+
+    res.json({ invoice: updated, line_items_count: lineItems.length, subtotal });
+  } catch (err) {
+    console.error('[billing] line-items update failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/billing/invoices/:invoiceId
 // Returns the invoice header + line items + event history.
 // ----------------------------------------------------------------------------

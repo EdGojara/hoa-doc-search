@@ -712,14 +712,15 @@
       <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
         <div>
           <div class="section-label">Type</div>
-          <select id="billing-draft-type" style="padding:6px;">
+          <select id="billing-draft-type" style="padding:6px;" onchange="billingTypeChanged()">
             <option value="fixed">Fixed (recurring, billed in advance)</option>
             <option value="activity">Activity (variable, billed in arrears)</option>
           </select>
         </div>
         <div>
           <div class="section-label">Service period</div>
-          <input type="month" id="billing-draft-period" style="padding:6px;">
+          <input type="month" id="billing-draft-period" style="padding:6px;" onchange="billingUpdatePeriodHint()">
+          <div id="billing-period-hint" style="font-size:11px; color:#888; margin-top:4px;"></div>
         </div>
         <button class="action-btn" onclick="billingGenerateDraft()">Generate</button>
       </div>
@@ -740,6 +741,44 @@
       <h4 style="margin-top:0;">🧾 Recent Invoices</h4>
       <div id="billing-recent-invoices" style="font-size:14px; color:#888;">Loading…</div>
     </div>
+  </div>
+
+  <!-- Invoice detail view: drill-in from a Recent Invoices row.
+       Shows line items (editable for draft), Add Line Item dropdown
+       sourced from the contract's reimbursable + owner_charge categories,
+       Save Changes button, and Void Invoice button. -->
+  <div id="billing-invoice-detail" style="display:none;">
+    <button class="secondary-btn" onclick="billingBackToCommunity()">← Back to community</button>
+
+    <div id="billing-invoice-header" style="margin-top:16px;"></div>
+
+    <div class="panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">📋 Line Items</h4>
+      <div id="billing-line-items-container"></div>
+    </div>
+
+    <div class="panel" id="billing-add-line-panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">➕ Add Line Item</h4>
+      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
+        <div style="flex:1; min-width:280px;">
+          <div class="section-label">Category (with rate)</div>
+          <select id="billing-add-category" style="padding:6px; width:100%;"></select>
+        </div>
+        <div>
+          <div class="section-label">Quantity</div>
+          <input type="number" id="billing-add-qty" min="0" step="0.01" value="1" style="padding:6px; width:90px;">
+        </div>
+        <button class="action-btn" onclick="billingAddLineItem()">+ Add</button>
+      </div>
+      <div style="font-size:11px; color:#888; margin-top:6px;">Pick a billable category, enter the count, click Add. Repeat for each line you need this period. Click Save when done.</div>
+    </div>
+
+    <div style="display:flex; gap:12px; margin-bottom:16px; flex-wrap:wrap;">
+      <button class="action-btn" onclick="billingSaveLineItems()">💾 Save Changes</button>
+      <button class="secondary-btn" id="billing-void-btn" onclick="billingVoidInvoice()" style="border-color:#a00; color:#a00;">⊘ Void Invoice</button>
+    </div>
+
+    <div id="billing-invoice-detail-result" style="font-size:14px;"></div>
   </div>
 </div>
 
@@ -787,8 +826,8 @@
             <div style="color:#888; font-size:13px; margin-bottom:8px;">${c.legal_name || ''}</div>
             <div style="font-size:13px; color:#444;">
               ${c.active_contract
-                ? `📜 Contract v${c.active_contract.version} · effective ${c.active_contract.effective_date}`
-                : '<span style="color:#a00;">⚠ No active contract</span>'}
+                ? `📅 Effective ${c.active_contract.effective_date}`
+                : '<span style="color:#a60;">⚠ Add fee schedule to enable billing</span>'}
             </div>
           `;
           card.onclick = () => billingShowCommunity(c.id);
@@ -828,9 +867,7 @@
       const c = data.contract;
 
       document.getElementById('billing-contract-summary').innerHTML = `
-        <div><b>Version:</b> ${c.version}</div>
         <div><b>Effective:</b> ${c.effective_date}${c.end_date ? ' to ' + c.end_date : ' (auto-renewing)'}</div>
-        <div><b>Escalator:</b> ${c.escalator_kind}${c.escalator_pct ? ' · ' + c.escalator_pct + '%' : ''}</div>
         <div><b>Payment terms:</b> ${c.payment_terms || '—'}</div>
         ${c.notes ? `<div style="margin-top:8px; padding:8px; background:#fffbe6; border-left:3px solid #fc0; font-size:12px;">📝 ${c.notes}</div>` : ''}
       `;
@@ -851,15 +888,47 @@
         { label: 'Fee', align: 'right', render: r => billingMoney(r.amount) }
       ]);
 
-      // Default the period picker to current month.
-      const today = new Date();
-      const yyyy = today.getFullYear();
-      const mm = String(today.getMonth() + 1).padStart(2, '0');
-      document.getElementById('billing-draft-period').value = `${yyyy}-${mm}`;
+      // Default period based on current type select (Activity → prior month).
+      billingTypeChanged();
 
       billingLoadInvoicesForCommunity(communityId);
     } catch (e) {
-      document.getElementById('billing-contract-summary').innerHTML = `<div style="color:#a00;">Failed to load contract: ${e.message}</div>`;
+      // 404 = no active contract for this community (a freshly seeded one).
+      if (String(e.message).includes('404')) {
+        document.getElementById('billing-contract-summary').innerHTML =
+          '<div style="padding:8px; background:#fff3cd; border-left:3px solid #f5a623;">No active contract for this community yet. Upload the management contract + fee schedule to enable billing.</div>';
+        // Hide draft form + fee schedule since there are no rates to bill against.
+        const draftPanel = document.querySelector('#billing-community-detail .panel:nth-of-type(2)');
+        const feePanel = document.querySelector('#billing-community-detail .panel:nth-of-type(3)');
+        if (draftPanel) draftPanel.style.display = 'none';
+        if (feePanel) feePanel.style.display = 'none';
+      } else {
+        document.getElementById('billing-contract-summary').innerHTML = `<div style="color:#a00;">Failed to load contract: ${e.message}</div>`;
+      }
+    }
+  }
+
+  function billingTypeChanged() {
+    const type = document.getElementById('billing-draft-type').value;
+    const today = new Date();
+    if (type === 'activity') today.setMonth(today.getMonth() - 1);
+    const yyyy = today.getFullYear();
+    const mm = String(today.getMonth() + 1).padStart(2, '0');
+    document.getElementById('billing-draft-period').value = `${yyyy}-${mm}`;
+    billingUpdatePeriodHint();
+  }
+
+  function billingUpdatePeriodHint() {
+    const type = document.getElementById('billing-draft-type').value;
+    const period = document.getElementById('billing-draft-period').value;
+    const hint = document.getElementById('billing-period-hint');
+    if (!period) { hint.textContent = ''; return; }
+    const [y, m] = period.split('-').map(Number);
+    const monthName = ['January','February','March','April','May','June','July','August','September','October','November','December'][m - 1];
+    if (type === 'activity') {
+      hint.textContent = `${monthName} ${y} activity (billed in arrears, typically the following month)`;
+    } else {
+      hint.textContent = `${monthName} ${y} fees (billed in advance)`;
     }
   }
 
@@ -880,13 +949,29 @@
         el.innerHTML = '<div style="color:#888;">No invoices yet for this community.</div>';
         return;
       }
-      el.innerHTML = billingTable(data.invoices, [
-        { label: 'Number', render: r => `<span style="font-family:monospace;">${r.invoice_number}</span>` },
-        { label: 'Type', render: r => r.invoice_type },
-        { label: 'Period', render: r => `${r.service_period_start} → ${r.service_period_end}` },
-        { label: 'Status', render: r => r.status },
-        { label: 'Total', align: 'right', render: r => billingMoney(r.total) }
-      ]);
+      // Build a clickable table — each row enters the invoice detail view.
+      const rowsHtml = data.invoices.map(r => `
+        <tr onclick="billingShowInvoice('${r.id}')" style="cursor:pointer;" onmouseover="this.style.background='#f5f5f5'" onmouseout="this.style.background=''">
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; font-family:monospace;">${r.invoice_number}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.invoice_type === 'activity' ? 'Activity' : 'Fixed'}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.service_period_start} → ${r.service_period_end}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${r.status === 'void' ? '<span style="color:#a00;">void</span>' : r.status}</td>
+          <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(r.total)}</td>
+        </tr>
+      `).join('');
+      el.innerHTML = `
+        <table style="width:100%; border-collapse:collapse;">
+          <thead><tr>
+            <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Number</th>
+            <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Type</th>
+            <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Period</th>
+            <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Status</th>
+            <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Total</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        <div style="font-size:11px; color:#888; margin-top:6px;">Click a row to view, edit line items, or void.</div>
+      `;
     } catch (e) {
       el.innerHTML = `<div style="color:#a00;">Failed to load invoices: ${e.message}</div>`;
     }
@@ -940,6 +1025,270 @@
     } catch (e) {
       result.innerHTML = `<div style="color:#a00;">Failed: ${e.message}</div>`;
     }
+  }
+
+  // ----------------------------------------------------------------------
+  // Invoice detail view
+  // ----------------------------------------------------------------------
+  let billingCurrentInvoice = null;
+  let billingCurrentInvoiceLineItems = [];   // in-memory editable list
+  let billingCurrentRateCard = [];           // dropdown options sourced from contract
+
+  async function billingShowInvoice(invoiceId) {
+    document.getElementById('billing-community-detail').style.display = 'none';
+    document.getElementById('billing-invoice-detail').style.display = 'block';
+    document.getElementById('billing-invoice-header').innerHTML = '<div style="color:#888;">Loading…</div>';
+    document.getElementById('billing-line-items-container').innerHTML = '';
+    document.getElementById('billing-invoice-detail-result').innerHTML = '';
+
+    try {
+      const r = await fetch(`/api/billing/invoices/${invoiceId}`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      billingCurrentInvoice = data.invoice;
+      billingCurrentInvoiceLineItems = (data.line_items || []).map(li => ({
+        source: li.source,
+        source_ref_id: li.source_ref_id,
+        category: li.category,
+        description: li.description,
+        qty: Number(li.qty),
+        unit_price: Number(li.unit_price),
+        amount: Number(li.amount),
+        sort_order: li.sort_order
+      }));
+
+      const inv = data.invoice;
+      const community = inv.community || {};
+      const monthLabel = (() => {
+        const [y, m] = (inv.service_period_start || '').split('-').map(Number);
+        if (!y || !m) return inv.service_period_start;
+        return new Date(y, m - 1, 1).toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      })();
+      const typeLabel = inv.invoice_type === 'activity'
+        ? `Activity for ${monthLabel} (billed in arrears)`
+        : `Fixed fees for ${monthLabel} (billed in advance)`;
+
+      const statusBadge = inv.status === 'void'
+        ? '<span style="padding:2px 8px; background:#fee; color:#a00; border-radius:4px; font-size:12px;">VOID</span>'
+        : `<span style="padding:2px 8px; background:#e8f5e9; color:#185; border-radius:4px; font-size:12px;">${inv.status.toUpperCase()}</span>`;
+
+      document.getElementById('billing-invoice-header').innerHTML = `
+        <h3 style="margin:0;">Invoice <span style="font-family:monospace;">${inv.invoice_number}</span></h3>
+        <div style="margin-top:6px; color:#444; font-size:14px;">
+          ${typeLabel} · ${community.name || ''} ${statusBadge}
+        </div>
+        <div style="margin-top:6px; font-size:14px;">
+          <b>Subtotal:</b> ${billingMoney(inv.subtotal)} · <b>Total:</b> ${billingMoney(inv.total)}
+        </div>
+        ${inv.status === 'void' && inv.void_reason ? `<div style="margin-top:6px; font-size:12px; color:#888;">Voided: ${inv.void_reason}</div>` : ''}
+      `;
+
+      // Hide Add/Save/Void affordances for void or paid invoices.
+      const editable = inv.status === 'draft' || inv.status === 'review';
+      document.getElementById('billing-add-line-panel').style.display = editable ? 'block' : 'none';
+      document.querySelectorAll('#billing-invoice-detail .action-btn').forEach(b => {
+        b.style.display = editable ? '' : 'none';
+      });
+      document.getElementById('billing-void-btn').style.display = editable ? '' : 'none';
+
+      // Populate the rate-card dropdown from this invoice's contract.
+      await billingLoadRateCard(inv.contract_id);
+      billingRenderLineItems();
+    } catch (e) {
+      document.getElementById('billing-invoice-header').innerHTML = `<div style="color:#a00;">Failed to load invoice: ${e.message}</div>`;
+    }
+  }
+
+  async function billingLoadRateCard(contractId) {
+    // The rate card for this invoice is the active contract's reimbursable +
+    // owner_charge categories. We fetch via the by-community endpoint, since
+    // there's only one active contract per community in v0.
+    try {
+      // Find the community for this contract via cached communities + contract fetch.
+      const community = billingCommunitiesCache.find(c => c.active_contract && c.active_contract.id === contractId);
+      if (!community) {
+        billingCurrentRateCard = [];
+        billingPopulateCategoryDropdown();
+        return;
+      }
+      const r = await fetch(`/api/billing/communities/${community.id}/contract`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      const data = await r.json();
+      const reimb = (data.fee_schedule.reimbursables || []).map(x => ({
+        source: 'reimbursable',
+        source_ref_id: x.item_id,
+        category: x.category,
+        description: x.description,
+        unit_price: x.unit_price !== null ? Number(x.unit_price) : 0,
+        billing_method: x.billing_method
+      }));
+      const owner = (data.fee_schedule.owner_charges || []).map(x => ({
+        source: 'owner_charge',
+        source_ref_id: x.item_id,
+        category: x.category,
+        description: x.description,
+        unit_price: Number(x.amount)
+      }));
+      billingCurrentRateCard = [...reimb, ...owner];
+      billingPopulateCategoryDropdown();
+    } catch (e) {
+      console.error('billingLoadRateCard failed:', e);
+      billingCurrentRateCard = [];
+      billingPopulateCategoryDropdown();
+    }
+  }
+
+  function billingPopulateCategoryDropdown() {
+    const sel = document.getElementById('billing-add-category');
+    if (!billingCurrentRateCard || billingCurrentRateCard.length === 0) {
+      sel.innerHTML = '<option value="">(no rate card available for this contract)</option>';
+      return;
+    }
+    sel.innerHTML = billingCurrentRateCard.map((r, idx) => {
+      const rate = r.billing_method === 'at_cost' ? 'at cost' : billingMoney(r.unit_price);
+      const method = r.billing_method ? ` / ${r.billing_method}` : '';
+      return `<option value="${idx}">${r.description} — ${rate}${method}</option>`;
+    }).join('');
+  }
+
+  function billingAddLineItem() {
+    const sel = document.getElementById('billing-add-category');
+    const qtyEl = document.getElementById('billing-add-qty');
+    const idx = sel.value;
+    if (idx === '' || idx === undefined) return;
+    const rateEntry = billingCurrentRateCard[Number(idx)];
+    const qty = Number(qtyEl.value || 0);
+    if (qty <= 0) {
+      document.getElementById('billing-invoice-detail-result').innerHTML = '<div style="color:#a00;">Enter a quantity greater than 0.</div>';
+      return;
+    }
+    billingCurrentInvoiceLineItems.push({
+      source: rateEntry.source,
+      source_ref_id: rateEntry.source_ref_id,
+      category: rateEntry.category,
+      description: rateEntry.description,
+      qty,
+      unit_price: rateEntry.unit_price,
+      amount: Math.round(qty * rateEntry.unit_price * 100) / 100,
+      sort_order: billingCurrentInvoiceLineItems.length * 10
+    });
+    qtyEl.value = '1';
+    billingRenderLineItems();
+    document.getElementById('billing-invoice-detail-result').innerHTML = '';
+  }
+
+  function billingRemoveLineItem(idx) {
+    billingCurrentInvoiceLineItems.splice(idx, 1);
+    billingRenderLineItems();
+  }
+
+  function billingRenderLineItems() {
+    const container = document.getElementById('billing-line-items-container');
+    if (billingCurrentInvoiceLineItems.length === 0) {
+      container.innerHTML = '<div style="color:#888; font-size:13px;">No line items yet. Use the Add Line Item form below.</div>';
+      return;
+    }
+    const subtotal = billingCurrentInvoiceLineItems.reduce((s, li) => s + Number(li.amount || 0), 0);
+    const editable = billingCurrentInvoice && (billingCurrentInvoice.status === 'draft' || billingCurrentInvoice.status === 'review');
+    const rows = billingCurrentInvoiceLineItems.map((li, idx) => `
+      <tr>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${li.description}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${editable ? `<input type="number" min="0" step="0.01" value="${li.qty}" style="width:70px; padding:3px;" onchange="billingUpdateQty(${idx}, this.value)">` : li.qty}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.unit_price)}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.amount)}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:center;">${editable ? `<button onclick="billingRemoveLineItem(${idx})" style="background:none; border:none; color:#a00; cursor:pointer; font-size:14px;" title="Remove">×</button>` : ''}</td>
+      </tr>
+    `).join('');
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Description</th>
+          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Qty</th>
+          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Rate</th>
+          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Amount</th>
+          <th style="text-align:center; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr>
+          <td colspan="3" style="padding:8px; text-align:right; font-weight:600;">Subtotal</td>
+          <td style="padding:8px; text-align:right; font-weight:600;">${billingMoney(subtotal)}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    `;
+  }
+
+  function billingUpdateQty(idx, val) {
+    const qty = Number(val || 0);
+    const li = billingCurrentInvoiceLineItems[idx];
+    li.qty = qty;
+    li.amount = Math.round(qty * Number(li.unit_price || 0) * 100) / 100;
+    billingRenderLineItems();
+  }
+
+  async function billingSaveLineItems() {
+    if (!billingCurrentInvoice) return;
+    const result = document.getElementById('billing-invoice-detail-result');
+    result.innerHTML = '<div style="color:#888;">Saving…</div>';
+    try {
+      const r = await fetch(`/api/billing/invoices/${billingCurrentInvoice.id}/line-items`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ line_items: billingCurrentInvoiceLineItems })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      result.innerHTML = `
+        <div style="padding:8px; background:#e8f5e9; border-left:3px solid #4c8;">
+          ✓ Saved · subtotal ${billingMoney(data.subtotal)} · ${data.line_items_count} line items
+        </div>
+      `;
+      billingCurrentInvoice.subtotal = data.subtotal;
+      billingCurrentInvoice.total = data.subtotal;
+      // Refresh header so the totals update.
+      const headerEl = document.getElementById('billing-invoice-header');
+      const subSpan = headerEl.querySelector('b');
+      if (subSpan) {
+        billingShowInvoice(billingCurrentInvoice.id);
+      }
+    } catch (e) {
+      result.innerHTML = `<div style="color:#a00;">Failed to save: ${e.message}</div>`;
+    }
+  }
+
+  async function billingVoidInvoice() {
+    if (!billingCurrentInvoice) return;
+    const reason = prompt('Why are you voiding this invoice? (audit trail)');
+    if (reason === null) return;   // user cancelled
+    const result = document.getElementById('billing-invoice-detail-result');
+    result.innerHTML = '<div style="color:#888;">Voiding…</div>';
+    try {
+      const r = await fetch(`/api/billing/invoices/${billingCurrentInvoice.id}/void`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason || 'Voided by user' })
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      result.innerHTML = `
+        <div style="padding:8px; background:#fff3cd; border-left:3px solid #f5a623;">
+          ✓ Invoice voided. Invoice number is now free for regeneration.
+        </div>
+      `;
+      billingShowInvoice(billingCurrentInvoice.id);
+    } catch (e) {
+      result.innerHTML = `<div style="color:#a00;">Failed to void: ${e.message}</div>`;
+    }
+  }
+
+  function billingBackToCommunity() {
+    document.getElementById('billing-invoice-detail').style.display = 'none';
+    document.getElementById('billing-community-detail').style.display = 'block';
+    if (billingCurrentCommunityId) {
+      billingLoadInvoicesForCommunity(billingCurrentCommunityId);
+    }
+    billingCurrentInvoice = null;
+    billingCurrentInvoiceLineItems = [];
   }
 
   // Auto-load communities the first time the Bedrock Office tab is opened.
