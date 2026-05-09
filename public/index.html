@@ -734,6 +734,25 @@
       </div>
     </div>
 
+    <div class="panel" id="billing-community-manual-panel" style="margin-bottom:16px;">
+      <h4 style="margin-top:0;">➕ Manual Line Items (optional)</h4>
+      <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
+        Stage line items that won't come from the Vantaca file (one-off events, special services, write-in postage, etc.). They get appended when you click Generate. To add a NEW one-off description (e.g., "Back to School Bash - Admin Fee"), pick the closest category and edit the description on the invoice detail view after generating.
+      </p>
+      <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; margin-bottom:10px;">
+        <div style="flex:1; min-width:280px;">
+          <div class="section-label">Category (with rate)</div>
+          <select id="billing-pending-category" style="padding:6px; width:100%;"></select>
+        </div>
+        <div>
+          <div class="section-label">Quantity</div>
+          <input type="number" id="billing-pending-qty" min="0" step="0.01" value="1" style="padding:6px; width:90px;">
+        </div>
+        <button class="action-btn" onclick="billingAddPendingLineItem()">+ Stage</button>
+      </div>
+      <div id="billing-pending-line-items" style="font-size:13px;"></div>
+    </div>
+
     <div class="panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">✨ Generate Draft Invoice</h4>
       <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
@@ -746,8 +765,12 @@
         </div>
         <div>
           <div class="section-label">Service period</div>
-          <input type="month" id="billing-draft-period" style="padding:6px;" onchange="billingUpdatePeriodHint()">
+          <input type="month" id="billing-draft-period" style="padding:6px;" onchange="billingUpdatePeriodHint(); billingUpdateInvoiceNumberPreview();">
           <div id="billing-period-hint" style="font-size:11px; color:#888; margin-top:4px;"></div>
+        </div>
+        <div>
+          <div class="section-label">Will be numbered</div>
+          <div id="billing-preview-invoice-number" style="padding:6px 10px; background:#f0f4f8; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; font-size:14px; min-width:90px; text-align:center;">—</div>
         </div>
         <button class="action-btn" onclick="billingGenerateDraft()">Generate</button>
       </div>
@@ -947,6 +970,27 @@
         { label: 'Fee', align: 'right', render: r => billingMoney(r.amount) }
       ]);
 
+      // Build community-detail rate card (used by Manual Line Items dropdown).
+      const reimbCC = (data.fee_schedule.reimbursables || []).map(x => ({
+        source: 'reimbursable',
+        source_ref_id: x.item_id,
+        category: x.category,
+        description: x.description,
+        unit_price: x.unit_price !== null ? Number(x.unit_price) : 0,
+        billing_method: x.billing_method
+      }));
+      const ownerCC = (data.fee_schedule.owner_charges || []).map(x => ({
+        source: 'owner_charge',
+        source_ref_id: x.item_id,
+        category: x.category,
+        description: x.description,
+        unit_price: Number(x.amount)
+      }));
+      billingCommunityRateCard = [...reimbCC, ...ownerCC];
+      billingPendingLineItems = [];   // reset stale staged items when switching communities
+      billingPopulateCommunityCategoryDropdown();
+      billingRenderPendingLineItems();
+
       // Default period based on current type select (Activity → prior month).
       billingTypeChanged();
 
@@ -975,10 +1019,114 @@
     const mm = String(today.getMonth() + 1).padStart(2, '0');
     document.getElementById('billing-draft-period').value = `${yyyy}-${mm}`;
     billingUpdatePeriodHint();
+    billingUpdateInvoiceNumberPreview();
 
     // Show the Vantaca inputs panel only for activity invoices.
     const panel = document.getElementById('billing-community-inputs-panel');
     if (panel) panel.style.display = type === 'activity' ? 'block' : 'none';
+  }
+
+  function billingUpdateInvoiceNumberPreview() {
+    const el = document.getElementById('billing-preview-invoice-number');
+    if (!el) return;
+    const community = (billingCommunitiesCache || []).find(c => c.id === billingCurrentCommunityId);
+    if (!community) { el.textContent = '—'; el.style.color = '#888'; return; }
+    if (!community.vantaca_code) {
+      el.textContent = '(needs vantaca code)';
+      el.style.color = '#a60';
+      el.title = 'Add the Vantaca code on the community record to enable invoice numbering.';
+      return;
+    }
+    const type = document.getElementById('billing-draft-type').value;
+    const period = document.getElementById('billing-draft-period').value;
+    if (!period) { el.textContent = '—'; el.style.color = '#888'; return; }
+    const [yyyy, mm] = period.split('-');
+    const yy = yyyy.slice(2);
+    const suffix = type === 'activity' ? '2' : '';
+    el.textContent = `${yy}${mm}${community.vantaca_code}${suffix}`;
+    el.style.color = '#1a1a1a';
+    el.title = '';
+  }
+
+  // ----- Manual line item staging (community detail view, before Generate) -----
+  function billingPopulateCommunityCategoryDropdown() {
+    const sel = document.getElementById('billing-pending-category');
+    if (!sel) return;
+    if (!billingCommunityRateCard || billingCommunityRateCard.length === 0) {
+      sel.innerHTML = '<option value="">(no rate card available — add a contract first)</option>';
+      return;
+    }
+    sel.innerHTML = billingCommunityRateCard.map((r, idx) => {
+      const rate = r.billing_method === 'at_cost' ? 'at cost' : '$' + Number(r.unit_price || 0).toFixed(2);
+      const method = r.billing_method ? ` / ${r.billing_method}` : '';
+      return `<option value="${idx}">${r.description} — ${rate}${method}</option>`;
+    }).join('');
+  }
+
+  function billingAddPendingLineItem() {
+    const sel = document.getElementById('billing-pending-category');
+    const qtyEl = document.getElementById('billing-pending-qty');
+    const idx = sel.value;
+    if (idx === '' || idx === undefined) return;
+    const rateEntry = billingCommunityRateCard[Number(idx)];
+    const qty = Number(qtyEl.value || 0);
+    if (qty <= 0) {
+      alert('Quantity must be greater than 0.');
+      return;
+    }
+    billingPendingLineItems.push({
+      source: rateEntry.source,
+      source_ref_id: rateEntry.source_ref_id,
+      category: rateEntry.category,
+      description: rateEntry.description,
+      qty,
+      unit_price: Number(rateEntry.unit_price || 0),
+      amount: Math.round(qty * Number(rateEntry.unit_price || 0) * 100) / 100,
+      sort_order: 1000 + billingPendingLineItems.length * 10
+    });
+    qtyEl.value = '1';
+    billingRenderPendingLineItems();
+  }
+
+  function billingRemovePendingLineItem(idx) {
+    billingPendingLineItems.splice(idx, 1);
+    billingRenderPendingLineItems();
+  }
+
+  function billingRenderPendingLineItems() {
+    const container = document.getElementById('billing-pending-line-items');
+    if (!container) return;
+    if (billingPendingLineItems.length === 0) {
+      container.innerHTML = '<div style="color:#888; font-size:13px;">No staged items.</div>';
+      return;
+    }
+    const subtotal = billingPendingLineItems.reduce((s, li) => s + Number(li.amount || 0), 0);
+    const rows = billingPendingLineItems.map((li, idx) => `
+      <tr>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${li.description}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${li.qty}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.unit_price)}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.amount)}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:center;"><button onclick="billingRemovePendingLineItem(${idx})" style="background:none; border:none; color:#a00; cursor:pointer; font-size:14px;" title="Remove">×</button></td>
+      </tr>
+    `).join('');
+    container.innerHTML = `
+      <table style="width:100%; border-collapse:collapse;">
+        <thead><tr>
+          <th style="text-align:left; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Description</th>
+          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Qty</th>
+          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Rate</th>
+          <th style="text-align:right; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;">Amount</th>
+          <th style="text-align:center; padding:6px 8px; border-bottom:1px solid #ddd; font-size:12px; color:#666; font-weight:600;"></th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr>
+          <td colspan="3" style="text-align:right; padding:6px 8px; font-weight:600;">Staged subtotal</td>
+          <td style="text-align:right; padding:6px 8px; font-weight:600;">${billingMoney(subtotal)}</td>
+          <td></td>
+        </tr></tfoot>
+      </table>
+    `;
   }
 
   // ---------- Staged Vantaca file (held in browser state until Generate) ----------
@@ -1156,10 +1304,49 @@
         }
       }
 
+      // If staged manual line items, append them to the invoice now.
+      let manualNote = '';
+      if (billingPendingLineItems.length > 0 && data.invoice && data.invoice.id) {
+        try {
+          // Fetch current line items so we can append rather than replace.
+          const currR = await fetch(`/api/billing/invoices/${data.invoice.id}`);
+          const currData = await currR.json().catch(() => ({}));
+          const currentLines = (currData.line_items || []).map(li => ({
+            source: li.source,
+            source_ref_id: li.source_ref_id,
+            category: li.category,
+            description: li.description,
+            qty: Number(li.qty),
+            unit_price: Number(li.unit_price),
+            amount: Number(li.amount),
+            manual_override: !!li.manual_override,
+            manual_override_reason: li.manual_override_reason || null,
+            sort_order: li.sort_order
+          }));
+          const merged = [...currentLines, ...billingPendingLineItems];
+          const putR = await fetch(`/api/billing/invoices/${data.invoice.id}/line-items`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ line_items: merged })
+          });
+          const putData = await putR.json().catch(() => ({}));
+          if (!putR.ok) throw new Error(putData.error || `HTTP ${putR.status}`);
+          manualNote = `<br><small>Plus ${billingPendingLineItems.length} manually staged line item(s) appended.</small>`;
+          // Update totals from PUT response.
+          data.subtotal = putData.subtotal;
+          data.line_items_count = putData.line_items_count;
+          // Clear staged state.
+          billingPendingLineItems = [];
+          billingRenderPendingLineItems();
+        } catch (manualErr) {
+          manualNote = `<br><small style="color:#a00;">Manual line items failed to apply: ${manualErr.message}. Open the draft to add them by hand.</small>`;
+        }
+      }
+
       result.innerHTML = `
         <div style="padding:8px; background:#e8f5e9; border-left:3px solid #4c8;">
           ✓ Draft invoice created: <b style="font-family:monospace;">${data.invoice_number}</b><br>
-          Subtotal ${billingMoney(data.subtotal)} · ${data.line_items_count} line items · status: draft${importNote}<br>
+          Subtotal ${billingMoney(data.subtotal)} · ${data.line_items_count} line items · status: draft${importNote}${manualNote}<br>
           <a href="#" onclick="event.preventDefault(); billingShowInvoice('${data.invoice.id}')" style="font-size:12px; color:#1976d2;">→ Open draft to review and edit</a>
         </div>
       `;
@@ -1176,6 +1363,10 @@
   let billingCurrentInvoiceLineItems = [];   // in-memory editable list
   let billingCurrentRateCard = [];           // dropdown options sourced from contract
   let billingCurrentRateCardContractId = null;  // contract id the rate card was loaded for (for PATCHing rates)
+
+  // ----- Community-detail-view state for pre-Generate staging -----
+  let billingCommunityRateCard = [];        // rate card on the community detail page
+  let billingPendingLineItems = [];         // manually staged before Generate
 
   async function billingShowInvoice(invoiceId) {
     document.getElementById('billing-community-detail').style.display = 'none';
