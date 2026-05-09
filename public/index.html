@@ -735,15 +735,25 @@
       <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
     </div>
 
-    <div class="panel" style="margin-bottom:16px;">
-      <h4 style="margin-top:0;">📋 Fee Schedule</h4>
-      <h5 style="margin:8px 0 4px 0;">Fixed Monthly</h5>
-      <div id="billing-fee-fixed"></div>
-      <h5 style="margin:16px 0 4px 0;">Reimbursables (billed to Association as-used)</h5>
-      <div id="billing-fee-reimbursables"></div>
-      <h5 style="margin:16px 0 4px 0;">Owner Charges (billed to Association, collected from Owner where legal)</h5>
-      <div id="billing-fee-owner-charges"></div>
-    </div>
+    <details class="panel" style="margin-bottom:16px;">
+      <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
+        📋 Fee Schedule <span style="color:#888; font-weight:400; font-size:12px;">(click to expand)</span>
+      </summary>
+      <div style="padding-top:12px;">
+        <details open style="margin-bottom:8px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Fixed Monthly</summary>
+          <div id="billing-fee-fixed" style="margin-top:6px;"></div>
+        </details>
+        <details style="margin-bottom:8px;">
+          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Reimbursables (billed to Association as-used)</summary>
+          <div id="billing-fee-reimbursables" style="margin-top:6px;"></div>
+        </details>
+        <details>
+          <summary style="cursor:pointer; font-weight:600; font-size:13px;">Owner Charges (billed to Association, collected from Owner where legal)</summary>
+          <div id="billing-fee-owner-charges" style="margin-top:6px;"></div>
+        </details>
+      </div>
+    </details>
 
     <div class="panel">
       <h4 style="margin-top:0;">🧾 Recent Invoices</h4>
