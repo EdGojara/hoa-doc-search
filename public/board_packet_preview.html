@@ -1,0 +1,982 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bedrock Board Packet — Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    /* ====================================================================
+       Bedrock Board Packet — design language v0
+       Same visual system as the invoice: navy #315A87, Inter, restraint.
+       Uses Lakes of Pine Forest April 2026 data as the realistic example.
+       ==================================================================== */
+
+    :root {
+      --bedrock-navy: #315A87;
+      --bedrock-navy-deep: #1F3A5F;
+      --bedrock-navy-tint: #EAF0F7;
+      --bedrock-navy-mute: #6E89AB;
+      --ink: #1a1a1a;
+      --ink-soft: #4a4a4a;
+      --ink-muted: #888;
+      --rule: #E5E7EB;
+      --rule-soft: #F1F2F4;
+      --paper: #ffffff;
+      --accent-warn: #B47B00;
+      --accent-warn-tint: #FFF8E8;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #f4f5f7;
+      color: var(--ink);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px;
+      font-feature-settings: "tnum" 1, "ss01" 1;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Each "page" is a Letter-sized panel with shadow, like the invoice */
+    .page {
+      width: 8.5in;
+      min-height: 11in;
+      margin: 32px auto;
+      background: var(--paper);
+      box-shadow: 0 4px 24px rgba(0, 0, 0, 0.08);
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* ============== COVER PAGE ============== */
+    .cover {
+      padding: 0;
+      color: var(--paper);
+    }
+
+    .cover-hero {
+      flex: 0 0 5.5in;
+      background:
+        linear-gradient(180deg, rgba(31,58,95,0.55) 0%, rgba(31,58,95,0.85) 100%),
+        url('https://images.unsplash.com/photo-1572120360610-d971b9d7767c?w=1600&q=80') center/cover;
+      position: relative;
+      padding: 0.7in 0.8in;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+
+    .cover-brand {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+    }
+
+    .cover-brand img {
+      height: 80px;
+      width: auto;
+      filter: brightness(0) invert(1);  /* white logo on dark hero */
+    }
+
+    .cover-period {
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: rgba(255,255,255,0.85);
+      align-self: flex-end;
+    }
+
+    .cover-title {
+      margin-top: auto;
+    }
+
+    .cover-eyebrow {
+      font-size: 11px;
+      letter-spacing: 0.22em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: rgba(255,255,255,0.85);
+      margin-bottom: 12px;
+    }
+
+    .cover-community {
+      font-size: 42px;
+      font-weight: 700;
+      line-height: 1.05;
+      letter-spacing: -0.01em;
+      color: var(--paper);
+      margin-bottom: 12px;
+    }
+
+    .cover-month {
+      font-size: 22px;
+      font-weight: 300;
+      color: rgba(255,255,255,0.92);
+    }
+
+    .cover-meta {
+      flex: 1;
+      padding: 0.6in 0.8in;
+      background: var(--paper);
+      color: var(--ink);
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+      align-content: start;
+    }
+
+    .cover-meta-block .label {
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--ink-muted);
+      margin-bottom: 8px;
+    }
+
+    .cover-meta-block .body {
+      font-size: 14px;
+      line-height: 1.6;
+      color: var(--ink);
+    }
+
+    .cover-meta-block .body strong { font-weight: 600; }
+
+    .cover-tagline {
+      grid-column: 1 / -1;
+      margin-top: auto;
+      padding-top: 24px;
+      border-top: 1px solid var(--rule);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 11px;
+      color: var(--ink-muted);
+      letter-spacing: 0.04em;
+    }
+
+    .cover-tagline .tag {
+      color: var(--bedrock-navy);
+      font-weight: 600;
+      letter-spacing: 0.06em;
+    }
+
+    /* ============== INTERIOR PAGE LAYOUT ============== */
+    .interior {
+      padding: 0.6in 0.7in;
+    }
+
+    .page-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 16px;
+      margin-bottom: 32px;
+      border-bottom: 2px solid var(--bedrock-navy);
+    }
+
+    .page-header-brand {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .page-header-brand img {
+      height: 36px;
+      width: auto;
+    }
+
+    .page-header-context {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--bedrock-navy-mute);
+      text-align: right;
+      line-height: 1.5;
+    }
+
+    .page-header-context strong {
+      display: block;
+      color: var(--bedrock-navy-deep);
+      font-size: 12px;
+      letter-spacing: 0.18em;
+    }
+
+    /* Section title / eyebrow */
+    .section-eyebrow {
+      font-size: 10px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--bedrock-navy);
+      margin-bottom: 6px;
+    }
+
+    .section-title {
+      font-size: 28px;
+      font-weight: 700;
+      line-height: 1.15;
+      color: var(--bedrock-navy-deep);
+      letter-spacing: -0.01em;
+      margin: 0 0 8px 0;
+    }
+
+    .section-lede {
+      font-size: 14px;
+      color: var(--ink-soft);
+      line-height: 1.6;
+      margin: 0 0 32px 0;
+      max-width: 520px;
+    }
+
+    /* Page footer common to interior pages */
+    .page-foot {
+      margin-top: auto;
+      padding-top: 18px;
+      border-top: 1px solid var(--rule);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-size: 10px;
+      color: var(--ink-muted);
+      letter-spacing: 0.05em;
+    }
+
+    .page-foot .tag {
+      color: var(--bedrock-navy);
+      font-weight: 600;
+      letter-spacing: 0.08em;
+    }
+
+    .page-foot .pager {
+      font-feature-settings: "tnum" 1;
+    }
+
+    /* ============== TABLE OF CONTENTS ============== */
+    .toc {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+
+    .toc li {
+      display: flex;
+      align-items: baseline;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--rule);
+      font-size: 14px;
+    }
+
+    .toc li:last-child { border-bottom: none; }
+
+    .toc .num {
+      font-feature-settings: "tnum" 1;
+      width: 32px;
+      color: var(--bedrock-navy);
+      font-weight: 600;
+      font-size: 13px;
+    }
+
+    .toc .title-cell {
+      flex: 1;
+      color: var(--ink);
+      font-weight: 500;
+    }
+
+    .toc .title-cell .desc {
+      display: block;
+      color: var(--ink-muted);
+      font-weight: 400;
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .toc .dots {
+      flex: 0 0 auto;
+      color: var(--rule);
+      margin: 0 12px;
+      letter-spacing: 0.2em;
+      font-size: 11px;
+    }
+
+    .toc .pg {
+      font-feature-settings: "tnum" 1;
+      color: var(--ink-muted);
+      font-size: 13px;
+      width: 24px;
+      text-align: right;
+    }
+
+    /* ============== AGENDA ============== */
+    .agenda {
+      list-style: none;
+      counter-reset: agenda;
+      padding: 0;
+      margin: 0;
+    }
+
+    .agenda > li {
+      counter-increment: agenda;
+      padding: 14px 0 14px 56px;
+      position: relative;
+      border-bottom: 1px solid var(--rule-soft);
+    }
+
+    .agenda > li:last-child { border-bottom: none; }
+
+    .agenda > li::before {
+      content: counter(agenda, decimal-leading-zero);
+      position: absolute;
+      left: 0;
+      top: 14px;
+      font-size: 13px;
+      font-weight: 700;
+      color: var(--bedrock-navy);
+      font-feature-settings: "tnum" 1;
+      letter-spacing: 0.08em;
+    }
+
+    .agenda-title {
+      font-size: 15px;
+      font-weight: 600;
+      color: var(--ink);
+      margin: 0 0 4px 0;
+    }
+
+    .agenda-sub {
+      list-style: none;
+      padding: 0;
+      margin: 4px 0 0 0;
+    }
+
+    .agenda-sub li {
+      font-size: 13px;
+      color: var(--ink-soft);
+      padding: 2px 0 2px 14px;
+      position: relative;
+      line-height: 1.55;
+    }
+
+    .agenda-sub li::before {
+      content: "•";
+      position: absolute;
+      left: 0;
+      color: var(--bedrock-navy-mute);
+    }
+
+    .agenda-tag {
+      display: inline-block;
+      font-size: 9px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      padding: 2px 8px;
+      border-radius: 3px;
+      margin-left: 8px;
+      vertical-align: 2px;
+    }
+
+    .agenda-tag.decision { background: var(--accent-warn-tint); color: var(--accent-warn); }
+    .agenda-tag.executive { background: #F0EAFE; color: #5B3A9F; }
+    .agenda-tag.report { background: var(--bedrock-navy-tint); color: var(--bedrock-navy-deep); }
+
+    /* ============== EXEC SUMMARY ============== */
+    .summary-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      margin-bottom: 32px;
+    }
+
+    .summary-card {
+      padding: 16px 18px;
+      background: var(--bedrock-navy-tint);
+      border-left: 3px solid var(--bedrock-navy);
+      border-radius: 0 4px 4px 0;
+    }
+
+    .summary-card .label {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--bedrock-navy-deep);
+      margin-bottom: 6px;
+    }
+
+    .summary-card .value {
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--bedrock-navy-deep);
+      line-height: 1.1;
+      font-feature-settings: "tnum" 1;
+    }
+
+    .summary-card .delta {
+      font-size: 11px;
+      color: var(--ink-muted);
+      margin-top: 4px;
+    }
+
+    .summary-card.warn { background: var(--accent-warn-tint); border-left-color: var(--accent-warn); }
+    .summary-card.warn .label { color: var(--accent-warn); }
+    .summary-card.warn .value { color: var(--accent-warn); }
+
+    .summary-prose p {
+      font-size: 14px;
+      line-height: 1.65;
+      color: var(--ink);
+      margin: 0 0 14px 0;
+    }
+
+    .summary-prose strong { color: var(--bedrock-navy-deep); font-weight: 600; }
+
+    /* ============== DRV SECTION ============== */
+    .drv-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 36px;
+      margin-bottom: 28px;
+    }
+
+    .drv-stats {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .drv-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .drv-row .name {
+      flex: 0 0 130px;
+      font-size: 13px;
+      color: var(--ink);
+    }
+
+    .drv-row .bar {
+      flex: 1;
+      height: 14px;
+      background: var(--rule-soft);
+      border-radius: 2px;
+      overflow: hidden;
+      position: relative;
+    }
+
+    .drv-row .bar-fill {
+      height: 100%;
+      background: var(--bedrock-navy);
+      border-radius: 2px;
+    }
+
+    .drv-row .count {
+      flex: 0 0 36px;
+      text-align: right;
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--ink);
+      font-feature-settings: "tnum" 1;
+    }
+
+    .drv-headline {
+      font-size: 64px;
+      font-weight: 800;
+      line-height: 1;
+      color: var(--bedrock-navy-deep);
+      font-feature-settings: "tnum" 1;
+      letter-spacing: -0.02em;
+      margin: 0;
+    }
+
+    .drv-headline-label {
+      font-size: 11px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--ink-muted);
+      margin-top: 6px;
+    }
+
+    .drv-status-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 22px;
+    }
+
+    .drv-chip {
+      font-size: 11px;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: var(--rule-soft);
+      color: var(--ink-soft);
+      font-feature-settings: "tnum" 1;
+    }
+
+    .drv-chip strong {
+      color: var(--bedrock-navy-deep);
+      font-weight: 700;
+    }
+
+    .drv-callout {
+      margin-top: 4px;
+      padding: 16px 20px;
+      background: var(--bedrock-navy-tint);
+      border-left: 3px solid var(--bedrock-navy);
+      border-radius: 0 4px 4px 0;
+    }
+
+    .drv-callout-label {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      font-weight: 600;
+      color: var(--bedrock-navy-deep);
+      margin-bottom: 4px;
+    }
+
+    .drv-callout-body {
+      font-size: 13px;
+      line-height: 1.6;
+      color: var(--bedrock-navy-deep);
+    }
+
+    /* ============== PRINT ============== */
+    @media print {
+      html, body { background: white; }
+      .page { box-shadow: none; margin: 0; page-break-after: always; }
+      @page { size: letter; margin: 0; }
+      .preview-banner { display: none; }
+    }
+
+    /* Mock-only banner */
+    .preview-banner {
+      max-width: 8.5in;
+      margin: 16px auto 0;
+      padding: 12px 16px;
+      background: #FFF3CD;
+      border-left: 3px solid #F5A623;
+      font-size: 12px;
+      color: #5A4500;
+      border-radius: 4px;
+      line-height: 1.5;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="preview-banner">
+    <strong>Mock preview</strong> · Bedrock Board Packet design v0 · using Lakes of Pine Forest April 2026 data as the realistic example. Five representative pages (cover, TOC, agenda, manager's executive summary, DRV summary) for sign-off on visual language. Once approved, the same template wires to live data and additional sections (financials, vendor activity, legal accounts, full minutes) get added.
+  </div>
+
+  <!-- ===================================================================
+       PAGE 1 — COVER
+       =================================================================== -->
+  <div class="page cover">
+    <div class="cover-hero">
+      <div class="cover-brand">
+        <img src="logos/bedrock_logo.png" alt="Bedrock Association Management">
+      </div>
+      <div class="cover-period">April 2026 · Volume 4</div>
+
+      <div class="cover-title">
+        <div class="cover-eyebrow">Board Meeting Packet</div>
+        <div class="cover-community">Lakes of Pine Forest<br>Homeowners Association</div>
+        <div class="cover-month">For the meeting of Tuesday, April 21, 2026</div>
+      </div>
+    </div>
+
+    <div class="cover-meta">
+      <div class="cover-meta-block">
+        <div class="label">Meeting</div>
+        <div class="body">
+          <strong>Tuesday, April 21, 2026 — 6:00 PM</strong><br>
+          Steve Radack Community Center<br>
+          18650 Clay Rd, Houston, TX 77084
+        </div>
+      </div>
+      <div class="cover-meta-block">
+        <div class="label">Prepared by</div>
+        <div class="body">
+          <strong>Bedrock Association Management, LLC</strong><br>
+          12808 W Airport Blvd, Ste 253<br>
+          Sugar Land, TX 77478
+        </div>
+      </div>
+      <div class="cover-meta-block">
+        <div class="label">Period covered</div>
+        <div class="body"><strong>March 2026</strong> · 1 month</div>
+      </div>
+      <div class="cover-meta-block">
+        <div class="label">Issued</div>
+        <div class="body"><strong>April 14, 2026</strong></div>
+      </div>
+
+      <div class="cover-tagline">
+        <span>Bedrock Association Management, LLC</span>
+        <span class="tag">Community. Simplified.</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       PAGE 2 — TABLE OF CONTENTS
+       =================================================================== -->
+  <div class="page interior">
+    <div class="page-header">
+      <div class="page-header-brand">
+        <img src="logos/bedrock_logo.png" alt="Bedrock">
+      </div>
+      <div class="page-header-context">
+        <strong>Lakes of Pine Forest</strong>
+        Board Packet · April 2026
+      </div>
+    </div>
+
+    <div class="section-eyebrow">Inside this packet</div>
+    <h1 class="section-title">Table of Contents</h1>
+    <p class="section-lede">A curated, navigable structure rather than 47 pages of source documents stapled together. Source docs are preserved in the appendices.</p>
+
+    <ul class="toc">
+      <li>
+        <span class="num">01</span>
+        <span class="title-cell">Manager's Executive Summary <span class="desc">What changed this month, what needs the board's attention</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">3</span>
+      </li>
+      <li>
+        <span class="num">02</span>
+        <span class="title-cell">Meeting Agenda <span class="desc">Order of business, decision items flagged</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">4</span>
+      </li>
+      <li>
+        <span class="num">03</span>
+        <span class="title-cell">KPIs at a Glance <span class="desc">Collection rate, delinquency aging, reserves, expense vs. budget</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">5</span>
+      </li>
+      <li>
+        <span class="num">04</span>
+        <span class="title-cell">Financial Highlights <span class="desc">Net income, variances, anomalies flagged for review</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">6</span>
+      </li>
+      <li>
+        <span class="num">05</span>
+        <span class="title-cell">Deed Restriction Activity <span class="desc">Volume, top categories, fairness check across the population</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">8</span>
+      </li>
+      <li>
+        <span class="num">06</span>
+        <span class="title-cell">Vendor &amp; Contract Activity <span class="desc">New approvals, work completed, upcoming contract decisions</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">10</span>
+      </li>
+      <li>
+        <span class="num">07</span>
+        <span class="title-cell">Legal &amp; Collections <span class="desc">Accounts at attorney, status, dollars outstanding</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">11</span>
+      </li>
+      <li>
+        <span class="num">08</span>
+        <span class="title-cell">Action Items Tracker <span class="desc">Carry-over items from prior meetings; closure status</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">12</span>
+      </li>
+      <li>
+        <span class="num">09</span>
+        <span class="title-cell">Prior Meeting Minutes <span class="desc">March 17, 2026</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">13</span>
+      </li>
+      <li>
+        <span class="num">A</span>
+        <span class="title-cell">Appendices <span class="desc">Full income statement, balance sheet, bank statements, complete DRV listing, utility bills</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">14+</span>
+      </li>
+    </ul>
+
+    <div class="page-foot">
+      <span>Lakes of Pine Forest · April 2026 Board Packet</span>
+      <span class="tag">Community. Simplified.</span>
+      <span class="pager">2 / 14</span>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       PAGE 3 — MANAGER'S EXECUTIVE SUMMARY
+       =================================================================== -->
+  <div class="page interior">
+    <div class="page-header">
+      <div class="page-header-brand">
+        <img src="logos/bedrock_logo.png" alt="Bedrock">
+      </div>
+      <div class="page-header-context">
+        <strong>Lakes of Pine Forest</strong>
+        Board Packet · April 2026
+      </div>
+    </div>
+
+    <div class="section-eyebrow">01 · Manager's Executive Summary</div>
+    <h1 class="section-title">What changed this month</h1>
+    <p class="section-lede">A 60-second read of where the community stands and what needs the board's attention tonight. Everything below is pulled from the underlying data — not a separate narrative.</p>
+
+    <div class="summary-grid">
+      <div class="summary-card">
+        <div class="label">Operating Net (March)</div>
+        <div class="value">+$13,098</div>
+        <div class="delta">vs. budget +$1,124 · YTD +$38,444 vs. budget +$3,371</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">DRV — Total Activity</div>
+        <div class="value">341</div>
+        <div class="delta">81 new first notices · 32 certified (DRV)</div>
+      </div>
+      <div class="summary-card warn">
+        <div class="label">⚠ Action required tonight</div>
+        <div class="value">3</div>
+        <div class="delta">Mailbox bid review · Pool gate vendor selection · MUD update</div>
+      </div>
+      <div class="summary-card">
+        <div class="label">Reserves &amp; Savings</div>
+        <div class="value">$435K</div>
+        <div class="delta">Combined reserve + savings balances at month-end</div>
+      </div>
+    </div>
+
+    <div class="summary-prose">
+      <p><strong>Operations:</strong> March came in $11,974 favorable to budget, driven primarily by water (–$1,500 vs. budget) and lower irrigation activity. Pool management seasonal ramp-up begins in April; expect $9–10K monthly from May through September.</p>
+      <p><strong>Deed restrictions:</strong> Total activity of 341 events covered 165 closures, 81 first notices, 39 second notices, and 32 certified-letter escalations. Trash cans/recycling and storage of unapproved items remain the top categories at 14% and 11% of total activity respectively.</p>
+      <p><strong>Decisions on tonight's agenda:</strong> Three items require the board's vote — mailbox repair vs. replace estimates (continued from March), pool gate access system selection, and continued MUD/lake maintenance negotiations. Estimates and vendor packets in the appendix.</p>
+    </div>
+
+    <div class="page-foot">
+      <span>Lakes of Pine Forest · April 2026 Board Packet</span>
+      <span class="tag">Community. Simplified.</span>
+      <span class="pager">3 / 14</span>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       PAGE 4 — AGENDA
+       =================================================================== -->
+  <div class="page interior">
+    <div class="page-header">
+      <div class="page-header-brand">
+        <img src="logos/bedrock_logo.png" alt="Bedrock">
+      </div>
+      <div class="page-header-context">
+        <strong>Lakes of Pine Forest</strong>
+        Board Packet · April 2026
+      </div>
+    </div>
+
+    <div class="section-eyebrow">02 · Meeting Agenda</div>
+    <h1 class="section-title">Tuesday, April 21, 2026 · 6:00 PM</h1>
+    <p class="section-lede">Steve Radack Community Center, 18650 Clay Rd, Houston, TX 77084. Items marked <span class="agenda-tag decision" style="font-size:9px;">Decision</span> require a board vote.</p>
+
+    <ol class="agenda">
+      <li>
+        <div class="agenda-title">Confirm Quorum &amp; Call Open Session to Order</div>
+      </li>
+      <li>
+        <div class="agenda-title">Approval of Meeting Minutes <span class="agenda-tag decision">Decision</span></div>
+        <ul class="agenda-sub">
+          <li>March 2026 minutes (attached, page 13)</li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">Ratifications Between Meetings</div>
+        <ul class="agenda-sub">
+          <li>Approved Itech Pool Gate Access System (email vote, March 28)</li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">New Business</div>
+      </li>
+      <li>
+        <div class="agenda-title">Finances <span class="agenda-tag report">Report</span></div>
+        <ul class="agenda-sub">
+          <li>Finance Committee report — March financials acceptance</li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">Business in Progress</div>
+        <ul class="agenda-sub">
+          <li>Continuation of negotiations with MUD and lake maintenance</li>
+          <li>Bids for repairs / replacements of mailboxes <span class="agenda-tag decision">Decision</span></li>
+          <li>Signs — proposals for review <span class="agenda-tag decision">Decision</span></li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">Committee Reports</div>
+        <ul class="agenda-sub">
+          <li>Social Committee — summer activities preparation</li>
+          <li>Grounds Committee — fountain control key combination access</li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">Homeowner Forum</div>
+        <ul class="agenda-sub">
+          <li>Up to 3 minutes per homeowner before repeating turns</li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">Executive Session <span class="agenda-tag executive">Executive</span></div>
+        <ul class="agenda-sub">
+          <li>Legal matters and attorney communications</li>
+          <li>Delinquent accounts and collection actions</li>
+          <li>Enforcement and compliance issues</li>
+          <li>Other confidential matters per Texas Property Code §209.0051</li>
+        </ul>
+      </li>
+      <li>
+        <div class="agenda-title">Executive Session Adjournment</div>
+      </li>
+      <li>
+        <div class="agenda-title">Next Regularly Scheduled Meeting</div>
+        <ul class="agenda-sub">
+          <li>Tuesday, May 19, 2026 · 6:00 PM · Steve Radack Community Center</li>
+        </ul>
+      </li>
+    </ol>
+
+    <div class="page-foot">
+      <span>Lakes of Pine Forest · April 2026 Board Packet</span>
+      <span class="tag">Community. Simplified.</span>
+      <span class="pager">4 / 14</span>
+    </div>
+  </div>
+
+  <!-- ===================================================================
+       PAGE 5 — DRV SUMMARY
+       =================================================================== -->
+  <div class="page interior">
+    <div class="page-header">
+      <div class="page-header-brand">
+        <img src="logos/bedrock_logo.png" alt="Bedrock">
+      </div>
+      <div class="page-header-context">
+        <strong>Lakes of Pine Forest</strong>
+        Board Packet · April 2026
+      </div>
+    </div>
+
+    <div class="section-eyebrow">05 · Deed Restriction Activity</div>
+    <h1 class="section-title">March 2026 enforcement</h1>
+    <p class="section-lede">A summary of deed restriction enforcement actions taken this period, grouped by violation type and current status. The complete homeowner-level listing is in the appendix on page 14.</p>
+
+    <div class="drv-grid">
+      <div>
+        <div class="drv-headline">341</div>
+        <div class="drv-headline-label">Total enforcement events</div>
+
+        <div class="drv-status-chips">
+          <div class="drv-chip"><strong>165</strong> closed</div>
+          <div class="drv-chip"><strong>81</strong> first notice</div>
+          <div class="drv-chip"><strong>39</strong> second notice</div>
+          <div class="drv-chip"><strong>32</strong> certified</div>
+          <div class="drv-chip"><strong>21</strong> pending hearing</div>
+          <div class="drv-chip"><strong>1</strong> resolved</div>
+          <div class="drv-chip"><strong>1</strong> owner response</div>
+          <div class="drv-chip"><strong>1</strong> void</div>
+        </div>
+
+        <div class="drv-callout" style="margin-top:24px;">
+          <div class="drv-callout-label">Fairness check — top category</div>
+          <div class="drv-callout-body">
+            Trash cans / recycling containers (54 events) tracks closely with the prior 12-month baseline. No homeowner cluster received treatment outside the typical days-to-cure range.
+          </div>
+        </div>
+      </div>
+
+      <div>
+        <div style="font-size:11px; letter-spacing:0.14em; text-transform:uppercase; font-weight:600; color:var(--ink-muted); margin-bottom:14px;">
+          Top categories by volume
+        </div>
+        <div class="drv-stats">
+          <div class="drv-row">
+            <span class="name">Trash Cans / Recycling</span>
+            <span class="bar"><span class="bar-fill" style="width:100%;"></span></span>
+            <span class="count">54</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Storage of Unapproved</span>
+            <span class="bar"><span class="bar-fill" style="width:88%;"></span></span>
+            <span class="count">47</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Fences</span>
+            <span class="bar"><span class="bar-fill" style="width:71%;"></span></span>
+            <span class="count">38</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Mow / Mow &amp; Edge</span>
+            <span class="bar"><span class="bar-fill" style="width:56%;"></span></span>
+            <span class="count">30</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Sod Yard</span>
+            <span class="bar"><span class="bar-fill" style="width:44%;"></span></span>
+            <span class="count">24</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Holiday Decorations</span>
+            <span class="bar"><span class="bar-fill" style="width:39%;"></span></span>
+            <span class="count">21</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Mildew</span>
+            <span class="bar"><span class="bar-fill" style="width:31%;"></span></span>
+            <span class="count">17</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Landscaping (all)</span>
+            <span class="bar"><span class="bar-fill" style="width:28%;"></span></span>
+            <span class="count">15</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Inoperable Vehicle</span>
+            <span class="bar"><span class="bar-fill" style="width:18%;"></span></span>
+            <span class="count">10</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Prune Trees</span>
+            <span class="bar"><span class="bar-fill" style="width:17%;"></span></span>
+            <span class="count">9</span>
+          </div>
+          <div class="drv-row">
+            <span class="name">Other (12 categories)</span>
+            <span class="bar"><span class="bar-fill" style="width:14%;"></span></span>
+            <span class="count">76</span>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page-foot">
+      <span>Lakes of Pine Forest · April 2026 Board Packet</span>
+      <span class="tag">Community. Simplified.</span>
+      <span class="pager">5 / 14</span>
+    </div>
+  </div>
+
+</body>
+</html>
