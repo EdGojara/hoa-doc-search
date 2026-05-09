@@ -700,19 +700,24 @@ Return ONLY the JSON. No markdown, no preamble, no commentary.`;
       }
     }
 
-    // 2. Postage for DRV notices (first + second + certified mail).
-    if (totalNotices > 0) {
-      const postage = findReimb('postage');
+    // 2. Postage for DRV first + second notices ONLY.
+    //    Certified letters don't add postage — the $35 deed-restriction-
+    //    certified-demand-letter fee covers the certified mail cost.
+    //    Prefers the dedicated 'postage_drv_notices' subcategory (added in
+    //    migration 006); falls back to generic 'postage' if not seeded.
+    const drvNoticeCount = firstCount + secondCount;
+    if (drvNoticeCount > 0) {
+      const postage = findReimb('postage_drv_notices') || findReimb('postage');
       if (postage) {
         const rate = Number(postage.unit_price || 0);
         newLines.push({
           source: 'reimbursable',
           source_ref_id: postage.id,
           category: postage.category,
-          description: `Postage — DRV notices (${firstCount} first, ${secondCount} second, ${certCount} certified)`,
-          qty: totalNotices,
+          description: `Postage — DRV notices (${firstCount} first, ${secondCount} second)`,
+          qty: drvNoticeCount,
           unit_price: rate,
-          amount: Math.round(totalNotices * rate * 100) / 100,
+          amount: Math.round(drvNoticeCount * rate * 100) / 100,
           sort_order: (sortIdx += 10)
         });
       }

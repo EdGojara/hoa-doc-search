@@ -1095,6 +1095,8 @@
         qty: Number(li.qty),
         unit_price: Number(li.unit_price),
         amount: Number(li.amount),
+        manual_override: !!li.manual_override,
+        manual_override_reason: li.manual_override_reason || null,
         sort_order: li.sort_order
       }));
 
@@ -1231,15 +1233,20 @@
     }
     const subtotal = billingCurrentInvoiceLineItems.reduce((s, li) => s + Number(li.amount || 0), 0);
     const editable = billingCurrentInvoice && (billingCurrentInvoice.status === 'draft' || billingCurrentInvoice.status === 'review');
-    const rows = billingCurrentInvoiceLineItems.map((li, idx) => `
+    const rows = billingCurrentInvoiceLineItems.map((li, idx) => {
+      const overrideTag = li.manual_override
+        ? ` <span title="Override reason: ${(li.manual_override_reason || '').replace(/"/g, '&quot;')}" style="color:#a60; font-size:11px; cursor:help; margin-left:4px;">⚠ override</span>`
+        : '';
+      return `
       <tr>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${li.description}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px;">${li.description}${overrideTag}</td>
         <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${editable ? `<input type="number" min="0" step="0.01" value="${li.qty}" style="width:70px; padding:3px;" onchange="billingUpdateQty(${idx}, this.value)">` : li.qty}</td>
-        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.unit_price)}</td>
+        <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${editable ? `<input type="number" min="0" step="0.0001" value="${li.unit_price}" style="width:80px; padding:3px;" onchange="billingUpdateUnitPrice(${idx}, this.value, this)">` : billingMoney(li.unit_price)}</td>
         <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:right;">${billingMoney(li.amount)}</td>
         <td style="padding:6px 8px; border-bottom:1px solid #eee; font-size:13px; text-align:center;">${editable ? `<button onclick="billingRemoveLineItem(${idx})" style="background:none; border:none; color:#a00; cursor:pointer; font-size:14px;" title="Remove">×</button>` : ''}</td>
       </tr>
-    `).join('');
+      `;
+    }).join('');
     container.innerHTML = `
       <table style="width:100%; border-collapse:collapse;">
         <thead><tr>
@@ -1264,6 +1271,44 @@
     const li = billingCurrentInvoiceLineItems[idx];
     li.qty = qty;
     li.amount = Math.round(qty * Number(li.unit_price || 0) * 100) / 100;
+    billingRenderLineItems();
+  }
+
+  function billingUpdateUnitPrice(idx, val, el) {
+    const li = billingCurrentInvoiceLineItems[idx];
+    const newPrice = Number(val || 0);
+    const oldPrice = Number(li.unit_price || 0);
+    if (Math.abs(newPrice - oldPrice) < 0.0001) return;   // no change
+
+    // Look up the rate-card price for this category to detect override.
+    const rateEntry = (billingCurrentRateCard || []).find(r => r.source_ref_id === li.source_ref_id);
+    const rateCardPrice = rateEntry ? Number(rateEntry.unit_price) : null;
+    const isOverride = rateCardPrice !== null && Math.abs(newPrice - rateCardPrice) > 0.0001;
+
+    if (isOverride) {
+      // Confirmation with required reason. Audit-trail rule: every override
+      // gets a "why" stored on the line item.
+      const reason = prompt(
+        `Override rate for "${li.description}"?\n\n` +
+        `Rate card: $${rateCardPrice.toFixed(2)}\n` +
+        `New price: $${newPrice.toFixed(2)}\n\n` +
+        `Reason for override (required for audit trail):\n` +
+        `Example: "letter was thicker than usual, postage was $1.03"`
+      );
+      if (reason === null || reason.trim() === '') {
+        // User cancelled or didn't provide reason — revert.
+        if (el) el.value = oldPrice;
+        return;
+      }
+      li.manual_override = true;
+      li.manual_override_reason = reason.trim();
+    } else {
+      // Back to rate-card price — clear override flag.
+      li.manual_override = false;
+      li.manual_override_reason = null;
+    }
+    li.unit_price = newPrice;
+    li.amount = Math.round(Number(li.qty || 0) * newPrice * 100) / 100;
     billingRenderLineItems();
   }
 
