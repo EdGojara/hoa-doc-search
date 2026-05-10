@@ -15,6 +15,7 @@
 // ============================================================================
 
 const express = require('express');
+const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
@@ -271,15 +272,52 @@ router.patch('/:vendorId', async (req, res) => {
 });
 
 // POST /api/vendors/invoices/upload  — drop invoice PDF -> AI parse -> match/create vendor -> save invoice
+//
+// Dedup defense (real AP workflow gotcha — same invoice shouldn't get filed twice):
+//   1. byte-level: if the EXACT same PDF bytes already exist for this mgmt co,
+//      short-circuit before paying for a Claude call. Returns 409 with existing
+//      invoice info; client can choose to force_insert (rare — only legit if
+//      the same PDF is the source for two communities, which is unusual).
+//   2. semantic: after parse, if (vendor_id, invoice_number) already exists,
+//      return 409. Client can force_insert (rare — vendor reused a number).
+//   3. soft signal (no invoice_number): same vendor + same total + same date
+//      within 60 days -> warn. Returns 409 with warning level.
+//
+// force_insert=true in body bypasses checks. The DB-level partial unique
+// index on (mgmt_co, vendor_id, invoice_number) is the final safety net for
+// race conditions.
 router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
   const t0 = Date.now();
   if (!req.file) return res.status(400).json({ error: 'No PDF uploaded (expected field "pdf")' });
   if (req.file.mimetype !== 'application/pdf') {
     return res.status(400).json({ error: `Unsupported file type: ${req.file.mimetype}` });
   }
-  const { community_id, finding_id, category_hint } = req.body || {};   // community_id optional; finding_id optional (for anomaly-triggered intake); category_hint optional (used only if AI doesn't detect)
+  const { community_id, finding_id, category_hint, force_insert } = req.body || {};
+  const forceInsert = force_insert === 'true' || force_insert === true;
 
   try {
+    // ---- Layer 1: file-hash check (skip if force_insert) ----
+    const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    if (!forceInsert) {
+      const { data: hashHit } = await supabase
+        .from('invoices_received')
+        .select('id, invoice_number, invoice_date, total_amount, file_name, vendor_id, vendor:vendors(name)')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('file_hash', fileHash)
+        .limit(1)
+        .maybeSingle();
+      if (hashHit) {
+        return res.status(409).json({
+          duplicate: true,
+          dup_reason: 'file_hash',
+          message: 'Exact same PDF file is already on file. Skipping Claude parse — confirm if you really want a second copy.',
+          existing_invoice: hashHit,
+          new_file_name: req.file.originalname
+        });
+      }
+    }
+
+    // ---- Parse with Claude ----
     const { parsed, usage } = await parseVendorInvoicePDF(req.file.buffer);
 
     if (!parsed.vendor_name || !parsed.total_amount) {
@@ -287,7 +325,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       parsed.parse_confidence = 'low';
     }
 
-    // Find or create the vendor.
+    // ---- Find or create the vendor (no insert yet) ----
     const matchResult = await findOrCreateVendor({
       name: parsed.vendor_name || 'Unknown Vendor',
       dba: parsed.vendor_dba,
@@ -298,7 +336,60 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       category: parsed.vendor_category_guess || category_hint || null
     });
 
-    // Insert the invoice.
+    // ---- Layer 2: semantic dup check on (vendor_id, invoice_number) ----
+    if (!forceInsert && parsed.invoice_number) {
+      const { data: numHit } = await supabase
+        .from('invoices_received')
+        .select('id, invoice_number, invoice_date, total_amount, file_name, vendor:vendors(name)')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('vendor_id', matchResult.vendor.id)
+        .eq('invoice_number', parsed.invoice_number)
+        .limit(1)
+        .maybeSingle();
+      if (numHit) {
+        return res.status(409).json({
+          duplicate: true,
+          dup_reason: 'vendor_invoice_number',
+          message: `Invoice #${parsed.invoice_number} from ${matchResult.vendor.name} is already on file. Confirm if this is a legitimate second copy.`,
+          existing_invoice: numHit,
+          parsed,
+          vendor: matchResult.vendor,
+          vendor_was_created: matchResult.was_created,
+          vendor_match_method: matchResult.match_method,
+          vendor_match_score: matchResult.match_score
+        });
+      }
+    }
+
+    // ---- Layer 3: soft dup signal (no invoice number, but same vendor+date+amount nearby) ----
+    if (!forceInsert && !parsed.invoice_number && parsed.invoice_date && parsed.total_amount != null) {
+      const dayLo = new Date(parsed.invoice_date); dayLo.setDate(dayLo.getDate() - 60);
+      const dayHi = new Date(parsed.invoice_date); dayHi.setDate(dayHi.getDate() + 60);
+      const { data: softHits } = await supabase
+        .from('invoices_received')
+        .select('id, invoice_number, invoice_date, total_amount, file_name')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('vendor_id', matchResult.vendor.id)
+        .eq('total_amount', Number(parsed.total_amount))
+        .gte('invoice_date', dayLo.toISOString().slice(0, 10))
+        .lte('invoice_date', dayHi.toISOString().slice(0, 10))
+        .limit(1);
+      if (softHits && softHits.length > 0) {
+        return res.status(409).json({
+          duplicate: true,
+          dup_reason: 'soft_amount_date',
+          message: `Same vendor + same amount ($${Number(parsed.total_amount).toLocaleString()}) within 60 days of this date already exists. Likely duplicate.`,
+          existing_invoice: softHits[0],
+          parsed,
+          vendor: matchResult.vendor,
+          vendor_was_created: matchResult.was_created,
+          vendor_match_method: matchResult.match_method,
+          vendor_match_score: matchResult.match_score
+        });
+      }
+    }
+
+    // ---- Insert the invoice ----
     const { data: invoice, error: insErr } = await supabase
       .from('invoices_received')
       .insert({
@@ -315,6 +406,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
         line_items: parsed.line_items || [],
         raw_text: null,
         file_name: req.file.originalname,
+        file_hash: fileHash,
         file_url: null,
         source: 'manual_upload',
         parsed_at: new Date().toISOString(),
@@ -326,7 +418,18 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       })
       .select()
       .single();
-    if (insErr) throw insErr;
+    if (insErr) {
+      // Catch unique-index violation gracefully (race condition between dup check and insert).
+      if (insErr.code === '23505') {
+        return res.status(409).json({
+          duplicate: true,
+          dup_reason: 'unique_constraint',
+          message: 'Database refused as duplicate (race condition or pre-existing record).',
+          db_error: insErr.message
+        });
+      }
+      throw insErr;
+    }
 
     // Trade-tape entry.
     await supabase.from('agent_runs').insert({
@@ -334,7 +437,7 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       community_id: community_id || null,
       module: 'vendors',
       endpoint: 'POST /api/vendors/invoices/upload',
-      request_input: { file_name: req.file.originalname, file_size: req.file.size, finding_id: finding_id || null },
+      request_input: { file_name: req.file.originalname, file_size: req.file.size, file_hash: fileHash, finding_id: finding_id || null, force_insert: forceInsert },
       retrieved_context: { vendor_id: matchResult.vendor.id, was_new_vendor: matchResult.was_created },
       prompt: 'parseVendorInvoicePDF',
       model: 'claude-sonnet-4-6',
@@ -355,6 +458,48 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
     });
   } catch (err) {
     console.error('[vendors] invoice upload failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// DELETE /api/vendors/invoices/:invoiceId  — remove an invoice (e.g. duplicate)
+// Vendor rollups recompute via the trusted_vendor_invoice_rollup trigger.
+router.delete('/invoices/:invoiceId', async (req, res) => {
+  const { invoiceId } = req.params;
+  try {
+    // Pull the row first so we can log what was deleted.
+    const { data: existing } = await supabase
+      .from('invoices_received')
+      .select('id, vendor_id, invoice_number, invoice_date, total_amount, file_name')
+      .eq('id', invoiceId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+
+    if (!existing) return res.status(404).json({ error: 'Invoice not found' });
+
+    const { error: delErr } = await supabase
+      .from('invoices_received')
+      .delete()
+      .eq('id', invoiceId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (delErr) throw delErr;
+
+    // Audit: every delete goes on the trade tape.
+    await supabase.from('agent_runs').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      module: 'vendors',
+      endpoint: 'DELETE /api/vendors/invoices/:id',
+      request_input: { invoice_id: invoiceId, reason: req.body?.reason || null },
+      retrieved_context: { deleted_record: existing },
+      prompt: null,
+      model: null,
+      response: { ok: true },
+      duration_ms: 0
+    });
+
+    res.json({ ok: true, deleted: existing });
+  } catch (err) {
+    console.error('[vendors] invoice delete failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
