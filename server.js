@@ -333,6 +333,18 @@ app.use('/api/vendors', vendorsRouter);
 const { router: helpRouter } = require('./api/help');
 app.use('/api/help', helpRouter);
 
+// Documents Tracker — Bedrock's canonical document library.
+// Endpoints under /api/documents/*. See api/documents.js and
+// migrations/012_documents_module.sql for the schema.
+// Drop a PDF -> Claude extracts metadata (community, category, period,
+// status) + structured fields (insurance premium, budget total, etc.).
+// Files stored in Supabase Storage with normalized filenames. Dedup
+// detection across byte-identical, content-identical, and semantic-match
+// patterns. Per-community matrix view. Natural-language retrieval.
+// Predecessor tagging based on community management history.
+const { router: documentsRouter } = require('./api/documents');
+app.use('/api/documents', documentsRouter);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });

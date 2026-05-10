@@ -221,6 +221,7 @@
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
   <div class="tab" onclick="switchTab('vendors')">🏢 Vendors</div>
   <div class="tab" onclick="switchTab('help')">📚 Help</div>
+  <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
 </div>
 
 <!-- Chat Tab -->
@@ -2469,6 +2470,70 @@
   </div>
 </div>
 
+<!-- =========================================================================
+     DOCUMENTS TAB — Bedrock's canonical document library
+     Drop PDFs, auto-extract metadata, dedup, per-community matrix view,
+     natural-language retrieval, predecessor tagging.
+     ========================================================================= -->
+<div class="tab-content" id="tab-docs" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1300px;">
+    <h2 style="margin:0 0 4px 0;">🗂️ Documents — Community Library</h2>
+    <p style="color:#888; margin:0 0 20px 0; font-size:13px;">
+      Drop a PDF, Claude figures out what it is. The system tracks expirations, flags duplicates, surfaces gaps, and serves docs back when asked in plain English.
+      <span style="color:#315A87; font-weight:500;">Single source of truth for community documents.</span>
+    </p>
+
+    <!-- Natural language search -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <h3 style="margin-top:0;">🔍 Find a document</h3>
+      <div style="display:flex; gap:8px;">
+        <input type="text" id="docs-query" placeholder='e.g., "give me the 2026 LPF approved budget" or "show me all expired insurance"'
+               style="flex:1; padding:10px; font-size:14px; border:1px solid #d0d7de; border-radius:6px;"
+               onkeydown="if(event.key==='Enter') docsQuery();">
+        <button class="action-btn" onclick="docsQuery()">Find</button>
+      </div>
+      <div id="docs-query-results" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Upload area -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">📥 Upload documents</h3>
+        <span style="font-size:11px; color:#888;">No metadata needed — Claude reads the file and figures it out</span>
+      </div>
+      <div id="docs-drop-area"
+           style="border:2px dashed #d0d7de; border-radius:8px; padding:24px; text-align:center; cursor:pointer; background:#f9f9f9;"
+           onclick="document.getElementById('docs-file-input').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#315A87';"
+           ondragleave="this.style.borderColor='#d0d7de';"
+           ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; if(event.dataTransfer.files.length) docsUploadFiles(event.dataTransfer.files);">
+        <div style="font-size:32px;">📄</div>
+        <p style="margin:8px 0 0 0; color:#444; font-size:14px;"><strong>Click or drop one or more PDFs</strong></p>
+        <p style="margin:4px 0 0 0; color:#888; font-size:11px;">~30-60 seconds per document for Claude to extract metadata</p>
+      </div>
+      <input type="file" id="docs-file-input" accept=".pdf" multiple style="display:none" onchange="if(this.files.length) docsUploadFiles(this.files)">
+      <div id="docs-upload-queue" style="margin-top:12px;"></div>
+    </div>
+
+    <!-- Pending duplicates banner (only shows if there are any) -->
+    <div id="docs-dup-banner" style="display:none; margin-bottom:16px;"></div>
+
+    <!-- Per-community matrix view -->
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">📊 Document Coverage Matrix</h3>
+        <select id="docs-matrix-filter" onchange="docsLoadMatrix()" style="padding:6px; font-size:13px;">
+          <option value="">All communities</option>
+        </select>
+      </div>
+      <p style="font-size:12px; color:#666; margin:0 0 12px 0;">
+        Each row = a community. Each column = a document category. Cells show status: 🟢 current · 🟡 expiring soon · 🔴 expired · ⚪ missing · ⬜ N/A.
+      </p>
+      <div id="docs-matrix-container" style="font-size:12px; color:#888;">Loading…</div>
+    </div>
+  </div>
+</div>
+
 <script>
   // ---------- Financial Review state ----------
   let finrevCommunitiesCache = [];
@@ -4621,6 +4686,260 @@ ${questionsPage}
       if (onclick === "switchTab('help')") {
         t.addEventListener('click', () => {
           if (!helpHasLoaded) { helpHasLoaded = true; helpLoadDocs(); }
+        });
+      }
+    });
+  });
+
+  // ==========================================================================
+  // DOCUMENTS TAB — Bedrock's canonical document library
+  // ==========================================================================
+  let docsUploadQueue = [];
+  let docsCommunitiesCache = [];
+  let docsCategoriesCache = [];
+  let docsMatrixData = [];
+
+  function docsRenderQueue() {
+    const wrap = document.getElementById('docs-upload-queue');
+    if (docsUploadQueue.length === 0) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = docsUploadQueue.map(item => {
+      const statusIcon =
+        item.status === 'pending' ? '<span style="color:#888;">⏳</span>' :
+        item.status === 'uploading' ? '<span style="color:#1565c0;">⚙️</span>' :
+        item.status === 'done' ? '<span style="color:#2e7d32;">✅</span>' :
+        item.status === 'duplicate' ? '<span style="color:#a06400;">⚠️</span>' :
+        '<span style="color:#a00;">❌</span>';
+      return `<div style="border:1px solid #e0e0e0; border-radius:6px; padding:10px 12px; margin-bottom:6px; background:white; font-size:13px;">
+        <div>${statusIcon} <strong>${escapeHtml(item.file.name)}</strong> <span style="color:#888; font-size:11px;">(${(item.file.size/1024).toFixed(0)} KB)</span></div>
+        ${item.resultHtml ? `<div style="margin-top:6px; font-size:12px;">${item.resultHtml}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  async function docsUploadFiles(fileList) {
+    for (let i = 0; i < fileList.length; i++) {
+      const f = fileList[i];
+      if (f.type !== 'application/pdf' && !f.name.toLowerCase().endsWith('.pdf')) continue;
+      docsUploadQueue.push({ id: 'q'+Date.now()+'_'+i, file: f, status: 'pending', resultHtml: '' });
+    }
+    docsRenderQueue();
+    // Process serially
+    for (const item of docsUploadQueue) {
+      if (item.status !== 'pending') continue;
+      item.status = 'uploading';
+      item.resultHtml = '<span style="color:#666;">Claude reading the PDF + extracting metadata…</span>';
+      docsRenderQueue();
+      try {
+        const fd = new FormData();
+        fd.append('pdf', item.file);
+        const r = await fetch('/api/documents/upload', { method: 'POST', body: fd });
+        const data = await r.json();
+        if (r.status === 409 && data.duplicate) {
+          item.status = 'duplicate';
+          item.resultHtml = `<div style="color:#a06400;">⚠️ ${escapeHtml(data.message)}</div>`;
+          docsRenderQueue();
+          continue;
+        }
+        if (!r.ok) {
+          item.status = 'error';
+          item.resultHtml = `<div style="color:#a00;">❌ ${escapeHtml(data.error || 'failed')}</div>`;
+          docsRenderQueue();
+          continue;
+        }
+        item.status = 'done';
+        const d = data.document;
+        const ex = data.extracted;
+        const tags = [];
+        if (data.matched_community) tags.push(`<span style="background:#e3f2fd; color:#1565c0; padding:1px 6px; border-radius:3px; font-size:10px;">${escapeHtml(data.matched_community.name)}</span>`);
+        if (d.category) tags.push(`<span style="background:#f5f5f5; color:#444; padding:1px 6px; border-radius:3px; font-size:10px;">${escapeHtml(d.category)}</span>`);
+        if (d.period_label) tags.push(`<span style="background:#fff8e1; color:#7b5e00; padding:1px 6px; border-radius:3px; font-size:10px;">${escapeHtml(d.period_label)}</span>`);
+        if (d.created_by_mgmt_company === 'Predecessor') tags.push(`<span style="background:#fbe9e7; color:#bf360c; padding:1px 6px; border-radius:3px; font-size:10px;">Pre-Bedrock</span>`);
+        if (data.semantic_duplicate) tags.push(`<span style="background:#fff4e0; color:#a06400; padding:1px 6px; border-radius:3px; font-size:10px;">⚠️ Possible dup of existing</span>`);
+        item.resultHtml = `<div style="color:#2e7d32;">✅ <strong>${escapeHtml(d.title || d.file_name_normalized)}</strong></div>
+          <div style="margin-top:4px;">${tags.join(' ')}</div>
+          <div style="margin-top:4px; color:#666; font-size:11px;">Saved as: <code>${escapeHtml(d.file_name_normalized)}</code> · confidence: ${escapeHtml(d.extraction_confidence)}${ex?.extraction_notes ? ` · <em>"${escapeHtml(ex.extraction_notes)}"</em>` : ''}</div>`;
+        docsRenderQueue();
+      } catch (e) {
+        item.status = 'error';
+        item.resultHtml = `<div style="color:#a00;">❌ ${escapeHtml(e.message)}</div>`;
+        docsRenderQueue();
+      }
+    }
+    // Refresh the matrix after batch completes
+    setTimeout(() => { docsLoadMatrix(); docsLoadDups(); }, 400);
+  }
+
+  async function docsQuery() {
+    const q = document.getElementById('docs-query').value.trim();
+    const out = document.getElementById('docs-query-results');
+    if (!q) { out.innerHTML = ''; return; }
+    out.innerHTML = '<div style="color:#666; font-size:13px;">⚙️ Looking…</div>';
+    try {
+      const r = await fetch('/api/documents/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ question: q })
+      });
+      const data = await r.json();
+      if (!r.ok) {
+        out.innerHTML = `<div style="color:#a00; font-size:13px;">${escapeHtml(data.error || 'Query failed')}</div>`;
+        return;
+      }
+      if ((data.results || []).length === 0) {
+        out.innerHTML = `<div style="background:#fff7d6; border:1px solid #e0d089; border-radius:6px; padding:10px; font-size:13px;">
+          <strong>${escapeHtml(data.interpretation || 'No matches found')}</strong>
+          <div style="margin-top:4px; color:#666;">No documents in the library match this. Try a different phrasing, or check that the document has been uploaded.</div>
+        </div>`;
+        return;
+      }
+      out.innerHTML = `
+        <div style="background:#e3f2fd; border-left:3px solid #1565c0; padding:8px 12px; margin-bottom:10px; font-size:12px;">
+          <strong>Interpreted as:</strong> ${escapeHtml(data.interpretation)}
+        </div>
+        ${(data.results || []).map(d => `
+          <div style="border:1px solid #e0e0e0; border-radius:6px; padding:10px 12px; margin-bottom:6px; background:white; font-size:13px; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <div style="font-weight:600; color:#315A87;">${escapeHtml(d.title || d.file_name_normalized)}</div>
+              <div style="margin-top:2px; color:#888; font-size:11px;">
+                ${escapeHtml(d.community?.name || '—')} · ${escapeHtml(d.category)} · ${escapeHtml(d.period_label || '—')} ·
+                ${d.created_by_mgmt_company === 'Predecessor' ? '<span style="color:#bf360c;">Pre-Bedrock · </span>' : ''}
+                uploaded ${new Date(d.uploaded_at).toLocaleDateString()}
+              </div>
+            </div>
+            ${d.file_path ? `<a href="/api/documents/${d.id}/download" target="_blank" class="secondary-btn" style="font-size:11px; padding:4px 10px; text-decoration:none;">⬇️ Download</a>` : '<span style="color:#888; font-size:11px;">(file not stored)</span>'}
+          </div>
+        `).join('')}
+      `;
+    } catch (e) {
+      out.innerHTML = `<div style="color:#a00; font-size:13px;">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function docsLoadMatrix() {
+    const wrap = document.getElementById('docs-matrix-container');
+    wrap.innerHTML = '<div style="color:#888;">Loading…</div>';
+    const filter = document.getElementById('docs-matrix-filter')?.value;
+    try {
+      const r = await fetch(`/api/documents/matrix${filter ? `?community_id=${filter}` : ''}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      docsMatrixData = data.matrix || [];
+
+      // Group by community → categories
+      const byCommunity = {};
+      docsMatrixData.forEach(row => {
+        if (!byCommunity[row.community_id]) byCommunity[row.community_id] = { name: row.community_name, rows: [] };
+        byCommunity[row.community_id].rows.push(row);
+      });
+
+      const communityIds = Object.keys(byCommunity).sort((a, b) => byCommunity[a].name.localeCompare(byCommunity[b].name));
+      if (communityIds.length === 0) {
+        wrap.innerHTML = '<div style="color:#888; padding:20px; text-align:center;">No documents yet. Drop some PDFs above to start populating the library.</div>';
+        return;
+      }
+
+      function statusIcon(s, days) {
+        if (s === 'missing') return '<span title="Missing" style="color:#aaa;">⚪</span>';
+        if (s === 'expired') return `<span title="Expired ${Math.abs(days||0)} days ago" style="color:#d32f2f;">🔴</span>`;
+        if (s === 'expiring_soon') return `<span title="Expires in ${days||0} days" style="color:#ed6c02;">🟡</span>`;
+        if (s === 'current') return '<span title="Current" style="color:#2e7d32;">🟢</span>';
+        return '<span style="color:#aaa;">⬜</span>';
+      }
+
+      const out = [];
+      out.push('<div style="overflow-x:auto;">');
+      for (const cid of communityIds) {
+        const c = byCommunity[cid];
+        // gap counts
+        const requiredRows = c.rows.filter(r => r.required_for_resale);
+        const okCount = requiredRows.filter(r => r.matrix_status === 'current').length;
+        const totalRequired = requiredRows.length;
+        const pctOk = totalRequired > 0 ? Math.round(okCount / totalRequired * 100) : 0;
+        const statusColor = pctOk >= 90 ? '#2e7d32' : pctOk >= 60 ? '#ed6c02' : '#d32f2f';
+
+        out.push(`<div style="margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
+            <h4 style="margin:0; color:#315A87;">${escapeHtml(c.name)}</h4>
+            <span style="font-size:12px; color:${statusColor}; font-weight:600;">${okCount}/${totalRequired} resale-required docs current (${pctOk}%)</span>
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead><tr style="background:#f5f5f5;">
+              <th style="padding:6px 8px; text-align:left; width:42%;">Category</th>
+              <th style="padding:6px 8px; text-align:center; width:6%;">Status</th>
+              <th style="padding:6px 8px; text-align:left; width:14%;">Period</th>
+              <th style="padding:6px 8px; text-align:left; width:14%;">Expires</th>
+              <th style="padding:6px 8px; text-align:center; width:8%;">HWD</th>
+              <th style="padding:6px 8px; text-align:center; width:8%;">Vantaca</th>
+              <th style="padding:6px 8px; text-align:center; width:8%;">Required</th>
+            </tr></thead>
+            <tbody>
+              ${c.rows.map(r => `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:6px 8px;">${escapeHtml(r.category_display)}</td>
+                <td style="padding:6px 8px; text-align:center; font-size:14px;">${statusIcon(r.matrix_status, r.days_to_expiration)}</td>
+                <td style="padding:6px 8px;">${escapeHtml(r.current_period || '—')}</td>
+                <td style="padding:6px 8px; ${r.matrix_status === 'expired' ? 'color:#d32f2f;' : r.matrix_status === 'expiring_soon' ? 'color:#ed6c02;' : ''}">${r.current_expiration_date || '—'}</td>
+                <td style="padding:6px 8px; text-align:center;">${r.current_document_id ? (r.in_homewise ? '✓' : '<span style="color:#aaa;">—</span>') : ''}</td>
+                <td style="padding:6px 8px; text-align:center;">${r.current_document_id ? (r.in_vantaca ? '✓' : '<span style="color:#aaa;">—</span>') : ''}</td>
+                <td style="padding:6px 8px; text-align:center; color:#888;">${r.required_for_resale ? '★' : ''}</td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`);
+      }
+      out.push('</div>');
+      wrap.innerHTML = out.join('');
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#a00;">Failed to load matrix: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function docsLoadCommunitiesFilter() {
+    try {
+      const r = await fetch('/api/billing/communities');
+      const data = await r.json();
+      docsCommunitiesCache = (data.communities || []).sort((a, b) => a.name.localeCompare(b.name));
+      const sel = document.getElementById('docs-matrix-filter');
+      if (!sel) return;
+      sel.innerHTML = '<option value="">All communities</option>' + docsCommunitiesCache.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+    } catch (_) { /* swallow */ }
+  }
+
+  async function docsLoadDups() {
+    try {
+      const r = await fetch('/api/documents/duplicates/pending');
+      const data = await r.json();
+      const banner = document.getElementById('docs-dup-banner');
+      if (!r.ok || !(data.groups || []).length) { banner.style.display = 'none'; return; }
+      banner.style.display = 'block';
+      banner.innerHTML = `<div class="panel" style="background:#fff4e0; border-color:#e0c089;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong style="color:#a06400;">⚠️ ${data.groups.length} duplicate group${data.groups.length === 1 ? '' : 's'} pending review</strong>
+            <div style="font-size:12px; color:#666; margin-top:2px;">trustEd flagged documents that may be duplicates. Review and decide what to keep.</div>
+          </div>
+          <button class="secondary-btn" onclick="docsShowDups()">Review →</button>
+        </div>
+      </div>`;
+    } catch (_) { /* swallow */ }
+  }
+
+  function docsShowDups() {
+    alert('Dedup resolution UI coming in next push. For now the duplicates are visible in /api/documents/duplicates/pending and can be resolved via API.');
+  }
+
+  // Auto-load matrix the first time the Documents tab is opened
+  let docsHasLoaded = false;
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('docs')") {
+        t.addEventListener('click', () => {
+          if (!docsHasLoaded) {
+            docsHasLoaded = true;
+            docsLoadCommunitiesFilter();
+            docsLoadMatrix();
+            docsLoadDups();
+          }
         });
       }
     });
