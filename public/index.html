@@ -739,7 +739,7 @@
       </div>
     </div>
 
-    <div class="panel" style="margin-bottom:16px;">
+    <div class="panel" id="billing-active-contract-panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">📜 Active Contract</h4>
       <div id="billing-contract-summary" style="font-size:14px;"></div>
     </div>
@@ -782,7 +782,7 @@
       <div id="billing-pending-line-items" style="font-size:13px;"></div>
     </div>
 
-    <div class="panel" style="margin-bottom:16px;">
+    <div class="panel" id="billing-draft-invoice-panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">✨ Generate Draft Invoice</h4>
       <div style="display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap;">
         <div>
@@ -806,7 +806,7 @@
       <div id="billing-draft-result" style="margin-top:12px; font-size:14px;"></div>
     </div>
 
-    <details class="panel" style="margin-bottom:16px;">
+    <details class="panel" id="billing-fee-schedule-panel" style="margin-bottom:16px;">
       <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
         📋 Fee Schedule <span style="color:#888; font-weight:400; font-size:12px;">(click to expand)</span>
       </summary>
@@ -967,6 +967,14 @@
       ? `${community.legal_name || ''} · Vantaca code: ${community.vantaca_code || '?'}`
       : '';
 
+    // Reset all panels to visible (in case a previous community had no contract and hid them)
+    const _draft = document.getElementById('billing-draft-invoice-panel');
+    const _fee = document.getElementById('billing-fee-schedule-panel');
+    const _manual = document.getElementById('billing-community-manual-panel');
+    if (_draft) _draft.style.display = '';
+    if (_fee) _fee.style.display = '';
+    if (_manual) _manual.style.display = '';
+
     document.getElementById('billing-contract-summary').textContent = 'Loading…';
     document.getElementById('billing-fee-fixed').textContent = '';
     document.getElementById('billing-fee-reimbursables').textContent = '';
@@ -1030,12 +1038,22 @@
       // 404 = no active contract for this community (a freshly seeded one).
       if (String(e.message).includes('404')) {
         document.getElementById('billing-contract-summary').innerHTML =
-          '<div style="padding:8px; background:#fff3cd; border-left:3px solid #f5a623;">No active contract for this community yet. Upload the management contract + fee schedule to enable billing.</div>';
-        // Hide draft form + fee schedule since there are no rates to bill against.
-        const draftPanel = document.querySelector('#billing-community-detail .panel:nth-of-type(2)');
-        const feePanel = document.querySelector('#billing-community-detail .panel:nth-of-type(3)');
+          '<div style="padding:8px; background:#fff3cd; border-left:3px solid #f5a623;">No active contract for this community yet. <strong>Use the Upload / Update Contract panel above</strong> to add one.</div>';
+        // Hide draft form + fee schedule + manual line items since there are no rates to bill against.
+        // Use stable IDs (not :nth-of-type) so adding new panels doesn't break this.
+        const draftPanel = document.getElementById('billing-draft-invoice-panel');
+        const feePanel = document.getElementById('billing-fee-schedule-panel');
+        const manualPanel = document.getElementById('billing-community-manual-panel');
         if (draftPanel) draftPanel.style.display = 'none';
         if (feePanel) feePanel.style.display = 'none';
+        if (manualPanel) manualPanel.style.display = 'none';
+        // Auto-open the contract upload panel since that's clearly the next action
+        const ctBody = document.getElementById('billing-contract-mgmt-body');
+        const ctTog = document.getElementById('billing-contract-toggle');
+        if (ctBody && ctTog && ctBody.style.display === 'none') {
+          ctBody.style.display = 'block';
+          ctTog.textContent = 'Hide';
+        }
       } else {
         document.getElementById('billing-contract-summary').innerHTML = `<div style="color:#a00;">Failed to load contract: ${e.message}</div>`;
       }
