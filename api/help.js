@@ -122,18 +122,20 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
   if (!source_type) return res.status(400).json({ error: 'source_type is required' });
 
   try {
-    // Dedup check by file hash
+    // Dedup check by file hash. Check returns ANY existing record (regardless of status)
+    // because the unique constraint is unconditional on (mgmt_co, file_hash).
     const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
-    const { data: existing } = await supabase
+    const { data: existing, error: existingErr } = await supabase
       .from('knowledge_documents')
       .select('id, title, status')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('file_hash', fileHash)
       .maybeSingle();
-    if (existing && existing.status === 'active') {
+    if (existingErr) console.warn('[help] dedup pre-check error:', existingErr.message);
+    if (existing) {
       return res.status(409).json({
         duplicate: true,
-        message: `That exact PDF is already ingested as "${existing.title}". To replace, delete the existing document first or upload a different version.`,
+        message: `That exact PDF is already ingested as "${existing.title}" (status: ${existing.status}). To replace it, delete the existing document from the list below first, then re-upload.`,
         existing
       });
     }
@@ -160,7 +162,26 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
       })
       .select()
       .single();
-    if (docErr) throw docErr;
+    if (docErr) {
+      // Postgres unique violation = duplicate file_hash slipped past the pre-check
+      // (race condition, RLS read/write asymmetry, etc.). Render the same friendly 409.
+      if (docErr.code === '23505') {
+        const { data: dup } = await supabase
+          .from('knowledge_documents')
+          .select('id, title, status')
+          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+          .eq('file_hash', fileHash)
+          .maybeSingle();
+        return res.status(409).json({
+          duplicate: true,
+          message: dup
+            ? `That exact PDF is already ingested as "${dup.title}" (status: ${dup.status}). To replace it, delete the existing document from the list below first, then re-upload.`
+            : 'That exact PDF is already ingested. Delete the existing one first, then re-upload.',
+          existing: dup || null
+        });
+      }
+      throw docErr;
+    }
 
     // Chunk each page, then embed all chunks in batches of 50 (OpenAI limit-friendly)
     const allChunkRows = [];
