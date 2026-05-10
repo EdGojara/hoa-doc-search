@@ -204,7 +204,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
     // 1) Hash check for byte-level duplicate
     const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
     const { data: existing } = await supabase
-      .from('documents')
+      .from('library_documents')
       .select('id, title, status, file_name_normalized, community_id, category')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('file_hash', fileHash)
@@ -245,7 +245,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
     let semanticDup = null;
     if (community?.id && parsed.category && parsed.period_label) {
       const { data: sdup } = await supabase
-        .from('documents')
+        .from('library_documents')
         .select('id, title, file_name_normalized, status, uploaded_at')
         .eq('management_company_id', BEDROCK_MGMT_CO_ID)
         .eq('community_id', community.id)
@@ -272,7 +272,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
 
     // 8) Insert document row
     const { data: doc, error: insErr } = await supabase
-      .from('documents')
+      .from('library_documents')
       .insert({
         id: docId,
         management_company_id: BEDROCK_MGMT_CO_ID,
@@ -382,7 +382,7 @@ router.get('/matrix', async (req, res) => {
 router.get('/', async (req, res) => {
   try {
     let q = supabase
-      .from('documents')
+      .from('library_documents')
       .select('*, community:communities(name, legal_name), extracted:document_extracted_fields(fields)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('uploaded_at', { ascending: false });
@@ -410,7 +410,7 @@ router.get('/', async (req, res) => {
 router.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase
-      .from('documents')
+      .from('library_documents')
       .select('*, community:communities(name, legal_name), extracted:document_extracted_fields(fields)')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -430,7 +430,7 @@ router.get('/:id', async (req, res) => {
 router.get('/:id/download', async (req, res) => {
   try {
     const { data: doc } = await supabase
-      .from('documents')
+      .from('library_documents')
       .select('file_path, file_name_normalized')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -492,7 +492,7 @@ Return ONLY the JSON, no preamble.`;
 
     // Query documents matching the parsed filters
     let q = supabase
-      .from('documents')
+      .from('library_documents')
       .select('*, community:communities(name)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID);
 
@@ -537,7 +537,7 @@ router.patch('/:id', async (req, res) => {
     if (Object.keys(update).length === 0) return res.status(400).json({ error: 'no updatable fields supplied' });
 
     const { data, error } = await supabase
-      .from('documents')
+      .from('library_documents')
       .update(update)
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -557,7 +557,7 @@ router.patch('/:id', async (req, res) => {
 router.delete('/:id', async (req, res) => {
   try {
     const { data: doc } = await supabase
-      .from('documents')
+      .from('library_documents')
       .select('file_path')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -566,7 +566,7 @@ router.delete('/:id', async (req, res) => {
       try { await supabase.storage.from(STORAGE_BUCKET).remove([doc.file_path]); } catch (_) { /* swallow */ }
     }
     const { error } = await supabase
-      .from('documents')
+      .from('library_documents')
       .delete()
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID);
@@ -585,7 +585,7 @@ router.get('/duplicates/pending', async (req, res) => {
   try {
     const { data: groups, error } = await supabase
       .from('document_duplicate_groups')
-      .select('*, members:document_duplicate_members(document_id, decision, document:documents(*))')
+      .select('*, members:document_duplicate_members(document_id, decision, document:library_documents(*))')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('resolution_status', 'pending')
       .order('detected_at', { ascending: false });
@@ -617,16 +617,16 @@ router.post('/duplicates/:groupId/resolve', async (req, res) => {
       // Apply the decision
       if (d.decision === 'delete') {
         const { data: doc } = await supabase
-          .from('documents')
+          .from('library_documents')
           .select('file_path')
           .eq('id', d.document_id)
           .maybeSingle();
         if (doc?.file_path) {
           try { await supabase.storage.from(STORAGE_BUCKET).remove([doc.file_path]); } catch (_) { /* swallow */ }
         }
-        await supabase.from('documents').delete().eq('id', d.document_id);
+        await supabase.from('library_documents').delete().eq('id', d.document_id);
       } else if (d.decision === 'keep_as_version') {
-        await supabase.from('documents').update({ status: 'superseded' }).eq('id', d.document_id);
+        await supabase.from('library_documents').update({ status: 'superseded' }).eq('id', d.document_id);
       }
       // 'keep' = no change to document
     }

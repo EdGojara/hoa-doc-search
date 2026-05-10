@@ -1,10 +1,10 @@
 -- ============================================================================
--- 012_documents_module.sql
+-- 012_library_documents_module.sql
 -- ----------------------------------------------------------------------------
 -- Documents Tracker module. Bedrock's canonical document library.
 --
 -- Architectural decision: trustEd becomes the single source of truth for
--- community documents. Files live in Supabase Storage. HomeWise Doctivity
+-- community library_documents. Files live in Supabase Storage. HomeWise Doctivity
 -- and Vantaca's library become DOWNSTREAM consumers — staff downloads from
 -- trustEd, uploads to vendors, marks the push state in trustEd. Eventually
 -- (Push 2) we automate push via vendor APIs.
@@ -26,12 +26,12 @@
 -- ============================================================================
 
 -- ============================================================================
--- documents
+-- library_documents
 -- One row per uploaded PDF. Status determines whether this version is
 -- currently active or has been superseded by a newer version of the same
 -- (community, category, period) tuple.
 -- ============================================================================
-CREATE TABLE IF NOT EXISTS documents (
+CREATE TABLE IF NOT EXISTS library_documents (
   id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
   management_company_id    UUID NOT NULL REFERENCES management_companies(id),
   community_id             UUID REFERENCES communities(id),     -- nullable for portfolio-level docs
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS documents (
   extraction_notes         TEXT,                                 -- Claude's notes if anything was ambiguous
   -- Free-form
   notes                    TEXT,                                 -- staff notes about this specific document
-  superseded_by_id         UUID REFERENCES documents(id),
+  superseded_by_id         UUID REFERENCES library_documents(id),
   uploaded_by              UUID,                                 -- nullable until auth
   uploaded_at              TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -83,18 +83,18 @@ CREATE TABLE IF NOT EXISTS documents (
 
 -- Quick lookups
 CREATE INDEX IF NOT EXISTS idx_docs_mgmt_co_community_category
-  ON documents(management_company_id, community_id, category, status);
+  ON library_documents(management_company_id, community_id, category, status);
 CREATE INDEX IF NOT EXISTS idx_docs_status
-  ON documents(management_company_id, status) WHERE status IN ('current','missing');
+  ON library_documents(management_company_id, status) WHERE status IN ('current','missing');
 CREATE INDEX IF NOT EXISTS idx_docs_expiration
-  ON documents(expiration_date) WHERE expiration_date IS NOT NULL AND status = 'current';
+  ON library_documents(expiration_date) WHERE expiration_date IS NOT NULL AND status = 'current';
 CREATE UNIQUE INDEX IF NOT EXISTS ux_docs_file_hash
-  ON documents(management_company_id, file_hash)
+  ON library_documents(management_company_id, file_hash)
   WHERE file_hash IS NOT NULL;
 
-DROP TRIGGER IF EXISTS trg_documents_updated_at ON documents;
-CREATE TRIGGER trg_documents_updated_at
-  BEFORE UPDATE ON documents
+DROP TRIGGER IF EXISTS trg_library_documents_updated_at ON library_documents;
+CREATE TRIGGER trg_library_documents_updated_at
+  BEFORE UPDATE ON library_documents
   FOR EACH ROW EXECUTE FUNCTION trusted_set_updated_at();
 
 -- ============================================================================
@@ -114,7 +114,7 @@ CREATE TRIGGER trg_documents_updated_at
 --                      attendees: [...], decisions: [...] }
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS document_extracted_fields (
-  document_id              UUID PRIMARY KEY REFERENCES documents(id) ON DELETE CASCADE,
+  document_id              UUID PRIMARY KEY REFERENCES library_documents(id) ON DELETE CASCADE,
   fields                   JSONB NOT NULL,
   extracted_at             TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -174,7 +174,7 @@ ON CONFLICT (category) DO UPDATE SET
 -- ============================================================================
 -- community_management_history
 -- Tracks when each community came under Bedrock's management. Used to
--- auto-tag predecessor-era documents based on creation date.
+-- auto-tag predecessor-era library_documents based on creation date.
 -- ============================================================================
 CREATE TABLE IF NOT EXISTS community_management_history (
   id                       UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
@@ -216,7 +216,7 @@ CREATE TABLE IF NOT EXISTS document_duplicate_groups (
 
 CREATE TABLE IF NOT EXISTS document_duplicate_members (
   group_id                 UUID NOT NULL REFERENCES document_duplicate_groups(id) ON DELETE CASCADE,
-  document_id              UUID NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+  document_id              UUID NOT NULL REFERENCES library_documents(id) ON DELETE CASCADE,
   decision                 TEXT
                            CHECK (decision IS NULL OR decision IN ('keep','delete','keep_as_version')),
   PRIMARY KEY (group_id, document_id)
@@ -228,14 +228,14 @@ CREATE INDEX IF NOT EXISTS idx_dup_groups_pending
 -- ============================================================================
 -- RLS
 -- ============================================================================
-ALTER TABLE documents                       ENABLE ROW LEVEL SECURITY;
+ALTER TABLE library_documents                       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_extracted_fields       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE community_management_history    ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_duplicate_groups       ENABLE ROW LEVEL SECURITY;
 ALTER TABLE document_duplicate_members      ENABLE ROW LEVEL SECURITY;
 
-DROP POLICY IF EXISTS p_documents_tenant ON documents;
-CREATE POLICY p_documents_tenant ON documents
+DROP POLICY IF EXISTS p_library_documents_tenant ON library_documents;
+CREATE POLICY p_library_documents_tenant ON library_documents
   FOR ALL TO authenticated
   USING (management_company_id::text = (auth.jwt() ->> 'management_company_id'))
   WITH CHECK (management_company_id::text = (auth.jwt() ->> 'management_company_id'));
@@ -244,7 +244,7 @@ DROP POLICY IF EXISTS p_doc_fields_tenant ON document_extracted_fields;
 CREATE POLICY p_doc_fields_tenant ON document_extracted_fields
   FOR ALL TO authenticated
   USING (EXISTS (
-    SELECT 1 FROM documents d
+    SELECT 1 FROM library_documents d
     WHERE d.id = document_extracted_fields.document_id
       AND d.management_company_id::text = (auth.jwt() ->> 'management_company_id')
   ));
@@ -275,11 +275,11 @@ CREATE POLICY p_dup_members_tenant ON document_duplicate_members
 -- ============================================================================
 -- Grants
 -- ============================================================================
-GRANT ALL ON documents, document_extracted_fields, community_management_history,
+GRANT ALL ON library_documents, document_extracted_fields, community_management_history,
              document_duplicate_groups, document_duplicate_members
   TO service_role;
 GRANT SELECT, INSERT, UPDATE, DELETE ON
-  documents, document_extracted_fields, community_management_history,
+  library_documents, document_extracted_fields, community_management_history,
   document_duplicate_groups, document_duplicate_members
   TO authenticated;
 GRANT SELECT ON document_categories TO service_role, authenticated;
@@ -319,7 +319,7 @@ SELECT
   END                         AS days_to_expiration
 FROM communities c
 CROSS JOIN document_categories cat
-LEFT JOIN documents d
+LEFT JOIN library_documents d
   ON d.community_id = c.id
   AND d.category = cat.category
   AND d.status = 'current'
