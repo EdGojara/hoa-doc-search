@@ -220,6 +220,7 @@
   <div class="tab" onclick="switchTab('billing')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
   <div class="tab" onclick="switchTab('vendors')">🏢 Vendors</div>
+  <div class="tab" onclick="switchTab('help')">📚 Help</div>
 </div>
 
 <!-- Chat Tab -->
@@ -2361,6 +2362,113 @@
   </div>
 </div>
 
+<!-- =========================================================================
+     HELP TAB — Operational Training Layer
+     Drop vendor admin guides / SOPs / agreements. Ask any question. Get
+     answers in the askEd 4-part template (Action / Output / Reasoning /
+     Watch Outs) with source citations. The system tells the user what they
+     need to know AT the moment they need it.
+     ========================================================================= -->
+<div class="tab-content" id="tab-help" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1100px;">
+    <h2 style="margin:0 0 4px 0;">📚 Help — Operational Training Layer</h2>
+    <p style="color:#888; margin:0 0 20px 0; font-size:13px;">
+      Ask anything. Answers come from your loaded knowledge base (vendor admin guides, SOPs, agreements) in Bedrock voice with source citations.
+      <span style="color:#315A87; font-weight:500;">Built so new hires are productive in week 1, not month 6.</span>
+    </p>
+
+    <!-- The search / Q&A area -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <h3 style="margin-top:0;">🔍 Ask a question</h3>
+      <div style="display:flex; gap:8px; align-items:flex-start;">
+        <textarea id="help-question" rows="2" placeholder="e.g., How do I cancel a completed HomeWise order? Or — How do I process an order with missing documents?"
+                  style="flex:1; padding:10px; font-size:14px; border:1px solid #d0d7de; border-radius:6px; resize:vertical; font-family:inherit;"
+                  onkeydown="if(event.key==='Enter' && (event.ctrlKey || event.metaKey)) helpAsk();"></textarea>
+        <button class="action-btn" onclick="helpAsk()" id="help-ask-btn">Ask</button>
+      </div>
+      <div style="margin-top:8px; display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:#888;">
+        <label style="display:flex; align-items:center; gap:4px;">
+          <span>Filter:</span>
+          <select id="help-vendor-filter" style="padding:3px 6px; font-size:11px;">
+            <option value="">All sources</option>
+            <option value="homewise">HomeWise only</option>
+            <option value="vantaca">Vantaca only</option>
+            <option value="bedrock">Bedrock SOPs only</option>
+          </select>
+        </label>
+        <span style="color:#aaa;">Tip: Ctrl/Cmd + Enter to submit</span>
+      </div>
+    </div>
+
+    <!-- The answer -->
+    <div id="help-answer-panel" style="display:none;">
+      <div class="panel" id="help-answer-card" style="margin-bottom:12px;">
+        <div id="help-answer-meta" style="font-size:11px; color:#888; margin-bottom:8px;"></div>
+        <div id="help-answer-body" style="font-size:14px; line-height:1.6;"></div>
+      </div>
+      <details class="panel" style="margin-bottom:16px;">
+        <summary style="cursor:pointer; font-weight:600; font-size:13px;">📎 Sources <span id="help-citation-count" style="color:#888; font-weight:400;"></span></summary>
+        <div id="help-citations" style="padding-top:10px;"></div>
+      </details>
+    </div>
+
+    <!-- Knowledge base management -->
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">📦 Loaded Knowledge Base</h3>
+        <button class="secondary-btn" onclick="helpToggleUploader()" id="help-uploader-toggle" style="font-size:12px; padding:4px 10px;">+ Add document</button>
+      </div>
+      <div id="help-uploader" style="display:none; background:#f9f9f9; border:1px solid #e0e0e0; border-radius:6px; padding:14px; margin-bottom:14px;">
+        <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
+          Drop a PDF (vendor admin guide, user guide, agreement, internal SOP, etc.). Claude extracts the text page-by-page and indexes it for semantic search. Takes 30-90 seconds depending on length.
+        </p>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Title</label>
+            <input type="text" id="help-upload-title" placeholder="e.g., HomeWise Account Administrator Guide"
+                   style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Vendor</label>
+            <input type="text" id="help-upload-vendor" placeholder="e.g., homewise, vantaca, bedrock"
+                   style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Source type</label>
+            <select id="help-upload-source-type" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+              <option value="vendor_admin_guide">Vendor admin guide</option>
+              <option value="vendor_user_guide">Vendor user guide</option>
+              <option value="vendor_agreement">Vendor service agreement</option>
+              <option value="vendor_release_notes">Vendor release notes</option>
+              <option value="bedrock_sop">Bedrock SOP</option>
+              <option value="governing_document">Governing document (CCR, bylaws, rules)</option>
+              <option value="training_material">Training material</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Notes (optional)</label>
+            <input type="text" id="help-upload-notes" placeholder="e.g., supersedes 1.2024 version"
+                   style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+          </div>
+        </div>
+        <div id="help-upload-drop"
+             style="border:2px dashed #d0d7de; border-radius:6px; padding:20px; text-align:center; cursor:pointer; background:#fff;"
+             onclick="document.getElementById('help-upload-file').click()"
+             ondragover="event.preventDefault(); this.style.borderColor='#315A87';"
+             ondragleave="this.style.borderColor='#d0d7de';"
+             ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; if(event.dataTransfer.files[0]) helpUploadFile(event.dataTransfer.files[0]);">
+          <div style="font-size:24px;">📄</div>
+          <p style="margin:6px 0 0 0; color:#444; font-size:13px;">Click or drop the PDF here</p>
+        </div>
+        <input type="file" id="help-upload-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) helpUploadFile(this.files[0])">
+        <div id="help-upload-status" style="margin-top:10px;"></div>
+      </div>
+      <div id="help-docs-list" style="font-size:13px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
 <script>
   // ---------- Financial Review state ----------
   let finrevCommunitiesCache = [];
@@ -4283,6 +4391,240 @@ ${questionsPage}
       .replace(/"/g, '&quot;')
       .replace(/'/g, '&#039;');
   }
+
+  // ==========================================================================
+  // HELP TAB — Operational Training Layer
+  // ==========================================================================
+
+  function helpToggleUploader() {
+    const u = document.getElementById('help-uploader');
+    const t = document.getElementById('help-uploader-toggle');
+    if (u.style.display === 'none') { u.style.display = 'block'; t.textContent = '× Cancel'; }
+    else { u.style.display = 'none'; t.textContent = '+ Add document'; }
+  }
+
+  async function helpLoadDocs() {
+    const el = document.getElementById('help-docs-list');
+    el.innerHTML = '<div style="color:#888;">Loading…</div>';
+    try {
+      const r = await fetch('/api/help/documents');
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'Failed to load');
+      const docs = data.documents || [];
+      if (docs.length === 0) {
+        el.innerHTML = `<div style="padding:20px; text-align:center; color:#888;">
+          No documents loaded yet. Click <strong>+ Add document</strong> above to drop your first PDF.
+          <br><br>
+          <span style="font-size:12px;">Good starting points: HomeWise Admin Guide, Vantaca Admin Guide, your service agreements.</span>
+        </div>`;
+        return;
+      }
+      el.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:13px;">
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:8px; text-align:left;">Title</th>
+            <th style="padding:8px; text-align:left;">Vendor</th>
+            <th style="padding:8px; text-align:left;">Type</th>
+            <th style="padding:8px; text-align:right;">Pages</th>
+            <th style="padding:8px; text-align:right;">Chunks</th>
+            <th style="padding:8px; text-align:left;">Ingested</th>
+            <th style="padding:8px; text-align:center;"></th>
+          </tr></thead>
+          <tbody>
+            ${docs.map(d => `
+              <tr style="border-bottom:1px solid #eee;">
+                <td style="padding:8px;"><strong>${escapeHtml(d.title)}</strong>${d.notes ? `<div style="color:#888; font-size:11px;">${escapeHtml(d.notes)}</div>` : ''}</td>
+                <td style="padding:8px; font-size:12px;">${escapeHtml(d.vendor || '—')}</td>
+                <td style="padding:8px; font-size:12px;">${escapeHtml(d.source_type.replace(/_/g, ' '))}</td>
+                <td style="padding:8px; text-align:right; font-variant-numeric: tabular-nums;">${d.page_count || '—'}</td>
+                <td style="padding:8px; text-align:right; font-variant-numeric: tabular-nums;">${d.chunk_count || 0}</td>
+                <td style="padding:8px; font-size:12px; color:#666;">${new Date(d.ingested_at).toLocaleDateString()}</td>
+                <td style="padding:8px; text-align:center;">
+                  <a href="#" onclick="event.preventDefault(); helpDeleteDoc('${d.id}', '${escapeHtml(d.title).replace(/'/g, '&#039;')}')" title="Delete" style="color:#a00; text-decoration:none;">🗑️</a>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    } catch (e) {
+      el.innerHTML = `<div style="color:#a00;">Failed to load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function helpUploadFile(file) {
+    if (!file) return;
+    const title = document.getElementById('help-upload-title').value.trim();
+    const vendor = document.getElementById('help-upload-vendor').value.trim().toLowerCase();
+    const source_type = document.getElementById('help-upload-source-type').value;
+    const notes = document.getElementById('help-upload-notes').value.trim();
+    const status = document.getElementById('help-upload-status');
+
+    if (!title) { alert('Please enter a title before uploading.'); return; }
+    if (!source_type) { alert('Please pick a source type.'); return; }
+
+    status.innerHTML = `<div style="background:#fff7d6; border:1px solid #e0d089; border-radius:6px; padding:10px; font-size:13px;">
+      ⚙️ Extracting text with Claude + embedding chunks… (30-90s depending on length)
+    </div>`;
+
+    try {
+      const fd = new FormData();
+      fd.append('pdf', file);
+      fd.append('title', title);
+      fd.append('source_type', source_type);
+      if (vendor) fd.append('vendor', vendor);
+      if (notes) fd.append('notes', notes);
+
+      const r = await fetch('/api/help/ingest', { method: 'POST', body: fd });
+      const data = await r.json();
+
+      if (r.status === 409 && data.duplicate) {
+        status.innerHTML = `<div style="background:#fff4e0; border:1px solid #e0c089; border-radius:6px; padding:10px; font-size:13px; color:#a06400;">
+          ⚠️ ${escapeHtml(data.message)}
+        </div>`;
+        return;
+      }
+      if (!r.ok) {
+        status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">
+          ❌ ${escapeHtml(data.error || 'Upload failed')}
+        </div>`;
+        return;
+      }
+
+      status.innerHTML = `<div style="background:#e8f5e9; border:1px solid #b8d8b8; border-radius:6px; padding:10px; font-size:13px;">
+        ✅ Indexed in ${(data.duration_ms / 1000).toFixed(1)}s — ${data.pages} pages, ${data.chunks} searchable chunks. You can now ask questions about it.
+      </div>`;
+      // clear form
+      document.getElementById('help-upload-title').value = '';
+      document.getElementById('help-upload-vendor').value = '';
+      document.getElementById('help-upload-notes').value = '';
+      document.getElementById('help-upload-file').value = '';
+      // refresh list
+      helpLoadDocs();
+    } catch (e) {
+      status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function helpDeleteDoc(id, title) {
+    if (!confirm(`Delete "${title}" from the knowledge base?\n\nAll its indexed chunks will be removed. This cannot be undone.`)) return;
+    try {
+      const r = await fetch(`/api/help/documents/${id}`, { method: 'DELETE' });
+      const data = await r.json();
+      if (!r.ok) { alert('Delete failed: ' + (data.error || 'unknown')); return; }
+      helpLoadDocs();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  }
+
+  async function helpAsk() {
+    const q = document.getElementById('help-question').value.trim();
+    if (!q) { alert('Type a question first.'); return; }
+    const vendorFilter = document.getElementById('help-vendor-filter').value;
+    const askBtn = document.getElementById('help-ask-btn');
+    const panel = document.getElementById('help-answer-panel');
+    const meta = document.getElementById('help-answer-meta');
+    const body = document.getElementById('help-answer-body');
+    const cites = document.getElementById('help-citations');
+    const citeCount = document.getElementById('help-citation-count');
+
+    askBtn.disabled = true;
+    askBtn.textContent = 'Thinking…';
+    panel.style.display = 'block';
+    meta.textContent = '';
+    body.innerHTML = '<div style="color:#888;">⚙️ Searching knowledge base + composing answer…</div>';
+    cites.innerHTML = '';
+    citeCount.textContent = '';
+
+    try {
+      const payload = { question: q };
+      if (vendorFilter) payload.vendor_filter = [vendorFilter];
+
+      const r = await fetch('/api/help/query', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const data = await r.json();
+
+      if (!r.ok) {
+        body.innerHTML = `<div style="color:#a00;">❌ ${escapeHtml(data.error || 'Query failed')}</div>`;
+        return;
+      }
+      if (data.no_results) {
+        body.innerHTML = `<div style="color:#a06400;">${escapeHtml(data.message)}</div>`;
+        return;
+      }
+
+      meta.textContent = `Answered in ${(data.duration_ms / 1000).toFixed(1)}s · ${data.citations.length} sources consulted`;
+      body.innerHTML = helpRenderMarkdown(data.answer);
+
+      citeCount.textContent = `(${data.citations.length})`;
+      cites.innerHTML = data.citations.map(c => `
+        <div style="border-left:3px solid #315A87; padding:8px 12px; margin-bottom:8px; background:#f9f9fb; font-size:12px;">
+          <div style="font-weight:600; color:#315A87;">
+            Source ${c.index}: ${escapeHtml(c.document_title)}${c.page_number ? `, p. ${c.page_number}` : ''}
+            ${c.section_heading ? ` — <span style="color:#666; font-weight:400;">${escapeHtml(c.section_heading)}</span>` : ''}
+          </div>
+          <div style="color:#888; font-size:11px; margin-top:2px;">
+            ${c.vendor ? escapeHtml(c.vendor) + ' · ' : ''}similarity ${(c.similarity * 100).toFixed(0)}%
+          </div>
+          <div style="color:#555; margin-top:4px; font-style:italic;">"${escapeHtml(c.preview)}…"</div>
+        </div>
+      `).join('');
+    } catch (e) {
+      body.innerHTML = `<div style="color:#a00;">❌ ${escapeHtml(e.message)}</div>`;
+    } finally {
+      askBtn.disabled = false;
+      askBtn.textContent = 'Ask';
+    }
+  }
+
+  /**
+   * Tiny markdown renderer good enough for askEd-template responses
+   * (headings, bold, lists, code). Not a full markdown parser; just
+   * what Claude actually produces in the 4-part template.
+   */
+  function helpRenderMarkdown(md) {
+    if (!md) return '';
+    let html = escapeHtml(md);
+    // Headings (## or ###)
+    html = html.replace(/^### (.+)$/gm, '<h4 style="margin:14px 0 6px 0; color:#315A87;">$1</h4>');
+    html = html.replace(/^## (.+)$/gm, '<h3 style="margin:18px 0 8px 0; color:#315A87; border-bottom:1px solid #e0e0e0; padding-bottom:4px;">$1</h3>');
+    // Bold **x**
+    html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    // Italic *x*
+    html = html.replace(/(^|[\s(])\*([^*]+)\*/g, '$1<em>$2</em>');
+    // Inline code `x`
+    html = html.replace(/`([^`]+)`/g, '<code style="background:#f0f0f0; padding:1px 4px; border-radius:3px; font-size:0.92em;">$1</code>');
+    // Convert numbered list lines into <ol>
+    html = html.replace(/((?:^\d+\. .+(?:\n|$))+)/gm, (m) => {
+      const items = m.trim().split(/\n/).map(line => line.replace(/^\d+\. /, '<li>') + '</li>').join('');
+      return `<ol style="margin:6px 0; padding-left:22px;">${items}</ol>`;
+    });
+    // Convert dash bullet lines into <ul>
+    html = html.replace(/((?:^- .+(?:\n|$))+)/gm, (m) => {
+      const items = m.trim().split(/\n/).map(line => line.replace(/^- /, '<li>') + '</li>').join('');
+      return `<ul style="margin:6px 0; padding-left:22px;">${items}</ul>`;
+    });
+    // Paragraphs from double newlines
+    html = html.split(/\n\n+/).map(p => p.startsWith('<') ? p : `<p style="margin:8px 0;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+    return html;
+  }
+
+  // Auto-load docs the first time the Help tab is opened
+  let helpHasLoaded = false;
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('help')") {
+        t.addEventListener('click', () => {
+          if (!helpHasLoaded) { helpHasLoaded = true; helpLoadDocs(); }
+        });
+      }
+    });
+  });
 
   // ==========================================================================
   // VENDORS TAB — Vendor Master + Invoice Intake (Push 1)

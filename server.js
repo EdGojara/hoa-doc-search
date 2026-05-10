@@ -321,6 +321,18 @@ app.use('/api/financial-review', financialReviewRouter);
 const { router: vendorsRouter } = require('./api/vendors');
 app.use('/api/vendors', vendorsRouter);
 
+// Operational Training Layer (Help / Knowledge Base)
+// Endpoints under /api/help/*. See api/help.js and
+// migrations/011_knowledge_base.sql for the schema.
+// Drop a vendor admin guide / SOP / agreement -> Claude extracts text
+// page-by-page, chunks + embeds, stores for semantic retrieval. Ask a
+// question -> top chunks retrieved -> Claude synthesizes answer in the
+// askEd 4-part template (Action / Output / Reasoning / Watch Outs) with
+// source citations. Breaks vendor support-tier extraction; encodes tribal
+// knowledge that survives staff turnover.
+const { router: helpRouter } = require('./api/help');
+app.use('/api/help', helpRouter);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
