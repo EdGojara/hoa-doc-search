@@ -1017,4 +1017,268 @@ router.get('/invoices/:invoiceId/pdf', async (req, res) => {
   }
 });
 
+// ============================================================================
+// CONTRACT INTAKE — drop a Bedrock-Association management contract PDF,
+// AI parses, user reviews, save populates contracts + child tables.
+//
+// Two-step flow on purpose:
+//   1. POST /contracts/parse  → returns extracted structured data, no save
+//   2. POST /contracts/save   → caller submits reviewed data, transactional save
+//
+// The review step is where Ed's CFE judgment encodes — humans verify the
+// AI's extraction before it becomes a billing rate that real money flows on.
+// ============================================================================
+
+/**
+ * Claude prompt for extracting Bedrock management contract terms.
+ * Returns strict JSON shape that maps to contracts + child tables.
+ */
+const CONTRACT_EXTRACTION_PROMPT = `You are extracting structured data from a Bedrock Association Management management agreement PDF. Return a JSON object with EXACTLY this shape (omit fields you cannot determine):
+
+{
+  "community_name": "string",
+  "effective_date": "YYYY-MM-DD",
+  "signed_date": "YYYY-MM-DD",
+  "end_date": null,
+  "signatories": { "association": "string or null", "managing_agent": "string or null" },
+  "notice_address": "full address string",
+  "notice_email": "email",
+  "agent_contact_name": "string",
+  "agent_contact_email": "email",
+  "escalator_kind": "max_cpi_or_pct | fixed_pct | cpi_only | none",
+  "escalator_pct": 5.00,
+  "payment_terms": "string (e.g. 'Net 30' or 'Monthly in advance')",
+  "spending_authority_limit": 1500.00,
+  "fixed_items": [
+    { "description": "Monthly Management Fee", "monthly_amount": 2400.00, "notes": null }
+  ],
+  "reimbursables": [
+    {
+      "category": "snake_case_slug (e.g. community_mailings, work_outside_normal, postage, event_staffing, transition_setup, annual_statement_mailing)",
+      "description": "human-readable",
+      "billing_method": "per_unit | hourly | per_lot_plus_postage | at_cost",
+      "unit_price": 0.50,
+      "notes": "any unit context, e.g. per lot, per hour"
+    }
+  ],
+  "owner_charges": [
+    {
+      "category": "snake_case_slug (e.g. assessment_late_reminder, assessment_certified_demand, drv_certified_demand, nsf_charge, attorney_legal_action, payment_plan_fee, arc_application_fee, mediation_court_appearance)",
+      "description": "human-readable",
+      "fee_amount": 25.00,
+      "notes": null
+    }
+  ],
+  "extraction_notes": "Free text. Anything unusual you noticed about this contract: ambiguous language, multiple rate tables, hand-written annotations, things that need human review."
+}
+
+Rules:
+- Use null (not empty string) for fields you cannot find.
+- All money values are NUMBERS, not strings, no $ sign, no commas.
+- Dates are ISO YYYY-MM-DD only.
+- For escalator: "max_cpi_or_pct" means "greater of CPI-U or X%"; "fixed_pct" is straight X%; "cpi_only" is CPI without floor; "none" if no escalator.
+- For reimbursables, billing_method "per_unit" applies to per-mailing/per-lot rates; "hourly" for $/hour rates; "per_lot_plus_postage" for annual statement billing; "at_cost" for postage passthrough.
+- Be conservative: if you're not sure of a field, return null and call it out in extraction_notes.
+
+Return ONLY the JSON object, no preamble, no code fence, no commentary.`;
+
+/**
+ * POST /api/billing/contracts/parse
+ * Multipart upload with field "pdf" (required) + body community_id (optional;
+ * if omitted, the caller picks community after seeing extracted name).
+ * Returns the parsed JSON for review (NO save).
+ */
+router.post('/contracts/parse', upload.single('pdf'), async (req, res) => {
+  const t0 = Date.now();
+  if (!req.file) return res.status(400).json({ error: 'No PDF uploaded (expected field "pdf")' });
+  if (req.file.mimetype !== 'application/pdf') {
+    return res.status(400).json({ error: `Unsupported file type: ${req.file.mimetype}` });
+  }
+
+  try {
+    const pdfBase64 = req.file.buffer.toString('base64');
+
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 4000,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+          { type: 'text', text: CONTRACT_EXTRACTION_PROMPT }
+        ]
+      }]
+    });
+
+    const text = completion.content?.[0]?.text || '';
+    let parsed;
+    try {
+      // Strip any code fences if Claude added them despite the instruction.
+      const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      parsed = JSON.parse(cleaned);
+    } catch (jsonErr) {
+      console.error('[billing] contract parse JSON failed:', jsonErr.message);
+      return res.status(500).json({
+        error: 'Could not parse Claude response as JSON',
+        raw_response: text
+      });
+    }
+
+    // Persist trade-tape entry.
+    await supabase.from('agent_runs').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: req.body?.community_id || null,
+      module: 'billing',
+      endpoint: 'POST /api/billing/contracts/parse',
+      request_input: { file_name: req.file.originalname, file_size: req.file.size },
+      retrieved_context: null,
+      prompt: 'CONTRACT_EXTRACTION_PROMPT',
+      model: 'claude-sonnet-4-5',
+      response: parsed,
+      input_tokens: completion.usage?.input_tokens || null,
+      output_tokens: completion.usage?.output_tokens || null,
+      duration_ms: Date.now() - t0
+    });
+
+    res.json({
+      parsed,
+      file_name: req.file.originalname,
+      duration_ms: Date.now() - t0
+    });
+  } catch (err) {
+    console.error('[billing] contract parse failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+/**
+ * POST /api/billing/contracts/save
+ * Body: { community_id, parsed }   where parsed matches the schema returned by /parse
+ * Side-effects:
+ *   - If an existing 'active' contract exists for the community, mark it 'superseded'
+ *   - Insert new contracts row (version = prior + 1, or 1 if first)
+ *   - Insert all contract_fixed_items / contract_reimbursables / contract_owner_charges
+ * Returns the new contract_id and a summary count.
+ */
+router.post('/contracts/save', async (req, res) => {
+  const { community_id, parsed } = req.body || {};
+  if (!community_id) return res.status(400).json({ error: 'community_id required' });
+  if (!parsed) return res.status(400).json({ error: 'parsed payload required' });
+
+  try {
+    // Verify community exists and belongs to Bedrock.
+    const { data: community, error: commErr } = await supabase
+      .from('communities')
+      .select('id, name, management_company_id')
+      .eq('id', community_id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (commErr || !community) return res.status(404).json({ error: 'Community not found' });
+
+    // Find prior active contract (if any) so we can supersede + version-bump.
+    const { data: priorContracts } = await supabase
+      .from('contracts')
+      .select('id, version, status')
+      .eq('community_id', community_id)
+      .order('version', { ascending: false })
+      .limit(1);
+    const priorActive = (priorContracts || []).find(c => c.status === 'active');
+    const nextVersion = (priorContracts && priorContracts[0]) ? priorContracts[0].version + 1 : 1;
+
+    // Mark prior active as superseded.
+    if (priorActive) {
+      await supabase
+        .from('contracts')
+        .update({ status: 'superseded' })
+        .eq('id', priorActive.id);
+    }
+
+    // Insert new contract.
+    const escalatorKind = ['max_cpi_or_pct', 'fixed_pct', 'cpi_only', 'none'].includes(parsed.escalator_kind)
+      ? parsed.escalator_kind : 'none';
+
+    const { data: newContract, error: insErr } = await supabase
+      .from('contracts')
+      .insert({
+        community_id,
+        version: nextVersion,
+        effective_date: parsed.effective_date || new Date().toISOString().slice(0, 10),
+        end_date: parsed.end_date || null,
+        signed_date: parsed.signed_date || null,
+        signatories: parsed.signatories || null,
+        notice_address: parsed.notice_address || null,
+        escalator_kind: escalatorKind,
+        escalator_pct: parsed.escalator_pct != null ? Number(parsed.escalator_pct) : null,
+        payment_terms: parsed.payment_terms || 'Net 30',
+        status: 'active',
+        notes: [
+          parsed.extraction_notes,
+          parsed.spending_authority_limit ? `Spending authority: $${parsed.spending_authority_limit}` : null,
+          parsed.agent_contact_name ? `Day-to-day agent: ${parsed.agent_contact_name} (${parsed.agent_contact_email || ''})` : null
+        ].filter(Boolean).join('\n\n') || null
+      })
+      .select()
+      .single();
+    if (insErr) throw insErr;
+
+    const contractId = newContract.id;
+
+    // Insert child rows.
+    const fixedRows = (parsed.fixed_items || []).map((item, i) => ({
+      contract_id: contractId,
+      description: item.description,
+      monthly_amount: Number(item.monthly_amount) || 0,
+      notes: item.notes || null,
+      sort_order: i
+    }));
+    if (fixedRows.length > 0) {
+      const { error: fErr } = await supabase.from('contract_fixed_items').insert(fixedRows);
+      if (fErr) throw fErr;
+    }
+
+    const reimbRows = (parsed.reimbursables || []).map((item, i) => ({
+      contract_id: contractId,
+      category: item.category,
+      description: item.description,
+      billing_method: ['per_unit', 'hourly', 'per_lot_plus_postage', 'at_cost'].includes(item.billing_method)
+        ? item.billing_method : 'per_unit',
+      unit_price: item.unit_price != null ? Number(item.unit_price) : null,
+      notes: item.notes || null,
+      sort_order: i
+    }));
+    if (reimbRows.length > 0) {
+      const { error: rErr } = await supabase.from('contract_reimbursables').insert(reimbRows);
+      if (rErr) throw rErr;
+    }
+
+    const ownerRows = (parsed.owner_charges || []).map((item, i) => ({
+      contract_id: contractId,
+      category: item.category,
+      description: item.description,
+      fee_amount: Number(item.fee_amount) || 0,
+      notes: item.notes || null,
+      sort_order: i
+    }));
+    if (ownerRows.length > 0) {
+      const { error: oErr } = await supabase.from('contract_owner_charges').insert(ownerRows);
+      if (oErr) throw oErr;
+    }
+
+    res.json({
+      contract_id: contractId,
+      version: nextVersion,
+      community: community.name,
+      superseded_id: priorActive ? priorActive.id : null,
+      counts: {
+        fixed_items: fixedRows.length,
+        reimbursables: reimbRows.length,
+        owner_charges: ownerRows.length
+      }
+    });
+  } catch (err) {
+    console.error('[billing] contract save failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };

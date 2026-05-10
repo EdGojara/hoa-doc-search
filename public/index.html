@@ -712,6 +712,33 @@
     <h3 id="billing-detail-name" style="margin-top:16px; margin-bottom:4px;"></h3>
     <div id="billing-detail-meta" style="color:#888; font-size:13px; margin-bottom:16px;"></div>
 
+    <!-- Contract Intake / Management -->
+    <div class="panel" style="margin-bottom:16px;" id="billing-contract-mgmt-panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h4 style="margin:0;">📤 Upload / Update Contract</h4>
+        <button class="secondary-btn" id="billing-contract-toggle" onclick="billingContractToggle()" style="font-size:12px; padding:4px 10px;">Show</button>
+      </div>
+      <div id="billing-contract-mgmt-body" style="display:none;">
+        <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
+          Drop a Bedrock-Association management contract PDF. Claude extracts the fee schedule, you review &amp; correct, then save populates the contract tables. The previous active contract is automatically superseded.
+        </p>
+        <div id="billing-contract-drop-area"
+             style="border:2px dashed #d0d7de; border-radius:8px; padding:20px; text-align:center; cursor:pointer; background:#f9f9f9; transition:border-color 0.15s;"
+             onclick="document.getElementById('billing-contract-file').click()"
+             ondragover="event.preventDefault(); this.style.borderColor='#1976d2'; this.style.background='#eef5ff';"
+             ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+             ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files[0]) billingContractParse(event.dataTransfer.files[0]);">
+          <div style="font-size:24px;">📜</div>
+          <p style="margin:6px 0 0 0; color:#444; font-size:14px;">Click or drop the contract PDF</p>
+          <p style="margin:4px 0 0 0; color:#888; font-size:11px;">Claude will read it and extract the fee schedule</p>
+        </div>
+        <input type="file" id="billing-contract-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) billingContractParse(this.files[0])">
+
+        <div id="billing-contract-parse-status" style="margin-top:12px;"></div>
+        <div id="billing-contract-review" style="margin-top:16px; display:none;"></div>
+      </div>
+    </div>
+
     <div class="panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">📜 Active Contract</h4>
       <div id="billing-contract-summary" style="font-size:14px;"></div>
@@ -1189,6 +1216,317 @@
     const sel = document.getElementById('billing-community-select');
     if (sel) sel.value = '';
     billingCurrentCommunityId = null;
+    // Reset the contract intake panel to clean state for next community
+    billingContractClearReview();
+    const body = document.getElementById('billing-contract-mgmt-body');
+    if (body) body.style.display = 'none';
+    const tog = document.getElementById('billing-contract-toggle');
+    if (tog) tog.textContent = 'Show';
+  }
+
+  // ==========================================================================
+  // CONTRACT INTAKE — drop PDF, AI parses, review, save
+  // ==========================================================================
+  let billingContractParsed = null;
+
+  function billingContractToggle() {
+    const body = document.getElementById('billing-contract-mgmt-body');
+    const tog = document.getElementById('billing-contract-toggle');
+    if (!body) return;
+    if (body.style.display === 'none') {
+      body.style.display = 'block';
+      tog.textContent = 'Hide';
+    } else {
+      body.style.display = 'none';
+      tog.textContent = 'Show';
+    }
+  }
+
+  function billingContractClearReview() {
+    billingContractParsed = null;
+    const review = document.getElementById('billing-contract-review');
+    if (review) { review.style.display = 'none'; review.innerHTML = ''; }
+    const status = document.getElementById('billing-contract-parse-status');
+    if (status) status.innerHTML = '';
+    const fileInput = document.getElementById('billing-contract-file');
+    if (fileInput) fileInput.value = '';
+  }
+
+  async function billingContractParse(file) {
+    if (!file) return;
+    if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) {
+      alert('Please drop a PDF.');
+      return;
+    }
+    if (!billingCurrentCommunityId) {
+      alert('No community selected.');
+      return;
+    }
+    const status = document.getElementById('billing-contract-parse-status');
+    status.innerHTML = `<div style="background:#fff7d6; border:1px solid #e0d089; border-radius:6px; padding:10px; font-size:13px;">⚙️ Parsing contract with Claude… (10-30s)</div>`;
+
+    try {
+      const fd = new FormData();
+      fd.append('pdf', file);
+      fd.append('community_id', billingCurrentCommunityId);
+      const res = await fetch('/api/billing/contracts/parse', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (!res.ok) {
+        status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(data.error || 'Parse failed')}</div>`;
+        return;
+      }
+      billingContractParsed = data.parsed || {};
+      status.innerHTML = `<div style="background:#e8f5e9; border:1px solid #b8d8b8; border-radius:6px; padding:10px; font-size:13px;">✅ Parsed in ${data.duration_ms}ms. Review &amp; edit below, then click Save.</div>`;
+      billingContractRenderReview();
+    } catch (e) {
+      console.error('[billing] contract parse failed', e);
+      status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function billingContractRenderReview() {
+    const p = billingContractParsed || {};
+    const review = document.getElementById('billing-contract-review');
+
+    function inputText(label, key, value, placeholder = '', width = '100%') {
+      return `<div style="margin-bottom:8px;">
+        <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">${escapeHtml(label)}</label>
+        <input type="text" data-contract-key="${key}" value="${value != null ? escapeHtml(String(value)) : ''}" placeholder="${escapeHtml(placeholder)}" style="padding:6px; width:${width}; font-size:13px; box-sizing:border-box;">
+      </div>`;
+    }
+    function inputNumber(label, key, value, width = '100%') {
+      return `<div style="margin-bottom:8px;">
+        <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">${escapeHtml(label)}</label>
+        <input type="number" step="0.01" data-contract-key="${key}" value="${value != null ? value : ''}" style="padding:6px; width:${width}; font-size:13px; box-sizing:border-box;">
+      </div>`;
+    }
+    function selectField(label, key, value, options) {
+      const opts = options.map(o => `<option value="${o}" ${o === value ? 'selected' : ''}>${o}</option>`).join('');
+      return `<div style="margin-bottom:8px;">
+        <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">${escapeHtml(label)}</label>
+        <select data-contract-key="${key}" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">${opts}</select>
+      </div>`;
+    }
+
+    const fixedRows = (p.fixed_items || []).map((it, i) => `
+      <tr data-fixed-row="${i}" style="border-bottom:1px solid #eee;">
+        <td style="padding:4px;"><input type="text" data-fixed-field="description" data-row="${i}" value="${escapeHtml(it.description || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="number" step="0.01" data-fixed-field="monthly_amount" data-row="${i}" value="${it.monthly_amount != null ? it.monthly_amount : ''}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="text" data-fixed-field="notes" data-row="${i}" value="${escapeHtml(it.notes || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px; text-align:center;"><a href="#" onclick="event.preventDefault(); billingContractRemoveRow('fixed_items', ${i})" style="color:#a00; font-size:11px;">×</a></td>
+      </tr>`).join('');
+
+    const reimbRows = (p.reimbursables || []).map((it, i) => `
+      <tr data-reimb-row="${i}" style="border-bottom:1px solid #eee;">
+        <td style="padding:4px;"><input type="text" data-reimb-field="category" data-row="${i}" value="${escapeHtml(it.category || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="text" data-reimb-field="description" data-row="${i}" value="${escapeHtml(it.description || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;">
+          <select data-reimb-field="billing_method" data-row="${i}" style="width:100%; padding:4px; font-size:12px;">
+            <option value="per_unit"${it.billing_method === 'per_unit' ? ' selected' : ''}>per_unit</option>
+            <option value="hourly"${it.billing_method === 'hourly' ? ' selected' : ''}>hourly</option>
+            <option value="per_lot_plus_postage"${it.billing_method === 'per_lot_plus_postage' ? ' selected' : ''}>per_lot+postage</option>
+            <option value="at_cost"${it.billing_method === 'at_cost' ? ' selected' : ''}>at_cost</option>
+          </select>
+        </td>
+        <td style="padding:4px;"><input type="number" step="0.0001" data-reimb-field="unit_price" data-row="${i}" value="${it.unit_price != null ? it.unit_price : ''}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="text" data-reimb-field="notes" data-row="${i}" value="${escapeHtml(it.notes || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px; text-align:center;"><a href="#" onclick="event.preventDefault(); billingContractRemoveRow('reimbursables', ${i})" style="color:#a00; font-size:11px;">×</a></td>
+      </tr>`).join('');
+
+    const ownerRows = (p.owner_charges || []).map((it, i) => `
+      <tr data-owner-row="${i}" style="border-bottom:1px solid #eee;">
+        <td style="padding:4px;"><input type="text" data-owner-field="category" data-row="${i}" value="${escapeHtml(it.category || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="text" data-owner-field="description" data-row="${i}" value="${escapeHtml(it.description || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="number" step="0.01" data-owner-field="fee_amount" data-row="${i}" value="${it.fee_amount != null ? it.fee_amount : ''}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px;"><input type="text" data-owner-field="notes" data-row="${i}" value="${escapeHtml(it.notes || '')}" style="width:100%; padding:4px; font-size:12px;"></td>
+        <td style="padding:4px; text-align:center;"><a href="#" onclick="event.preventDefault(); billingContractRemoveRow('owner_charges', ${i})" style="color:#a00; font-size:11px;">×</a></td>
+      </tr>`).join('');
+
+    review.style.display = 'block';
+    review.innerHTML = `
+      <h5 style="margin:0 0 8px 0; color:#315A87;">Review Extracted Contract Terms</h5>
+      ${p.extraction_notes ? `<div style="background:#fff7d6; border:1px solid #e0d089; border-radius:4px; padding:8px 10px; margin-bottom:12px; font-size:12px;"><strong>Claude noted:</strong> ${escapeHtml(p.extraction_notes)}</div>` : ''}
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div>
+          ${inputText('Effective date', 'effective_date', p.effective_date, 'YYYY-MM-DD')}
+          ${inputText('Signed date', 'signed_date', p.signed_date, 'YYYY-MM-DD')}
+          ${inputText('End date (blank = open-ended)', 'end_date', p.end_date, 'YYYY-MM-DD')}
+          ${inputText('Payment terms', 'payment_terms', p.payment_terms || 'Net 30', 'Net 30')}
+        </div>
+        <div>
+          ${selectField('Escalator kind', 'escalator_kind', p.escalator_kind || 'none', ['max_cpi_or_pct', 'fixed_pct', 'cpi_only', 'none'])}
+          ${inputNumber('Escalator %', 'escalator_pct', p.escalator_pct)}
+          ${inputNumber('Spending authority limit ($)', 'spending_authority_limit', p.spending_authority_limit)}
+          ${inputText('Day-to-day agent', 'agent_contact_name', p.agent_contact_name)}
+        </div>
+      </div>
+
+      <div style="margin-bottom:12px;">
+        ${inputText('Notice address', 'notice_address', p.notice_address)}
+        ${inputText('Notice email', 'notice_email', p.notice_email)}
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong style="font-size:13px;">📋 Fixed Monthly Items</strong>
+          <button class="secondary-btn" onclick="billingContractAddRow('fixed_items')" style="font-size:11px; padding:2px 8px;">+ row</button>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:6px; text-align:left; width:50%;">Description</th>
+            <th style="padding:6px; text-align:left; width:20%;">Monthly $</th>
+            <th style="padding:6px; text-align:left; width:25%;">Notes</th>
+            <th style="padding:6px; width:5%;"></th>
+          </tr></thead>
+          <tbody>${fixedRows || '<tr><td colspan="4" style="padding:8px; color:#888; text-align:center;">No fixed items extracted. Add a row.</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong style="font-size:13px;">🔁 Reimbursables (variable)</strong>
+          <button class="secondary-btn" onclick="billingContractAddRow('reimbursables')" style="font-size:11px; padding:2px 8px;">+ row</button>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:6px; text-align:left; width:18%;">Category</th>
+            <th style="padding:6px; text-align:left; width:30%;">Description</th>
+            <th style="padding:6px; text-align:left; width:14%;">Method</th>
+            <th style="padding:6px; text-align:left; width:13%;">Unit price</th>
+            <th style="padding:6px; text-align:left; width:20%;">Notes</th>
+            <th style="padding:6px; width:5%;"></th>
+          </tr></thead>
+          <tbody>${reimbRows || '<tr><td colspan="6" style="padding:8px; color:#888; text-align:center;">No reimbursables extracted. Add a row.</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <div style="margin-bottom:16px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <strong style="font-size:13px;">👥 Owner Charges (billed to Association)</strong>
+          <button class="secondary-btn" onclick="billingContractAddRow('owner_charges')" style="font-size:11px; padding:2px 8px;">+ row</button>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:6px; text-align:left; width:25%;">Category</th>
+            <th style="padding:6px; text-align:left; width:35%;">Description</th>
+            <th style="padding:6px; text-align:left; width:15%;">Fee $</th>
+            <th style="padding:6px; text-align:left; width:20%;">Notes</th>
+            <th style="padding:6px; width:5%;"></th>
+          </tr></thead>
+          <tbody>${ownerRows || '<tr><td colspan="5" style="padding:8px; color:#888; text-align:center;">No owner charges extracted. Add a row.</td></tr>'}</tbody>
+        </table>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:16px;">
+        <button class="action-btn" onclick="billingContractSave()">💾 Save Contract</button>
+        <button class="secondary-btn" onclick="billingContractClearReview()">Cancel</button>
+      </div>
+      <div id="billing-contract-save-status" style="margin-top:10px;"></div>
+    `;
+  }
+
+  function billingContractAddRow(section) {
+    if (!billingContractParsed) billingContractParsed = {};
+    if (!billingContractParsed[section]) billingContractParsed[section] = [];
+    billingContractParsed[section].push({});
+    billingContractCommitEdits();   // capture any in-flight edits before re-render
+    billingContractRenderReview();
+  }
+
+  function billingContractRemoveRow(section, idx) {
+    if (!billingContractParsed || !billingContractParsed[section]) return;
+    billingContractCommitEdits();
+    billingContractParsed[section].splice(idx, 1);
+    billingContractRenderReview();
+  }
+
+  /**
+   * Read all current input values from the review form back into billingContractParsed.
+   * Used before re-rendering (add/remove row) and before saving.
+   */
+  function billingContractCommitEdits() {
+    if (!billingContractParsed) return;
+    // Top-level fields
+    document.querySelectorAll('[data-contract-key]').forEach(el => {
+      const key = el.getAttribute('data-contract-key');
+      let v = el.value;
+      if (el.type === 'number') v = v === '' ? null : Number(v);
+      if (v === '') v = null;
+      billingContractParsed[key] = v;
+    });
+    // Fixed items
+    const fixedMap = {};
+    document.querySelectorAll('[data-fixed-field]').forEach(el => {
+      const row = el.getAttribute('data-row');
+      const field = el.getAttribute('data-fixed-field');
+      if (!fixedMap[row]) fixedMap[row] = {};
+      let v = el.value;
+      if (el.type === 'number') v = v === '' ? null : Number(v);
+      if (v === '') v = null;
+      fixedMap[row][field] = v;
+    });
+    billingContractParsed.fixed_items = Object.keys(fixedMap).sort((a, b) => Number(a) - Number(b)).map(k => fixedMap[k]);
+    // Reimbursables
+    const reimbMap = {};
+    document.querySelectorAll('[data-reimb-field]').forEach(el => {
+      const row = el.getAttribute('data-row');
+      const field = el.getAttribute('data-reimb-field');
+      if (!reimbMap[row]) reimbMap[row] = {};
+      let v = el.value;
+      if (el.type === 'number') v = v === '' ? null : Number(v);
+      if (v === '') v = null;
+      reimbMap[row][field] = v;
+    });
+    billingContractParsed.reimbursables = Object.keys(reimbMap).sort((a, b) => Number(a) - Number(b)).map(k => reimbMap[k]);
+    // Owner charges
+    const ownerMap = {};
+    document.querySelectorAll('[data-owner-field]').forEach(el => {
+      const row = el.getAttribute('data-row');
+      const field = el.getAttribute('data-owner-field');
+      if (!ownerMap[row]) ownerMap[row] = {};
+      let v = el.value;
+      if (el.type === 'number') v = v === '' ? null : Number(v);
+      if (v === '') v = null;
+      ownerMap[row][field] = v;
+    });
+    billingContractParsed.owner_charges = Object.keys(ownerMap).sort((a, b) => Number(a) - Number(b)).map(k => ownerMap[k]);
+  }
+
+  async function billingContractSave() {
+    billingContractCommitEdits();
+    if (!billingCurrentCommunityId) { alert('No community selected.'); return; }
+    if (!billingContractParsed) { alert('No parsed contract to save.'); return; }
+    const status = document.getElementById('billing-contract-save-status');
+    status.innerHTML = `<div style="color:#888; font-size:12px;">Saving…</div>`;
+
+    try {
+      const res = await fetch('/api/billing/contracts/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          community_id: billingCurrentCommunityId,
+          parsed: billingContractParsed
+        })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(data.error || 'Save failed')}</div>`;
+        return;
+      }
+      status.innerHTML = `<div style="background:#e8f5e9; border:1px solid #b8d8b8; border-radius:6px; padding:10px; font-size:13px;">
+        ✅ Saved. Contract v${data.version} for ${escapeHtml(data.community)}.
+        ${data.superseded_id ? '<br>Previous active contract was superseded.' : ''}
+        <br><span style="color:#666; font-size:11px;">${data.counts.fixed_items} fixed items, ${data.counts.reimbursables} reimbursables, ${data.counts.owner_charges} owner charges.</span>
+      </div>`;
+      // Reload the active-contract panel to reflect the new contract
+      setTimeout(() => {
+        if (billingCurrentCommunityId) billingShowCommunity(billingCurrentCommunityId);
+      }, 800);
+    } catch (e) {
+      console.error('[billing] contract save failed', e);
+      status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(e.message)}</div>`;
+    }
   }
 
   async function billingLoadInvoicesForCommunity(communityId) {
