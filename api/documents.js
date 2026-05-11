@@ -1187,6 +1187,141 @@ ${fullText.slice(0, 80000)}
   }
 });
 
+// ============================================================================
+// Form Email Templates — for the "Send to Owner" workflow on the Forms tab
+// ----------------------------------------------------------------------------
+// Per-category subject + body templates with variable substitution. Lives
+// here (not in a separate router) because it's tightly tied to library_documents
+// and only applies to form categories.
+//
+// Endpoints:
+//   GET  /api/documents/email-templates                list all templates
+//   GET  /api/documents/email-templates/:category      get one template
+//   PUT  /api/documents/email-templates/:category      update template (Ed-editable)
+//   POST /api/documents/:id/email-render               render template with this
+//                                                       doc's data + recipient name,
+//                                                       returns subject + body + mailto:
+// ============================================================================
+
+router.get('/email-templates/all', async (req, res) => {
+  // Note: path is '/email-templates/all' (not just '/email-templates') so it
+  // doesn't get swallowed by the earlier-registered GET /:id route.
+  try {
+    const { data, error } = await supabase
+      .from('form_email_templates')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('category');
+    if (error) throw error;
+    res.json({ templates: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/email-templates/:category', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('form_email_templates')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('category', req.params.category)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'Template not found for category: ' + req.params.category });
+    res.json({ template: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.put('/email-templates/:category', async (req, res) => {
+  try {
+    const { subject_template, body_template, notes } = req.body || {};
+    if (!subject_template || !body_template) {
+      return res.status(400).json({ error: 'subject_template and body_template required' });
+    }
+    // Upsert — create if missing, update if exists
+    const { data, error } = await supabase
+      .from('form_email_templates')
+      .upsert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        category: req.params.category,
+        subject_template,
+        body_template,
+        notes: notes || null
+      }, { onConflict: 'management_company_id,category' })
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, template: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/:id/email-render', async (req, res) => {
+  try {
+    const { recipient_name, recipient_email, base_url } = req.body || {};
+    // Load the doc + community
+    const { data: doc } = await supabase
+      .from('library_documents')
+      .select('*, community:communities(name)')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!doc) return res.status(404).json({ error: 'Document not found' });
+    // Load the template for this doc's category
+    const { data: template } = await supabase
+      .from('form_email_templates')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('category', doc.category)
+      .maybeSingle();
+    if (!template) {
+      return res.status(404).json({ error: 'No email template configured for category: ' + doc.category });
+    }
+    // Build the download URL — use whatever base the UI passed (handles
+    // Render's dynamic URL vs. localhost vs. custom domain later)
+    const downloadLink = `${(base_url || '').replace(/\/+$/, '')}/api/documents/${doc.id}/download`;
+    const communityName = doc.community?.name || 'your community';
+    const recipientNameOrEmpty = recipient_name ? ` ${recipient_name}` : '';
+
+    // Substitute variables in subject + body
+    const vars = {
+      community_name: communityName,
+      form_title: doc.title || doc.file_name_normalized || 'the form',
+      download_link: downloadLink,
+      bedrock_phone: '(832) 588-2485',
+      bedrock_email: 'info@bedrocktx.com',
+      recipient_name: recipient_name || '',
+      recipient_name_or_empty: recipientNameOrEmpty
+    };
+    const fill = (str) => Object.entries(vars).reduce(
+      (s, [k, v]) => s.split(`{${k}}`).join(v),
+      str
+    );
+    const subject = fill(template.subject_template);
+    const body = fill(template.body_template);
+
+    // Construct a mailto: URL the browser can open in Outlook
+    // (URL-encoded so Outlook/Gmail/etc. handle special chars correctly)
+    const mailto = `mailto:${encodeURIComponent(recipient_email || '')}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+
+    res.json({
+      ok: true,
+      subject,
+      body,
+      mailto,
+      recipient_email: recipient_email || '',
+      template_category: template.category,
+      document: { id: doc.id, title: doc.title, community: communityName }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // GET /api/documents/categories  — master category list
 // ----------------------------------------------------------------------------

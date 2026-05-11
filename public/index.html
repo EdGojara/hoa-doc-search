@@ -6040,6 +6040,7 @@ ${questionsPage}
                 <td style="padding:6px 8px;">${dt(d.uploaded_at)}</td>
                 <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                   ${d.file_path ? `<a href="/api/documents/${escapeHtml(d.id)}/download" target="_blank" class="secondary-btn" style="font-size:11px; padding:3px 8px; text-decoration:none;">⬇ Download</a>` : '<span style="color:#888; font-size:10px;">(no file)</span>'}
+                  <button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:#1F3A5F;" onclick="formsOpenSend('${escapeHtml(d.id)}')" title="Email this form to an owner with pre-filled template">📧 Send</button>
                   <button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="formsCopyLink('${escapeHtml(d.id)}')" title="Copy download link to clipboard for emailing">🔗 Link</button>
                   <button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:#a00;" onclick="formsDelete('${escapeHtml(d.id)}', '${escapeHtml((d.title || 'form').replace(/'/g, '')).slice(0, 40)}')">✕</button>
                 </td>
@@ -6066,6 +6067,196 @@ ${questionsPage}
       setTimeout(() => toast.remove(), 2500);
     } catch (e) {
       alert('Copy failed: ' + e.message);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Send modal — opens with pre-populated subject + body from the per-category
+  // template. Recipient email is the only field the user MUST fill in. Edits
+  // to subject/body are kept local to this send; persistent template changes
+  // happen via the "Edit template" link.
+  // --------------------------------------------------------------------------
+  let _formsSendCurrentDocId = null;
+
+  async function formsOpenSend(docId) {
+    _formsSendCurrentDocId = docId;
+    // Create modal shell first so it shows immediately while we fetch the render
+    const backdrop = document.createElement('div');
+    backdrop.id = 'forms-send-modal-backdrop';
+    backdrop.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9998; display:flex; align-items:center; justify-content:center; padding:20px;';
+    backdrop.innerHTML = `
+      <div style="background:white; border-radius:10px; max-width:700px; width:100%; max-height:90vh; overflow-y:auto; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+        <div style="padding:18px 22px; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <h3 style="margin:0; color:#315A87;">📧 Send Form to Owner</h3>
+            <div style="font-size:12px; color:#888; margin-top:2px;" id="forms-send-context">Loading…</div>
+          </div>
+          <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="formsCloseSend()">✕ Cancel</button>
+        </div>
+        <div style="padding:18px 22px;" id="forms-send-body">
+          <div style="color:#888; font-size:13px;">⚙️ Loading template…</div>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+
+    try {
+      // Render the template — the backend substitutes placeholders against the
+      // doc's community/title/category and builds the mailto: URL.
+      const r = await fetch(`/api/documents/${encodeURIComponent(docId)}/email-render`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recipient_email: '',
+          recipient_name: '',
+          base_url: window.location.origin
+        })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+
+      const ctx = document.getElementById('forms-send-context');
+      if (ctx) ctx.textContent = `${data.document?.title || ''} · ${data.document?.community || ''}`;
+
+      const bodyEl = document.getElementById('forms-send-body');
+      bodyEl.innerHTML = `
+        <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Recipient email *</label>
+            <input type="email" id="forms-send-email" placeholder="owner@example.com" required
+                   style="width:100%; padding:7px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Recipient name (optional)</label>
+            <input type="text" id="forms-send-name" placeholder="e.g., John Smith"
+                   style="width:100%; padding:7px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Subject</label>
+            <input type="text" id="forms-send-subject" value="${escapeHtml(data.subject)}"
+                   style="width:100%; padding:7px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">
+              Body
+              <span style="font-style:italic; color:#888;">— ${escapeHtml(data.template_category)} template, edits below apply to this send only</span>
+            </label>
+            <textarea id="forms-send-body-text" style="width:100%; min-height:280px; padding:8px; font-size:12.5px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px; font-family:inherit; line-height:1.6;">${escapeHtml(data.body)}</textarea>
+          </div>
+          <div style="font-size:11px; color:#666; background:#f5f9fc; border:1px solid #d4e1ee; padding:8px 10px; border-radius:4px; line-height:1.6;">
+            <strong>How it works:</strong> Clicking <strong>Open in Outlook</strong> opens your email client with this message pre-filled. Review, hit Send in Outlook — the email goes from your Bedrock account, replies come back to you, and lands in your Sent folder. The form is shared as a download link in the body (always serves the current version).
+          </div>
+        </div>
+        <div style="padding:14px 0 0 0; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <button class="secondary-btn" style="font-size:12px;" onclick="formsEditTemplate('${escapeHtml(data.template_category)}')">⚙ Edit ${escapeHtml(data.template_category)} template</button>
+          <div style="display:flex; gap:8px;">
+            <button class="secondary-btn" onclick="formsCloseSend()">Cancel</button>
+            <button class="action-btn" onclick="formsSendViaMailto()">📧 Open in Outlook</button>
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      const bodyEl = document.getElementById('forms-send-body');
+      if (bodyEl) bodyEl.innerHTML = `<div style="color:#a00; font-size:13px;">Failed to load template: ${escapeHtml(e.message)}</div>
+        <div style="margin-top:10px; font-size:12px; color:#666;">Make sure migration 019 has been run in Supabase (creates form_email_templates with seed defaults).</div>`;
+    }
+  }
+
+  function formsCloseSend() {
+    const el = document.getElementById('forms-send-modal-backdrop');
+    if (el) el.remove();
+    _formsSendCurrentDocId = null;
+  }
+
+  function formsSendViaMailto() {
+    const to = document.getElementById('forms-send-email').value.trim();
+    const name = document.getElementById('forms-send-name').value.trim();
+    const subject = document.getElementById('forms-send-subject').value;
+    let body = document.getElementById('forms-send-body-text').value;
+    if (!to) { alert('Recipient email is required.'); return; }
+    // If user typed a name AND the body has the placeholder, fill it in.
+    // (The initial render came with recipient_name='', so {recipient_name_or_empty}
+    // was empty. If they add a name now, inject it.)
+    if (name) {
+      body = body.replace(/^Hi,/m, `Hi ${name},`);
+    }
+    // Build mailto URL. Outlook on Windows handles encoded subject/body cleanly.
+    const url = `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+    // Open in a new window/tab — keeps the modal open in case user wants to
+    // send to another recipient with the same template
+    window.open(url, '_blank');
+  }
+
+  // --------------------------------------------------------------------------
+  // Template editor — pop a simpler modal to edit subject + body for a category
+  // --------------------------------------------------------------------------
+  async function formsEditTemplate(category) {
+    formsCloseSend();
+    try {
+      const r = await fetch(`/api/documents/email-templates/${encodeURIComponent(category)}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      const t = data.template;
+
+      const backdrop = document.createElement('div');
+      backdrop.id = 'forms-template-modal-backdrop';
+      backdrop.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9998; display:flex; align-items:center; justify-content:center; padding:20px;';
+      backdrop.innerHTML = `
+        <div style="background:white; border-radius:10px; max-width:720px; width:100%; max-height:90vh; overflow-y:auto; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+          <div style="padding:18px 22px; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
+            <div>
+              <h3 style="margin:0; color:#315A87;">⚙ Edit Template — ${escapeHtml(category)}</h3>
+              <div style="font-size:12px; color:#888; margin-top:2px;">Saved edits apply to every future Send for this category until changed again.</div>
+            </div>
+            <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="formsCloseTemplateEditor()">✕ Cancel</button>
+          </div>
+          <div style="padding:18px 22px;">
+            <div style="font-size:11px; color:#666; background:#f5f9fc; border:1px solid #d4e1ee; padding:8px 10px; border-radius:4px; margin-bottom:14px; line-height:1.6;">
+              <strong>Available placeholders:</strong>
+              <code>{community_name}</code> · <code>{form_title}</code> · <code>{download_link}</code> · <code>{bedrock_phone}</code> · <code>{bedrock_email}</code> · <code>{recipient_name_or_empty}</code> (leading space + name, or empty)
+            </div>
+            <div style="margin-bottom:12px;">
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Subject</label>
+              <input type="text" id="forms-template-subject" value="${escapeHtml(t.subject_template)}"
+                     style="width:100%; padding:7px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Body</label>
+              <textarea id="forms-template-body" style="width:100%; min-height:340px; padding:8px; font-size:12.5px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px; font-family:inherit; line-height:1.6;">${escapeHtml(t.body_template)}</textarea>
+            </div>
+          </div>
+          <div style="padding:14px 22px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:8px;">
+            <button class="secondary-btn" onclick="formsCloseTemplateEditor()">Cancel</button>
+            <button class="action-btn" id="forms-template-save-btn" onclick="formsSaveTemplate('${escapeHtml(category)}')">Save Template</button>
+          </div>
+        </div>`;
+      document.body.appendChild(backdrop);
+    } catch (e) {
+      alert('Failed to load template: ' + e.message);
+    }
+  }
+
+  function formsCloseTemplateEditor() {
+    const el = document.getElementById('forms-template-modal-backdrop');
+    if (el) el.remove();
+  }
+
+  async function formsSaveTemplate(category) {
+    const subject = document.getElementById('forms-template-subject').value;
+    const body = document.getElementById('forms-template-body').value;
+    const btn = document.getElementById('forms-template-save-btn');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      const r = await fetch(`/api/documents/email-templates/${encodeURIComponent(category)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ subject_template: subject, body_template: body })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      formsCloseTemplateEditor();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Save Template';
+      alert('Save failed: ' + e.message);
     }
   }
 
