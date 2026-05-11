@@ -222,6 +222,7 @@
   <div class="tab" onclick="switchTab('vendors')">🏢 Vendors</div>
   <div class="tab" onclick="switchTab('help')">📚 Help</div>
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
+  <div class="tab" onclick="switchTab('packets')">📋 Board Packets</div>
 </div>
 
 <!-- Chat Tab -->
@@ -2501,6 +2502,14 @@
         <h3 style="margin:0;">📥 Upload documents</h3>
         <span style="font-size:11px; color:#888;">No metadata needed — Claude reads the file and figures it out</span>
       </div>
+      <!-- Community-lock: use when batch-uploading docs for a specific community. -->
+      <div style="margin-bottom: 10px; padding: 8px 10px; background: #f5f9fc; border: 1px solid #d4e1ee; border-radius: 6px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+        <label style="font-size: 12px; color: #444; font-weight: 500;">Target community:</label>
+        <select id="docs-upload-community-lock" style="padding: 5px 8px; font-size: 12px; border: 1px solid #c0d0e0; border-radius: 4px; min-width: 220px;">
+          <option value="">🤖 Auto-detect (Claude reads the PDF)</option>
+        </select>
+        <span style="font-size: 11px; color: #6a7d8e;">If locked, every doc in this batch goes to that community regardless of what Claude sees in the file.</span>
+      </div>
       <div id="docs-drop-area"
            style="border:2px dashed #d0d7de; border-radius:8px; padding:24px; text-align:center; cursor:pointer; background:#f9f9f9;"
            onclick="document.getElementById('docs-file-input').click()"
@@ -2532,6 +2541,18 @@
       <div id="docs-matrix-container" style="font-size:12px; color:#888;">Loading…</div>
     </div>
 
+    <!-- Orphan documents — community_id IS NULL, awaiting manual assignment -->
+    <div class="panel" style="margin-top: 16px; display: none;" id="docs-orphans-panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <h3 style="margin:0; color:#a06400;">⚠️ Unassigned Documents</h3>
+        <span style="font-size:11px; color:#888;">Claude couldn't match these to a community — pick one to assign</span>
+      </div>
+      <p style="font-size:12px; color:#666; margin:0 0 12px 0;">
+        These uploaded but with <code>community_id = NULL</code>, usually because the doc didn't name the community internally (recorded amendments, generic templates, etc.). Use the community-lock dropdown on future uploads to prevent this.
+      </p>
+      <div id="docs-orphans-container" style="font-size:12px; color:#888;">Loading…</div>
+    </div>
+
     <!-- Legacy library (pre-trustEd askEd index) -->
     <div class="panel" style="margin-top: 16px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -2543,6 +2564,85 @@
         Click <strong>Categorize</strong> to promote a doc into the Tracker with full metadata extraction. Already-migrated docs hide from this list automatically.
       </p>
       <div id="docs-legacy-container" style="font-size:12px; color:#888;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     BOARD PACKETS TAB — Bedrock board packet generator
+     Pick community + period, fill 11 canonical sections via manual / upload /
+     auto-from-trustEd, render as a branded packet for board meetings.
+     ========================================================================= -->
+<div class="tab-content" id="tab-packets" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1300px;">
+    <h2 style="margin:0 0 4px 0;">📋 Board Packets</h2>
+    <p style="color:#888; margin:0 0 20px 0; font-size:13px;">
+      Assemble a Bedrock-branded board packet in ~45 minutes. Each section accepts manual input, PDF upload (Claude extracts), or auto-fill from trustEd modules.
+      <span style="color:#315A87; font-weight:500;">The encoded-Ed voice across cover, exec summary, watch-outs, and action items.</span>
+    </p>
+
+    <!-- New packet creation panel -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <h3 style="margin-top:0;">➕ Create New Packet</h3>
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 12px; align-items:end;">
+        <div>
+          <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Community *</label>
+          <select id="packets-new-community" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+            <option value="">Select community…</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Period Label *</label>
+          <input type="text" id="packets-new-period" placeholder='e.g., "April 2026" or "Annual 2026"'
+                 style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Meeting Date</label>
+          <input type="date" id="packets-new-date" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+        </div>
+        <div>
+          <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Type</label>
+          <select id="packets-new-type" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+            <option value="regular">Regular</option>
+            <option value="annual">Annual</option>
+            <option value="special">Special</option>
+            <option value="executive">Executive Session</option>
+            <option value="workshop">Workshop</option>
+          </select>
+        </div>
+      </div>
+      <!-- Section checkboxes — pick which sections to include in this packet.
+           Defaults: every section that's flagged required_default in the templates.
+           Uncheck the ones that don't apply to this community or this meeting. -->
+      <div style="margin-top:12px;">
+        <label style="display:block; font-size:11px; color:#666; margin-bottom:6px;">
+          Sections to include
+          <span style="color:#888;">— uncheck what you don't need for this packet</span>
+        </label>
+        <div id="packets-create-sections" style="display:flex; flex-wrap:wrap; gap:6px;">
+          <span style="color:#888; font-size:12px;">Loading section templates…</span>
+        </div>
+      </div>
+      <div style="margin-top:12px; display:flex; justify-content:flex-end;">
+        <button class="action-btn" onclick="packetsCreate()">Create Packet →</button>
+      </div>
+      <div id="packets-create-result" style="margin-top:8px;"></div>
+    </div>
+
+    <!-- Existing packets list -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">📚 Existing Packets</h3>
+        <select id="packets-filter-community" onchange="packetsLoadList()" style="padding:6px; font-size:13px;">
+          <option value="">All communities</option>
+        </select>
+      </div>
+      <div id="packets-list-container" style="font-size:13px; color:#888;">Loading…</div>
+    </div>
+
+    <!-- Selected packet detail / wizard -->
+    <div id="packets-detail-container" style="display:none;">
+      <!-- populated by packetsLoadDetail() -->
     </div>
   </div>
 </div>
@@ -4745,6 +4845,11 @@ ${questionsPage}
       try {
         const fd = new FormData();
         fd.append('pdf', item.file);
+        // Community lock (optional): if user selected a target community in the
+        // upload UI, every doc in this batch is force-assigned to it regardless
+        // of what Claude reads from the PDF.
+        const lockedCommunityId = document.getElementById('docs-upload-community-lock')?.value || '';
+        if (lockedCommunityId) fd.append('community_id', lockedCommunityId);
         const r = await fetch('/api/documents/upload', { method: 'POST', body: fd });
         const data = await r.json();
         if (r.status === 409 && data.duplicate) {
@@ -4784,8 +4889,8 @@ ${questionsPage}
         docsRenderQueue();
       }
     }
-    // Refresh the matrix after batch completes
-    setTimeout(() => { docsLoadMatrix(); docsLoadDups(); }, 400);
+    // Refresh the matrix + orphans after batch completes
+    setTimeout(() => { docsLoadMatrix(); docsLoadDups(); docsLoadOrphans(); }, 400);
   }
 
   async function docsQuery() {
@@ -4917,10 +5022,76 @@ ${questionsPage}
       const r = await fetch('/api/billing/communities');
       const data = await r.json();
       docsCommunitiesCache = (data.communities || []).sort((a, b) => a.name.localeCompare(b.name));
+      // Populate the matrix filter
       const sel = document.getElementById('docs-matrix-filter');
-      if (!sel) return;
-      sel.innerHTML = '<option value="">All communities</option>' + docsCommunitiesCache.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+      if (sel) sel.innerHTML = '<option value="">All communities</option>' + docsCommunitiesCache.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+      // Populate the upload community-lock dropdown
+      const lockSel = document.getElementById('docs-upload-community-lock');
+      if (lockSel) {
+        lockSel.innerHTML = '<option value="">🤖 Auto-detect (Claude reads the PDF)</option>' +
+          docsCommunitiesCache.map(c => `<option value="${c.id}">🔒 Lock to: ${escapeHtml(c.name)}</option>`).join('');
+      }
     } catch (_) { /* swallow */ }
+  }
+
+  async function docsLoadOrphans() {
+    const wrap = document.getElementById('docs-orphans-container');
+    const panel = document.getElementById('docs-orphans-panel');
+    if (!wrap || !panel) return;
+    try {
+      const r = await fetch('/api/documents?community_id=null&include_legacy=false');
+      const data = await r.json();
+      const orphans = (data.documents || []).filter(d => d.source !== 'legacy' && !d.community_id);
+      if (orphans.length === 0) { panel.style.display = 'none'; return; }
+      panel.style.display = 'block';
+      const opts = docsCommunitiesCache.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+      wrap.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead><tr style="background:#fff4e0;">
+            <th style="padding:6px 8px; text-align:left;">Title</th>
+            <th style="padding:6px 8px; text-align:left;">Category</th>
+            <th style="padding:6px 8px; text-align:left;">Period</th>
+            <th style="padding:6px 8px; text-align:left;">Uploaded</th>
+            <th style="padding:6px 8px; text-align:right;">Assign to Community</th>
+          </tr></thead>
+          <tbody>
+            ${orphans.map(d => `<tr style="border-bottom:1px solid #eee;">
+              <td style="padding:6px 8px;"><div style="font-weight:500;">${escapeHtml(d.title || d.file_name_normalized || '(untitled)')}</div>
+                <div style="color:#888; font-size:10px;">${escapeHtml(d.file_name_original || '')}</div></td>
+              <td style="padding:6px 8px;">${escapeHtml(d.category || '—')}</td>
+              <td style="padding:6px 8px;">${escapeHtml(d.period_label || '—')}</td>
+              <td style="padding:6px 8px;">${d.uploaded_at ? new Date(d.uploaded_at).toLocaleDateString() : '—'}</td>
+              <td style="padding:6px 8px; text-align:right;">
+                <select onchange="docsAssignCommunity('${d.id}', this.value, this)" style="padding:4px; font-size:11px;">
+                  <option value="">Pick community…</option>
+                  ${opts}
+                </select>
+              </td>
+            </tr>`).join('')}
+          </tbody>
+        </table>`;
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#a00;">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function docsAssignCommunity(docId, communityId, selectEl) {
+    if (!communityId) return;
+    selectEl.disabled = true;
+    try {
+      const r = await fetch(`/api/documents/${docId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: communityId })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      // Refresh orphans + matrix
+      setTimeout(() => { docsLoadOrphans(); docsLoadMatrix(); }, 200);
+    } catch (e) {
+      selectEl.disabled = false;
+      alert('Assign failed: ' + e.message);
+    }
   }
 
   async function docsLoadDups() {
@@ -5068,10 +5239,376 @@ ${questionsPage}
         t.addEventListener('click', () => {
           if (!docsHasLoaded) {
             docsHasLoaded = true;
-            docsLoadCommunitiesFilter();
+            // load communities first so the dropdown is ready before orphan render
+            docsLoadCommunitiesFilter().then(() => docsLoadOrphans());
             docsLoadMatrix();
             docsLoadDups();
             docsLoadLegacy();
+          }
+        });
+      }
+    });
+  });
+
+  // ==========================================================================
+  // BOARD PACKETS TAB — Bedrock board packet generator
+  // ==========================================================================
+  let packetsCommunitiesCache = [];
+  let packetsCurrentPacketId = null;
+  let packetsCurrentSections = [];
+  let packetsTemplatesCache = [];
+
+  async function packetsLoadCommunities() {
+    try {
+      const r = await fetch('/api/billing/communities');
+      const data = await r.json();
+      packetsCommunitiesCache = (data.communities || []).slice().sort((a, b) => a.name.localeCompare(b.name));
+      ['packets-new-community', 'packets-filter-community'].forEach(id => {
+        const sel = document.getElementById(id);
+        if (!sel) return;
+        const placeholder = id === 'packets-filter-community' ? 'All communities' : 'Select community…';
+        sel.innerHTML = `<option value="">${placeholder}</option>` +
+          packetsCommunitiesCache.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+      });
+    } catch (_) { /* swallow */ }
+  }
+
+  async function packetsLoadTemplates() {
+    try {
+      const r = await fetch('/api/board-packets/templates');
+      const data = await r.json();
+      packetsTemplatesCache = data.templates || [];
+      packetsRenderCreateSectionCheckboxes();
+    } catch (_) { /* swallow */ }
+  }
+
+  function packetsRenderCreateSectionCheckboxes() {
+    const wrap = document.getElementById('packets-create-sections');
+    if (!wrap || packetsTemplatesCache.length === 0) return;
+    wrap.innerHTML = packetsTemplatesCache.map(t => `
+      <label style="display:inline-flex; align-items:center; gap:4px; font-size:12px; padding:5px 9px; border:1px solid #d0d7de; border-radius:4px; cursor:pointer; background:white; user-select:none;">
+        <input type="checkbox" class="packets-section-check" value="${escapeHtml(t.section_key)}" ${t.required_default ? 'checked' : ''}>
+        ${escapeHtml(t.display_name)}
+      </label>
+    `).join('');
+  }
+
+  async function packetsCreate() {
+    const community_id = document.getElementById('packets-new-community').value;
+    const period_label = document.getElementById('packets-new-period').value.trim();
+    const meeting_date = document.getElementById('packets-new-date').value || null;
+    const meeting_type = document.getElementById('packets-new-type').value;
+    const out = document.getElementById('packets-create-result');
+    if (!community_id || !period_label) {
+      out.innerHTML = '<div style="color:#a00; font-size:12px;">Community and Period Label are required.</div>';
+      return;
+    }
+    out.innerHTML = '<div style="color:#666; font-size:12px;">Creating…</div>';
+    // Gather which sections to include (only the checked ones become 'pending'
+    // in the wizard; unchecked ones become 'skipped' but can be unskipped later).
+    const includedSections = Array.from(document.querySelectorAll('.packets-section-check:checked'))
+      .map(cb => cb.value);
+    try {
+      const r = await fetch('/api/board-packets', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          community_id, period_label, meeting_date, meeting_type,
+          included_sections: includedSections.length > 0 ? includedSections : null
+        })
+      });
+      const data = await r.json();
+      if (r.status === 409) {
+        out.innerHTML = `<div style="color:#a06400; font-size:12px;">A packet already exists for this community + period. <a href="#" onclick="packetsLoadDetail('${data.existing_id}'); return false;">Open it →</a></div>`;
+        return;
+      }
+      if (!r.ok) throw new Error(data.error || 'create failed');
+      out.innerHTML = `<div style="color:#2e7d32; font-size:12px;">✓ Created. Loading sections…</div>`;
+      document.getElementById('packets-new-period').value = '';
+      document.getElementById('packets-new-date').value = '';
+      await packetsLoadList();
+      await packetsLoadDetail(data.packet.id);
+    } catch (e) {
+      out.innerHTML = `<div style="color:#a00; font-size:12px;">❌ ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function packetsLoadList() {
+    const wrap = document.getElementById('packets-list-container');
+    wrap.innerHTML = '<div style="color:#888;">Loading…</div>';
+    try {
+      const filter = document.getElementById('packets-filter-community')?.value;
+      const qs = filter ? `?community_id=${filter}` : '';
+      const r = await fetch('/api/board-packets' + qs);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      const packets = data.packets || [];
+      if (packets.length === 0) {
+        wrap.innerHTML = '<div style="color:#888; padding:14px; text-align:center;">No packets yet. Create one above.</div>';
+        return;
+      }
+      wrap.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead><tr style="background:#f5f5f5;">
+            <th style="padding:6px 8px; text-align:left;">Community</th>
+            <th style="padding:6px 8px; text-align:left;">Period</th>
+            <th style="padding:6px 8px; text-align:left;">Meeting Date</th>
+            <th style="padding:6px 8px; text-align:center;">Status</th>
+            <th style="padding:6px 8px; text-align:center;">Sections</th>
+            <th style="padding:6px 8px; text-align:right;">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${packets.map(p => {
+              const total = p.sections_total || 0;
+              const ready = p.sections_ready || 0;
+              const pctOk = total > 0 ? Math.round(ready / total * 100) : 0;
+              const statusColor = pctOk >= 90 ? '#2e7d32' : pctOk >= 50 ? '#ed6c02' : '#888';
+              return `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:6px 8px;">${escapeHtml(p.community_name || '—')}</td>
+                <td style="padding:6px 8px;">${escapeHtml(p.period_label || '—')}</td>
+                <td style="padding:6px 8px;">${p.meeting_date || '—'}</td>
+                <td style="padding:6px 8px; text-align:center;"><span style="background:#f0f0f0; padding:2px 8px; border-radius:10px; font-size:10px;">${escapeHtml(p.status)}</span></td>
+                <td style="padding:6px 8px; text-align:center; color:${statusColor}; font-weight:500;">${ready}/${total} (${pctOk}%)</td>
+                <td style="padding:6px 8px; text-align:right;">
+                  <button class="secondary-btn" style="font-size:11px; padding:4px 10px;" onclick="packetsLoadDetail('${p.id}')">Open →</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#a00;">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function packetsLoadDetail(packetId) {
+    packetsCurrentPacketId = packetId;
+    const wrap = document.getElementById('packets-detail-container');
+    wrap.style.display = 'block';
+    wrap.innerHTML = '<div class="panel" style="margin-top:16px;"><div style="color:#888;">Loading packet…</div></div>';
+    try {
+      const r = await fetch(`/api/board-packets/${packetId}`);
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      packetsCurrentSections = data.sections || [];
+      const p = data.packet;
+      wrap.innerHTML = `
+        <div class="panel" style="margin-top:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:10px;">
+            <div>
+              <h3 style="margin:0;">${escapeHtml(p.community?.name || '—')} — ${escapeHtml(p.period_label)}</h3>
+              <div style="color:#888; font-size:12px; margin-top:2px;">
+                Meeting: ${p.meeting_date || '(date TBD)'} ${p.meeting_type ? '· ' + p.meeting_type : ''}
+                ${p.meeting_location ? '· ' + escapeHtml(p.meeting_location) : ''}
+              </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <a class="secondary-btn" style="font-size:12px; padding:6px 12px; text-decoration:none;"
+                 href="/api/board-packets/${packetId}/preview" target="_blank">👁️ Preview</a>
+              <button class="action-btn" style="font-size:12px;" onclick="packetsRender('${packetId}')">📄 Render</button>
+              <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsClose()">Close</button>
+            </div>
+          </div>
+          <p style="font-size:12px; color:#666; margin:0 0 12px 0;">
+            Each section accepts: <strong>📝 Manual</strong> input · <strong>📥 Upload PDF</strong> (Claude extracts) · <strong>⚡ Auto-fill</strong> from trustEd (where available) · <strong>🤖 AI</strong>-generate (for narrative sections).
+          </p>
+          <div id="packets-sections-container"></div>
+        </div>`;
+      packetsRenderSections();
+    } catch (e) {
+      wrap.innerHTML = `<div class="panel" style="margin-top:16px;"><div style="color:#a00;">Failed: ${escapeHtml(e.message)}</div></div>`;
+    }
+  }
+
+  function packetsClose() {
+    packetsCurrentPacketId = null;
+    document.getElementById('packets-detail-container').style.display = 'none';
+  }
+
+  function packetsRenderSections() {
+    const wrap = document.getElementById('packets-sections-container');
+    if (!wrap || !packetsCurrentSections) return;
+    wrap.innerHTML = packetsCurrentSections.map(s => {
+      const t = s.template || {};
+      const statusColor = s.status === 'ready' ? '#2e7d32' :
+                          s.status === 'pending' ? '#aaa' :
+                          s.status === 'error' ? '#d32f2f' : '#888';
+      const statusBg = s.status === 'ready' ? '#dff5e0' :
+                       s.status === 'pending' ? '#f0f0f0' :
+                       s.status === 'error' ? '#fbe9e7' : '#f5f5f5';
+      const isSkipped = s.status === 'skipped';
+      const inputOptions = [];
+      if (!isSkipped) {
+        if (t.supports_manual)        inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsEditManual('${s.section_key}')">📝 Manual</button>`);
+        if (t.supports_upload)        inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsUploadSection('${s.section_key}')">📥 Upload</button>`);
+        if (t.supports_auto_trusted)  inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsAutoFill('${s.section_key}')">⚡ Auto</button>`);
+        if (t.supports_ai_generated)  inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsAiGenerate('${s.section_key}')">🤖 AI</button>`);
+      }
+      // Skip / Unskip toggle — Ed can mark a section as not applicable for this
+      // packet (e.g., LPF doesn't need DRV every month) without losing any data
+      // already entered. Flips status between 'skipped' and 'pending'.
+      const skipLabel = isSkipped ? '↩ Include' : '✕ Skip';
+      const skipColor = isSkipped ? '#2e7d32' : '#888';
+      inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:${skipColor};" onclick="packetsToggleSkip('${s.section_key}')">${skipLabel}</button>`);
+
+      const hasData = s.input_data && Object.keys(s.input_data).length > 0;
+      const previewText = hasData ? JSON.stringify(s.input_data, null, 2).slice(0, 280) : '';
+      const cardOpacity = isSkipped ? 'opacity: 0.55;' : '';
+
+      return `<div style="border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong style="color:#315A87;">${escapeHtml(t.display_name || s.section_key)}</strong>
+            <span style="background:${statusBg}; color:${statusColor}; padding:1px 8px; border-radius:10px; font-size:10px; margin-left:8px; font-weight:600;">${escapeHtml(s.status)}</span>
+            ${!isSkipped ? `<span style="background:#f5f5f5; color:#666; padding:1px 6px; border-radius:3px; font-size:10px; margin-left:4px;">${escapeHtml(s.input_mode)}</span>` : ''}
+          </div>
+          <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end;">
+            ${inputOptions.join('')}
+            ${hasData && !isSkipped ? `<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsViewSection('${s.section_key}')">View</button>` : ''}
+          </div>
+        </div>
+        ${t.description ? `<div style="color:#888; font-size:11px; margin-top:4px;">${escapeHtml(t.description)}</div>` : ''}
+        ${hasData && !isSkipped ? `<div style="margin-top:6px; background:#fafafa; padding:6px 8px; border-radius:4px; font-family:monospace; font-size:10px; color:#666; max-height:80px; overflow:hidden;">${escapeHtml(previewText)}${JSON.stringify(s.input_data).length > 280 ? '…' : ''}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+
+  async function packetsUploadSection(sectionKey) {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.pdf';
+    input.onchange = async () => {
+      const f = input.files[0];
+      if (!f) return;
+      const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+      if (sec) { sec.status = 'in_progress'; packetsRenderSections(); }
+      try {
+        const fd = new FormData();
+        fd.append('pdf', f);
+        const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/upload`, {
+          method: 'POST', body: fd
+        });
+        const data = await r.json();
+        if (!r.ok) throw new Error(data.error || 'failed');
+        await packetsLoadDetail(packetsCurrentPacketId);
+      } catch (e) {
+        alert('Upload failed: ' + e.message);
+        await packetsLoadDetail(packetsCurrentPacketId);
+      }
+    };
+    input.click();
+  }
+
+  async function packetsAiGenerate(sectionKey) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (sec) { sec.status = 'in_progress'; packetsRenderSections(); }
+    try {
+      const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/ai-generate`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      await packetsLoadDetail(packetsCurrentPacketId);
+    } catch (e) {
+      alert('AI generate failed: ' + e.message);
+      await packetsLoadDetail(packetsCurrentPacketId);
+    }
+  }
+
+  async function packetsAutoFill(sectionKey) {
+    try {
+      const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/auto-fill`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
+      });
+      const data = await r.json();
+      if (r.status === 501) {
+        alert(data.message || 'Auto-fill not yet available — use Manual or Upload for now.');
+        return;
+      }
+      if (!r.ok) throw new Error(data.error || 'failed');
+      await packetsLoadDetail(packetsCurrentPacketId);
+    } catch (e) {
+      alert('Auto-fill failed: ' + e.message);
+    }
+  }
+
+  function packetsEditManual(sectionKey) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (!sec) return;
+    const current = sec.input_data ? JSON.stringify(sec.input_data, null, 2) : (sec.template?.data_schema_hint ? JSON.stringify(sec.template.data_schema_hint, null, 2) : '{}');
+    const edited = prompt(`Edit input_data for "${sec.template?.display_name || sectionKey}":\n\n(Day 1 uses a JSON textarea. Day 2 ships a proper form per section type.)`, current);
+    if (edited === null) return;
+    let parsed;
+    try { parsed = JSON.parse(edited); }
+    catch (e) { alert('Invalid JSON: ' + e.message); return; }
+    fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ input_data: parsed, input_mode: 'manual' })
+    }).then(r => r.json()).then(data => {
+      if (data.error) { alert(data.error); return; }
+      packetsLoadDetail(packetsCurrentPacketId);
+    });
+  }
+
+  function packetsViewSection(sectionKey) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (!sec) return;
+    const w = window.open('', '_blank', 'width=720,height=600');
+    w.document.write(`<title>${escapeHtml(sec.template?.display_name || sectionKey)}</title>
+      <body style="font-family: monospace; padding: 20px; background: #fafafa;">
+      <h3 style="font-family: -apple-system, sans-serif; color: #315A87;">${escapeHtml(sec.template?.display_name || sectionKey)}</h3>
+      <p style="font-family: -apple-system, sans-serif; color: #666; font-size: 12px;">${escapeHtml(sec.template?.description || '')}</p>
+      <pre style="background: white; padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; font-size: 11px; white-space: pre-wrap;">${escapeHtml(JSON.stringify(sec.input_data, null, 2))}</pre></body>`);
+  }
+
+  async function packetsToggleSkip(sectionKey) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (!sec) return;
+    const newStatus = sec.status === 'skipped' ? 'pending' : 'skipped';
+    try {
+      const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      // Optimistic local update so the UI doesn't flicker
+      sec.status = newStatus;
+      packetsRenderSections();
+    } catch (e) {
+      alert('Skip toggle failed: ' + e.message);
+    }
+  }
+
+  async function packetsRender(packetId) {
+    try {
+      const r = await fetch(`/api/board-packets/${packetId}/render`, { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      alert(data.message || 'Render complete.');
+      window.open(`/api/board-packets/${packetId}/preview`, '_blank');
+      packetsLoadList();
+    } catch (e) {
+      alert('Render failed: ' + e.message);
+    }
+  }
+
+  // Auto-load when the Board Packets tab is opened
+  let packetsHasLoaded = false;
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('packets')") {
+        t.addEventListener('click', () => {
+          if (!packetsHasLoaded) {
+            packetsHasLoaded = true;
+            packetsLoadCommunities();
+            packetsLoadTemplates();
+            packetsLoadList();
           }
         });
       }

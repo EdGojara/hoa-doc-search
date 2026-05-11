@@ -290,8 +290,25 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
     // 2) Extract metadata via Claude
     const { parsed, usage } = await extractDocumentMetadata(req.file.buffer);
 
-    // 3) Match community + load category display name
-    const community = await findCommunityByName(parsed.community_name);
+    // 3) Match community — caller can LOCK the community via form field
+    //    community_id (e.g., the user picked "Lock to: Waterview" in the upload
+    //    UI). Locking overrides Claude's detection — useful when the doc
+    //    doesn't name the community internally (recorded amendments,
+    //    insurance policies, generic templates).
+    let community = null;
+    const lockedCommunityId = (req.body?.community_id || '').trim();
+    if (lockedCommunityId) {
+      const { data: c } = await supabase
+        .from('communities')
+        .select('id, name, legal_name')
+        .eq('id', lockedCommunityId)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .maybeSingle();
+      community = c || null;
+    }
+    if (!community) {
+      community = await findCommunityByName(parsed.community_name);
+    }
     const { data: catRow } = await supabase
       .from('document_categories')
       .select('display_name')
@@ -417,7 +434,31 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       })
       .select()
       .single();
-    if (insErr) throw insErr;
+    if (insErr) {
+      // The byte-dedup check at step 1 SHOULD have caught any same-hash duplicate.
+      // If we still hit the unique constraint here, it's a race condition (two
+      // simultaneous uploads of the same file) or a stale-read scenario.
+      // Either way: surface it as a friendly 409 rather than a raw SQL 500.
+      if (insErr.code === '23505' && /file_hash|ux_docs_file_hash/i.test(insErr.message || '')) {
+        const { data: dup } = await supabase
+          .from('library_documents')
+          .select('id, title, status, file_name_normalized, community_id, category')
+          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+          .eq('file_hash', fileHash)
+          .maybeSingle();
+        // Clean up the storage upload we just did since the DB row didn't land
+        if (uploadedFile) {
+          try { await supabase.storage.from(STORAGE_BUCKET).remove([filePath]); } catch (_) { /* swallow */ }
+        }
+        return res.status(409).json({
+          duplicate: true,
+          dup_type: 'byte_identical_race',
+          message: `This file is already in trustEd as "${dup?.title || dup?.file_name_normalized || 'an existing document'}" (status: ${dup?.status || 'unknown'}). No action needed.`,
+          existing: dup || null
+        });
+      }
+      throw insErr;
+    }
 
     // 9) Store extracted fields
     if (parsed.extracted_fields && Object.keys(parsed.extracted_fields).length > 0) {
@@ -514,7 +555,13 @@ router.get('/', async (req, res) => {
       .select('*, community:communities(id, name, legal_name), extracted:document_extracted_fields(fields)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('uploaded_at', { ascending: false });
-    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    // Support 'community_id=null' filter for orphan discovery (docs Claude
+    // couldn't match to a community, awaiting manual assignment).
+    if (req.query.community_id === 'null' || req.query.community_id === 'unassigned') {
+      q = q.is('community_id', null);
+    } else if (req.query.community_id) {
+      q = q.eq('community_id', req.query.community_id);
+    }
     if (req.query.category) q = q.eq('category', req.query.category);
     if (req.query.status) q = q.eq('status', req.query.status);
     if (req.query.include_predecessor === 'false') {

@@ -345,6 +345,18 @@ app.use('/api/help', helpRouter);
 const { router: documentsRouter } = require('./api/documents');
 app.use('/api/documents', documentsRouter);
 
+// Board Packets — Bedrock board packet generator
+// Endpoints under /api/board-packets/*. See api/board_packets.js and
+// migrations/014_board_packets.sql for the schema.
+// Pick community + period -> get 11 canonical sections (cover, agenda,
+// financials, DRV, AR aging, etc.) each accepting manual / upload /
+// auto-from-trustEd input. Claude extracts uploaded PDFs into structured
+// data per section. AI-generates exec summary + watch-outs from assembled
+// data. Renders as Bedrock-branded HTML/PDF (Day 3) using the design
+// language from /public/board_packet_preview.html.
+const { router: boardPacketsRouter } = require('./api/board_packets');
+app.use('/api/board-packets', boardPacketsRouter);
+
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
