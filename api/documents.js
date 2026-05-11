@@ -701,7 +701,7 @@ router.get('/:id/download', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/query', async (req, res) => {
   const t0 = Date.now();
-  const { question } = req.body || {};
+  const { question, default_community } = req.body || {};
   if (!question || !question.trim()) return res.status(400).json({ error: 'question is required' });
 
   try {
@@ -712,7 +712,13 @@ router.post('/query', async (req, res) => {
       .select('id, name')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID);
 
-    const parsePrompt = `Parse this document retrieval request into structured filters. Available communities: ${JSON.stringify((comms || []).map(c => c.name))}. Available categories: ${JSON.stringify((cats || []).map(c => `${c.category} (${c.display_name})`))}.
+    // Context hint: the UI's top-of-page community selector. If the user's
+    // question doesn't name a community, assume they mean the selected one.
+    const contextLine = default_community
+      ? `\n\nUI CONTEXT: The user currently has "${default_community}" selected as the active community. If the question doesn't explicitly name a different community, assume they mean ${default_community}.`
+      : '';
+
+    const parsePrompt = `Parse this document retrieval request into structured filters. Available communities: ${JSON.stringify((comms || []).map(c => c.name))}. Available categories: ${JSON.stringify((cats || []).map(c => `${c.category} (${c.display_name})`))}.${contextLine}
 
 Request: "${question}"
 
@@ -735,6 +741,14 @@ Return ONLY the JSON, no preamble.`;
     const parsedFilters = JSON.parse(
       (parseRes.content?.[0]?.text || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
     );
+
+    // Backstop: if Claude failed to set a community AND the UI has one selected,
+    // apply the UI default. Also annotate the interpretation so the user sees
+    // the assumption.
+    if (!parsedFilters.community_name && default_community) {
+      parsedFilters.community_name = default_community;
+      parsedFilters.defaulted_to_ui_community = true;
+    }
 
     // Query documents matching the parsed filters
     let q = supabase

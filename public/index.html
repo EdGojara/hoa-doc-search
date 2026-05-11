@@ -5496,7 +5496,10 @@ ${questionsPage}
       const r = await fetch('/api/documents/query', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ question: q })
+        // Pass the top-of-page community selector as context. If the user
+        // doesn't name a community in the question, the search defaults
+        // to whatever they have selected at the top.
+        body: JSON.stringify({ question: q, default_community: currentCommunity || null })
       });
       const data = await r.json();
       if (!r.ok) {
