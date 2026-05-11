@@ -157,9 +157,27 @@ function buildNormalizedFilename({ community_name, category_display, period_labe
   return parts.join(' - ').replace(/[/\\?%*:|"<>]/g, '_') + '.pdf';
 }
 
+// Token-set Jaccard similarity for fuzzy name matching.
+// Tolerates singular/plural ('Lake'/'Lakes'), abbreviations,
+// trailing entity types ('HOA', 'Inc.'), word reorderings.
+function nameJaccard(a, b) {
+  const tokenize = s => new Set(
+    (s || '').toLowerCase()
+      .replace(/[^a-z0-9]+/g, ' ')
+      .split(' ')
+      .filter(t => t.length > 2 && !['the','and','for','inc','llc','hoa','homeowners','association'].includes(t))
+  );
+  const ta = tokenize(a);
+  const tb = tokenize(b);
+  if (ta.size === 0 || tb.size === 0) return 0;
+  const inter = [...ta].filter(t => tb.has(t)).length;
+  const union = new Set([...ta, ...tb]).size;
+  return inter / union;
+}
+
 async function findCommunityByName(name) {
   if (!name) return null;
-  // Try exact first, then ilike, then fuzzy on legal_name
+  // Try exact first
   let { data } = await supabase
     .from('communities')
     .select('id, name, legal_name')
@@ -167,6 +185,7 @@ async function findCommunityByName(name) {
     .ilike('name', name)
     .maybeSingle();
   if (data) return data;
+  // Try substring (legacy behavior)
   ({ data } = await supabase
     .from('communities')
     .select('id, name, legal_name')
@@ -181,7 +200,29 @@ async function findCommunityByName(name) {
     .ilike('legal_name', `%${name}%`)
     .limit(1));
   if (data && data.length > 0) return data[0];
-  return null;
+  // Fuzzy match across all communities — fixes singular/plural typos, abbreviations,
+  // partial matches that substring doesn't catch
+  const { data: all } = await supabase
+    .from('communities')
+    .select('id, name, legal_name')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+  if (!all || all.length === 0) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const c of all) {
+    const score = Math.max(
+      nameJaccard(name, c.name),
+      nameJaccard(name, c.legal_name)
+    );
+    if (score > bestScore) {
+      bestScore = score;
+      best = c;
+    }
+  }
+  // Threshold of 0.4 — generous because community names are short and Claude often
+  // drops a letter or pluralizes wrong. False positives are caught by the user
+  // reviewing the upload card.
+  return bestScore >= 0.4 ? best : null;
 }
 
 async function getPredecessorContext(communityId, effectiveDate) {
