@@ -4594,6 +4594,15 @@ async function downloadVwRFP() {
     const questions = a.questions_for_board || [];
     const nbSummary = a.normalization_basis?.summary || '';
     const addBacks = a.normalization_basis?.add_back_estimates || [];
+    // v3 additions — vendor character, risk-adjusted view, before-you-vote, quality questions
+    const vendorChar = a.vendor_character || [];
+    const riskAdj = a.risk_adjusted_view || {};
+    const beforeVote = a.before_you_vote || [];
+    const qualityQs = a.vendor_quality_questions || [];
+    const charByIndex = {};
+    vendorChar.forEach(vc => { if (typeof vc.proposal_index === 'number') charByIndex[vc.proposal_index] = vc; });
+    const riskByIndex = {};
+    (riskAdj.per_proposal || []).forEach(rp => { if (typeof rp.proposal_index === 'number') riskByIndex[rp.proposal_index] = rp; });
 
     const sorted = [...norm].sort((x, y) =>
       (x.normalized_annual_total || Infinity) - (y.normalized_annual_total || Infinity)
@@ -4661,18 +4670,81 @@ async function downloadVwRFP() {
       @media print { body { print-color-adjust: exact; -webkit-print-color-adjust: exact; } }
     `;
 
-    const top3Rows = top3.map(n => `
-      <tr ${n.is_incumbent ? 'class="incumbent"' : ''}>
-        <td>${escapeHtml(n.vendor_name)}${n.is_incumbent ? ' <span style="font-size:10px; color:#996; font-weight:600; letter-spacing:0.06em;">INCUMBENT</span>' : ''}</td>
-        <td class="num">${n.stated_total != null ? '$' + Number(n.stated_total).toLocaleString() : '—'}</td>
-        <td class="num">${n.stated_term_months != null ? n.stated_term_months + ' mo' : '—'}</td>
-        <td class="num normalized">$${Number(n.normalized_annual_total || 0).toLocaleString()}</td>
-      </tr>
-    `).join('');
+    const top3Rows = top3.map(n => {
+      const rp = riskByIndex[n.proposal_index];
+      const showRange = riskAdj.show && rp && rp.high_estimate != null && (rp.high_estimate > (n.normalized_annual_total || 0));
+      const rangeRow = showRange
+        ? `<tr class="risk-adj-row"><td colspan="3" style="padding:2px 12px 8px 12px; font-size:11px; color:#8a6818; font-style:italic; border-bottom:1px solid #eaecef;">↳ risk-adjusted range if material risks materialize${rp.explanation ? `: ${escapeHtml(rp.explanation)}` : ''}</td><td class="num" style="padding:2px 12px 8px 12px; font-size:11.5px; color:#8a6818; font-style:italic; border-bottom:1px solid #eaecef;">$${Number(rp.low_estimate).toLocaleString()}–$${Number(rp.high_estimate).toLocaleString()}</td></tr>`
+        : '';
+      return `
+        <tr ${n.is_incumbent ? 'class="incumbent"' : ''}>
+          <td>${escapeHtml(n.vendor_name)}${n.is_incumbent ? ' <span style="font-size:10px; color:#996; font-weight:600; letter-spacing:0.06em;">INCUMBENT</span>' : ''}</td>
+          <td class="num">${n.stated_total != null ? '$' + Number(n.stated_total).toLocaleString() : '—'}</td>
+          <td class="num">${n.stated_term_months != null ? n.stated_term_months + ' mo' : '—'}</td>
+          <td class="num normalized">$${Number(n.normalized_annual_total || 0).toLocaleString()}</td>
+        </tr>${rangeRow}
+      `;
+    }).join('');
 
     const restLine = rest.length
       ? `<div class="also-bid">Also bid: ${rest.map(r => `${escapeHtml(r.vendor_name)} ($${Number(r.normalized_annual_total || 0).toLocaleString()}/yr)`).join(', ')} — excluded from detailed comparison.</div>`
       : '';
+
+    // Vendor Character block — short one-liner per vendor on page 1.
+    // Suppressed in 'quick' tier to keep that format minimal.
+    const charBlock = (tier !== 'quick' && vendorChar.length)
+      ? `<h2 class="section">Vendor character</h2>
+        <ul class="char-list" style="margin:6px 0 0 0; padding-left:18px; list-style:disc;">
+          ${vendorChar.map(vc => {
+            const vName = norm.find(n => n.proposal_index === vc.proposal_index)?.vendor_name || `Vendor ${vc.proposal_index}`;
+            return `<li style="font-size:12.5px; color:#2a2f3a; line-height:1.55; margin-bottom:4px;"><strong>${escapeHtml(vName)}:</strong> ${escapeHtml(vc.one_line_read || '')}</li>`;
+          }).join('')}
+        </ul>`
+      : '';
+
+    // Before You Vote block — actionable pre-vote items, grouped by category.
+    // Standard + Full tiers only.
+    const beforeVoteBlock = (tier !== 'quick' && beforeVote.length)
+      ? (() => {
+          const labels = {
+            negotiation: 'Negotiate before signing',
+            reference_check: 'References to call',
+            historical_context: 'Confirm with historical data',
+            verification: 'Verify before voting'
+          };
+          const grouped = {};
+          beforeVote.forEach(b => {
+            const k = b.category || 'verification';
+            grouped[k] = grouped[k] || [];
+            grouped[k].push(b);
+          });
+          const sections = Object.keys(grouped).map(k => `
+            <div style="margin-bottom:10px;">
+              <div style="font-size:11px; color:#1a3a5c; letter-spacing:0.08em; font-weight:600; text-transform:uppercase; margin-bottom:4px;">${escapeHtml(labels[k] || k)}</div>
+              <ul style="margin:0; padding-left:18px; list-style:disc;">
+                ${grouped[k].map(b => {
+                  const vendorScope = (b.applies_to_proposal_indexes || []).map(i => norm.find(n => n.proposal_index === i)?.vendor_name).filter(Boolean).join(', ');
+                  return `<li style="font-size:12.5px; color:#2a2f3a; line-height:1.55; margin-bottom:3px;">${b.priority === 'high' ? '<strong>' : ''}${escapeHtml(b.item || '')}${b.priority === 'high' ? '</strong>' : ''}${vendorScope ? ` <span style="color:#888; font-size:11px;">(${escapeHtml(vendorScope)})</span>` : ''}</li>`;
+                }).join('')}
+              </ul>
+            </div>
+          `).join('');
+          return `<h2 class="section">Before you vote</h2>${sections}`;
+        })()
+      : '';
+
+    // Vendor Quality Questions block — full tier only.
+    // What references and trial periods reveal that contracts don't.
+    const qualityQsBlock = (tier === 'full' && qualityQs.length)
+      ? `<h2 class="section">What the contract won't tell you</h2>
+        <p style="font-size:12px; color:#555; margin: 4px 0 10px 0; font-style: italic;">Ask references and watch during trial period. These are quality factors that don't show in bid documents.</p>
+        <ul style="margin:0; padding-left:18px; list-style:disc;">
+          ${qualityQs.map(q => `<li style="font-size:12.5px; color:#2a2f3a; line-height:1.55; margin-bottom:4px;">${escapeHtml(q)}</li>`).join('')}
+        </ul>`
+      : '';
+
+    // Disclaimer — small italic line at the bottom of every page footer.
+    const disclaimerLine = `<div style="font-size:9.5px; color:#aaa; font-style:italic; padding-top:6px; line-height:1.5; max-width:6.2in;">This analysis supports the board's decision. The board owns the final call based on references, community priorities, and operational context not visible in bid documents.</div>`;
 
     let switchBlock = '';
     if (sv.applies) {
@@ -4760,6 +4832,8 @@ async function downloadVwRFP() {
 
         ${nbBlock}
 
+        ${charBlock}
+
         ${wwcmBlock}
 
         ${matRisksBlock}
@@ -4768,10 +4842,11 @@ async function downloadVwRFP() {
           <div>Bedrock Association Management · (832) 588-2485</div>
           <div>Page 1</div>
         </div>
+        ${disclaimerLine}
       </div>
     `;
 
-    const detailPage = (tier !== 'quick' && (wkBlock || matRisksBlock))
+    const detailPage = (tier !== 'quick' && (wkBlock || matRisksBlock || beforeVoteBlock))
       ? `
         <div class="page">
           <div class="eyebrow-accent">Detail</div>
@@ -4790,31 +4865,37 @@ async function downloadVwRFP() {
               </div>
             `).join('')}` : ''}
 
+          ${beforeVoteBlock}
+
           <div class="footer-bar">
             <div>${escapeHtml(community)} · Vendor Decision</div>
             <div>Page 2</div>
           </div>
+          ${disclaimerLine}
         </div>
       `
       : '';
 
-    const questionsPage = questions.length
+    const questionsPage = (questions.length || qualityQsBlock)
       ? `
         <div class="page">
           <div class="eyebrow-accent">Questions for the board</div>
           <h1 class="headline" style="font-size:18px;">Discussion before voting</h1>
-          <p style="font-size:12.5px; color:#555; margin: 14px 0 18px 0;">Items the board should consider before final decision.</p>
+          ${questions.length ? `<p style="font-size:12.5px; color:#555; margin: 14px 0 18px 0;">Items the board should consider before final decision.</p>
           ${questions.map((q, i) => `
             <div class="question-item">
               <div class="question-num">${i + 1}</div>
               <div class="question-text">${escapeHtml(q)}</div>
             </div>
-          `).join('')}
+          `).join('')}` : ''}
+
+          ${qualityQsBlock}
 
           <div style="margin-top:48px; padding-top:14px; border-top:1px solid #e8eaed; font-size:10.5px; color:#9aa0a8; line-height:1.6;">
             Prepared by Bedrock Association Management · ${escapeHtml(today)}<br>
             (832) 588-2485 · bedrocktx.com
           </div>
+          ${disclaimerLine}
 
           <div class="footer-bar">
             <div>${escapeHtml(community)} · Vendor Decision</div>

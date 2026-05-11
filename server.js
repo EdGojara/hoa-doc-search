@@ -2758,6 +2758,37 @@ RETURN ONLY VALID JSON IN THIS EXACT SHAPE — no preamble, no markdown fences:
       "normalized_annual_total": "number",
       "key_distinction": "string — one phrase that distinguishes this vendor in the comparison"
     }
+  ],
+  "vendor_character": [
+    {
+      "proposal_index": "number",
+      "operational_focus": "technical_pool | facilities_operational | balanced",
+      "service_style": "corporate_polished | relationship_flexible | balanced",
+      "exclusion_strategy": "aggressive_exclusions | broad_inclusion | balanced",
+      "one_line_read": "string — single CFE-style read on this vendor's character and posture. ≤25 words. e.g., 'Technical/pool-focused with aggressive exclusions; protects margin through gray-area scope — expect out-of-scope billing patterns.'"
+    }
+  ],
+  "risk_adjusted_view": {
+    "show": "boolean — set true ONLY when at least one material risk has a numeric annualized_exposure_usd worth surfacing as a range",
+    "per_proposal": [
+      {
+        "proposal_index": "number",
+        "low_estimate": "number — normalized_annual_total + sum of the LOWEST-likelihood material risk exposures for this proposal",
+        "high_estimate": "number — normalized_annual_total + sum of the HIGHEST-likelihood material risk exposures for this proposal",
+        "explanation": "string — ≤30 words on what's included in the range. e.g., 'Adds bathroom supply ambiguity ($1.2K) + non-standard chemical pass-through ($2–4K).'"
+      }
+    ]
+  },
+  "before_you_vote": [
+    {
+      "category": "negotiation | reference_check | historical_context | verification",
+      "item": "string — actionable instruction (≤25 words). e.g., 'Negotiate out the mid-term cost escalation clause OR cap it at CPI before execution.'",
+      "applies_to_proposal_indexes": ["array — optional, empty if generic"],
+      "priority": "high | medium"
+    }
+  ],
+  "vendor_quality_questions": [
+    "string — question for the board to ask references / probe in trial period. Focus on what contracts can't show: staffing stability, emergency response, communication quality, out-of-scope billing patterns, supervisor accessibility, complaint handling. Tailor to this service category."
   ]
 }
 
@@ -2767,7 +2798,37 @@ CRITICAL OUTPUT RULES:
 - "worth_knowing" includes items above threshold that are real but won't flip the recommendation.
 - Items below the materiality threshold appear NOWHERE in the output.
 - Every "annualized_total" and "normalized_annual_total" must be a number, not null.
-- "normalization_basis.summary" is what shows up to the board — make it readable, not a methodology dump.`,
+- "normalization_basis.summary" is what shows up to the board — make it readable, not a methodology dump.
+
+NEW SECTIONS (v3) — character + risk-adjusted + action items:
+
+STEP 5 — VENDOR CHARACTER READ (qualitative pattern recognition)
+For each vendor, characterize their posture across three axes:
+- operational_focus: what they emphasize in scope. A vendor focused on pool chemistry/safety with narrow scope = technical_pool. A vendor with broad cleaning/facilities/housekeeping language = facilities_operational. Mixed = balanced.
+- service_style: read the CONTRACT BODY LANGUAGE not just the proposal summary. Heavy indemnity carve-outs + Acts of God + swim-at-your-own-risk + extensive legal protection = corporate_polished. Cooperative tone + minimal legal armor = relationship_flexible. Mixed = balanced.
+- exclusion_strategy: count and breadth of EXCLUSIONS/CARVE-OUTS. Long list of "this is NOT included" items creates gray-area billing opportunities = aggressive_exclusions. Few or no exclusions with broad scope = broad_inclusion. Mixed = balanced.
+
+The "one_line_read" is your audit-partner-voice summary — what would a CFE say about this vendor's posture in one sentence? Connect the axes when relevant: "Technical/polished with aggressive exclusions = protects margin via gray-area scope" or "Relationship-oriented with broad inclusion = predictable cost but premium price."
+
+STEP 6 — RISK-ADJUSTED VIEW
+Set show=true ONLY when at least one material_risk has a numeric annualized_exposure_usd. For each affected proposal, compute a low/high range:
+- low_estimate = normalized_annual_total + sum of LOWER-BOUND likely exposures (e.g., the cheap end of "non-standard chemicals could be $2-4K" = $2K)
+- high_estimate = normalized_annual_total + sum of UPPER-BOUND likely exposures
+This is the "real cost if risks materialize" number that corrects lowball-by-exclusion pricing. If no proposal has dollar-quantified material risks, set show=false and leave per_proposal empty.
+
+STEP 7 — BEFORE YOU VOTE (action items)
+Generate 3-6 actionable items the board should complete BEFORE the vote. Categories:
+- negotiation: contract clauses to redline (e.g., "Cap the cost escalation clause at CPI" / "Strike the vendor-side termination right")
+- reference_check: specific references to call (e.g., "Call 3 references at communities of similar pool size")
+- historical_context: prior-year data to confirm (e.g., "Confirm last year's actual pool opening date matches the recommendation")
+- verification: documents/facts to verify (e.g., "Verify both vendors' current insurance certificates")
+Each item must be ACTIONABLE — start with a verb. Not "consider X" — "Do X." Set priority='high' for items that could change the vote; 'medium' for items that should happen regardless.
+
+STEP 8 — VENDOR QUALITY QUESTIONS
+Generate 4-6 questions tailored to this service category that won't show in any contract. These are for references and trial periods. Focus areas: staffing stability/turnover, emergency response, supervisor accessibility, out-of-scope billing patterns, complaint handling, communication quality, reliability during stress events (storms, equipment failures, etc.). Phrase as direct questions the board can ask references.
+
+BOARD DECISION DISCLAIMER (always include in output as a constant — the renderer will surface it):
+The board owns the final decision. This analysis is decision SUPPORT — it does NOT override the board's judgment, community priorities, or vendor reference checks. The recommendation reflects the dollar math and visible contract structure; vendor RELIABILITY emerges only in references and stress events.`,
       messages: [{
         role: 'user',
         content: `Compare these vendor proposals for ${community} (category: ${dominantCategory}, type: ${dominantDocType}).
