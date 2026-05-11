@@ -1311,9 +1311,35 @@ For mixed documents, populate both as relevant.`
 
     const isIncumbent = req.body.isIncumbent === 'true' || req.body.isIncumbent === true;
 
+    // Save the original PDF to Supabase Storage so we have a permanent record.
+    // Bucket: 'documents' (shared with the Documents Tracker). Path:
+    // vendor_proposals/{mgmt_co}/{community}/{uuid}.pdf
+    // If storage fails (bucket missing, perms), we log and continue — the proposal
+    // still gets saved to DB just without a file_path. Original-PDF download will
+    // gracefully fall back to the branded HTML summary.
+    const crypto = require('crypto');
+    const proposalIdForStorage = crypto.randomUUID();
+    const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+    const safeCommunityPath = (community || 'unknown').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+    const storagePath = `vendor_proposals/${BEDROCK_MGMT_CO_ID}/${safeCommunityPath}/${proposalIdForStorage}.pdf`;
+    let storedFilePath = null;
+    try {
+      const { error: storageErr } = await supabase.storage
+        .from('documents')
+        .upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: false });
+      if (storageErr) {
+        console.warn('[upload-proposal] storage save skipped:', storageErr.message);
+      } else {
+        storedFilePath = storagePath;
+      }
+    } catch (sErr) {
+      console.warn('[upload-proposal] storage exception:', sErr.message);
+    }
+
     const { data: savedProposal, error: proposalError } = await supabase
       .from('vendor_proposals')
       .insert({
+        id: proposalIdForStorage,
         management_company_id: BEDROCK_MGMT_CO_ID,
         community: community || 'Unknown',
         vendor_id: vendorId,
@@ -1332,7 +1358,10 @@ For mixed documents, populate both as relevant.`
         is_incumbent: isIncumbent,
         term_months: termMonths,
         annualized_total_amount: annualizedTotal,
-        annualization_basis: annualizationBasis
+        annualization_basis: annualizationBasis,
+        file_path: storedFilePath,
+        file_hash: fileHash,
+        file_size_bytes: req.file.size
       })
       .select()
       .single();
@@ -1612,7 +1641,7 @@ app.get('/vendor-proposals', async (req, res) => {
     const { community } = req.query;
     let query = supabase
       .from('vendor_proposals')
-      .select('id, community, vendor_id, bid_request_id, vendor_name_raw, filename, document_type, service_category, total_amount, annualized_total_amount, currency, proposal_date, is_incumbent, term_months, created_at, vendors(name)')
+      .select('id, community, vendor_id, bid_request_id, vendor_name_raw, filename, document_type, service_category, total_amount, annualized_total_amount, currency, proposal_date, is_incumbent, term_months, outcome, outcome_decided_at, file_path, created_at, vendors(name)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('created_at', { ascending: false })
       .limit(200);
@@ -1653,6 +1682,329 @@ app.delete('/vendor-proposals/:id', async (req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID);
     if (error) throw error;
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Serve the ORIGINAL proposal PDF if stored in Supabase Storage
+// Returns 404 if the proposal predates storage support (saved before this push)
+app.get('/download-proposal-source/:id', async (req, res) => {
+  try {
+    const { data: p } = await supabase
+      .from('vendor_proposals')
+      .select('file_path, filename, vendor_name_raw')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!p || !p.file_path) {
+      return res.status(404).send('<h1>Original PDF not stored</h1><p>This proposal was uploaded before storage was enabled, or the file save failed at upload time. Use the summary download instead.</p>');
+    }
+    const { data, error } = await supabase.storage.from('documents').download(p.file_path);
+    if (error) throw error;
+    const buf = Buffer.from(await data.arrayBuffer());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${(p.filename || 'proposal.pdf').replace(/[^a-z0-9._-]+/gi, '_')}"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[download-proposal-source] failed:', err.message);
+    res.status(500).send('Error: ' + err.message);
+  }
+});
+
+// Mark a proposal's outcome (won / lost / withdrawn / expired / pending)
+// Body: { outcome: 'won'|'lost'|'withdrawn'|'expired'|'pending', notes?: string,
+//         auto_mark_siblings_lost?: boolean (when outcome='won') }
+app.post('/vendor-proposals/:id/outcome', async (req, res) => {
+  try {
+    const { outcome, notes, auto_mark_siblings_lost } = req.body || {};
+    if (!['pending', 'won', 'lost', 'withdrawn', 'expired'].includes(outcome)) {
+      return res.status(400).json({ error: 'invalid outcome value' });
+    }
+    const { data: updated, error } = await supabase
+      .from('vendor_proposals')
+      .update({
+        outcome,
+        outcome_decided_at: outcome === 'pending' ? null : new Date().toISOString(),
+        outcome_notes: notes || null
+      })
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .select('id, bid_request_id, outcome')
+      .single();
+    if (error) throw error;
+
+    // If marked 'won' AND the user opted in, mark siblings (same bid_request) as lost
+    let siblingsUpdated = 0;
+    if (outcome === 'won' && auto_mark_siblings_lost && updated.bid_request_id) {
+      const { count } = await supabase
+        .from('vendor_proposals')
+        .update({
+          outcome: 'lost',
+          outcome_decided_at: new Date().toISOString(),
+          outcome_notes: notes ? `Auto-marked lost when sibling proposal won. ${notes}` : 'Auto-marked lost when sibling proposal won.'
+        }, { count: 'exact' })
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('bid_request_id', updated.bid_request_id)
+        .neq('id', req.params.id)
+        .eq('outcome', 'pending');
+      siblingsUpdated = count || 0;
+      // Also pin the selected_proposal_id on the bid_request
+      await supabase
+        .from('bid_requests')
+        .update({ selected_proposal_id: req.params.id })
+        .eq('id', updated.bid_request_id);
+    }
+
+    res.json({ ok: true, proposal: updated, siblings_marked_lost: siblingsUpdated });
+  } catch (err) {
+    console.error('[vendor-proposals/:id/outcome] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Vendor Contracts — signed agreements that resulted from winning bids
+// Separate from the existing 'contracts' table (which is for Bedrock-community
+// MANAGEMENT agreements). This table holds vendor SERVICE contracts.
+// ============================================================================
+
+// List vendor contracts (filterable by community / category / status)
+app.get('/vendor-contracts', async (req, res) => {
+  try {
+    const { community, community_id, service_category, status } = req.query;
+    let q = supabase
+      .from('vendor_contracts')
+      .select('*, vendors(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('effective_date', { ascending: false, nullsFirst: false })
+      .limit(200);
+    if (community_id) q = q.eq('community_id', community_id);
+    else if (community) q = q.eq('community_name', community);
+    if (service_category) q = q.eq('service_category', service_category);
+    if (status) q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ contracts: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create a vendor contract (with optional PDF upload)
+// Either multipart with a file OR JSON body
+app.post('/vendor-contracts', upload.single('contract'), async (req, res) => {
+  try {
+    const crypto = require('crypto');
+    // Form data can be in req.body whether file is present or not (multer parses both)
+    const b = req.body || {};
+    const contractId = crypto.randomUUID();
+
+    let storedFilePath = null;
+    let fileHash = null;
+    let fileSize = null;
+    if (req.file) {
+      fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+      fileSize = req.file.size;
+      const safeCommunity = (b.community_name || 'unknown').replace(/[^a-z0-9_-]+/gi, '_').toLowerCase();
+      const storagePath = `vendor_contracts/${BEDROCK_MGMT_CO_ID}/${safeCommunity}/${contractId}.pdf`;
+      try {
+        const { error: storageErr } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: false });
+        if (!storageErr) storedFilePath = storagePath;
+        else console.warn('[vendor-contracts] storage save skipped:', storageErr.message);
+      } catch (sErr) {
+        console.warn('[vendor-contracts] storage exception:', sErr.message);
+      }
+    }
+
+    const annualized = b.annualized_amount || (b.total_amount && b.term_months
+      ? (Number(b.total_amount) / Number(b.term_months)) * 12
+      : b.total_amount);
+
+    const { data: contract, error } = await supabase
+      .from('vendor_contracts')
+      .insert({
+        id: contractId,
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: b.community_id || null,
+        community_name: b.community_name || null,
+        vendor_id: b.vendor_id || null,
+        vendor_name_raw: b.vendor_name_raw || null,
+        source_proposal_id: b.source_proposal_id || null,
+        bid_request_id: b.bid_request_id || null,
+        service_category: b.service_category || 'other',
+        service_description: b.service_description || null,
+        effective_date: b.effective_date || null,
+        end_date: b.end_date || null,
+        signed_date: b.signed_date || null,
+        total_amount: b.total_amount ? Number(b.total_amount) : null,
+        annualized_amount: annualized ? Number(annualized) : null,
+        term_months: b.term_months ? Number(b.term_months) : null,
+        escalator_kind: b.escalator_kind || 'none',
+        escalator_pct: b.escalator_pct ? Number(b.escalator_pct) : null,
+        payment_terms: b.payment_terms || null,
+        termination_terms: b.termination_terms || null,
+        auto_renews: b.auto_renews === 'true' || b.auto_renews === true,
+        renewal_notice_days: b.renewal_notice_days ? Number(b.renewal_notice_days) : null,
+        w9_on_file: b.w9_on_file === 'true' || b.w9_on_file === true,
+        coi_on_file: b.coi_on_file === 'true' || b.coi_on_file === true,
+        notes: b.notes || null,
+        status: b.status || 'active',
+        file_path: storedFilePath,
+        file_hash: fileHash,
+        file_size_bytes: fileSize
+      })
+      .select()
+      .single();
+    if (error) throw error;
+
+    // If linked to a source proposal, mark it won + siblings lost (best-effort)
+    if (b.source_proposal_id) {
+      await supabase
+        .from('vendor_proposals')
+        .update({ outcome: 'won', outcome_decided_at: new Date().toISOString() })
+        .eq('id', b.source_proposal_id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    }
+
+    res.json({ ok: true, contract, stored_pdf: !!storedFilePath });
+  } catch (err) {
+    console.error('[vendor-contracts POST] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Download a vendor contract PDF
+app.get('/vendor-contracts/:id/download', async (req, res) => {
+  try {
+    const { data: c } = await supabase
+      .from('vendor_contracts')
+      .select('file_path, vendor_name_raw, community_name')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!c || !c.file_path) return res.status(404).send('<h1>Contract PDF not available</h1>');
+    const { data, error } = await supabase.storage.from('documents').download(c.file_path);
+    if (error) throw error;
+    const buf = Buffer.from(await data.arrayBuffer());
+    const niceName = `${(c.community_name || 'community').replace(/[^a-z0-9]+/gi, '_')}_${(c.vendor_name_raw || 'vendor').replace(/[^a-z0-9]+/gi, '_')}_contract.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${niceName}"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[vendor-contracts download] failed:', err.message);
+    res.status(500).send('Error: ' + err.message);
+  }
+});
+
+// Delete a vendor contract (and its stored PDF, if any)
+app.delete('/vendor-contracts/:id', async (req, res) => {
+  try {
+    const { data: c } = await supabase
+      .from('vendor_contracts')
+      .select('file_path')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (c?.file_path) {
+      try { await supabase.storage.from('documents').remove([c.file_path]); } catch (_) { /* swallow */ }
+    }
+    const { error } = await supabase
+      .from('vendor_contracts')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Benchmarking endpoints — read-only analytics across the vendor data moat
+// ============================================================================
+
+// Service category list (for filter dropdowns)
+app.get('/benchmarks/categories', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vendor_service_categories')
+      .select('*')
+      .order('sort_order');
+    if (error) throw error;
+    res.json({ categories: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-category benchmarks (min/median/max etc. by year + service)
+app.get('/benchmarks/categories/summary', async (req, res) => {
+  try {
+    let q = supabase
+      .from('v_service_category_benchmarks')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('proposal_year', { ascending: false });
+    if (req.query.year) q = q.eq('proposal_year', Number(req.query.year));
+    if (req.query.service_category) q = q.eq('service_category', req.query.service_category);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ benchmarks: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-vendor performance (win rate, total bids, communities served, etc.)
+app.get('/benchmarks/vendor-performance', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('v_vendor_performance')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('total_bids', { ascending: false })
+      .limit(200);
+    if (error) throw error;
+    res.json({ vendors: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-community spend / bid activity
+app.get('/benchmarks/community-spend', async (req, res) => {
+  try {
+    let q = supabase
+      .from('v_community_vendor_spend')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('community_name', { ascending: true });
+    if (req.query.community) q = q.eq('community_name', req.query.community);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ spend: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Active vendor contracts roll-up (matrix view for compliance / expiration monitoring)
+app.get('/benchmarks/active-contracts', async (req, res) => {
+  try {
+    let q = supabase
+      .from('v_active_vendor_contracts')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('end_date', { ascending: true, nullsFirst: false });
+    if (req.query.community) q = q.eq('community_name', req.query.community);
+    if (req.query.service_category) q = q.eq('service_category', req.query.service_category);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ contracts: data || [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

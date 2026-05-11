@@ -3852,17 +3852,22 @@ async function downloadVwRFP() {
     }
     wrap.innerHTML = '<div style="color:#888; font-size: 13px; padding: 10px;">Loading…</div>';
     try {
-      const [rfpRes, propRes] = await Promise.all([
+      const [rfpRes, propRes, contractRes] = await Promise.all([
         fetch('/bid-requests?community=' + encodeURIComponent(currentCommunity)),
-        fetch('/vendor-proposals?community=' + encodeURIComponent(currentCommunity))
+        fetch('/vendor-proposals?community=' + encodeURIComponent(currentCommunity)),
+        fetch('/vendor-contracts?community=' + encodeURIComponent(currentCommunity))
       ]);
       const rfpData = await rfpRes.json();
       const propData = await propRes.json();
+      const contractData = contractRes.ok ? await contractRes.json() : { contracts: [] };
       const rfps = rfpData.bidRequests || [];
       const proposals = propData.proposals || [];
+      const contracts = contractData.contracts || [];
+      // Stash globally so the "upload signed contract" modal can pre-fill from the proposal
+      window._vwLastProposals = proposals;
 
-      if (rfps.length === 0 && proposals.length === 0) {
-        wrap.innerHTML = '<div style="color:#888; font-size: 13px; padding: 14px; text-align: center;">No RFPs or proposals saved for ' + escapeHtml(currentCommunity) + ' yet. Generate or upload above and they\'ll show up here.</div>';
+      if (rfps.length === 0 && proposals.length === 0 && contracts.length === 0) {
+        wrap.innerHTML = '<div style="color:#888; font-size: 13px; padding: 14px; text-align: center;">No RFPs, proposals, or contracts saved for ' + escapeHtml(currentCommunity) + ' yet. Generate or upload above and they\'ll show up here.</div>';
         return;
       }
 
@@ -3901,37 +3906,101 @@ async function downloadVwRFP() {
         </div>`;
       }
 
+      // Outcome badge helper
+      const outcomeBadge = (o) => {
+        if (o === 'won') return '<span style="background:#dff5e0; color:#2e7d32; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">✓ WON</span>';
+        if (o === 'lost') return '<span style="background:#fde0e0; color:#a02828; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">✕ LOST</span>';
+        if (o === 'withdrawn') return '<span style="background:#f0f0f0; color:#666; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">— WITHDRAWN</span>';
+        if (o === 'expired') return '<span style="background:#fff4e0; color:#a06400; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">⌛ EXPIRED</span>';
+        return '<span style="background:#e3f2fd; color:#1565c0; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">⏳ PENDING</span>';
+      };
+
       // Proposals table
       if (proposals.length > 0) {
-        html += `<div>
-          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: #315A87; margin-bottom: 8px;">📄 Vendor Proposals (${proposals.length})</div>
+        html += `<div style="margin-bottom: 18px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: #315A87; margin-bottom: 8px;">📄 Vendor Proposals / Bids (${proposals.length})</div>
           <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
             <thead><tr style="background: #f5f5f5;">
               <th style="padding: 6px 8px; text-align: left;">Vendor</th>
               <th style="padding: 6px 8px; text-align: left;">Service</th>
-              <th style="padding: 6px 8px; text-align: left;">Type</th>
-              <th style="padding: 6px 8px; text-align: right;">Total</th>
+              <th style="padding: 6px 8px; text-align: right;">Total / Annualized</th>
               <th style="padding: 6px 8px; text-align: left;">Date</th>
+              <th style="padding: 6px 8px; text-align: center;">Outcome</th>
               <th style="padding: 6px 8px; text-align: right;">Actions</th>
             </tr></thead><tbody>
             ${proposals.map(p => `<tr style="border-bottom: 1px solid #eee;">
               <td style="padding: 6px 8px;">
                 <div style="font-weight: 500;">${escapeHtml(p.vendors?.name || p.vendor_name_raw || '—')}</div>
-                ${p.is_incumbent ? '<span style="background:#e3f2fd; color:#1565c0; padding:1px 6px; border-radius:3px; font-size:10px;">Incumbent</span>' : ''}
+                <div style="font-size:10px; color:#888;">${escapeHtml(p.document_type || '')} ${p.is_incumbent ? '· <span style="color:#1565c0;">Incumbent</span>' : ''}</div>
               </td>
               <td style="padding: 6px 8px;">${escapeHtml(p.service_category || '—')}</td>
-              <td style="padding: 6px 8px;">${escapeHtml(p.document_type || '—')}</td>
               <td style="padding: 6px 8px; text-align: right;">
                 ${money(p.total_amount)}
                 ${p.annualized_total_amount && p.annualized_total_amount !== p.total_amount ? `<div style="color: #888; font-size: 10px; font-style: italic;">${money(p.annualized_total_amount)} annualized</div>` : ''}
               </td>
               <td style="padding: 6px 8px;">${dt(p.proposal_date || p.created_at)}</td>
+              <td style="padding: 6px 8px; text-align: center;">${outcomeBadge(p.outcome || 'pending')}</td>
               <td style="padding: 6px 8px; text-align: right; white-space: nowrap;">
-                <a href="/download-proposal/${escapeHtml(p.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 8px; text-decoration: none;">⬇ Download</a>
-                <button class="secondary-btn" style="font-size: 11px; padding: 3px 8px; color: #a00;" onclick="vwDeleteProposal('${escapeHtml(p.id)}', '${escapeHtml((p.vendor_name_raw || 'proposal').replace(/'/g, '')).slice(0, 40)}')">✕ Delete</button>
+                ${p.file_path ? `<a href="/download-proposal-source/${escapeHtml(p.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 7px; text-decoration: none;" title="Original PDF">📑 PDF</a>` : ''}
+                <a href="/download-proposal/${escapeHtml(p.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 7px; text-decoration: none;" title="Bedrock-branded summary">⬇ Summary</a>
+                ${p.outcome === 'pending' || !p.outcome ? `
+                  <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color:#2e7d32;" onclick="vwMarkProposalOutcome('${escapeHtml(p.id)}', 'won', ${p.bid_request_id ? 'true' : 'false'})" title="Mark this bid as the winning proposal">✓ Won</button>
+                  <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color:#a02828;" onclick="vwMarkProposalOutcome('${escapeHtml(p.id)}', 'lost', false)" title="Mark as lost">✕ Lost</button>
+                ` : `
+                  <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color:#666;" onclick="vwMarkProposalOutcome('${escapeHtml(p.id)}', 'pending', false)" title="Reset to pending">↺ Reset</button>
+                `}
+                <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color: #a00;" onclick="vwDeleteProposal('${escapeHtml(p.id)}', '${escapeHtml((p.vendor_name_raw || 'proposal').replace(/'/g, '')).slice(0, 40)}')">✕</button>
               </td>
             </tr>`).join('')}
           </tbody></table>
+          <div style="font-size: 10px; color: #888; margin-top: 6px; padding-left: 4px;">
+            📑 = original PDF stored · ⬇ = Bedrock-branded summary (works for any proposal)
+          </div>
+        </div>`;
+      }
+
+      // Signed contracts table
+      if (contracts.length > 0) {
+        html += `<div>
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: #315A87; margin-bottom: 8px;">📝 Signed Vendor Contracts (${contracts.length})</div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead><tr style="background: #f5f5f5;">
+              <th style="padding: 6px 8px; text-align: left;">Vendor</th>
+              <th style="padding: 6px 8px; text-align: left;">Service</th>
+              <th style="padding: 6px 8px; text-align: right;">Total / Annualized</th>
+              <th style="padding: 6px 8px; text-align: left;">Effective</th>
+              <th style="padding: 6px 8px; text-align: left;">Ends</th>
+              <th style="padding: 6px 8px; text-align: center;">Status</th>
+              <th style="padding: 6px 8px; text-align: right;">Actions</th>
+            </tr></thead><tbody>
+            ${contracts.map(c => {
+              const statusColor = c.status === 'active' ? '#2e7d32' : c.status === 'expired' ? '#a02828' : c.status === 'expiring' ? '#a06400' : '#666';
+              const statusBg = c.status === 'active' ? '#dff5e0' : c.status === 'expired' ? '#fde0e0' : c.status === 'expiring' ? '#fff4e0' : '#f0f0f0';
+              return `<tr style="border-bottom: 1px solid #eee;">
+                <td style="padding: 6px 8px;">
+                  <div style="font-weight: 500;">${escapeHtml(c.vendors?.name || c.vendor_name_raw || '—')}</div>
+                  <div style="font-size:10px; color:#888;">${[c.w9_on_file ? 'W-9 ✓' : 'W-9 —', c.coi_on_file ? 'COI ✓' : 'COI —', c.auto_renews ? 'auto-renews' : ''].filter(Boolean).join(' · ')}</div>
+                </td>
+                <td style="padding: 6px 8px;">${escapeHtml(c.service_category || '—')}</td>
+                <td style="padding: 6px 8px; text-align: right;">
+                  ${money(c.total_amount)}
+                  ${c.annualized_amount && c.annualized_amount !== c.total_amount ? `<div style="color: #888; font-size: 10px; font-style: italic;">${money(c.annualized_amount)} annualized</div>` : ''}
+                </td>
+                <td style="padding: 6px 8px;">${dt(c.effective_date)}</td>
+                <td style="padding: 6px 8px;">${dt(c.end_date)}</td>
+                <td style="padding: 6px 8px; text-align: center;">
+                  <span style="background:${statusBg}; color:${statusColor}; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">${escapeHtml(c.status || 'active')}</span>
+                </td>
+                <td style="padding: 6px 8px; text-align: right; white-space: nowrap;">
+                  ${c.file_path ? `<a href="/vendor-contracts/${escapeHtml(c.id)}/download" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 7px; text-decoration: none;">📑 PDF</a>` : '<span style="color:#888; font-size:10px;">no PDF</span>'}
+                  <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color: #a00;" onclick="vwDeleteContract('${escapeHtml(c.id)}', '${escapeHtml((c.vendor_name_raw || 'contract').replace(/'/g, '')).slice(0, 40)}')">✕</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody></table>
+          <div style="font-size: 10px; color: #888; margin-top: 6px; padding-left: 4px;">
+            Signed contracts created via "Mark as Won" → "Upload signed contract" or via the dedicated Vendor Contracts form (coming soon)
+          </div>
         </div>`;
       }
 
@@ -3957,6 +4026,164 @@ async function downloadVwRFP() {
     if (!confirm(`Delete the ${label} proposal?\n\nThis removes the extracted data from trustEd permanently.`)) return;
     try {
       const r = await fetch('/vendor-proposals/' + encodeURIComponent(id), { method: 'DELETE' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      vwLoadLibrary();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  }
+
+  async function vwMarkProposalOutcome(id, outcome, hasBidRequest) {
+    const labels = { won: 'WINNING bid', lost: 'lost bid', pending: 'pending' };
+    let autoMarkSiblings = false;
+    let notes = null;
+
+    if (outcome === 'won') {
+      const msg = hasBidRequest
+        ? 'Mark this proposal as the WINNING bid?\n\nClick OK to mark it Won and automatically mark all SIBLING proposals (under the same RFP) as Lost.\nClick Cancel to abort.'
+        : 'Mark this proposal as the WINNING bid?\n\n(No sibling proposals — not tied to an RFP.)\nClick OK to confirm.';
+      if (!confirm(msg)) return;
+      autoMarkSiblings = hasBidRequest;
+      const wantUpload = confirm('After this, do you have a signed contract PDF to upload alongside? Click OK to upload now, Cancel to skip (you can upload later).');
+      // We'll handle upload after the outcome flip succeeds
+      // (stash intent for the followup)
+      window._vwUploadContractFor = wantUpload ? id : null;
+    } else if (outcome === 'lost') {
+      if (!confirm('Mark this proposal as LOST?')) return;
+    }
+    try {
+      const r = await fetch(`/vendor-proposals/${encodeURIComponent(id)}/outcome`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ outcome, auto_mark_siblings_lost: autoMarkSiblings, notes })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      if (data.siblings_marked_lost > 0) {
+        // Quiet info — no alert, just refresh
+        console.log(`[vendor-workflow] auto-marked ${data.siblings_marked_lost} sibling proposal(s) as lost`);
+      }
+      // Refresh
+      vwLoadLibrary();
+      // Follow-up: contract upload modal
+      if (window._vwUploadContractFor) {
+        const proposalId = window._vwUploadContractFor;
+        window._vwUploadContractFor = null;
+        vwOpenContractUploadModal(proposalId);
+      }
+    } catch (e) {
+      alert('Failed: ' + e.message);
+    }
+  }
+
+  function vwOpenContractUploadModal(sourceProposalId) {
+    // Find the proposal so we can pre-fill the form
+    const proposal = (window._vwLastProposals || []).find(p => p.id === sourceProposalId);
+    const backdrop = document.createElement('div');
+    backdrop.id = 'vwContractModalBackdrop';
+    backdrop.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9998; display:flex; align-items:center; justify-content:center; padding:20px;';
+    backdrop.innerHTML = `
+      <div style="background:white; border-radius:10px; max-width:680px; width:100%; max-height:90vh; overflow-y:auto; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+        <div style="padding:18px 22px; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <h3 style="margin:0; color:#315A87;">📝 Upload Signed Contract</h3>
+            <div style="font-size:12px; color:#888; margin-top:2px;">${escapeHtml(proposal?.vendors?.name || proposal?.vendor_name_raw || 'Vendor')} — ${escapeHtml(currentCommunity)}</div>
+          </div>
+          <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="vwCloseContractModal()">✕ Cancel</button>
+        </div>
+        <div style="padding:18px 22px;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Effective Date</label>
+              <input type="date" id="vwc-effective" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">End Date</label>
+              <input type="date" id="vwc-end" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Signed Date</label>
+              <input type="date" id="vwc-signed" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Term (months)</label>
+              <input type="number" id="vwc-term" value="${proposal?.term_months || 12}" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Total Amount ($)</label>
+              <input type="number" step="0.01" id="vwc-total" value="${proposal?.total_amount || ''}" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Service Category</label>
+              <input type="text" id="vwc-category" value="${escapeHtml(proposal?.service_category || 'other')}" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div style="display:flex; gap:14px; align-items:center; grid-column: 1 / -1;">
+              <label style="font-size:12px; display:flex; gap:4px; align-items:center; cursor:pointer;"><input type="checkbox" id="vwc-w9"> W-9 on file</label>
+              <label style="font-size:12px; display:flex; gap:4px; align-items:center; cursor:pointer;"><input type="checkbox" id="vwc-coi"> COI on file</label>
+              <label style="font-size:12px; display:flex; gap:4px; align-items:center; cursor:pointer;"><input type="checkbox" id="vwc-autorenew"> Auto-renews</label>
+            </div>
+            <div style="grid-column: 1 / -1;">
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Signed Contract PDF (optional but recommended)</label>
+              <input type="file" id="vwc-pdf" accept=".pdf" style="width:100%; font-size:12px;">
+            </div>
+            <div style="grid-column: 1 / -1;">
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Notes</label>
+              <textarea id="vwc-notes" rows="2" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;" placeholder="Any deal-specific notes — special terms, board approval reference, etc."></textarea>
+            </div>
+          </div>
+        </div>
+        <div style="padding:14px 22px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:8px;">
+          <button class="secondary-btn" onclick="vwCloseContractModal()">Cancel</button>
+          <button class="action-btn" id="vwc-save-btn" onclick="vwSaveContract('${escapeHtml(sourceProposalId)}')">Save Contract</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+  }
+
+  function vwCloseContractModal() {
+    const el = document.getElementById('vwContractModalBackdrop');
+    if (el) el.remove();
+  }
+
+  async function vwSaveContract(sourceProposalId) {
+    const proposal = (window._vwLastProposals || []).find(p => p.id === sourceProposalId);
+    const btn = document.getElementById('vwc-save-btn');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      const fd = new FormData();
+      fd.append('source_proposal_id', sourceProposalId);
+      fd.append('community_name', currentCommunity || '');
+      fd.append('vendor_id', proposal?.vendor_id || '');
+      fd.append('vendor_name_raw', proposal?.vendors?.name || proposal?.vendor_name_raw || '');
+      fd.append('service_category', document.getElementById('vwc-category').value);
+      fd.append('effective_date', document.getElementById('vwc-effective').value);
+      fd.append('end_date', document.getElementById('vwc-end').value);
+      fd.append('signed_date', document.getElementById('vwc-signed').value);
+      fd.append('term_months', document.getElementById('vwc-term').value);
+      fd.append('total_amount', document.getElementById('vwc-total').value);
+      fd.append('w9_on_file', document.getElementById('vwc-w9').checked);
+      fd.append('coi_on_file', document.getElementById('vwc-coi').checked);
+      fd.append('auto_renews', document.getElementById('vwc-autorenew').checked);
+      fd.append('notes', document.getElementById('vwc-notes').value);
+      const pdfFile = document.getElementById('vwc-pdf').files[0];
+      if (pdfFile) fd.append('contract', pdfFile);
+      if (proposal?.bid_request_id) fd.append('bid_request_id', proposal.bid_request_id);
+      const r = await fetch('/vendor-contracts', { method: 'POST', body: fd });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      vwCloseContractModal();
+      vwLoadLibrary();
+    } catch (e) {
+      btn.disabled = false; btn.textContent = 'Save Contract';
+      alert('Save failed: ' + e.message);
+    }
+  }
+
+  async function vwDeleteContract(id, label) {
+    if (!confirm(`Delete the ${label} contract?\n\nThe stored PDF (if any) will also be removed.`)) return;
+    try {
+      const r = await fetch('/vendor-contracts/' + encodeURIComponent(id), { method: 'DELETE' });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'failed');
       vwLoadLibrary();
