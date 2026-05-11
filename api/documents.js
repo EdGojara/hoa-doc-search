@@ -79,7 +79,10 @@ const STANDARD_CATEGORIES = [
   'annual_financial_statements', 'current_unaudited_financials',
   'w9', 'welcome_package', 'engineers_inspection_report',
   'litigation', 'design_document', 'special_assessments',
-  'unit_ledger', 'management_agreement', 'other'
+  'unit_ledger', 'management_agreement',
+  // Resident-facing form templates (added in migration 017)
+  'arc_application', 'key_fob_form', 'forms_and_applications',
+  'other'
 ];
 
 const DOC_EXTRACTION_PROMPT = `You are extracting metadata from a community association (HOA) document. Read the PDF and return a JSON object with EXACTLY this shape:
@@ -87,7 +90,7 @@ const DOC_EXTRACTION_PROMPT = `You are extracting metadata from a community asso
 {
   "community_name": "string (best-guess of the community/association name from document content)",
   "community_legal_name": "string (full legal name if found, e.g., 'Lakes of Pine Forest Homeowners Association, Inc.')",
-  "category": "one of: annual_budget | insurance_dec_page | annual_board_meeting_minutes | regular_meeting_minutes | reserve_study | reserve_report | bylaws | declaration_ccrs | rules_and_regulations | resolutions_and_policies | articles_of_incorporation | annual_financial_statements | current_unaudited_financials | w9 | welcome_package | engineers_inspection_report | litigation | design_document | special_assessments | unit_ledger | management_agreement | other",
+  "category": "one of: annual_budget | insurance_dec_page | annual_board_meeting_minutes | regular_meeting_minutes | reserve_study | reserve_report | bylaws | declaration_ccrs | rules_and_regulations | resolutions_and_policies | articles_of_incorporation | annual_financial_statements | current_unaudited_financials | w9 | welcome_package | engineers_inspection_report | litigation | design_document | special_assessments | unit_ledger | management_agreement | arc_application | key_fob_form | forms_and_applications | other. NOTE on forms: arc_application = blank Architectural Review / ACC application TEMPLATE residents fill out. key_fob_form = key fob or access card request TEMPLATE. forms_and_applications = catch-all for OTHER blank form templates (lease disclosures, pet registration, pool access requests, violation notice templates, etc.). These are template forms, NOT submitted/completed instances. The design_document category is for architectural GUIDELINES (the rules); arc_application is for the application FORM owners use to request approval under those rules.",
   "period_label": "string (e.g., '2026', '2026-04', 'FY2025-2026', etc.) — what fiscal year/period this document represents",
   "effective_date": "YYYY-MM-DD or null",
   "expiration_date": "YYYY-MM-DD or null (only for documents that have an explicit expiration like insurance policies)",
