@@ -110,21 +110,39 @@ Return ONLY the JSON object, no preamble, no code fence.`;
 
 async function extractDocumentMetadata(pdfBuffer) {
   const pdfBase64 = pdfBuffer.toString('base64');
-  const completion = await anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 4000,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
-        { type: 'text', text: DOC_EXTRACTION_PROMPT }
-      ]
-    }]
-  });
-
-  const text = completion.content?.[0]?.text || '';
-  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-  return { parsed: JSON.parse(cleaned), usage: completion.usage };
+  // Retry up to 4 times with exponential backoff on 429 rate-limit errors.
+  // Anthropic's input token cap is 30K/min on lower tiers — bulk PDF uploads
+  // burn through this fast. Backoff waits 30s, 60s, 90s, 120s.
+  const RETRY_DELAYS_MS = [30000, 60000, 90000, 120000];
+  let lastError = null;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    try {
+      const completion = await anthropic.messages.create({
+        model: 'claude-sonnet-4-5',
+        max_tokens: 4000,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 } },
+            { type: 'text', text: DOC_EXTRACTION_PROMPT }
+          ]
+        }]
+      });
+      const text = completion.content?.[0]?.text || '';
+      const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+      return { parsed: JSON.parse(cleaned), usage: completion.usage };
+    } catch (err) {
+      lastError = err;
+      // Only retry on rate-limit (429) or overload (529) errors
+      const isRetryable = err.status === 429 || err.status === 529 ||
+                          /rate_limit|overloaded/i.test(err.message || '');
+      if (!isRetryable || attempt >= RETRY_DELAYS_MS.length) throw err;
+      const delay = RETRY_DELAYS_MS[attempt];
+      console.warn(`[documents] Claude rate-limited, retrying in ${delay/1000}s (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length})`);
+      await new Promise(r => setTimeout(r, delay));
+    }
+  }
+  throw lastError;
 }
 
 function buildNormalizedFilename({ community_name, category_display, period_label, approval_status }) {
@@ -241,19 +259,38 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       approval_status: parsed.approval_status
     });
 
-    // 6) Pre-insert: Check for semantic duplicate (same community + category + period)
+    // 6) Pre-insert: Check for semantic duplicate (same community + category + period + similar title)
+    // Title comparison prevents false-positives for legitimately distinct documents that
+    // share community/category/period but are different things (e.g., separate GL / D&O /
+    // Umbrella / Crime insurance policies all categorized as 'insurance_dec_page').
     let semanticDup = null;
     if (community?.id && parsed.category && parsed.period_label) {
-      const { data: sdup } = await supabase
+      const { data: candidates } = await supabase
         .from('library_documents')
         .select('id, title, file_name_normalized, status, uploaded_at')
         .eq('management_company_id', BEDROCK_MGMT_CO_ID)
         .eq('community_id', community.id)
         .eq('category', STANDARD_CATEGORIES.includes(parsed.category) ? parsed.category : 'other')
         .eq('period_label', parsed.period_label)
-        .eq('status', 'current')
-        .maybeSingle();
-      semanticDup = sdup;
+        .eq('status', 'current');
+      // Compare titles: only flag as dup if titles are similar enough that they
+      // describe the same logical document.
+      const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+      const newTitleNorm = normalize(parsed.title);
+      const newTokens = new Set(newTitleNorm.split(' ').filter(t => t.length > 2));
+      for (const c of (candidates || [])) {
+        const existingNorm = normalize(c.title);
+        const existingTokens = new Set(existingNorm.split(' ').filter(t => t.length > 2));
+        // Token Jaccard similarity
+        const intersect = [...newTokens].filter(t => existingTokens.has(t)).length;
+        const union = new Set([...newTokens, ...existingTokens]).size || 1;
+        const similarity = intersect / union;
+        // Fire dup only if titles are 60%+ similar OR either title is empty/null
+        if (similarity >= 0.6 || newTokens.size === 0 || existingTokens.size === 0) {
+          semanticDup = c;
+          break;
+        }
+      }
     }
 
     // 7) Upload file to Supabase Storage (skip if storage isn't enabled — fall back to metadata only)
