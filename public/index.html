@@ -2531,6 +2531,19 @@
       </p>
       <div id="docs-matrix-container" style="font-size:12px; color:#888;">Loading…</div>
     </div>
+
+    <!-- Legacy library (pre-trustEd askEd index) -->
+    <div class="panel" style="margin-top: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <h3 style="margin:0;">📜 Legacy Library</h3>
+        <span style="font-size:11px; color:#888;">From the original Lakes of Pine Forest askEd index — not yet categorized</span>
+      </div>
+      <p style="font-size:12px; color:#666; margin:0 0 12px 0;">
+        These documents were ingested before the Documents Tracker existed. askEd can still search them, but they have no category, period, or expiration tracking.
+        Click <strong>Categorize</strong> to promote a doc into the Tracker with full metadata extraction. Already-migrated docs hide from this list automatically.
+      </p>
+      <div id="docs-legacy-container" style="font-size:12px; color:#888;">Loading…</div>
+    </div>
   </div>
 </div>
 
@@ -4755,9 +4768,15 @@ ${questionsPage}
         if (d.period_label) tags.push(`<span style="background:#fff8e1; color:#7b5e00; padding:1px 6px; border-radius:3px; font-size:10px;">${escapeHtml(d.period_label)}</span>`);
         if (d.created_by_mgmt_company === 'Predecessor') tags.push(`<span style="background:#fbe9e7; color:#bf360c; padding:1px 6px; border-radius:3px; font-size:10px;">Pre-Bedrock</span>`);
         if (data.semantic_duplicate) tags.push(`<span style="background:#fff4e0; color:#a06400; padding:1px 6px; border-radius:3px; font-size:10px;">⚠️ Possible dup of existing</span>`);
+        if (data.legacy_duplicate) tags.push(`<span style="background:#f0e6d2; color:#8a6a00; padding:1px 6px; border-radius:3px; font-size:10px;" title="Similar filename in legacy askEd index">📜 Likely supersedes legacy</span>`);
         item.resultHtml = `<div style="color:#2e7d32;">✅ <strong>${escapeHtml(d.title || d.file_name_normalized)}</strong></div>
           <div style="margin-top:4px;">${tags.join(' ')}</div>
-          <div style="margin-top:4px; color:#666; font-size:11px;">Saved as: <code>${escapeHtml(d.file_name_normalized)}</code> · confidence: ${escapeHtml(d.extraction_confidence)}${ex?.extraction_notes ? ` · <em>"${escapeHtml(ex.extraction_notes)}"</em>` : ''}</div>`;
+          <div style="margin-top:4px; color:#666; font-size:11px;">Saved as: <code>${escapeHtml(d.file_name_normalized)}</code> · confidence: ${escapeHtml(d.extraction_confidence)}${ex?.extraction_notes ? ` · <em>"${escapeHtml(ex.extraction_notes)}"</em>` : ''}</div>
+          ${data.legacy_duplicate ? `<div style="margin-top:6px; padding:6px 8px; background:#faf5e8; border:1px solid #e0d089; border-radius:4px; font-size:11px;">
+            <strong>Legacy match:</strong> <code>${escapeHtml(data.legacy_duplicate.filename)}</code> (${data.legacy_duplicate.chunk_count} chunks, ${Math.round(data.legacy_duplicate.similarity*100)}% similar)
+            <button class="secondary-btn" style="font-size:10px; padding:2px 8px; margin-left:8px;"
+                    onclick="docsMarkLegacySuperseded('${escapeHtml(data.legacy_duplicate.legacy_id)}','${escapeHtml(d.id)}', this)">Mark legacy as superseded</button>
+          </div>` : ''}`;
         docsRenderQueue();
       } catch (e) {
         item.status = 'error';
@@ -4927,6 +4946,119 @@ ${questionsPage}
     alert('Dedup resolution UI coming in next push. For now the duplicates are visible in /api/documents/duplicates/pending and can be resolved via API.');
   }
 
+  // ---------- Legacy library panel ----------
+  // Pulls the pre-trustEd askEd index, grouped by (community, filename), and
+  // shows a "Categorize" button per doc that promotes it into library_documents
+  // via Claude text extraction.
+  async function docsLoadLegacy() {
+    const wrap = document.getElementById('docs-legacy-container');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:#888;">Loading…</div>';
+    try {
+      const r = await fetch('/api/documents/legacy/list');
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      const docs = data.documents || [];
+      if (docs.length === 0) {
+        wrap.innerHTML = '<div style="color:#888; padding:14px; text-align:center;">No uncategorized legacy documents. (Either nothing legacy, or everything is already migrated.)</div>';
+        return;
+      }
+      // group by community
+      const byCommunity = {};
+      docs.forEach(d => {
+        const c = d.community_name || '(Unknown community)';
+        if (!byCommunity[c]) byCommunity[c] = [];
+        byCommunity[c].push(d);
+      });
+      const out = [];
+      const commNames = Object.keys(byCommunity).sort();
+      for (const cn of commNames) {
+        const rows = byCommunity[cn];
+        out.push(`<div style="margin-bottom:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:6px;">
+            <h4 style="margin:0; color:#315A87;">${escapeHtml(cn)}</h4>
+            <span style="font-size:11px; color:#888;">${rows.length} document${rows.length === 1 ? '' : 's'} · ${rows.reduce((s, r) => s + (r.chunk_count || 0), 0)} chunks</span>
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:12px;">
+            <thead><tr style="background:#f5f5f5;">
+              <th style="padding:6px 8px; text-align:left; width:55%;">Filename</th>
+              <th style="padding:6px 8px; text-align:center; width:10%;">Chunks</th>
+              <th style="padding:6px 8px; text-align:center; width:10%;">Source</th>
+              <th style="padding:6px 8px; text-align:right; width:25%;">Actions</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map(r => `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:6px 8px;">
+                  <div style="font-weight:500;">${escapeHtml(r.filename || '(untitled)')}</div>
+                  ${r.preview ? `<div style="color:#888; font-size:11px; margin-top:2px;">${escapeHtml((r.preview || '').slice(0, 140))}${(r.preview || '').length > 140 ? '…' : ''}</div>` : ''}
+                </td>
+                <td style="padding:6px 8px; text-align:center;">${r.chunk_count}</td>
+                <td style="padding:6px 8px; text-align:center;">
+                  <span style="background:#f0e6d2; color:#8a6a00; padding:2px 8px; border-radius:10px; font-size:10px; font-weight:600;">LEGACY</span>
+                </td>
+                <td style="padding:6px 8px; text-align:right;">
+                  <button class="secondary-btn" style="font-size:11px; padding:4px 10px;"
+                          onclick="docsCategorizeLegacy('${escapeHtml(r.legacy_id)}', this)">Categorize →</button>
+                </td>
+              </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`);
+      }
+      wrap.innerHTML = out.join('');
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#a00;">Failed to load legacy docs: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function docsMarkLegacySuperseded(legacyId, libraryDocId, btn) {
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Marking…';
+    try {
+      const r = await fetch(`/api/documents/${encodeURIComponent(legacyId)}/supersede`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ superseded_by_id: libraryDocId })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      btn.innerHTML = '✓ Marked';
+      btn.style.background = '#dff5e0';
+      btn.style.color = '#2e7d32';
+      setTimeout(() => docsLoadLegacy(), 800);
+    } catch (e) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      alert('Failed: ' + e.message);
+    }
+  }
+
+  async function docsCategorizeLegacy(legacyId, btn) {
+    if (!confirm('Send this legacy doc through Claude metadata extraction and promote it into the Documents Tracker?\n\nThe original askEd chunks stay in place — askEd can still search them. This adds a categorized record alongside.')) return;
+    const originalText = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Extracting…';
+    try {
+      const r = await fetch('/api/documents/legacy/categorize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ legacy_id: legacyId })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      btn.innerHTML = '✓ Categorized';
+      btn.style.background = '#dff5e0';
+      btn.style.color = '#2e7d32';
+      // Refresh matrix + legacy list shortly so user sees the doc move
+      setTimeout(() => { docsLoadMatrix(); docsLoadLegacy(); }, 800);
+    } catch (e) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      alert('Categorize failed: ' + e.message);
+    }
+  }
+
   // Auto-load matrix the first time the Documents tab is opened
   let docsHasLoaded = false;
   document.addEventListener('DOMContentLoaded', () => {
@@ -4939,6 +5071,7 @@ ${questionsPage}
             docsLoadCommunitiesFilter();
             docsLoadMatrix();
             docsLoadDups();
+            docsLoadLegacy();
           }
         });
       }

@@ -5,7 +5,7 @@
 //
 //   POST /upload          single PDF, auto-extract metadata, dedup, save
 //   POST /bulk-upload     multiple PDFs at once; reports dedups + extractions
-//   GET  /                list documents (filterable)
+//   GET  /                list documents (filterable, ?include_legacy=true)
 //   GET  /matrix          per-community document matrix view
 //   GET  /:id             single document with extracted fields
 //   GET  /:id/download    serve the PDF file
@@ -14,6 +14,16 @@
 //   DELETE /:id           remove a document (and its file from storage)
 //   GET  /duplicates      list pending duplicate groups
 //   POST /duplicates/:id/resolve   accept keep/delete decisions
+//   POST /:id/supersede   mark this doc as superseded by another (library or legacy)
+//   POST /legacy/categorize        promote a legacy doc into library_documents
+//                                   via Claude metadata extraction from chunks
+//   GET  /legacy                   list legacy docs (grouped, with chunk counts)
+//
+// Three-repository reality:
+//   - library_documents   = new Documents Tracker (writes go here)
+//   - documents (legacy)  = original askEd vector index (chunked, reads only)
+//   - knowledge_documents = Help layer (reads only — pulled via /api/help)
+// Reads UNIFY across these; writes always target library_documents.
 //
 // Design principles applied:
 //   - Frustration Test: drop a PDF, get a clean result without typing metadata
@@ -305,6 +315,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
     // share community/category/period but are different things (e.g., separate GL / D&O /
     // Umbrella / Crime insurance policies all categorized as 'insurance_dec_page').
     let semanticDup = null;
+    let legacyDup = null;  // separately tracked: a likely-matching legacy doc (informational)
     if (community?.id && parsed.category && parsed.period_label) {
       const { data: candidates } = await supabase
         .from('library_documents')
@@ -331,6 +342,36 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
           semanticDup = c;
           break;
         }
+      }
+    }
+
+    // 6b) Legacy table cross-check: did Ed upload this same logical doc before
+    // through the original askEd pipeline? Match by community name + filename
+    // fuzzy similarity (legacy table has no category/period — just filename + chunks).
+    if (community?.name) {
+      try {
+        const { data: legacyRows } = await supabase
+          .from('v_legacy_documents_summary')
+          .select('legacy_id, filename, chunk_count, is_migrated')
+          .eq('community_name', community.name)
+          .eq('is_migrated', false)  // already-migrated legacy docs don't dup-warn
+          .limit(50);
+        const newTitle = parsed.title || req.file.originalname || '';
+        let bestScore = 0;
+        let best = null;
+        for (const lr of (legacyRows || [])) {
+          // Compare against both filename and the new title
+          const score = Math.max(
+            nameJaccard(newTitle, lr.filename || ''),
+            nameJaccard(req.file.originalname || '', lr.filename || '')
+          );
+          if (score > bestScore) { bestScore = score; best = lr; }
+        }
+        // 0.5 threshold — slightly stricter than community matching because
+        // false positives are more annoying here (user has to dismiss).
+        if (bestScore >= 0.5) legacyDup = { ...best, similarity: bestScore };
+      } catch (e) {
+        console.warn('[documents] legacy dup check skipped:', e.message);
       }
     }
 
@@ -428,6 +469,7 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       extracted: parsed,
       stored_file: uploadedFile,
       semantic_duplicate: semanticDup,
+      legacy_duplicate: legacyDup,  // legacy askEd doc that looks like the same logical doc
       duration_ms: Date.now() - t0
     });
   } catch (err) {
@@ -455,29 +497,108 @@ router.get('/matrix', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // GET /api/documents  — list (with filters)
-// Query: ?community_id&category&status&include_predecessor=true
+// Query: ?community_id&category&status&include_predecessor=true&include_legacy=true
+//
+// When include_legacy=true (default), also returns legacy askEd docs (chunked
+// PDF/DOCX from the original Lakes of Pine Forest doc-search project) merged
+// into one unified list. Legacy rows are tagged source='legacy' and identified
+// by a synthetic id ('legacy:<md5>') so the UI can treat them uniformly.
 // ----------------------------------------------------------------------------
 router.get('/', async (req, res) => {
   try {
+    const includeLegacy = req.query.include_legacy !== 'false';   // default: include
+
+    // ---- Library docs (the new system) ----
     let q = supabase
       .from('library_documents')
-      .select('*, community:communities(name, legal_name), extracted:document_extracted_fields(fields)')
+      .select('*, community:communities(id, name, legal_name), extracted:document_extracted_fields(fields)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('uploaded_at', { ascending: false });
     if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
     if (req.query.category) q = q.eq('category', req.query.category);
     if (req.query.status) q = q.eq('status', req.query.status);
-    if (req.query.include_predecessor !== 'true') {
-      // by default, show all; if explicit 'false' is passed, filter out predecessor
-      if (req.query.include_predecessor === 'false') {
-        q = q.eq('created_by_mgmt_company', 'Bedrock');
-      }
+    if (req.query.include_predecessor === 'false') {
+      q = q.eq('created_by_mgmt_company', 'Bedrock');
     }
-    const { data, error } = await q.limit(Number(req.query.limit) || 200);
+    const { data: libDocs, error } = await q.limit(Number(req.query.limit) || 200);
+    if (error) throw error;
+
+    const libraryNormalized = (libDocs || []).map(d => ({
+      ...d,
+      source: 'library',
+      _id: d.id
+    }));
+
+    // ---- Legacy docs (chunked askEd index) ----
+    let legacyNormalized = [];
+    if (includeLegacy) {
+      let lq = supabase.from('v_legacy_documents_summary').select('*');
+      // Apply community filter if provided. The legacy table uses community
+      // NAME in metadata->>'community', not the UUID — so we resolve the
+      // community name first if a community_id was passed.
+      if (req.query.community_id) {
+        const { data: c } = await supabase
+          .from('communities')
+          .select('name')
+          .eq('id', req.query.community_id)
+          .maybeSingle();
+        if (c?.name) lq = lq.eq('community_name', c.name);
+        else lq = lq.eq('community_name', '__no_match__');
+      }
+      // Don't show already-migrated legacy docs unless explicitly asked
+      if (req.query.include_migrated !== 'true') lq = lq.eq('is_migrated', false);
+      const { data: legacyDocs } = await lq.limit(500);
+      legacyNormalized = (legacyDocs || []).map(l => ({
+        // Match the shape consumers expect, with everything category/period-y
+        // as null because legacy docs were never categorized.
+        id: l.legacy_id,
+        _id: l.legacy_id,
+        source: 'legacy',
+        title: l.filename || '(untitled)',
+        file_name_original: l.filename,
+        file_name_normalized: l.filename,
+        category: l.doc_type || null,
+        period_label: null,
+        effective_date: null,
+        expiration_date: null,
+        status: 'current',
+        approval_status: null,
+        created_by_mgmt_company: 'Unknown',
+        community: l.community_name ? { name: l.community_name } : null,
+        community_name: l.community_name,
+        chunk_count: l.chunk_count,
+        preview: l.preview,
+        is_migrated: l.is_migrated,
+        migrated_to_library_id: l.migrated_to_library_id,
+        uploaded_at: null
+      }));
+    }
+
+    res.json({
+      documents: [...libraryNormalized, ...legacyNormalized],
+      library_count: libraryNormalized.length,
+      legacy_count: legacyNormalized.length
+    });
+  } catch (err) {
+    console.error('[documents] list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/documents/legacy  — legacy docs only, grouped by (community, filename)
+// Useful for the "Legacy library" panel in the Documents tab UI.
+// ----------------------------------------------------------------------------
+router.get('/legacy/list', async (req, res) => {
+  try {
+    let q = supabase.from('v_legacy_documents_summary').select('*');
+    if (req.query.community_name) q = q.eq('community_name', req.query.community_name);
+    if (req.query.include_migrated !== 'true') q = q.eq('is_migrated', false);
+    const { data, error } = await q.limit(1000);
     if (error) throw error;
     res.json({ documents: data || [] });
   } catch (err) {
-    console.error('[documents] list failed:', err.message);
+    console.error('[documents] legacy list failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
@@ -716,6 +837,222 @@ router.post('/duplicates/:groupId/resolve', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[documents] dedup resolve failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/documents/:id/supersede
+// Body: { superseded_by_id: '<library_doc_uuid>' }   // new doc that replaces this one
+//
+// Use cases:
+//   - A new 2026 Budget supersedes the 2025 Budget for the same community.
+//   - A new categorized library doc supersedes a legacy askEd doc (in this
+//     case :id is the new library doc, and we mark the legacy migrated_to_library_id).
+//
+// If :id starts with 'legacy:' we're operating on a legacy doc; otherwise on a
+// library doc.
+// ----------------------------------------------------------------------------
+router.post('/:id/supersede', async (req, res) => {
+  try {
+    const { superseded_by_id } = req.body || {};
+    const docId = req.params.id;
+
+    // Path A: legacy doc being marked as superseded by a new library doc
+    if (docId.startsWith('legacy:')) {
+      if (!superseded_by_id) {
+        return res.status(400).json({ error: 'superseded_by_id required (the new library doc id)' });
+      }
+      // We need to find the legacy chunks matching this synthetic id.
+      // Fastest path: look up the row in the summary view, get filename+community,
+      // then update every chunk row.
+      const { data: summary } = await supabase
+        .from('v_legacy_documents_summary')
+        .select('community_name, filename')
+        .eq('legacy_id', docId)
+        .maybeSingle();
+      if (!summary) return res.status(404).json({ error: 'Legacy document not found' });
+      const { error: upErr } = await supabase
+        .from('documents')
+        .update({ migrated_to_library_id: superseded_by_id })
+        .eq('metadata->>community', summary.community_name)
+        .eq('metadata->>filename', summary.filename);
+      if (upErr) throw upErr;
+      return res.json({ ok: true, type: 'legacy_marked_migrated', legacy: summary });
+    }
+
+    // Path B: library doc being marked as superseded by another library doc
+    const update = {
+      status: 'superseded',
+      superseded_at: new Date().toISOString()
+    };
+    if (superseded_by_id) update.superseded_by_id = superseded_by_id;
+    const { data, error } = await supabase
+      .from('library_documents')
+      .update(update)
+      .eq('id', docId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, type: 'library_superseded', document: data });
+  } catch (err) {
+    console.error('[documents] supersede failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/documents/legacy/categorize
+// Body: { legacy_id: 'legacy:<md5>' }
+//
+// Promote a legacy askEd doc into library_documents:
+//   1) Fetch all chunks for this (community, filename) and concatenate.
+//   2) Ask Claude (text-only, no PDF) to extract metadata using the same
+//      DOC_EXTRACTION_PROMPT.
+//   3) Insert a new library_documents row with source_origin='migrated_from_legacy'
+//      and link the legacy chunks via migrated_to_library_id.
+//   4) NOTE: we keep the legacy chunks in place (askEd still searches them).
+//      The library row becomes the canonical metadata reference.
+// ----------------------------------------------------------------------------
+router.post('/legacy/categorize', async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const { legacy_id } = req.body || {};
+    if (!legacy_id || !legacy_id.startsWith('legacy:')) {
+      return res.status(400).json({ error: 'legacy_id required (format: legacy:<md5>)' });
+    }
+
+    // 1) Look up the legacy doc summary
+    const { data: summary } = await supabase
+      .from('v_legacy_documents_summary')
+      .select('*')
+      .eq('legacy_id', legacy_id)
+      .maybeSingle();
+    if (!summary) return res.status(404).json({ error: 'Legacy document not found' });
+    if (summary.is_migrated) {
+      return res.status(409).json({ error: 'Already migrated', migrated_to_library_id: summary.migrated_to_library_id });
+    }
+
+    // 2) Pull the concatenated text via the helper function
+    const { data: textRows, error: txErr } = await supabase.rpc('legacy_document_text', {
+      p_community: summary.community_name,
+      p_filename: summary.filename
+    });
+    if (txErr) throw txErr;
+    const fullText = (typeof textRows === 'string' ? textRows : '') || '';
+    if (!fullText) return res.status(422).json({ error: 'No text content found in legacy chunks' });
+
+    // 3) Ask Claude to extract metadata from the text (not a PDF — text-only path)
+    const textPrompt = `${DOC_EXTRACTION_PROMPT}
+
+NOTE: I'm giving you the EXTRACTED TEXT of this document, not the PDF. Set page_count to null. Be honest about extraction_confidence — text-only extraction is generally less reliable than PDF-based extraction.
+
+The document filename was: "${summary.filename}"
+The community is known to be: "${summary.community_name}"
+
+--- DOCUMENT TEXT BEGINS ---
+${fullText.slice(0, 80000)}
+--- DOCUMENT TEXT ENDS ---`;
+
+    const completion = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: textPrompt }]
+    });
+    const rawText = completion.content?.[0]?.text || '';
+    const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    const parsed = JSON.parse(cleaned);
+
+    // 4) Resolve the community
+    const community = await findCommunityByName(parsed.community_name || summary.community_name);
+
+    // 5) Build the library_documents row
+    const docId = crypto.randomUUID();
+    const { data: catRow } = await supabase
+      .from('document_categories')
+      .select('display_name')
+      .eq('category', STANDARD_CATEGORIES.includes(parsed.category) ? parsed.category : 'other')
+      .maybeSingle();
+    const categoryDisplay = catRow?.display_name || parsed.category || 'Other';
+    const fileNameNormalized = buildNormalizedFilename({
+      community_name: community?.name || parsed.community_name || summary.community_name,
+      category_display: categoryDisplay,
+      period_label: parsed.period_label,
+      approval_status: parsed.approval_status
+    });
+    const provenance = await getPredecessorContext(community?.id, parsed.effective_date);
+
+    const { data: doc, error: insErr } = await supabase
+      .from('library_documents')
+      .insert({
+        id: docId,
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: community?.id || null,
+        category: STANDARD_CATEGORIES.includes(parsed.category) ? parsed.category : 'other',
+        period_label: parsed.period_label || null,
+        effective_date: parsed.effective_date || null,
+        expiration_date: parsed.expiration_date || null,
+        approval_status: parsed.approval_status || null,
+        status: 'current',
+        title: parsed.title || summary.filename.replace(/\.[a-z]+$/i, ''),
+        file_name_original: summary.filename,
+        file_name_normalized: fileNameNormalized,
+        file_path: null,                         // no PDF on disk for legacy migration
+        file_hash: null,
+        file_size_bytes: null,
+        page_count: null,
+        created_by_mgmt_company: provenance.mgmt,
+        predecessor_name: provenance.predecessor,
+        extraction_model: 'claude-sonnet-4-5',
+        extraction_confidence: parsed.extraction_confidence || 'medium',
+        extraction_notes: `[Migrated from legacy askEd index, text-only extraction] ${parsed.extraction_notes || ''}`.trim(),
+        source_origin: 'migrated_from_legacy'
+      })
+      .select()
+      .single();
+    if (insErr) throw insErr;
+
+    if (parsed.extracted_fields && Object.keys(parsed.extracted_fields).length > 0) {
+      await supabase.from('document_extracted_fields').insert({
+        document_id: doc.id,
+        fields: parsed.extracted_fields
+      });
+    }
+
+    // 6) Link the legacy chunks → this new library doc
+    await supabase
+      .from('documents')
+      .update({ migrated_to_library_id: doc.id })
+      .eq('metadata->>community', summary.community_name)
+      .eq('metadata->>filename', summary.filename);
+
+    // 7) Trade tape
+    await supabase.from('agent_runs').insert({
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: community?.id || null,
+      module: 'documents',
+      endpoint: 'POST /api/documents/legacy/categorize',
+      request_input: { legacy_id, community: summary.community_name, filename: summary.filename, chunks: summary.chunk_count },
+      retrieved_context: { matched_community: community?.name },
+      prompt: 'DOC_EXTRACTION_PROMPT (text-only variant)',
+      model: 'claude-sonnet-4-5',
+      response: { document_id: doc.id, ...parsed },
+      input_tokens: completion.usage?.input_tokens || null,
+      output_tokens: completion.usage?.output_tokens || null,
+      duration_ms: Date.now() - t0
+    });
+
+    res.json({
+      ok: true,
+      document: doc,
+      extracted: parsed,
+      matched_community: community,
+      legacy_summary: summary,
+      duration_ms: Date.now() - t0
+    });
+  } catch (err) {
+    console.error('[documents] legacy categorize failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
