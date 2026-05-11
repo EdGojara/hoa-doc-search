@@ -636,6 +636,21 @@
         <div id="vwComparisonResult" style="display:none;"></div>
       </div>
 
+      <!-- LIBRARY: persistent history of RFPs and proposals for the selected community -->
+      <div class="vw-step" id="vwLibrarySection" style="margin-top: 16px;">
+        <div class="vw-step-header">
+          <div class="vw-step-num complete" style="background: #6E89AB;">📚</div>
+          <div style="flex: 1;">
+            <div class="vw-step-title">RFP &amp; Proposal Library</div>
+            <div class="vw-step-subtitle">Past RFPs and vendor proposals for the selected community — download or delete</div>
+          </div>
+          <button class="secondary-btn" style="font-size: 12px; padding: 4px 12px;" onclick="vwLoadLibrary()">↻ Refresh</button>
+        </div>
+        <div id="vwLibraryContainer" style="margin-top: 12px;">
+          <div style="color:#888; font-size: 13px; padding: 10px;">Loading…</div>
+        </div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -3824,6 +3839,156 @@ async function downloadVwRFP() {
     vwState.proposals.splice(idx, 1);
     renderProposalsList();
   }
+
+  // --------------------------------------------------------------------------
+  // RFP & Proposal Library — persistent history per community
+  // --------------------------------------------------------------------------
+  async function vwLoadLibrary() {
+    const wrap = document.getElementById('vwLibraryContainer');
+    if (!wrap) return;
+    if (!currentCommunity) {
+      wrap.innerHTML = '<div style="color:#888; font-size: 13px; padding: 10px;">Select a community at the top of the page to see its RFP and proposal history.</div>';
+      return;
+    }
+    wrap.innerHTML = '<div style="color:#888; font-size: 13px; padding: 10px;">Loading…</div>';
+    try {
+      const [rfpRes, propRes] = await Promise.all([
+        fetch('/bid-requests?community=' + encodeURIComponent(currentCommunity)),
+        fetch('/vendor-proposals?community=' + encodeURIComponent(currentCommunity))
+      ]);
+      const rfpData = await rfpRes.json();
+      const propData = await propRes.json();
+      const rfps = rfpData.bidRequests || [];
+      const proposals = propData.proposals || [];
+
+      if (rfps.length === 0 && proposals.length === 0) {
+        wrap.innerHTML = '<div style="color:#888; font-size: 13px; padding: 14px; text-align: center;">No RFPs or proposals saved for ' + escapeHtml(currentCommunity) + ' yet. Generate or upload above and they\'ll show up here.</div>';
+        return;
+      }
+
+      const money = n => n != null && !Number.isNaN(Number(n))
+        ? '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })
+        : '—';
+      const dt = d => d ? new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : '—';
+
+      let html = '';
+
+      // RFPs table
+      if (rfps.length > 0) {
+        html += `<div style="margin-bottom: 18px;">
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: #315A87; margin-bottom: 8px;">📋 RFPs Generated (${rfps.length})</div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead><tr style="background: #f5f5f5;">
+              <th style="padding: 6px 8px; text-align: left;">Vendor Type</th>
+              <th style="padding: 6px 8px; text-align: left;">Term</th>
+              <th style="padding: 6px 8px; text-align: left;">Bid Deadline</th>
+              <th style="padding: 6px 8px; text-align: left;">Created</th>
+              <th style="padding: 6px 8px; text-align: center;">Status</th>
+              <th style="padding: 6px 8px; text-align: right;">Actions</th>
+            </tr></thead><tbody>
+            ${rfps.map(r => `<tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 6px 8px; font-weight: 500;">${escapeHtml(r.vendor_type || '—')}</td>
+              <td style="padding: 6px 8px;">${escapeHtml(r.contract_term || '—')}</td>
+              <td style="padding: 6px 8px;">${dt(r.bid_deadline)}</td>
+              <td style="padding: 6px 8px;">${dt(r.created_at)}</td>
+              <td style="padding: 6px 8px; text-align: center;"><span style="background: #f0f0f0; color: #555; padding: 1px 8px; border-radius: 10px; font-size: 10px;">${escapeHtml(r.status || 'draft')}</span></td>
+              <td style="padding: 6px 8px; text-align: right; white-space: nowrap;">
+                <a href="/download-rfp/${escapeHtml(r.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 8px; text-decoration: none;">⬇ Download</a>
+                <button class="secondary-btn" style="font-size: 11px; padding: 3px 8px; color: #a00;" onclick="vwDeleteRfp('${escapeHtml(r.id)}', '${escapeHtml((r.vendor_type || 'RFP').replace(/'/g, '')).slice(0, 30)}')">✕ Delete</button>
+              </td>
+            </tr>`).join('')}
+          </tbody></table>
+        </div>`;
+      }
+
+      // Proposals table
+      if (proposals.length > 0) {
+        html += `<div>
+          <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600; color: #315A87; margin-bottom: 8px;">📄 Vendor Proposals (${proposals.length})</div>
+          <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+            <thead><tr style="background: #f5f5f5;">
+              <th style="padding: 6px 8px; text-align: left;">Vendor</th>
+              <th style="padding: 6px 8px; text-align: left;">Service</th>
+              <th style="padding: 6px 8px; text-align: left;">Type</th>
+              <th style="padding: 6px 8px; text-align: right;">Total</th>
+              <th style="padding: 6px 8px; text-align: left;">Date</th>
+              <th style="padding: 6px 8px; text-align: right;">Actions</th>
+            </tr></thead><tbody>
+            ${proposals.map(p => `<tr style="border-bottom: 1px solid #eee;">
+              <td style="padding: 6px 8px;">
+                <div style="font-weight: 500;">${escapeHtml(p.vendors?.name || p.vendor_name_raw || '—')}</div>
+                ${p.is_incumbent ? '<span style="background:#e3f2fd; color:#1565c0; padding:1px 6px; border-radius:3px; font-size:10px;">Incumbent</span>' : ''}
+              </td>
+              <td style="padding: 6px 8px;">${escapeHtml(p.service_category || '—')}</td>
+              <td style="padding: 6px 8px;">${escapeHtml(p.document_type || '—')}</td>
+              <td style="padding: 6px 8px; text-align: right;">
+                ${money(p.total_amount)}
+                ${p.annualized_total_amount && p.annualized_total_amount !== p.total_amount ? `<div style="color: #888; font-size: 10px; font-style: italic;">${money(p.annualized_total_amount)} annualized</div>` : ''}
+              </td>
+              <td style="padding: 6px 8px;">${dt(p.proposal_date || p.created_at)}</td>
+              <td style="padding: 6px 8px; text-align: right; white-space: nowrap;">
+                <a href="/download-proposal/${escapeHtml(p.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 8px; text-decoration: none;">⬇ Download</a>
+                <button class="secondary-btn" style="font-size: 11px; padding: 3px 8px; color: #a00;" onclick="vwDeleteProposal('${escapeHtml(p.id)}', '${escapeHtml((p.vendor_name_raw || 'proposal').replace(/'/g, '')).slice(0, 40)}')">✕ Delete</button>
+              </td>
+            </tr>`).join('')}
+          </tbody></table>
+        </div>`;
+      }
+
+      wrap.innerHTML = html;
+    } catch (err) {
+      wrap.innerHTML = '<div style="color: #a00; font-size: 12px; padding: 10px;">Failed to load library: ' + escapeHtml(err.message) + '</div>';
+    }
+  }
+
+  async function vwDeleteRfp(id, label) {
+    if (!confirm(`Delete the "${label}" RFP?\n\nAny uploaded proposals tied to it will be kept in the library (just detached).`)) return;
+    try {
+      const r = await fetch('/bid-requests/' + encodeURIComponent(id), { method: 'DELETE' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      vwLoadLibrary();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  }
+
+  async function vwDeleteProposal(id, label) {
+    if (!confirm(`Delete the ${label} proposal?\n\nThis removes the extracted data from trustEd permanently.`)) return;
+    try {
+      const r = await fetch('/vendor-proposals/' + encodeURIComponent(id), { method: 'DELETE' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      vwLoadLibrary();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  }
+
+  // Auto-load library when the Vendor Workflow tab is opened
+  let vwLibraryLoadedFor = '';
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach(t => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('vendor')") {
+        t.addEventListener('click', () => {
+          // Defer slightly so currentCommunity is set
+          setTimeout(() => { if (vwLibraryLoadedFor !== currentCommunity) { vwLibraryLoadedFor = currentCommunity; vwLoadLibrary(); } }, 100);
+        });
+      }
+    });
+    // Also reload when the community dropdown changes at the top
+    if (typeof communitySelect !== 'undefined' && communitySelect) {
+      communitySelect.addEventListener('change', () => {
+        // Only refresh if Vendor Workflow tab is currently visible
+        const vt = document.getElementById('tab-vendor');
+        if (vt && vt.classList.contains('active')) {
+          vwLibraryLoadedFor = currentCommunity;
+          vwLoadLibrary();
+        }
+      });
+    }
+  });
 
   async function runComparison() {
     if (vwState.proposals.length < 2) {

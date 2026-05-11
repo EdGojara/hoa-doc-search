@@ -1590,6 +1590,185 @@ app.get('/bid-requests/:id/proposals', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Vendor Workflow library: list / delete / download endpoints
+// ----------------------------------------------------------------------------
+// Persistent history of RFPs and uploaded proposals per community. RFPs already
+// had /download-rfp/:id (DOCX); this section adds:
+//   - GET /vendor-proposals?community=...     list all proposals (not tied to a specific RFP)
+//   - DELETE /bid-requests/:id                delete an RFP (linked proposals are detached, not deleted)
+//   - DELETE /vendor-proposals/:id            delete a proposal
+//   - GET  /download-proposal/:id             Bedrock-branded HTML summary of the extracted proposal
+//
+// Note: original proposal PDFs are NOT currently saved to storage — only the
+// Claude-extracted structured data lives in vendor_proposals. The download
+// endpoint renders that extracted data as a clean branded summary, which is
+// what Ed wants to hand to a board. Future: persist original PDF to Supabase
+// Storage at upload time so we have both the source and the rendered summary.
+// ============================================================================
+
+app.get('/vendor-proposals', async (req, res) => {
+  try {
+    const { community } = req.query;
+    let query = supabase
+      .from('vendor_proposals')
+      .select('id, community, vendor_id, bid_request_id, vendor_name_raw, filename, document_type, service_category, total_amount, annualized_total_amount, currency, proposal_date, is_incumbent, term_months, created_at, vendors(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (community) query = query.eq('community', community);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ proposals: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/bid-requests/:id', async (req, res) => {
+  try {
+    // Detach any linked proposals — keep them in the library standalone
+    await supabase
+      .from('vendor_proposals')
+      .update({ bid_request_id: null })
+      .eq('bid_request_id', req.params.id);
+    const { error } = await supabase
+      .from('bid_requests')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/vendor-proposals/:id', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('vendor_proposals')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/download-proposal/:id', async (req, res) => {
+  try {
+    const { data: p, error } = await supabase
+      .from('vendor_proposals')
+      .select('*, vendors(name)')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) throw error;
+    if (!p) return res.status(404).send('<h1>Proposal not found</h1>');
+
+    const extracted = p.extracted_data || {};
+    const lineItems = Array.isArray(extracted.line_items) ? extracted.line_items : [];
+    const esc = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const money = n => n != null && !Number.isNaN(Number(n))
+      ? '$' + Number(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+      : '—';
+
+    const html = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8"><title>${esc(p.vendor_name_raw || 'Vendor Proposal')} — ${esc(p.community)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  body { font-family: 'Inter', -apple-system, sans-serif; max-width: 850px; margin: 40px auto; padding: 20px; color: #1a1a1a; font-size: 14px; line-height: 1.55; font-feature-settings: "tnum" 1; }
+  h1 { color: #315A87; border-bottom: 2px solid #315A87; padding-bottom: 10px; font-size: 24px; margin: 0 0 6px 0; }
+  h2 { color: #1F3A5F; margin-top: 28px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.14em; border-bottom: 1px solid #e0e0e0; padding-bottom: 6px; }
+  table { width: 100%; border-collapse: collapse; margin: 8px 0; font-size: 13px; }
+  th { background: #f0f4f8; padding: 8px; text-align: left; font-weight: 600; }
+  td { padding: 8px; border-bottom: 1px solid #e8eaed; vertical-align: top; }
+  .meta { color: #666; font-size: 12px; margin-bottom: 16px; }
+  .totals { background: #f9fafb; padding: 14px 18px; border-radius: 6px; margin: 8px 0; }
+  .totals-row { display: flex; justify-content: space-between; padding: 4px 0; font-size: 13px; }
+  .totals-row.total { font-weight: 600; font-size: 16px; color: #1F3A5F; border-top: 1px solid #d0d7de; padding-top: 8px; margin-top: 4px; }
+  .totals-row.annualized { color: #666; font-size: 11px; font-style: italic; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 10px; font-size: 11px; font-weight: 600; margin-left: 8px; vertical-align: middle; }
+  .badge-incumbent { background: #e3f2fd; color: #1565c0; }
+  .footer { margin-top: 40px; padding-top: 16px; border-top: 1px solid #e0e0e0; color: #888; font-size: 11px; text-align: center; }
+  .footer .brand { color: #315A87; font-weight: 600; }
+  @media print { body { margin: 0.5in; max-width: none; } }
+</style></head><body>
+<h1>${esc(p.vendor_name_raw || 'Vendor Proposal')}${p.is_incumbent ? '<span class="badge badge-incumbent">Incumbent</span>' : ''}</h1>
+<div class="meta">
+  <strong>${esc(p.community || '—')}</strong> ·
+  ${esc(p.service_category || '—')} ·
+  ${esc(p.document_type || '—')}
+  ${p.proposal_date ? ' · proposal dated ' + esc(p.proposal_date) : ''}
+  ${p.filename ? '<div style="margin-top:4px;">Original filename: <code>' + esc(p.filename) + '</code></div>' : ''}
+</div>
+
+<h2>Pricing</h2>
+<div class="totals">
+  ${extracted.totals?.subtotal != null ? `<div class="totals-row"><span>Subtotal</span><span>${money(extracted.totals.subtotal)}</span></div>` : ''}
+  ${extracted.totals?.tax != null ? `<div class="totals-row"><span>Tax${extracted.totals.tax_rate_percent ? ` (${extracted.totals.tax_rate_percent}%)` : ''}</span><span>${money(extracted.totals.tax)}</span></div>` : ''}
+  ${p.total_amount != null ? `<div class="totals-row total"><span>Total</span><span>${money(p.total_amount)}</span></div>` : '<div class="totals-row"><span>Total</span><span>(not stated)</span></div>'}
+  ${p.annualized_total_amount != null && p.term_months && p.term_months !== 12 ? `<div class="totals-row annualized"><span>Annualized: ${esc(p.annualization_basis || '')}</span><span>${money(p.annualized_total_amount)}</span></div>` : ''}
+</div>
+
+${lineItems.length > 0 ? `<h2>Line Items</h2>
+<table><thead><tr>
+  <th style="width: 55%;">Description</th>
+  <th style="width: 8%; text-align: right;">Qty</th>
+  <th style="width: 10%;">Unit</th>
+  <th style="width: 13%; text-align: right;">Unit Price</th>
+  <th style="width: 14%; text-align: right;">Total</th>
+</tr></thead><tbody>
+${lineItems.map(li => `<tr>
+  <td>${esc(li.description || '')}</td>
+  <td style="text-align: right;">${li.quantity != null ? esc(li.quantity) : ''}</td>
+  <td>${esc(li.unit || '')}</td>
+  <td style="text-align: right;">${li.unit_price != null ? money(li.unit_price) : ''}</td>
+  <td style="text-align: right;">${li.total_price != null ? money(li.total_price) : ''}</td>
+</tr>`).join('')}
+</tbody></table>` : ''}
+
+${extracted.service_contract_details && (extracted.service_contract_details.term_months || extracted.service_contract_details.term_length) ? `<h2>Contract Terms</h2>
+<table>
+  ${extracted.service_contract_details.term_length || extracted.service_contract_details.term_months ? `<tr><th style="width: 28%;">Term</th><td>${esc(extracted.service_contract_details.term_length || (extracted.service_contract_details.term_months + ' months'))}</td></tr>` : ''}
+  ${extracted.service_contract_details.term_start_date ? `<tr><th>Start</th><td>${esc(extracted.service_contract_details.term_start_date)}</td></tr>` : ''}
+  ${extracted.service_contract_details.term_end_date ? `<tr><th>End</th><td>${esc(extracted.service_contract_details.term_end_date)}</td></tr>` : ''}
+  ${extracted.service_contract_details.escalation_clauses ? `<tr><th>Escalation</th><td>${esc(extracted.service_contract_details.escalation_clauses)}</td></tr>` : ''}
+  ${extracted.service_contract_details.termination_terms ? `<tr><th>Termination</th><td>${esc(extracted.service_contract_details.termination_terms)}</td></tr>` : ''}
+</table>` : ''}
+
+${extracted.payment_terms ? `<h2>Payment Terms</h2><p>${esc(extracted.payment_terms)}</p>` : ''}
+
+${extracted.insurance_provided && Object.values(extracted.insurance_provided).some(v => v) ? `<h2>Insurance Provided</h2>
+<table>
+  ${extracted.insurance_provided.general_liability ? `<tr><th style="width: 28%;">General Liability</th><td>${esc(extracted.insurance_provided.general_liability)}</td></tr>` : ''}
+  ${extracted.insurance_provided.umbrella ? `<tr><th>Umbrella</th><td>${esc(extracted.insurance_provided.umbrella)}</td></tr>` : ''}
+  ${extracted.insurance_provided.workers_comp ? `<tr><th>Workers Comp</th><td>${esc(extracted.insurance_provided.workers_comp)}</td></tr>` : ''}
+  ${extracted.insurance_provided.auto ? `<tr><th>Auto</th><td>${esc(extracted.insurance_provided.auto)}</td></tr>` : ''}
+</table>` : ''}
+
+${extracted.key_terms_summary ? `<h2>Key Terms Summary</h2><p>${esc(extracted.key_terms_summary)}</p>` : ''}
+
+${extracted.extraction_notes ? `<h2>Extraction Notes</h2><p style="color:#666; font-style:italic; font-size:12px;">${esc(extracted.extraction_notes)}</p>` : ''}
+
+<div class="footer">
+  <span class="brand">Bedrock Association Management</span> · Community. Simplified.<br>
+  Proposal summary generated from extracted data on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
+</div>
+</body></html>`;
+
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    console.error('[download-proposal] failed:', err.message);
+    res.status(500).send('Error: ' + err.message);
+  }
+});
+
 // =====================================================================
 // Market value estimate lookup — TrueCar-style data layer
 // Priority: community-specific actuals → cross-community avg → AI estimate
