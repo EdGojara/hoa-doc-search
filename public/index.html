@@ -5521,6 +5521,7 @@ ${questionsPage}
         if (d.created_by_mgmt_company === 'Predecessor') tags.push(`<span style="background:#fbe9e7; color:#bf360c; padding:1px 6px; border-radius:3px; font-size:10px;">Pre-Bedrock</span>`);
         if (data.semantic_duplicate) tags.push(`<span style="background:#fff4e0; color:#a06400; padding:1px 6px; border-radius:3px; font-size:10px;">⚠️ Possible dup of existing</span>`);
         if (data.legacy_duplicate) tags.push(`<span style="background:#f0e6d2; color:#8a6a00; padding:1px 6px; border-radius:3px; font-size:10px;" title="Similar filename in legacy askEd index">📜 Likely supersedes legacy</span>`);
+        if (data.superseded_prior) tags.push(`<span style="background:#e0f2e7; color:#1f6a40; padding:1px 6px; border-radius:3px; font-size:10px;" title="Auto-superseded a prior form version">🔁 Replaces prior version</span>`);
         item.resultHtml = `<div style="color:#2e7d32;">✅ <strong>${escapeHtml(d.title || d.file_name_normalized)}</strong></div>
           <div style="margin-top:4px;">${tags.join(' ')}</div>
           <div style="margin-top:4px; color:#666; font-size:11px;">Saved as: <code>${escapeHtml(d.file_name_normalized)}</code> · confidence: ${escapeHtml(d.extraction_confidence)}${ex?.extraction_notes ? ` · <em>"${escapeHtml(ex.extraction_notes)}"</em>` : ''}</div>
@@ -5528,6 +5529,11 @@ ${questionsPage}
             <strong>Legacy match:</strong> <code>${escapeHtml(data.legacy_duplicate.filename)}</code> (${data.legacy_duplicate.chunk_count} chunks, ${Math.round(data.legacy_duplicate.similarity*100)}% similar)
             <button class="secondary-btn" style="font-size:10px; padding:2px 8px; margin-left:8px;"
                     onclick="docsMarkLegacySuperseded('${escapeHtml(data.legacy_duplicate.legacy_id)}','${escapeHtml(d.id)}', this)">Mark legacy as superseded</button>
+          </div>` : ''}
+          ${data.superseded_prior ? `<div style="margin-top:6px; padding:6px 8px; background:#e8f5ee; border:1px solid #b0d4bf; border-radius:4px; font-size:11px;">
+            <strong>🔁 Replaces:</strong> "${escapeHtml(data.superseded_prior.title || data.superseded_prior.file_name_normalized || 'prior version')}" (uploaded ${data.superseded_prior.uploaded_at ? new Date(data.superseded_prior.uploaded_at).toLocaleDateString() : 'previously'}) — moved to archive.
+            <button class="secondary-btn" style="font-size:10px; padding:2px 8px; margin-left:8px;"
+                    onclick="docsUndoSupersession('${escapeHtml(data.superseded_prior.id)}', this)" title="Restore the prior version if this was the wrong target">↺ Undo</button>
           </div>` : ''}`;
         docsRenderQueue();
       } catch (e) {
@@ -5832,6 +5838,28 @@ ${questionsPage}
     }
   }
 
+  async function docsUndoSupersession(priorDocId, btn) {
+    if (!confirm('Restore the prior form as the current version?\n\nThe new upload will remain in the library but lose "current" status. Use this if the auto-supersession matched the wrong document.')) return;
+    const originalText = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '⏳';
+    try {
+      const r = await fetch(`/api/documents/${encodeURIComponent(priorDocId)}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'current' })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      btn.innerHTML = '✓ Restored';
+      btn.style.background = '#dff5e0';
+      btn.style.color = '#2e7d32';
+    } catch (e) {
+      btn.disabled = false;
+      btn.innerHTML = originalText;
+      alert('Undo failed: ' + e.message);
+    }
+  }
+
   async function docsMarkLegacySuperseded(legacyId, libraryDocId, btn) {
     const originalText = btn.innerHTML;
     btn.disabled = true;
@@ -5937,7 +5965,9 @@ ${questionsPage}
       const categoriesToQuery = formType ? [formType] : formCategories;
       const results = [];
       for (const cat of categoriesToQuery) {
-        const qs = new URLSearchParams({ category: cat, include_legacy: 'false' });
+        // status=current only — superseded versions are archived, not surfaced
+        // in the default Forms list (matches "always show the most recent form")
+        const qs = new URLSearchParams({ category: cat, include_legacy: 'false', status: 'current' });
         if (communityId) qs.set('community_id', communityId);
         const r = await fetch('/api/documents?' + qs.toString());
         const d = await r.json();

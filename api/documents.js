@@ -365,6 +365,52 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       }
     }
 
+    // 6c) Form supersession check (forms-only path).
+    // For resident-facing form categories, a new upload that matches an
+    // existing current form (same community + category, similar title)
+    // is treated as a NEW VERSION that supersedes the old one. Unlike the
+    // semantic_dup flow (which holds the new doc as 'draft' for user review),
+    // this auto-promotes new to 'current' and demotes old to 'superseded' —
+    // because forms have ONE current version per community by definition.
+    // Threshold is looser (0.3 vs 0.6) for the same reason.
+    const FORM_CATEGORIES = ['arc_application', 'key_fob_form', 'forms_and_applications'];
+    let supersedeTargetId = null;
+    let supersedeTargetSnapshot = null;
+    if (community?.id && FORM_CATEGORIES.includes(parsed.category) && !semanticDup) {
+      const { data: priorVersions } = await supabase
+        .from('library_documents')
+        .select('id, title, file_name_normalized, uploaded_at, period_label')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('community_id', community.id)
+        .eq('category', parsed.category)
+        .eq('status', 'current');
+      if (priorVersions && priorVersions.length > 0) {
+        const normalize = s => (s || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+        const newTokens = new Set(normalize(parsed.title).split(' ').filter(t => t.length > 2));
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const p of priorVersions) {
+          const existingTokens = new Set(normalize(p.title).split(' ').filter(t => t.length > 2));
+          if (newTokens.size === 0 || existingTokens.size === 0) {
+            // If either title is empty, ANY same-community-same-category form is a likely supersession
+            bestMatch = p;
+            bestScore = 1.0;
+            break;
+          }
+          const intersect = [...newTokens].filter(t => existingTokens.has(t)).length;
+          const union = new Set([...newTokens, ...existingTokens]).size || 1;
+          const sim = intersect / union;
+          if (sim > bestScore) { bestScore = sim; bestMatch = p; }
+        }
+        // Forms threshold: 0.3 (looser than general 0.6) because each form
+        // category typically has only one current version per community.
+        if (bestScore >= 0.3) {
+          supersedeTargetId = bestMatch.id;
+          supersedeTargetSnapshot = bestMatch;
+        }
+      }
+    }
+
     // 6b) Legacy table cross-check: did Ed upload this same logical doc before
     // through the original askEd pipeline? Match by community name + filename
     // fuzzy similarity (legacy table has no category/period — just filename + chunks).
@@ -471,6 +517,23 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       });
     }
 
+    // 9b) Form supersession execution.
+    // If this upload was identified as a new version of an existing form,
+    // mark the prior version as 'superseded' and link the chain. The new
+    // doc is already 'current' (the default). Forms-only auto-flow — for
+    // other categories, supersession remains a user-confirmed action.
+    if (supersedeTargetId) {
+      await supabase
+        .from('library_documents')
+        .update({
+          status: 'superseded',
+          superseded_at: new Date().toISOString(),
+          superseded_by_id: doc.id
+        })
+        .eq('id', supersedeTargetId)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    }
+
     // 10) If there's a semantic duplicate, create a duplicate group for user resolution
     if (semanticDup) {
       const { data: dupGroup } = await supabase
@@ -514,6 +577,9 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       stored_file: uploadedFile,
       semantic_duplicate: semanticDup,
       legacy_duplicate: legacyDup,  // legacy askEd doc that looks like the same logical doc
+      // Forms-only: auto-superseded a prior version. UI shows what got replaced
+      // so user can undo if it was the wrong target.
+      superseded_prior: supersedeTargetSnapshot,
       duration_ms: Date.now() - t0
     });
   } catch (err) {
