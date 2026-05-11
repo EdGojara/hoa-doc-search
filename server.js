@@ -1145,6 +1145,192 @@ app.get('/bid-requests', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Component Taxonomy Mapping
+// ----------------------------------------------------------------------------
+// Given a proposal's extracted line items + the service category, ask Claude
+// to map each line item to a canonical component from service_category_components.
+// Also detects MISSING components (canonical entries with typical_inclusion_rate
+// of 'always'/'usually' that this proposal doesn't address — the gap detection
+// that flags "low base price by exclusion" shenanigans).
+//
+// Saves mappings to proposal_component_mappings. Idempotent: re-running clears
+// prior mappings for this proposal first.
+// ============================================================================
+async function mapProposalComponents(proposalId, opts = {}) {
+  try {
+    // Load proposal
+    const { data: proposal, error: pErr } = await supabase
+      .from('vendor_proposals')
+      .select('id, service_category, extracted_data, term_months')
+      .eq('id', proposalId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (pErr || !proposal) return { ok: false, error: 'proposal not found' };
+
+    const serviceCategory = proposal.service_category || 'other';
+    const lineItems = Array.isArray(proposal.extracted_data?.line_items)
+      ? proposal.extracted_data.line_items : [];
+
+    // Load canonical components for this category
+    const { data: components } = await supabase
+      .from('service_category_components')
+      .select('component_key, display_name, description, typical_inclusion_rate, typical_unit, is_typical_exclusion, is_high_markup_target')
+      .eq('service_category', serviceCategory)
+      .order('sort_order');
+
+    if (!components || components.length === 0) {
+      // No taxonomy for this category — nothing to map
+      return { ok: true, mapped: 0, missing: 0, note: 'no canonical components for category: ' + serviceCategory };
+    }
+
+    if (lineItems.length === 0 && (!proposal.extracted_data?.totals?.total)) {
+      return { ok: true, mapped: 0, missing: 0, note: 'no line items to map' };
+    }
+
+    const componentList = components.map(c => `- ${c.component_key}: ${c.display_name} (typically ${c.typical_inclusion_rate}; ${c.typical_unit})${c.description ? ' — ' + c.description : ''}`).join('\n');
+
+    const prompt = `You are decomposing a vendor proposal into canonical components so it can be compared apples-to-apples with other proposals. The vendor's wording often obscures what's included vs. excluded vs. marked up — your job is to see through it.
+
+SERVICE CATEGORY: ${serviceCategory}
+
+CANONICAL COMPONENTS available for this category:
+${componentList}
+
+PROPOSAL LINE ITEMS:
+${JSON.stringify(lineItems, null, 2)}
+
+OVERALL PROPOSAL FINANCIALS:
+- Stated total: ${proposal.extracted_data?.totals?.total ?? 'not stated'}
+- Term months: ${proposal.term_months ?? 'unclear'}
+- Contract type: ${proposal.extracted_data?.document_type ?? 'unclear'}
+
+YOUR JOB — return JSON exactly this shape:
+
+{
+  "mappings": [
+    {
+      "raw_line_item_index": <integer index of the line item in the input array, or null if you inferred this component from extracted_data outside line_items>,
+      "raw_line_item_description": "string — verbatim from vendor's proposal",
+      "raw_line_item_amount": <number or null>,
+      "raw_line_item_unit": "string — what the vendor said: 'monthly','annual','per_hour','per_visit', etc.",
+      "component_key": "exact key from the canonical list above, OR null if no canonical component fits",
+      "normalized_annual_amount": <number — annualized for cross-vendor comparison. If amount is monthly, multiply by 12. If quoted across the proposal term, divide by term_months and multiply by 12. Use null if amount unclear.>,
+      "is_included_in_base": <boolean — true if part of base contract price; false if listed as ADD-ON, OPTIONAL, or EXCLUSION>,
+      "mapping_confidence": "high | medium | low | unmapped",
+      "notes": "string — anything unusual about this mapping. Flag suspicious markups, ambiguous bundling, vague descriptions."
+    }
+  ],
+  "missing_components": [
+    "list of canonical component_key strings that are NOT addressed in this proposal AT ALL (neither in line items nor implicitly bundled). Focus on components with typical_inclusion_rate of 'always' or 'usually' — those are the suspicious gaps. Skip 'rarely' ones unless they're explicitly mentioned as exclusions."
+  ],
+  "implicit_inclusions": [
+    "list of canonical component_key strings that this proposal probably INCLUDES implicitly (no separate line item but mentioned in scope/terms). Use sparingly — only when you're confident the vendor's narrative covers it."
+  ],
+  "overall_notes": "1-3 sentences calling out: opacity tactics this vendor used, suspicious omissions, unusual bundling, anything an experienced CFE would flag for the board."
+}
+
+CRITICAL RULES:
+- Use 'unmapped' confidence + null component_key for line items that don't fit any canonical component (e.g., "Documentation fee" — doesn't match any component).
+- When a single line item bundles multiple components (e.g., "Pool maintenance and chemicals — $5,000/month"), split into multiple mapping rows with the SAME raw_line_item_index but different component_keys and your best split of the amount. Note in 'notes' that you split it.
+- For missing_components: this is the LOWBALL DETECTION layer. A pool contract without chemicals_supply, or a landscape contract without fertilization, is suspicious. Be aggressive in flagging.
+- Annualization: if term is 7 months and total is $35,000, the annualized is $60,000 ($35K / 7 * 12). Apply consistently.
+- Numbers are NUMBERS, not strings.
+
+Return ONLY the JSON. No preamble, no markdown fences.`;
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }]
+    });
+    const text = response.content[0]?.text || '';
+    const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    let result;
+    try {
+      result = JSON.parse(cleaned);
+    } catch (parseErr) {
+      console.warn('[mapProposalComponents] JSON parse failed:', parseErr.message);
+      return { ok: false, error: 'mapping JSON parse failed: ' + parseErr.message };
+    }
+
+    // Wipe any prior mappings for this proposal (idempotent remap)
+    await supabase.from('proposal_component_mappings').delete().eq('proposal_id', proposalId);
+
+    const rows = [];
+
+    // Add mapped line items
+    for (const m of (result.mappings || [])) {
+      rows.push({
+        proposal_id: proposalId,
+        service_category: serviceCategory,
+        component_key: m.component_key || null,
+        raw_line_item_index: m.raw_line_item_index ?? null,
+        raw_line_item_description: m.raw_line_item_description || null,
+        raw_line_item_amount: m.raw_line_item_amount ?? null,
+        raw_line_item_unit: m.raw_line_item_unit || null,
+        normalized_annual_amount: m.normalized_annual_amount ?? null,
+        mapping_confidence: m.mapping_confidence || 'medium',
+        is_included_in_base: m.is_included_in_base !== false,
+        is_missing_from_proposal: false,
+        notes: m.notes || null
+      });
+    }
+
+    // Add MISSING components as separate rows — the gap detection layer
+    const missingKeys = Array.isArray(result.missing_components) ? result.missing_components : [];
+    for (const key of missingKeys) {
+      // Validate the key actually exists in the canonical list
+      const comp = components.find(c => c.component_key === key);
+      if (!comp) continue;
+      rows.push({
+        proposal_id: proposalId,
+        service_category: serviceCategory,
+        component_key: key,
+        raw_line_item_index: null,
+        raw_line_item_description: null,
+        raw_line_item_amount: null,
+        raw_line_item_unit: null,
+        normalized_annual_amount: null,
+        mapping_confidence: 'high',                     // high confidence it's missing
+        is_included_in_base: false,
+        is_missing_from_proposal: true,
+        flagged_as_unusual_exclusion: comp.typical_inclusion_rate === 'always' || comp.typical_inclusion_rate === 'usually',
+        notes: `Canonical component '${comp.display_name}' (typically ${comp.typical_inclusion_rate}) is NOT addressed in this proposal.`
+      });
+    }
+
+    if (rows.length > 0) {
+      await supabase.from('proposal_component_mappings').insert(rows);
+    }
+
+    // Trade tape (best-effort, swallow errors)
+    try {
+      await supabase.from('agent_runs').insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        module: 'vendor_workflow',
+        endpoint: 'mapProposalComponents',
+        request_input: { proposal_id: proposalId, service_category: serviceCategory, line_items_count: lineItems.length },
+        prompt: 'COMPONENT_MAPPING_PROMPT',
+        model: 'claude-sonnet-4-5',
+        response: { mappings_count: (result.mappings || []).length, missing_count: missingKeys.length, overall_notes: result.overall_notes },
+        input_tokens: response.usage?.input_tokens || null,
+        output_tokens: response.usage?.output_tokens || null
+      });
+    } catch (_) { /* swallow */ }
+
+    return {
+      ok: true,
+      mapped: (result.mappings || []).length,
+      missing: missingKeys.length,
+      overall_notes: result.overall_notes || null
+    };
+  } catch (err) {
+    console.error('[mapProposalComponents] failed:', err.message);
+    return { ok: false, error: err.message };
+  }
+}
+
 // Upload a vendor proposal PDF, extract structured data, save to database
 app.post('/upload-proposal', upload.single('proposal'), async (req, res) => {
   try {
@@ -1370,6 +1556,13 @@ For mixed documents, populate both as relevant.`
       console.error('Error saving proposal:', proposalError);
       return res.status(500).json({ error: 'Could not save proposal to database: ' + proposalError.message });
     }
+
+    // Fire component mapping in the background — don't block the upload response.
+    // The mapping will be queryable via GET /vendor-proposals/:id/components
+    // a moment later. Logs but doesn't fail the upload if mapping errors out.
+    mapProposalComponents(savedProposal.id)
+      .then(r => console.log('[upload-proposal] component mapping:', JSON.stringify(r)))
+      .catch(e => console.warn('[upload-proposal] component mapping failed:', e.message));
 
     res.json({
       success: true,
@@ -2005,6 +2198,165 @@ app.get('/benchmarks/active-contracts', async (req, res) => {
     const { data, error } = await q;
     if (error) throw error;
     res.json({ contracts: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Component Taxonomy endpoints
+// ============================================================================
+
+// List canonical components (optionally filter by service_category)
+app.get('/service-components', async (req, res) => {
+  try {
+    let q = supabase
+      .from('service_category_components')
+      .select('*')
+      .order('service_category')
+      .order('sort_order');
+    if (req.query.service_category) q = q.eq('service_category', req.query.service_category);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ components: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Get the component-level breakdown of a single proposal
+// Returns: mapped components (with included/excluded/missing flags) + summary
+app.get('/vendor-proposals/:id/components', async (req, res) => {
+  try {
+    const { data: rows, error } = await supabase
+      .from('v_proposal_components_flat')
+      .select('*')
+      .eq('proposal_id', req.params.id)
+      .order('is_missing_from_proposal', { ascending: true })   // included first
+      .order('component_display_name', { ascending: true });
+    if (error) throw error;
+    const all = rows || [];
+    const included = all.filter(r => !r.is_missing_from_proposal && r.is_included_in_base);
+    const addOns   = all.filter(r => !r.is_missing_from_proposal && !r.is_included_in_base);
+    const missing  = all.filter(r => r.is_missing_from_proposal);
+    const totalIncluded = included.reduce((s, r) => s + (Number(r.normalized_annual_amount) || 0), 0);
+    res.json({
+      proposal_id: req.params.id,
+      components: all,
+      summary: {
+        included_count: included.length,
+        addon_count: addOns.length,
+        missing_count: missing.length,
+        included_annualized_total: totalIncluded || null,
+        unusual_exclusions: missing.filter(r => r.flagged_as_unusual_exclusion).map(r => r.component_display_name)
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Re-run component mapping for a proposal (use after taxonomy changes
+// or if extraction needs to be redone)
+app.post('/vendor-proposals/:id/remap-components', async (req, res) => {
+  try {
+    const result = await mapProposalComponents(req.params.id);
+    if (!result.ok) return res.status(500).json(result);
+    res.json(result);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Side-by-side component comparison for a set of proposals (typically tied
+// to one bid_request, but can be any list). Returns a pivot ready for the UI.
+app.post('/vendor-proposals/compare-components', async (req, res) => {
+  try {
+    const { proposal_ids } = req.body || {};
+    if (!Array.isArray(proposal_ids) || proposal_ids.length === 0) {
+      return res.status(400).json({ error: 'proposal_ids array required' });
+    }
+    const { data: rows, error } = await supabase
+      .from('v_proposal_components_flat')
+      .select('*')
+      .in('proposal_id', proposal_ids);
+    if (error) throw error;
+
+    // Build pivot: { component_key: { display_name, per_vendor: { proposal_id: { amount, included, missing, ... } } } }
+    const pivot = {};
+    const vendors = {};
+    for (const r of (rows || [])) {
+      vendors[r.proposal_id] = vendors[r.proposal_id] || {
+        proposal_id: r.proposal_id, vendor_name: r.vendor_name, vendor_id: r.vendor_id,
+        community: r.community, is_incumbent: r.is_incumbent, outcome: r.outcome,
+        service_category: r.service_category
+      };
+      const key = r.component_key || '_unmapped';
+      pivot[key] = pivot[key] || {
+        component_key: r.component_key,
+        display_name: r.component_display_name || (r.component_key ? r.component_key : 'Unmapped'),
+        typical_inclusion_rate: r.typical_inclusion_rate,
+        is_high_markup_target: r.component_is_high_markup_target,
+        is_typical_exclusion: r.component_is_typical_exclusion,
+        per_vendor: {}
+      };
+      // If we already have a cell for this vendor/component, sum (for split-component cases)
+      const existing = pivot[key].per_vendor[r.proposal_id];
+      pivot[key].per_vendor[r.proposal_id] = {
+        amount: (existing?.amount || 0) + (Number(r.normalized_annual_amount) || 0),
+        is_included: r.is_included_in_base,
+        is_missing: r.is_missing_from_proposal,
+        flagged_high_markup: r.flagged_as_high_markup,
+        flagged_unusual_exclusion: r.flagged_as_unusual_exclusion,
+        raw_description: r.raw_line_item_description,
+        notes: r.mapping_notes
+      };
+    }
+
+    // Compute apples-to-apples totals: sum of included components per vendor
+    const vendorTotals = {};
+    for (const v of Object.values(vendors)) {
+      let stated = 0;
+      let aTA   = 0;     // apples-to-apples: only including-in-base
+      for (const compKey of Object.keys(pivot)) {
+        const cell = pivot[compKey].per_vendor[v.proposal_id];
+        if (!cell || cell.is_missing) continue;
+        if (cell.is_included) {
+          stated += cell.amount;
+          aTA    += cell.amount;
+        } else {
+          stated += cell.amount;   // add-ons count toward stated total
+          // but NOT toward apples-to-apples comparison
+        }
+      }
+      vendorTotals[v.proposal_id] = { stated_total: stated, included_total: aTA };
+    }
+
+    res.json({
+      vendors: Object.values(vendors),
+      components: Object.values(pivot),
+      vendor_totals: vendorTotals,
+      proposal_ids_requested: proposal_ids
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Per-component benchmarks (year/category/component aggregations)
+app.get('/benchmarks/components', async (req, res) => {
+  try {
+    let q = supabase
+      .from('v_component_benchmarks')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('proposal_year', { ascending: false });
+    if (req.query.year) q = q.eq('proposal_year', Number(req.query.year));
+    if (req.query.service_category) q = q.eq('service_category', req.query.service_category);
+    if (req.query.component_key) q = q.eq('component_key', req.query.component_key);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ benchmarks: data || [] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

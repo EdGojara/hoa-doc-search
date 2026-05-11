@@ -3943,6 +3943,7 @@ async function downloadVwRFP() {
               <td style="padding: 6px 8px; text-align: right; white-space: nowrap;">
                 ${p.file_path ? `<a href="/download-proposal-source/${escapeHtml(p.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 7px; text-decoration: none;" title="Original PDF">📑 PDF</a>` : ''}
                 <a href="/download-proposal/${escapeHtml(p.id)}" target="_blank" class="secondary-btn" style="font-size: 11px; padding: 3px 7px; text-decoration: none;" title="Bedrock-branded summary">⬇ Summary</a>
+                <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color:#315A87;" onclick="vwShowComponents('${escapeHtml(p.id)}')" title="Component-level breakdown (what's included, what's missing, markups)">🔍 Analyze</button>
                 ${p.outcome === 'pending' || !p.outcome ? `
                   <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color:#2e7d32;" onclick="vwMarkProposalOutcome('${escapeHtml(p.id)}', 'won', ${p.bid_request_id ? 'true' : 'false'})" title="Mark this bid as the winning proposal">✓ Won</button>
                   <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color:#a02828;" onclick="vwMarkProposalOutcome('${escapeHtml(p.id)}', 'lost', false)" title="Mark as lost">✕ Lost</button>
@@ -3951,7 +3952,8 @@ async function downloadVwRFP() {
                 `}
                 <button class="secondary-btn" style="font-size: 11px; padding: 3px 7px; color: #a00;" onclick="vwDeleteProposal('${escapeHtml(p.id)}', '${escapeHtml((p.vendor_name_raw || 'proposal').replace(/'/g, '')).slice(0, 40)}')">✕</button>
               </td>
-            </tr>`).join('')}
+            </tr>
+            <tr id="vw-components-row-${escapeHtml(p.id)}" style="display:none;"><td colspan="6" style="padding:0; background:#f9fafb; border-bottom:1px solid #eee;"><div id="vw-components-panel-${escapeHtml(p.id)}" style="padding:14px 18px;"></div></td></tr>`).join('')}
           </tbody></table>
           <div style="font-size: 10px; color: #888; margin-top: 6px; padding-left: 4px;">
             📑 = original PDF stored · ⬇ = Bedrock-branded summary (works for any proposal)
@@ -4177,6 +4179,125 @@ async function downloadVwRFP() {
     } catch (e) {
       btn.disabled = false; btn.textContent = 'Save Contract';
       alert('Save failed: ' + e.message);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Component-level analysis — the apples-to-apples decomposition
+  // Toggles an inline panel showing INCLUDED components, ADD-ONS, and MISSING
+  // canonical components (the "lowball by exclusion" detection).
+  // --------------------------------------------------------------------------
+  async function vwShowComponents(proposalId) {
+    const row = document.getElementById('vw-components-row-' + proposalId);
+    const panel = document.getElementById('vw-components-panel-' + proposalId);
+    if (!row || !panel) return;
+    // Toggle: if already visible, collapse
+    if (row.style.display === 'table-row') {
+      row.style.display = 'none';
+      return;
+    }
+    row.style.display = 'table-row';
+    panel.innerHTML = '<div style="color:#888; font-size:12px; padding:8px;">⚙️ Loading component breakdown…</div>';
+    try {
+      const r = await fetch('/vendor-proposals/' + encodeURIComponent(proposalId) + '/components');
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      const all = data.components || [];
+      // If empty, offer to re-run mapping
+      if (all.length === 0) {
+        panel.innerHTML = `<div style="font-size:12px; color:#666;">
+          No component mappings yet for this proposal.
+          ${data.note || ''}
+          <button class="secondary-btn" style="font-size:11px; padding:3px 8px; margin-left:8px;" onclick="vwRemapComponents('${escapeHtml(proposalId)}')">↻ Run component mapping now</button>
+        </div>`;
+        return;
+      }
+      const money = n => n != null && !Number.isNaN(Number(n))
+        ? '$' + Number(n).toLocaleString('en-US', { maximumFractionDigits: 0 })
+        : '—';
+      const included = all.filter(c => !c.is_missing_from_proposal && c.is_included_in_base);
+      const addOns   = all.filter(c => !c.is_missing_from_proposal && !c.is_included_in_base);
+      const missing  = all.filter(c => c.is_missing_from_proposal);
+      const unusualMissing = missing.filter(c => c.flagged_as_unusual_exclusion);
+
+      let h = `<div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap: 12px; font-size: 12px;">`;
+
+      // INCLUDED column
+      h += `<div>
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; font-weight:600; color:#2e7d32; margin-bottom:6px;">✓ Included in base (${included.length})</div>
+        ${included.length === 0 ? '<div style="color:#888; font-style:italic;">(none mapped to canonical components)</div>' :
+          included.map(c => `<div style="padding:5px 8px; background:#dff5e0; border-radius:4px; margin-bottom:4px;">
+            <div style="font-weight:500;">${escapeHtml(c.component_display_name || c.component_key || '—')}</div>
+            <div style="display:flex; justify-content:space-between; font-size:11px; color:#555; margin-top:2px;">
+              <span>${money(c.normalized_annual_amount)}/yr</span>
+              ${c.flagged_as_high_markup ? '<span style="color:#a06400;" title="Flagged as above-market markup">⚠ markup</span>' : ''}
+            </div>
+            ${c.raw_line_item_description ? `<div style="font-size:10px; color:#888; margin-top:2px;">"${escapeHtml((c.raw_line_item_description || '').slice(0, 80))}${(c.raw_line_item_description || '').length > 80 ? '…' : ''}"</div>` : ''}
+          </div>`).join('')
+        }
+      </div>`;
+
+      // ADD-ONS column
+      h += `<div>
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; font-weight:600; color:#a06400; margin-bottom:6px;">$ Add-ons / Optional (${addOns.length})</div>
+        ${addOns.length === 0 ? '<div style="color:#888; font-style:italic;">(no separate add-ons flagged)</div>' :
+          addOns.map(c => `<div style="padding:5px 8px; background:#fff4e0; border-radius:4px; margin-bottom:4px;">
+            <div style="font-weight:500;">${escapeHtml(c.component_display_name || c.component_key || '—')}</div>
+            <div style="font-size:11px; color:#555; margin-top:2px;">${money(c.normalized_annual_amount)}/yr <span style="color:#888; font-size:10px;">(not in base)</span></div>
+            ${c.raw_line_item_description ? `<div style="font-size:10px; color:#888; margin-top:2px;">"${escapeHtml((c.raw_line_item_description || '').slice(0, 80))}"</div>` : ''}
+          </div>`).join('')
+        }
+      </div>`;
+
+      // MISSING column — the lowball-by-exclusion detection
+      h += `<div>
+        <div style="font-size:10px; text-transform:uppercase; letter-spacing:0.1em; font-weight:600; color:#a02828; margin-bottom:6px;">⚠ NOT included (${missing.length})</div>
+        ${missing.length === 0 ? '<div style="color:#888; font-style:italic;">No canonical-component gaps detected.</div>' :
+          missing.map(c => `<div style="padding:5px 8px; background:#fde0e0; border-radius:4px; margin-bottom:4px;">
+            <div style="font-weight:500;">${escapeHtml(c.component_display_name || c.component_key || '—')}</div>
+            <div style="font-size:11px; color:#a02828; margin-top:2px;">
+              ${c.flagged_as_unusual_exclusion ? '⚠ <strong>Typically included</strong> — gap likely material' : 'Less common to include'}
+            </div>
+          </div>`).join('')
+        }
+      </div>`;
+
+      h += `</div>`;
+
+      // Summary line
+      if (data.summary?.included_annualized_total) {
+        h += `<div style="margin-top:10px; padding:8px 12px; background:white; border:1px solid #d0d7de; border-radius:4px; font-size:12px;">
+          <strong>Apples-to-apples included total: ${money(data.summary.included_annualized_total)}/yr</strong>
+          ${data.summary.unusual_exclusions?.length ? ` · Likely material gaps: <span style="color:#a02828;">${data.summary.unusual_exclusions.map(s => escapeHtml(s)).join(', ')}</span>` : ''}
+          <button class="secondary-btn" style="font-size:10px; padding:2px 8px; margin-left:10px;" onclick="vwRemapComponents('${escapeHtml(proposalId)}')">↻ Re-run mapping</button>
+        </div>`;
+      } else {
+        h += `<div style="margin-top:10px; font-size:11px; color:#888;">
+          No annualized total computed (line item amounts unclear).
+          <button class="secondary-btn" style="font-size:10px; padding:2px 8px; margin-left:6px;" onclick="vwRemapComponents('${escapeHtml(proposalId)}')">↻ Re-run mapping</button>
+        </div>`;
+      }
+
+      panel.innerHTML = h;
+    } catch (e) {
+      panel.innerHTML = `<div style="color:#a00; font-size:12px;">Failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function vwRemapComponents(proposalId) {
+    const panel = document.getElementById('vw-components-panel-' + proposalId);
+    if (panel) panel.innerHTML = '<div style="color:#888; font-size:12px; padding:8px;">⚙️ Re-mapping components via Claude… (~10-15s)</div>';
+    try {
+      const r = await fetch('/vendor-proposals/' + encodeURIComponent(proposalId) + '/remap-components', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      // Reload the panel
+      vwShowComponents(proposalId);
+      // First click toggled it open; re-mapping closed it via reload; force open
+      const row = document.getElementById('vw-components-row-' + proposalId);
+      if (row && row.style.display === 'none') row.style.display = 'table-row';
+    } catch (e) {
+      if (panel) panel.innerHTML = `<div style="color:#a00; font-size:12px;">Re-mapping failed: ${escapeHtml(e.message)}</div>`;
     }
   }
 
