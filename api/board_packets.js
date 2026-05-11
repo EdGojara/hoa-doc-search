@@ -375,24 +375,35 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 
 <!-- SECTION PLACEHOLDER PAGES (Day 3 will replace with real renders) -->
 ${tocItems.map(it => `
-<div class="page interior">
+${(() => {
+  const sec = sections.find(s => s.section_key === it.sectionKey) || {};
+  const data = sec.input_data;
+  const isAgendaText = sec.section_key === 'agenda' && data?.format === 'text' && data?.text;
+  const isExecSummaryText = sec.section_key === 'exec_summary' && (data?.text || typeof data === 'string');
+  return `<div class="page interior">
   ${pageHeader}
   <div class="section-eyebrow">${esc(it.num)} of ${tocItems.length}</div>
   <h1 class="section-title">${esc(it.title)}</h1>
   ${it.description ? `<p class="section-lede">${esc(it.description)}</p>` : ''}
-  <div class="section-placeholder">
-    <h4>
-      Section data ${it.hasData ? '<span class="badge badge-ready">ready</span>' : '<span class="badge badge-pending">pending</span>'}
-      <span class="badge badge-mode">${esc(it.inputMode)}</span>
-    </h4>
-    <p>Day 2 preview shows section data as JSON. Day 3 ships per-section Bedrock-branded renderers (charts, tables, formatted narrative).</p>
-    ${it.hasData
-      ? `<pre>${esc(JSON.stringify((sections.find(s => s.section_key === it.sectionKey) || {}).input_data, null, 2))}</pre>`
-      : `<p style="color: var(--ink-muted);"><em>No data entered yet. Use the wizard to add Manual, Upload, Auto-fill, or AI-generated content for this section.</em></p>`
-    }
-  </div>
+  ${isAgendaText
+    ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(data.text)}</div>`
+    : isExecSummaryText
+    ? `<div style="font-size: 14px; line-height: 1.65; color: var(--ink); white-space: pre-wrap;">${esc(data.text || data)}</div>`
+    : `<div class="section-placeholder">
+        <h4>
+          Section data ${it.hasData ? '<span class="badge badge-ready">ready</span>' : '<span class="badge badge-pending">pending</span>'}
+          <span class="badge badge-mode">${esc(it.inputMode)}</span>
+        </h4>
+        <p>Day 3 ships per-section Bedrock-branded renderers (charts, tables, formatted narrative). Below: structured data as currently stored.</p>
+        ${it.hasData
+          ? `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`
+          : `<p style="color: var(--ink-muted);"><em>No data entered yet. Use the wizard to add Manual, Upload, Auto-fill, or AI-generated content for this section.</em></p>`
+        }
+      </div>`
+  }
   ${footer(it.page)}
-</div>`).join('')}
+</div>`;
+})()}`).join('')}
 
 </body>
 </html>`;

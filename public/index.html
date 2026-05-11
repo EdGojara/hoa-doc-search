@@ -5255,6 +5255,7 @@ ${questionsPage}
   // ==========================================================================
   let packetsCommunitiesCache = [];
   let packetsCurrentPacketId = null;
+  let packetsCurrentPacket = null;        // full packet object incl. community
   let packetsCurrentSections = [];
   let packetsTemplatesCache = [];
 
@@ -5391,6 +5392,7 @@ ${questionsPage}
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'failed');
       packetsCurrentSections = data.sections || [];
+      packetsCurrentPacket = data.packet || null;
       const p = data.packet;
       wrap.innerHTML = `
         <div class="panel" style="margin-top:16px;">
@@ -5452,7 +5454,16 @@ ${questionsPage}
       inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:${skipColor};" onclick="packetsToggleSkip('${s.section_key}')">${skipLabel}</button>`);
 
       const hasData = s.input_data && Object.keys(s.input_data).length > 0;
-      const previewText = hasData ? JSON.stringify(s.input_data, null, 2).slice(0, 280) : '';
+      // Agenda + exec_summary store text content directly — show the text
+      // excerpt rather than the raw JSON dump for a cleaner card preview.
+      let previewText = '';
+      if (hasData) {
+        if ((s.section_key === 'agenda' || s.section_key === 'exec_summary') && s.input_data.text) {
+          previewText = String(s.input_data.text).slice(0, 280);
+        } else {
+          previewText = JSON.stringify(s.input_data, null, 2).slice(0, 280);
+        }
+      }
       const cardOpacity = isSkipped ? 'opacity: 0.55;' : '';
 
       return `<div style="border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}">
@@ -5518,6 +5529,13 @@ ${questionsPage}
   }
 
   async function packetsAutoFill(sectionKey) {
+    // Agenda: hook into the existing Agenda Generator workflow.
+    // Opens a modal pre-filled with packet metadata; Ed adds the items;
+    // the generated agenda gets saved back into the packet.
+    if (sectionKey === 'agenda') {
+      return packetsOpenAgendaModal();
+    }
+    // All other sections: stubbed today, ships with universal askEd build.
     try {
       const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/auto-fill`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({})
@@ -5531,6 +5549,153 @@ ${questionsPage}
       await packetsLoadDetail(packetsCurrentPacketId);
     } catch (e) {
       alert('Auto-fill failed: ' + e.message);
+    }
+  }
+
+  // --------------------------------------------------------------------------
+  // Agenda generator modal — wires the existing /generate-agenda endpoint
+  // to the packet's agenda section. Pre-fills meeting metadata from the
+  // packet, takes Ed's inputs (ratifications / new biz / etc.), runs
+  // Claude, saves the result as the agenda section's input_data.
+  // --------------------------------------------------------------------------
+  function packetsOpenAgendaModal() {
+    if (!packetsCurrentPacket) { alert('Packet not loaded.'); return; }
+    const p = packetsCurrentPacket;
+    const agendaSection = packetsCurrentSections.find(s => s.section_key === 'agenda');
+    const existingMeta = agendaSection?.input_data?.meta || {};
+
+    // Map packet.meeting_type (slug) -> agenda generator's display string
+    const meetingTypeMap = {
+      regular: 'Regular Board Meeting',
+      annual: 'Annual Meeting',
+      special: 'Special Meeting',
+      executive: 'Special Meeting',
+      workshop: 'Special Meeting',
+      other: 'Regular Board Meeting'
+    };
+    const defaultMeetingType = meetingTypeMap[p.meeting_type] || 'Regular Board Meeting';
+
+    // Create modal
+    const backdrop = document.createElement('div');
+    backdrop.id = 'packets-agenda-modal-backdrop';
+    backdrop.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9998; display:flex; align-items:center; justify-content:center; padding:20px;';
+    backdrop.innerHTML = `
+      <div style="background:white; border-radius:10px; max-width:680px; width:100%; max-height:90vh; overflow-y:auto; box-shadow:0 10px 40px rgba(0,0,0,0.3);">
+        <div style="padding:18px 22px; border-bottom:1px solid #e5e7eb; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <h3 style="margin:0; color:#315A87;">🪄 Generate Agenda</h3>
+            <div style="font-size:12px; color:#888; margin-top:2px;">${escapeHtml(p.community?.name || '')} — ${escapeHtml(p.period_label || '')}</div>
+          </div>
+          <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="packetsCloseAgendaModal()">✕ Cancel</button>
+        </div>
+        <div style="padding:18px 22px;">
+          <div style="background:#f5f9fc; border:1px solid #d4e1ee; border-radius:6px; padding:10px 12px; margin-bottom:14px; font-size:12px; color:#444;">
+            <strong>Meeting metadata pulled from packet:</strong><br>
+            Type: ${escapeHtml(defaultMeetingType)} ·
+            Date: ${p.meeting_date || '(TBD)'} ·
+            Time: ${escapeHtml(p.meeting_time || '(TBD)')} ·
+            Location: ${escapeHtml(p.meeting_location || '(TBD)')}
+            ${(!p.meeting_date || !p.meeting_time || !p.meeting_location) ? '<div style="color:#a06400; margin-top:4px;">⚠️ Some fields are missing. Edit the packet first (Open packet → meeting fields) for cleaner output, or proceed and the agenda will have placeholders.</div>' : ''}
+          </div>
+          <div style="display:grid; grid-template-columns:1fr; gap:10px;">
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Ratifications Since Last Meeting</label>
+              <textarea id="packets-agenda-ratifications" style="width:100%; min-height:50px; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;" placeholder="List any actions taken between meetings...">${escapeHtml(existingMeta.ratifications || '')}</textarea>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">New Business Items</label>
+              <textarea id="packets-agenda-new-business" style="width:100%; min-height:70px; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;" placeholder="One per line — e.g., Pool repair bids review, 2026-2027 budget approval">${escapeHtml(existingMeta.new_business || '')}</textarea>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Business in Progress</label>
+              <textarea id="packets-agenda-business-in-progress" style="width:100%; min-height:70px; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;" placeholder="Carried-over items from prior meetings...">${escapeHtml(existingMeta.business_in_progress || '')}</textarea>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Committee Reports Expected</label>
+              <textarea id="packets-agenda-committees" style="width:100%; min-height:50px; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;" placeholder="e.g., Social Committee, Grounds Committee">${escapeHtml(existingMeta.committees || '')}</textarea>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Next Meeting Date</label>
+              <input type="text" id="packets-agenda-next-meeting" style="width:100%; padding:6px; font-size:13px; box-sizing:border-box; border:1px solid #d0d7de; border-radius:4px;" placeholder="e.g., Tuesday, June 16 @ 6:00 PM" value="${escapeHtml(existingMeta.next_meeting || '')}">
+            </div>
+          </div>
+        </div>
+        <div style="padding:14px 22px; border-top:1px solid #e5e7eb; display:flex; justify-content:flex-end; gap:8px;">
+          <button class="secondary-btn" onclick="packetsCloseAgendaModal()">Cancel</button>
+          <button class="action-btn" id="packets-agenda-generate-btn" onclick="packetsGenerateAgenda()">🪄 Generate & Save to Packet</button>
+        </div>
+      </div>`;
+    document.body.appendChild(backdrop);
+  }
+
+  function packetsCloseAgendaModal() {
+    const el = document.getElementById('packets-agenda-modal-backdrop');
+    if (el) el.remove();
+  }
+
+  async function packetsGenerateAgenda() {
+    const p = packetsCurrentPacket;
+    if (!p) return;
+    const btn = document.getElementById('packets-agenda-generate-btn');
+    btn.disabled = true; btn.textContent = '⏳ Generating…';
+
+    const meetingTypeMap = {
+      regular: 'Regular Board Meeting', annual: 'Annual Meeting',
+      special: 'Special Meeting', executive: 'Special Meeting',
+      workshop: 'Special Meeting', other: 'Regular Board Meeting'
+    };
+    const meetingType = meetingTypeMap[p.meeting_type] || 'Regular Board Meeting';
+
+    const ratifications = document.getElementById('packets-agenda-ratifications').value;
+    const newBusiness = document.getElementById('packets-agenda-new-business').value;
+    const businessInProgress = document.getElementById('packets-agenda-business-in-progress').value;
+    const committees = document.getElementById('packets-agenda-committees').value;
+    const nextMeeting = document.getElementById('packets-agenda-next-meeting').value;
+
+    try {
+      // Call the existing Agenda Generator endpoint
+      const genRes = await fetch('/generate-agenda', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          community: p.community?.name || '',
+          meetingType,
+          date: p.meeting_date || '',
+          time: p.meeting_time || '',
+          location: p.meeting_location || '',
+          ratifications, newBusiness, businessInProgress, committees, nextMeeting
+        })
+      });
+      const genData = await genRes.json();
+      if (!genRes.ok || !genData.agenda) {
+        throw new Error(genData.error || 'Agenda generation returned no text');
+      }
+
+      // Save back to the packet's agenda section
+      const inputData = {
+        format: 'text',
+        text: genData.agenda,
+        meta: {
+          meeting_type: meetingType,
+          ratifications, new_business: newBusiness,
+          business_in_progress: businessInProgress,
+          committees, next_meeting: nextMeeting,
+          generated_at: new Date().toISOString()
+        }
+      };
+      const saveRes = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/agenda`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ input_data: inputData, input_mode: 'auto_from_trusted', status: 'ready' })
+      });
+      const saveData = await saveRes.json();
+      if (!saveRes.ok) throw new Error(saveData.error || 'failed to save');
+
+      packetsCloseAgendaModal();
+      await packetsLoadDetail(packetsCurrentPacketId);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = '🪄 Generate & Save to Packet';
+      alert('Generate failed: ' + e.message);
     }
   }
 
