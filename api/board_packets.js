@@ -47,6 +47,357 @@ const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const router = express.Router();
 
 // ----------------------------------------------------------------------------
+// Community visual assets (logo + hero image) per the Bedrock design system.
+// Hardcoded for now (only 3 communities have full assets); later this moves
+// to a logo_path / hero_path column on the communities table so Ed can
+// upload new community photos from the UI.
+// ----------------------------------------------------------------------------
+const COMMUNITY_ASSETS = {
+  'Lakes of Pine Forest': {
+    hero: '/photos/communities/LPF_hero.jpg',
+    logo: '/logos/lakes_of_pine_forest_logo.png',
+    legal_suffix: 'Homeowners Association'
+  },
+  'Canyon Gate at Cinco Ranch': {
+    hero: null,
+    logo: '/logos/canyon_gate_logo.png',
+    legal_suffix: 'Homeowners Association'
+  },
+  'Waterview Estates': {
+    hero: null,
+    logo: '/logos/waterview_logo.jpg',
+    legal_suffix: 'Homeowners Association'
+  }
+};
+
+function getCommunityAssets(communityName) {
+  return COMMUNITY_ASSETS[communityName] || { hero: null, logo: null, legal_suffix: '' };
+}
+
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function fmtDate(d) {
+  if (!d) return '(date TBD)';
+  try {
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return String(d);
+    return dt.toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+  } catch (_) { return String(d); }
+}
+
+function fmtDateShort(d) {
+  if (!d) return '';
+  try {
+    const dt = new Date(d);
+    if (Number.isNaN(dt.getTime())) return String(d);
+    return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+  } catch (_) { return String(d); }
+}
+
+// ----------------------------------------------------------------------------
+// HTML renderer for a packet preview. Produces a Bedrock-branded multi-page
+// document: Cover + TOC + (placeholder pages for each non-skipped section).
+// The TOC reflects ONLY the sections Ed kept checked (status != 'skipped').
+//
+// Day 3 will replace section placeholders with real rendered content per
+// section type. Day 4 will add Puppeteer/Chromium server-side PDF export.
+// ----------------------------------------------------------------------------
+function renderPacketPreviewHtml({ packet, sections, volume }) {
+  const community = packet.community || {};
+  const assets = getCommunityAssets(community.name);
+  const heroStyle = assets.hero
+    ? `background: linear-gradient(180deg, rgba(31,58,95,0.25) 0%, rgba(31,58,95,0.45) 55%, rgba(31,58,95,0.85) 100%), url('${assets.hero}') center/cover;`
+    : `background: linear-gradient(180deg, #4a7ab0 0%, #315A87 50%, #1F3A5F 100%);`;
+
+  const visibleSections = (sections || []).filter(s => s.status !== 'skipped').sort((a, b) => a.section_order - b.section_order);
+
+  // Estimate page numbers — cover = 1, TOC = 2, sections start at 3
+  let pageCursor = 3;
+  const tocItems = visibleSections.map((s, i) => {
+    const num = String(i + 1).padStart(2, '0');
+    const t = s.template || {};
+    const startPage = pageCursor;
+    pageCursor += 1;  // 1 page per section in v0; Day 3 will compute realistically
+    return {
+      num,
+      title: t.display_name || s.section_key,
+      description: t.description || '',
+      page: startPage,
+      sectionKey: s.section_key,
+      hasData: s.input_data && Object.keys(s.input_data).length > 0,
+      inputMode: s.input_mode,
+      status: s.status
+    };
+  });
+
+  const totalPages = 2 + visibleSections.length;  // cover + TOC + sections
+
+  // Common page footer template
+  const footer = (pageNum) => `
+    <div class="page-foot">
+      <span class="foot-brand">Bedrock Association Management <span class="foot-tag">· Community. Simplified.</span></span>
+      <span class="foot-context">${esc(community.name || '')} · ${esc(packet.period_label || '')} · pg ${pageNum} / ${totalPages}</span>
+    </div>`;
+
+  // Common interior page header template
+  const pageHeader = `
+    <div class="page-header">
+      <div class="page-header-brand">
+        <img src="${assets.logo || '/logos/bedrock_logo.png'}" alt="${esc(community.name)}">
+        ${assets.logo && assets.logo !== '/logos/bedrock_logo.png' ? `<img src="/logos/bedrock_logo.png" alt="Bedrock" style="height:42px; margin-left:10px;">` : ''}
+      </div>
+      <div class="page-header-context">
+        <strong>${esc(community.name || '')}</strong>
+        Board Packet · ${esc(packet.period_label || '')}
+      </div>
+    </div>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${esc(community.name)} — ${esc(packet.period_label)} Board Packet</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bedrock-navy: #315A87;
+    --bedrock-navy-deep: #1F3A5F;
+    --bedrock-navy-tint: #EAF0F7;
+    --bedrock-navy-mute: #6E89AB;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-muted: #888;
+    --rule: #E5E7EB;
+    --rule-soft: #F1F2F4;
+    --paper: #ffffff;
+    --accent-warn: #B47B00;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #f4f5f7; color: var(--ink);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px; font-feature-settings: "tnum" 1; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page {
+    width: 8.5in; min-height: 11in; margin: 32px auto;
+    background: var(--paper); box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    display: flex; flex-direction: column; position: relative; overflow: hidden;
+  }
+  /* ========== COVER PAGE ========== */
+  .cover { padding: 0; color: var(--paper); }
+  .cover-hero {
+    flex: 0 0 5.5in; ${heroStyle}
+    position: relative; padding: 0.7in 0.8in;
+    display: flex; flex-direction: column; justify-content: space-between;
+  }
+  .cover-brand { display: flex; align-items: center; gap: 16px; }
+  .cover-brand img { height: 110px; width: auto; filter: brightness(0) invert(1); }
+  .cover-period {
+    font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+    font-weight: 600; color: rgba(255,255,255,0.85); align-self: flex-end;
+  }
+  .cover-title { margin-top: auto; }
+  .cover-eyebrow {
+    font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+    font-weight: 600; color: rgba(255,255,255,0.85); margin-bottom: 12px;
+  }
+  .cover-community {
+    font-size: 42px; font-weight: 700; line-height: 1.05; letter-spacing: -0.01em;
+    color: var(--paper); margin-bottom: 12px;
+  }
+  .cover-month { font-size: 22px; font-weight: 300; color: rgba(255,255,255,0.92); }
+  .cover-meta {
+    flex: 1; padding: 0.6in 0.8in; background: var(--paper); color: var(--ink);
+    display: grid; grid-template-columns: 1fr 1fr; gap: 32px; align-content: start;
+  }
+  .cover-meta-block .label {
+    font-size: 10px; letter-spacing: 0.16em; text-transform: uppercase;
+    font-weight: 600; color: var(--ink-muted); margin-bottom: 8px;
+  }
+  .cover-meta-block .body { font-size: 14px; line-height: 1.6; color: var(--ink); }
+  .cover-meta-block .body strong { font-weight: 600; }
+
+  /* ========== INTERIOR PAGES ========== */
+  .interior { padding: 0.6in 0.7in; }
+  .page-header {
+    display: flex; justify-content: space-between; align-items: center;
+    padding-bottom: 16px; margin-bottom: 32px;
+    border-bottom: 2px solid var(--bedrock-navy);
+  }
+  .page-header-brand { display: flex; align-items: center; gap: 12px; }
+  .page-header-brand img { height: 52px; width: auto; }
+  .page-header-context {
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    font-weight: 600; color: var(--bedrock-navy-mute); text-align: right; line-height: 1.5;
+  }
+  .page-header-context strong {
+    display: block; color: var(--bedrock-navy-deep); font-size: 12px; letter-spacing: 0.18em;
+  }
+  .section-eyebrow {
+    font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+    font-weight: 600; color: var(--bedrock-navy); margin-bottom: 6px;
+  }
+  .section-title {
+    font-size: 28px; font-weight: 700; line-height: 1.15;
+    color: var(--bedrock-navy-deep); letter-spacing: -0.01em; margin: 0 0 8px 0;
+  }
+  .section-lede {
+    font-size: 14px; color: var(--ink-soft); line-height: 1.6;
+    margin: 0 0 32px 0; max-width: 520px;
+  }
+  .page-foot {
+    margin-top: auto; padding-top: 18px; border-top: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: baseline;
+    font-size: 10px; color: var(--ink-muted); letter-spacing: 0.05em;
+  }
+  .page-foot .foot-brand { font-weight: 500; color: var(--ink); letter-spacing: 0.04em; }
+  .page-foot .foot-tag {
+    color: var(--bedrock-navy); font-weight: 600; letter-spacing: 0.08em; margin-left: 4px;
+  }
+
+  /* ========== TOC ========== */
+  .toc { list-style: none; padding: 0; margin: 0; }
+  .toc li {
+    display: flex; align-items: baseline; padding: 14px 0;
+    border-bottom: 1px solid var(--rule); font-size: 14px;
+  }
+  .toc li:last-child { border-bottom: none; }
+  .toc .num {
+    font-feature-settings: "tnum" 1; width: 32px;
+    color: var(--bedrock-navy); font-weight: 600; font-size: 13px;
+  }
+  .toc .title-cell { flex: 1; color: var(--ink); font-weight: 500; }
+  .toc .title-cell .desc {
+    display: block; color: var(--ink-muted); font-weight: 400; font-size: 12px; margin-top: 2px;
+  }
+  .toc .dots {
+    flex: 0 0 auto; color: var(--rule); margin: 0 12px;
+    letter-spacing: 0.2em; font-size: 11px;
+  }
+  .toc .pg {
+    font-feature-settings: "tnum" 1; color: var(--ink-muted);
+    font-size: 13px; width: 24px; text-align: right;
+  }
+
+  /* ========== Section placeholder (Day 2 — pending real renderers) ========== */
+  .section-placeholder {
+    background: var(--bedrock-navy-tint); border: 1px dashed var(--bedrock-navy-mute);
+    border-radius: 8px; padding: 24px; margin-top: 20px;
+  }
+  .section-placeholder h4 { margin: 0 0 8px 0; color: var(--bedrock-navy-deep); }
+  .section-placeholder p { margin: 0 0 12px 0; color: var(--ink-soft); font-size: 13px; }
+  .section-placeholder pre {
+    background: white; border: 1px solid var(--rule); border-radius: 4px;
+    padding: 12px; font-size: 11px; overflow-x: auto; max-height: 320px;
+    color: var(--ink-soft); white-space: pre-wrap;
+  }
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 10px;
+    font-size: 10px; font-weight: 600; letter-spacing: 0.04em;
+  }
+  .badge-ready { background: #dff5e0; color: #2e7d32; }
+  .badge-pending { background: #f0f0f0; color: #666; }
+  .badge-mode { background: #f5f5f5; color: #555; margin-left: 6px; }
+
+  @media print {
+    body { background: white; }
+    .page { box-shadow: none; margin: 0; page-break-after: always; }
+  }
+</style>
+</head>
+<body>
+
+<!-- COVER PAGE -->
+<div class="page cover">
+  <div class="cover-hero">
+    <div class="cover-brand">
+      <img src="/logos/bedrock_logo.png" alt="Bedrock Association Management">
+    </div>
+    <div class="cover-period">${esc(packet.period_label || '')} ${volume ? `· Volume ${volume}` : ''}</div>
+    <div class="cover-title">
+      <div class="cover-eyebrow">Board Meeting Packet</div>
+      <div class="cover-community">${esc(community.name || '')}${assets.legal_suffix ? `<br>${esc(assets.legal_suffix)}` : ''}</div>
+      <div class="cover-month">For the meeting of ${esc(fmtDate(packet.meeting_date))}</div>
+    </div>
+  </div>
+  <div class="cover-meta">
+    <div class="cover-meta-block">
+      <div class="label">Meeting</div>
+      <div class="body">
+        <strong>${esc(fmtDate(packet.meeting_date))}${packet.meeting_time ? ' — ' + esc(packet.meeting_time) : ''}</strong><br>
+        ${packet.meeting_location ? esc(packet.meeting_location) : '<span style="color:var(--ink-muted);">(location TBD)</span>'}
+      </div>
+    </div>
+    <div class="cover-meta-block">
+      <div class="label">Prepared by</div>
+      <div class="body">
+        <strong>Bedrock Association Management, LLC</strong><br>
+        12808 W Airport Blvd, Ste 253<br>
+        Sugar Land, TX 77478
+      </div>
+    </div>
+    <div class="cover-meta-block">
+      <div class="label">Period covered</div>
+      <div class="body"><strong>${esc(packet.period_label || '')}</strong></div>
+    </div>
+    <div class="cover-meta-block">
+      <div class="label">Issued</div>
+      <div class="body"><strong>${esc(fmtDateShort(packet.created_at || new Date()))}</strong></div>
+    </div>
+  </div>
+</div>
+
+<!-- TOC PAGE -->
+<div class="page interior">
+  ${pageHeader}
+  <div class="section-eyebrow">Inside this packet</div>
+  <h1 class="section-title">Table of Contents</h1>
+  <p class="section-lede">A curated, navigable structure rather than 47 pages of source documents stapled together. Source docs are preserved in the appendices.</p>
+  <ul class="toc">
+    ${tocItems.map(it => `
+      <li>
+        <span class="num">${it.num}</span>
+        <span class="title-cell">${esc(it.title)} <span class="desc">${esc(it.description)}</span></span>
+        <span class="dots">·······························</span>
+        <span class="pg">${it.page}</span>
+      </li>`).join('')}
+  </ul>
+  ${footer(2)}
+</div>
+
+<!-- SECTION PLACEHOLDER PAGES (Day 3 will replace with real renders) -->
+${tocItems.map(it => `
+<div class="page interior">
+  ${pageHeader}
+  <div class="section-eyebrow">${esc(it.num)} of ${tocItems.length}</div>
+  <h1 class="section-title">${esc(it.title)}</h1>
+  ${it.description ? `<p class="section-lede">${esc(it.description)}</p>` : ''}
+  <div class="section-placeholder">
+    <h4>
+      Section data ${it.hasData ? '<span class="badge badge-ready">ready</span>' : '<span class="badge badge-pending">pending</span>'}
+      <span class="badge badge-mode">${esc(it.inputMode)}</span>
+    </h4>
+    <p>Day 2 preview shows section data as JSON. Day 3 ships per-section Bedrock-branded renderers (charts, tables, formatted narrative).</p>
+    ${it.hasData
+      ? `<pre>${esc(JSON.stringify((sections.find(s => s.section_key === it.sectionKey) || {}).input_data, null, 2))}</pre>`
+      : `<p style="color: var(--ink-muted);"><em>No data entered yet. Use the wizard to add Manual, Upload, Auto-fill, or AI-generated content for this section.</em></p>`
+    }
+  </div>
+  ${footer(it.page)}
+</div>`).join('')}
+
+</body>
+</html>`;
+}
+// ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
 
@@ -628,57 +979,48 @@ router.post('/:id/render', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // GET /api/board-packets/:id/preview
-// Day 1: returns a minimal HTML preview showing what sections are ready.
-// Day 3: returns the full rendered Bedrock-branded HTML.
+// Renders the packet as Bedrock-branded HTML using the design language from
+// /public/board_packet_preview.html — community hero (if available), branded
+// cover, Table of Contents reflecting only non-skipped sections, plus a
+// placeholder page per section showing the structured data.
+//
+// Day 3 will replace section placeholders with per-section renderers
+// (financial tables, agenda formatting, exec-summary prose, etc.).
 // ----------------------------------------------------------------------------
 router.get('/:id/preview', async (req, res) => {
   try {
     const { data: packet } = await supabase
       .from('board_packets')
-      .select('*, community:communities(name)')
+      .select('*, community:communities(id, name, legal_name)')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
-    if (!packet) return res.status(404).send('Packet not found');
+    if (!packet) return res.status(404).send('<h1>Packet not found</h1>');
+
     const { data: sections } = await supabase
       .from('board_packet_sections')
-      .select('*, template:board_packet_section_templates(display_name)')
+      .select('*, template:board_packet_section_templates(display_name, description)')
       .eq('packet_id', req.params.id)
       .order('section_order');
 
-    // Day 1 minimal preview — just a status page. Day 3 wires the real template.
-    const html = `<!DOCTYPE html><html><head>
-      <meta charset="UTF-8"><title>${packet.community?.name} — ${packet.period_label}</title>
-      <style>
-        body { font-family: -apple-system, Inter, sans-serif; max-width: 800px; margin: 40px auto; padding: 20px; color: #1a1a1a; }
-        h1 { color: #315A87; border-bottom: 2px solid #315A87; padding-bottom: 8px; }
-        .section { padding: 12px; border: 1px solid #e0e0e0; border-radius: 6px; margin-bottom: 8px; }
-        .status-ready { border-left: 4px solid #2e7d32; }
-        .status-pending { border-left: 4px solid #aaa; }
-        .status-error { border-left: 4px solid #d32f2f; }
-        .status-skipped { border-left: 4px solid #ccc; opacity: 0.5; }
-        .status-label { display: inline-block; padding: 2px 8px; font-size: 11px; border-radius: 10px; font-weight: 600; }
-        .ready { background: #dff5e0; color: #2e7d32; }
-        .pending { background: #f0f0f0; color: #666; }
-        pre { background: #fafafa; padding: 8px; font-size: 11px; overflow-x: auto; }
-      </style></head><body>
-      <h1>${packet.community?.name} — ${packet.period_label}</h1>
-      <p><strong>Meeting:</strong> ${packet.meeting_date || '(date TBD)'} ${packet.meeting_type ? '· ' + packet.meeting_type : ''} ${packet.meeting_location ? '· ' + packet.meeting_location : ''}</p>
-      <p style="color:#888; font-size:13px;">Day 1 preview. Bedrock-branded rendering ships Day 3.</p>
-      ${(sections || []).map(s => `
-        <div class="section status-${s.status}">
-          <div style="display:flex; justify-content:space-between; align-items:center;">
-            <strong>${s.template?.display_name || s.section_key}</strong>
-            <span class="status-label ${s.status === 'ready' ? 'ready' : 'pending'}">${s.status}</span>
-          </div>
-          ${s.input_data ? `<pre>${JSON.stringify(s.input_data, null, 2).slice(0, 400)}${JSON.stringify(s.input_data).length > 400 ? '...' : ''}</pre>` : '<div style="color:#aaa; font-size:12px; margin-top:4px;">No data yet</div>'}
-        </div>`).join('')}
-    </body></html>`;
-    res.setHeader('Content-Type', 'text/html');
+    // Volume number = how many packets exist for this community up to and
+    // including this one's meeting date. Adds a nice Bedrock touch ("Volume 4").
+    let volume = 1;
+    if (packet.community_id) {
+      const { count } = await supabase
+        .from('board_packets')
+        .select('id', { count: 'exact', head: true })
+        .eq('community_id', packet.community_id)
+        .lte('meeting_date', packet.meeting_date || '9999-12-31');
+      volume = Math.max(1, count || 1);
+    }
+
+    const html = renderPacketPreviewHtml({ packet, sections: sections || [], volume });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
     console.error('[board_packets] preview failed:', err.message);
-    res.status(500).send('Preview failed: ' + err.message);
+    res.status(500).send(`<h1>Preview failed</h1><pre>${String(err.message).replace(/</g,'&lt;')}</pre>`);
   }
 });
 
