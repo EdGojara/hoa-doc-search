@@ -185,7 +185,6 @@ router.post('/', upload.single('file'), async (req, res) => {
     const insert = {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id: communityId,
-      document_id: null, // optionally set below if we also create a generic documents row
       source_filename: sourceFilename,
       source_excerpt: req.body.source_excerpt || null,
       property_address: extracted.property_address || null,

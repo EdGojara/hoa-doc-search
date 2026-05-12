@@ -30,9 +30,9 @@ CREATE TABLE IF NOT EXISTS arc_historical_decisions (
   management_company_id    UUID NOT NULL REFERENCES management_companies(id),
   community_id             UUID NOT NULL REFERENCES communities(id) ON DELETE CASCADE,
 
-  -- Source — link to documents row when one was created, plus a fallback
-  -- snapshot of the filename so we never lose attribution
-  document_id              UUID REFERENCES documents(id) ON DELETE SET NULL,
+  -- Source — we snapshot the filename + first chars of raw text so we
+  -- never lose attribution, regardless of whether the source PDF gets
+  -- stored elsewhere in the document library.
   source_filename          TEXT,
   source_excerpt           TEXT,                                  -- short snippet of raw text for review UI
 
