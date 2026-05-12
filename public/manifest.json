@@ -1,0 +1,20 @@
+{
+  "name": "askEd by Bedrock",
+  "short_name": "askEd",
+  "description": "Voice-first AI advisor for HOA management — trained on Ed's playbook and your community's governing documents.",
+  "start_url": "/voice.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#315A87",
+  "theme_color": "#315A87",
+  "icons": [
+    {
+      "src": "/logos/bedrock_logo.png",
+      "sizes": "any",
+      "type": "image/png",
+      "purpose": "any"
+    }
+  ],
+  "categories": ["business", "productivity"]
+}
