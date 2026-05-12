@@ -1022,21 +1022,35 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
       return res.end();
     }
 
-    send({ type: 'trace', stage: 'anthropic-returned', kind: typeof streamResp });
+    send({
+      type: 'trace',
+      stage: 'anthropic-returned',
+      kind: typeof streamResp,
+      ctor: streamResp && streamResp.constructor && streamResp.constructor.name,
+      keys: streamResp ? Object.keys(streamResp).slice(0, 20) : null,
+      hasAsyncIter: !!(streamResp && streamResp[Symbol.asyncIterator]),
+      hasIterator: !!(streamResp && streamResp.iterator),
+      hasController: !!(streamResp && streamResp.controller)
+    });
 
     let deltaCount = 0;
     let eventCount = 0;
     try {
       for await (const event of streamResp) {
         eventCount++;
+        if (eventCount <= 3) {
+          // surface first few raw events for diagnosis
+          send({ type: 'trace', stage: 'event', n: eventCount, etype: event && event.type, dtype: event && event.delta && event.delta.type });
+        }
         if (aborted) break;
         if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
           deltaCount++;
           send({ type: 'delta', text: event.delta.text });
         }
       }
+      send({ type: 'trace', stage: 'iter-done', events: eventCount });
     } catch (iterErr) {
-      send({ type: 'error', stage: 'iteration', message: iterErr.message, name: iterErr.name });
+      send({ type: 'error', stage: 'iteration', message: iterErr.message, name: iterErr.name, stack: (iterErr.stack || '').split('\n').slice(0, 4) });
       console.error('[ask-ed-stream] iteration failed:', iterErr.stack || iterErr);
       return res.end();
     }
