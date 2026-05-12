@@ -407,6 +407,10 @@ app.use('/api/vendors', vendorsRouter);
 const { router: helpRouter } = require('./api/help');
 app.use('/api/help', helpRouter);
 
+// Community profile + facts (per-community operational knowledge layer)
+const { router: communityProfileRouter, buildCommunityContextBlock } = require('./api/communities');
+app.use('/api/community-profile', communityProfileRouter);
+
 // Documents Tracker — Bedrock's canonical document library.
 // Endpoints under /api/documents/*. See api/documents.js and
 // migrations/012_documents_module.sql for the schema.
@@ -935,8 +939,11 @@ HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and 
 When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`;
 }
 
-function buildAskEdUserMessage({ situation, community, playbookContext, docContext, attachmentContent, attachmentNote }) {
-  const textBody = `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation || '(no text provided — see attached file above)'}\n\n${community ? `Community: ${community}` : ''}${attachmentNote || ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`;
+function buildAskEdUserMessage({ situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote }) {
+  const profileBlock = communityContext
+    ? `\n\n${communityContext}\n\n(Quote the facts above verbatim when relevant. If a fact is marked ⚠ EXPIRED, mention that it should be verified before quoting.)\n`
+    : '';
+  const textBody = `${playbookContext}${profileBlock}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation || '(no text provided — see attached file above)'}\n\n${community ? `Community: ${community}` : ''}${attachmentNote || ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`;
   if (attachmentContent) {
     return [attachmentContent, { type: 'text', text: textBody }];
   }
@@ -995,10 +1002,11 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
       }
     }
 
-    // Run playbook + doc retrieval in parallel
-    const [playbookEntries, docContext] = await Promise.all([
+    // Run playbook + community-docs + community-profile retrieval in parallel
+    const [playbookEntries, docContext, communityContext] = await Promise.all([
       getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
-      getRelevantChunks(situation || 'general guidance', community)
+      getRelevantChunks(situation || 'general guidance', community),
+      buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })
     ]);
     const playbookContext = formatPlaybookContext(playbookEntries, {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
@@ -1007,7 +1015,7 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
     send({ type: 'meta', model: 'claude-sonnet-4-6' });
 
     const userContent = buildAskEdUserMessage({
-      situation, community, playbookContext, docContext, attachmentContent, attachmentNote
+      situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote
     });
 
     // Raw SSE iterator (stream:true on create). Avoids the listener-timing
@@ -1068,14 +1076,12 @@ app.post('/ask-ed', upload.single('attachment'), async (req, res) => {
       }
     }
 
-    // Semantic playbook retrieval — replaces the old "most recent 50 by date"
-    // pattern, which stuffed irrelevant entries into the prompt and bloated
-    // both latency and noise. getRelevantPlaybook returns top-N entries by
-    // cosine similarity to the question, so Claude gets only the rules that
-    // actually apply. Run in parallel with community-doc retrieval.
-    const [playbookEntries, docContext] = await Promise.all([
+    // Semantic playbook retrieval + community docs + community profile,
+    // all in parallel.
+    const [playbookEntries, docContext, communityContext] = await Promise.all([
       getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
-      getRelevantChunks(situation || 'general guidance', community)
+      getRelevantChunks(situation || 'general guidance', community),
+      buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })
     ]);
     const playbookContext = formatPlaybookContext(playbookEntries, {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
@@ -1168,13 +1174,9 @@ HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and 
 When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`,
       messages: [{
         role: 'user',
-        content: attachmentContent ? [
-          attachmentContent,
-          {
-            type: 'text',
-            text: `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation || '(no text provided — see attached file above)'}\n\n${community ? `Community: ${community}` : ''}${attachmentNote}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`
-          }
-        ] : `${playbookContext}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation}\n\n${community ? `Community: ${community}` : ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`
+        content: buildAskEdUserMessage({
+          situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote
+        })
       }]
     });
 

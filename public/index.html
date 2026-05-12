@@ -244,6 +244,7 @@
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
   <div class="tab" onclick="switchTab('packets')">📋 Board Packets</div>
+  <div class="tab" onclick="switchTab('profile')">🏘️ Profile</div>
 </div>
 
 <!-- Chat Tab -->
@@ -2734,6 +2735,417 @@
     </div>
   </div>
 </div>
+
+<!-- ============================================================
+     Community Profile tab — operational knowledge layer
+     ============================================================ -->
+<div class="tab-content" id="tab-profile" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1100px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:18px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏘️ Community Profile</h2>
+        <p style="font-size:13px; color:#666;">Operational facts AskEd reads on every question for this community. Set expiration dates on anything that changes seasonally.</p>
+      </div>
+      <select id="profCommunitySelect" class="draft-type-select" onchange="profOnCommunityChange()" style="min-width:240px;">
+        <option value="">— Pick a community —</option>
+      </select>
+    </div>
+
+    <div id="prof-empty" style="background:#f5f8fc; border:1px dashed #c0d0e0; border-radius:8px; padding:32px; text-align:center; color:#5a7390;">
+      Select a community above to view or edit its profile.
+    </div>
+
+    <div id="prof-body" style="display:none;">
+
+      <!-- ===== Profile (structured) ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">📌 Profile fields</h3>
+          <span style="font-size:11px; color:#888;">Auto-saved when you click Save</span>
+        </div>
+        <div class="prof-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px 18px;">
+          <label class="prof-fld"><span>Office hours</span><input id="prof-office_hours" placeholder="M–F 9am–5pm" /></label>
+          <label class="prof-fld"><span>Primary contact name</span><input id="prof-primary_contact_name" placeholder="e.g., Ed Gojara" /></label>
+          <label class="prof-fld"><span>Primary phone</span><input id="prof-primary_phone" placeholder="(281) 555-0100" /></label>
+          <label class="prof-fld"><span>Primary email</span><input id="prof-primary_email" type="email" placeholder="ed@bedrocktxai.com" /></label>
+          <label class="prof-fld"><span>Total homes</span><input id="prof-total_lots" type="number" readonly style="background:#f5f8fc; color:#666;" /></label>
+          <label class="prof-fld"><span>Annual assessment ($)</span><input id="prof-assessment_annual" type="number" step="0.01" placeholder="1440" /></label>
+          <label class="prof-fld"><span>Assessment frequency</span>
+            <select id="prof-assessment_frequency">
+              <option value="">—</option>
+              <option value="annual">Annual</option>
+              <option value="semiannual">Semi-annual</option>
+              <option value="quarterly">Quarterly</option>
+              <option value="monthly">Monthly</option>
+            </select>
+          </label>
+          <label class="prof-fld"><span>Fiscal year end</span><input id="prof-fiscal_year_end" placeholder="December 31" /></label>
+          <label class="prof-fld" style="grid-column: 1 / -1;"><span>Amenities (comma-separated)</span><input id="prof-amenities" placeholder="pool, clubhouse, tennis courts, playground" /></label>
+          <label class="prof-fld"><span>Bank / reserves note</span><input id="prof-banking" placeholder="Operating: Frost. Reserves: ICS @ TexasFirst." /></label>
+          <label class="prof-fld"><span>Insurance carrier</span><input id="prof-insurance_carrier" placeholder="Travelers" /></label>
+          <label class="prof-fld" style="grid-column: 1 / -1;"><span>Notes (free-form)</span><textarea id="prof-notes" rows="3" placeholder="Anything else AskEd should always know about this community."></textarea></label>
+        </div>
+        <div style="margin-top:14px; text-align:right;">
+          <button class="primary-btn" onclick="profSaveProfile()" style="padding:8px 18px;">💾 Save profile</button>
+          <span id="prof-save-status" style="margin-left:10px; font-size:12px; color:#2d7a3a;"></span>
+        </div>
+      </div>
+
+      <!-- ===== Manual facts (free-form, with expiration) ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <div>
+            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">📝 Facts (with expiration tracking)</h3>
+            <p style="font-size:12px; color:#888; margin-top:2px;">Add anything ad-hoc — pool hours, swim party rules, holiday office closures. Set an expires date for seasonal items so AskEd flags them as stale.</p>
+          </div>
+          <button class="secondary-btn" onclick="profShowAddFact()" style="font-size:13px;">+ Add fact</button>
+        </div>
+
+        <div id="prof-add-fact-form" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:14px;">
+          <div class="prof-grid" style="display:grid; grid-template-columns: 160px 1fr 1fr; gap:8px 12px; margin-bottom:10px;">
+            <label class="prof-fld"><span>Category</span>
+              <select id="prof-fact-category">
+                <option value="">—</option>
+                <option value="pool">Pool</option>
+                <option value="amenities">Amenities</option>
+                <option value="parking">Parking</option>
+                <option value="pets">Pets</option>
+                <option value="rules">Rules</option>
+                <option value="office">Office</option>
+                <option value="vendor">Vendor</option>
+                <option value="seasonal">Seasonal</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label class="prof-fld" style="grid-column: 2 / -1;"><span>Label (what is this?)</span><input id="prof-fact-label" placeholder="e.g., Pool hours — 2026 season" /></label>
+            <label class="prof-fld" style="grid-column: 1 / -1;"><span>Value (the answer / fact)</span><textarea id="prof-fact-value" rows="2" placeholder="Sat–Sun 10am–9pm, swim parties require 7-day reservation + $50 deposit, max 25 guests."></textarea></label>
+            <label class="prof-fld"><span>Expires (optional)</span><input id="prof-fact-expires" type="date" /></label>
+            <label class="prof-fld" style="grid-column: 2 / -1;"><span>Review note (optional)</span><input id="prof-fact-review-note" placeholder="e.g., Confirm with board each April" /></label>
+          </div>
+          <div style="text-align:right;">
+            <button class="secondary-btn" onclick="profHideAddFact()" style="padding:6px 14px;">Cancel</button>
+            <button class="primary-btn" onclick="profSaveNewFact()" style="padding:6px 14px;">Save fact</button>
+            <span id="prof-new-fact-status" style="margin-left:8px; font-size:12px;"></span>
+          </div>
+        </div>
+
+        <div id="prof-facts-list">
+          <!-- populated by profRenderFacts() -->
+        </div>
+      </div>
+
+      <!-- ===== Computed (auto-pulled from existing tables) ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px;">
+        <div style="margin-bottom:14px;">
+          <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🔗 Auto-pulled from other data</h3>
+          <p style="font-size:12px; color:#888; margin-top:2px;">These come from your vendor contracts table. Click "Override" to replace with manual values (e.g., the contract says one contact but you call a different field rep).</p>
+        </div>
+        <div id="prof-computed-list">
+          <!-- populated -->
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <style>
+    .prof-fld { display:flex; flex-direction:column; gap:4px; font-size:12px; }
+    .prof-fld span { font-weight:600; color:#445; }
+    .prof-fld input, .prof-fld textarea, .prof-fld select { padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; }
+    .prof-fld input:focus, .prof-fld textarea:focus, .prof-fld select:focus { outline:none; border-color:#1a3a5c; }
+    .fact-row { display:grid; grid-template-columns: 110px 1fr 200px 130px; gap:12px; padding:10px 12px; border:1px solid #e3e8ef; border-radius:8px; margin-bottom:8px; align-items:center; background:#fff; }
+    .fact-row.stale { background:#fffaf0; border-color:#e8c97a; }
+    .fact-cat { font-size:11px; font-weight:700; text-transform:uppercase; color:#5a7390; letter-spacing:0.4px; }
+    .fact-body { font-size:13px; color:#222; }
+    .fact-label { font-weight:600; color:#1a3a5c; margin-bottom:2px; }
+    .fact-meta { font-size:11px; color:#888; }
+    .fact-stale-tag { display:inline-block; background:#e8c97a; color:#5a3e00; padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700; margin-left:6px; }
+    .fact-actions button { font-size:11px; padding:4px 9px; border:1px solid #c0d0e0; background:#fff; border-radius:4px; cursor:pointer; margin-right:4px; }
+    .fact-actions button:hover { background:#f5f8fc; }
+    .fact-actions button.danger { color:#c0392b; border-color:#e8b8b0; }
+    .fact-actions button.refresh { color:#2d7a3a; border-color:#b8d8c0; }
+  </style>
+</div>
+
+<script>
+  // ============================================================
+  // Community Profile tab
+  // ============================================================
+  let profCommunities = [];
+  let profCurrent = null;        // {id, name, slug, total_lots, profile, ...}
+  let profFacts = [];
+  let profComputed = [];
+
+  async function profLoadCommunitiesOnce() {
+    if (profCommunities.length > 0) return;
+    try {
+      const r = await fetch('/api/billing/communities');
+      const j = await r.json();
+      profCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+      const sel = document.getElementById('profCommunitySelect');
+      profCommunities.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id; opt.textContent = c.name;
+        sel.appendChild(opt);
+      });
+    } catch (err) {
+      console.warn('profLoadCommunities', err);
+    }
+  }
+
+  async function profOnCommunityChange() {
+    const id = document.getElementById('profCommunitySelect').value;
+    const empty = document.getElementById('prof-empty');
+    const body = document.getElementById('prof-body');
+    if (!id) { empty.style.display = ''; body.style.display = 'none'; return; }
+    empty.style.display = 'none'; body.style.display = '';
+    await profLoadFull(id);
+  }
+
+  async function profLoadFull(communityId) {
+    try {
+      const r = await fetch(`/api/community-profile/${communityId}/full`);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      profCurrent = j.community || null;
+      profFacts = j.facts || [];
+      profComputed = j.computed_facts || [];
+      profPopulateForm(j.profile || {}, j.community || {});
+      profRenderFacts();
+      profRenderComputed();
+    } catch (err) {
+      alert('Failed to load profile: ' + err.message);
+    }
+  }
+
+  function profPopulateForm(profile, community) {
+    const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+    set('prof-office_hours', profile.office_hours);
+    set('prof-primary_contact_name', profile.primary_contact_name);
+    set('prof-primary_phone', profile.primary_phone);
+    set('prof-primary_email', profile.primary_email);
+    set('prof-total_lots', community.total_lots);
+    set('prof-assessment_annual', profile.assessment_annual);
+    set('prof-assessment_frequency', profile.assessment_frequency);
+    set('prof-fiscal_year_end', profile.fiscal_year_end);
+    set('prof-amenities', Array.isArray(profile.amenities) ? profile.amenities.join(', ') : (profile.amenities || ''));
+    set('prof-banking', profile.banking);
+    set('prof-insurance_carrier', profile.insurance_carrier);
+    set('prof-notes', profile.notes);
+  }
+
+  async function profSaveProfile() {
+    if (!profCurrent) return;
+    const val = (id) => document.getElementById(id).value.trim();
+    const numOrNull = (id) => { const v = val(id); return v === '' ? null : Number(v); };
+    const updates = {
+      office_hours: val('prof-office_hours') || null,
+      primary_contact_name: val('prof-primary_contact_name') || null,
+      primary_phone: val('prof-primary_phone') || null,
+      primary_email: val('prof-primary_email') || null,
+      assessment_annual: numOrNull('prof-assessment_annual'),
+      assessment_frequency: val('prof-assessment_frequency') || null,
+      fiscal_year_end: val('prof-fiscal_year_end') || null,
+      amenities: val('prof-amenities')
+        ? val('prof-amenities').split(',').map(s => s.trim()).filter(Boolean)
+        : null,
+      banking: val('prof-banking') || null,
+      insurance_carrier: val('prof-insurance_carrier') || null,
+      notes: val('prof-notes') || null
+    };
+    const status = document.getElementById('prof-save-status');
+    status.textContent = 'Saving…'; status.style.color = '#888';
+    try {
+      const r = await fetch(`/api/community-profile/${profCurrent.id}/profile`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates)
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      status.textContent = '✓ Saved'; status.style.color = '#2d7a3a';
+      setTimeout(() => { status.textContent = ''; }, 2500);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message; status.style.color = '#c0392b';
+    }
+  }
+
+  // ---------- Facts ----------
+  function profRenderFacts() {
+    const wrap = document.getElementById('prof-facts-list');
+    if (!profFacts || profFacts.length === 0) {
+      wrap.innerHTML = '<div style="font-size:13px; color:#888; padding:14px; text-align:center;">No facts yet. Click "+ Add fact" above.</div>';
+      return;
+    }
+    wrap.innerHTML = profFacts.map(profFactRowHtml).join('');
+  }
+
+  function profFactRowHtml(f) {
+    const stale = f.is_expired;
+    const exp = f.expires_at ? new Date(f.expires_at).toISOString().slice(0,10) : null;
+    const upd = f.last_updated_at ? new Date(f.last_updated_at).toISOString().slice(0,10) : null;
+    return `
+      <div class="fact-row ${stale ? 'stale' : ''}" data-fact-id="${f.id}">
+        <div class="fact-cat">${(f.category || '—').toUpperCase()}</div>
+        <div class="fact-body">
+          <div class="fact-label">${profEsc(f.label || f.key)}${stale ? '<span class="fact-stale-tag">⚠ EXPIRED</span>' : ''}</div>
+          <div style="white-space:pre-wrap;">${profEsc(f.value)}</div>
+          ${f.review_note ? `<div class="fact-meta" style="margin-top:4px;">📌 ${profEsc(f.review_note)}</div>` : ''}
+        </div>
+        <div class="fact-meta">
+          ${exp ? `Expires: <strong>${exp}</strong><br>` : ''}
+          ${upd ? `Updated: ${upd}` : ''}
+        </div>
+        <div class="fact-actions" style="text-align:right;">
+          ${stale ? `<button class="refresh" onclick="profMarkCurrent('${f.id}')">Mark current</button>` : ''}
+          <button onclick="profEditFact('${f.id}')">Edit</button>
+          <button class="danger" onclick="profDeleteFact('${f.id}')">Delete</button>
+        </div>
+      </div>`;
+  }
+
+  function profEsc(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function profShowAddFact() {
+    document.getElementById('prof-add-fact-form').style.display = '';
+    ['prof-fact-category','prof-fact-label','prof-fact-value','prof-fact-expires','prof-fact-review-note']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    document.getElementById('prof-new-fact-status').textContent = '';
+  }
+  function profHideAddFact() {
+    document.getElementById('prof-add-fact-form').style.display = 'none';
+  }
+
+  async function profSaveNewFact() {
+    if (!profCurrent) return;
+    const category = document.getElementById('prof-fact-category').value || null;
+    const label = document.getElementById('prof-fact-label').value.trim();
+    const value = document.getElementById('prof-fact-value').value.trim();
+    const expires_at = document.getElementById('prof-fact-expires').value || null;
+    const review_note = document.getElementById('prof-fact-review-note').value.trim() || null;
+    if (!value) { alert('Please enter a value (the fact itself).'); return; }
+
+    // Derive a stable key from label or use timestamp
+    const key = (label || 'fact')
+      .toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_+|_+$/g,'')
+      .slice(0, 60) + '_' + Date.now().toString(36);
+
+    const status = document.getElementById('prof-new-fact-status');
+    status.textContent = 'Saving…'; status.style.color = '#888';
+    try {
+      const r = await fetch(`/api/community-profile/${profCurrent.id}/facts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category, key, label, value, expires_at, review_note })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      status.textContent = '✓ Added'; status.style.color = '#2d7a3a';
+      setTimeout(() => { profHideAddFact(); profLoadFull(profCurrent.id); }, 600);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message; status.style.color = '#c0392b';
+    }
+  }
+
+  async function profEditFact(factId) {
+    const f = profFacts.find(x => x.id === factId);
+    if (!f) return;
+    const newValue = prompt('Edit the fact value:', f.value);
+    if (newValue == null || newValue === f.value) return;
+    try {
+      const r = await fetch(`/api/community-profile/facts/${factId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ value: newValue })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      await profLoadFull(profCurrent.id);
+    } catch (err) {
+      alert('Edit failed: ' + err.message);
+    }
+  }
+
+  async function profMarkCurrent(factId) {
+    try {
+      const r = await fetch(`/api/community-profile/facts/${factId}/mark-current`, { method: 'POST' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      await profLoadFull(profCurrent.id);
+    } catch (err) {
+      alert('Failed: ' + err.message);
+    }
+  }
+
+  async function profDeleteFact(factId) {
+    if (!confirm('Delete this fact? AskEd will stop seeing it.')) return;
+    try {
+      const r = await fetch(`/api/community-profile/facts/${factId}`, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      await profLoadFull(profCurrent.id);
+    } catch (err) {
+      alert('Delete failed: ' + err.message);
+    }
+  }
+
+  // ---------- Computed (auto-pulled) ----------
+  function profRenderComputed() {
+    const wrap = document.getElementById('prof-computed-list');
+    if (!profComputed || profComputed.length === 0) {
+      wrap.innerHTML = '<div style="font-size:13px; color:#888; padding:14px; text-align:center;">Nothing auto-pulled yet. Add a vendor contract for this community and it shows up here automatically.</div>';
+      return;
+    }
+    wrap.innerHTML = profComputed.map(c => {
+      const d = c.details || {};
+      const contact = [d.contact_name, d.phone, d.email].filter(Boolean).join(' · ');
+      return `
+        <div class="fact-row" style="grid-template-columns: 110px 1fr 200px 130px;">
+          <div class="fact-cat">${(c.category || 'AUTO').toUpperCase()}</div>
+          <div class="fact-body">
+            <div class="fact-label">${profEsc(c.label)}</div>
+            <div>${profEsc(c.value)}</div>
+            ${contact ? `<div class="fact-meta" style="margin-top:3px;">${profEsc(contact)}</div>` : ''}
+          </div>
+          <div class="fact-meta">
+            ${c.expires_at ? `Contract ends: <strong>${new Date(c.expires_at).toISOString().slice(0,10)}</strong>` : ''}
+          </div>
+          <div class="fact-actions" style="text-align:right;">
+            <button onclick="profOverrideComputed('${c.key}', '${profEsc(c.label)}', '${profEsc(c.value)}')">Override</button>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function profOverrideComputed(key, label, currentValue) {
+    profShowAddFact();
+    const labelEl = document.getElementById('prof-fact-label');
+    const valEl = document.getElementById('prof-fact-value');
+    const catEl = document.getElementById('prof-fact-category');
+    labelEl.value = label;
+    valEl.value = currentValue;
+    catEl.value = 'vendor';
+    labelEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // Lazy-load on first tab switch
+  const _origSwitchTab = typeof switchTab === 'function' ? switchTab : null;
+  if (_origSwitchTab) {
+    switchTab = function(tab) {
+      _origSwitchTab(tab);
+      if (tab === 'profile') profLoadCommunitiesOnce();
+    };
+  } else {
+    // Fallback: also kick off when tab clicked
+    document.addEventListener('DOMContentLoaded', () => {
+      const tab = document.querySelector('.tab[onclick*="profile"]');
+      if (tab) tab.addEventListener('click', profLoadCommunitiesOnce);
+    });
+  }
+</script>
 
 <script>
   // ---------- Financial Review state ----------
