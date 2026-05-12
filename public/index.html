@@ -2896,11 +2896,11 @@
       <div style="font-size:28px; color:#5a7390;">📥</div>
       <div style="font-size:14px; font-weight:600; color:#1a3a5c; margin-top:6px;">Drag &amp; drop email files here</div>
       <div style="font-size:12px; color:#5a7390; margin-top:4px;">
-        Accepts <strong>.eml</strong>, <strong>.txt</strong>, <strong>.pdf</strong> (multiple files ok) — or
+        Accepts <strong>.eml</strong>, <strong>.txt</strong>, <strong>.pdf</strong>, or direct drag from <strong>Outlook</strong> / Gmail — or
         <button onclick="document.getElementById('in-file-picker').click(); event.stopPropagation();" style="background:none; border:none; color:#1a3a5c; text-decoration:underline; cursor:pointer; font:inherit; font-size:12px; padding:0;">click to pick files</button>
       </div>
       <div style="font-size:11px; color:#888; margin-top:8px;">
-        Outlook tip: <strong>File → Save As → .eml</strong>, then drag the saved file here.
+        Outlook direct drag captures the body text. If you also want headers + attachments preserved, use <strong>Save As → .eml</strong> first.
       </div>
       <input type="file" id="in-file-picker" multiple accept=".eml,.txt,.pdf,message/rfc822,text/plain,application/pdf" style="display:none;" />
       <select id="in-drop-community" class="draft-type-select" style="margin-top:10px; width:auto;">
@@ -3054,9 +3054,44 @@
       });
     });
     zone.addEventListener('drop', (e) => {
+      // 1) Prefer real files (drag from File Explorer, saved .eml, Gmail download-on-drag)
       const files = Array.from(e.dataTransfer?.files || []);
-      if (files.length > 0) inProcessFiles(files);
+      if (files.length > 0) {
+        inProcessFiles(files);
+        return;
+      }
+      // 2) Fall back to text payload (the typical Outlook → browser path).
+      // Outlook drag puts the email body on the clipboard as text/plain and/or
+      // text/html. We capture whichever is richer.
+      const textPlain = e.dataTransfer?.getData?.('text/plain') || '';
+      const textHtml  = e.dataTransfer?.getData?.('text/html')  || '';
+      const stripped  = inStripHtmlToText(textHtml);
+      // Pick the longer of (plain, html-stripped) so we keep as much body as Outlook gave us
+      const body = (stripped.length > textPlain.length) ? stripped : textPlain;
+      if (body && body.trim().length >= 30) {
+        const blob = new Blob([body], { type: 'text/plain' });
+        const synth = new File([blob], `outlook-drag-${Date.now()}.txt`, { type: 'text/plain' });
+        inProcessFiles([synth]);
+      } else {
+        alert(
+          'No usable content in that drop.\n\n' +
+          'Outlook tip: if direct drag doesn\'t work, right-click the email → ' +
+          'Save As → choose .eml format, then drag the saved file here. ' +
+          'Or copy the email body and use the "+ Paste new email" button.'
+        );
+      }
     });
+
+    // Crude HTML → text used when Outlook hands us text/html
+    window.inStripHtmlToText = function(html) {
+      if (!html) return '';
+      const tmp = document.createElement('div');
+      tmp.innerHTML = html;
+      // remove scripts/styles
+      tmp.querySelectorAll('script,style').forEach(n => n.remove());
+      const text = (tmp.innerText || tmp.textContent || '').replace(/ /g, ' ').replace(/\n{3,}/g, '\n\n');
+      return text.trim();
+    };
 
     // Also accept paste of files (rare but works in some Outlook flows)
     document.addEventListener('paste', (e) => {
