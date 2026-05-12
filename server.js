@@ -966,8 +966,14 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
 
   const send = (obj) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); };
 
+  // NOTE: Do NOT watch req.on('close') for abort. On Render's HTTP proxy,
+  // 'close' on the request stream fires as soon as the client finishes
+  // *sending* (request body fully consumed), not when the client actually
+  // disconnects — that was falsely aborting the loop after one event.
+  // We watch res.on('close') instead, which only fires when the response
+  // socket itself closes (the real client disconnect).
   let aborted = false;
-  req.on('close', () => { aborted = true; });
+  res.on('close', () => { aborted = true; });
 
   try {
     const { situation, community } = req.body;
