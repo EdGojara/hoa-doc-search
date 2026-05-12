@@ -2764,6 +2764,14 @@
           <span style="font-size:11px; color:#888;">Auto-saved when you click Save</span>
         </div>
         <div class="prof-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px 18px;">
+          <label class="prof-fld"><span>Onsite service?</span>
+            <select id="prof-onsite">
+              <option value="">—</option>
+              <option value="yes">Yes — onsite manager</option>
+              <option value="no">No — remote management only</option>
+            </select>
+          </label>
+          <label class="prof-fld"><span>Onsite days &amp; hours</span><input id="prof-onsite_hours" placeholder="Tue/Thu 10am–2pm, Sat 9am–1pm" /></label>
           <label class="prof-fld"><span>Office hours</span><input id="prof-office_hours" placeholder="M–F 9am–5pm" /></label>
           <label class="prof-fld"><span>Primary contact name</span><input id="prof-primary_contact_name" placeholder="e.g., Ed Gojara" /></label>
           <label class="prof-fld"><span>Primary phone</span><input id="prof-primary_phone" placeholder="(281) 555-0100" /></label>
@@ -2920,6 +2928,8 @@
 
   function profPopulateForm(profile, community) {
     const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : v); };
+    set('prof-onsite', profile.onsite);
+    set('prof-onsite_hours', profile.onsite_hours);
     set('prof-office_hours', profile.office_hours);
     set('prof-primary_contact_name', profile.primary_contact_name);
     set('prof-primary_phone', profile.primary_phone);
@@ -2939,6 +2949,8 @@
     const val = (id) => document.getElementById(id).value.trim();
     const numOrNull = (id) => { const v = val(id); return v === '' ? null : Number(v); };
     const updates = {
+      onsite: val('prof-onsite') || null,
+      onsite_hours: val('prof-onsite_hours') || null,
       office_hours: val('prof-office_hours') || null,
       primary_contact_name: val('prof-primary_contact_name') || null,
       primary_phone: val('prof-primary_phone') || null,
