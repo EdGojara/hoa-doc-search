@@ -4694,14 +4694,27 @@
       <!-- Action buttons + draft response editor -->
       <div class="acc-card">
         <h3>📨 Send response to homeowner</h3>
-        <p style="font-size:12px; color:#5a7390; margin-bottom:12px;">trustEd drafted the response below. Edit it freely — what you save here is what the homeowner sees on their status page. (Outbound email comes in Phase 2; for now, use Outlook with this text after finalizing.)</p>
+        <p style="font-size:12px; color:#5a7390; margin-bottom:12px;">
+          ${(latestAssess && latestAssess.draft_response) ? 'trustEd drafted this response in your voice. Edit freely — what you save is what the homeowner sees on their status page.' : 'No draft response yet. Click "Re-assess" above to generate one, or write your own.'}
+          (Outbound email comes in Phase 2; for now, use Outlook with this text after finalizing.)
+        </p>
         <div class="fld">
           <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Message to homeowner</label>
           <textarea id="acc-msg" rows="12" style="padding:12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; line-height:1.55; width:100%;">${accEsc(accBuildDraftResponse(a, latestAssess))}</textarea>
         </div>
         <div class="fld" style="margin-top:10px;">
+          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Conditions (if conditional approval)</label>
+          <textarea id="acc-conditions" rows="2" placeholder="e.g., 'Must use neutral palette; must complete by October 30.'" style="padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></textarea>
+        </div>
+        <div class="fld" style="margin-top:10px;">
           <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Internal notes (not sent to homeowner)</label>
           <textarea id="acc-internal" rows="2" style="padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></textarea>
+        </div>
+        <div style="margin-top:10px; padding:8px 12px; background:#f0fdf4; border:1px solid #86efac; border-radius:6px;">
+          <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; font-size:12px; color:#166534;">
+            <input id="acc-promote" type="checkbox" checked style="margin-top:2px;" />
+            <span><strong>Add this decision to the ACC History library</strong> — your decision becomes precedent for future AI assessments at ${accEsc(a.community?.name || 'this community')}. The system gets sharper with every approval / denial you finalize.</span>
+          </label>
         </div>
         <div class="acc-ai-actions">
           <button class="acc-action-btn approve" onclick="accFinalize('approve', '${a.id}')">✓ Approve &amp; send</button>
@@ -4745,11 +4758,16 @@
   }
 
   function accBuildDraftResponse(a, assessment) {
-    // Use the AI's draft_response if it exists in the assessment's raw payload
-    if (assessment && assessment.summary) {
-      // The /api/applications/:id endpoint already serves the structured assessment;
-      // we use the manager-facing summary + concerns to compose a draft if no draft_response field is present.
-      // For now, use the simple template below.
+    // Use the AI's pre-written draft_response if it was generated — that's
+    // tailored to this specific application, written in Bedrock voice, with
+    // the right reasoning. Falls back to a generic template if absent
+    // (e.g., assessment failed or hasn't run yet).
+    if (assessment && assessment.draft_response && assessment.draft_response.trim()) {
+      return assessment.draft_response.trim();
+    }
+    // Also fall back to the denormalized field on the application row
+    if (a.assessment_draft_response && a.assessment_draft_response.trim()) {
+      return a.assessment_draft_response.trim();
     }
     const ref = a.reference_number;
     const name = a.submitter_name;
@@ -4783,14 +4801,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function accFinalize(action, appId) {
     const msg = document.getElementById('acc-msg').value.trim();
     const internal = document.getElementById('acc-internal').value.trim();
+    const conditionsEl = document.getElementById('acc-conditions');
+    const conditions = conditionsEl ? conditionsEl.value.trim() : '';
+    const promoteEl = document.getElementById('acc-promote');
+    const promote = promoteEl ? promoteEl.checked : true;
+
     if (!msg) {
       alert('Please write a message to the homeowner first.');
       return;
     }
+    if (action === 'approve_with_conditions' && !conditions) {
+      if (!confirm('You selected "Approve with conditions" but didn\'t fill in the conditions field. Proceed anyway?')) return;
+    }
     const labels = {
-      approve: 'Approve and send this response?',
-      approve_with_conditions: 'Approve with conditions and send this response?',
-      deny: 'Deny and send this response?',
+      approve: 'Approve and send this response?' + (promote ? '\n\n(This decision will be added to the ACC History library for AI to learn from.)' : ''),
+      approve_with_conditions: 'Approve with conditions and send this response?' + (promote ? '\n\n(This decision will be added to the ACC History library.)' : ''),
+      deny: 'Deny and send this response?' + (promote ? '\n\n(This denial will be added to the ACC History library.)' : ''),
       request_more_info: 'Request more info and send this message?'
     };
     if (!confirm(labels[action] || 'Send?')) return;
@@ -4801,12 +4827,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const r = await fetch('/api/applications/' + appId + '/finalize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action, message_to_owner: msg, internal_notes: internal || null })
+        body: JSON.stringify({
+          action,
+          message_to_owner: msg,
+          internal_notes: internal || null,
+          conditions: conditions || null,
+          promote_to_history: promote
+        })
       });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
-      status.textContent = '✓ Done — homeowner can see the response on their status page now.'; status.style.color = '#166534';
-      setTimeout(() => accOpenDetail(appId), 800);
+      let successMsg = '✓ Done — homeowner can see the response on their status page now.';
+      if (j.promoted_to_history) successMsg += ' Added to ACC History library — AI will reference this on future similar applications.';
+      status.textContent = successMsg;
+      status.style.color = '#166534';
+      setTimeout(() => accOpenDetail(appId), 1200);
     } catch (err) {
       status.textContent = 'Error: ' + err.message; status.style.color = '#b91c1c';
     }

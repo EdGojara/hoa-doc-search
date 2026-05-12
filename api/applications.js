@@ -258,6 +258,8 @@ Return the JSON assessment now.`;
       concerns: parsed.concerns || [],
       citations: parsed.citations || [],
       confidence: parsed.confidence,
+      draft_response: parsed.draft_response || null,
+      recommended_action: parsed.recommended_action || null,
       ai_model: ASSESSMENT_MODEL,
       ai_input_tokens: completion.usage?.input_tokens || null,
       ai_output_tokens: completion.usage?.output_tokens || null,
@@ -274,6 +276,8 @@ Return the JSON assessment now.`;
       assessment_concerns: parsed.concerns || [],
       assessment_citations: parsed.citations || [],
       assessment_confidence: parsed.confidence,
+      assessment_draft_response: parsed.draft_response || null,
+      assessment_recommended_action: parsed.recommended_action || null,
       last_assessment_at: new Date().toISOString()
     }).eq('id', application.id);
 
@@ -544,11 +548,16 @@ router.post('/:id/assess', async (req, res) => {
 });
 
 // POST /api/applications/:id/finalize — manager action
-// Body: { action: 'approve'|'deny'|'approve_with_conditions'|'request_more_info',
-//          message_to_owner: '...', internal_notes?: '...', decided_by_name?: '...' }
+// Body: { action, message_to_owner, internal_notes?, decided_by_name?,
+//          conditions?, promote_to_history? (default: true) }
+//
+// When promote_to_history is true and action is approve/deny/conditional,
+// a row is also created in arc_historical_decisions so this decision
+// immediately becomes precedent for future AI assessments of similar
+// applications in the same community. THIS IS THE TYPE-B LEARNING LOOP.
 router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) => {
   try {
-    const { action, message_to_owner, internal_notes, decided_by_name } = req.body || {};
+    const { action, message_to_owner, internal_notes, decided_by_name, conditions, promote_to_history } = req.body || {};
     if (!action) return res.status(400).json({ error: 'action is required' });
 
     const validActions = ['approve', 'deny', 'approve_with_conditions', 'request_more_info'];
@@ -580,7 +589,7 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
       .update(patch)
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .select()
+      .select('*, community:communities(id, name)')
       .single();
     if (updErr) throw updErr;
 
@@ -599,7 +608,65 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
       metadata: { final_status: finalStatus, action }
     });
 
-    res.json({ ok: true, application: app });
+    // ========================================================================
+    // TYPE-B LEARNING LOOP: promote this decision into arc_historical_decisions
+    // so future AI assessments treat it as precedent. Skipped on request_more_info
+    // (no decision yet to learn from) and skippable via promote_to_history=false.
+    // ========================================================================
+    let promoted = null;
+    const shouldPromote = (promote_to_history !== false) && action !== 'request_more_info';
+    if (shouldPromote) {
+      try {
+        const appData = app.application_data || {};
+        const decisionType = action === 'approve' ? 'approved'
+                           : action === 'deny' ? 'denied'
+                           : 'conditional';
+        const summary = message_to_owner
+          ? message_to_owner.replace(/\s+/g, ' ').slice(0, 400)
+          : `${app.submitter_name} requested ${appData.project_type || 'a project'} at ${app.property_address}; ${decisionType} on ${new Date().toISOString().slice(0, 10)}.`;
+        const reasoning = internal_notes || null;
+        const embedSource = [
+          appData.project_type,
+          appData.project_description,
+          conditions,
+          reasoning,
+          summary
+        ].filter(Boolean).join(' — ').slice(0, 6000);
+        const embedding = await embed(embedSource);
+
+        const { data: historyRow } = await supabase
+          .from('arc_historical_decisions')
+          .insert({
+            management_company_id: BEDROCK_MGMT_CO_ID,
+            community_id: app.community_id,
+            source_filename: `internal-app-${app.reference_number}`,
+            source_excerpt: `Submitted via Bedrock public portal · ${app.reference_number}`,
+            property_address: app.property_address,
+            homeowner_name: app.submitter_name,
+            project_type: appData.project_type || null,
+            project_description: appData.project_description || null,
+            decision_type: decisionType,
+            decided_at: new Date().toISOString().slice(0, 10),
+            decided_by: decided_by_name || 'Bedrock manager',
+            conditions: conditions || null,
+            reasoning: reasoning,
+            summary: summary,
+            embedding,
+            extracted_by_model: ASSESSMENT_MODEL,
+            extraction_confidence: 'high',
+            manually_edited: true,
+            raw_extraction: { source: 'internal_application_finalize', application_id: app.id }
+          })
+          .select('id')
+          .single();
+        promoted = historyRow;
+      } catch (err) {
+        // Don't fail the finalize if the history promotion errors — log it.
+        console.error('[applications] promote-to-history failed:', err.message);
+      }
+    }
+
+    res.json({ ok: true, application: app, promoted_to_history: promoted });
   } catch (err) {
     console.error('[applications] finalize failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
