@@ -246,6 +246,8 @@
   <div class="tab" onclick="switchTab('packets')">📋 Board Packets</div>
   <div class="tab" onclick="switchTab('profile')">🏘️ Profile</div>
   <div class="tab" onclick="switchTab('events')">🎉 Events</div>
+  <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
+  <div class="tab" onclick="switchTab('recaps')">📰 Recaps</div>
 </div>
 
 <!-- Chat Tab -->
@@ -2875,6 +2877,710 @@
     .fact-actions button.refresh { color:#2d7a3a; border-color:#b8d8c0; }
   </style>
 </div>
+
+<!-- ============================================================
+     📧 Email Intake tab — paste threads, Claude extracts library facts
+     ============================================================ -->
+<div class="tab-content" id="tab-intake" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1180px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📧 Email Intake</h2>
+        <p style="font-size:13px; color:#666;">Paste an email thread → Claude extracts facts, vendors, decisions, and action items → approve to promote into the Community Facts library.</p>
+      </div>
+      <button class="primary-btn" onclick="inShowNewModal()" style="padding:9px 18px;">+ Paste new email</button>
+    </div>
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center;">
+      <select id="in-filter-community" class="draft-type-select" onchange="inLoadList()">
+        <option value="">All communities</option>
+      </select>
+      <select id="in-filter-status" class="draft-type-select" onchange="inLoadList()">
+        <option value="">All statuses</option>
+        <option value="pending">Pending</option>
+        <option value="extracted">Extracted</option>
+        <option value="approved">Approved</option>
+        <option value="error">Error</option>
+      </select>
+    </div>
+
+    <div id="in-list-view">
+      <div id="in-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <div id="in-empty" style="display:none; background:#f5f8fc; border:1px dashed #c0d0e0; border-radius:8px; padding:32px; text-align:center; color:#5a7390;">
+        No intakes yet. Click "+ Paste new email" to start capturing email knowledge.
+      </div>
+    </div>
+
+    <div id="in-detail-view" style="display:none;"></div>
+  </div>
+
+  <!-- New intake modal -->
+  <div id="in-new-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:#fff; border-radius:12px; max-width:780px; width:100%; max-height:90vh; overflow-y:auto; padding:24px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Paste an email thread for extraction</h3>
+        <button onclick="inHideNewModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
+        <label class="prof-fld"><span>Community</span>
+          <select id="in-new-community"><option value="">— pick community —</option></select>
+        </label>
+        <label class="prof-fld"><span>Subject (optional)</span><input id="in-new-subject" placeholder="RE: LPF pool closing date confirmation" /></label>
+      </div>
+      <label class="prof-fld" style="margin-bottom:10px;">
+        <span>Email thread (paste the whole thread including replies)</span>
+        <textarea id="in-new-raw" rows="14" placeholder="Paste the full email thread here. Include sender names, dates, and reply chains — Claude reads through everything to extract facts, vendors, decisions, and action items." style="width:100%; padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; font-family: ui-monospace, SFMono-Regular, monospace;"></textarea>
+      </label>
+      <div style="text-align:right;">
+        <button class="secondary-btn" onclick="inHideNewModal()">Cancel</button>
+        <button class="primary-btn" onclick="inSubmitNew()" style="padding:8px 18px;" id="in-submit-btn">🔍 Extract</button>
+        <span id="in-new-status" style="margin-left:10px; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .in-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 80px 1fr 130px 110px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; }
+    .in-row:hover { border-color:#1a3a5c; }
+    .in-status-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+    .in-status-pending { background:#fef3c7; color:#92400e; }
+    .in-status-extracted { background:#dbeafe; color:#1e3a8a; }
+    .in-status-approved { background:#dcfce7; color:#166534; }
+    .in-status-error { background:#fee2e2; color:#991b1b; }
+    .in-urgency-high { color:#c0392b; font-weight:700; }
+    .in-urgency-medium { color:#b45309; font-weight:600; }
+    .in-urgency-low { color:#5a7390; }
+    .extract-block { background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-bottom:12px; }
+    .extract-block h4 { font-size:12px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
+    .extract-item { padding:8px 10px; background:#fff; border:1px solid #f0f2f5; border-radius:6px; margin-bottom:6px; font-size:13px; line-height:1.5; }
+    .extract-item .ei-label { font-weight:600; color:#1a3a5c; margin-right:6px; }
+    .extract-item .ei-tag { display:inline-block; padding:1px 7px; border-radius:99px; background:#e8f0f8; color:#1a3a5c; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; margin-left:4px; }
+    .extract-item .ei-meta { color:#666; font-size:11px; margin-top:3px; }
+    .confidence-high { color:#16a34a; }
+    .confidence-medium { color:#b45309; }
+    .confidence-low { color:#c0392b; }
+  </style>
+</div>
+
+<script>
+  // ============================================================
+  // Email Intake tab
+  // ============================================================
+  let inCommunities = [];
+  let inCurrentList = [];
+  let inCurrent = null;
+
+  async function inInit() {
+    if (inCommunities.length === 0) {
+      try {
+        const r = await fetch('/api/billing/communities');
+        const j = await r.json();
+        inCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+        ['in-filter-community','in-new-community'].forEach(id => {
+          const sel = document.getElementById(id);
+          while (sel.options.length > 1) sel.remove(1);
+          inCommunities.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id; opt.textContent = c.name;
+            sel.appendChild(opt);
+          });
+        });
+      } catch (err) { console.warn('inInit', err); }
+    }
+    inLoadList();
+  }
+
+  async function inLoadList() {
+    const cid = document.getElementById('in-filter-community').value;
+    const status = document.getElementById('in-filter-status').value;
+    const params = new URLSearchParams();
+    if (cid) params.set('community_id', cid);
+    if (status) params.set('status', status);
+    try {
+      const r = await fetch('/api/email-intelligence?' + params.toString());
+      const j = await r.json();
+      inCurrentList = j.intakes || [];
+      inRenderList();
+    } catch (err) {
+      alert('Failed to load: ' + err.message);
+    }
+  }
+
+  function inRenderList() {
+    const wrap = document.getElementById('in-list');
+    const empty = document.getElementById('in-empty');
+    if (inCurrentList.length === 0) { wrap.innerHTML = ''; empty.style.display = ''; return; }
+    empty.style.display = 'none';
+    wrap.innerHTML = inCurrentList.map(i => `
+      <div class="in-row" onclick="inOpenDetail('${i.id}')">
+        <div><span class="in-status-pill in-status-${i.extraction_status}">${i.extraction_status}</span></div>
+        <div>
+          <div style="font-weight:600; color:#1a3a5c;">${inEsc(i.extracted_summary || i.subject || '(no summary)')}</div>
+          <div style="font-size:11px; color:#5a7390; margin-top:3px;">
+            ${inEsc(i.community?.name || '— no community —')} · ${new Date(i.ingested_at).toLocaleDateString()}
+            ${i.board_relevant ? ' · <span style="color:#1e3a8a; font-weight:600;">📋 Board relevant</span>' : ''}
+          </div>
+        </div>
+        <div style="font-size:11px;">
+          ${i.urgency ? `<span class="in-urgency-${i.urgency}">⚡ ${i.urgency.toUpperCase()}</span>` : ''}
+          ${i.extraction_confidence ? `<div class="confidence-${i.extraction_confidence}" style="margin-top:3px; font-size:10px;">confidence: ${i.extraction_confidence}</div>` : ''}
+        </div>
+        <div style="text-align:right; font-size:11px; color:#888;">
+          ${i.approved_at ? '✓ Approved<br>' + new Date(i.approved_at).toLocaleDateString() : ''}
+        </div>
+      </div>`).join('');
+  }
+
+  function inEsc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // --- New intake modal ---
+  function inShowNewModal() {
+    document.getElementById('in-new-modal').style.display = 'flex';
+    document.getElementById('in-new-raw').focus();
+  }
+  function inHideNewModal() {
+    document.getElementById('in-new-modal').style.display = 'none';
+    ['in-new-subject','in-new-raw'].forEach(id => document.getElementById(id).value = '');
+    document.getElementById('in-new-status').textContent = '';
+    document.getElementById('in-submit-btn').disabled = false;
+    document.getElementById('in-submit-btn').textContent = '🔍 Extract';
+  }
+  async function inSubmitNew() {
+    const community_id = document.getElementById('in-new-community').value || null;
+    const subject = document.getElementById('in-new-subject').value.trim() || null;
+    const raw = document.getElementById('in-new-raw').value.trim();
+    if (!raw) { alert('Please paste the email thread.'); return; }
+
+    const btn = document.getElementById('in-submit-btn');
+    const status = document.getElementById('in-new-status');
+    btn.disabled = true; btn.textContent = '⏳ Extracting (10-20s)…';
+    status.textContent = 'Claude is reading the thread…'; status.style.color = '#888';
+
+    try {
+      const r = await fetch('/api/email-intelligence', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id, subject, raw_content: raw })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      inHideNewModal();
+      await inLoadList();
+      inOpenDetail(j.intake.id);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.style.color = '#c0392b';
+      btn.disabled = false; btn.textContent = '🔍 Extract';
+    }
+  }
+
+  // --- Detail view ---
+  async function inOpenDetail(id) {
+    try {
+      const r = await fetch('/api/email-intelligence/' + id);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      inCurrent = j.intake;
+      inRenderDetail();
+    } catch (err) { alert('Failed to load: ' + err.message); }
+  }
+  function inBackToList() {
+    document.getElementById('in-detail-view').style.display = 'none';
+    document.getElementById('in-list-view').style.display = '';
+    inLoadList();
+  }
+
+  function inRenderDetail() {
+    const i = inCurrent;
+    document.getElementById('in-list-view').style.display = 'none';
+    const view = document.getElementById('in-detail-view');
+    view.style.display = '';
+
+    const d = i.extracted_data || {};
+    const isApproved = i.extraction_status === 'approved';
+    const isError = i.extraction_status === 'error';
+
+    let extractionHtml;
+    if (isError) {
+      extractionHtml = `
+        <div class="extract-block" style="background:#fef2f2; border-color:#fca5a5;">
+          <h4 style="color:#991b1b;">Extraction error</h4>
+          <div style="font-size:13px; color:#7f1d1d;">${inEsc(i.extraction_error || 'Unknown error')}</div>
+          <button class="secondary-btn" onclick="inReExtract()" style="margin-top:10px; font-size:13px;">🔄 Retry extraction</button>
+        </div>`;
+    } else {
+      extractionHtml = `
+        <!-- Summary -->
+        <div class="extract-block">
+          <h4>📝 Summary</h4>
+          <div style="font-size:14px; color:#1a3a5c; font-weight:600;">${inEsc(d.summary || i.extracted_summary || '(no summary)')}</div>
+          <div style="font-size:11px; color:#5a7390; margin-top:8px;">
+            Topic: <strong>${inEsc(d.topic || '—')}</strong> ·
+            Urgency: <span class="in-urgency-${i.urgency || 'low'}">${i.urgency || '—'}</span> ·
+            Confidence: <span class="confidence-${i.extraction_confidence || 'medium'}">${i.extraction_confidence || '—'}</span> ·
+            Board relevant: <strong>${i.board_relevant ? 'YES' : 'no'}</strong>
+          </div>
+        </div>
+
+        <!-- Vendor mentions -->
+        <div class="extract-block">
+          <h4>🤝 Vendors mentioned (${(d.vendor_mentions || []).length})</h4>
+          ${(d.vendor_mentions || []).length === 0 ? '<div style="font-size:12px; color:#888;">None found.</div>' :
+            (d.vendor_mentions || []).map(v => `
+              <div class="extract-item">
+                <span class="ei-label">${inEsc(v.name)}</span>
+                <span class="ei-tag">${inEsc(v.role)}</span>
+                ${v.contact_name ? `<div class="ei-meta">👤 ${inEsc(v.contact_name)}</div>` : ''}
+                ${v.phone ? `<div class="ei-meta">📞 ${inEsc(v.phone)}</div>` : ''}
+                ${v.email ? `<div class="ei-meta">✉️ ${inEsc(v.email)}</div>` : ''}
+                ${v.notes ? `<div class="ei-meta">📌 ${inEsc(v.notes)}</div>` : ''}
+              </div>`).join('')
+          }
+        </div>
+
+        <!-- Facts -->
+        <div class="extract-block">
+          <h4>📚 Facts to add to library (${(d.facts || []).length})</h4>
+          ${(d.facts || []).length === 0 ? '<div style="font-size:12px; color:#888;">None found.</div>' :
+            (d.facts || []).map(f => `
+              <div class="extract-item">
+                <span class="ei-label">${inEsc(f.label || f.category)}</span>
+                <span class="ei-tag">${inEsc(f.category)}</span>
+                <span class="confidence-${f.confidence || 'medium'}" style="font-size:10px; margin-left:6px;">[${f.confidence || 'medium'}]</span>
+                <div style="margin-top:4px; white-space:pre-wrap;">${inEsc(f.value)}</div>
+                ${f.expires_at ? `<div class="ei-meta">⏰ Expires: ${inEsc(f.expires_at)}</div>` : ''}
+              </div>`).join('')
+          }
+        </div>
+
+        <!-- Decisions -->
+        <div class="extract-block">
+          <h4>⚖️ Decisions captured (${(d.decisions || []).length})</h4>
+          ${(d.decisions || []).length === 0 ? '<div style="font-size:12px; color:#888;">None found.</div>' :
+            (d.decisions || []).map(dec => `
+              <div class="extract-item">
+                <div>${inEsc(dec.summary)}</div>
+                <div class="ei-meta">
+                  Decided by <strong>${inEsc(dec.decided_by || 'unknown')}</strong>${dec.decided_at ? ' on ' + inEsc(dec.decided_at) : ''}
+                  ${dec.board_visible ? ' · <span style="color:#1e3a8a;">📋 Board visible</span>' : ' · <span style="color:#888;">internal only</span>'}
+                </div>
+              </div>`).join('')
+          }
+        </div>
+
+        <!-- Action items -->
+        <div class="extract-block">
+          <h4>✅ Action items (${(d.action_items || []).length})</h4>
+          ${(d.action_items || []).length === 0 ? '<div style="font-size:12px; color:#888;">None found.</div>' :
+            (d.action_items || []).map(a => `
+              <div class="extract-item">
+                <div>${inEsc(a.task)}</div>
+                <div class="ei-meta">
+                  Owner: <strong>${inEsc(a.owner || 'unspecified')}</strong>${a.due ? ' · Due: ' + inEsc(a.due) : ''}
+                </div>
+              </div>`).join('')
+          }
+        </div>
+
+        <!-- Open questions -->
+        ${(d.open_questions || []).length > 0 ? `
+          <div class="extract-block" style="background:#fffaf0; border-color:#e8c97a;">
+            <h4 style="color:#92400e;">❓ Reviewer should clarify before approving</h4>
+            ${(d.open_questions || []).map(q => `<div class="extract-item">${inEsc(q)}</div>`).join('')}
+          </div>` : ''
+        }
+
+        ${isApproved ? `
+          <div style="background:#dcfce7; border:1px solid #86efac; border-radius:8px; padding:14px; margin-bottom:12px;">
+            <div style="font-weight:700; color:#166534; margin-bottom:4px;">✓ Approved and promoted to library</div>
+            <div style="font-size:12px; color:#15803d;">
+              ${(i.promoted_fact_ids || []).length} fact${(i.promoted_fact_ids || []).length === 1 ? '' : 's'} +
+              ${(i.promoted_decision_ids || []).length} decision${(i.promoted_decision_ids || []).length === 1 ? '' : 's'} added to ${inEsc(i.community?.name || 'this community')}.
+              AskEd will now reference these on every question.
+            </div>
+          </div>` : `
+          <div style="text-align:right; margin-top:14px;">
+            <button class="secondary-btn" onclick="inReExtract()" style="font-size:13px;">🔄 Re-extract</button>
+            <button class="primary-btn" onclick="inApprove()" style="padding:8px 22px; font-size:14px;">✓ Approve &amp; promote to library</button>
+            <span id="in-approve-status" style="margin-left:10px; font-size:12px;"></span>
+          </div>`
+        }
+      `;
+    }
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button class="secondary-btn" onclick="inBackToList()" style="font-size:13px;">← Back to intake list</button>
+      </div>
+
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:16px;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px;">
+          <div style="flex:1;">
+            <h2 style="font-size:18px; font-weight:700; color:#1a3a5c;">${inEsc(i.subject || '(no subject)')}</h2>
+            <div style="font-size:12px; color:#5a7390; margin-top:4px;">
+              <span class="in-status-pill in-status-${i.extraction_status}">${i.extraction_status}</span>
+              · ${inEsc(i.community?.name || 'no community')} · Ingested ${new Date(i.ingested_at).toLocaleString()}
+            </div>
+          </div>
+          <button onclick="inDeleteIntake()" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
+        </div>
+      </div>
+
+      ${extractionHtml}
+
+      <details style="background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-top:14px;">
+        <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">📄 Original email thread (raw)</summary>
+        <pre style="white-space:pre-wrap; font-size:12px; color:#444; margin-top:10px; padding:12px; background:#fff; border:1px solid #f0f2f5; border-radius:6px; max-height:400px; overflow-y:auto;">${inEsc(i.raw_content)}</pre>
+      </details>
+    `;
+  }
+
+  async function inApprove() {
+    if (!inCurrent) return;
+    const status = document.getElementById('in-approve-status');
+    status.textContent = 'Approving + promoting…'; status.style.color = '#888';
+    try {
+      const r = await fetch('/api/email-intelligence/' + inCurrent.id + '/approve', { method: 'POST' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      inOpenDetail(inCurrent.id);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.style.color = '#c0392b';
+    }
+  }
+  async function inReExtract() {
+    if (!inCurrent) return;
+    if (!confirm('Re-run extraction? This will overwrite the current extracted data.')) return;
+    try {
+      const r = await fetch('/api/email-intelligence/' + inCurrent.id + '/re-extract', { method: 'POST' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      inOpenDetail(inCurrent.id);
+    } catch (err) { alert('Re-extract failed: ' + err.message); }
+  }
+  async function inDeleteIntake() {
+    if (!inCurrent || !confirm('Delete this intake permanently?')) return;
+    try {
+      const r = await fetch('/api/email-intelligence/' + inCurrent.id, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      inBackToList();
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  // Hook switchTab
+  if (typeof switchTab === 'function') {
+    const _prevIn = switchTab;
+    switchTab = function(tab) {
+      _prevIn(tab);
+      if (tab === 'intake') inInit();
+    };
+  }
+</script>
+
+<!-- ============================================================
+     📰 Recaps tab — generate board/internal/community summaries
+     ============================================================ -->
+<div class="tab-content" id="tab-recaps" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1180px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📰 Recaps</h2>
+        <p style="font-size:13px; color:#666;">Generate audience-tailored summaries: boards get the high-signal view, your team gets the operational detail. Filter applied by your <strong>board_visible</strong> flags on decisions.</p>
+      </div>
+      <button class="primary-btn" onclick="rcShowNewModal()" style="padding:9px 18px;">+ Generate recap</button>
+    </div>
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center;">
+      <select id="rc-filter-community" class="draft-type-select" onchange="rcLoadList()">
+        <option value="">All communities</option>
+      </select>
+      <select id="rc-filter-audience" class="draft-type-select" onchange="rcLoadList()">
+        <option value="">All audiences</option>
+        <option value="board">Board</option>
+        <option value="internal">Internal</option>
+        <option value="community">Community</option>
+      </select>
+    </div>
+
+    <div id="rc-list-view">
+      <div id="rc-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <div id="rc-empty" style="display:none; background:#f5f8fc; border:1px dashed #c0d0e0; border-radius:8px; padding:32px; text-align:center; color:#5a7390;">
+        No recaps yet. Click "+ Generate recap" to create one.
+      </div>
+    </div>
+
+    <div id="rc-detail-view" style="display:none;"></div>
+  </div>
+
+  <!-- New recap modal -->
+  <div id="rc-new-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:#fff; border-radius:12px; max-width:540px; width:100%; max-height:90vh; overflow-y:auto; padding:24px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Generate a recap</h3>
+        <button onclick="rcHideNewModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
+        <label class="prof-fld"><span>Community *</span>
+          <select id="rc-new-community"><option value="">— pick community —</option></select>
+        </label>
+        <label class="prof-fld"><span>Audience *</span>
+          <select id="rc-new-audience">
+            <option value="board">📋 Board (filtered, high-level)</option>
+            <option value="internal">👥 Internal team (full detail)</option>
+            <option value="community">🏘️ Community / homeowners</option>
+          </select>
+        </label>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <label class="prof-fld"><span>Period start *</span><input id="rc-new-start" type="date" /></label>
+          <label class="prof-fld"><span>Period end *</span><input id="rc-new-end" type="date" /></label>
+        </div>
+        <div style="font-size:11px; color:#888; margin-top:4px;">
+          Default range is the last 14 days. Adjust if you want a monthly or quarterly recap.
+        </div>
+      </div>
+      <div style="text-align:right; margin-top:16px;">
+        <button class="secondary-btn" onclick="rcHideNewModal()">Cancel</button>
+        <button class="primary-btn" onclick="rcGenerate()" style="padding:8px 18px;" id="rc-gen-btn">✨ Generate</button>
+        <span id="rc-new-status" style="margin-left:10px; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .rc-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 100px 1fr 200px 100px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; }
+    .rc-row:hover { border-color:#1a3a5c; }
+    .rc-aud-board { background:#dbeafe; color:#1e3a8a; }
+    .rc-aud-internal { background:#fef3c7; color:#92400e; }
+    .rc-aud-community { background:#dcfce7; color:#166534; }
+    .rc-aud-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+    .recap-content { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:24px; font-size:14px; line-height:1.65; color:#1f2937; }
+    .recap-content h1, .recap-content h2 { color:#1a3a5c; font-weight:700; margin: 16px 0 8px; }
+    .recap-content h2 { font-size:16px; }
+    .recap-content h1 { font-size:20px; }
+    .recap-content ul, .recap-content ol { margin: 8px 0 8px 20px; }
+    .recap-content li { margin-bottom: 3px; }
+    .recap-content strong { color:#0f172a; }
+    .recap-content p { margin: 6px 0; }
+  </style>
+</div>
+
+<script>
+  // ============================================================
+  // Recaps tab
+  // ============================================================
+  let rcCommunities = [];
+  let rcCurrentList = [];
+  let rcCurrent = null;
+
+  async function rcInit() {
+    if (rcCommunities.length === 0) {
+      try {
+        const r = await fetch('/api/billing/communities');
+        const j = await r.json();
+        rcCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+        ['rc-filter-community','rc-new-community'].forEach(id => {
+          const sel = document.getElementById(id);
+          while (sel.options.length > 1) sel.remove(1);
+          rcCommunities.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id; opt.textContent = c.name;
+            sel.appendChild(opt);
+          });
+        });
+      } catch (err) { console.warn(err); }
+    }
+
+    // Default date range: last 14 days
+    const end = new Date();
+    const start = new Date(); start.setDate(start.getDate() - 14);
+    document.getElementById('rc-new-start').value = start.toISOString().slice(0, 10);
+    document.getElementById('rc-new-end').value = end.toISOString().slice(0, 10);
+
+    rcLoadList();
+  }
+
+  async function rcLoadList() {
+    const cid = document.getElementById('rc-filter-community').value;
+    const aud = document.getElementById('rc-filter-audience').value;
+    const params = new URLSearchParams();
+    if (cid) params.set('community_id', cid);
+    if (aud) params.set('audience', aud);
+    try {
+      const r = await fetch('/api/email-intelligence/recaps/list?' + params.toString());
+      const j = await r.json();
+      rcCurrentList = j.recaps || [];
+      rcRenderList();
+    } catch (err) { alert('Load failed: ' + err.message); }
+  }
+
+  function rcRenderList() {
+    const wrap = document.getElementById('rc-list');
+    const empty = document.getElementById('rc-empty');
+    if (rcCurrentList.length === 0) { wrap.innerHTML=''; empty.style.display=''; return; }
+    empty.style.display = 'none';
+    wrap.innerHTML = rcCurrentList.map(r => `
+      <div class="rc-row" onclick="rcOpenDetail('${r.id}')">
+        <div><span class="rc-aud-pill rc-aud-${r.audience}">${r.audience}</span></div>
+        <div>
+          <div style="font-weight:600; color:#1a3a5c;">${inEsc(r.title || r.community?.name + ' recap')}</div>
+          <div style="font-size:11px; color:#5a7390; margin-top:3px;">${inEsc(r.community?.name || '—')} · ${r.period_start} → ${r.period_end}</div>
+        </div>
+        <div style="font-size:12px; color:#666;">Generated ${new Date(r.generated_at).toLocaleDateString()}</div>
+        <div style="font-size:11px; text-align:right; color:${r.status === 'sent' ? '#16a34a' : '#888'};">${r.sent_at ? '✓ Sent' : 'Draft'}</div>
+      </div>`).join('');
+  }
+
+  // --- New recap ---
+  function rcShowNewModal() {
+    const end = new Date();
+    const start = new Date(); start.setDate(start.getDate() - 14);
+    if (!document.getElementById('rc-new-start').value) document.getElementById('rc-new-start').value = start.toISOString().slice(0,10);
+    if (!document.getElementById('rc-new-end').value) document.getElementById('rc-new-end').value = end.toISOString().slice(0,10);
+    document.getElementById('rc-new-modal').style.display = 'flex';
+  }
+  function rcHideNewModal() {
+    document.getElementById('rc-new-modal').style.display = 'none';
+    document.getElementById('rc-new-status').textContent = '';
+    document.getElementById('rc-gen-btn').disabled = false;
+    document.getElementById('rc-gen-btn').textContent = '✨ Generate';
+  }
+  async function rcGenerate() {
+    const body = {
+      community_id: document.getElementById('rc-new-community').value,
+      audience: document.getElementById('rc-new-audience').value,
+      period_start: document.getElementById('rc-new-start').value,
+      period_end: document.getElementById('rc-new-end').value
+    };
+    if (!body.community_id || !body.audience || !body.period_start || !body.period_end) {
+      alert('All fields required.'); return;
+    }
+    const btn = document.getElementById('rc-gen-btn');
+    const status = document.getElementById('rc-new-status');
+    btn.disabled = true; btn.textContent = '⏳ Generating…';
+    status.textContent = 'Claude is drafting the recap…'; status.style.color = '#888';
+    try {
+      const r = await fetch('/api/email-intelligence/recaps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      rcHideNewModal();
+      await rcLoadList();
+      rcOpenDetail(j.recap.id);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message; status.style.color = '#c0392b';
+      btn.disabled = false; btn.textContent = '✨ Generate';
+    }
+  }
+
+  // --- Detail ---
+  async function rcOpenDetail(id) {
+    try {
+      const r = await fetch('/api/email-intelligence/recaps/' + id);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      rcCurrent = j.recap;
+      rcRenderDetail();
+    } catch (err) { alert('Load failed: ' + err.message); }
+  }
+  function rcBackToList() {
+    document.getElementById('rc-detail-view').style.display = 'none';
+    document.getElementById('rc-list-view').style.display = '';
+    rcLoadList();
+  }
+
+  function rcRenderDetail() {
+    const r = rcCurrent;
+    document.getElementById('rc-list-view').style.display = 'none';
+    const view = document.getElementById('rc-detail-view');
+    view.style.display = '';
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button class="secondary-btn" onclick="rcBackToList()" style="font-size:13px;">← Back to recaps list</button>
+      </div>
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:16px;">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+          <div>
+            <h2 style="font-size:18px; font-weight:700; color:#1a3a5c;">${inEsc(r.title || 'Recap')}</h2>
+            <div style="font-size:12px; color:#5a7390; margin-top:4px;">
+              <span class="rc-aud-pill rc-aud-${r.audience}">${r.audience}</span>
+              · ${inEsc(r.community?.name || '—')} · ${r.period_start} → ${r.period_end}
+              · ${r.status}
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button class="secondary-btn" onclick="rcCopyMarkdown()" style="font-size:13px;">📋 Copy markdown</button>
+            <button class="secondary-btn" onclick="rcMailto()" style="font-size:13px;">✉️ Email this</button>
+            <button onclick="rcDelete()" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
+          </div>
+        </div>
+      </div>
+      <div class="recap-content" id="rc-rendered">${rcRenderMarkdown(r.summary_markdown || '')}</div>
+      <div style="margin-top:14px; font-size:11px; color:#888;">
+        Generated ${new Date(r.generated_at).toLocaleString()} from
+        ${(r.included_decision_ids || []).length} decision${(r.included_decision_ids || []).length === 1 ? '' : 's'},
+        ${(r.included_fact_ids || []).length} fact${(r.included_fact_ids || []).length === 1 ? '' : 's'},
+        ${(r.included_event_ids || []).length} event${(r.included_event_ids || []).length === 1 ? '' : 's'},
+        ${(r.included_intake_ids || []).length} email${(r.included_intake_ids || []).length === 1 ? '' : 's'}.
+      </div>
+    `;
+  }
+
+  function rcRenderMarkdown(md) {
+    let html = inEsc(md);
+    html = html.replace(/^###\s+(.+)$/gm, '<h3>$1</h3>');
+    html = html.replace(/^##\s+(.+)$/gm, '<h2>$1</h2>');
+    html = html.replace(/^#\s+(.+)$/gm, '<h1>$1</h1>');
+    html = html.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+    html = html.replace(/\*(.+?)\*/g, '<em>$1</em>');
+    html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+    html = html.replace(/(?:^|\n)((?:-\s+.+\n?)+)/g, (m, b) => {
+      const items = b.trim().split('\n').map(l => `<li>${l.replace(/^-\s+/, '')}</li>`).join('');
+      return `\n<ul>${items}</ul>`;
+    });
+    html = html.split(/\n{2,}/).map(p => /^<(h1|h2|h3|ul)/.test(p.trim()) ? p : `<p>${p.replace(/\n/g, '<br>')}</p>`).join('\n');
+    return html;
+  }
+
+  async function rcCopyMarkdown() {
+    if (!rcCurrent) return;
+    try {
+      await navigator.clipboard.writeText(rcCurrent.summary_markdown || '');
+      alert('Copied to clipboard.');
+    } catch (e) { alert('Copy failed.'); }
+  }
+  function rcMailto() {
+    if (!rcCurrent) return;
+    const subj = encodeURIComponent(rcCurrent.title || 'Community Recap');
+    const body = encodeURIComponent(rcCurrent.summary_markdown || '');
+    window.location.href = `mailto:?subject=${subj}&body=${body}`;
+  }
+  async function rcDelete() {
+    if (!rcCurrent || !confirm('Delete this recap?')) return;
+    try {
+      const r = await fetch('/api/email-intelligence/recaps/' + rcCurrent.id, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      rcBackToList();
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  // Hook switchTab
+  if (typeof switchTab === 'function') {
+    const _prevRc = switchTab;
+    switchTab = function(tab) {
+      _prevRc(tab);
+      if (tab === 'recaps') rcInit();
+    };
+  }
+</script>
 
 <!-- ============================================================
      🎉 Events tab — plan, run, and review community events

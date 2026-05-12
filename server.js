@@ -415,6 +415,10 @@ app.use('/api/community-profile', communityProfileRouter);
 const { router: eventsRouter } = require('./api/events');
 app.use('/api/events', eventsRouter);
 
+// Email intelligence — intake + extraction + recaps
+const { router: emailIntakeRouter } = require('./api/email_intake');
+app.use('/api/email-intelligence', emailIntakeRouter);
+
 // Public event page — served from /event/:slug → returns the standalone HTML
 app.get('/event/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'event.html'));
