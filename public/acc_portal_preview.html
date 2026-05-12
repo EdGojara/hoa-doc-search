@@ -1,0 +1,1240 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ACC Application Portal — Design Preview</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <style>
+    /* ============================================================
+       Bedrock ACC Application Portal — design preview v0
+       Same design language as the board packet preview.
+       6 pages stacked vertically for review.
+       Real owner-facing pages will be responsive — desktop here
+       for review, mobile preview at the end.
+       ============================================================ */
+
+    :root {
+      --bedrock-navy: #315A87;
+      --bedrock-navy-deep: #1F3A5F;
+      --bedrock-navy-tint: #EAF0F7;
+      --bedrock-navy-mute: #6E89AB;
+      --ink: #1a1a1a;
+      --ink-soft: #4a4a4a;
+      --ink-muted: #888;
+      --rule: #E5E7EB;
+      --rule-soft: #F1F2F4;
+      --paper: #ffffff;
+      --accent-warn: #B47B00;
+      --accent-warn-tint: #FFF8E8;
+      --accent-success: #1F6A40;
+      --accent-success-tint: #E8F5EE;
+      --accent-error: #A02828;
+      --accent-error-tint: #FDE0E0;
+      --accent-info: #1565C0;
+      --accent-info-tint: #E3F2FD;
+    }
+
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; background: #f4f5f7; color: var(--ink);
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      font-size: 14px; font-feature-settings: "tnum" 1; line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* Preview chrome */
+    .preview-intro {
+      max-width: 8.5in; margin: 32px auto 20px; padding: 24px 36px;
+      background: white; border-radius: 8px;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+    .preview-intro h1 {
+      margin: 0 0 8px 0; font-size: 22px; color: var(--bedrock-navy-deep);
+      letter-spacing: -0.01em;
+    }
+    .preview-intro p {
+      margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.65;
+    }
+    .section-label {
+      max-width: 8.5in; margin: 40px auto 12px; padding: 0 8px;
+      font-size: 11px; letter-spacing: 0.22em; text-transform: uppercase;
+      font-weight: 600; color: var(--bedrock-navy-mute);
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .section-label .desc {
+      font-size: 11px; letter-spacing: 0.04em; text-transform: none;
+      font-weight: 400; color: var(--ink-muted);
+    }
+
+    /* Page container — desktop */
+    .page {
+      width: 8.5in; min-height: 9in; margin: 0 auto;
+      background: var(--paper); box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+      display: flex; flex-direction: column; position: relative; overflow: hidden;
+      padding: 0;
+    }
+
+    /* Mobile page frame */
+    .mobile-frame {
+      width: 375px; min-height: 700px; margin: 0 auto;
+      background: var(--paper); box-shadow: 0 4px 24px rgba(0,0,0,0.12);
+      border-radius: 24px; overflow: hidden;
+      padding: 0;
+    }
+    .mobile-status-bar {
+      height: 28px; background: var(--bedrock-navy-deep); color: white;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 20px; font-size: 11px; font-weight: 500;
+    }
+
+    /* Bedrock header bar — universal across pages */
+    .portal-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 18px 36px; border-bottom: 1px solid var(--rule);
+      background: white;
+    }
+    .portal-header-brand {
+      display: flex; align-items: center; gap: 10px;
+    }
+    .portal-header-brand .logo-mark {
+      width: 32px; height: 32px; background: var(--bedrock-navy-deep);
+      color: white; display: flex; align-items: center; justify-content: center;
+      border-radius: 4px; font-weight: 800; font-size: 16px;
+      font-family: 'Inter', serif;
+    }
+    .portal-header-brand .brand-text {
+      font-size: 14px; font-weight: 600; color: var(--bedrock-navy-deep);
+      letter-spacing: -0.005em;
+    }
+    .portal-header-brand .brand-text small {
+      display: block; font-size: 9px; font-weight: 500; letter-spacing: 0.14em;
+      color: var(--ink-muted); text-transform: uppercase; margin-top: 1px;
+    }
+    .portal-header-right {
+      font-size: 11px; color: var(--ink-muted); letter-spacing: 0.06em;
+    }
+    .portal-header-right a { color: var(--bedrock-navy); text-decoration: none; }
+
+    /* Page footer — universal */
+    .portal-footer {
+      border-top: 1px solid var(--rule); padding: 20px 36px;
+      display: flex; justify-content: space-between; align-items: baseline;
+      font-size: 10px; color: var(--ink-muted); letter-spacing: 0.04em;
+      margin-top: auto;
+    }
+    .portal-footer .brand {
+      color: var(--ink); font-weight: 500; letter-spacing: 0.04em;
+    }
+    .portal-footer .tag {
+      color: var(--bedrock-navy); font-weight: 600; letter-spacing: 0.08em;
+      margin-left: 4px;
+    }
+    .portal-footer-disclaimer {
+      padding: 0 36px 14px;
+      font-size: 9.5px; color: var(--ink-muted); font-style: italic;
+      line-height: 1.5; border-top: 1px solid var(--rule-soft);
+      padding-top: 10px;
+    }
+
+    /* Buttons */
+    .btn-primary, .btn-secondary, .btn-tertiary {
+      display: inline-flex; align-items: center; justify-content: center;
+      padding: 12px 20px; border-radius: 6px; font-size: 13px; font-weight: 600;
+      cursor: pointer; border: none; text-decoration: none; line-height: 1;
+      letter-spacing: 0.02em; transition: all 0.15s ease;
+      font-family: inherit;
+    }
+    .btn-primary {
+      background: var(--bedrock-navy-deep); color: white;
+    }
+    .btn-primary:hover { background: var(--bedrock-navy); }
+    .btn-secondary {
+      background: white; color: var(--bedrock-navy-deep);
+      border: 1px solid var(--bedrock-navy-mute);
+    }
+    .btn-secondary:hover { background: var(--bedrock-navy-tint); }
+    .btn-tertiary {
+      background: transparent; color: var(--bedrock-navy);
+      padding: 8px 12px; font-size: 12px;
+    }
+    .btn-tertiary:hover { color: var(--bedrock-navy-deep); text-decoration: underline; }
+
+    /* Form fields */
+    label {
+      display: block; font-size: 11px; font-weight: 600; color: var(--ink-soft);
+      letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px;
+    }
+    label .required { color: var(--accent-error); margin-left: 3px; }
+    label .hint {
+      font-size: 11px; font-weight: 400; color: var(--ink-muted);
+      letter-spacing: 0.02em; text-transform: none; display: inline-block; margin-left: 8px;
+    }
+    input[type="text"], input[type="email"], input[type="tel"], input[type="date"],
+    textarea, select {
+      width: 100%; padding: 11px 13px; font-size: 13.5px;
+      border: 1px solid #D0D7DE; border-radius: 6px;
+      background: white; color: var(--ink); font-family: inherit;
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    input:focus, textarea:focus, select:focus {
+      outline: none; border-color: var(--bedrock-navy);
+      box-shadow: 0 0 0 3px rgba(49,90,135,0.12);
+    }
+    textarea { min-height: 90px; resize: vertical; }
+    .file-drop {
+      border: 2px dashed #D0D7DE; border-radius: 6px;
+      padding: 22px 18px; text-align: center; cursor: pointer;
+      background: var(--bedrock-navy-tint); transition: all 0.15s ease;
+    }
+    .file-drop:hover {
+      border-color: var(--bedrock-navy); background: white;
+    }
+    .file-drop .icon { font-size: 24px; display: block; margin-bottom: 6px; }
+    .file-drop .label {
+      font-size: 12px; font-weight: 500; color: var(--bedrock-navy-deep);
+      letter-spacing: 0.02em; text-transform: none;
+    }
+    .file-drop .hint {
+      font-size: 11px; color: var(--ink-muted); margin-top: 4px;
+      letter-spacing: 0.02em; text-transform: none; font-weight: 400;
+    }
+
+    /* ============ PAGE 1: ADDRESS LOOKUP LANDING ============ */
+    .address-lookup-content {
+      flex: 1; display: flex; flex-direction: column; justify-content: center;
+      align-items: center; padding: 80px 36px;
+      background: linear-gradient(180deg, #ffffff 0%, var(--bedrock-navy-tint) 100%);
+    }
+    .address-lookup-content .eyebrow {
+      font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase;
+      font-weight: 600; color: var(--bedrock-navy); margin-bottom: 16px;
+    }
+    .address-lookup-content h1 {
+      font-size: 36px; font-weight: 700; color: var(--bedrock-navy-deep);
+      margin: 0 0 12px 0; letter-spacing: -0.02em; text-align: center;
+    }
+    .address-lookup-content .lede {
+      font-size: 15px; color: var(--ink-soft); margin: 0 0 38px 0;
+      text-align: center; max-width: 460px; line-height: 1.6;
+    }
+    .address-lookup-form {
+      width: 100%; max-width: 480px;
+      background: white; padding: 28px; border-radius: 10px;
+      box-shadow: 0 4px 16px rgba(0,0,0,0.06); border: 1px solid var(--rule);
+    }
+    .address-lookup-form .row { margin-bottom: 14px; }
+    .address-lookup-form .row-double {
+      display: grid; grid-template-columns: 1fr 140px; gap: 12px;
+    }
+    .address-lookup-form .btn-primary { width: 100%; padding: 14px; font-size: 14px; }
+    .address-lookup-help {
+      margin-top: 22px; text-align: center; font-size: 12px; color: var(--ink-muted);
+      max-width: 460px;
+    }
+    .address-lookup-help a { color: var(--bedrock-navy); text-decoration: none; }
+
+    /* ============ PAGE 2: COMMUNITY LANDING ============ */
+    .community-content { padding: 36px 36px 24px; flex: 1; }
+    .community-hero {
+      display: flex; align-items: center; gap: 18px; padding: 24px;
+      background: var(--bedrock-navy-tint); border-radius: 8px; margin-bottom: 32px;
+    }
+    .community-hero .community-badge {
+      width: 64px; height: 64px; background: white;
+      display: flex; align-items: center; justify-content: center;
+      border-radius: 8px; box-shadow: 0 2px 6px rgba(0,0,0,0.06);
+      font-weight: 800; font-size: 22px; color: var(--bedrock-navy-deep);
+      letter-spacing: -0.02em;
+    }
+    .community-hero h1 {
+      font-size: 26px; font-weight: 700; color: var(--bedrock-navy-deep);
+      margin: 0 0 4px 0; letter-spacing: -0.015em;
+    }
+    .community-hero p {
+      font-size: 13px; color: var(--ink-soft); margin: 0; line-height: 1.5;
+    }
+    .services-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px;
+    }
+    .service-card {
+      padding: 20px; border: 1px solid var(--rule); border-radius: 8px;
+      background: white; transition: all 0.15s ease;
+      display: flex; flex-direction: column;
+    }
+    .service-card:hover { border-color: var(--bedrock-navy); box-shadow: 0 2px 12px rgba(0,0,0,0.06); }
+    .service-card .icon {
+      font-size: 24px; margin-bottom: 12px; line-height: 1;
+    }
+    .service-card h3 {
+      font-size: 15px; font-weight: 600; color: var(--bedrock-navy-deep);
+      margin: 0 0 6px 0; letter-spacing: -0.005em;
+    }
+    .service-card .desc {
+      font-size: 12.5px; color: var(--ink-soft); margin: 0 0 14px 0;
+      line-height: 1.55; flex: 1;
+    }
+    .service-card-actions {
+      display: flex; flex-direction: column; gap: 6px;
+    }
+    .service-card .btn-primary { width: 100%; padding: 10px; font-size: 12.5px; }
+    .service-card .btn-tertiary {
+      width: 100%; padding: 6px; font-size: 11.5px;
+      color: var(--ink-muted); text-decoration: underline;
+    }
+    .services-footer {
+      display: flex; gap: 20px; padding-top: 18px; border-top: 1px solid var(--rule);
+      font-size: 12px; color: var(--ink-soft);
+    }
+    .services-footer a { color: var(--bedrock-navy); text-decoration: none; font-weight: 500; }
+
+    /* ============ PAGE 3: ARC APPLICATION FORM ============ */
+    .form-content { padding: 36px 36px 28px; flex: 1; }
+    .form-content h1 {
+      font-size: 24px; font-weight: 700; color: var(--bedrock-navy-deep);
+      margin: 0 0 6px 0; letter-spacing: -0.015em;
+    }
+    .form-content .form-lede {
+      font-size: 13px; color: var(--ink-soft); margin: 0 0 28px 0; line-height: 1.6;
+    }
+    .form-section {
+      margin-bottom: 28px; padding-bottom: 24px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .form-section:last-of-type { border-bottom: none; }
+    .form-section-label {
+      font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+      font-weight: 600; color: var(--bedrock-navy); margin-bottom: 14px;
+      display: flex; align-items: baseline; gap: 10px;
+    }
+    .form-section-label .step-num {
+      width: 22px; height: 22px; background: var(--bedrock-navy-deep); color: white;
+      border-radius: 50%; display: inline-flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 700; letter-spacing: 0;
+    }
+    .form-row { margin-bottom: 14px; }
+    .form-row-double { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .form-row-triple { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    .form-action-bar {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-top: 24px; border-top: 1px solid var(--rule); margin-top: 24px;
+    }
+    .form-action-bar-help { font-size: 11.5px; color: var(--ink-muted); }
+    .form-action-bar-buttons { display: flex; gap: 10px; }
+
+    /* ============ PAGE 4: THREE-STATE RESPONSE ============ */
+    .response-content { padding: 40px 36px; flex: 1; }
+    .response-status {
+      padding: 24px; border-radius: 8px; margin-bottom: 24px;
+      display: flex; align-items: flex-start; gap: 16px;
+    }
+    .response-status.approved {
+      background: var(--accent-success-tint);
+      border-left: 4px solid var(--accent-success);
+    }
+    .response-status.incomplete {
+      background: var(--accent-warn-tint);
+      border-left: 4px solid var(--accent-warn);
+    }
+    .response-status.concerns {
+      background: var(--accent-error-tint);
+      border-left: 4px solid var(--accent-error);
+    }
+    .response-status .icon { font-size: 32px; line-height: 1; flex-shrink: 0; }
+    .response-status .body { flex: 1; }
+    .response-status .label {
+      font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+      font-weight: 700; margin-bottom: 6px;
+    }
+    .response-status.approved .label { color: var(--accent-success); }
+    .response-status.incomplete .label { color: var(--accent-warn); }
+    .response-status.concerns .label { color: var(--accent-error); }
+    .response-status h2 {
+      font-size: 24px; font-weight: 700; color: var(--bedrock-navy-deep);
+      margin: 0 0 10px 0; letter-spacing: -0.015em; line-height: 1.2;
+    }
+    .response-status p {
+      font-size: 14px; color: var(--ink); margin: 0; line-height: 1.6;
+    }
+    .reference-badge {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 14px; background: white; border: 1px solid var(--rule);
+      border-radius: 6px; font-family: 'SF Mono', 'Monaco', monospace;
+      font-size: 13px; font-weight: 600; color: var(--bedrock-navy-deep);
+      letter-spacing: 0.04em; margin-top: 14px;
+    }
+    .reference-badge .label {
+      font-family: 'Inter', sans-serif; font-size: 10px; font-weight: 500;
+      letter-spacing: 0.14em; text-transform: uppercase; color: var(--ink-muted);
+    }
+    .response-detail { padding: 0 4px; }
+    .response-detail h3 {
+      font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
+      font-weight: 600; color: var(--bedrock-navy); margin: 24px 0 12px 0;
+    }
+    .response-detail p {
+      font-size: 13px; color: var(--ink); line-height: 1.65; margin: 0 0 14px 0;
+    }
+    .response-detail ul {
+      margin: 0 0 16px 0; padding-left: 20px; font-size: 13px;
+      color: var(--ink); line-height: 1.65;
+    }
+    .response-detail ul li { margin-bottom: 6px; }
+    .response-detail .citation {
+      font-size: 11.5px; color: var(--ink-muted); font-style: italic;
+    }
+    .response-callout-warning {
+      padding: 14px 18px; background: var(--accent-warn-tint);
+      border: 1px solid #E0D089; border-radius: 6px;
+      margin: 18px 0; font-size: 13px; line-height: 1.6;
+    }
+    .response-callout-warning strong { color: var(--accent-warn); }
+    .response-action-buttons {
+      display: flex; gap: 10px; padding-top: 20px; margin-top: 20px;
+      border-top: 1px solid var(--rule); flex-wrap: wrap;
+    }
+    .response-action-buttons .btn-primary,
+    .response-action-buttons .btn-secondary { flex: 1; min-width: 220px; }
+    .response-action-buttons .btn-tertiary { font-size: 12px; }
+
+    /* ============ MOBILE FRAME ADAPTATIONS ============ */
+    .mobile-frame .portal-header { padding: 14px 18px; }
+    .mobile-frame .portal-header-brand .brand-text { font-size: 13px; }
+    .mobile-frame .form-content { padding: 22px 18px; }
+    .mobile-frame .form-content h1 { font-size: 20px; }
+    .mobile-frame .form-row-double, .mobile-frame .form-row-triple {
+      grid-template-columns: 1fr; gap: 14px;
+    }
+    .mobile-frame .form-action-bar { flex-direction: column; align-items: stretch; gap: 12px; }
+    .mobile-frame .form-action-bar-buttons { flex-direction: column; }
+    .mobile-frame .btn-primary, .mobile-frame .btn-secondary { width: 100%; padding: 14px; }
+    .mobile-frame .portal-footer { padding: 16px 18px; flex-direction: column; gap: 4px; align-items: flex-start; }
+
+    /* End-of-preview marker */
+    .preview-end {
+      max-width: 8.5in; margin: 60px auto 80px; padding: 32px;
+      background: white; border-radius: 8px; text-align: center;
+      box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+    .preview-end h3 {
+      margin: 0 0 8px 0; color: var(--bedrock-navy-deep); font-size: 18px;
+    }
+    .preview-end p { margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.6; }
+  </style>
+</head>
+<body>
+
+<!-- ==============================
+     PREVIEW INTRO
+     ============================== -->
+<div class="preview-intro">
+  <h1>ACC Application Portal — Design Preview v0</h1>
+  <p>
+    Six pages of the owner-facing portal at <code>my.bedrocktxai.com</code>, stacked
+    for review. Same design language as the board packet preview. Eaglewood used
+    as the example community. Mobile preview of the form at the end.
+    <br><br>
+    <strong>Pages:</strong> (1) Address lookup landing, (2) Community landing,
+    (3) ARC application form, (4a) Likely Approved response, (4b) Incomplete response,
+    (4c) Concerns Identified response, (5) Status check page.
+  </p>
+</div>
+
+<!-- ==============================
+     PAGE 1 — ADDRESS LOOKUP LANDING
+     ============================== -->
+<div class="section-label">
+  <span>Page 1 — Root landing</span>
+  <span class="desc">my.bedrocktxai.com — no community list exposed</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>A Division of Bedrock Association Management</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="address-lookup-content">
+    <div class="eyebrow">Find your community to begin</div>
+    <h1>Apply or request<br>a community service</h1>
+    <p class="lede">
+      ARC applications, key fob requests, gate cards, pet registrations, and more.
+      Enter your property address to find your community.
+    </p>
+
+    <div class="address-lookup-form">
+      <div class="row">
+        <label>Property street address<span class="required">*</span></label>
+        <input type="text" placeholder="1234 Example Drive">
+      </div>
+      <div class="row row-double">
+        <div>
+          <label>City</label>
+          <input type="text" placeholder="Stafford">
+        </div>
+        <div>
+          <label>ZIP code<span class="required">*</span></label>
+          <input type="text" placeholder="77477">
+        </div>
+      </div>
+      <button class="btn-primary">Find My Community →</button>
+    </div>
+
+    <p class="address-lookup-help">
+      Can't find your address? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a>
+      and we'll help you verify.
+    </p>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>(832) 588-2485</span>
+  </div>
+</div>
+
+<!-- ==============================
+     PAGE 2 — COMMUNITY LANDING
+     ============================== -->
+<div class="section-label">
+  <span>Page 2 — Community portal</span>
+  <span class="desc">my.bedrocktxai.com/eaglewood — services menu</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>A Division of Bedrock Association Management</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">Check status</a> · <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="community-content">
+    <div class="community-hero">
+      <div class="community-badge">EW</div>
+      <div>
+        <h1>Eaglewood</h1>
+        <p>Apply for community services. You'll get an initial response within minutes for most requests.</p>
+      </div>
+    </div>
+
+    <div class="services-grid">
+      <div class="service-card">
+        <div class="icon">🏗️</div>
+        <h3>Architectural Review (ARC)</h3>
+        <p class="desc">
+          Modify your home — fence, paint, addition, landscape, roof, or other exterior changes.
+          Approved or denied within 30 days.
+        </p>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online — instant response</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="icon">🏊</div>
+        <h3>Pool / Amenity Access</h3>
+        <p class="desc">
+          Request key fobs for the pool, gym, or clubhouse. Replacement fobs available
+          (fee may apply).
+        </p>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="icon">🚗</div>
+        <h3>Gate / Vehicle Access</h3>
+        <p class="desc">
+          Register vehicles for community gate access. Up to 2 vehicles per unit.
+          Additional vehicles require board approval.
+        </p>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="icon">🐾</div>
+        <h3>Pet Registration</h3>
+        <p class="desc">
+          Register pets per community rules. Vaccination records and breed restrictions
+          apply per Article IX.
+        </p>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="services-footer">
+      <span>Need something else? <a href="#">Email us at info@bedrocktx.com</a></span>
+      <span>·</span>
+      <span>Already applied? <a href="#">Check your application status →</a></span>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Eaglewood · (832) 588-2485</span>
+  </div>
+</div>
+
+<!-- ==============================
+     PAGE 3 — ARC APPLICATION FORM
+     ============================== -->
+<div class="section-label">
+  <span>Page 3 — ARC Application Form</span>
+  <span class="desc">my.bedrocktxai.com/eaglewood/arc</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Eaglewood · Architectural Review Application</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">← Back to Eaglewood</a>
+    </div>
+  </div>
+
+  <div class="form-content">
+    <h1>Architectural Review Application</h1>
+    <p class="form-lede">
+      Complete this application to request approval for a modification to your property.
+      You'll receive an initial assessment as soon as you submit, and the Architectural
+      Control Committee will provide formal written approval within 30 days as required
+      by Texas Property Code §209.00505.
+    </p>
+
+    <!-- SECTION 1 -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">1</span> Your information
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Full name<span class="required">*</span></label>
+          <input type="text" placeholder="Your name">
+        </div>
+        <div>
+          <label>Email address<span class="required">*</span></label>
+          <input type="email" placeholder="you@example.com">
+        </div>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Property address<span class="required">*</span></label>
+          <input type="text" placeholder="1234 Example Drive">
+        </div>
+        <div>
+          <label>Phone<span class="required">*</span></label>
+          <input type="tel" placeholder="(832) 555-1234">
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 2 -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">2</span> Modification details
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Type of work<span class="required">*</span></label>
+          <select>
+            <option>— Select type of work —</option>
+            <option>Paint / Color Change</option>
+            <option>Fence (install or replace)</option>
+            <option>Roof (replace)</option>
+            <option>Landscape / Plantings</option>
+            <option>Addition / Extension</option>
+            <option>Pool / Spa</option>
+            <option>Driveway / Hardscape</option>
+            <option>Solar Panels</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <div>
+          <label>Estimated total cost <span class="hint">if known</span></label>
+          <input type="text" placeholder="$">
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Description of proposed work<span class="required">*</span></label>
+        <textarea placeholder="Describe what you'd like to do, including location on the property, scope, materials, colors, and dimensions. The more detail, the faster we can review."></textarea>
+      </div>
+      <div class="form-row form-row-triple">
+        <div>
+          <label>Materials</label>
+          <input type="text" placeholder="e.g., cedar wood">
+        </div>
+        <div>
+          <label>Color(s)</label>
+          <input type="text" placeholder="e.g., natural stain">
+        </div>
+        <div>
+          <label>Dimensions <span class="hint">if applicable</span></label>
+          <input type="text" placeholder="e.g., 6 ft × 50 ft">
+        </div>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Estimated start date</label>
+          <input type="date">
+        </div>
+        <div>
+          <label>Estimated completion date</label>
+          <input type="date">
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 3 -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">3</span> Contractor <span class="hint" style="font-size:11px; font-weight:400; letter-spacing:0;">— optional, but recommended for larger work</span>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Contractor / company name</label>
+          <input type="text" placeholder="Contractor name">
+        </div>
+        <div>
+          <label>Contractor phone or email</label>
+          <input type="text" placeholder="(832) 555-9876 or contractor@email.com">
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Insurance / license docs <span class="hint">PDF or image</span></label>
+        <div class="file-drop">
+          <span class="icon">📄</span>
+          <span class="label">Click or drag certificate of insurance / contractor license</span>
+          <div class="hint">PDF or image, up to 10 MB</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 4 -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">4</span> Photos &amp; plans
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Current condition photos <span class="required">*</span> <span class="hint">multiple OK</span></label>
+          <div class="file-drop">
+            <span class="icon">📷</span>
+            <span class="label">Drop photos of current state</span>
+            <div class="hint">JPG / PNG / HEIC up to 20 MB each</div>
+          </div>
+        </div>
+        <div>
+          <label>Inspiration / example photos <span class="hint">if applicable</span></label>
+          <div class="file-drop">
+            <span class="icon">🖼️</span>
+            <span class="label">Drop reference photos</span>
+            <div class="hint">JPG / PNG / HEIC up to 20 MB each</div>
+          </div>
+        </div>
+      </div>
+      <div class="form-row">
+        <label>Site plan or sketch <span class="required">*</span></label>
+        <div class="file-drop">
+          <span class="icon">📐</span>
+          <span class="label">Drop site plan, survey, or hand-drawn sketch showing the modification location</span>
+          <div class="hint">PDF or image, up to 25 MB. Hand-drawn sketches are fine — just include measurements.</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-action-bar">
+      <div class="form-action-bar-help">
+        Required fields marked with <span style="color:var(--accent-error)">*</span>.
+        You'll get an initial assessment immediately after submitting.
+      </div>
+      <div class="form-action-bar-buttons">
+        <button class="btn-secondary">Save as Draft</button>
+        <button class="btn-primary">Submit Application →</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Eaglewood · ARC Application</span>
+  </div>
+  <div class="portal-footer-disclaimer">
+    This online application is an initial intake. Final approval requires Architectural Control Committee review per Texas Property Code §209.00505. Do not begin any work until you receive formal written approval.
+  </div>
+</div>
+
+<!-- ==============================
+     PAGE 4a — LIKELY APPROVED RESPONSE
+     ============================== -->
+<div class="section-label">
+  <span>Page 4a — Three-state response: Likely Approved</span>
+  <span class="desc">~70% of well-prepared applications</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Eaglewood · Application Received</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="response-content">
+    <div class="response-status approved">
+      <span class="icon">✓</span>
+      <div class="body">
+        <div class="label">Initial assessment</div>
+        <h2>Likely to be approved</h2>
+        <p>
+          Based on Eaglewood's architectural guidelines, your fence application
+          appears to comply with the relevant sections of the community's Rules &amp;
+          Regulations and Design Standards.
+        </p>
+        <div class="reference-badge">
+          <span class="label">Reference</span>
+          EAG-ARC-2026-0042
+        </div>
+      </div>
+    </div>
+
+    <div class="response-detail">
+      <h3>Why we say "likely"</h3>
+      <p>
+        This is a preliminary assessment based on the information you submitted and
+        Eaglewood's published guidelines. The Architectural Control Committee will
+        provide a formal written decision within 30 days as required by Texas
+        Property Code §209.00505.
+      </p>
+
+      <h3>Guidelines this application meets</h3>
+      <ul>
+        <li>Cedar is on the approved material list <span class="citation">(Design Standards §4.2)</span></li>
+        <li>Proposed height (6 ft) is within the community maximum <span class="citation">(Rules &amp; Regulations Article V §3)</span></li>
+        <li>Rear yard location does not impact adjacent property setbacks <span class="citation">(Article V §4)</span></li>
+      </ul>
+
+      <div class="response-callout-warning">
+        <strong>Important — read before beginning:</strong>
+        Do NOT begin any work until you receive the formal written approval letter
+        from the Architectural Control Committee. Beginning work without final
+        approval may result in fines, a stop-work order, or a requirement to remove
+        the modification at your expense. The committee will respond within 30 days.
+      </div>
+
+      <h3>What happens next</h3>
+      <ul>
+        <li>You'll receive an email confirmation in the next few minutes</li>
+        <li>The Architectural Control Committee will review and provide a formal decision within 30 days</li>
+        <li>You'll receive the formal approval (or any clarifying questions) by email</li>
+        <li>Check your application status anytime at <strong>my.bedrocktxai.com/status/EAG-ARC-2026-0042</strong></li>
+      </ul>
+
+      <div class="response-action-buttons">
+        <button class="btn-primary">Download a copy of this assessment</button>
+        <button class="btn-secondary">Check status later</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Eaglewood · EAG-ARC-2026-0042</span>
+  </div>
+</div>
+
+<!-- ==============================
+     PAGE 4b — INCOMPLETE RESPONSE
+     ============================== -->
+<div class="section-label">
+  <span>Page 4b — Three-state response: Incomplete</span>
+  <span class="desc">~20% — missing required info, owner returns to fix</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Eaglewood · Application Received</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="response-content">
+    <div class="response-status incomplete">
+      <span class="icon">⚠</span>
+      <div class="body">
+        <div class="label">Initial assessment</div>
+        <h2>Your application needs more information</h2>
+        <p>
+          We received your fence application, but a few required items are missing or
+          need clarification before the Architectural Control Committee can review it.
+        </p>
+        <div class="reference-badge">
+          <span class="label">Reference</span>
+          EAG-ARC-2026-0042
+        </div>
+      </div>
+    </div>
+
+    <div class="response-detail">
+      <h3>What we need from you</h3>
+      <ul>
+        <li><strong>Site plan with dimensions</strong> — please upload a sketch or survey showing the fence location and exact length</li>
+        <li><strong>Material specification</strong> — you indicated "wood" but didn't specify the type. Please confirm: cedar, redwood, composite, or other?</li>
+        <li><strong>Photo of contractor's license</strong> — your application lists a contractor but no license / insurance document is attached</li>
+      </ul>
+
+      <p>
+        Most applications with missing information can be completed in a few minutes.
+        Once you provide these items, your application will return to the queue with
+        an updated assessment — usually within seconds of resubmitting.
+      </p>
+
+      <h3>How to return to your application</h3>
+      <ul>
+        <li><strong>Magic link in your email</strong> — we just sent you a link that opens your application directly. Click it, add the missing info, hit Submit again.</li>
+        <li><strong>Reference number lookup</strong> — go to <strong>my.bedrocktxai.com/status</strong>, enter <code>EAG-ARC-2026-0042</code> and your email address.</li>
+      </ul>
+
+      <div class="response-callout-warning">
+        <strong>Your application is saved.</strong>
+        Nothing you've entered will be lost. The Architectural Control Committee's 30-day
+        review clock per TX Property Code §209.00505 starts only once your application is
+        complete.
+      </div>
+
+      <div class="response-action-buttons">
+        <button class="btn-primary">Return and add information →</button>
+        <button class="btn-secondary">Save and come back later</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Eaglewood · EAG-ARC-2026-0042</span>
+  </div>
+</div>
+
+<!-- ==============================
+     PAGE 4c — CONCERNS IDENTIFIED RESPONSE
+     ============================== -->
+<div class="section-label">
+  <span>Page 4c — Three-state response: Concerns Identified</span>
+  <span class="desc">~10% — preliminary denial signal, but owner has the right to proceed</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Eaglewood · Application Received</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="response-content">
+    <div class="response-status concerns">
+      <span class="icon">!</span>
+      <div class="body">
+        <div class="label">Initial assessment</div>
+        <h2>Concerns identified — likely to be denied as currently submitted</h2>
+        <p>
+          We received your fence application. Based on Eaglewood's architectural
+          guidelines, the following concerns were identified that may prevent
+          formal approval.
+        </p>
+        <div class="reference-badge">
+          <span class="label">Reference</span>
+          EAG-ARC-2026-0042
+        </div>
+      </div>
+    </div>
+
+    <div class="response-detail">
+      <h3>Specific concerns</h3>
+      <ul>
+        <li>
+          <strong>Proposed fence height (8 ft) exceeds community maximum</strong> — Eaglewood
+          limits exterior fence height to 6 ft <span class="citation">(Rules &amp; Regulations Article V §3)</span>.
+          A height variance would require board approval as an exception.
+        </li>
+        <li>
+          <strong>Vinyl is not on the approved material list</strong> — approved fence materials
+          for Eaglewood are cedar, redwood, composite, and wrought iron
+          <span class="citation">(Design Standards §4.2)</span>. Vinyl is not currently approved.
+        </li>
+      </ul>
+
+      <p>
+        Most applications with concerns like these can be approved after adjustment —
+        for example, reducing the height to 6 ft and switching to an approved material
+        would resolve both items. You're welcome to revise and resubmit at no cost.
+      </p>
+
+      <h3>Your two options</h3>
+      <p>
+        Per Texas Property Code §209.00505, you have the right to submit your application
+        as-is for formal Architectural Control Committee review. The committee will respond
+        within 30 days with a written decision — which, based on the guidelines above,
+        is likely to be a denial. You may also revise and resubmit at no cost.
+      </p>
+
+      <div class="response-callout-warning">
+        <strong>Note on revising:</strong> Revising your application doesn't restart any clock
+        or affect your standing. Most owners in this situation choose to adjust the application
+        rather than wait for a formal denial. We're here to help if you have questions about
+        the guidelines.
+      </div>
+
+      <div class="response-action-buttons">
+        <button class="btn-primary">Revise my application →</button>
+        <button class="btn-secondary">Submit anyway for formal review</button>
+        <a href="#" class="btn-tertiary">Email us with questions →</a>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Eaglewood · EAG-ARC-2026-0042</span>
+  </div>
+</div>
+
+<!-- ==============================
+     PAGE 5 — STATUS CHECK PAGE
+     ============================== -->
+<div class="section-label">
+  <span>Page 5 — Status check (bonus)</span>
+  <span class="desc">my.bedrocktxai.com/status/EAG-ARC-2026-0042 — owner returns to check</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Eaglewood · Application Status</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="response-content">
+    <div style="padding: 0 4px 18px;">
+      <div class="form-section-label" style="margin-bottom: 6px;">
+        <span style="font-family: 'SF Mono', monospace; letter-spacing: 0.04em;">EAG-ARC-2026-0042</span>
+      </div>
+      <h1 style="font-size: 22px; font-weight:700; color: var(--bedrock-navy-deep); margin: 0 0 6px 0; letter-spacing: -0.015em;">
+        Fence — 6 ft cedar — rear yard
+      </h1>
+      <p style="font-size:13px; color: var(--ink-soft); margin:0;">
+        Submitted Tuesday, May 12, 2026 · Initial assessment: Likely Approved
+      </p>
+    </div>
+
+    <div class="response-status approved" style="margin-bottom: 18px;">
+      <span class="icon">⏳</span>
+      <div class="body">
+        <div class="label">Current status</div>
+        <h2 style="font-size:18px;">Awaiting Architectural Control Committee review</h2>
+        <p>
+          Your application is in the queue for formal committee review. Per Texas Property
+          Code §209.00505, the committee has up to 30 days from your submission date to
+          respond — that's by <strong>June 11, 2026</strong>.
+        </p>
+      </div>
+    </div>
+
+    <div class="response-detail">
+      <h3>Timeline</h3>
+      <ul>
+        <li><strong>May 12, 2026 — Application submitted</strong> — initial assessment: likely approved</li>
+        <li><strong>May 13, 2026 — Manager review</strong> — confirmed assessment, queued for committee</li>
+        <li><strong>Pending</strong> — Architectural Control Committee formal review (by June 11, 2026)</li>
+        <li><strong>Pending</strong> — Formal written approval letter</li>
+      </ul>
+
+      <h3>What you submitted</h3>
+      <ul>
+        <li>6 ft cedar fence, natural stain finish, rear yard along east property line</li>
+        <li>Approximate dimensions: 6 ft × 50 ft</li>
+        <li>Contractor: Lone Star Fencing (license attached)</li>
+        <li>Estimated start: June 15, 2026</li>
+      </ul>
+
+      <div class="response-action-buttons">
+        <button class="btn-secondary">Email manager about my application</button>
+        <button class="btn-secondary">Download my application as PDF</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>EAG-ARC-2026-0042</span>
+  </div>
+</div>
+
+<!-- ==============================
+     MOBILE PREVIEW — ARC FORM
+     ============================== -->
+<div class="section-label" style="margin-top: 60px;">
+  <span>Mobile preview — ARC form (375 px)</span>
+  <span class="desc">how the form looks on phones</span>
+</div>
+<div class="mobile-frame">
+  <div class="mobile-status-bar">
+    <span>9:41</span>
+    <span>my.bedrocktxai.com</span>
+    <span>🔋</span>
+  </div>
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark" style="width:26px; height:26px; font-size:14px;">B</div>
+      <div class="brand-text" style="font-size:12px;">
+        Eaglewood
+        <small style="font-size:8px;">ARC Application</small>
+      </div>
+    </div>
+  </div>
+
+  <div class="form-content">
+    <h1>Architectural Review Application</h1>
+    <p class="form-lede" style="font-size:12px;">
+      Complete this to request approval for a modification. You'll get an initial
+      assessment as soon as you submit.
+    </p>
+
+    <div class="form-section">
+      <div class="form-section-label" style="font-size:10px;">
+        <span class="step-num" style="width:18px; height:18px; font-size:10px;">1</span>
+        Your information
+      </div>
+      <div class="form-row">
+        <label>Full name<span class="required">*</span></label>
+        <input type="text" placeholder="Your name">
+      </div>
+      <div class="form-row">
+        <label>Email<span class="required">*</span></label>
+        <input type="email" placeholder="you@example.com">
+      </div>
+      <div class="form-row">
+        <label>Property address<span class="required">*</span></label>
+        <input type="text" placeholder="1234 Example Drive">
+      </div>
+    </div>
+
+    <div class="form-section">
+      <div class="form-section-label" style="font-size:10px;">
+        <span class="step-num" style="width:18px; height:18px; font-size:10px;">2</span>
+        Modification details
+      </div>
+      <div class="form-row">
+        <label>Type of work<span class="required">*</span></label>
+        <select>
+          <option>— Select —</option>
+          <option>Paint</option>
+          <option>Fence</option>
+          <option>Roof</option>
+          <option>Landscape</option>
+          <option>Addition</option>
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Describe the work<span class="required">*</span></label>
+        <textarea placeholder="What you'd like to do, materials, dimensions..."></textarea>
+      </div>
+    </div>
+
+    <div class="form-action-bar">
+      <div class="form-action-bar-buttons">
+        <button class="btn-primary">Submit Application →</button>
+        <button class="btn-secondary">Save as Draft</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span class="brand" style="font-size:9px;">Bedrock Association Management</span>
+    <span style="font-size:9px;">(832) 588-2485</span>
+  </div>
+</div>
+
+<!-- ==============================
+     END OF PREVIEW
+     ============================== -->
+<div class="preview-end">
+  <h3>End of design preview</h3>
+  <p>
+    Six pages of the owner-facing ACC portal, plus mobile form view.
+    Ready for Ed's feedback before backend wiring.<br>
+    <em>v0 — May 2026</em>
+  </p>
+</div>
+
+</body>
+</html>
