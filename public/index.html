@@ -249,6 +249,7 @@
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
   <div class="tab" onclick="switchTab('recaps')">📰 Recaps</div>
   <div class="tab" onclick="switchTab('archistory')">🏗️ ACC History</div>
+  <div class="tab" onclick="switchTab('accqueue')">📋 ACC Queue</div>
 </div>
 
 <!-- Chat Tab -->
@@ -4113,6 +4114,449 @@
     if (t) t.addEventListener('click', () => ahInit());
   })();
   try { ahInit(); } catch (e) { console.warn('eager ahInit', e); }
+</script>
+
+<!-- ============================================================
+     📋 ACC Queue tab — manager to-do list + AI recommendation + finalize
+     ============================================================ -->
+<div class="tab-content" id="tab-accqueue" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1280px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📋 ACC Queue</h2>
+        <p style="font-size:13px; color:#666; max-width:720px;">Applications submitted by homeowners. trustEd has already drafted a recommendation for each — your job is to review, approve/modify/deny, and send the response. <strong>Speed matters</strong> — the homeowner saw the preliminary preview the moment they submitted, and they're waiting on the official decision.</p>
+      </div>
+      <div style="text-align:right;">
+        <div id="acc-stats-pills" style="font-size:11px;"></div>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center;">
+      <select id="acc-filter-community" class="draft-type-select" onchange="accLoadList()">
+        <option value="">All communities</option>
+      </select>
+      <select id="acc-filter-status" class="draft-type-select" onchange="accLoadList()">
+        <option value="pending_committee_review">⏳ Awaiting review (default)</option>
+        <option value="">All statuses</option>
+        <option value="approved">✓ Approved</option>
+        <option value="denied">✗ Denied</option>
+        <option value="withdrawn">↩ Withdrawn</option>
+        <option value="closed">Closed</option>
+      </select>
+      <input id="acc-search" type="search" placeholder="Reference, name, address…" oninput="accSearchDebounced()" style="flex:1; min-width:240px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
+      <button class="secondary-btn" onclick="accLoadList()" style="font-size:13px;">⟳ Refresh</button>
+    </div>
+
+    <div id="acc-list-view">
+      <div id="acc-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <div id="acc-empty" style="display:none; background:#f5f8fc; border:1px dashed #c0d0e0; border-radius:8px; padding:32px; text-align:center; color:#5a7390;">
+        No applications in this filter. When homeowners submit via the public portal, they'll appear here automatically.
+      </div>
+    </div>
+
+    <div id="acc-detail-view" style="display:none;"></div>
+  </div>
+
+  <style>
+    .acc-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 140px 1fr 180px 130px 110px; gap:14px; align-items:center; cursor:pointer; transition: all 0.12s; }
+    .acc-row:hover { border-color:#1a3a5c; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(26,58,92,0.08); }
+    .acc-row.urgent { border-left: 4px solid #ea580c; }
+    .acc-row .ref { font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#1a3a5c; font-weight:600; }
+    .acc-row .submitter { font-weight:700; color:#1a3a5c; font-size:14px; }
+    .acc-row .addr { font-size:12px; color:#5a7390; margin-top:2px; }
+    .acc-row .summary { font-size:12px; color:#444; margin-top:5px; line-height:1.45; }
+    .acc-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+    .acc-pill-likely { background:#dcfce7; color:#166534; }
+    .acc-pill-incomplete { background:#fef3c7; color:#92400e; }
+    .acc-pill-concerns { background:#fee2e2; color:#991b1b; }
+    .acc-pill-manual { background:#e0e7ff; color:#3730a3; }
+    .acc-pill-approved { background:#dcfce7; color:#166534; }
+    .acc-pill-denied { background:#fee2e2; color:#991b1b; }
+    .acc-pill-pending { background:#fef3c7; color:#92400e; }
+    .acc-age { font-size:11px; color:#5a7390; }
+    .acc-age.warn { color:#ea580c; font-weight:600; }
+    .acc-age.danger { color:#dc2626; font-weight:700; }
+
+    .acc-stats-pill { display:inline-block; padding:4px 11px; border-radius:99px; background:#f1f5f9; color:#475569; font-weight:600; font-size:11px; margin-left:6px; }
+    .acc-stats-pill.amber { background:#fef3c7; color:#92400e; }
+    .acc-stats-pill.green { background:#dcfce7; color:#166534; }
+    .acc-stats-pill.red { background:#fee2e2; color:#991b1b; }
+
+    .acc-card { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:14px; }
+    .acc-card h3 { font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
+    .acc-ai-card { background: linear-gradient(135deg, #fafbff 0%, #f1f5fa 100%); border-color:#c5d3e8; }
+    .acc-ai-card h3 { color:#1a3a5c; }
+    .acc-ai-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
+    .acc-action-btn { padding:9px 18px; border-radius:8px; font:inherit; font-size:13px; font-weight:600; cursor:pointer; border: 1px solid transparent; }
+    .acc-action-btn.approve { background:#16a34a; color:#fff; border-color:#15803d; }
+    .acc-action-btn.modify { background:#1a3a5c; color:#fff; border-color:#0f2942; }
+    .acc-action-btn.conditional { background:#d97706; color:#fff; border-color:#b45309; }
+    .acc-action-btn.deny { background:#dc2626; color:#fff; border-color:#b91c1c; }
+    .acc-action-btn.more-info { background:#fff; color:#1a3a5c; border-color:#1a3a5c; }
+    .acc-action-btn:active { transform: scale(0.97); }
+    .acc-action-btn:hover { filter: brightness(1.05); }
+
+    .acc-field-pair { display:grid; grid-template-columns: 140px 1fr; gap:10px; padding:6px 0; font-size:13px; border-bottom: 1px solid #f0f2f5; }
+    .acc-field-pair:last-child { border-bottom: none; }
+    .acc-field-pair .k { font-weight:600; color:#5a7390; }
+  </style>
+</div>
+
+<script>
+  // ============================================================
+  // ACC Queue tab
+  // ============================================================
+  let accCommunities = [];
+  let accCurrentList = [];
+  let accCurrent = null;       // { application, assessments, responses, attachments }
+
+  async function accInit() {
+    if (accCommunities.length === 0) {
+      try {
+        const r = await fetch('/api/billing/communities');
+        const j = await r.json();
+        accCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+        const sel = document.getElementById('acc-filter-community');
+        while (sel.options.length > 1) sel.remove(1);
+        accCommunities.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id; opt.textContent = c.name;
+          sel.appendChild(opt);
+        });
+      } catch (err) { console.warn('accInit', err); }
+    }
+    accLoadList();
+  }
+
+  let accSearchTimer = null;
+  function accSearchDebounced() {
+    clearTimeout(accSearchTimer);
+    accSearchTimer = setTimeout(accLoadList, 250);
+  }
+
+  async function accLoadList() {
+    const params = new URLSearchParams();
+    const cid = document.getElementById('acc-filter-community').value;
+    const status = document.getElementById('acc-filter-status').value;
+    if (cid) params.set('community_id', cid);
+    if (status) params.set('final_status', status);
+    try {
+      const r = await fetch('/api/applications?' + params.toString());
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      accCurrentList = j.applications || [];
+      // Apply free-text search client-side
+      const q = document.getElementById('acc-search').value.trim().toLowerCase();
+      if (q) {
+        accCurrentList = accCurrentList.filter(a => {
+          const hay = `${a.reference_number || ''} ${a.submitter_name || ''} ${a.submitter_email || ''} ${a.property_address || ''} ${a.assessment_summary || ''}`.toLowerCase();
+          return hay.includes(q);
+        });
+      }
+      accRenderList();
+      accRenderStats();
+    } catch (err) { console.warn('accLoadList', err); }
+  }
+
+  function accRenderStats() {
+    const wrap = document.getElementById('acc-stats-pills');
+    if (!wrap) return;
+    const all = accCurrentList;
+    const pending = all.filter(a => a.final_status === 'pending_committee_review').length;
+    const overdue = all.filter(a => {
+      if (a.final_status !== 'pending_committee_review' || !a.submitted_at) return false;
+      const age = (Date.now() - new Date(a.submitted_at).getTime()) / 1000 / 3600;
+      return age > 24;
+    }).length;
+    const approved = all.filter(a => a.final_status === 'approved').length;
+    wrap.innerHTML = `
+      <span class="acc-stats-pill amber">${pending} pending</span>
+      ${overdue > 0 ? `<span class="acc-stats-pill red">${overdue} over 24h</span>` : ''}
+      <span class="acc-stats-pill green">${approved} approved</span>
+    `;
+  }
+
+  function accRenderList() {
+    const wrap = document.getElementById('acc-list');
+    const empty = document.getElementById('acc-empty');
+    if (accCurrentList.length === 0) {
+      wrap.innerHTML = ''; empty.style.display = ''; return;
+    }
+    empty.style.display = 'none';
+    wrap.innerHTML = accCurrentList.map(a => {
+      const submitted = a.submitted_at ? new Date(a.submitted_at) : null;
+      const ageHours = submitted ? (Date.now() - submitted.getTime()) / 1000 / 3600 : null;
+      const ageClass = ageHours == null ? '' : (ageHours > 48 ? 'danger' : ageHours > 24 ? 'warn' : '');
+      const ageTxt = ageHours == null ? '—' : (ageHours < 1 ? `${Math.round(ageHours*60)}m ago` : ageHours < 24 ? `${Math.round(ageHours)}h ago` : `${Math.round(ageHours/24)}d ago`);
+      const urgent = a.final_status === 'pending_committee_review' && ageHours > 24;
+
+      const aiPill = a.assessment_status ? `<span class="acc-pill acc-pill-${a.assessment_status === 'likely_approved' ? 'likely' : a.assessment_status === 'concerns_identified' ? 'concerns' : a.assessment_status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(a.assessment_status)}</span>` : '';
+
+      const finalPill = a.final_status === 'approved' ? '<span class="acc-pill acc-pill-approved">✓ Approved</span>'
+                       : a.final_status === 'denied' ? '<span class="acc-pill acc-pill-denied">✗ Denied</span>'
+                       : '<span class="acc-pill acc-pill-pending">⏳ Pending</span>';
+
+      return `
+        <div class="acc-row ${urgent ? 'urgent' : ''}" onclick="accOpenDetail('${a.id}')">
+          <div>
+            <div class="ref">${accEsc(a.reference_number)}</div>
+            <div style="font-size:11px; color:#888; margin-top:3px;">${accEsc(a.community?.name || '')}</div>
+          </div>
+          <div>
+            <div class="submitter">${accEsc(a.submitter_name)}</div>
+            <div class="addr">${accEsc(a.property_address)}</div>
+            ${a.assessment_summary ? `<div class="summary">${accEsc(a.assessment_summary)}</div>` : ''}
+          </div>
+          <div>
+            <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">AI assessment</strong>
+            ${aiPill}
+          </div>
+          <div>
+            <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Status</strong>
+            ${finalPill}
+          </div>
+          <div class="acc-age ${ageClass}">${ageTxt}</div>
+        </div>`;
+    }).join('');
+  }
+
+  function accFormatAssessmentStatus(s) {
+    switch (s) {
+      case 'likely_approved': return '✓ Likely approve';
+      case 'incomplete': return '📝 Incomplete';
+      case 'concerns_identified': return '⚠ Concerns';
+      case 'manual_review': return '👤 Manual';
+      default: return s || '—';
+    }
+  }
+
+  async function accOpenDetail(id) {
+    try {
+      const r = await fetch('/api/applications/' + id);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      accCurrent = j;
+      accRenderDetail();
+    } catch (err) { alert('Load failed: ' + err.message); }
+  }
+
+  function accBackToList() {
+    document.getElementById('acc-detail-view').style.display = 'none';
+    document.getElementById('acc-list-view').style.display = '';
+    accLoadList();
+  }
+
+  function accRenderDetail() {
+    const a = accCurrent.application;
+    const latestAssess = accCurrent.assessments[0];
+    const view = document.getElementById('acc-detail-view');
+    document.getElementById('acc-list-view').style.display = 'none';
+    view.style.display = '';
+
+    const appData = a.application_data || {};
+    const submitted = a.submitted_at ? new Date(a.submitted_at).toLocaleString() : null;
+    const ageHours = a.submitted_at ? (Date.now() - new Date(a.submitted_at).getTime()) / 1000 / 3600 : null;
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button class="secondary-btn" onclick="accBackToList()" style="font-size:13px;">← Back to queue</button>
+      </div>
+
+      <div class="acc-card">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+          <div>
+            <div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#1a3a5c; font-weight:700; margin-bottom:6px;">${accEsc(a.reference_number)}</div>
+            <h2 style="font-size:22px; font-weight:700; color:#1a3a5c;">${accEsc(a.submitter_name)} — ${accEsc(a.property_address)}</h2>
+            <div style="font-size:13px; color:#5a7390; margin-top:4px;">
+              ${accEsc(a.community?.name || '')} · ${accEsc(a.submitter_email)}${a.submitter_phone ? ' · ' + accEsc(a.submitter_phone) : ''}${submitted ? ' · Submitted ' + accEsc(submitted) : ''}
+            </div>
+            ${ageHours != null && a.final_status === 'pending_committee_review' && ageHours > 24
+              ? '<div style="margin-top:8px; padding:6px 12px; background:#fee2e2; color:#991b1b; border-radius:6px; font-size:12px; font-weight:600; display:inline-block;">⚠ Pending for ' + Math.round(ageHours) + ' hours — homeowner is waiting</div>'
+              : ''
+            }
+          </div>
+        </div>
+      </div>
+
+      <!-- AI assessment -->
+      ${latestAssess ? `
+        <div class="acc-card acc-ai-card">
+          <h3>🤖 Preliminary AI assessment</h3>
+          <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
+            <span class="acc-pill acc-pill-${latestAssess.status === 'likely_approved' ? 'likely' : latestAssess.status === 'concerns_identified' ? 'concerns' : latestAssess.status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(latestAssess.status)}</span>
+            <span style="font-size:11px; color:#5a7390; align-self:center;">Confidence: <strong>${accEsc(latestAssess.confidence || '—')}</strong></span>
+            <button class="secondary-btn" onclick="accReassess('${a.id}')" style="margin-left:auto; padding:4px 10px; font-size:11px;">🔄 Re-assess</button>
+          </div>
+          ${latestAssess.summary ? `<div style="font-size:14px; line-height:1.6; margin-bottom:12px;"><strong>Summary:</strong> ${accEsc(latestAssess.summary)}</div>` : ''}
+          ${(latestAssess.concerns || []).length > 0 ? `
+            <div style="margin-bottom:10px;">
+              <strong style="font-size:12px; color:#5a7390;">⚠ Concerns:</strong>
+              <ul style="margin:4px 0 0; padding-left:22px; font-size:13px;">
+                ${latestAssess.concerns.map(c => `<li><strong>${accEsc(c.concern || '')}</strong>${c.citation ? ` <span style="color:#666; font-size:11px;">(${accEsc(c.citation)})</span>` : ''}${c.severity ? ` <span class="acc-pill acc-pill-${c.severity === 'high' ? 'concerns' : c.severity === 'medium' ? 'incomplete' : 'manual'}" style="font-size:9px;">${accEsc(c.severity)}</span>` : ''}</li>`).join('')}
+              </ul>
+            </div>` : ''
+          }
+          ${(latestAssess.missing_items || []).length > 0 ? `
+            <div style="margin-bottom:10px;">
+              <strong style="font-size:12px; color:#5a7390;">📝 Missing items:</strong>
+              <ul style="margin:4px 0 0; padding-left:22px; font-size:13px;">
+                ${latestAssess.missing_items.map(m => `<li>${accEsc(m.item || '')}${m.required ? ' <strong style="color:#b91c1c; font-size:11px;">REQUIRED</strong>' : ''}${m.hint ? ` <span style="color:#666; font-size:11px;">— ${accEsc(m.hint)}</span>` : ''}</li>`).join('')}
+              </ul>
+            </div>` : ''
+          }
+          ${(latestAssess.citations || []).length > 0 ? `
+            <details style="margin-top:10px;">
+              <summary style="cursor:pointer; font-size:12px; font-weight:600; color:#5a7390;">📚 Cited sources</summary>
+              <ul style="margin:6px 0 0; padding-left:22px; font-size:12px;">
+                ${latestAssess.citations.map(c => `<li><strong>${accEsc(c.document || '')}</strong>${c.section ? ` · ${accEsc(c.section)}` : ''}${c.quote ? `: <em>"${accEsc(c.quote)}"</em>` : ''}</li>`).join('')}
+              </ul>
+            </details>` : ''
+          }
+        </div>` : '<div class="acc-card">No AI assessment yet. <button class="secondary-btn" onclick="accReassess(\'' + a.id + '\')" style="font-size:13px;">Run one now</button></div>'
+      }
+
+      <!-- Action buttons + draft response editor -->
+      <div class="acc-card">
+        <h3>📨 Send response to homeowner</h3>
+        <p style="font-size:12px; color:#5a7390; margin-bottom:12px;">trustEd drafted the response below. Edit it freely — what you save here is what the homeowner sees on their status page. (Outbound email comes in Phase 2; for now, use Outlook with this text after finalizing.)</p>
+        <div class="fld">
+          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Message to homeowner</label>
+          <textarea id="acc-msg" rows="12" style="padding:12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; line-height:1.55; width:100%;">${accEsc(accBuildDraftResponse(a, latestAssess))}</textarea>
+        </div>
+        <div class="fld" style="margin-top:10px;">
+          <label style="font-size:11px; font-weight:600; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px;">Internal notes (not sent to homeowner)</label>
+          <textarea id="acc-internal" rows="2" style="padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;"></textarea>
+        </div>
+        <div class="acc-ai-actions">
+          <button class="acc-action-btn approve" onclick="accFinalize('approve', '${a.id}')">✓ Approve &amp; send</button>
+          <button class="acc-action-btn conditional" onclick="accFinalize('approve_with_conditions', '${a.id}')">⚠ Approve with conditions</button>
+          <button class="acc-action-btn more-info" onclick="accFinalize('request_more_info', '${a.id}')">📝 Request more info</button>
+          <button class="acc-action-btn deny" onclick="accFinalize('deny', '${a.id}')">✗ Deny</button>
+          <button class="secondary-btn" style="margin-left:auto;" onclick="accCopyToClipboard('${a.id}')">📋 Copy message</button>
+        </div>
+        <p id="acc-action-status" style="margin-top:10px; font-size:12px; text-align:right;"></p>
+      </div>
+
+      <!-- Application details -->
+      <div class="acc-card">
+        <h3>📋 What was submitted</h3>
+        <div class="acc-field-pair"><div class="k">Project type</div><div>${accEsc(appData.project_type || '—')}</div></div>
+        <div class="acc-field-pair"><div class="k">Description</div><div style="white-space:pre-wrap;">${accEsc(appData.project_description || '—')}</div></div>
+        ${appData.materials ? `<div class="acc-field-pair"><div class="k">Materials</div><div>${accEsc(appData.materials)}</div></div>` : ''}
+        ${appData.dimensions ? `<div class="acc-field-pair"><div class="k">Dimensions</div><div>${accEsc(appData.dimensions)}</div></div>` : ''}
+        ${appData.location_on_property ? `<div class="acc-field-pair"><div class="k">Location</div><div>${accEsc(appData.location_on_property)}</div></div>` : ''}
+        ${appData.start_date ? `<div class="acc-field-pair"><div class="k">Start date</div><div>${accEsc(appData.start_date)}</div></div>` : ''}
+        ${appData.completion_date ? `<div class="acc-field-pair"><div class="k">Completion</div><div>${accEsc(appData.completion_date)}</div></div>` : ''}
+        ${appData.contractor ? `<div class="acc-field-pair"><div class="k">Contractor</div><div>${accEsc(appData.contractor)}</div></div>` : ''}
+        ${appData.estimated_cost ? `<div class="acc-field-pair"><div class="k">Est. cost</div><div>$${accEsc(appData.estimated_cost)}</div></div>` : ''}
+        ${appData.additional_notes ? `<div class="acc-field-pair"><div class="k">Notes</div><div style="white-space:pre-wrap;">${accEsc(appData.additional_notes)}</div></div>` : ''}
+      </div>
+
+      <!-- Response history -->
+      ${accCurrent.responses.length > 0 ? `
+        <div class="acc-card">
+          <h3>📒 Response history</h3>
+          ${accCurrent.responses.map(r => `
+            <div style="padding:10px 0; border-bottom:1px solid #f0f2f5; font-size:13px;">
+              <div style="font-weight:600; color:#1a3a5c;">${accEsc(r.response_type)} ${r.action_at ? '<span style="font-weight:400; color:#888; font-size:11px;">' + new Date(r.action_at).toLocaleString() + '</span>' : ''}</div>
+              ${r.message_to_owner ? `<div style="white-space:pre-wrap; margin-top:5px; color:#444;">${accEsc(r.message_to_owner)}</div>` : ''}
+              ${r.internal_notes ? `<div style="margin-top:5px; padding:6px 10px; background:#f5f8fc; border-radius:4px; font-size:11px; color:#5a7390;"><strong>Internal:</strong> ${accEsc(r.internal_notes)}</div>` : ''}
+            </div>
+          `).join('')}
+        </div>` : ''
+      }
+    `;
+  }
+
+  function accBuildDraftResponse(a, assessment) {
+    // Use the AI's draft_response if it exists in the assessment's raw payload
+    if (assessment && assessment.summary) {
+      // The /api/applications/:id endpoint already serves the structured assessment;
+      // we use the manager-facing summary + concerns to compose a draft if no draft_response field is present.
+      // For now, use the simple template below.
+    }
+    const ref = a.reference_number;
+    const name = a.submitter_name;
+    const project = (a.application_data && a.application_data.project_type) || 'project';
+    return `Hi ${name},
+
+Thanks for submitting your ARC application (${ref}). I've reviewed the details about your ${project} and want to follow up with the next step.
+
+[Your decision and reasoning here]
+
+If you have questions or want to discuss alternatives, just reply or give us a call.
+
+— Bedrock Association Management`;
+  }
+
+  async function accReassess(appId) {
+    const status = document.getElementById('acc-action-status');
+    if (status) status.textContent = 'Re-assessing…';
+    try {
+      const r = await fetch('/api/applications/' + appId + '/assess', { method: 'POST' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      await accOpenDetail(appId);
+    } catch (err) {
+      if (status) { status.textContent = 'Error: ' + err.message; status.style.color = '#b91c1c'; }
+      else alert('Re-assess failed: ' + err.message);
+    }
+  }
+  window.accReassess = accReassess;
+
+  async function accFinalize(action, appId) {
+    const msg = document.getElementById('acc-msg').value.trim();
+    const internal = document.getElementById('acc-internal').value.trim();
+    if (!msg) {
+      alert('Please write a message to the homeowner first.');
+      return;
+    }
+    const labels = {
+      approve: 'Approve and send this response?',
+      approve_with_conditions: 'Approve with conditions and send this response?',
+      deny: 'Deny and send this response?',
+      request_more_info: 'Request more info and send this message?'
+    };
+    if (!confirm(labels[action] || 'Send?')) return;
+
+    const status = document.getElementById('acc-action-status');
+    status.textContent = 'Saving…'; status.style.color = '#5a7390';
+    try {
+      const r = await fetch('/api/applications/' + appId + '/finalize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action, message_to_owner: msg, internal_notes: internal || null })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      status.textContent = '✓ Done — homeowner can see the response on their status page now.'; status.style.color = '#166534';
+      setTimeout(() => accOpenDetail(appId), 800);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message; status.style.color = '#b91c1c';
+    }
+  }
+  window.accFinalize = accFinalize;
+
+  function accCopyToClipboard(appId) {
+    const msg = document.getElementById('acc-msg').value;
+    navigator.clipboard.writeText(msg).then(() => {
+      const status = document.getElementById('acc-action-status');
+      status.textContent = '✓ Copied to clipboard — paste into Outlook'; status.style.color = '#166534';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    }).catch(err => alert('Copy failed: ' + err.message));
+  }
+  window.accCopyToClipboard = accCopyToClipboard;
+
+  function accEsc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Wire tab activation
+  (function() {
+    const t = document.querySelector('.tab[onclick*="\'accqueue\'"]');
+    if (t) t.addEventListener('click', () => accInit());
+  })();
+  try { accInit(); } catch (e) { console.warn('eager accInit', e); }
 </script>
 
 <!-- ============================================================

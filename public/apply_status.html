@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Application Status — Bedrock</title>
+  <meta name="theme-color" content="#1a3a5c" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937; min-height: 100dvh;
+    }
+    .page { max-width: 640px; margin: 0 auto; padding: 18px 18px 48px; }
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 4px 20px; border-bottom: 1px solid #e2e8f0; margin-bottom: 26px;
+    }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 8px; background: #1a3a5c; color: #fff;
+      display:flex; align-items:center; justify-content:center; font-weight: 700; font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; color: #0f172a; }
+    .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+
+    .ref-pill {
+      display: inline-block; background: #1a3a5c; color: #fff;
+      padding: 5px 12px; border-radius: 999px;
+      font-family: ui-monospace, SFMono-Regular, monospace; font-size: 12px; font-weight: 600;
+      margin-bottom: 10px;
+    }
+    h1 { font-size: 26px; font-weight: 700; margin: 0 0 6px; color: #0f172a; line-height: 1.2; }
+    .lede { font-size: 14px; color: #475569; margin-bottom: 26px; }
+
+    .status-card {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 14px;
+      padding: 22px; margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .status-card.green { background: #f0fdf4; border-color: #86efac; }
+    .status-card.red { background: #fef2f2; border-color: #fca5a5; }
+    .status-card.amber { background: #fffbeb; border-color: #fcd34d; }
+    .status-card.blue { background: #eff6ff; border-color: #93c5fd; }
+
+    .status-card .label {
+      font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.5px;
+      color: #64748b; margin-bottom: 6px;
+    }
+    .status-card .value { font-size: 20px; font-weight: 700; color: #0f172a; }
+    .status-card .value.green { color: #166534; }
+    .status-card .value.red { color: #991b1b; }
+    .status-card .value.amber { color: #92400e; }
+    .status-card .value.blue { color: #1e3a8a; }
+    .status-card .timestamp { font-size: 12px; color: #64748b; margin-top: 6px; }
+
+    .card {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 18px; margin-bottom: 14px;
+    }
+    .card h2 {
+      font-size: 13px; font-weight: 700; color: #1a3a5c;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px;
+    }
+    .card .body { font-size: 14px; color: #1f2937; line-height: 1.6; white-space: pre-wrap; }
+    .card ul { margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.55; }
+
+    .footer-note { text-align: center; font-size: 11px; color: #94a3b8; margin-top: 30px; }
+
+    .error { color: #b91c1c; padding: 28px; text-align: center; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar">
+      <div class="brand-mark">B</div>
+      <div>
+        <div class="brand-title">Bedrock Association Management</div>
+        <div class="brand-sub">Application Status</div>
+      </div>
+    </div>
+
+    <div id="loading" style="text-align:center; padding:48px 0; color:#64748b;">Loading…</div>
+    <div id="error-screen" class="error" style="display:none;"></div>
+    <div id="content" style="display:none;"></div>
+
+    <div class="footer-note">Powered by Bedrock Intelligence · bedrocktxai.com</div>
+  </div>
+
+  <script>
+    const reference = decodeURIComponent(location.pathname.split('/').filter(Boolean).pop());
+
+    async function load() {
+      try {
+        const r = await fetch(`/api/applications/public/status/${encodeURIComponent(reference)}`);
+        const j = await r.json();
+        if (!r.ok) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('error-screen').style.display = '';
+          document.getElementById('error-screen').textContent = j.error || 'Application not found';
+          return;
+        }
+        render(j);
+      } catch (err) {
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('error-screen').style.display = '';
+        document.getElementById('error-screen').textContent = err.message;
+      }
+    }
+
+    function render({ application: a, latest_response: r }) {
+      document.getElementById('loading').style.display = 'none';
+      const c = document.getElementById('content');
+      c.style.display = '';
+
+      const final = a.final_status;
+      const submitted = a.submitted_at ? new Date(a.submitted_at).toLocaleString() : null;
+      const decided = a.final_decided_at ? new Date(a.final_decided_at).toLocaleString() : null;
+
+      const statusMap = {
+        draft: { tone: 'blue', label: 'Draft' },
+        pending_committee_review: { tone: 'amber', label: 'Under review' },
+        approved: { tone: 'green', label: '✓ Approved' },
+        denied: { tone: 'red', label: '✗ Denied' },
+        withdrawn: { tone: 'blue', label: 'Withdrawn' },
+        closed: { tone: 'blue', label: 'Closed' }
+      };
+      const fs = statusMap[final] || { tone: 'blue', label: final || 'Pending' };
+
+      let html = `
+        <span class="ref-pill">${escapeHtml(a.reference_number)}</span>
+        <h1>${escapeHtml(a.community?.name || 'Application')}</h1>
+        <p class="lede">Submitted by ${escapeHtml(a.submitter_name)} for ${escapeHtml(a.property_address)}</p>
+
+        <div class="status-card ${fs.tone}">
+          <div class="label">Status</div>
+          <div class="value ${fs.tone}">${escapeHtml(fs.label)}</div>
+          ${submitted ? `<div class="timestamp">Submitted ${escapeHtml(submitted)}</div>` : ''}
+          ${decided ? `<div class="timestamp">Decided ${escapeHtml(decided)}</div>` : ''}
+        </div>
+      `;
+
+      // Manager's final response (if sent)
+      if (r && r.message_to_owner) {
+        const rTitle = r.response_type === 'approval' ? '✓ Your manager\'s response — approved'
+                     : r.response_type === 'denial' ? 'Your manager\'s response'
+                     : r.response_type === 'request_more_info' ? '📝 Manager needs more information'
+                     : 'Manager response';
+        html += `
+          <div class="card">
+            <h2>${escapeHtml(rTitle)}</h2>
+            <div class="body">${escapeHtml(r.message_to_owner)}</div>
+            ${r.action_at ? `<div style="font-size:11px; color:#94a3b8; margin-top:10px;">Sent ${escapeHtml(new Date(r.action_at).toLocaleString())}</div>` : ''}
+          </div>
+        `;
+      } else if (final === 'pending_committee_review') {
+        // Show the preliminary AI snapshot while waiting
+        if (a.assessment_summary) {
+          html += `
+            <div class="card">
+              <h2>Preliminary preview (not the official decision)</h2>
+              <div class="body">${escapeHtml(a.assessment_summary)}</div>
+            </div>
+          `;
+        }
+        if (a.assessment_concerns && a.assessment_concerns.length > 0) {
+          html += `
+            <div class="card">
+              <h2>⚠️ Items your manager may want to discuss</h2>
+              <ul>${a.assessment_concerns.map(x => `<li>${escapeHtml(x.concern || '')}</li>`).join('')}</ul>
+            </div>
+          `;
+        }
+        if (a.assessment_missing_items && a.assessment_missing_items.length > 0) {
+          html += `
+            <div class="card">
+              <h2>📝 Items that may be missing</h2>
+              <ul>${a.assessment_missing_items.map(x => `<li>${escapeHtml(x.item || '')}${x.required ? ' <strong style="color:#b91c1c; font-size:11px;">REQUIRED</strong>' : ''}</li>`).join('')}</ul>
+            </div>
+          `;
+        }
+        html += `
+          <div class="card" style="background:#f8fafc; border-style:dashed;">
+            <div class="body" style="font-size:13px; color:#475569;">
+              Your community manager will personally review this application and follow up with the official decision within 24 hours. Check back here anytime for updates.
+            </div>
+          </div>
+        `;
+      }
+
+      c.innerHTML = html;
+    }
+
+    function escapeHtml(s) {
+      return (s == null ? '' : String(s))
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    load();
+  </script>
+</body>
+</html>

@@ -424,6 +424,18 @@ app.use('/api/email-intelligence', emailIntakeRouter);
 const { router: arcHistoryRouter } = require('./api/arc_history');
 app.use('/api/arc-history', arcHistoryRouter);
 
+// ACC applications — public submission + AI assessment + manager queue
+const { router: applicationsRouter } = require('./api/applications');
+app.use('/api/applications', applicationsRouter);
+
+// Public homeowner-facing pages (no auth)
+app.get('/apply/status/:reference', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'apply_status.html'));
+});
+app.get('/apply/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'apply.html'));
+});
+
 // Shared helper: scrub vendor names from error messages before they reach
 // the user. Anthropic SDK errors can include "claude" / model IDs that
 // should never appear in user-facing strings.

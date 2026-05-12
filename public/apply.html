@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>ARC Application — Bedrock</title>
+  <meta name="theme-color" content="#1a3a5c" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937;
+      min-height: 100dvh;
+    }
+    .page { max-width: 700px; margin: 0 auto; padding: 18px 18px 48px; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 4px 20px;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 24px;
+    }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 8px; background: #1a3a5c; color: #fff;
+      display:flex; align-items:center; justify-content:center; font-weight: 700; font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; color: #0f172a; }
+    .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+
+    h1 {
+      font-size: 26px; font-weight: 700; margin: 0 0 8px; color: #0f172a; line-height: 1.2;
+    }
+    .lede { font-size: 14px; color: #475569; line-height: 1.55; margin-bottom: 22px; }
+    .lede strong { color: #1a3a5c; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 18px; margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .card h2 {
+      font-size: 13px; font-weight: 700; color: #1a3a5c;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px;
+    }
+
+    .fld { display:flex; flex-direction:column; gap:5px; margin-bottom: 12px; }
+    .fld label { font-size: 12px; font-weight: 600; color: #334155; }
+    .fld .req { color: #dc2626; }
+    .fld input, .fld select, .fld textarea {
+      padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
+      font: inherit; font-size: 15px; background: #fff;
+    }
+    .fld input:focus, .fld select:focus, .fld textarea:focus {
+      outline: none; border-color: #1a3a5c;
+      box-shadow: 0 0 0 3px rgba(26, 58, 92, 0.10);
+    }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .submit-btn {
+      display: block; width: 100%;
+      background: #1a3a5c; color: #fff;
+      padding: 16px; border: none; border-radius: 10px;
+      font: inherit; font-size: 16px; font-weight: 700;
+      cursor: pointer; margin-top: 8px;
+      box-shadow: 0 4px 12px rgba(26, 58, 92, 0.25);
+    }
+    .submit-btn:active { transform: scale(0.985); }
+    .submit-btn:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
+    .fee-banner {
+      background: #fff7ed; border: 1px solid #fbbf24;
+      padding: 12px 16px; border-radius: 10px; margin-bottom: 16px;
+      font-size: 13px; color: #78350f;
+    }
+    .fee-banner strong { color: #b45309; }
+
+    /* Loading / submitted screen */
+    .loading-screen { display: none; text-align: center; padding: 32px 16px; }
+    .loading-screen.show { display: block; }
+    .spinner {
+      width: 56px; height: 56px;
+      border: 4px solid #cbd5e1; border-top-color: #1a3a5c;
+      border-radius: 50%; margin: 0 auto 16px;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .loading-screen h2 { font-size: 18px; font-weight: 700; color: #0f172a; margin: 0 0 6px; }
+    .loading-screen p { font-size: 13px; color: #64748b; }
+
+    /* Result screen */
+    .result-screen { display: none; padding: 8px 0; }
+    .result-screen.show { display: block; }
+    .result-icon {
+      width: 72px; height: 72px; border-radius: 50%;
+      margin: 0 auto 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 36px;
+    }
+    .result-icon.likely { background: #dcfce7; color: #166534; }
+    .result-icon.incomplete { background: #fef3c7; color: #92400e; }
+    .result-icon.concerns { background: #fee2e2; color: #991b1b; }
+    .result-icon.manual { background: #e0e7ff; color: #3730a3; }
+    .result-screen h2 { text-align: center; font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+    .result-screen .ref { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 22px; }
+    .result-screen .ref code {
+      background: #f1f5f9; padding: 2px 10px; border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;
+      color: #1a3a5c;
+    }
+    .preview-card {
+      background: #fff; border-radius: 12px; padding: 18px;
+      border: 1px solid #e2e8f0; margin-bottom: 14px;
+    }
+    .preview-card h3 {
+      font-size: 12px; font-weight: 700; color: #1a3a5c;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 10px;
+    }
+    .preview-card .body {
+      font-size: 14px; color: #1f2937; line-height: 1.6; white-space: pre-wrap;
+    }
+    .preview-card ul { margin: 6px 0 0; padding-left: 20px; font-size: 13px; line-height: 1.55; }
+    .preview-card li { margin-bottom: 4px; }
+
+    .preview-card.concern { background: #fff7ed; border-color: #fbbf24; }
+    .preview-card.concern h3 { color: #b45309; }
+    .preview-card.missing { background: #fef9c3; border-color: #eab308; }
+    .preview-card.missing h3 { color: #854d0e; }
+    .preview-card.draft { background: #f0fdf4; border-color: #86efac; }
+    .preview-card.draft h3 { color: #166534; }
+
+    .disclaimer {
+      font-size: 12px; color: #64748b;
+      padding: 12px 14px; background: #f8fafc;
+      border-left: 3px solid #cbd5e1; border-radius: 6px;
+      line-height: 1.5; margin-top: 18px;
+    }
+
+    .footer-note { text-align: center; font-size: 11px; color: #94a3b8; margin-top: 28px; }
+
+    .err-msg { color: #b91c1c; font-size: 13px; text-align: center; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar">
+      <div class="brand-mark">B</div>
+      <div>
+        <div class="brand-title">Bedrock Association Management</div>
+        <div class="brand-sub" id="topbar-sub">Architectural Review Application</div>
+      </div>
+    </div>
+
+    <div id="loading-meta" style="text-align:center; padding:48px 0; color:#64748b;">Loading…</div>
+
+    <!-- FORM SCREEN -->
+    <div id="form-screen" style="display:none;">
+      <h1 id="page-title">ARC Application</h1>
+      <p class="lede" id="page-lede">
+        Tell us about the project you'd like approved. You'll get a <strong>preliminary AI assessment within seconds</strong>, and your community manager will follow up with the official decision within 24 hours.
+      </p>
+
+      <div class="fee-banner" id="fee-banner" style="display:none;"></div>
+
+      <div class="card">
+        <h2>About you</h2>
+        <div class="fld">
+          <label>Full name <span class="req">*</span></label>
+          <input id="submitter_name" type="text" autocomplete="name" />
+        </div>
+        <div class="grid-2">
+          <div class="fld">
+            <label>Email <span class="req">*</span></label>
+            <input id="submitter_email" type="email" autocomplete="email" />
+          </div>
+          <div class="fld">
+            <label>Phone</label>
+            <input id="submitter_phone" type="tel" autocomplete="tel" inputmode="tel" />
+          </div>
+        </div>
+        <div class="fld">
+          <label>Property address (in this community) <span class="req">*</span></label>
+          <input id="property_address" type="text" autocomplete="street-address" placeholder="8201 Pine Forest Ln" />
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>About the project</h2>
+        <div class="fld">
+          <label>Project type <span class="req">*</span></label>
+          <select id="project_type">
+            <option value="">— Pick one —</option>
+            <option value="fence">Fence</option>
+            <option value="paint">Paint / exterior color</option>
+            <option value="addition">Room addition / structure</option>
+            <option value="pool">Pool / spa</option>
+            <option value="deck">Deck / patio</option>
+            <option value="landscaping">Landscaping / trees</option>
+            <option value="roof">Roof</option>
+            <option value="door">Door / garage door</option>
+            <option value="window">Windows</option>
+            <option value="shed">Shed / outbuilding</option>
+            <option value="mailbox">Mailbox</option>
+            <option value="driveway">Driveway / walkway</option>
+            <option value="other">Other</option>
+          </select>
+        </div>
+        <div class="fld">
+          <label>Describe the project <span class="req">*</span></label>
+          <textarea id="project_description" rows="4" placeholder="e.g., 6ft cedar board-on-board fence along the rear property line, replacing the existing 4ft chain-link."></textarea>
+        </div>
+        <div class="grid-2">
+          <div class="fld">
+            <label>Materials</label>
+            <input id="materials" type="text" placeholder="cedar, vinyl, stucco, brick, etc." />
+          </div>
+          <div class="fld">
+            <label>Dimensions / size</label>
+            <input id="dimensions" type="text" placeholder="6ft tall × 80 linear ft" />
+          </div>
+        </div>
+        <div class="fld">
+          <label>Where on the property?</label>
+          <input id="location_on_property" type="text" placeholder="rear yard, side yard, front, etc." />
+        </div>
+        <div class="grid-2">
+          <div class="fld">
+            <label>Expected start date</label>
+            <input id="start_date" type="date" />
+          </div>
+          <div class="fld">
+            <label>Expected completion</label>
+            <input id="completion_date" type="date" />
+          </div>
+        </div>
+        <div class="grid-2">
+          <div class="fld">
+            <label>Contractor (if any)</label>
+            <input id="contractor" type="text" />
+          </div>
+          <div class="fld">
+            <label>Estimated cost ($)</label>
+            <input id="estimated_cost" type="number" min="0" step="50" />
+          </div>
+        </div>
+        <div class="fld">
+          <label>Anything else we should know?</label>
+          <textarea id="additional_notes" rows="2" placeholder="HOA-pertinent details, special circumstances, etc."></textarea>
+        </div>
+      </div>
+
+      <button id="submit-btn" class="submit-btn">Submit application →</button>
+      <p id="form-err" class="err-msg" style="display:none;"></p>
+    </div>
+
+    <!-- LOADING SCREEN -->
+    <div id="loading-screen" class="loading-screen">
+      <div class="spinner"></div>
+      <h2>Reviewing your application…</h2>
+      <p>Cross-referencing your community's governing documents and past decisions. This usually takes 5-15 seconds.</p>
+    </div>
+
+    <!-- RESULT SCREEN -->
+    <div id="result-screen" class="result-screen">
+      <div class="result-icon" id="result-icon">?</div>
+      <h2 id="result-title">Application received</h2>
+      <p class="ref">Reference: <code id="ref-code"></code></p>
+
+      <div class="preview-card draft" id="draft-card" style="display:none;">
+        <h3>📨 Preliminary preview of your manager's response</h3>
+        <div class="body" id="draft-body"></div>
+      </div>
+
+      <div class="preview-card concern" id="concerns-card" style="display:none;">
+        <h3>⚠️ Items that may need attention</h3>
+        <ul id="concerns-list"></ul>
+      </div>
+
+      <div class="preview-card missing" id="missing-card" style="display:none;">
+        <h3>📝 Information that may be missing</h3>
+        <ul id="missing-list"></ul>
+      </div>
+
+      <div class="preview-card" id="summary-card" style="display:none;">
+        <h3>Summary</h3>
+        <div class="body" id="summary-body"></div>
+      </div>
+
+      <div class="disclaimer">
+        🔍 <strong>This is a preliminary AI-assisted analysis, not the official decision.</strong> Your community manager will personally review your application and follow up within 24 hours with the official response. You can check the latest status anytime at the link below.
+      </div>
+
+      <p style="text-align:center; margin-top:22px;">
+        <a id="status-link" href="#" style="background: #fff; color: #1a3a5c; border: 1px solid #1a3a5c; padding: 11px 22px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600;">Check status anytime</a>
+      </p>
+      <p style="text-align:center; margin-top:14px;">
+        <button onclick="location.reload()" style="background: none; border: none; color: #64748b; text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px;">Submit another application</button>
+      </p>
+    </div>
+
+    <div class="footer-note">Powered by Bedrock Intelligence · bedrocktxai.com</div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const slug = location.pathname.split('/').filter(Boolean).pop();
+
+    let meta = null;
+
+    async function loadMeta() {
+      try {
+        const r = await fetch(`/api/applications/public/${encodeURIComponent(slug)}`);
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.error || ('HTTP ' + r.status));
+        }
+        meta = await r.json();
+        renderMeta();
+      } catch (err) {
+        $('loading-meta').innerHTML = `<div style="color:#b91c1c;">Couldn't load this community: ${escapeHtml(err.message)}</div>`;
+      }
+    }
+
+    function renderMeta() {
+      $('loading-meta').style.display = 'none';
+      $('form-screen').style.display = '';
+      $('page-title').textContent = `ARC Application — ${meta.community.name}`;
+      $('topbar-sub').textContent = `Architectural Review · ${meta.community.name}`;
+
+      const svc = meta.service;
+      if (svc && svc.fee_paid_by === 'owner' && Number(svc.owner_payable_fee) > 0) {
+        $('fee-banner').style.display = '';
+        $('fee-banner').innerHTML = `💵 <strong>Application fee: $${Number(svc.owner_payable_fee).toFixed(2)}</strong>. Payment instructions will follow once your manager reviews this submission.`;
+      }
+    }
+
+    $('submit-btn').addEventListener('click', async () => {
+      $('form-err').style.display = 'none';
+      const required = ['submitter_name', 'submitter_email', 'property_address', 'project_type', 'project_description'];
+      for (const id of required) {
+        if (!$(id).value.trim()) {
+          showFormErr('Please fill in the highlighted fields.');
+          $(id).focus();
+          return;
+        }
+      }
+
+      $('form-screen').style.display = 'none';
+      $('loading-screen').classList.add('show');
+
+      const body = {
+        submitter_name: $('submitter_name').value.trim(),
+        submitter_email: $('submitter_email').value.trim(),
+        submitter_phone: $('submitter_phone').value.trim() || null,
+        property_address: $('property_address').value.trim(),
+        application_data: {
+          project_type: $('project_type').value,
+          project_description: $('project_description').value.trim(),
+          materials: $('materials').value.trim() || null,
+          dimensions: $('dimensions').value.trim() || null,
+          location_on_property: $('location_on_property').value.trim() || null,
+          start_date: $('start_date').value || null,
+          completion_date: $('completion_date').value || null,
+          contractor: $('contractor').value.trim() || null,
+          estimated_cost: Number($('estimated_cost').value) || null,
+          additional_notes: $('additional_notes').value.trim() || null
+        }
+      };
+
+      try {
+        const r = await fetch(`/api/applications/public/${encodeURIComponent(slug)}/submit`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        $('loading-screen').classList.remove('show');
+        renderResult(j);
+      } catch (err) {
+        $('loading-screen').classList.remove('show');
+        $('form-screen').style.display = '';
+        showFormErr(err.message);
+      }
+    });
+
+    function renderResult(payload) {
+      const ref = payload.reference_number;
+      const a = payload.assessment;
+
+      $('ref-code').textContent = ref;
+      $('status-link').href = payload.status_url;
+      $('result-screen').classList.add('show');
+
+      if (!a) {
+        $('result-icon').textContent = '📬';
+        $('result-icon').className = 'result-icon manual';
+        $('result-title').textContent = 'Application received';
+        $('summary-card').style.display = '';
+        $('summary-body').textContent = 'Your application has been submitted to your community manager for review. You\'ll hear back within 24 hours.';
+        return;
+      }
+
+      // Title + icon based on status
+      const statusMap = {
+        likely_approved: { icon: '✓', cls: 'likely', title: 'Likely to be approved' },
+        incomplete: { icon: '📝', cls: 'incomplete', title: 'A few details needed' },
+        concerns_identified: { icon: '⚠️', cls: 'concerns', title: 'Some items to review' },
+        manual_review: { icon: '👤', cls: 'manual', title: 'Manager review required' }
+      };
+      const s = statusMap[a.status] || statusMap.manual_review;
+      $('result-icon').textContent = s.icon;
+      $('result-icon').className = 'result-icon ' + s.cls;
+      $('result-title').textContent = s.title;
+
+      if (a.summary) {
+        $('summary-card').style.display = '';
+        $('summary-body').textContent = a.summary;
+      }
+
+      if (a.concerns && a.concerns.length > 0) {
+        $('concerns-card').style.display = '';
+        $('concerns-list').innerHTML = a.concerns.map(c => `
+          <li><strong>${escapeHtml(c.concern || '')}</strong>${c.citation ? ` <span style="color:#666; font-size:12px;">(${escapeHtml(c.citation)})</span>` : ''}</li>
+        `).join('');
+      }
+
+      if (a.missing_items && a.missing_items.length > 0) {
+        $('missing-card').style.display = '';
+        $('missing-list').innerHTML = a.missing_items.map(m => `
+          <li>${escapeHtml(m.item || '')}${m.hint ? ` <span style="color:#666; font-size:12px;">— ${escapeHtml(m.hint)}</span>` : ''}${m.required ? ' <span style="color:#b91c1c; font-weight:700; font-size:11px;">REQUIRED</span>' : ''}</li>
+        `).join('');
+      }
+
+      if (a.draft_response) {
+        $('draft-card').style.display = '';
+        $('draft-body').textContent = a.draft_response;
+      }
+    }
+
+    function showFormErr(msg) {
+      const e = $('form-err');
+      e.textContent = msg; e.style.display = '';
+      e.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function escapeHtml(s) {
+      return (s == null ? '' : String(s))
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    loadMeta();
+  </script>
+</body>
+</html>
