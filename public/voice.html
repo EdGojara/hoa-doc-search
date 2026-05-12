@@ -255,6 +255,29 @@
     .typing-dots span:nth-child(2) { animation-delay: 0.2s; }
     .typing-dots span:nth-child(3) { animation-delay: 0.4s; }
 
+    /* ---------- Stop-talking pill ---------- */
+    .stop-pill {
+      display: none;
+      margin: 0 auto 10px;
+      background: #fee2e2;
+      color: #b91c1c;
+      padding: 8px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      border: 1px solid #fca5a5;
+      width: fit-content;
+      align-items: center;
+      gap: 6px;
+      box-shadow: 0 2px 6px rgba(220, 38, 38, 0.12);
+      animation: fadeUp 0.2s ease;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .stop-pill.show { display: inline-flex; }
+    .stop-pill:active { transform: scale(0.97); }
+
     /* ---------- Install banner ---------- */
     .install-banner {
       display: none;
@@ -318,6 +341,11 @@
   </div>
 
   <div class="footer">
+    <div style="text-align:center;">
+      <button class="stop-pill" id="stopPill" type="button" aria-label="Stop talking">
+        <span aria-hidden="true">⏹</span> Stop talking
+      </button>
+    </div>
     <div class="input-row">
       <textarea
         class="text-input"
@@ -475,7 +503,7 @@
       if (listening) return;
       hint.classList.remove('error');
       textInput.value = '';
-      stopSpeaking();   // kill any in-flight answer playback
+      resetTtsQueue();  // kill in-flight answer playback AND any queued sentences
       unlockAudio();    // also unlock TTS playback while we have a gesture
       try {
         const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -634,9 +662,18 @@
       try { ttsAudio.currentTime = 0; } catch (_) {}
       if (currentSpeakBtn) currentSpeakBtn.classList.remove('playing');
       currentSpeakBtn = null;
+      // Force the in-flight playback promise to resolve so drainTtsQueue
+      // can continue (or exit if the queue was cleared).
+      if (currentTtsResolver) { currentTtsResolver(); currentTtsResolver = null; }
     }
 
-    textInput.addEventListener('focus', stopSpeaking);
+    // ---- Stop-talking pill: visible while Onyx is playing or queued ----
+    document.getElementById('stopPill').addEventListener('click', () => {
+      resetTtsQueue();
+      hint.textContent = 'Stopped. Tap the mic to ask another question.';
+    });
+
+    textInput.addEventListener('focus', () => { resetTtsQueue(); });
 
     // ========================================================================
     // Submit / render — streaming version
@@ -651,6 +688,15 @@
     // Maintains strict-order playback while letting fetches overlap.
     const ttsQueue = [];   // { audioPromise } entries in spoken order
     let ttsPlaying = false;
+    let currentTtsResolver = null; // resolves the in-flight playback promise
+                                   // when we need to interrupt synchronously
+
+    function updateStopPill() {
+      const pill = document.getElementById('stopPill');
+      if (!pill) return;
+      const visible = ttsPlaying || ttsQueue.length > 0;
+      pill.classList.toggle('show', visible);
+    }
 
     function enqueueTtsSentence(sentence) {
       const cleaned = cleanForTts(sentence);
@@ -665,34 +711,41 @@
         .catch((err) => { console.warn('tts seg failed', err); return null; });
 
       ttsQueue.push({ audioPromise });
+      updateStopPill();
       drainTtsQueue();
     }
 
     async function drainTtsQueue() {
       if (ttsPlaying) return;
       const next = ttsQueue.shift();
-      if (!next) return;
+      if (!next) { updateStopPill(); return; }
       ttsPlaying = true;
+      updateStopPill();
       try {
         const url = await next.audioPromise;
-        if (!url) { ttsPlaying = false; return drainTtsQueue(); }
+        if (!url) { ttsPlaying = false; updateStopPill(); return drainTtsQueue(); }
         ttsAudio.src = url;
         await new Promise((resolve) => {
+          currentTtsResolver = resolve;
           ttsAudio.onended = () => { URL.revokeObjectURL(url); resolve(); };
           ttsAudio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
           const p = ttsAudio.play();
           if (p && p.catch) p.catch(() => resolve());
         });
+        currentTtsResolver = null;
       } catch (err) {
         console.warn('tts play err', err);
       }
       ttsPlaying = false;
+      updateStopPill();
       drainTtsQueue();
     }
 
     function resetTtsQueue() {
-      stopSpeaking();
+      // Clear queue FIRST so drainTtsQueue exits when current promise resolves
       ttsQueue.length = 0;
+      stopSpeaking();
+      updateStopPill();
     }
 
     // Strip markdown & filter sentences that shouldn't be spoken
