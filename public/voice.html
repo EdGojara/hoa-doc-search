@@ -638,7 +638,100 @@
 
     textInput.addEventListener('focus', stopSpeaking);
 
-    // ---------- Submit / render ----------
+    // ========================================================================
+    // Submit / render — streaming version
+    // ------------------------------------------------------------------------
+    // Calls /ask-ed-stream (SSE). As each delta arrives:
+    //   1. Append text to the assistant bubble (progressive typing UX)
+    //   2. Watch for completed sentences and queue them for TTS
+    //   3. drainTtsQueue() plays sentences serially as audio arrives
+    // ========================================================================
+
+    // ---- Sentence-aware TTS queue ----
+    // Maintains strict-order playback while letting fetches overlap.
+    const ttsQueue = [];   // { audioPromise } entries in spoken order
+    let ttsPlaying = false;
+
+    function enqueueTtsSentence(sentence) {
+      const cleaned = cleanForTts(sentence);
+      if (!cleaned) return;
+      const audioPromise = fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: cleaned, voice: 'onyx' })
+      })
+        .then((r) => { if (!r.ok) throw new Error('TTS HTTP ' + r.status); return r.blob(); })
+        .then((blob) => URL.createObjectURL(blob))
+        .catch((err) => { console.warn('tts seg failed', err); return null; });
+
+      ttsQueue.push({ audioPromise });
+      drainTtsQueue();
+    }
+
+    async function drainTtsQueue() {
+      if (ttsPlaying) return;
+      const next = ttsQueue.shift();
+      if (!next) return;
+      ttsPlaying = true;
+      try {
+        const url = await next.audioPromise;
+        if (!url) { ttsPlaying = false; return drainTtsQueue(); }
+        ttsAudio.src = url;
+        await new Promise((resolve) => {
+          ttsAudio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+          ttsAudio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+          const p = ttsAudio.play();
+          if (p && p.catch) p.catch(() => resolve());
+        });
+      } catch (err) {
+        console.warn('tts play err', err);
+      }
+      ttsPlaying = false;
+      drainTtsQueue();
+    }
+
+    function resetTtsQueue() {
+      stopSpeaking();
+      ttsQueue.length = 0;
+    }
+
+    // Strip markdown & filter sentences that shouldn't be spoken
+    // (headings, numbered-list scaffolding, emoji-only).
+    function cleanForTts(text) {
+      let t = text
+        .replace(/^#{1,6}\s+.*$/gm, '')       // drop heading lines
+        .replace(/^[-*•]\s+/gm, '')           // bullet dashes
+        .replace(/^\d+\.\s+/gm, '')           // ordered-list markers
+        .replace(/[*_`]/g, '')                // bold/italic/code
+        .replace(/\[(.*?)\]\(.*?\)/g, '$1')   // markdown links
+        .replace(/[✅📋💡⚠️🧠🎙️📑🏗️📊🏘️🚤🐕🌳🔊📲]/g, '') // common emoji noise
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (t.length < 3) return '';
+      // Skip pure section labels like "ACTION", "RESPONSE", etc.
+      if (/^[A-Z\s\-]{4,}$/.test(t)) return '';
+      return t;
+    }
+
+    // Sentence splitter — finds boundary positions in a streamed buffer
+    // and returns { sentences, remainder }. Boundaries: . ! ? followed by
+    // whitespace; or a blank line; or end-of-block headings.
+    function flushSentences(buffer) {
+      const sentences = [];
+      let remainder = buffer;
+      const re = /([.!?])\s+|\n{2,}/g;
+      let lastIdx = 0;
+      let m;
+      while ((m = re.exec(buffer)) !== null) {
+        const end = m.index + (m[1] ? 1 : 0);  // include the punctuation
+        const piece = buffer.slice(lastIdx, end).trim();
+        if (piece) sentences.push(piece);
+        lastIdx = re.lastIndex;
+      }
+      remainder = buffer.slice(lastIdx);
+      return { sentences, remainder };
+    }
+
     async function submit(question) {
       if (emptyState && emptyState.parentNode) emptyState.remove();
       addBubble('user', question);
@@ -646,31 +739,114 @@
       textInput.dispatchEvent(new Event('input'));
       hint.textContent = 'Thinking…';
 
+      resetTtsQueue();
       const thinkingBubble = addThinking();
+      const assistantDiv = document.createElement('div');
+      assistantDiv.className = 'bubble assistant';
+      const contentSpan = document.createElement('div');
+      contentSpan.className = 'streaming-content';
+      assistantDiv.appendChild(contentSpan);
+
+      let fullText = '';
+      let pendingForTts = '';
+      let firstDeltaSeen = false;
+
+      const form = new FormData();
+      form.append('situation', question);
+      const communityId = communitySelect.value;
+      if (communityId) form.append('community', communityId);
 
       try {
-        const form = new FormData();
-        form.append('situation', question);
-        const communityId = communitySelect.value;
-        if (communityId) form.append('community', communityId);
+        const res = await fetch('/ask-ed-stream', { method: 'POST', body: form });
+        if (!res.ok || !res.body) {
+          throw new Error('HTTP ' + res.status);
+        }
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buf = '';
 
-        const res = await fetch('/ask-ed', {
-          method: 'POST',
-          body: form
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buf += decoder.decode(value, { stream: true });
+
+          // SSE frames are separated by blank lines
+          const frames = buf.split('\n\n');
+          buf = frames.pop(); // keep trailing partial
+          for (const frame of frames) {
+            const line = frame.split('\n').find((l) => l.startsWith('data:'));
+            if (!line) continue;
+            let payload;
+            try { payload = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
+
+            if (payload.type === 'delta' && payload.text) {
+              if (!firstDeltaSeen) {
+                firstDeltaSeen = true;
+                thinkingBubble.remove();
+                stream.appendChild(assistantDiv);
+                hint.textContent = 'askEd is talking…';
+              }
+              fullText += payload.text;
+              pendingForTts += payload.text;
+              // Render progressively — re-run markdown over the whole text
+              contentSpan.innerHTML = renderMarkdown(fullText);
+              stream.scrollTop = stream.scrollHeight;
+
+              // Flush completed sentences into the TTS queue
+              const { sentences, remainder } = flushSentences(pendingForTts);
+              pendingForTts = remainder;
+              for (const s of sentences) {
+                if (s.length >= 12) enqueueTtsSentence(s); // skip tiny fragments
+              }
+            } else if (payload.type === 'error') {
+              throw new Error(payload.message || 'stream error');
+            } else if (payload.type === 'done') {
+              // Flush any leftover prose as the final TTS chunk
+              if (pendingForTts.trim()) {
+                enqueueTtsSentence(pendingForTts.trim());
+                pendingForTts = '';
+              }
+            }
+          }
+        }
+
+        // If we never got a single delta, surface that explicitly
+        if (!firstDeltaSeen) {
+          thinkingBubble.remove();
+          assistantDiv.innerHTML = renderMarkdown(fullText || '⚠️ No response received.');
+          stream.appendChild(assistantDiv);
+        }
+
+        // Add per-bubble actions now that we have final text
+        const actions = document.createElement('div');
+        actions.className = 'bubble-actions';
+        actions.innerHTML = `
+          <button class="bubble-action speak">🔊 Replay</button>
+          <button class="bubble-action copy">📋 Copy</button>
+        `;
+        assistantDiv.appendChild(actions);
+        actions.querySelector('.speak').addEventListener('click', (e) => {
+          const btn = e.currentTarget;
+          if (btn.classList.contains('playing')) {
+            stopSpeaking();
+            btn.classList.remove('playing');
+          } else {
+            speak(fullText, btn);
+          }
         });
-        const data = await res.json();
-        thinkingBubble.remove();
-
-        const answer = data.guidance || data.answer || data.error || 'No response.';
-        const bubble = addBubble('assistant', answer, true);
-        // Auto-speak the answer
-        const playBtn = bubble.querySelector('.bubble-action.speak');
-        speak(answer, playBtn);
+        actions.querySelector('.copy').addEventListener('click', async (e) => {
+          try {
+            await navigator.clipboard.writeText(fullText);
+            e.currentTarget.textContent = '✓ Copied';
+            setTimeout(() => { e.currentTarget.textContent = '📋 Copy'; }, 1200);
+          } catch (_) {}
+        });
 
         hint.textContent = 'Tap the mic to ask a follow-up.';
       } catch (err) {
+        console.warn('stream failed', err);
         thinkingBubble.remove();
-        addBubble('assistant', '⚠️ Connection error: ' + err.message);
+        addBubble('assistant', '⚠️ Connection error: ' + (err.message || 'unknown'));
         hint.textContent = 'Network error — try again.';
       }
     }

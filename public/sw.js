@@ -13,7 +13,7 @@
 //   - Bump CACHE_VERSION when shipping a new shell.
 // ============================================================================
 
-const CACHE_VERSION = 'asked-v2-2026-05-12';
+const CACHE_VERSION = 'asked-v2.5-2026-05-12';
 const SHELL = [
   '/voice.html',
   '/manifest.json',
