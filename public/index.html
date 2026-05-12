@@ -3571,14 +3571,14 @@
     } catch (err) { alert('Delete failed: ' + err.message); }
   }
 
-  // Hook switchTab
-  if (typeof switchTab === 'function') {
-    const _prevIn = switchTab;
-    switchTab = function(tab) {
-      _prevIn(tab);
-      if (tab === 'intake') inInit();
-    };
-  }
+  // Wire up tab activation. The original switchTab() is declared later in
+  // the document, so we can't reliably wrap it from here — instead attach
+  // directly to the tab element (which already exists in the DOM by the
+  // time this script runs).
+  (function() {
+    const t = document.querySelector('.tab[onclick*="\'intake\'"]');
+    if (t) t.addEventListener('click', () => inInit());
+  })();
 </script>
 
 <!-- ============================================================
@@ -3872,14 +3872,11 @@
     } catch (err) { alert('Delete failed: ' + err.message); }
   }
 
-  // Hook switchTab
-  if (typeof switchTab === 'function') {
-    const _prevRc = switchTab;
-    switchTab = function(tab) {
-      _prevRc(tab);
-      if (tab === 'recaps') rcInit();
-    };
-  }
+  // Wire tab activation via direct click listener (see Intake tab note).
+  (function() {
+    const t = document.querySelector('.tab[onclick*="\'recaps\'"]');
+    if (t) t.addEventListener('click', () => rcInit());
+  })();
 </script>
 
 <!-- ============================================================
@@ -4588,13 +4585,10 @@
   window.evGenerateEmailBlast = evGenerateEmailBlast;
 
   // Hook into the existing switchTab
-  if (typeof switchTab === 'function') {
-    const _prevSwitch = switchTab;
-    switchTab = function(tab) {
-      _prevSwitch(tab);
-      if (tab === 'events') evInit();
-    };
-  }
+  (function() {
+    const t = document.querySelector('.tab[onclick*="\'events\'"]');
+    if (t) t.addEventListener('click', () => evInit());
+  })();
 </script>
 
 <script>
@@ -4995,19 +4989,12 @@
     };
   }
 
-  // Lazy-load on first tab switch
-  const _origSwitchTab = typeof switchTab === 'function' ? switchTab : null;
-  if (_origSwitchTab) {
-    switchTab = function(tab) {
-      _origSwitchTab(tab);
-      if (tab === 'profile') profLoadCommunitiesOnce();
-    };
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      const tab = document.querySelector('.tab[onclick*="profile"]');
-      if (tab) tab.addEventListener('click', profLoadCommunitiesOnce);
-    });
-  }
+  // Wire tab activation via direct click listener. The original switchTab is
+  // declared LATER in this document, so wrapping it from here is a no-op.
+  (function() {
+    const t = document.querySelector('.tab[onclick*="\'profile\'"]');
+    if (t) t.addEventListener('click', () => profLoadCommunitiesOnce());
+  })();
 </script>
 
 <script>
