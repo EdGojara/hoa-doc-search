@@ -3579,6 +3579,10 @@
     const t = document.querySelector('.tab[onclick*="\'intake\'"]');
     if (t) t.addEventListener('click', () => inInit());
   })();
+  // Eager-load on page load too — covers the case where the user never
+  // clicks the tab (e.g., page loads with tab already active from URL)
+  // and the click-handler race we hit on first ship.
+  try { inInit(); } catch (e) { console.warn('eager inInit', e); }
 </script>
 
 <!-- ============================================================
@@ -3877,6 +3881,7 @@
     const t = document.querySelector('.tab[onclick*="\'recaps\'"]');
     if (t) t.addEventListener('click', () => rcInit());
   })();
+  try { rcInit(); } catch (e) { console.warn('eager rcInit', e); }
 </script>
 
 <!-- ============================================================
@@ -4589,6 +4594,7 @@
     const t = document.querySelector('.tab[onclick*="\'events\'"]');
     if (t) t.addEventListener('click', () => evInit());
   })();
+  try { evInit(); } catch (e) { console.warn('eager evInit', e); }
 </script>
 
 <script>
@@ -4995,6 +5001,7 @@
     const t = document.querySelector('.tab[onclick*="\'profile\'"]');
     if (t) t.addEventListener('click', () => profLoadCommunitiesOnce());
   })();
+  try { profLoadCommunitiesOnce(); } catch (e) { console.warn('eager profile init', e); }
 </script>
 
 <script>
