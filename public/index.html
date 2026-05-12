@@ -2282,7 +2282,7 @@
 
 <!-- =========================================================================
      VENDORS TAB — Vendor Master + Invoice Intake (Push 1)
-     Drop a vendor invoice PDF -> Claude parses identity + dates + amounts ->
+     Drop a vendor invoice PDF -> trustEd parses identity + dates + amounts ->
      fuzzy-match against vendor master (token Jaccard, EIN exact) -> persist
      invoice + agent_runs trade tape. Push 2: GL reconciliation with
      accrual-aware service_period matching. Push 3: COI expiry + 1099 + bench.
@@ -2909,14 +2909,14 @@
 </div>
 
 <!-- ============================================================
-     📧 Email Intake tab — paste threads, Claude extracts library facts
+     📧 Email Intake tab — paste threads, trustEd extracts library facts
      ============================================================ -->
 <div class="tab-content" id="tab-intake" style="overflow-y: auto; padding: 24px;">
   <div style="max-width: 1180px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
         <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📧 Email Intake</h2>
-        <p style="font-size:13px; color:#666;">Paste an email thread → Claude extracts facts, vendors, decisions, and action items → approve to promote into the Community Facts library.</p>
+        <p style="font-size:13px; color:#666;">Paste an email thread → trustEd extracts facts, vendors, decisions, and action items → approve to promote into the Community Facts library.</p>
       </div>
       <button class="primary-btn" onclick="inShowNewModal()" style="padding:9px 18px;">+ Paste new email</button>
     </div>
@@ -2983,7 +2983,7 @@
       </div>
       <label class="prof-fld" style="margin-bottom:10px;">
         <span>Email thread (paste the whole thread including replies)</span>
-        <textarea id="in-new-raw" rows="14" placeholder="Paste the full email thread here. Include sender names, dates, and reply chains — Claude reads through everything to extract facts, vendors, decisions, and action items." style="width:100%; padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; font-family: ui-monospace, SFMono-Regular, monospace;"></textarea>
+        <textarea id="in-new-raw" rows="14" placeholder="Paste the full email thread here. Include sender names, dates, and reply chains — trustEd reads through everything to extract facts, vendors, decisions, and action items." style="width:100%; padding:10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; font-family: ui-monospace, SFMono-Regular, monospace;"></textarea>
       </label>
       <div style="text-align:right;">
         <button class="secondary-btn" onclick="inHideNewModal()">Cancel</button>
@@ -3249,7 +3249,7 @@
 
   // Extract plain text from a dropped file.
   // .eml / .txt → read as text directly
-  // .pdf       → send to server-side PDF extractor (uses Claude PDF support)
+  // .pdf       → send to server-side PDF extractor
   async function inExtractFileText(file) {
     const name = (file.name || '').toLowerCase();
     if (name.endsWith('.pdf') || file.type === 'application/pdf') {
@@ -3342,7 +3342,7 @@
     const btn = document.getElementById('in-submit-btn');
     const status = document.getElementById('in-new-status');
     btn.disabled = true; btn.textContent = '⏳ Extracting (10-20s)…';
-    status.textContent = 'Claude is reading the thread…'; status.style.color = '#888';
+    status.textContent = 'Reading the thread…'; status.style.color = '#888';
 
     try {
       const r = await fetch('/api/email-intelligence', {
@@ -3594,7 +3594,7 @@
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
         <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏗️ ACC History</h2>
-        <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. Claude extracts structured fields → review → save. The AI assessment engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
+        <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. trustEd extracts structured fields — review → save. The AI assessment engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
       </div>
     </div>
 
@@ -4295,7 +4295,7 @@
     const btn = document.getElementById('rc-gen-btn');
     const status = document.getElementById('rc-new-status');
     btn.disabled = true; btn.textContent = '⏳ Generating…';
-    status.textContent = 'Claude is drafting the recap…'; status.style.color = '#888';
+    status.textContent = 'Drafting the recap…'; status.style.color = '#888';
     try {
       const r = await fetch('/api/email-intelligence/recaps', {
         method: 'POST',

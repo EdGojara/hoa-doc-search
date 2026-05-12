@@ -117,7 +117,7 @@ Return ONLY the JSON object.`;
   try {
     return { data: JSON.parse(cleaned), usage: response.usage };
   } catch (err) {
-    throw new Error('Claude returned invalid JSON: ' + err.message);
+    throw new Error('Extractor returned invalid JSON: ' + err.message);
   }
 }
 

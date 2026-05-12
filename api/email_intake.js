@@ -170,7 +170,7 @@ ${rawContent}`;
   try {
     return { data: JSON.parse(cleaned), usage: response.usage };
   } catch (err) {
-    throw new Error('Claude returned invalid JSON: ' + err.message + '\n---\n' + cleaned.slice(0, 500));
+    throw new Error('Extractor returned invalid JSON: ' + err.message + '\n---\n' + cleaned.slice(0, 500));
   }
 }
 
