@@ -443,143 +443,199 @@
       chip.addEventListener('click', () => submit(chip.dataset.q));
     });
 
-    // ---------- Speech recognition (STT) ----------
-    const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-    let recognizer = null;
+    // ========================================================================
+    // STT — MediaRecorder → /api/stt (OpenAI Whisper)
+    // ------------------------------------------------------------------------
+    // Reliable across iOS Safari, Chrome Android, desktop. Web Speech API
+    // was unusable on iPhone (audio-capture errors). Whisper just works.
+    // ========================================================================
+    let mediaRecorder = null;
+    let recordedChunks = [];
     let listening = false;
 
-    if (SpeechRec) {
-      recognizer = new SpeechRec();
-      recognizer.continuous = false;
-      recognizer.interimResults = true;
-      recognizer.lang = 'en-US';
+    function pickAudioMime() {
+      // iOS Safari supports audio/mp4; Chrome/Android prefer audio/webm.
+      // We probe in priority order and let MediaRecorder default if none.
+      const candidates = [
+        'audio/webm;codecs=opus',
+        'audio/webm',
+        'audio/mp4',
+        'audio/mp4;codecs=mp4a.40.2',
+        'audio/ogg;codecs=opus'
+      ];
+      for (const m of candidates) {
+        if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) {
+          return m;
+        }
+      }
+      return ''; // let the browser pick
+    }
 
-      recognizer.onstart = () => {
+    async function startListening() {
+      if (listening) return;
+      hint.classList.remove('error');
+      textInput.value = '';
+      stopSpeaking();   // kill any in-flight answer playback
+      unlockAudio();    // also unlock TTS playback while we have a gesture
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mime = pickAudioMime();
+        const opts = mime ? { mimeType: mime } : {};
+        mediaRecorder = new MediaRecorder(stream, opts);
+        recordedChunks = [];
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data && e.data.size > 0) recordedChunks.push(e.data);
+        };
+        mediaRecorder.onstop = async () => {
+          // Stop the mic immediately so the iOS red recording indicator goes away
+          stream.getTracks().forEach((t) => t.stop());
+          listening = false;
+          micBtn.classList.remove('listening');
+          hint.classList.remove('listening');
+          if (recordedChunks.length === 0) {
+            hint.textContent = 'No audio captured — tap mic and try again.';
+            return;
+          }
+          const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || mime || 'audio/webm' });
+          await transcribeAndSubmit(blob);
+        };
+        mediaRecorder.start();
         listening = true;
         micBtn.classList.add('listening');
         hint.classList.add('listening');
         hint.textContent = '🎤 Listening… tap mic again when finished.';
-      };
-
-      recognizer.onresult = (event) => {
-        let interim = '';
-        let final = '';
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const r = event.results[i];
-          if (r.isFinal) final += r[0].transcript;
-          else interim += r[0].transcript;
-        }
-        textInput.value = (final + interim).trim();
-        textInput.dispatchEvent(new Event('input'));
-      };
-
-      recognizer.onerror = (event) => {
-        console.warn('STT error', event.error);
-        hint.classList.remove('listening');
+      } catch (err) {
+        console.warn('mic error', err);
         hint.classList.add('error');
-        if (event.error === 'not-allowed' || event.error === 'service-not-allowed') {
-          hint.textContent = '🚫 Microphone access denied. Enable mic in browser settings.';
-        } else if (event.error === 'no-speech') {
-          hint.textContent = "Didn't catch that — tap the mic and try again.";
+        if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+          hint.textContent = '🚫 Mic access denied. Settings → Safari → Microphone → Allow.';
+        } else if (err.name === 'NotFoundError') {
+          hint.textContent = '🚫 No microphone found on this device.';
         } else {
-          hint.textContent = 'Speech recognition error: ' + event.error;
+          hint.textContent = 'Mic error: ' + (err.message || err.name);
         }
-        stopListening();
-      };
-
-      recognizer.onend = () => {
-        listening = false;
-        micBtn.classList.remove('listening');
-        hint.classList.remove('listening');
-        if (!hint.classList.contains('error')) {
-          hint.textContent = textInput.value.trim()
-            ? 'Tap send, or tap mic to re-record.'
-            : 'Tap the mic to speak — or type your question.';
-        }
-      };
-    } else {
-      micBtn.classList.add('disabled');
-      hint.textContent = 'Voice input not supported on this browser — try Chrome or Safari.';
+      }
     }
 
-    function startListening() {
-      if (!recognizer || listening) return;
-      hint.classList.remove('error');
-      textInput.value = '';
-      try { recognizer.start(); } catch (err) { console.warn('rec start', err); }
-    }
     function stopListening() {
-      if (!recognizer || !listening) return;
-      try { recognizer.stop(); } catch (err) { console.warn('rec stop', err); }
+      if (!listening || !mediaRecorder) return;
+      try { mediaRecorder.stop(); } catch (err) { console.warn('stop err', err); }
+    }
+
+    async function transcribeAndSubmit(blob) {
+      hint.textContent = '✍️ Transcribing…';
+      try {
+        const form = new FormData();
+        // give it a filename matching the codec so Whisper picks the right decoder
+        const ext = (blob.type || '').includes('mp4') ? 'mp4'
+                  : (blob.type || '').includes('mpeg') ? 'mp3'
+                  : (blob.type || '').includes('ogg') ? 'ogg'
+                  : 'webm';
+        form.append('audio', blob, `voice.${ext}`);
+        const res = await fetch('/api/stt', { method: 'POST', body: form });
+        const data = await res.json();
+        if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+        const text = (data.text || '').trim();
+        if (!text) {
+          hint.textContent = "Didn't catch that — tap mic and try again.";
+          return;
+        }
+        textInput.value = text;
+        textInput.dispatchEvent(new Event('input'));
+        submit(text);
+      } catch (err) {
+        console.warn('stt failed', err);
+        hint.classList.add('error');
+        hint.textContent = 'Transcription error: ' + (err.message || 'unknown');
+      }
     }
 
     micBtn.addEventListener('click', () => {
-      if (micBtn.classList.contains('disabled')) return;
       if (listening) {
         stopListening();
-        if (textInput.value.trim()) {
-          // tiny delay so onresult finishes flushing
-          setTimeout(() => submit(textInput.value.trim()), 120);
-        }
       } else {
         startListening();
       }
     });
 
-    // ---------- Speech synthesis (TTS) ----------
-    // Web Speech API voices are free but robotic. v2 will swap this for
-    // OpenAI Onyx via a server-side endpoint — same UX, better voice.
-    let currentUtterance = null;
-    let preferredVoice = null;
+    // Feature detection — if MediaRecorder + getUserMedia don't exist, disable mic
+    if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      micBtn.classList.add('disabled');
+      micBtn.disabled = true;
+      hint.textContent = 'Voice input not supported on this browser — type instead.';
+    }
 
-    function pickVoice() {
-      const voices = window.speechSynthesis.getVoices();
-      // Prefer en-US male-ish voices that sound less robotic on each platform
-      const candidates = [
-        'Google US English',
-        'Microsoft Guy Online (Natural) - English (United States)',
-        'Microsoft David Desktop - English (United States)',
-        'Alex',
-        'Daniel',
-        'Samantha'
-      ];
-      for (const name of candidates) {
-        const v = voices.find((x) => x.name === name);
-        if (v) return v;
+    // ========================================================================
+    // TTS — /api/tts (OpenAI Onyx)
+    // ------------------------------------------------------------------------
+    // iOS blocks audio playback that isn't tied to a user gesture, AND it
+    // blocks playback after async fetches even if the gesture started the
+    // chain. The unlock pattern: on the first user tap, play a silent
+    // <audio> so the element is "user-activated", then we can swap its src
+    // freely after fetches.
+    // ========================================================================
+    const ttsAudio = new Audio();
+    ttsAudio.preload = 'auto';
+    let audioUnlocked = false;
+    let currentSpeakBtn = null;
+
+    function unlockAudio() {
+      if (audioUnlocked) return;
+      try {
+        // 1-frame silent WAV (RIFF header + zero samples)
+        ttsAudio.src = 'data:audio/wav;base64,UklGRhwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+        const p = ttsAudio.play();
+        if (p && p.then) p.then(() => { audioUnlocked = true; }).catch(() => {});
+        else audioUnlocked = true;
+      } catch (_) {}
+    }
+
+    // Unlock on the very first user gesture anywhere in the UI
+    document.addEventListener('click', unlockAudio, { once: true, capture: true });
+    document.addEventListener('touchstart', unlockAudio, { once: true, capture: true });
+
+    async function speak(text, button) {
+      stopSpeaking();
+      currentSpeakBtn = button || null;
+      if (currentSpeakBtn) currentSpeakBtn.classList.add('playing');
+      try {
+        const res = await fetch('/api/tts', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ text, voice: 'onyx' })
+        });
+        if (!res.ok) {
+          const errJson = await res.json().catch(() => ({}));
+          throw new Error(errJson.error || ('HTTP ' + res.status));
+        }
+        const blob = await res.blob();
+        const url = URL.createObjectURL(blob);
+        ttsAudio.src = url;
+        ttsAudio.onended = () => {
+          URL.revokeObjectURL(url);
+          if (currentSpeakBtn) currentSpeakBtn.classList.remove('playing');
+          currentSpeakBtn = null;
+        };
+        ttsAudio.onerror = () => {
+          URL.revokeObjectURL(url);
+          if (currentSpeakBtn) currentSpeakBtn.classList.remove('playing');
+          currentSpeakBtn = null;
+        };
+        await ttsAudio.play();
+      } catch (err) {
+        console.warn('tts failed', err);
+        if (currentSpeakBtn) currentSpeakBtn.classList.remove('playing');
+        currentSpeakBtn = null;
       }
-      return voices.find((v) => v.lang && v.lang.startsWith('en')) || voices[0] || null;
-    }
-    if ('speechSynthesis' in window) {
-      // voices load async on some browsers
-      window.speechSynthesis.onvoiceschanged = () => { preferredVoice = pickVoice(); };
-      preferredVoice = pickVoice();
     }
 
-    function speak(text, button) {
-      if (!('speechSynthesis' in window)) return;
-      window.speechSynthesis.cancel();
-      // Strip markdown for cleaner audio output
-      const clean = text
-        .replace(/^#{1,6}\s+/gm, '')
-        .replace(/[*_`]/g, '')
-        .replace(/\[(.*?)\]\(.*?\)/g, '$1')
-        .replace(/\n{2,}/g, '. ')
-        .replace(/\n/g, ' ');
-      const utt = new SpeechSynthesisUtterance(clean);
-      if (preferredVoice) utt.voice = preferredVoice;
-      utt.rate = 1.02;
-      utt.pitch = 0.95;
-      utt.onstart = () => { if (button) button.classList.add('playing'); };
-      utt.onend = utt.onerror = () => { if (button) button.classList.remove('playing'); };
-      currentUtterance = utt;
-      window.speechSynthesis.speak(utt);
-    }
     function stopSpeaking() {
-      if ('speechSynthesis' in window) window.speechSynthesis.cancel();
+      try { ttsAudio.pause(); } catch (_) {}
+      try { ttsAudio.currentTime = 0; } catch (_) {}
+      if (currentSpeakBtn) currentSpeakBtn.classList.remove('playing');
+      currentSpeakBtn = null;
     }
 
-    // Stop TTS the moment user starts a new mic recording or types
-    micBtn.addEventListener('click', stopSpeaking, true);
     textInput.addEventListener('focus', stopSpeaking);
 
     // ---------- Submit / render ----------

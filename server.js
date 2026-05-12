@@ -763,6 +763,89 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
   }
 });
 
+// ============================================================================
+// Voice askEd v2 — OpenAI Whisper (STT) + Onyx (TTS) endpoints
+// ----------------------------------------------------------------------------
+// /api/stt — accepts an audio blob from the mobile mic, sends to Whisper,
+//            returns { text }. Replaces the unreliable Web Speech API on iOS.
+// /api/tts — accepts { text, voice? }, returns audio/mpeg bytes from OpenAI
+//            tts-1 (Onyx default). Replaces robotic browser speechSynthesis.
+//
+// Cost (typical staff usage ~10 questions/day):
+//   - Whisper: $0.006 / min audio → ~$0.30/mo
+//   - tts-1:   $15 / 1M chars     → ~$6/mo
+// Negligible vs the value of voice working reliably in the field.
+// ============================================================================
+
+// OpenAI Whisper needs a File-like object with a .name extension hint so the
+// API knows the format. multer gives us a Buffer; we wrap it via openai's
+// toFile helper which is the SDK-sanctioned path.
+const { toFile } = require('openai');
+
+app.post('/api/stt', upload.single('audio'), async (req, res) => {
+  if (!req.file) return res.status(400).json({ error: 'No audio uploaded (expected field "audio")' });
+  try {
+    // Pick a sensible filename so Whisper infers the codec.
+    // MediaRecorder typically gives audio/webm on Chrome/Android and audio/mp4
+    // on iOS Safari. Whisper accepts: webm, mp4, m4a, mp3, wav, mpga, mpeg, ogg, flac.
+    const mime = req.file.mimetype || 'audio/webm';
+    const ext = mime.includes('mp4') ? 'mp4'
+              : mime.includes('mpeg') ? 'mp3'
+              : mime.includes('wav') ? 'wav'
+              : mime.includes('ogg') ? 'ogg'
+              : 'webm';
+    const audioFile = await toFile(req.file.buffer, `voice.${ext}`, { type: mime });
+
+    const transcription = await openai.audio.transcriptions.create({
+      file: audioFile,
+      model: 'whisper-1',
+      language: 'en',
+      response_format: 'json'
+    });
+
+    res.json({ text: (transcription.text || '').trim() });
+  } catch (err) {
+    console.error('[stt] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/tts', async (req, res) => {
+  const { text, voice } = req.body || {};
+  if (!text || !text.trim()) return res.status(400).json({ error: 'text is required' });
+
+  try {
+    // Strip markdown so the spoken output sounds natural — no "asterisk
+    // asterisk action asterisk asterisk". This mirrors what the client used
+    // to do for speechSynthesis, but now done server-side so /api/tts is
+    // the single source of truth for spoken audio.
+    const clean = text
+      .replace(/^#{1,6}\s+/gm, '')      // headings
+      .replace(/[*_`]/g, '')             // bold/italic/code
+      .replace(/\[(.*?)\]\(.*?\)/g, '$1') // markdown links → label
+      .replace(/\n{2,}/g, '. ')          // paragraph breaks
+      .replace(/\n/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .slice(0, 4000);                   // tts-1 input cap is 4096 chars
+
+    const speech = await openai.audio.speech.create({
+      model: 'tts-1',           // tts-1-hd is ~2x cost; tts-1 is plenty
+      voice: voice || 'onyx',   // Ed's choice — warm, masculine, calm
+      input: clean,
+      response_format: 'mp3'
+    });
+
+    const buf = Buffer.from(await speech.arrayBuffer());
+    res.set('Content-Type', 'audio/mpeg');
+    res.set('Cache-Control', 'no-store');
+    res.send(buf);
+  } catch (err) {
+    console.error('[tts] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/ask-ed', upload.single('attachment'), async (req, res) => {
   try {
     const { situation, community } = req.body;
