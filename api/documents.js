@@ -1263,10 +1263,10 @@ router.put('/email-templates/:category', async (req, res) => {
 router.post('/:id/email-render', async (req, res) => {
   try {
     const { recipient_name, recipient_email, base_url } = req.body || {};
-    // Load the doc + community
+    // Load the doc + community (incl. slug for short-URL generation)
     const { data: doc } = await supabase
       .from('library_documents')
-      .select('*, community:communities(name)')
+      .select('*, community:communities(name, slug)')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
@@ -1282,17 +1282,32 @@ router.post('/:id/email-render', async (req, res) => {
       return res.status(404).json({ error: 'No email template configured for category: ' + doc.category });
     }
     // Build the download URL.
-    // Priority order:
+    // Domain priority:
     //   1. FORMS_PUBLIC_URL env var — pinned owner-facing domain (e.g.,
     //      my.bedrocktxai.com). Ensures email links are always branded
     //      consistently regardless of which subdomain the manager is using.
     //   2. base_url from request (window.location.origin) — fallback for
     //      local dev or before env var is set.
-    //   3. Empty — last resort (link will be relative, broken).
-    // Uses /f/:id short path (302-redirects to /api/documents/:id/download)
-    // for cleaner URLs in the email body.
+    //   3. Empty — last resort.
+    //
+    // Path priority — readable slug > UUID:
+    //   - If the doc's community has a slug AND the category has a short
+    //     alias (arc/fob/form), use /f/{community-slug}-{category-short}
+    //     e.g., my.bedrocktxai.com/f/lpf-arc
+    //     The slug always resolves to the CURRENT version, so updating
+    //     the form later doesn't break old email links.
+    //   - Otherwise fall back to /f/{uuid} (still works, just uglier).
     const downloadBase = (process.env.FORMS_PUBLIC_URL || base_url || '').replace(/\/+$/, '');
-    const downloadLink = `${downloadBase}/f/${doc.id}`;
+    const CATEGORY_TO_SHORT = {
+      arc_application: 'arc',
+      key_fob_form: 'fob',
+      forms_and_applications: 'form'
+    };
+    const communitySlug = doc.community?.slug;
+    const categoryShort = CATEGORY_TO_SHORT[doc.category];
+    const downloadLink = (communitySlug && categoryShort)
+      ? `${downloadBase}/f/${communitySlug}-${categoryShort}`
+      : `${downloadBase}/f/${doc.id}`;
     const communityName = doc.community?.name || 'your community';
     const recipientNameOrEmpty = recipient_name ? ` ${recipient_name}` : '';
 

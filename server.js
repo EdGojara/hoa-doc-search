@@ -300,21 +300,76 @@ app.use(express.static('public'));
 
 // ----------------------------------------------------------------------------
 // Short-URL redirect for owner-facing form downloads.
-// Maps /f/:doc_id -> /api/documents/:doc_id/download (302 redirect).
-// Used in Send-to-Owner emails so the link is shorter + brand-clean
-// (e.g., my.bedrocktxai.com/f/abc-123 instead of
-//  my.bedrocktxai.com/api/documents/abc-123/download). Owner clicks once,
-// browser follows the 302, file downloads. Same auth/visibility rules as
-// the underlying download endpoint.
+// Two URL formats both supported:
+//   1. /f/<uuid>                  → direct redirect to that document's download
+//   2. /f/<community>-<category>  → resolve to current doc for that pair
+//                                    e.g., /f/lpf-arc → current LPF ARC application
+//                                          /f/eaglewood-fob → current Eaglewood key fob form
+//
+// The slug format always serves the CURRENT version. When a new version is
+// uploaded and the old gets auto-superseded, the slug URL keeps working —
+// it just points to the new version. URLs in old emails work forever.
+//
+// Maps community slug + category short alias to the canonical category:
+//   arc  → arc_application
+//   fob  → key_fob_form
+//   form → forms_and_applications
 // ----------------------------------------------------------------------------
-app.get('/f/:doc_id', (req, res) => {
-  // Basic UUID sanity check — reject anything that doesn't look like a UUID
-  // so this route doesn't accidentally proxy random paths.
+const CATEGORY_SHORT_TO_CANONICAL = {
+  arc: 'arc_application',
+  fob: 'key_fob_form',
+  form: 'forms_and_applications'
+};
+
+app.get('/f/:slug', async (req, res) => {
+  const slug = String(req.params.slug || '').trim();
   const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
-  if (!uuidPattern.test(req.params.doc_id)) {
-    return res.status(404).send('<h1>Form not found</h1>');
+
+  // Path 1: UUID format (backward compat — keeps old emails working)
+  if (uuidPattern.test(slug)) {
+    return res.redirect(302, `/api/documents/${slug}/download`);
   }
-  res.redirect(302, `/api/documents/${req.params.doc_id}/download`);
+
+  // Path 2: community-category slug
+  // Split on the LAST hyphen so community slugs with hyphens (canyon-gate) work
+  const lastHyphen = slug.lastIndexOf('-');
+  if (lastHyphen < 0) return res.status(404).send('<h1>Form not found</h1>');
+  const communitySlug = slug.substring(0, lastHyphen).toLowerCase();
+  const categoryShort = slug.substring(lastHyphen + 1).toLowerCase();
+  const category = CATEGORY_SHORT_TO_CANONICAL[categoryShort];
+  if (!category) return res.status(404).send('<h1>Form not found</h1><p>Unknown form type.</p>');
+
+  try {
+    // Look up the community by slug
+    const { data: community } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('slug', communitySlug)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!community) return res.status(404).send('<h1>Form not found</h1><p>Unknown community.</p>');
+
+    // Find the current doc for (community, category). If multiple match
+    // (rare — only for forms_and_applications catch-all), prefer most recent.
+    const { data: doc } = await supabase
+      .from('library_documents')
+      .select('id')
+      .eq('community_id', community.id)
+      .eq('category', category)
+      .eq('status', 'current')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('uploaded_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (!doc) {
+      return res.status(404).send(`<h1>Form not found</h1><p>${community.name} doesn't have a current ${categoryShort.toUpperCase()} form on file.</p>`);
+    }
+
+    res.redirect(302, `/api/documents/${doc.id}/download`);
+  } catch (err) {
+    console.error('[/f/:slug] failed:', err.message);
+    res.status(500).send('<h1>Server error</h1>');
+  }
 });
 
 // Bedrock Office > Client Billing module
