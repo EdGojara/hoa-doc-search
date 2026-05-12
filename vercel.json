@@ -1,7 +1,0 @@
-{
-  "version": 2,
-  "rewrites": [
-    { "source": "/ask", "destination": "/api/ask" },
-    { "source": "/(.*)", "destination": "/public/$1" }
-  ]
-}
