@@ -1004,69 +1004,39 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
     }) || 'No relevant playbook examples for this question.';
 
-    send({ type: 'meta', model: 'claude-sonnet-4-6', stage: 'retrieval-done', playbook: playbookEntries.length, docChars: docContext?.length || 0 });
+    send({ type: 'meta', model: 'claude-sonnet-4-6' });
 
     const userContent = buildAskEdUserMessage({
       situation, community, playbookContext, docContext, attachmentContent, attachmentNote
     });
 
-    send({ type: 'trace', stage: 'before-anthropic' });
-
-    // Use the raw SSE iterator (stream: true on the create() call).
-    let streamResp;
-    try {
-      streamResp = await anthropic.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1500,
-        system: askEdSystem(),
-        messages: [{ role: 'user', content: userContent }],
-        stream: true
-      });
-    } catch (anthropicErr) {
-      send({ type: 'error', stage: 'anthropic-create', message: anthropicErr.message, status: anthropicErr.status, name: anthropicErr.name });
-      console.error('[ask-ed-stream] anthropic create failed:', anthropicErr.stack || anthropicErr);
-      return res.end();
-    }
-
-    send({
-      type: 'trace',
-      stage: 'anthropic-returned',
-      kind: typeof streamResp,
-      ctor: streamResp && streamResp.constructor && streamResp.constructor.name,
-      keys: streamResp ? Object.keys(streamResp).slice(0, 20) : null,
-      hasAsyncIter: !!(streamResp && streamResp[Symbol.asyncIterator]),
-      hasIterator: !!(streamResp && streamResp.iterator),
-      hasController: !!(streamResp && streamResp.controller)
+    // Raw SSE iterator (stream:true on create). Avoids the listener-timing
+    // race of the higher-level .stream() + .on('text') API.
+    const streamResp = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1500,
+      system: askEdSystem(),
+      messages: [{ role: 'user', content: userContent }],
+      stream: true
     });
 
     let deltaCount = 0;
     let eventCount = 0;
-    try {
-      for await (const event of streamResp) {
-        eventCount++;
-        if (eventCount <= 3) {
-          // surface first few raw events for diagnosis
-          send({ type: 'trace', stage: 'event', n: eventCount, etype: event && event.type, dtype: event && event.delta && event.delta.type });
-        }
-        if (aborted) break;
-        if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
-          deltaCount++;
-          send({ type: 'delta', text: event.delta.text });
-        }
+    for await (const event of streamResp) {
+      if (aborted) break;
+      eventCount++;
+      if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
+        deltaCount++;
+        send({ type: 'delta', text: event.delta.text });
       }
-      send({ type: 'trace', stage: 'iter-done', events: eventCount });
-    } catch (iterErr) {
-      send({ type: 'error', stage: 'iteration', message: iterErr.message, name: iterErr.name, stack: (iterErr.stack || '').split('\n').slice(0, 4) });
-      console.error('[ask-ed-stream] iteration failed:', iterErr.stack || iterErr);
-      return res.end();
     }
 
     console.log(`[ask-ed-stream] complete events=${eventCount} deltas=${deltaCount}`);
-    if (!aborted) send({ type: 'done', events: eventCount, deltas: deltaCount });
+    if (!aborted) send({ type: 'done' });
     res.end();
   } catch (err) {
-    console.error('[ask-ed-stream] outer failure:', err.stack || err.message);
-    try { send({ type: 'error', stage: 'outer', message: err.message, name: err.name }); } catch (_) {}
+    console.error('[ask-ed-stream] failed:', err.stack || err.message);
+    try { send({ type: 'error', message: err.message }); } catch (_) {}
     res.end();
   }
 });
