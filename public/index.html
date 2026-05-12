@@ -2891,6 +2891,29 @@
       <button class="primary-btn" onclick="inShowNewModal()" style="padding:9px 18px;">+ Paste new email</button>
     </div>
 
+    <!-- Drag-and-drop zone -->
+    <div id="in-drop-zone" style="border:2px dashed #c0d0e0; border-radius:10px; padding:24px; text-align:center; background:#f7f9fc; margin-bottom:14px; transition: all 0.2s; cursor:pointer;">
+      <div style="font-size:28px; color:#5a7390;">📥</div>
+      <div style="font-size:14px; font-weight:600; color:#1a3a5c; margin-top:6px;">Drag &amp; drop email files here</div>
+      <div style="font-size:12px; color:#5a7390; margin-top:4px;">
+        Accepts <strong>.eml</strong>, <strong>.txt</strong>, <strong>.pdf</strong> (multiple files ok) — or
+        <button onclick="document.getElementById('in-file-picker').click(); event.stopPropagation();" style="background:none; border:none; color:#1a3a5c; text-decoration:underline; cursor:pointer; font:inherit; font-size:12px; padding:0;">click to pick files</button>
+      </div>
+      <div style="font-size:11px; color:#888; margin-top:8px;">
+        Outlook tip: <strong>File → Save As → .eml</strong>, then drag the saved file here.
+      </div>
+      <input type="file" id="in-file-picker" multiple accept=".eml,.txt,.pdf,message/rfc822,text/plain,application/pdf" style="display:none;" />
+      <select id="in-drop-community" class="draft-type-select" style="margin-top:10px; width:auto;">
+        <option value="">— Optional: pick community before dropping —</option>
+      </select>
+    </div>
+
+    <!-- Queue progress (only visible while batch is running) -->
+    <div id="in-queue" style="display:none; background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-bottom:14px;">
+      <div style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Processing files…</div>
+      <div id="in-queue-items" style="display:flex; flex-direction:column; gap:6px;"></div>
+    </div>
+
     <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center;">
       <select id="in-filter-community" class="draft-type-select" onchange="inLoadList()">
         <option value="">All communities</option>
@@ -2900,6 +2923,7 @@
         <option value="pending">Pending</option>
         <option value="extracted">Extracted</option>
         <option value="approved">Approved</option>
+        <option value="superseded">Superseded</option>
         <option value="error">Error</option>
       </select>
     </div>
@@ -2947,6 +2971,8 @@
     .in-status-extracted { background:#dbeafe; color:#1e3a8a; }
     .in-status-approved { background:#dcfce7; color:#166534; }
     .in-status-error { background:#fee2e2; color:#991b1b; }
+    .in-status-superseded { background:#e0e7ff; color:#3730a3; }
+    .in-status-rejected { background:#f3f4f6; color:#4b5563; }
     .in-urgency-high { color:#c0392b; font-weight:700; }
     .in-urgency-medium { color:#b45309; font-weight:600; }
     .in-urgency-low { color:#5a7390; }
@@ -2976,8 +3002,9 @@
         const r = await fetch('/api/billing/communities');
         const j = await r.json();
         inCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
-        ['in-filter-community','in-new-community'].forEach(id => {
+        ['in-filter-community','in-new-community','in-drop-community'].forEach(id => {
           const sel = document.getElementById(id);
+          if (!sel) return;
           while (sel.options.length > 1) sel.remove(1);
           inCommunities.forEach(c => {
             const opt = document.createElement('option');
@@ -2987,7 +3014,201 @@
         });
       } catch (err) { console.warn('inInit', err); }
     }
+    inSetupDropZone();
     inLoadList();
+  }
+
+  // ============================================================
+  // Drag-and-drop file ingestion
+  // ============================================================
+  let inDropZoneReady = false;
+  function inSetupDropZone() {
+    if (inDropZoneReady) return;
+    inDropZoneReady = true;
+    const zone = document.getElementById('in-drop-zone');
+    const picker = document.getElementById('in-file-picker');
+    if (!zone) return;
+
+    // Click the zone itself to open file picker
+    zone.addEventListener('click', () => picker.click());
+
+    picker.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length > 0) inProcessFiles(files);
+      picker.value = ''; // reset for next pick
+    });
+
+    // Drag visuals
+    ['dragenter', 'dragover'].forEach(ev => {
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = '#1a3a5c';
+        zone.style.background = '#e8f0f8';
+      });
+    });
+    ['dragleave', 'drop'].forEach(ev => {
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = '#c0d0e0';
+        zone.style.background = '#f7f9fc';
+      });
+    });
+    zone.addEventListener('drop', (e) => {
+      const files = Array.from(e.dataTransfer?.files || []);
+      if (files.length > 0) inProcessFiles(files);
+    });
+
+    // Also accept paste of files (rare but works in some Outlook flows)
+    document.addEventListener('paste', (e) => {
+      // Only act when intake tab is active
+      const intakeTab = document.getElementById('tab-intake');
+      if (!intakeTab || !intakeTab.classList.contains('active')) return;
+      const files = Array.from(e.clipboardData?.files || []);
+      if (files.length > 0) inProcessFiles(files);
+    });
+  }
+
+  async function inProcessFiles(files) {
+    const queue = document.getElementById('in-queue');
+    const items = document.getElementById('in-queue-items');
+    queue.style.display = '';
+    items.innerHTML = '';
+
+    const communityId = document.getElementById('in-drop-community').value || null;
+
+    // Render queue rows
+    const rows = files.map((f, i) => {
+      const row = document.createElement('div');
+      row.style.cssText = 'display:grid; grid-template-columns: 24px 1fr 120px 80px; gap:10px; padding:8px 10px; background:#fcfcfd; border:1px solid #f0f2f5; border-radius:6px; font-size:12px; align-items:center;';
+      row.innerHTML = `
+        <span class="q-icon" style="font-size:14px;">⏳</span>
+        <span class="q-name" style="font-weight:600; color:#1a3a5c;">${inEsc(f.name)} <span style="font-weight:400; color:#888;">(${(f.size/1024).toFixed(1)} kb)</span></span>
+        <span class="q-status" style="color:#888;">queued</span>
+        <span class="q-action" style="text-align:right;"></span>
+      `;
+      items.appendChild(row);
+      return row;
+    });
+
+    let processed = 0;
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const row = rows[i];
+      row.querySelector('.q-icon').textContent = '⏳';
+      row.querySelector('.q-status').textContent = 'reading…';
+
+      try {
+        const raw = await inExtractFileText(file);
+        if (!raw || !raw.trim()) throw new Error('No readable text in file');
+
+        row.querySelector('.q-status').textContent = 'extracting…';
+        const subject = inGuessSubject(file.name, raw);
+
+        // Submit (with force=false; the server returns 200 + warning if near-dupe)
+        let resp = await fetch('/api/email-intelligence', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            community_id: communityId,
+            subject,
+            raw_content: raw,
+            source: 'upload'
+          })
+        });
+        let payload = await resp.json();
+
+        if (resp.status === 409 && payload.duplicate === 'exact') {
+          row.querySelector('.q-icon').textContent = '⚠️';
+          row.querySelector('.q-status').textContent = 'duplicate';
+          const link = document.createElement('a');
+          link.href = '#'; link.textContent = 'view original';
+          link.style.cssText = 'color:#1a3a5c; font-size:11px;';
+          link.onclick = (e) => { e.preventDefault(); inOpenDetail(payload.existing.id); };
+          row.querySelector('.q-action').appendChild(link);
+          processed++;
+          continue;
+        }
+        if (resp.status === 200 && payload.warning === 'near_duplicate') {
+          // Show a quick confirm dialog with candidates
+          const proceed = confirm(
+            `"${file.name}" looks similar (${(payload.candidates[0].similarity * 100).toFixed(0)}% match) to an earlier email:\n\n` +
+            `"${payload.candidates[0].extracted_summary || payload.candidates[0].subject || '(no summary)'}"\n` +
+            `Ingested ${new Date(payload.candidates[0].ingested_at).toLocaleDateString()}\n\n` +
+            `Continue and ingest anyway? Click OK to add as a new intake, Cancel to skip.`
+          );
+          if (!proceed) {
+            row.querySelector('.q-icon').textContent = '⏭️';
+            row.querySelector('.q-status').textContent = 'skipped';
+            processed++;
+            continue;
+          }
+          // Re-submit with force=true
+          resp = await fetch('/api/email-intelligence', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ community_id: communityId, subject, raw_content: raw, source: 'upload', force: true })
+          });
+          payload = await resp.json();
+        }
+
+        if (resp.status >= 400 || payload.error) {
+          throw new Error(payload.error || ('HTTP ' + resp.status));
+        }
+
+        row.querySelector('.q-icon').textContent = payload.supersedes ? '🔗' : '✓';
+        row.querySelector('.q-status').textContent = payload.supersedes ? 'supersedes earlier' : 'extracted';
+        const open = document.createElement('a');
+        open.href = '#'; open.textContent = 'open';
+        open.style.cssText = 'color:#1a3a5c; font-size:11px;';
+        open.onclick = (e) => { e.preventDefault(); inOpenDetail(payload.intake.id); };
+        row.querySelector('.q-action').appendChild(open);
+      } catch (err) {
+        row.querySelector('.q-icon').textContent = '❌';
+        row.querySelector('.q-status').textContent = 'error';
+        row.querySelector('.q-status').style.color = '#c0392b';
+        row.querySelector('.q-action').textContent = err.message.slice(0, 60);
+      }
+      processed++;
+    }
+
+    // After batch, refresh list
+    inLoadList();
+
+    // Leave the queue visible so user can review what happened; auto-hide after 30s if all good
+    setTimeout(() => {
+      const stillErrors = items.querySelectorAll('.q-icon');
+      const allGood = Array.from(stillErrors).every(s => s.textContent === '✓' || s.textContent === '🔗');
+      if (allGood) queue.style.display = 'none';
+    }, 30000);
+  }
+
+  // Extract plain text from a dropped file.
+  // .eml / .txt → read as text directly
+  // .pdf       → send to server-side PDF extractor (uses Claude PDF support)
+  async function inExtractFileText(file) {
+    const name = (file.name || '').toLowerCase();
+    if (name.endsWith('.pdf') || file.type === 'application/pdf') {
+      // POST to a generic PDF text extraction endpoint — leverages existing
+      // pdf-parse setup. We just take the text and treat it as the email body.
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch('/api/email-intelligence/extract-pdf-text', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (j.error) throw new Error('PDF extract: ' + j.error);
+      return j.text || '';
+    }
+    // .eml, .txt, .msg-as-text, anything else: read as plain text
+    return await file.text();
+  }
+
+  // Guess a reasonable subject from the filename or first useful header line.
+  function inGuessSubject(filename, raw) {
+    // Strip extension
+    const fromName = (filename || '').replace(/\.[^.]+$/, '').replace(/[_-]+/g, ' ').trim();
+    // Try to find a Subject: header in the body
+    const subjMatch = (raw || '').match(/^Subject:\s*(.+?)$/im);
+    if (subjMatch) return subjMatch[1].trim().slice(0, 200);
+    return fromName.slice(0, 200) || null;
   }
 
   async function inLoadList() {
@@ -3223,6 +3444,21 @@
               <span class="in-status-pill in-status-${i.extraction_status}">${i.extraction_status}</span>
               · ${inEsc(i.community?.name || 'no community')} · Ingested ${new Date(i.ingested_at).toLocaleString()}
             </div>
+            ${i.supersedes ? `
+              <div style="margin-top:8px; padding:6px 10px; background:#fef3c7; border:1px solid #f59e0b; border-radius:6px; font-size:12px; color:#78350f;">
+                🔗 <strong>This supersedes</strong> an earlier email:
+                <a href="#" onclick="event.preventDefault(); inOpenDetail('${i.supersedes.id}');" style="color:#78350f; font-weight:600;">${inEsc(i.supersedes.subject || i.supersedes.extracted_summary || '(no subject)')}</a>
+                <span style="color:#92400e;"> (${new Date(i.supersedes.ingested_at).toLocaleDateString()})</span>
+              </div>` : ''
+            }
+            ${i.superseded_by ? `
+              <div style="margin-top:8px; padding:6px 10px; background:#e0e7ff; border:1px solid #818cf8; border-radius:6px; font-size:12px; color:#3730a3;">
+                ⏭️ <strong>Superseded by</strong> a newer email:
+                <a href="#" onclick="event.preventDefault(); inOpenDetail('${i.superseded_by.id}');" style="color:#3730a3; font-weight:600;">${inEsc(i.superseded_by.subject || i.superseded_by.extracted_summary || '(no subject)')}</a>
+                <span style="color:#4338ca;"> (${new Date(i.superseded_by.ingested_at).toLocaleDateString()})</span>
+                — facts from this thread may be outdated.
+              </div>` : ''
+            }
           </div>
           <button onclick="inDeleteIntake()" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
         </div>

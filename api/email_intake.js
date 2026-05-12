@@ -35,13 +35,48 @@
 // ============================================================================
 
 const express = require('express');
+const crypto = require('crypto');
+const multer = require('multer');
+const pdfParse = require('pdf-parse');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+
+// ----------------------------------------------------------------------------
+// Dedup helpers
+// ----------------------------------------------------------------------------
+
+// Normalize content for hashing + embedding so superficial differences
+// (whitespace, signature lines, "On <date>, X wrote:" wrappers) don't
+// hide real duplicates.
+function normalizeForDedup(raw) {
+  if (!raw) return '';
+  let t = String(raw);
+  // Strip common email scaffolding
+  t = t.replace(/^\s*On .+ wrote:\s*$/gm, '');                  // "On Mon, May 12, 2026 at 2:34 PM Ed Gojara wrote:"
+  t = t.replace(/^\s*Sent from my (iPhone|Android|iPad).*$/gm, '');
+  t = t.replace(/^\s*-{2,}\s*Original Message\s*-{2,}.*$/gm, '');
+  t = t.replace(/^\s*Begin forwarded message:.*$/gm, '');
+  t = t.replace(/^\s*From:.*$/gm, '');
+  t = t.replace(/^\s*To:.*$/gm, '');
+  t = t.replace(/^\s*Cc:.*$/gm, '');
+  t = t.replace(/^\s*Subject:.*$/gm, '');
+  t = t.replace(/^\s*Date:.*$/gm, '');
+  t = t.replace(/^\s*Reply-To:.*$/gm, '');
+  t = t.replace(/^>+\s?/gm, '');                                 // strip reply quote markers
+  t = t.replace(/\s+/g, ' ').trim().toLowerCase();
+  return t;
+}
+
+function hashContent(raw) {
+  return crypto.createHash('sha256').update(normalizeForDedup(raw)).digest('hex');
+}
 
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
@@ -155,14 +190,38 @@ function slugifyKey(s) {
 }
 
 // ============================================================================
+// Utility: extract text from PDF (used by drag-and-drop on the intake tab)
+// ============================================================================
+router.post('/extract-pdf-text', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file is required' });
+    if (req.file.mimetype !== 'application/pdf' && !(req.file.originalname || '').toLowerCase().endsWith('.pdf')) {
+      return res.status(400).json({ error: 'Only PDF files supported on this endpoint' });
+    }
+    const parsed = await pdfParse(req.file.buffer);
+    res.json({ text: parsed.text || '', pages: parsed.numpages || null });
+  } catch (err) {
+    console.error('[email-intake] extract-pdf-text failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 // INTAKE ROUTES
 // ============================================================================
 
 // POST /api/email-intelligence — create + extract a new intake
-// Body: { community_id?, subject?, raw_content, sender_hint? }
+// Body: { community_id?, subject?, raw_content, sender_hint?, source?, force? }
+//   force=true bypasses near-duplicate warning (still blocks exact duplicates)
+//
+// Response:
+//   201 { intake }                  on success
+//   409 { duplicate: 'exact', existing }     exact hash match
+//   200 { warning: 'near_duplicate', candidates, draft }
+//                                   near-dupe; caller decides whether to re-POST with force=true
 router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
   try {
-    const { community_id, subject, raw_content, sender_hint } = req.body || {};
+    const { community_id, subject, raw_content, sender_hint, source, force } = req.body || {};
     if (!raw_content || !raw_content.trim()) {
       return res.status(400).json({ error: 'raw_content is required' });
     }
@@ -174,7 +233,62 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       communityName = data?.name || null;
     }
 
-    // Insert pending row first so we always have an audit trail
+    // 1. Hash + embedding for dedup
+    const contentHash = hashContent(raw_content);
+    const normalizedExcerpt = normalizeForDedup(raw_content).slice(0, 500);
+    let embedding = null;
+    try { embedding = await embed(raw_content); } catch (e) { console.warn('[dedup] embed failed', e.message); }
+
+    // 2. Exact duplicate check (only when community is set — cross-community
+    //    same-text is rare and might be intentional, allow it)
+    if (community_id) {
+      const { data: exact } = await supabase
+        .from('email_intake')
+        .select('id, subject, extracted_summary, extraction_status, ingested_at')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('community_id', community_id)
+        .eq('content_hash', contentHash)
+        .neq('extraction_status', 'superseded')
+        .maybeSingle();
+      if (exact) {
+        return res.status(409).json({
+          duplicate: 'exact',
+          message: 'This exact email thread is already in the intake list. Open the existing one instead.',
+          existing: exact
+        });
+      }
+    }
+
+    // 3. Near-duplicate / supersedes check (similarity ≥ 0.85)
+    let supersedesId = null;
+    let nearDupes = [];
+    if (embedding && community_id) {
+      const { data: matches } = await supabase.rpc('match_email_intakes', {
+        query_embedding: embedding,
+        community_id_in: community_id,
+        match_count: 5,
+        similarity_threshold: 0.85
+      });
+      nearDupes = matches || [];
+
+      // Supersession: high similarity AND new content is meaningfully longer than the matched one
+      const newRawLength = raw_content.length;
+      const supersedesMatch = nearDupes.find((m) => m.similarity >= 0.85 && newRawLength > (m.raw_length || 0) * 1.3);
+      if (supersedesMatch) supersedesId = supersedesMatch.id;
+
+      // Near-duplicate (no supersession): similarity ≥ 0.95 AND not yet flagged via force
+      const nearMatch = nearDupes.find((m) => m.similarity >= 0.95);
+      if (nearMatch && !force && !supersedesId) {
+        return res.status(200).json({
+          warning: 'near_duplicate',
+          message: 'Found a very similar email already in the system. Review before re-ingesting.',
+          candidates: nearDupes.slice(0, 3),
+          draft: { community_id, subject, raw_content, sender_hint }
+        });
+      }
+    }
+
+    // 4. Insert pending row
     const { data: intake, error: insErr } = await supabase
       .from('email_intake')
       .insert({
@@ -183,14 +297,43 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
         subject: subject || null,
         raw_content,
         sender_hint: sender_hint || null,
-        source: 'manual_paste',
-        extraction_status: 'pending'
+        source: source || 'manual_paste',
+        extraction_status: 'pending',
+        content_hash: contentHash,
+        normalized_excerpt: normalizedExcerpt,
+        embedding,
+        supersedes_id: supersedesId
       })
       .select()
       .single();
-    if (insErr) throw insErr;
+    if (insErr) {
+      // unique violation = race between dedup pre-check and insert; same response shape
+      if (insErr.code === '23505') {
+        const { data: existing } = await supabase
+          .from('email_intake')
+          .select('id, subject, extracted_summary, extraction_status, ingested_at')
+          .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+          .eq('community_id', community_id)
+          .eq('content_hash', contentHash)
+          .maybeSingle();
+        return res.status(409).json({
+          duplicate: 'exact',
+          message: 'This exact email thread is already in the intake list.',
+          existing
+        });
+      }
+      throw insErr;
+    }
 
-    // Run extraction
+    // 5. If we supersede something, mark the older one
+    if (supersedesId) {
+      await supabase
+        .from('email_intake')
+        .update({ superseded_by_id: intake.id, extraction_status: 'superseded' })
+        .eq('id', supersedesId);
+    }
+
+    // 6. Run extraction
     let extracted, extractionError = null;
     try {
       const result = await extractEmailWithClaude(raw_content, communityName);
@@ -224,7 +367,10 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       .select()
       .single();
 
-    res.json({ intake: updated });
+    res.status(201).json({
+      intake: updated,
+      supersedes: supersedesId ? { id: supersedesId } : null
+    });
   } catch (err) {
     console.error('[email-intake] create failed:', err.message);
     res.status(500).json({ error: err.message });
@@ -290,11 +436,15 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/email-intelligence/:id — full detail incl raw + extracted
+// GET /api/email-intelligence/:id — full detail incl raw + extracted + supersession links
 router.get('/:id', async (req, res) => {
   try {
     const { data, error } = await supabase.from('email_intake')
-      .select('*, community:communities(id, name, slug)')
+      .select(`*,
+        community:communities(id, name, slug),
+        supersedes:supersedes_id(id, subject, extracted_summary, ingested_at, extraction_status),
+        superseded_by:superseded_by_id(id, subject, extracted_summary, ingested_at, extraction_status)
+      `)
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
