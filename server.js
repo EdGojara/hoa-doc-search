@@ -298,6 +298,25 @@ const app = express();
 app.use(express.json());
 app.use(express.static('public'));
 
+// ----------------------------------------------------------------------------
+// Short-URL redirect for owner-facing form downloads.
+// Maps /f/:doc_id -> /api/documents/:doc_id/download (302 redirect).
+// Used in Send-to-Owner emails so the link is shorter + brand-clean
+// (e.g., my.bedrocktxai.com/f/abc-123 instead of
+//  my.bedrocktxai.com/api/documents/abc-123/download). Owner clicks once,
+// browser follows the 302, file downloads. Same auth/visibility rules as
+// the underlying download endpoint.
+// ----------------------------------------------------------------------------
+app.get('/f/:doc_id', (req, res) => {
+  // Basic UUID sanity check — reject anything that doesn't look like a UUID
+  // so this route doesn't accidentally proxy random paths.
+  const uuidPattern = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+  if (!uuidPattern.test(req.params.doc_id)) {
+    return res.status(404).send('<h1>Form not found</h1>');
+  }
+  res.redirect(302, `/api/documents/${req.params.doc_id}/download`);
+});
+
 // Bedrock Office > Client Billing module
 // Endpoints under /api/billing/*. See api/billing.js for the router definition
 // and migrations/001_foundation.sql + migrations/002_bedrock_billing.sql for

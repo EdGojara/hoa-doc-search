@@ -1281,9 +1281,18 @@ router.post('/:id/email-render', async (req, res) => {
     if (!template) {
       return res.status(404).json({ error: 'No email template configured for category: ' + doc.category });
     }
-    // Build the download URL — use whatever base the UI passed (handles
-    // Render's dynamic URL vs. localhost vs. custom domain later)
-    const downloadLink = `${(base_url || '').replace(/\/+$/, '')}/api/documents/${doc.id}/download`;
+    // Build the download URL.
+    // Priority order:
+    //   1. FORMS_PUBLIC_URL env var — pinned owner-facing domain (e.g.,
+    //      my.bedrocktxai.com). Ensures email links are always branded
+    //      consistently regardless of which subdomain the manager is using.
+    //   2. base_url from request (window.location.origin) — fallback for
+    //      local dev or before env var is set.
+    //   3. Empty — last resort (link will be relative, broken).
+    // Uses /f/:id short path (302-redirects to /api/documents/:id/download)
+    // for cleaner URLs in the email body.
+    const downloadBase = (process.env.FORMS_PUBLIC_URL || base_url || '').replace(/\/+$/, '');
+    const downloadLink = `${downloadBase}/f/${doc.id}`;
     const communityName = doc.community?.name || 'your community';
     const recipientNameOrEmpty = recipient_name ? ` ${recipient_name}` : '';
 
