@@ -424,6 +424,11 @@ app.use('/api/email-intelligence', emailIntakeRouter);
 const { router: arcHistoryRouter } = require('./api/arc_history');
 app.use('/api/arc-history', arcHistoryRouter);
 
+// Shared helper: scrub vendor names from error messages before they reach
+// the user. Anthropic SDK errors can include "claude" / model IDs that
+// should never appear in user-facing strings.
+const { safeErrorMessage } = require('./api/_safe_error');
+
 // Public event page — served from /event/:slug → returns the standalone HTML
 app.get('/event/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'event.html'));
@@ -833,7 +838,7 @@ app.post('/api/stt', upload.single('audio'), async (req, res) => {
     res.json({ text: (transcription.text || '').trim() });
   } catch (err) {
     console.error('[stt] failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -869,7 +874,7 @@ app.post('/api/tts', async (req, res) => {
     res.send(buf);
   } catch (err) {
     console.error('[tts] failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -1067,7 +1072,7 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
     res.end();
   } catch (err) {
     console.error('[ask-ed-stream] failed:', err.stack || err.message);
-    try { send({ type: 'error', message: err.message }); } catch (_) {}
+    try { send({ type: 'error', message: safeErrorMessage(err) }); } catch (_) {}
     res.end();
   }
 });

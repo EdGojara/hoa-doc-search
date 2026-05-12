@@ -24,6 +24,7 @@ const pdfParse = require('pdf-parse');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
+const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -150,7 +151,7 @@ router.post('/extract', upload.single('file'), async (req, res) => {
     });
   } catch (err) {
     console.error('[arc-history] extract failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -214,7 +215,7 @@ router.post('/', upload.single('file'), async (req, res) => {
     res.json({ decision: data });
   } catch (err) {
     console.error('[arc-history] save failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -248,7 +249,7 @@ router.get('/', async (req, res) => {
     res.json({ decisions: data || [] });
   } catch (err) {
     console.error('[arc-history] list failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -266,7 +267,7 @@ router.get('/summary', async (req, res) => {
     res.json({ summaries: data || [] });
   } catch (err) {
     console.error('[arc-history] summary failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -285,7 +286,7 @@ router.get('/:id', async (req, res) => {
     res.json({ decision: data });
   } catch (err) {
     console.error('[arc-history] get failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -337,7 +338,7 @@ router.patch('/:id', express.json({ limit: '1mb' }), async (req, res) => {
     res.json({ decision: data });
   } catch (err) {
     console.error('[arc-history] patch failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -355,7 +356,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[arc-history] delete failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 

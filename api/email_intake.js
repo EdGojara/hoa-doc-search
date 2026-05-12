@@ -41,6 +41,7 @@ const pdfParse = require('pdf-parse');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
+const { safeErrorMessage } = require('./_safe_error');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -202,7 +203,7 @@ router.post('/extract-pdf-text', upload.single('file'), async (req, res) => {
     res.json({ text: parsed.text || '', pages: parsed.numpages || null });
   } catch (err) {
     console.error('[email-intake] extract-pdf-text failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -373,7 +374,7 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
     });
   } catch (err) {
     console.error('[email-intake] create failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -412,7 +413,7 @@ router.post('/:id/re-extract', async (req, res) => {
     res.json({ intake: updated });
   } catch (err) {
     console.error('[email-intake] re-extract failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -432,7 +433,7 @@ router.get('/', async (req, res) => {
     res.json({ intakes: data || [] });
   } catch (err) {
     console.error('[email-intake] list failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -452,7 +453,7 @@ router.get('/:id', async (req, res) => {
     res.json({ intake: data });
   } catch (err) {
     console.error('[email-intake] get failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -474,7 +475,7 @@ router.patch('/:id', express.json({ limit: '2mb' }), async (req, res) => {
     res.json({ intake: data });
   } catch (err) {
     console.error('[email-intake] patch failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -582,7 +583,7 @@ router.post('/:id/approve', async (req, res) => {
     });
   } catch (err) {
     console.error('[email-intake] approve failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -597,7 +598,7 @@ router.delete('/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[email-intake] delete failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -619,7 +620,7 @@ router.get('/decisions/list', async (req, res) => {
     res.json({ decisions: data || [] });
   } catch (err) {
     console.error('[decisions] list failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -639,7 +640,7 @@ router.patch('/decisions/:id', express.json(), async (req, res) => {
     res.json({ decision: data });
   } catch (err) {
     console.error('[decisions] patch failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -764,7 +765,7 @@ router.post('/recaps', express.json(), async (req, res) => {
     res.json({ recap });
   } catch (err) {
     console.error('[recaps] generate failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -783,7 +784,7 @@ router.get('/recaps/list', async (req, res) => {
     res.json({ recaps: data || [] });
   } catch (err) {
     console.error('[recaps] list failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -799,7 +800,7 @@ router.get('/recaps/:id', async (req, res) => {
     res.json({ recap: data });
   } catch (err) {
     console.error('[recaps] get failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -820,7 +821,7 @@ router.patch('/recaps/:id', express.json({ limit: '1mb' }), async (req, res) => 
     res.json({ recap: data });
   } catch (err) {
     console.error('[recaps] patch failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
@@ -835,7 +836,7 @@ router.delete('/recaps/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[recaps] delete failed:', err.message);
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
 
