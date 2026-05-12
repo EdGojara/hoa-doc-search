@@ -2846,7 +2846,7 @@
       </div>
 
       <!-- ===== Computed (auto-pulled from existing tables) ===== -->
-      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px;">
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="margin-bottom:14px;">
           <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🔗 Auto-pulled from other data</h3>
           <p style="font-size:12px; color:#888; margin-top:2px;">These come from your vendor contracts table. Click "Override" to replace with manual values (e.g., the contract says one contact but you call a different field rep).</p>
@@ -2854,6 +2854,35 @@
         <div id="prof-computed-list">
           <!-- populated -->
         </div>
+      </div>
+
+      <!-- ===== Homeowner Roster ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
+          <div>
+            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🏠 Homeowner roster</h3>
+            <p style="font-size:12px; color:#888; margin-top:2px;">Upload a Vantaca export (CSV or XLSX). Used to verify homeowners at events, send blasts, and feed AskEd. Re-upload upserts by Vantaca ID.</p>
+          </div>
+          <div>
+            <span id="prof-roster-count" style="font-size:13px; color:#1a3a5c; font-weight:600;"></span>
+            <button class="secondary-btn" onclick="profShowUpload()" style="margin-left:8px; font-size:13px;">⬆ Upload CSV/XLSX</button>
+          </div>
+        </div>
+
+        <div id="prof-roster-upload" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:14px;">
+          <input type="file" id="prof-roster-file" accept=".csv,.xlsx,.xls,text/csv" />
+          <div style="margin-top:10px; display:flex; gap:8px;">
+            <button class="secondary-btn" onclick="profUploadPreview()" style="font-size:13px;">🔍 Preview</button>
+            <button class="primary-btn" onclick="profUploadCommit()" style="font-size:13px;">✓ Commit import</button>
+            <span id="prof-roster-status" style="margin-left:6px; font-size:12px; align-self:center;"></span>
+          </div>
+          <div id="prof-roster-preview" style="margin-top:12px;"></div>
+        </div>
+
+        <div style="display:flex; gap:8px; margin-bottom:10px;">
+          <input id="prof-roster-search" type="search" placeholder="Search by name, address, email…" oninput="profSearchRoster()" style="flex:1; padding:8px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
+        </div>
+        <div id="prof-roster-list" style="font-size:13px;"></div>
       </div>
 
     </div>
@@ -4187,11 +4216,32 @@
           </div>
           <div>
             <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:6px;">Print this QR for the entrance</h3>
-            <p style="font-size:13px; color:#475569; line-height:1.5; margin-bottom:10px;">Anyone who scans it lands on the waiver + sign-in form. Their signature is captured digitally and they're checked in automatically.</p>
-            <a href="${publicUrl}" target="_blank" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px;">↗ Open public page</a>
-            <a href="/api/events/${e.id}/qr" download="event-qr-${e.slug}.png" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px; margin-left:6px;">⬇ Download QR PNG</a>
+            <p style="font-size:13px; color:#475569; line-height:1.5; margin-bottom:10px;">Anyone who scans it lands on the waiver + sign-in form. Pre-registered guests get the fast lane at check-in.</p>
+            <div style="display:flex; flex-wrap:wrap; gap:6px;">
+              <a href="${publicUrl}" target="_blank" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px;">↗ Open public page</a>
+              <a href="/api/events/${e.id}/qr" download="event-qr-${e.slug}.png" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px;">⬇ Download QR PNG</a>
+              <button class="secondary-btn" onclick="evGenerateEmailBlast('${e.id}')" style="font-size:13px;">✉️ Generate email blast</button>
+            </div>
           </div>
         </div>` : ''}
+
+      <!-- Staff check-in code -->
+      <div class="ev-detail-card">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap;">
+          <div style="flex:1; min-width:240px;">
+            <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:6px;">🪪 Staff check-in</h3>
+            <p style="font-size:13px; color:#475569; line-height:1.5;">Staff opens <code>${evEsc(location.origin)}/event/${evEsc(e.slug)}/checkin</code> on their phone and enters the 6-digit code below. Their screen shows pre-registered attendees (green) and a walk-up button (red).</p>
+          </div>
+          <div style="text-align:center;">
+            ${e.staff_checkin_code
+              ? `<div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:28px; font-weight:700; color:#1a3a5c; letter-spacing:4px; padding:8px 20px; background:#e8f0f8; border-radius:8px;">${evEsc(e.staff_checkin_code)}</div>
+                 <button class="secondary-btn" onclick="evRotateCheckinCode('${e.id}')" style="margin-top:6px; font-size:11px;">🔄 Rotate code</button>`
+              : `<button class="primary-btn" onclick="evRotateCheckinCode('${e.id}')" style="padding:10px 20px;">Generate code</button>`
+            }
+            <div style="margin-top:6px;"><a href="/event/${evEsc(e.slug)}/checkin" target="_blank" style="font-size:11px; color:#1a3a5c;">↗ Open check-in page</a></div>
+          </div>
+        </div>
+      </div>
 
       <!-- Cost summary -->
       <div class="ev-detail-card">
@@ -4500,6 +4550,43 @@
     `;
   }
 
+  // ---------- Check-in code + email blast (event detail extras) ----------
+  async function evRotateCheckinCode(eventId) {
+    if (!confirm('Generate a new 6-digit check-in code? Any staff who memorized the old one will need to re-auth.')) return;
+    try {
+      const r = await fetch('/api/events/' + eventId + '/generate-checkin-code', { method: 'POST' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evOpenDetail(eventId);
+    } catch (err) { alert('Failed: ' + err.message); }
+  }
+  window.evRotateCheckinCode = evRotateCheckinCode;
+
+  async function evGenerateEmailBlast(eventId) {
+    try {
+      const r = await fetch('/api/events/' + eventId + '/email-blast');
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      // Open in a new window so user can copy or print
+      const w = window.open('', '_blank', 'width=720,height=860');
+      w.document.write(`
+        <html><head><title>Event Email Blast</title>
+        <style>body{font-family:Inter,Arial,sans-serif; padding:16px; background:#f5f8fc;} .actions{display:flex; gap:8px; margin-bottom:12px;} button{padding:8px 16px; background:#1a3a5c; color:#fff; border:none; border-radius:6px; cursor:pointer; font:inherit; font-size:13px;}</style>
+        </head><body>
+        <div class="actions">
+          <button onclick="document.execCommand('copy'); alert('Note: select the iframe content first, then Ctrl+C to copy.');">Tips</button>
+          <button onclick="window.print()">🖨 Print</button>
+          <a href="${j.plain_text_url}" target="_blank" style="padding:8px 16px; background:#fff; color:#1a3a5c; border:1px solid #c0d0e0; border-radius:6px; text-decoration:none; font-size:13px;">↗ Event URL</a>
+        </div>
+        <iframe srcdoc='${j.html.replace(/'/g, "&apos;").replace(/\n/g, ' ')}' style="width:100%; height:760px; border:1px solid #c0d0e0; background:#fff;"></iframe>
+        <p style="font-size:12px; color:#666; margin-top:10px;">To send via Outlook: Switch to your Outlook compose window, paste this HTML, or print as PDF and attach. Most modern Outlook clients honor pasted HTML formatting.</p>
+        </body></html>
+      `);
+      w.document.close();
+    } catch (err) { alert('Failed: ' + err.message); }
+  }
+  window.evGenerateEmailBlast = evGenerateEmailBlast;
+
   // Hook into the existing switchTab
   if (typeof switchTab === 'function') {
     const _prevSwitch = switchTab;
@@ -4778,6 +4865,136 @@
     labelEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
 
+  // ============================================================
+  // Roster (sub-section of the Profile tab)
+  // ============================================================
+  async function profLoadRoster() {
+    if (!profCurrent) return;
+    try {
+      const q = document.getElementById('prof-roster-search').value.trim();
+      const params = new URLSearchParams();
+      if (q) params.set('q', q);
+      const r = await fetch(`/api/events/communities/${profCurrent.id}/roster?` + params.toString());
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      const total = j.total_count || 0;
+      document.getElementById('prof-roster-count').textContent = `${total} homeowner${total === 1 ? '' : 's'} on file`;
+      profRenderRosterList(j.rows || []);
+    } catch (err) {
+      console.warn('roster load', err);
+    }
+  }
+
+  function profRenderRosterList(rows) {
+    const wrap = document.getElementById('prof-roster-list');
+    if (rows.length === 0) {
+      wrap.innerHTML = '<div style="color:#888; padding:12px; text-align:center;">No matches.</div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <div style="border:1px solid #e3e8ef; border-radius:6px; overflow:hidden; max-height:400px; overflow-y:auto;">
+        ${rows.map(r => `
+          <div style="display:grid; grid-template-columns: 1fr 1.4fr 1fr 1fr 30px; gap:10px; padding:8px 12px; border-bottom:1px solid #f0f2f5; font-size:12px; align-items:center;">
+            <div><strong>${profEsc(r.full_name || ((r.first_name || '') + ' ' + (r.last_name || '')).trim() || '—')}</strong></div>
+            <div style="color:#5a7390;">${profEsc(r.address || '')}${r.unit ? ' #' + profEsc(r.unit) : ''}</div>
+            <div style="color:#5a7390;">${profEsc(r.email || '')}</div>
+            <div style="color:#5a7390;">${profEsc(r.phone || '')}</div>
+            <button onclick="profDeleteHomeowner('${r.id}')" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:14px;" title="Remove">×</button>
+          </div>`).join('')}
+      </div>
+    `;
+  }
+
+  let profRosterSearchTimer = null;
+  function profSearchRoster() {
+    clearTimeout(profRosterSearchTimer);
+    profRosterSearchTimer = setTimeout(profLoadRoster, 250);
+  }
+
+  function profShowUpload() {
+    const box = document.getElementById('prof-roster-upload');
+    box.style.display = box.style.display === 'none' ? '' : 'none';
+  }
+
+  async function profUploadPreview() {
+    if (!profCurrent) return;
+    const file = document.getElementById('prof-roster-file').files[0];
+    if (!file) { alert('Pick a file first.'); return; }
+    const status = document.getElementById('prof-roster-status');
+    status.textContent = 'Parsing…'; status.style.color = '#888';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`/api/events/communities/${profCurrent.id}/roster/preview`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      status.textContent = `${j.stats.total_rows} rows · ${j.stats.with_vantaca_id} have Vantaca IDs · ${j.stats.with_email} have emails`;
+      status.style.color = '#1a3a5c';
+      const preview = document.getElementById('prof-roster-preview');
+      preview.innerHTML = `
+        <div style="font-size:12px; color:#666; margin-bottom:6px;">First 10 rows (preview):</div>
+        <div style="border:1px solid #c0d0e0; border-radius:4px; max-height:240px; overflow-y:auto;">
+          ${j.sample.map(s => `
+            <div style="display:grid; grid-template-columns: 1fr 1.4fr 1fr 1fr 80px; gap:8px; padding:5px 10px; border-bottom:1px solid #f0f2f5; font-size:11px;">
+              <div>${profEsc(s.full_name || s.first_name || '—')}</div>
+              <div style="color:#5a7390;">${profEsc(s.address || '')}</div>
+              <div style="color:#5a7390;">${profEsc(s.email || '')}</div>
+              <div style="color:#5a7390;">${profEsc(s.phone || '')}</div>
+              <div style="color:#888;">${profEsc(s.vantaca_id || 'no id')}</div>
+            </div>`).join('')}
+        </div>
+        <div style="font-size:11px; color:#888; margin-top:6px;">Click "Commit import" if this looks right. Existing rows with the same Vantaca ID will be updated; others will be added.</div>
+      `;
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.style.color = '#c0392b';
+    }
+  }
+
+  async function profUploadCommit() {
+    if (!profCurrent) return;
+    const file = document.getElementById('prof-roster-file').files[0];
+    if (!file) { alert('Pick a file first.'); return; }
+    if (!confirm(`Commit this roster to ${profCurrent.name}?`)) return;
+    const status = document.getElementById('prof-roster-status');
+    status.textContent = 'Importing…'; status.style.color = '#888';
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await fetch(`/api/events/communities/${profCurrent.id}/roster/import`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      status.textContent = `✓ Imported ${j.inserted} new + ${j.updated} updated (${j.total_processed} processed)`;
+      status.style.color = '#2d7a3a';
+      document.getElementById('prof-roster-upload').style.display = 'none';
+      document.getElementById('prof-roster-file').value = '';
+      document.getElementById('prof-roster-preview').innerHTML = '';
+      await profLoadRoster();
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.style.color = '#c0392b';
+    }
+  }
+
+  async function profDeleteHomeowner(id) {
+    if (!confirm('Remove this homeowner from the roster?')) return;
+    try {
+      const r = await fetch('/api/events/roster/' + id, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      profLoadRoster();
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  // Hook into existing profOnCommunityChange so roster loads when community picked
+  const _origProfChange = (typeof profOnCommunityChange === 'function') ? profOnCommunityChange : null;
+  if (_origProfChange) {
+    window.profOnCommunityChange = async function() {
+      await _origProfChange();
+      if (profCurrent) profLoadRoster();
+    };
+  }
+
   // Lazy-load on first tab switch
   const _origSwitchTab = typeof switchTab === 'function' ? switchTab : null;
   if (_origSwitchTab) {
@@ -4786,7 +5003,6 @@
       if (tab === 'profile') profLoadCommunitiesOnce();
     };
   } else {
-    // Fallback: also kick off when tab clicked
     document.addEventListener('DOMContentLoaded', () => {
       const tab = document.querySelector('.tab[onclick*="profile"]');
       if (tab) tab.addEventListener('click', profLoadCommunitiesOnce);

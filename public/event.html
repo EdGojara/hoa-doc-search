@@ -216,10 +216,22 @@
         <div class="fld" id="address-fld">
           <label for="signer_address">Address in community</label>
           <input id="signer_address" type="text" autocomplete="street-address" placeholder="8201 Pine Forest Ln" />
+          <div id="roster-match-badge" style="display:none; margin-top:6px; padding:8px 12px; border-radius:8px; font-size:13px; font-weight:600;"></div>
         </div>
         <div class="fld" id="guest-of-fld" style="display:none;">
           <label for="guest_of_address">Guest of (homeowner address)</label>
           <input id="guest_of_address" type="text" placeholder="If known, the address of the homeowner who invited you" />
+        </div>
+
+        <div class="fld" style="margin-top:12px;">
+          <label for="party_size">How many people will attend (including you)? <span style="color:#dc2626;">*</span></label>
+          <input id="party_size" type="number" min="1" max="20" value="1" style="max-width:120px;" />
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">Helps us plan food and supplies.</div>
+        </div>
+        <div class="fld" id="additional-names-fld" style="display:none;">
+          <label for="additional_names">Names of others in your party (optional)</label>
+          <input id="additional_names" type="text" placeholder="e.g., Sarah Smith, Jacob Smith (8 years old)" />
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">If any are minors, you'll be checking the consent box below.</div>
         </div>
       </div>
 
@@ -338,6 +350,51 @@
       $('guest-of-fld').style.display = isHO ? 'none' : '';
     });
 
+    // ---------- Party size → show/hide additional names ----------
+    $('party_size').addEventListener('input', () => {
+      const n = Number($('party_size').value) || 1;
+      $('additional-names-fld').style.display = n > 1 ? '' : 'none';
+    });
+
+    // ---------- Address → roster lookup ----------
+    let rosterMatchTimer = null;
+    let rosterMatchedHomeownerId = null;
+    $('signer_address').addEventListener('input', () => {
+      clearTimeout(rosterMatchTimer);
+      const addr = $('signer_address').value.trim();
+      const badge = $('roster-match-badge');
+      rosterMatchedHomeownerId = null;
+      if (addr.length < 4) { badge.style.display = 'none'; return; }
+      rosterMatchTimer = setTimeout(async () => {
+        try {
+          const r = await fetch(`/api/events/communities/${eventData.community?.id || ''}/roster-match?address=${encodeURIComponent(addr)}`);
+          if (!r.ok) return;
+          const j = await r.json();
+          const matches = j.matches || [];
+          if (matches.length === 1 && j.match_type === 'exact_address') {
+            const m = matches[0];
+            rosterMatchedHomeownerId = m.id;
+            badge.style.display = '';
+            badge.style.background = '#dcfce7';
+            badge.style.color = '#166534';
+            badge.style.border = '1px solid #86efac';
+            badge.innerHTML = `✓ Verified homeowner: <strong>${m.full_name || (m.first_name + ' ' + m.last_name)}</strong> at ${m.address}`;
+            // Auto-check homeowner box
+            $('is_homeowner').checked = true;
+            $('is_homeowner').dispatchEvent(new Event('change'));
+          } else if (matches.length >= 1) {
+            badge.style.display = '';
+            badge.style.background = '#fef3c7';
+            badge.style.color = '#92400e';
+            badge.style.border = '1px solid #fcd34d';
+            badge.innerHTML = `${matches.length} possible match${matches.length === 1 ? '' : 'es'} on file — staff will verify at check-in.`;
+          } else {
+            badge.style.display = 'none';
+          }
+        } catch (err) { console.warn('roster match', err); }
+      }, 350);
+    });
+
     // ---------- Toggle minor details ----------
     $('is_minor')?.addEventListener('change', () => {
       const isMinor = $('is_minor').checked;
@@ -429,6 +486,12 @@
       const isMinor = !!$('is_minor')?.checked;
       const isHO = $('is_homeowner').checked;
 
+      const partySize = Math.max(1, Number($('party_size').value) || 1);
+      const additionalNamesRaw = $('additional_names').value.trim();
+      const additionalNames = additionalNamesRaw
+        ? additionalNamesRaw.split(',').map(s => s.trim()).filter(Boolean)
+        : null;
+
       const body = {
         signer_name: name,
         signer_email: $('signer_email').value.trim() || null,
@@ -438,6 +501,10 @@
         guest_of_address: !isHO ? ($('guest_of_address').value.trim() || null) : null,
         is_minor: isMinor,
         parent_guardian_name: isMinor ? ($('parent_guardian_name').value.trim() || null) : null,
+        party_size: partySize,
+        additional_attendee_names: additionalNames,
+        homeowner_id: rosterMatchedHomeownerId,
+        pre_registered_at: new Date().toISOString(),
         signature_png: sigCanvas.toDataURL('image/png'),
         device_type: detectDeviceType()
       };

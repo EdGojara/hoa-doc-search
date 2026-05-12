@@ -379,6 +379,53 @@ async function buildCommunityContextBlock(communityNameOrId) {
     }
   }
 
+  // Recent decisions (last 90 days) — gives AskEd the institutional-memory layer
+  // that today only lives in inboxes.
+  try {
+    const sinceIso = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: decisions } = await supabase
+      .from('community_decisions')
+      .select('decision_summary, category, decided_at, decided_by')
+      .eq('community_id', comm.id)
+      .gte('decided_at', sinceIso)
+      .order('decided_at', { ascending: false })
+      .limit(15);
+    if (decisions && decisions.length > 0) {
+      lines.push('');
+      lines.push('RECENT DECISIONS (last 90 days)');
+      for (const d of decisions) {
+        const when = d.decided_at ? new Date(d.decided_at).toISOString().slice(0, 10) : 'date unknown';
+        const who = d.decided_by ? ` — ${d.decided_by}` : '';
+        lines.push(`  • ${d.decision_summary} (${when}${who})`);
+      }
+    }
+  } catch (_) { /* table may not exist yet; silent */ }
+
+  // Upcoming + recently-completed events — so AskEd knows about the pool party
+  // when a homeowner asks "is there a community event coming up?"
+  try {
+    const now = new Date();
+    const past30 = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000).toISOString();
+    const future60 = new Date(now.getTime() + 60 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: events } = await supabase
+      .from('events')
+      .select('name, event_type, location, scheduled_start_at, status')
+      .eq('community_id', comm.id)
+      .gte('scheduled_start_at', past30)
+      .lte('scheduled_start_at', future60)
+      .order('scheduled_start_at', { ascending: true })
+      .limit(10);
+    if (events && events.length > 0) {
+      lines.push('');
+      lines.push('EVENTS (recent + upcoming, ±30/60 days)');
+      for (const e of events) {
+        const when = new Date(e.scheduled_start_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+        const where = e.location ? ` at ${e.location}` : '';
+        lines.push(`  • ${e.name} — ${when}${where} [${e.status}]`);
+      }
+    }
+  } catch (_) { /* silent */ }
+
   return lines.join('\n');
 }
 

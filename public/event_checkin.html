@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <title>Event Check-In — Bedrock</title>
+  <meta name="theme-color" content="#1a3a5c" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+      background: #0f172a;
+      color: #f1f5f9;
+      min-height: 100dvh;
+    }
+    .topbar {
+      background: #1a3a5c; padding: 14px 18px;
+      display: flex; align-items: center; gap: 12px;
+      position: sticky; top: 0; z-index: 50;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    }
+    .brand-mark {
+      width: 32px; height: 32px; border-radius: 8px;
+      background: #fff; color: #1a3a5c;
+      display:flex; align-items:center; justify-content:center;
+      font-weight: 700; font-size: 14px;
+    }
+    .event-title { font-size: 14px; font-weight: 700; line-height: 1.25; }
+    .event-sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
+    .menu-btn {
+      margin-left: auto;
+      background: rgba(255,255,255,0.12);
+      color: #fff; border: 1px solid rgba(255,255,255,0.25);
+      padding: 6px 12px; border-radius: 999px;
+      font: inherit; font-size: 12px; font-weight: 600;
+      cursor: pointer;
+    }
+
+    /* Auth screen */
+    .auth-screen {
+      max-width: 380px; margin: 60px auto; padding: 24px;
+      text-align: center;
+    }
+    .auth-screen h1 { font-size: 22px; margin: 16px 0 6px; }
+    .auth-screen p { font-size: 13px; color: #94a3b8; margin-bottom: 24px; line-height: 1.5; }
+    .auth-screen .code-input {
+      font-size: 32px; font-weight: 700; text-align: center;
+      letter-spacing: 8px;
+      width: 100%; padding: 14px;
+      border: 2px solid #334155; background: #1e293b;
+      color: #f1f5f9; border-radius: 10px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+    .auth-screen .code-input:focus { outline: none; border-color: #60a5fa; }
+    .auth-screen .auth-btn {
+      width: 100%; margin-top: 14px;
+      background: #2563eb; color: #fff;
+      padding: 14px; border: none; border-radius: 10px;
+      font: inherit; font-size: 16px; font-weight: 700;
+      cursor: pointer;
+    }
+    .auth-screen .auth-err { color: #fca5a5; font-size: 13px; margin-top: 8px; display: none; }
+
+    /* Live metrics dashboard */
+    .metrics {
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px;
+      padding: 14px 18px; background: #1e293b; border-bottom: 1px solid #334155;
+    }
+    .metric {
+      text-align: center; padding: 8px;
+    }
+    .metric .val { font-size: 24px; font-weight: 700; color: #f1f5f9; }
+    .metric .lbl { font-size: 10px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.5px; font-weight: 600; }
+    .metric.green .val { color: #4ade80; }
+    .metric.yellow .val { color: #fbbf24; }
+    .metric.blue .val { color: #60a5fa; }
+
+    /* Search bar */
+    .search-bar {
+      padding: 12px 18px; background: #0f172a;
+      position: sticky; top: 60px; z-index: 40;
+      border-bottom: 1px solid #1e293b;
+    }
+    .search-bar input {
+      width: 100%; padding: 14px 16px;
+      background: #1e293b; color: #f1f5f9;
+      border: 2px solid #334155; border-radius: 10px;
+      font: inherit; font-size: 16px;
+    }
+    .search-bar input:focus { outline: none; border-color: #60a5fa; }
+
+    /* Attendee list */
+    .list { padding: 12px 16px 80px; }
+    .card {
+      background: #1e293b;
+      border: 2px solid transparent;
+      border-radius: 12px;
+      padding: 14px 16px;
+      margin-bottom: 10px;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 12px;
+      align-items: center;
+    }
+    .card.green-row { border-color: #16a34a; background: linear-gradient(135deg, #1e293b 0%, #14532d 100%); }
+    .card.checked-in { border-color: #4ade80; background: linear-gradient(135deg, #14532d 0%, #166534 100%); }
+    .card.yellow-row { border-color: #ca8a04; background: linear-gradient(135deg, #1e293b 0%, #713f12 100%); }
+    .card.red-row { border-color: #dc2626; background: linear-gradient(135deg, #1e293b 0%, #7f1d1d 100%); }
+
+    .card .name { font-size: 16px; font-weight: 700; }
+    .card .addr { font-size: 12px; color: #cbd5e1; margin-top: 2px; }
+    .card .party { font-size: 13px; color: #f1f5f9; margin-top: 4px; }
+    .card .waiver-tag { display: inline-block; font-size: 10px; padding: 2px 8px; border-radius: 99px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.3px; margin-top: 6px; margin-right: 4px; }
+    .waiver-yes { background: #14532d; color: #4ade80; }
+    .waiver-no { background: #7f1d1d; color: #fca5a5; }
+    .checked-tag { background: #14532d; color: #4ade80; }
+    .pre-tag { background: #1e3a8a; color: #93c5fd; }
+
+    .card .action-btn {
+      background: #16a34a; color: #fff;
+      padding: 14px 20px; border: none; border-radius: 10px;
+      font: inherit; font-size: 14px; font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      box-shadow: 0 2px 8px rgba(22, 163, 74, 0.35);
+    }
+    .card .action-btn:active { transform: scale(0.97); }
+    .card.checked-in .action-btn { background: #14532d; color: #4ade80; box-shadow: none; cursor: default; }
+    .card.red-row .action-btn { background: #dc2626; }
+
+    .empty-state {
+      text-align: center; padding: 48px 16px;
+      color: #94a3b8; font-size: 14px;
+    }
+    .empty-state .icon { font-size: 36px; margin-bottom: 8px; }
+
+    /* Walk-up FAB */
+    .walkup-fab {
+      position: fixed; bottom: 18px; right: 18px;
+      background: #dc2626; color: #fff;
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: none;
+      box-shadow: 0 8px 20px rgba(220, 38, 38, 0.45);
+      font-size: 28px;
+      cursor: pointer;
+      z-index: 100;
+    }
+    .walkup-fab:active { transform: scale(0.95); }
+
+    /* Walk-up modal */
+    .modal-bg {
+      display: none;
+      position: fixed; inset: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 200;
+      align-items: flex-end;
+    }
+    .modal-bg.show { display: flex; }
+    .modal-card {
+      background: #0f172a;
+      width: 100%;
+      max-height: 92vh;
+      overflow-y: auto;
+      border-radius: 18px 18px 0 0;
+      padding: 20px;
+      animation: slideUp 0.25s ease;
+    }
+    @keyframes slideUp { from { transform: translateY(40px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+    .modal-card h2 { font-size: 18px; font-weight: 700; margin-bottom: 14px; }
+    .modal-card .fld { display: flex; flex-direction: column; gap: 5px; margin-bottom: 10px; }
+    .modal-card .fld label { font-size: 12px; font-weight: 600; color: #cbd5e1; }
+    .modal-card .fld input {
+      padding: 11px 12px;
+      background: #1e293b; color: #f1f5f9;
+      border: 1px solid #334155; border-radius: 8px;
+      font: inherit; font-size: 15px;
+    }
+    .modal-card .check-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 10px; background: #1e293b; border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    .modal-card .check-row input { width: 20px; height: 20px; }
+
+    .sig-wrap-staff {
+      border: 2px dashed #334155; border-radius: 8px;
+      background: #1e293b; height: 150px;
+      touch-action: none; user-select: none; -webkit-user-select: none;
+      position: relative;
+    }
+    .sig-wrap-staff.has-ink { border-color: #4ade80; border-style: solid; }
+    .sig-wrap-staff canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+    .sig-wrap-staff .placeholder {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #64748b; font-size: 13px; pointer-events: none;
+    }
+    .sig-wrap-staff.has-ink .placeholder { display: none; }
+
+    .modal-actions { display: flex; gap: 10px; margin-top: 14px; }
+    .modal-actions button {
+      flex: 1; padding: 14px; border-radius: 10px;
+      font: inherit; font-size: 15px; font-weight: 700;
+      cursor: pointer; border: none;
+    }
+    .btn-cancel { background: #334155; color: #f1f5f9; }
+    .btn-submit { background: #16a34a; color: #fff; }
+
+    .pulse {
+      animation: pulse 1.5s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.6); }
+      50% { box-shadow: 0 0 0 12px rgba(74, 222, 128, 0); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Auth screen -->
+  <div id="auth-screen" class="auth-screen">
+    <div class="brand-mark" style="margin: 0 auto;">B</div>
+    <h1>Staff Check-In</h1>
+    <p>Enter the 6-digit check-in code your manager generated for this event.</p>
+    <input id="auth-code" class="code-input" maxlength="6" inputmode="numeric" placeholder="••••••" autocomplete="off" />
+    <button class="auth-btn" id="auth-btn">Continue →</button>
+    <div class="auth-err" id="auth-err"></div>
+  </div>
+
+  <!-- Main app -->
+  <div id="app" style="display:none;">
+    <div class="topbar">
+      <div class="brand-mark">B</div>
+      <div style="flex: 1;">
+        <div class="event-title" id="t-event-name">Event</div>
+        <div class="event-sub" id="t-event-sub"></div>
+      </div>
+      <button class="menu-btn" id="refresh-btn">⟳ Refresh</button>
+    </div>
+
+    <div class="metrics" id="metrics">
+      <div class="metric green"><div class="val" id="m-checked">0</div><div class="lbl">Checked in</div></div>
+      <div class="metric blue"><div class="val" id="m-pre">0</div><div class="lbl">Pre-reg</div></div>
+      <div class="metric yellow"><div class="val" id="m-walkup">0</div><div class="lbl">Walk-ups</div></div>
+      <div class="metric"><div class="val" id="m-total">0</div><div class="lbl">Total people</div></div>
+    </div>
+
+    <div class="search-bar">
+      <input id="search" type="search" placeholder="Search by name or address…" autocomplete="off" />
+    </div>
+
+    <div class="list" id="list"></div>
+
+    <button class="walkup-fab" id="walkup-btn" title="Register a walk-up">+</button>
+  </div>
+
+  <!-- Walk-up registration modal -->
+  <div class="modal-bg" id="walkup-modal">
+    <div class="modal-card">
+      <h2>Register walk-up</h2>
+      <div class="fld">
+        <label>Full name *</label>
+        <input id="w-name" type="text" autocomplete="name" />
+      </div>
+      <div class="fld">
+        <label>Address (we'll match against the roster)</label>
+        <input id="w-address" type="text" autocomplete="street-address" />
+        <div id="w-roster-badge" style="display:none; margin-top:4px; padding:6px 10px; border-radius:6px; font-size:12px; font-weight:600;"></div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+        <div class="fld">
+          <label>Email (optional)</label>
+          <input id="w-email" type="email" />
+        </div>
+        <div class="fld">
+          <label>Phone (optional)</label>
+          <input id="w-phone" type="tel" inputmode="tel" />
+        </div>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+        <div class="fld">
+          <label>Party size *</label>
+          <input id="w-party" type="number" min="1" max="20" value="1" />
+        </div>
+        <div class="check-row">
+          <input type="checkbox" id="w-homeowner" />
+          <label for="w-homeowner" style="font-size:13px; color:#f1f5f9;">Homeowner</label>
+        </div>
+      </div>
+      <div class="fld">
+        <label>I acknowledge the event waiver applies — please sign:</label>
+        <div class="sig-wrap-staff" id="w-sig-wrap">
+          <canvas id="w-sig"></canvas>
+          <div class="placeholder">Sign here</div>
+        </div>
+        <button onclick="clearWalkupSig()" style="background:none; border:none; color:#64748b; text-decoration:underline; font:inherit; font-size:11px; cursor:pointer; padding:4px 0; margin-top:4px; text-align:left; align-self:flex-start;">Clear signature</button>
+      </div>
+      <div class="modal-actions">
+        <button class="btn-cancel" onclick="hideWalkupModal()">Cancel</button>
+        <button class="btn-submit" id="w-submit">Register &amp; check in</button>
+      </div>
+      <p id="w-err" style="color:#fca5a5; font-size:13px; text-align:center; margin-top:10px; display:none;"></p>
+    </div>
+  </div>
+
+  <script>
+    // ========================================================================
+    // /event/:slug/checkin — staff page
+    // ========================================================================
+    const $ = (id) => document.getElementById(id);
+    const slug = location.pathname.replace(/\/checkin\/?$/, '').split('/').filter(Boolean).pop();
+    const codeKey = 'checkin-code:' + slug;
+
+    let event = null;
+    let signatures = [];
+    let attendance = null;
+    let pollTimer = null;
+    let filterText = '';
+
+    // ---------- Auth ----------
+    const savedCode = sessionStorage.getItem(codeKey);
+    if (savedCode) authenticate(savedCode, true);
+
+    $('auth-btn').addEventListener('click', () => authenticate($('auth-code').value.trim(), false));
+    $('auth-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') authenticate($('auth-code').value.trim(), false); });
+
+    async function authenticate(code, silent) {
+      if (!code || code.length < 4) {
+        if (!silent) showAuthErr('Enter the 6-digit code.');
+        return;
+      }
+      try {
+        const r = await fetch(`/api/events/public/${encodeURIComponent(slug)}/checkin-auth`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ code })
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        sessionStorage.setItem(codeKey, code);
+        $('auth-screen').style.display = 'none';
+        $('app').style.display = '';
+        await loadFeed();
+        // Poll every 4 seconds for live updates
+        pollTimer = setInterval(loadFeed, 4000);
+      } catch (err) {
+        sessionStorage.removeItem(codeKey);
+        if (!silent) showAuthErr(err.message);
+      }
+    }
+
+    function showAuthErr(msg) {
+      const e = $('auth-err');
+      e.textContent = msg;
+      e.style.display = '';
+    }
+
+    // ---------- Feed ----------
+    async function loadFeed() {
+      const code = sessionStorage.getItem(codeKey);
+      if (!code) return;
+      try {
+        const r = await fetch(`/api/events/public/${encodeURIComponent(slug)}/checkin-feed`, {
+          headers: { 'X-Checkin-Code': code }
+        });
+        const j = await r.json();
+        if (!r.ok) {
+          if (r.status === 401) {
+            sessionStorage.removeItem(codeKey);
+            location.reload();
+            return;
+          }
+          throw new Error(j.error || ('HTTP ' + r.status));
+        }
+        event = j.event;
+        signatures = j.signatures || [];
+        attendance = j.attendance || null;
+        renderHeader();
+        renderMetrics();
+        renderList();
+      } catch (err) {
+        console.warn('feed', err);
+      }
+    }
+
+    function renderHeader() {
+      $('t-event-name').textContent = event.name;
+      const dt = new Date(event.scheduled_start_at);
+      const dateStr = dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+      $('t-event-sub').textContent = `${dateStr}${event.location ? ' · ' + event.location : ''}`;
+    }
+
+    function renderMetrics() {
+      $('m-checked').textContent = attendance?.checked_in_count || 0;
+      $('m-pre').textContent = attendance?.pre_registered_count || 0;
+      $('m-walkup').textContent = attendance?.walkup_count || 0;
+      $('m-total').textContent = `${attendance?.total_people_checked_in || 0}/${attendance?.total_people_registered || 0}`;
+    }
+
+    function renderList() {
+      const list = $('list');
+      const filter = filterText.toLowerCase();
+      const filtered = signatures.filter((s) => {
+        if (!filter) return true;
+        const hay = `${s.signer_name || ''} ${s.signer_address || ''} ${s.signer_email || ''}`.toLowerCase();
+        return hay.includes(filter);
+      });
+
+      // Sort: not-checked-in pre-reg first (green-go), then checked-in (faded), then walk-ups
+      filtered.sort((a, b) => {
+        const aDone = a.checked_in_at ? 1 : 0;
+        const bDone = b.checked_in_at ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        const aPre = a.pre_registered_at ? 0 : 1;
+        const bPre = b.pre_registered_at ? 0 : 1;
+        if (aPre !== bPre) return aPre - bPre;
+        return (a.signer_name || '').localeCompare(b.signer_name || '');
+      });
+
+      if (filtered.length === 0) {
+        list.innerHTML = `
+          <div class="empty-state">
+            <div class="icon">${signatures.length === 0 ? '👥' : '🔍'}</div>
+            ${signatures.length === 0
+              ? 'No registrations yet. Tap the red + button to register walk-ups.'
+              : 'No matches for that search.'}
+          </div>`;
+        return;
+      }
+
+      list.innerHTML = filtered.map(renderCard).join('');
+    }
+
+    function renderCard(s) {
+      const isCheckedIn = !!s.checked_in_at;
+      const hasWaiver = !!s.signature_png;
+      const isPreReg = !!s.pre_registered_at;
+
+      let cls = 'card ';
+      if (isCheckedIn) cls += 'checked-in';
+      else if (isPreReg && hasWaiver) cls += 'green-row';
+      else if (isPreReg && !hasWaiver) cls += 'yellow-row';
+      else cls += 'red-row';
+
+      const partyTxt = (s.party_size || 1) > 1
+        ? `Party of ${s.party_size}${s.additional_attendee_names && s.additional_attendee_names.length > 0 ? ' — ' + s.additional_attendee_names.join(', ') : ''}`
+        : 'Solo';
+
+      const buttonLabel = isCheckedIn
+        ? `✓ Checked in`
+        : isPreReg
+          ? `✓ Check in (${s.party_size || 1})`
+          : `+ Add &amp; check in`;
+
+      return `
+        <div class="${cls}" data-id="${s.id}">
+          <div>
+            <div class="name">${escapeHtml(s.signer_name || '(no name)')}</div>
+            ${s.signer_address ? `<div class="addr">${escapeHtml(s.signer_address)}</div>` : ''}
+            <div class="party">${escapeHtml(partyTxt)}</div>
+            <div>
+              ${isPreReg ? '<span class="waiver-tag pre-tag">Pre-registered</span>' : '<span class="waiver-tag waiver-no">Walk-up</span>'}
+              ${hasWaiver ? '<span class="waiver-tag waiver-yes">Waiver ✓</span>' : '<span class="waiver-tag waiver-no">Waiver missing</span>'}
+              ${isCheckedIn ? '<span class="waiver-tag checked-tag">✓ ' + new Date(s.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) + '</span>' : ''}
+            </div>
+          </div>
+          <button class="action-btn ${isCheckedIn ? '' : 'pulse'}" ${isCheckedIn ? 'disabled' : `onclick="checkIn('${s.id}')"`}>${buttonLabel}</button>
+        </div>`;
+    }
+
+    function escapeHtml(s) {
+      return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    // ---------- Check-in action ----------
+    async function checkIn(signatureId) {
+      const code = sessionStorage.getItem(codeKey);
+      if (!code) return;
+      try {
+        const r = await fetch(`/api/events/public/${encodeURIComponent(slug)}/checkin/${signatureId}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Checkin-Code': code },
+          body: JSON.stringify({ staff_label: 'staff' })
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        await loadFeed();
+      } catch (err) {
+        alert('Check-in failed: ' + err.message);
+      }
+    }
+    window.checkIn = checkIn;
+
+    // ---------- Search ----------
+    $('search').addEventListener('input', () => {
+      filterText = $('search').value.trim();
+      renderList();
+    });
+    $('refresh-btn').addEventListener('click', loadFeed);
+
+    // ---------- Walk-up modal + signature pad ----------
+    let walkupSigCanvas, walkupSigCtx, walkupDrawing = false, walkupHasInk = false, walkupLastX = 0, walkupLastY = 0;
+    let walkupMatchedHomeownerId = null;
+
+    $('walkup-btn').addEventListener('click', () => {
+      $('walkup-modal').classList.add('show');
+      setupWalkupSigPad();
+      ['w-name','w-address','w-email','w-phone'].forEach(id => $(id).value = '');
+      $('w-party').value = 1;
+      $('w-homeowner').checked = false;
+      $('w-roster-badge').style.display = 'none';
+      walkupMatchedHomeownerId = null;
+    });
+
+    function hideWalkupModal() { $('walkup-modal').classList.remove('show'); }
+    window.hideWalkupModal = hideWalkupModal;
+
+    function setupWalkupSigPad() {
+      walkupSigCanvas = $('w-sig');
+      const dpr = window.devicePixelRatio || 1;
+      const rect = walkupSigCanvas.parentNode.getBoundingClientRect();
+      walkupSigCanvas.width = Math.floor(rect.width * dpr);
+      walkupSigCanvas.height = Math.floor(rect.height * dpr);
+      walkupSigCtx = walkupSigCanvas.getContext('2d');
+      walkupSigCtx.scale(dpr, dpr);
+      walkupSigCtx.lineCap = 'round';
+      walkupSigCtx.lineJoin = 'round';
+      walkupSigCtx.strokeStyle = '#f1f5f9';
+      walkupSigCtx.lineWidth = 2.5;
+
+      walkupSigCanvas.onpointerdown = (e) => {
+        e.preventDefault();
+        walkupDrawing = true;
+        const p = sigPos(e, walkupSigCanvas);
+        walkupLastX = p.x; walkupLastY = p.y;
+        walkupSigCtx.beginPath();
+        walkupSigCtx.arc(p.x, p.y, walkupSigCtx.lineWidth / 2, 0, Math.PI * 2);
+        walkupSigCtx.fillStyle = '#f1f5f9';
+        walkupSigCtx.fill();
+        walkupHasInk = true;
+        $('w-sig-wrap').classList.add('has-ink');
+      };
+      walkupSigCanvas.onpointermove = (e) => {
+        if (!walkupDrawing) return;
+        e.preventDefault();
+        const p = sigPos(e, walkupSigCanvas);
+        walkupSigCtx.beginPath();
+        walkupSigCtx.moveTo(walkupLastX, walkupLastY);
+        walkupSigCtx.lineTo(p.x, p.y);
+        walkupSigCtx.stroke();
+        walkupLastX = p.x; walkupLastY = p.y;
+      };
+      walkupSigCanvas.onpointerup = () => { walkupDrawing = false; };
+      walkupSigCanvas.onpointercancel = () => { walkupDrawing = false; };
+      walkupSigCanvas.ontouchstart = (e) => e.preventDefault();
+      walkupSigCanvas.ontouchmove = (e) => e.preventDefault();
+    }
+    function sigPos(ev, canvas) {
+      const rect = canvas.getBoundingClientRect();
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    }
+    function clearWalkupSig() {
+      walkupSigCtx.clearRect(0, 0, walkupSigCanvas.width, walkupSigCanvas.height);
+      walkupHasInk = false;
+      $('w-sig-wrap').classList.remove('has-ink');
+    }
+    window.clearWalkupSig = clearWalkupSig;
+
+    // Walk-up address roster lookup (same idea as public reg page)
+    let walkupAddrTimer = null;
+    $('w-address').addEventListener('input', () => {
+      clearTimeout(walkupAddrTimer);
+      const addr = $('w-address').value.trim();
+      const badge = $('w-roster-badge');
+      walkupMatchedHomeownerId = null;
+      if (addr.length < 4) { badge.style.display = 'none'; return; }
+      walkupAddrTimer = setTimeout(async () => {
+        try {
+          if (!event?.community_id) return;
+          const r = await fetch(`/api/events/communities/${event.community_id}/roster-match?address=${encodeURIComponent(addr)}`);
+          if (!r.ok) return;
+          const j = await r.json();
+          const matches = j.matches || [];
+          if (matches.length === 1 && j.match_type === 'exact_address') {
+            const m = matches[0];
+            walkupMatchedHomeownerId = m.id;
+            badge.style.display = '';
+            badge.style.background = '#14532d';
+            badge.style.color = '#4ade80';
+            badge.textContent = `✓ Homeowner: ${m.full_name || (m.first_name + ' ' + m.last_name)}`;
+            $('w-homeowner').checked = true;
+            if (!$('w-name').value && m.full_name) $('w-name').value = m.full_name;
+          } else if (matches.length > 0) {
+            badge.style.display = '';
+            badge.style.background = '#713f12';
+            badge.style.color = '#fbbf24';
+            badge.textContent = `${matches.length} similar matches — confirm manually`;
+          } else {
+            badge.style.display = 'none';
+          }
+        } catch (err) { console.warn(err); }
+      }, 350);
+    });
+
+    $('w-submit').addEventListener('click', async () => {
+      const name = $('w-name').value.trim();
+      const errEl = $('w-err');
+      errEl.style.display = 'none';
+      if (!name) { errEl.textContent = 'Name required.'; errEl.style.display = ''; return; }
+      if (!walkupHasInk) { errEl.textContent = 'Please sign the waiver.'; errEl.style.display = ''; return; }
+
+      const code = sessionStorage.getItem(codeKey);
+      const body = {
+        signer_name: name,
+        signer_email: $('w-email').value.trim() || null,
+        signer_phone: $('w-phone').value.trim() || null,
+        signer_address: $('w-address').value.trim() || null,
+        is_homeowner: $('w-homeowner').checked,
+        party_size: Math.max(1, Number($('w-party').value) || 1),
+        homeowner_id: walkupMatchedHomeownerId,
+        signature_png: walkupSigCanvas.toDataURL('image/png'),
+        staff_label: 'walkup'
+      };
+
+      try {
+        const r = await fetch(`/api/events/public/${encodeURIComponent(slug)}/walkup`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Checkin-Code': code },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        hideWalkupModal();
+        await loadFeed();
+      } catch (err) {
+        errEl.textContent = err.message;
+        errEl.style.display = '';
+      }
+    });
+  </script>
+</body>
+</html>

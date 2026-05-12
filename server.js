@@ -424,6 +424,11 @@ app.get('/event/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'event.html'));
 });
 
+// Staff check-in page — gated by 6-digit code on the page itself
+app.get('/event/:slug/checkin', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'event_checkin.html'));
+});
+
 // Documents Tracker — Bedrock's canonical document library.
 // Endpoints under /api/documents/*. See api/documents.js and
 // migrations/012_documents_module.sql for the schema.
