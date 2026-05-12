@@ -305,6 +305,23 @@
   </div>
 
   <script>
+    // Retry-wrapper to absorb Render cold-starts (see index.html for context)
+    (function () {
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async function (input, init) {
+        let last = null;
+        for (let i = 0; i < 3; i++) {
+          try { return await origFetch(input, init); }
+          catch (e) {
+            last = e;
+            if (!/Failed to fetch|NetworkError|fetch failed/i.test(e.message || '')) throw e;
+            if (i < 2) await new Promise(r => setTimeout(r, i === 0 ? 4000 : 10000));
+          }
+        }
+        throw last;
+      };
+    })();
+
     const $ = (id) => document.getElementById(id);
     const slug = location.pathname.split('/').filter(Boolean).pop();
 

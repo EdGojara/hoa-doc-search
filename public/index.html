@@ -935,6 +935,43 @@
 <!-- Bedrock Office helpers (separate <script> so the existing main script
      block stays untouched). All functions are global. -->
 <script>
+  // ============================================================
+  // Global fetch retry-wrapper — absorbs Render cold-starts.
+  // ----------------------------------------------------------------
+  // Render's free/starter plan sleeps after 15 min idle. First request
+  // back takes 30-60s, during which the browser fetch() times out and
+  // throws "Failed to fetch". We catch that, wait, retry up to 2 more
+  // times with backoff. Most users never see the wake-up.
+  // ============================================================
+  (function () {
+    if (window.__fetchWrapped) return;
+    window.__fetchWrapped = true;
+    const origFetch = window.fetch.bind(window);
+    window.fetch = async function (input, init) {
+      const url = typeof input === 'string' ? input : (input?.url || '');
+      // Only retry our own API calls — don't mess with third-party URLs
+      const isOurApi = url.startsWith('/api/') || url.startsWith('/ask-ed');
+      const maxAttempts = isOurApi ? 3 : 1;
+      let lastErr = null;
+      for (let i = 0; i < maxAttempts; i++) {
+        try {
+          return await origFetch(input, init);
+        } catch (err) {
+          lastErr = err;
+          // Only retry true network errors (TypeError "Failed to fetch"),
+          // not real HTTP errors (those don't throw)
+          if (!/Failed to fetch|NetworkError|fetch failed/i.test(err.message || '')) throw err;
+          if (i < maxAttempts - 1) {
+            // 4s on first retry, 10s on second — covers a typical Render cold start
+            const wait = i === 0 ? 4000 : 10000;
+            await new Promise(r => setTimeout(r, wait));
+          }
+        }
+      }
+      throw lastErr;
+    };
+  })();
+
   let billingCurrentCommunityId = null;
   let billingCommunitiesCache = [];
 
