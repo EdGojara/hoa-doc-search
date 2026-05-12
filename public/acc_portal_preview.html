@@ -259,6 +259,24 @@
     .services-grid {
       display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 24px;
     }
+    .services-grid-2 { grid-template-columns: 1fr 1fr; }
+    .services-grid-1 { grid-template-columns: 1fr; max-width: 480px; margin-left: auto; margin-right: auto; }
+    .fee-line {
+      display: flex; align-items: center; gap: 8px; font-size: 12px;
+      padding: 8px 12px; border-radius: 5px; margin: 4px 0 14px 0;
+      font-weight: 500;
+    }
+    .fee-line .fee-icon {
+      width: 16px; height: 16px; border-radius: 50%;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 10px; font-weight: 700; flex-shrink: 0;
+    }
+    .fee-community { background: var(--accent-success-tint); color: var(--accent-success); }
+    .fee-community .fee-icon { background: var(--accent-success); color: white; }
+    .fee-owner { background: var(--bedrock-navy-tint); color: var(--bedrock-navy-deep); }
+    .fee-owner .fee-icon { background: var(--bedrock-navy); color: white; font-size: 11px; }
+    .fee-conditional { background: #F5F5F5; color: var(--ink-soft); }
+    .fee-conditional .fee-icon { background: var(--ink-muted); color: white; font-style: italic; }
     .service-card {
       padding: 20px; border: 1px solid var(--rule); border-radius: 8px;
       background: white; transition: all 0.15s ease;
@@ -317,6 +335,34 @@
     .form-row { margin-bottom: 14px; }
     .form-row-double { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
     .form-row-triple { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+    .fee-callout {
+      padding: 18px 22px; border-radius: 8px; margin-top: 8px;
+      display: flex; flex-direction: column; align-items: flex-start;
+    }
+    .fee-callout-community {
+      background: var(--accent-success-tint);
+      border: 1px solid #B8DDC5;
+    }
+    .fee-callout-owner {
+      background: var(--bedrock-navy-tint);
+      border: 1px solid #C5D5E5;
+    }
+    .fee-callout-label {
+      font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase;
+      font-weight: 700; color: var(--ink-soft);
+      margin-bottom: 4px;
+    }
+    .fee-callout-community .fee-callout-label { color: var(--accent-success); }
+    .fee-callout-owner .fee-callout-label { color: var(--bedrock-navy); }
+    .fee-callout-amount {
+      font-size: 22px; font-weight: 700; color: var(--bedrock-navy-deep);
+      letter-spacing: -0.01em; margin-bottom: 6px;
+    }
+    .fee-callout-community .fee-callout-amount { color: var(--accent-success); }
+    .fee-callout-desc {
+      font-size: 12.5px; color: var(--ink-soft); line-height: 1.55;
+    }
+
     .form-action-bar {
       display: flex; justify-content: space-between; align-items: center;
       padding-top: 24px; border-top: 1px solid var(--rule); margin-top: 24px;
@@ -430,13 +476,19 @@
      PREVIEW INTRO
      ============================== -->
 <div class="preview-intro">
-  <h1>ACC Application Portal — Design Preview v0</h1>
+  <h1>ACC Application Portal — Design Preview v1</h1>
   <p>
     Six pages of the owner-facing portal at <code>my.bedrocktxai.com</code>, stacked
-    for review. Same design language as the board packet preview. Eaglewood used
-    as the example community. Mobile preview of the form at the end.
+    for review. Same design language as the board packet preview.
     <br><br>
-    <strong>Pages:</strong> (1) Address lookup landing, (2) Community landing,
+    <strong>Eaglewood</strong> is the example community throughout. Eaglewood offers
+    <strong>ARC + Pool/Amenity Access</strong> only (no gate, no pet). ARC is
+    <strong>community-paid</strong> (no charge to homeowner).
+    <br><br>
+    The second pass (further down) shows a different community where the homeowner pays the
+    ARC fee, so you can see how the same pages handle per-community variation.
+    <br><br>
+    <strong>Pages:</strong> (1) Address lookup landing, (2) Eaglewood community landing,
     (3) ARC application form, (4a) Likely Approved response, (4b) Incomplete response,
     (4c) Concerns Identified response, (5) Status check page.
   </p>
@@ -534,14 +586,18 @@
       </div>
     </div>
 
-    <div class="services-grid">
+    <div class="services-grid services-grid-2">
       <div class="service-card">
         <div class="icon">🏗️</div>
         <h3>Architectural Review (ARC)</h3>
         <p class="desc">
           Modify your home — fence, paint, addition, landscape, roof, or other exterior changes.
-          Approved or denied within 30 days.
+          Get an initial assessment immediately. Formal committee response within 30 days.
         </p>
+        <div class="fee-line fee-community">
+          <span class="fee-icon">✓</span>
+          <span>Covered by Eaglewood — no charge to you</span>
+        </div>
         <div class="service-card-actions">
           <button class="btn-primary">Apply Online — instant response</button>
           <a href="#" class="btn-tertiary">Download printable PDF →</a>
@@ -552,35 +608,13 @@
         <div class="icon">🏊</div>
         <h3>Pool / Amenity Access</h3>
         <p class="desc">
-          Request key fobs for the pool, gym, or clubhouse. Replacement fobs available
-          (fee may apply).
+          Request key fobs for the pool and amenity areas. First fob is included with your
+          residency. Replacement or additional fobs may carry a fee.
         </p>
-        <div class="service-card-actions">
-          <button class="btn-primary">Apply Online</button>
-          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        <div class="fee-line fee-conditional">
+          <span class="fee-icon">i</span>
+          <span>First fob included · replacement $25 each</span>
         </div>
-      </div>
-
-      <div class="service-card">
-        <div class="icon">🚗</div>
-        <h3>Gate / Vehicle Access</h3>
-        <p class="desc">
-          Register vehicles for community gate access. Up to 2 vehicles per unit.
-          Additional vehicles require board approval.
-        </p>
-        <div class="service-card-actions">
-          <button class="btn-primary">Apply Online</button>
-          <a href="#" class="btn-tertiary">Download printable PDF →</a>
-        </div>
-      </div>
-
-      <div class="service-card">
-        <div class="icon">🐾</div>
-        <h3>Pet Registration</h3>
-        <p class="desc">
-          Register pets per community rules. Vaccination records and breed restrictions
-          apply per Article IX.
-        </p>
         <div class="service-card-actions">
           <button class="btn-primary">Apply Online</button>
           <a href="#" class="btn-tertiary">Download printable PDF →</a>
@@ -666,26 +700,20 @@
       <div class="form-section-label">
         <span class="step-num">2</span> Modification details
       </div>
-      <div class="form-row form-row-double">
-        <div>
-          <label>Type of work<span class="required">*</span></label>
-          <select>
-            <option>— Select type of work —</option>
-            <option>Paint / Color Change</option>
-            <option>Fence (install or replace)</option>
-            <option>Roof (replace)</option>
-            <option>Landscape / Plantings</option>
-            <option>Addition / Extension</option>
-            <option>Pool / Spa</option>
-            <option>Driveway / Hardscape</option>
-            <option>Solar Panels</option>
-            <option>Other</option>
-          </select>
-        </div>
-        <div>
-          <label>Estimated total cost <span class="hint">if known</span></label>
-          <input type="text" placeholder="$">
-        </div>
+      <div class="form-row">
+        <label>Type of work<span class="required">*</span></label>
+        <select>
+          <option>— Select type of work —</option>
+          <option>Paint / Color Change</option>
+          <option>Fence (install or replace)</option>
+          <option>Roof (replace)</option>
+          <option>Landscape / Plantings</option>
+          <option>Addition / Extension</option>
+          <option>Pool / Spa</option>
+          <option>Driveway / Hardscape</option>
+          <option>Solar Panels</option>
+          <option>Other</option>
+        </select>
       </div>
       <div class="form-row">
         <label>Description of proposed work<span class="required">*</span></label>
@@ -772,6 +800,16 @@
           <span class="label">Drop site plan, survey, or hand-drawn sketch showing the modification location</span>
           <div class="hint">PDF or image, up to 25 MB. Hand-drawn sketches are fine — just include measurements.</div>
         </div>
+      </div>
+    </div>
+
+    <!-- Fee callout — appears just above Submit so owner sees commitment before clicking -->
+    <div class="fee-callout fee-callout-community">
+      <div class="fee-callout-label">Application fee</div>
+      <div class="fee-callout-amount">No charge to you</div>
+      <div class="fee-callout-desc">
+        The Eaglewood Architectural Review fee is covered by your community association.
+        Revisions to this application also do not incur additional fees.
       </div>
     </div>
 
@@ -945,10 +983,10 @@
       </ul>
 
       <div class="response-callout-warning">
-        <strong>Your application is saved.</strong>
-        Nothing you've entered will be lost. The Architectural Control Committee's 30-day
-        review clock per TX Property Code §209.00505 starts only once your application is
-        complete.
+        <strong>Your application is saved — no additional fee for revisions.</strong>
+        Nothing you've entered will be lost, and revising your application doesn't trigger
+        a new application fee. The Architectural Control Committee's 30-day review clock
+        per TX Property Code §209.00505 starts only once your application is complete.
       </div>
 
       <div class="response-action-buttons">
@@ -1136,6 +1174,204 @@
       <span class="tag">· Community. Simplified.</span>
     </span>
     <span>EAG-ARC-2026-0042</span>
+  </div>
+</div>
+
+<!-- ==============================
+     PER-COMMUNITY VARIATION — OWNER-PAID EXAMPLE
+     ============================== -->
+<div style="max-width: 8.5in; margin: 64px auto 12px; padding: 18px 28px; background: var(--bedrock-navy-tint); border-radius: 8px;">
+  <div style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; color: var(--bedrock-navy); margin-bottom: 6px;">
+    Per-community variation
+  </div>
+  <p style="margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.6;">
+    Each community configures its own services and fees. Below, the same pages
+    render for <strong>Sample HOA</strong> — a community that charges the owner a $150
+    ARC application fee and offers all 4 services (ARC, Pool, Gate, Pet). Note the
+    fee callouts and full service grid.
+  </p>
+</div>
+
+<!-- Variation Page 2 — full 4-card landing with fees -->
+<div class="section-label">
+  <span>Variation 2 — Owner-paid community, full service offering</span>
+  <span class="desc">my.bedrocktxai.com/sample-hoa</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>A Division of Bedrock Association Management</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">Check status</a> · <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="community-content">
+    <div class="community-hero">
+      <div class="community-badge">SH</div>
+      <div>
+        <h1>Sample HOA</h1>
+        <p>Apply for community services. Initial assessment within minutes for most requests.</p>
+      </div>
+    </div>
+
+    <div class="services-grid">
+      <div class="service-card">
+        <div class="icon">🏗️</div>
+        <h3>Architectural Review (ARC)</h3>
+        <p class="desc">
+          Modify your home — exterior changes require ACC approval before work begins.
+        </p>
+        <div class="fee-line fee-owner">
+          <span class="fee-icon">$</span>
+          <span>Application fee: $150 · paid at submission</span>
+        </div>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online — instant response</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="icon">🏊</div>
+        <h3>Pool / Amenity Access</h3>
+        <p class="desc">
+          Request key fobs for the pool, gym, or clubhouse.
+        </p>
+        <div class="fee-line fee-conditional">
+          <span class="fee-icon">i</span>
+          <span>First fob included · replacement $25 each</span>
+        </div>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="icon">🚗</div>
+        <h3>Gate / Vehicle Access</h3>
+        <p class="desc">
+          Register vehicles for community gate access. Up to 2 per unit; additional
+          require board approval.
+        </p>
+        <div class="fee-line fee-conditional">
+          <span class="fee-icon">i</span>
+          <span>First card included · replacement $25 each</span>
+        </div>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+
+      <div class="service-card">
+        <div class="icon">🐾</div>
+        <h3>Pet Registration</h3>
+        <p class="desc">
+          Register pets per community rules. Vaccination records and breed restrictions
+          apply.
+        </p>
+        <div class="fee-line fee-community">
+          <span class="fee-icon">✓</span>
+          <span>No fee — covered by community</span>
+        </div>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="services-footer">
+      <span>Need something else? <a href="#">Email us at info@bedrocktx.com</a></span>
+      <span>·</span>
+      <span>Already applied? <a href="#">Check your application status →</a></span>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Sample HOA · (832) 588-2485</span>
+  </div>
+</div>
+
+<!-- Variation Page 3 — ARC form with owner-paid fee callout -->
+<div class="section-label">
+  <span>Variation 3 — ARC form with owner-paid fee</span>
+  <span class="desc">Sample HOA · $150 fee at submission · note callout near Submit</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Sample HOA · Architectural Review Application</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">← Back to Sample HOA</a>
+    </div>
+  </div>
+
+  <div class="form-content">
+    <h1>Architectural Review Application</h1>
+    <p class="form-lede">
+      Complete this application to request approval for a modification to your property.
+      A $150 application fee is due at submission. You'll receive an initial assessment
+      immediately after submitting, and the Architectural Control Committee will provide
+      formal written approval within 30 days as required by Texas Property Code §209.00505.
+    </p>
+
+    <div style="background: var(--bedrock-navy-tint); border-left: 3px solid var(--bedrock-navy); padding: 14px 18px; border-radius: 0 6px 6px 0; margin-bottom: 24px; font-size: 12.5px; color: var(--ink-soft); line-height: 1.55;">
+      <strong>Form omitted in this variation for brevity</strong> — same 4 sections as the Eaglewood
+      version above (Your information, Modification details, Contractor, Photos &amp; plans).
+      The key difference is the fee callout below.
+    </div>
+
+    <!-- Fee callout — owner-paid variation -->
+    <div class="fee-callout fee-callout-owner">
+      <div class="fee-callout-label">Application fee</div>
+      <div class="fee-callout-amount">$150 — paid at submission</div>
+      <div class="fee-callout-desc">
+        Non-refundable, covers ARC review by your community's Architectural Control Committee.
+        <strong>Revisions to this application do not incur additional fees.</strong>
+        Payment by check, Zelle, or credit card. After submitting, you'll receive payment
+        instructions and your application enters review only after the fee clears.
+      </div>
+    </div>
+
+    <div class="form-action-bar">
+      <div class="form-action-bar-help">
+        You'll get an initial assessment immediately after submitting; payment processing
+        and committee review begin in parallel.
+      </div>
+      <div class="form-action-bar-buttons">
+        <button class="btn-secondary">Save as Draft</button>
+        <button class="btn-primary">Submit Application →</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Sample HOA · ARC Application</span>
+  </div>
+  <div class="portal-footer-disclaimer">
+    Application fee is non-refundable and does not constitute or guarantee committee approval.
+    Final approval requires Architectural Control Committee review per Texas Property Code §209.00505.
   </div>
 </div>
 
