@@ -998,34 +998,43 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
     }) || 'No relevant playbook examples for this question.';
 
+    console.log('[ask-ed-stream] retrieval done, playbook=' + playbookEntries.length + ' chars docs=' + (docContext?.length || 0));
     send({ type: 'meta', model: 'claude-sonnet-4-6' });
 
     const userContent = buildAskEdUserMessage({
       situation, community, playbookContext, docContext, attachmentContent, attachmentNote
     });
 
-    const stream = anthropic.messages.stream({
+    // Use the raw SSE iterator (stream: true on the create() call). This is
+    // the lowest-level API and avoids the "subscribe after construction"
+    // race that bit us with .on('text', ...).
+    const streamResp = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
       system: askEdSystem(),
-      messages: [{ role: 'user', content: userContent }]
+      messages: [{ role: 'user', content: userContent }],
+      stream: true
     });
 
-    stream.on('text', (delta) => {
-      if (aborted) return;
-      send({ type: 'delta', text: delta });
-    });
+    let deltaCount = 0;
+    for await (const event of streamResp) {
+      if (aborted) break;
+      // Each text delta arrives as a content_block_delta with delta.type=text_delta
+      if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
+        deltaCount++;
+        send({ type: 'delta', text: event.delta.text });
+      } else if (event.type === 'message_stop') {
+        // end of message — fall through to done below
+      } else if (event.type === 'message_delta' && event.usage) {
+        // optional: surface token usage; ignored client-side for now
+      }
+    }
 
-    stream.on('error', (err) => {
-      console.error('[ask-ed-stream] anthropic error:', err.message);
-      try { send({ type: 'error', message: err.message }); } catch (_) {}
-    });
-
-    await stream.finalMessage();
-    if (!aborted) send({ type: 'done' });
+    console.log('[ask-ed-stream] complete, deltas=' + deltaCount);
+    if (!aborted) send({ type: 'done', deltas: deltaCount });
     res.end();
   } catch (err) {
-    console.error('[ask-ed-stream] failed:', err.message);
+    console.error('[ask-ed-stream] failed:', err.stack || err.message);
     try { send({ type: 'error', message: err.message }); } catch (_) {}
     res.end();
   }
