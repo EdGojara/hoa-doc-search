@@ -998,44 +998,55 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
     }) || 'No relevant playbook examples for this question.';
 
-    console.log('[ask-ed-stream] retrieval done, playbook=' + playbookEntries.length + ' chars docs=' + (docContext?.length || 0));
-    send({ type: 'meta', model: 'claude-sonnet-4-6' });
+    send({ type: 'meta', model: 'claude-sonnet-4-6', stage: 'retrieval-done', playbook: playbookEntries.length, docChars: docContext?.length || 0 });
 
     const userContent = buildAskEdUserMessage({
       situation, community, playbookContext, docContext, attachmentContent, attachmentNote
     });
 
-    // Use the raw SSE iterator (stream: true on the create() call). This is
-    // the lowest-level API and avoids the "subscribe after construction"
-    // race that bit us with .on('text', ...).
-    const streamResp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      system: askEdSystem(),
-      messages: [{ role: 'user', content: userContent }],
-      stream: true
-    });
+    send({ type: 'trace', stage: 'before-anthropic' });
 
-    let deltaCount = 0;
-    for await (const event of streamResp) {
-      if (aborted) break;
-      // Each text delta arrives as a content_block_delta with delta.type=text_delta
-      if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
-        deltaCount++;
-        send({ type: 'delta', text: event.delta.text });
-      } else if (event.type === 'message_stop') {
-        // end of message — fall through to done below
-      } else if (event.type === 'message_delta' && event.usage) {
-        // optional: surface token usage; ignored client-side for now
-      }
+    // Use the raw SSE iterator (stream: true on the create() call).
+    let streamResp;
+    try {
+      streamResp = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 1500,
+        system: askEdSystem(),
+        messages: [{ role: 'user', content: userContent }],
+        stream: true
+      });
+    } catch (anthropicErr) {
+      send({ type: 'error', stage: 'anthropic-create', message: anthropicErr.message, status: anthropicErr.status, name: anthropicErr.name });
+      console.error('[ask-ed-stream] anthropic create failed:', anthropicErr.stack || anthropicErr);
+      return res.end();
     }
 
-    console.log('[ask-ed-stream] complete, deltas=' + deltaCount);
-    if (!aborted) send({ type: 'done', deltas: deltaCount });
+    send({ type: 'trace', stage: 'anthropic-returned', kind: typeof streamResp });
+
+    let deltaCount = 0;
+    let eventCount = 0;
+    try {
+      for await (const event of streamResp) {
+        eventCount++;
+        if (aborted) break;
+        if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
+          deltaCount++;
+          send({ type: 'delta', text: event.delta.text });
+        }
+      }
+    } catch (iterErr) {
+      send({ type: 'error', stage: 'iteration', message: iterErr.message, name: iterErr.name });
+      console.error('[ask-ed-stream] iteration failed:', iterErr.stack || iterErr);
+      return res.end();
+    }
+
+    console.log(`[ask-ed-stream] complete events=${eventCount} deltas=${deltaCount}`);
+    if (!aborted) send({ type: 'done', events: eventCount, deltas: deltaCount });
     res.end();
   } catch (err) {
-    console.error('[ask-ed-stream] failed:', err.stack || err.message);
-    try { send({ type: 'error', message: err.message }); } catch (_) {}
+    console.error('[ask-ed-stream] outer failure:', err.stack || err.message);
+    try { send({ type: 'error', stage: 'outer', message: err.message, name: err.name }); } catch (_) {}
     res.end();
   }
 });
