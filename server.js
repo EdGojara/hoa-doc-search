@@ -435,6 +435,10 @@ app.get('/apply/status/:reference', (req, res) => {
 app.get('/apply/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'apply.html'));
 });
+// One-URL-per-community landing page (lists all public services + status check + askEd)
+app.get('/c/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'community_landing.html'));
+});
 
 // Shared helper: scrub vendor names from error messages before they reach
 // the user. Anthropic SDK errors can include "claude" / model IDs that

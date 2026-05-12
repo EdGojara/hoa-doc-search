@@ -289,6 +289,73 @@ Return the JSON assessment now.`;
 }
 
 // ============================================================================
+// COMMUNITY LANDING — public page that lists all services + status check
+// ----------------------------------------------------------------------------
+// Returns everything the landing page needs in one call. Logo lookup is
+// derived from a small static map (extend as new community logo files land
+// in /public/logos/).
+// ============================================================================
+
+const COMMUNITY_LOGO_MAP = {
+  'lpf':                    'lakes_of_pine_forest_logo.png',
+  'lakes-of-pine-forest':   'lakes_of_pine_forest_logo.png',
+  'canyon-gate':            'canyon_gate_logo.png',
+  'canyon-gate-at-cinco-ranch': 'canyon_gate_logo.png',
+  'waterview':              'waterview_logo.jpg',
+  'waterview-estates':      'waterview_logo.jpg'
+};
+
+router.get('/community-landing/:slug', async (req, res) => {
+  try {
+    const slug = req.params.slug;
+    const { data: comm, error } = await supabase
+      .from('communities')
+      .select(`
+        id, name, slug, profile, total_lots,
+        services:community_services(
+          id, service_type, owner_payable_fee, fee_paid_by,
+          notice_period_days, notice_period_enforcement, service_config, active
+        )
+      `)
+      .eq('slug', slug)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) throw error;
+    if (!comm) return res.status(404).json({ error: 'Community not found' });
+
+    const activeServices = (comm.services || []).filter(s => s.active !== false);
+
+    // Look up upcoming events (next 60 days, public_signup_enabled)
+    const future60 = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
+    const { data: events } = await supabase
+      .from('events')
+      .select('id, name, slug, event_type, location, scheduled_start_at, public_signup_enabled')
+      .eq('community_id', comm.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('public_signup_enabled', true)
+      .gte('scheduled_start_at', new Date().toISOString())
+      .lte('scheduled_start_at', future60)
+      .order('scheduled_start_at', { ascending: true })
+      .limit(5);
+
+    res.json({
+      community: {
+        id: comm.id,
+        name: comm.name,
+        slug: comm.slug,
+        profile: comm.profile || {},
+        logo_filename: COMMUNITY_LOGO_MAP[slug] || null
+      },
+      services: activeServices,
+      upcoming_events: events || []
+    });
+  } catch (err) {
+    console.error('[applications] community-landing failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // PUBLIC ENDPOINTS
 // ============================================================================
 

@@ -1,0 +1,450 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Community Portal — Bedrock</title>
+  <meta name="theme-color" content="#1a3a5c" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937;
+      min-height: 100dvh;
+    }
+
+    .page { max-width: 880px; margin: 0 auto; padding: 24px 20px 60px; }
+
+    /* ===== Header (community logo + Bedrock co-brand) ===== */
+    .header {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 16px;
+      padding: 32px 28px;
+      box-shadow: 0 1px 3px rgba(15, 23, 42, 0.06);
+      text-align: center;
+      margin-bottom: 22px;
+    }
+    .community-logo {
+      max-width: 280px;
+      max-height: 100px;
+      margin: 0 auto 14px;
+      display: block;
+    }
+    .community-name {
+      font-size: 28px;
+      font-weight: 700;
+      color: #0f172a;
+      margin: 0 0 4px;
+      letter-spacing: -0.01em;
+    }
+    .powered-by {
+      font-size: 12px;
+      color: #64748b;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+    .powered-by strong { color: #1a3a5c; }
+    .text-only-mark {
+      width: 64px; height: 64px; border-radius: 14px;
+      background: #1a3a5c; color: #fff;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: 28px; font-weight: 700;
+      margin: 0 auto 12px;
+    }
+
+    /* ===== Section headers ===== */
+    h2.section {
+      font-size: 11px; font-weight: 700;
+      color: #64748b;
+      letter-spacing: 0.5px; text-transform: uppercase;
+      margin: 26px 0 12px;
+      padding: 0 6px;
+    }
+
+    /* ===== Service grid ===== */
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 14px;
+    }
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 22px;
+      transition: all 0.15s ease;
+      text-decoration: none;
+      color: #0f172a;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .card:hover {
+      border-color: #1a3a5c;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
+    }
+    .card .icon { font-size: 30px; }
+    .card .label {
+      font-size: 15px; font-weight: 700; color: #0f172a;
+      margin-top: 4px;
+    }
+    .card .desc {
+      font-size: 12px; color: #64748b;
+      line-height: 1.5;
+    }
+    .card .fee {
+      font-size: 11px; font-weight: 600;
+      color: #b45309;
+      margin-top: 4px;
+    }
+    .card.disabled {
+      opacity: 0.55;
+      cursor: default;
+      pointer-events: none;
+    }
+    .card.disabled .label { color: #64748b; }
+
+    /* ===== Status check bar ===== */
+    .status-check {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 16px 18px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-check label {
+      font-size: 13px; font-weight: 600; color: #475569;
+      flex-shrink: 0;
+    }
+    .status-check input {
+      flex: 1; min-width: 200px;
+      padding: 10px 14px;
+      border: 1px solid #cbd5e1; border-radius: 8px;
+      font: inherit; font-size: 14px;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+    }
+    .status-check button {
+      background: #1a3a5c; color: #fff;
+      border: none; border-radius: 8px;
+      padding: 10px 22px;
+      font: inherit; font-size: 14px; font-weight: 600;
+      cursor: pointer;
+    }
+    .status-check button:hover { background: #0f2942; }
+
+    /* ===== Events list (compact) ===== */
+    .event-row {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 14px 18px; margin-bottom: 8px;
+      display: flex; align-items: center; gap: 14px;
+      text-decoration: none; color: #0f172a;
+      transition: border-color 0.15s;
+    }
+    .event-row:hover { border-color: #1a3a5c; }
+    .event-row .date {
+      width: 60px;
+      text-align: center;
+      flex-shrink: 0;
+    }
+    .event-row .date .month {
+      font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; font-weight: 700;
+    }
+    .event-row .date .day {
+      font-size: 22px; font-weight: 700; color: #1a3a5c;
+      line-height: 1;
+    }
+    .event-row .info { flex: 1; }
+    .event-row .info .name { font-weight: 700; font-size: 14px; color: #0f172a; }
+    .event-row .info .meta { font-size: 12px; color: #64748b; margin-top: 2px; }
+    .event-row .arrow { color: #94a3b8; font-size: 20px; }
+
+    /* ===== Contact card ===== */
+    .contact {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 14px;
+      padding: 18px 22px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #334155;
+    }
+    .contact strong { color: #1a3a5c; }
+    .contact .row { display: flex; gap: 8px; align-items: baseline; }
+    .contact .row .k { font-size: 11px; color: #64748b; min-width: 100px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.3px; }
+
+    /* ===== AskEd voice CTA ===== */
+    .asked-cta {
+      background: linear-gradient(135deg, #1a3a5c 0%, #2a4a72 100%);
+      color: #fff;
+      border-radius: 14px;
+      padding: 18px 22px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      text-decoration: none;
+      transition: transform 0.15s;
+    }
+    .asked-cta:hover { transform: translateY(-1px); }
+    .asked-cta .mic-icon {
+      width: 48px; height: 48px;
+      background: rgba(255,255,255,0.15);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 22px;
+      flex-shrink: 0;
+    }
+    .asked-cta .label { font-weight: 700; font-size: 15px; }
+    .asked-cta .desc { font-size: 12px; color: rgba(255,255,255,0.8); margin-top: 2px; }
+
+    /* ===== Footer ===== */
+    .footer {
+      text-align: center;
+      margin-top: 40px;
+      padding: 20px 0;
+      border-top: 1px solid #e2e8f0;
+      font-size: 11px;
+      color: #94a3b8;
+    }
+    .footer strong { color: #475569; font-weight: 600; }
+
+    .error-screen {
+      text-align: center;
+      padding: 48px 20px;
+      color: #991b1b;
+      background: #fee2e2;
+      border-radius: 14px;
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div id="loading" style="text-align:center; padding:48px 0; color:#64748b;">Loading…</div>
+
+    <div id="error-screen" class="error-screen" style="display:none;"></div>
+
+    <div id="content" style="display:none;">
+      <!-- ===== Header ===== -->
+      <div class="header" id="header"></div>
+
+      <!-- ===== Services ===== -->
+      <h2 class="section">Submit a request</h2>
+      <div class="grid" id="services"></div>
+
+      <!-- ===== Upcoming events ===== -->
+      <div id="events-section" style="display:none;">
+        <h2 class="section">Upcoming events</h2>
+        <div id="events"></div>
+      </div>
+
+      <!-- ===== Status check ===== -->
+      <h2 class="section">Check application status</h2>
+      <form class="status-check" onsubmit="goToStatus(event)">
+        <label for="ref-input">Reference number</label>
+        <input id="ref-input" type="text" placeholder="e.g., LPF-ARC-2026-0001" required autocomplete="off" />
+        <button type="submit">Look up →</button>
+      </form>
+
+      <!-- ===== Ask Ed CTA ===== -->
+      <h2 class="section">Got a question?</h2>
+      <a href="/voice.html" class="asked-cta">
+        <div class="mic-icon">🎙️</div>
+        <div>
+          <div class="label">Ask Ed by voice</div>
+          <div class="desc">Tap the mic, ask anything about your community — rules, hours, upcoming events</div>
+        </div>
+      </a>
+
+      <!-- ===== Contact ===== -->
+      <h2 class="section">Community contact</h2>
+      <div class="contact" id="contact"></div>
+
+      <div class="footer">
+        Powered by <strong>Bedrock Intelligence</strong> · bedrocktxai.com
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Cold-start retry for Render free tier
+    (function () {
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async function (i, init) {
+        let last = null;
+        for (let n = 0; n < 3; n++) {
+          try { return await origFetch(i, init); }
+          catch (e) {
+            last = e;
+            if (!/Failed to fetch|NetworkError|fetch failed/i.test(e.message || '')) throw e;
+            if (n < 2) await new Promise(r => setTimeout(r, n === 0 ? 4000 : 10000));
+          }
+        }
+        throw last;
+      };
+    })();
+
+    const $ = (id) => document.getElementById(id);
+    const slug = location.pathname.split('/').filter(Boolean).pop();
+    let payload = null;
+
+    async function load() {
+      try {
+        const r = await fetch(`/api/applications/community-landing/${encodeURIComponent(slug)}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        payload = j;
+        render();
+      } catch (err) {
+        $('loading').style.display = 'none';
+        $('error-screen').style.display = '';
+        $('error-screen').innerHTML = `<strong>Couldn't load this community page.</strong><br>${escapeHtml(err.message)}<br><br><small>If this is your community URL and it's not working, contact Bedrock at <a href="mailto:hello@bedrocktxai.com" style="color:#991b1b;">hello@bedrocktxai.com</a>.</small>`;
+      }
+    }
+
+    function render() {
+      $('loading').style.display = 'none';
+      $('content').style.display = '';
+      const c = payload.community;
+      const services = payload.services || [];
+      const events = payload.upcoming_events || [];
+
+      // ===== Header =====
+      const logo = c.logo_filename
+        ? `<img class="community-logo" src="/logos/${escapeHtml(c.logo_filename)}" alt="${escapeHtml(c.name)} logo" onerror="this.outerHTML='<div class=\\'text-only-mark\\'>${escapeHtml((c.name || '').slice(0,1))}</div>'" />`
+        : `<div class="text-only-mark">${escapeHtml((c.name || '').slice(0,1))}</div>`;
+      $('header').innerHTML = `
+        ${logo}
+        <h1 class="community-name">${escapeHtml(c.name)}</h1>
+        <div class="powered-by">Managed by <strong>Bedrock Association Management</strong></div>
+      `;
+      document.title = `${c.name} — Community Portal`;
+
+      // ===== Services =====
+      // For each service this community has enabled, render a card.
+      // service_type → display config:
+      const SERVICE_TYPES = {
+        arc_application: {
+          icon: '🏗️',
+          label: 'Submit an ARC application',
+          desc: 'Architectural Review Committee request for fences, paint, additions, pools, decks, and more.',
+          href: `/apply/${encodeURIComponent(c.slug)}`,
+          enabled: true
+        },
+        key_fob: {
+          icon: '🔑',
+          label: 'Request a pool / key fob',
+          desc: 'Pool gate fobs or community access keys for your address.',
+          href: `/apply/${encodeURIComponent(c.slug)}`, // placeholder until fob flow ships
+          enabled: false,
+          comingSoon: true
+        },
+        forms_and_applications: {
+          icon: '📑',
+          label: 'Other forms',
+          desc: 'Vehicle registration, pool waivers, and other community forms.',
+          href: `/apply/${encodeURIComponent(c.slug)}`, // placeholder
+          enabled: false,
+          comingSoon: true
+        }
+      };
+
+      const cardsHtml = services
+        .filter(s => SERVICE_TYPES[s.service_type])
+        .map(s => {
+          const cfg = SERVICE_TYPES[s.service_type];
+          const feeNote = (s.fee_paid_by === 'owner' && Number(s.owner_payable_fee) > 0)
+            ? `Fee: $${Number(s.owner_payable_fee).toFixed(2)}`
+            : '';
+          const comingSoon = cfg.comingSoon ? '<div class="fee" style="color:#64748b;">Coming soon</div>' : '';
+          if (!cfg.enabled) {
+            return `
+              <div class="card disabled" role="presentation">
+                <div class="icon">${cfg.icon}</div>
+                <div class="label">${escapeHtml(cfg.label)}</div>
+                <div class="desc">${escapeHtml(cfg.desc)}</div>
+                ${comingSoon}
+              </div>
+            `;
+          }
+          return `
+            <a class="card" href="${cfg.href}">
+              <div class="icon">${cfg.icon}</div>
+              <div class="label">${escapeHtml(cfg.label)}</div>
+              <div class="desc">${escapeHtml(cfg.desc)}</div>
+              ${feeNote ? `<div class="fee">${escapeHtml(feeNote)}</div>` : ''}
+            </a>
+          `;
+        }).join('');
+
+      // If no services configured, show a soft empty state
+      $('services').innerHTML = cardsHtml || `
+        <div class="card disabled">
+          <div class="icon">📋</div>
+          <div class="label">No public services configured yet</div>
+          <div class="desc">Your community manager hasn't enabled public submission forms yet.</div>
+        </div>
+      `;
+
+      // ===== Upcoming events =====
+      if (events.length > 0) {
+        $('events-section').style.display = '';
+        $('events').innerHTML = events.map(e => {
+          const dt = new Date(e.scheduled_start_at);
+          const month = dt.toLocaleString('en-US', { month: 'short' });
+          const day = dt.getDate();
+          return `
+            <a class="event-row" href="/event/${encodeURIComponent(e.slug)}">
+              <div class="date">
+                <div class="month">${escapeHtml(month)}</div>
+                <div class="day">${day}</div>
+              </div>
+              <div class="info">
+                <div class="name">${escapeHtml(e.name)}</div>
+                <div class="meta">${dt.toLocaleString('en-US', { weekday: 'short', hour: 'numeric', minute: '2-digit' })}${e.location ? ' · ' + escapeHtml(e.location) : ''}</div>
+              </div>
+              <div class="arrow">→</div>
+            </a>
+          `;
+        }).join('');
+      }
+
+      // ===== Contact =====
+      const profile = c.profile || {};
+      const rows = [];
+      if (profile.onsite === 'yes' && profile.onsite_hours) {
+        rows.push(`<div class="row"><div class="k">Onsite hours</div><div>${escapeHtml(profile.onsite_hours)}</div></div>`);
+      }
+      if (profile.office_hours) rows.push(`<div class="row"><div class="k">Office hours</div><div>${escapeHtml(profile.office_hours)}</div></div>`);
+      if (profile.primary_contact_name) rows.push(`<div class="row"><div class="k">Contact</div><div>${escapeHtml(profile.primary_contact_name)}</div></div>`);
+      if (profile.primary_phone) rows.push(`<div class="row"><div class="k">Phone</div><div><a href="tel:${encodeURIComponent(profile.primary_phone)}" style="color:#1a3a5c;">${escapeHtml(profile.primary_phone)}</a></div></div>`);
+      if (profile.primary_email) rows.push(`<div class="row"><div class="k">Email</div><div><a href="mailto:${encodeURIComponent(profile.primary_email)}" style="color:#1a3a5c;">${escapeHtml(profile.primary_email)}</a></div></div>`);
+      $('contact').innerHTML = rows.length > 0 ? rows.join('') : '<em style="color:#94a3b8;">No contact info on file yet. Reach Bedrock at hello@bedrocktxai.com.</em>';
+    }
+
+    function goToStatus(e) {
+      e.preventDefault();
+      const ref = $('ref-input').value.trim();
+      if (!ref) return;
+      location.href = `/apply/status/${encodeURIComponent(ref)}`;
+    }
+    window.goToStatus = goToStatus;
+
+    function escapeHtml(s) {
+      return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    load();
+  </script>
+</body>
+</html>
