@@ -55,8 +55,25 @@
     .brand-title { font-weight: 700; font-size: 16px; color: #0f172a; }
     .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
 
+    .topbar-pills {
+      display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end;
+    }
+    .pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: #f1f5f9; color: #334155;
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 12px; font-weight: 600;
+      border: 1px solid #e2e8f0;
+    }
+    .pill select {
+      border: none; background: transparent; font: inherit; color: inherit;
+      outline: none; padding-right: 4px;
+      max-width: 130px;
+    }
+    /* legacy class still used in markup; identical to .pill */
     .community-pill {
-      display: flex; align-items: center; gap: 6px;
+      display: inline-flex; align-items: center; gap: 6px;
       background: #f1f5f9; color: #334155;
       padding: 6px 12px;
       border-radius: 999px;
@@ -66,7 +83,7 @@
     .community-pill select {
       border: none; background: transparent; font: inherit; color: inherit;
       outline: none; padding-right: 4px;
-      max-width: 140px;
+      max-width: 130px;
     }
 
     /* ---------- Transcript stream ---------- */
@@ -319,11 +336,24 @@
         <div class="brand-sub">Bedrock Intelligence</div>
       </div>
     </div>
-    <div class="community-pill">
-      <span>🏘️</span>
-      <select id="communitySelect">
-        <option value="">All communities</option>
-      </select>
+    <div class="topbar-pills">
+      <div class="pill" title="Pick the voice askEd uses">
+        <span aria-hidden="true">🎙️</span>
+        <select id="voiceSelect" aria-label="askEd voice">
+          <option value="onyx">Onyx — deep, calm</option>
+          <option value="echo">Echo — male, smooth</option>
+          <option value="fable">Fable — British male</option>
+          <option value="alloy">Alloy — neutral</option>
+          <option value="nova">Nova — female, bright</option>
+          <option value="shimmer">Shimmer — female, soft</option>
+        </select>
+      </div>
+      <div class="community-pill" title="Which community's docs to consult">
+        <span aria-hidden="true">🏘️</span>
+        <select id="communitySelect" aria-label="Community">
+          <option value="">All communities</option>
+        </select>
+      </div>
     </div>
   </div>
 
@@ -420,6 +450,30 @@
       $('installBanner').classList.remove('show');
       localStorage.setItem('asked-install-dismissed', 'true');
     });
+
+    // ---------- Voice picker ----------
+    // Selected voice persists across visits. All TTS calls (streaming
+    // sentence playback and bubble "Replay") read currentVoice at call time.
+    const voiceSelect = $('voiceSelect');
+    const VOICE_LABEL = {
+      onyx: 'Onyx', echo: 'Echo', fable: 'Fable',
+      alloy: 'Alloy', nova: 'Nova', shimmer: 'Shimmer'
+    };
+    let currentVoice = localStorage.getItem('asked-voice') || 'onyx';
+    if (!VOICE_LABEL[currentVoice]) currentVoice = 'onyx';
+    voiceSelect.value = currentVoice;
+    voiceSelect.addEventListener('change', () => {
+      currentVoice = voiceSelect.value;
+      localStorage.setItem('asked-voice', currentVoice);
+      // Interrupt anything currently speaking, then preview the new voice.
+      resetTtsQueue();
+      previewVoice();
+    });
+    function previewVoice() {
+      // Short greeting so the picker doubles as an A/B test. Uses speak()
+      // which talks to /api/tts with currentVoice.
+      speak(`Hi, I'm Ed. This is the ${VOICE_LABEL[currentVoice]} voice.`);
+    }
 
     // ---------- Load communities ----------
     // /ask-ed expects the community NAME (filters Supabase metadata.community
@@ -630,7 +684,7 @@
         const res = await fetch('/api/tts', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ text, voice: 'onyx' })
+          body: JSON.stringify({ text, voice: currentVoice })
         });
         if (!res.ok) {
           const errJson = await res.json().catch(() => ({}));
@@ -701,10 +755,11 @@
     function enqueueTtsSentence(sentence) {
       const cleaned = cleanForTts(sentence);
       if (!cleaned) return;
+      const voiceAtRequest = currentVoice; // capture in case user switches mid-stream
       const audioPromise = fetch('/api/tts', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text: cleaned, voice: 'onyx' })
+        body: JSON.stringify({ text: cleaned, voice: voiceAtRequest })
       })
         .then((r) => { if (!r.ok) throw new Error('TTS HTTP ' + r.status); return r.blob(); })
         .then((blob) => URL.createObjectURL(blob))
