@@ -476,21 +476,26 @@
      PREVIEW INTRO
      ============================== -->
 <div class="preview-intro">
-  <h1>ACC Application Portal — Design Preview v1</h1>
+  <h1>ACC Application Portal — Design Preview v2</h1>
   <p>
-    Six pages of the owner-facing portal at <code>my.bedrocktxai.com</code>, stacked
-    for review. Same design language as the board packet preview.
+    Owner-facing portal at <code>my.bedrocktxai.com</code>, stacked for review.
+    Same design language as the board packet preview.
     <br><br>
-    <strong>Eaglewood</strong> is the example community throughout. Eaglewood offers
-    <strong>ARC + Pool/Amenity Access</strong> only (no gate, no pet). ARC is
-    <strong>community-paid</strong> (no charge to homeowner).
+    <strong>Three community variations shown:</strong>
+    <br>
+    <strong>1) Eaglewood</strong> — ARC + Pool/Amenity. Community-paid ARC, but
+    <strong>owner sees no fee info</strong> (private to community internally).
+    <br>
+    <strong>2) Lakes of Pine Forest (LPF)</strong> — ARC only. 45-day notice
+    (not 30), LPF-specific 11 work-type checkboxes, LPF indemnity language.
+    No fee info shown to owner.
+    <br>
+    <strong>3) Sample HOA</strong> — Owner-paid example. All 4 services,
+    $150 ARC fee disclosed to owner with payment instructions.
     <br><br>
-    The second pass (further down) shows a different community where the homeowner pays the
-    ARC fee, so you can see how the same pages handle per-community variation.
-    <br><br>
-    <strong>Pages:</strong> (1) Address lookup landing, (2) Eaglewood community landing,
-    (3) ARC application form, (4a) Likely Approved response, (4b) Incomplete response,
-    (4c) Concerns Identified response, (5) Status check page.
+    <strong>Rule:</strong> Owner sees fee info only when the owner is on the hook.
+    Community-paid arrangements stay private. Internal billing context is tracked
+    in the manager UI; the public portal is silent on it.
   </p>
 </div>
 
@@ -594,10 +599,6 @@
           Modify your home — fence, paint, addition, landscape, roof, or other exterior changes.
           Get an initial assessment immediately. Formal committee response within 30 days.
         </p>
-        <div class="fee-line fee-community">
-          <span class="fee-icon">✓</span>
-          <span>Covered by Eaglewood — no charge to you</span>
-        </div>
         <div class="service-card-actions">
           <button class="btn-primary">Apply Online — instant response</button>
           <a href="#" class="btn-tertiary">Download printable PDF →</a>
@@ -803,16 +804,6 @@
       </div>
     </div>
 
-    <!-- Fee callout — appears just above Submit so owner sees commitment before clicking -->
-    <div class="fee-callout fee-callout-community">
-      <div class="fee-callout-label">Application fee</div>
-      <div class="fee-callout-amount">No charge to you</div>
-      <div class="fee-callout-desc">
-        The Eaglewood Architectural Review fee is covered by your community association.
-        Revisions to this application also do not incur additional fees.
-      </div>
-    </div>
-
     <div class="form-action-bar">
       <div class="form-action-bar-help">
         Required fields marked with <span style="color:var(--accent-error)">*</span>.
@@ -983,10 +974,10 @@
       </ul>
 
       <div class="response-callout-warning">
-        <strong>Your application is saved — no additional fee for revisions.</strong>
-        Nothing you've entered will be lost, and revising your application doesn't trigger
-        a new application fee. The Architectural Control Committee's 30-day review clock
-        per TX Property Code §209.00505 starts only once your application is complete.
+        <strong>Your application is saved.</strong>
+        Nothing you've entered will be lost. The Architectural Control Committee's 30-day
+        review clock per Texas Property Code §209.00505 starts only once your application
+        is complete.
       </div>
 
       <div class="response-action-buttons">
@@ -1178,17 +1169,322 @@
 </div>
 
 <!-- ==============================
+     LPF VARIATION — ARC ONLY, 45-DAY NOTICE, LPF-SPECIFIC WORK TYPES
+     ============================== -->
+<div style="max-width: 8.5in; margin: 64px auto 12px; padding: 18px 28px; background: var(--bedrock-navy-tint); border-radius: 8px;">
+  <div style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; color: var(--bedrock-navy); margin-bottom: 6px;">
+    Variation — Lakes of Pine Forest
+  </div>
+  <p style="margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.6;">
+    LPF offers ARC only. The form uses LPF's <strong>11 specific work-type checkboxes</strong>
+    (Basketball Goal, Fence, Landscaping, Playscape, Irrigation, Deck, Driveway, Ext.
+    Painting, Storage Shed, Ext. Remodeling, Other). LPF requires <strong>45-day notice</strong>
+    (not 30) per its Deed Restrictions. LPF-specific indemnity language. Community-paid
+    fee — no fee info shown to owner.
+  </p>
+</div>
+
+<!-- LPF Page 2 — community landing -->
+<div class="section-label">
+  <span>Variation 1 — LPF community landing</span>
+  <span class="desc">my.bedrocktxai.com/lpf — ARC only, no fee disclosure</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>A Division of Bedrock Association Management</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">Check status</a> · <a href="#">info@bedrocktx.com</a>
+    </div>
+  </div>
+
+  <div class="community-content">
+    <div class="community-hero">
+      <div class="community-badge">LPF</div>
+      <div>
+        <h1>Lakes of Pine Forest</h1>
+        <p>Apply for community services. Initial assessment within minutes for most requests.</p>
+      </div>
+    </div>
+
+    <div class="services-grid services-grid-1">
+      <div class="service-card">
+        <div class="icon">🏗️</div>
+        <h3>Architectural Review (ARC)</h3>
+        <p class="desc">
+          Modify your home — fence, paint, addition, landscape, pool, or other exterior changes.
+          LPF requires applications at least 45 days before beginning construction or improvement
+          per the Deed Restrictions. Initial assessment immediately; Architectural Control
+          Committee response within 30 days.
+        </p>
+        <div class="service-card-actions">
+          <button class="btn-primary">Apply Online — instant response</button>
+          <a href="#" class="btn-tertiary">Download printable PDF →</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="services-footer">
+      <span>Need something else? <a href="#">Email us at info@bedrocktx.com</a></span>
+      <span>·</span>
+      <span>Already applied? <a href="#">Check your application status →</a></span>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Lakes of Pine Forest · (832) 588-2485</span>
+  </div>
+</div>
+
+<!-- LPF Page 3 — ARC form with LPF's 11 work types + 45-day notice + LPF indemnity -->
+<div class="section-label">
+  <span>Variation 1 — LPF ARC form</span>
+  <span class="desc">my.bedrocktxai.com/lpf/arc — LPF's actual work types + 45-day notice + LPF indemnity</span>
+</div>
+<div class="page">
+  <div class="portal-header">
+    <div class="portal-header-brand">
+      <div class="logo-mark">B</div>
+      <div class="brand-text">
+        Bedrock Intelligence
+        <small>Lakes of Pine Forest · Architectural Review Application</small>
+      </div>
+    </div>
+    <div class="portal-header-right">
+      <a href="#">← Back to Lakes of Pine Forest</a>
+    </div>
+  </div>
+
+  <div class="form-content">
+    <h1>Architectural Review Application</h1>
+    <p class="form-lede">
+      Complete this application to request approval for a modification to your property.
+      The Deed Restrictions for Lakes of Pine Forest require all improvements to be
+      approved in writing by the Architectural Control Committee at least
+      <strong>45 days prior to beginning construction or improvement</strong>. You'll
+      receive an initial assessment immediately, and the Architectural Control Committee
+      will provide formal written approval per Texas Property Code §209.00505.
+    </p>
+
+    <!-- SECTION 1 — Your information (same as Eaglewood) -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">1</span> Your information
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Full name<span class="required">*</span></label>
+          <input type="text" placeholder="Your name">
+        </div>
+        <div>
+          <label>Email address<span class="required">*</span></label>
+          <input type="email" placeholder="you@example.com">
+        </div>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Property address<span class="required">*</span></label>
+          <input type="text" placeholder="1234 Example Drive">
+        </div>
+        <div>
+          <label>Phone<span class="required">*</span></label>
+          <input type="tel" placeholder="(832) 555-1234">
+        </div>
+      </div>
+      <div class="form-row" style="background: var(--bedrock-navy-tint); padding: 10px 14px; border-radius: 6px; font-size: 11px; color: var(--ink-soft); line-height: 1.5; margin-top: 14px;">
+        <em>By providing your email address, you authorize the use of electronic mail for official responses to this application, including approval/denial letters.</em>
+      </div>
+    </div>
+
+    <!-- SECTION 2 — LPF-specific work-type checkboxes -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">2</span> Approval requested
+      </div>
+      <p style="font-size:12.5px; color: var(--ink-soft); margin: 0 0 14px 0; line-height: 1.55;">
+        Select all that apply to your project. If your project isn't listed, choose "Other"
+        and describe in the next section.
+      </p>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px 18px; margin-bottom: 14px;">
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Basketball Goal
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Fence
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Landscaping
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Playscape
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Irrigation System
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Deck
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Driveway
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Ext. Painting
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Storage Shed
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Ext. Remodeling
+        </label>
+        <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 400; letter-spacing: 0; text-transform: none; color: var(--ink); margin-bottom: 0; cursor: pointer;">
+          <input type="checkbox" style="width: auto; padding: 0; margin: 0;"> Other
+        </label>
+      </div>
+      <div class="form-row">
+        <label>Description of improvement<span class="required">*</span></label>
+        <textarea placeholder="Describe what you'd like to do, including location on the property, scope, materials, colors, and dimensions."></textarea>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Estimated start date</label>
+          <input type="date">
+        </div>
+        <div>
+          <label>Estimated completion date</label>
+          <input type="date">
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 3 — Required documents per LPF Deed Restrictions -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">3</span> Required documents
+      </div>
+      <p style="font-size:12.5px; color: var(--ink-soft); margin: 0 0 14px 0; line-height: 1.55;">
+        Per the Deed Restrictions, your application will not be considered complete
+        without the following. Per-type details (such as engineered drawings for room
+        additions or drainage plans for pools) are described in the LPF instructions —
+        your initial assessment will tell you exactly what's missing if anything.
+      </p>
+      <div class="form-row">
+        <label>Plot plan or survey<span class="required">*</span> <span class="hint">showing location and dimensions of existing and proposed improvements</span></label>
+        <div class="file-drop">
+          <span class="icon">📐</span>
+          <span class="label">Drop plot plan, survey, or sketch</span>
+          <div class="hint">PDF or image, up to 25 MB. Show grades and lot drainage provisions where applicable.</div>
+        </div>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Current condition photos <span class="required">*</span></label>
+          <div class="file-drop">
+            <span class="icon">📷</span>
+            <span class="label">Photos of current state</span>
+            <div class="hint">multiple OK, up to 20 MB each</div>
+          </div>
+        </div>
+        <div>
+          <label>Material / color specifications</label>
+          <div class="file-drop">
+            <span class="icon">🎨</span>
+            <span class="label">Color samples, brochures, specs</span>
+            <div class="hint">paint brand/name, shingle samples, etc.</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 4 — Contractor (optional) -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">4</span> Contractor <span class="hint" style="font-size:11px; font-weight:400; letter-spacing:0;">— optional, but recommended for structural work</span>
+      </div>
+      <div class="form-row form-row-double">
+        <div>
+          <label>Contractor / company name</label>
+          <input type="text" placeholder="Contractor name">
+        </div>
+        <div>
+          <label>Contractor phone or email</label>
+          <input type="text" placeholder="(832) 555-9876 or contractor@email.com">
+        </div>
+      </div>
+    </div>
+
+    <!-- SECTION 5 — LPF acknowledgment + indemnity -->
+    <div class="form-section">
+      <div class="form-section-label">
+        <span class="step-num">5</span> Acknowledgment
+      </div>
+      <div style="background: #FAFBFC; border: 1px solid var(--rule); padding: 16px 20px; border-radius: 6px; font-size: 12px; color: var(--ink-soft); line-height: 1.6; margin-bottom: 14px;">
+        <p style="margin: 0 0 10px 0;">
+          I understand and agree that it is the duty of the property owner and any contractor
+          or consultant employed by the owner to determine that the proposed improvement(s)
+          are structurally, mechanically, and otherwise safe and that they are designed and
+          will be constructed in accordance with the architectural restrictions applicable.
+        </p>
+        <p style="margin: 0;">
+          I agree that neither the Association, nor any Director, Officer, Committee, Managing
+          Agent, member, or employee thereof, shall be liable for damage or otherwise because
+          of the approval or non-approval of this application or any facet thereof. I hereby
+          release, indemnify, and hold harmless the Indemnified Parties from any claim,
+          liability, damage, suit, and attorney's fees arising out of any action or omission
+          of any Indemnified Parties with regard to this application and in regard to the
+          design, plan review, construction, or inspection of the proposed improvements,
+          including any potential claims.
+        </p>
+      </div>
+      <label style="display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px; font-weight: 500; color: var(--ink); letter-spacing: 0; text-transform: none; margin-bottom: 0; cursor: pointer;">
+        <input type="checkbox" style="width: auto; padding: 0; margin: 3px 0 0 0;">
+        <span>I acknowledge and agree to the terms above. By submitting, I am providing my electronic signature on this application.<span class="required">*</span></span>
+      </label>
+    </div>
+
+    <div class="form-action-bar">
+      <div class="form-action-bar-help">
+        Required fields marked with <span style="color:var(--accent-error)">*</span>.
+        You'll get an initial assessment immediately after submitting.
+      </div>
+      <div class="form-action-bar-buttons">
+        <button class="btn-secondary">Save as Draft</button>
+        <button class="btn-primary">Submit Application →</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="portal-footer">
+    <span>
+      <span class="brand">Bedrock Association Management</span>
+      <span class="tag">· Community. Simplified.</span>
+    </span>
+    <span>Lakes of Pine Forest · ARC Application</span>
+  </div>
+  <div class="portal-footer-disclaimer">
+    Lakes of Pine Forest HOA, Inc. c/o Bedrock Association Management · 12808 W Airport Blvd, Suite #253, Sugar Land, Texas 77478 · info@bedrocktx.com · (832) 588-2485. This online application is an initial intake. Per LPF Deed Restrictions, plans must be approved in writing at least 45 days prior to beginning construction or improvement. Do not begin any work until you receive formal written approval.
+  </div>
+</div>
+
+<!-- ==============================
      PER-COMMUNITY VARIATION — OWNER-PAID EXAMPLE
      ============================== -->
 <div style="max-width: 8.5in; margin: 64px auto 12px; padding: 18px 28px; background: var(--bedrock-navy-tint); border-radius: 8px;">
   <div style="font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; color: var(--bedrock-navy); margin-bottom: 6px;">
-    Per-community variation
+    Variation — owner-paid community
   </div>
   <p style="margin: 0; font-size: 13px; color: var(--ink-soft); line-height: 1.6;">
     Each community configures its own services and fees. Below, the same pages
     render for <strong>Sample HOA</strong> — a community that charges the owner a $150
-    ARC application fee and offers all 4 services (ARC, Pool, Gate, Pet). Note the
-    fee callouts and full service grid.
+    ARC application fee and offers all 4 services. Note the visible fee callouts.
   </p>
 </div>
 
