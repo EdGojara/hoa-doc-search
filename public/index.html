@@ -245,6 +245,7 @@
   <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
   <div class="tab" onclick="switchTab('packets')">📋 Board Packets</div>
   <div class="tab" onclick="switchTab('profile')">🏘️ Profile</div>
+  <div class="tab" onclick="switchTab('events')">🎉 Events</div>
 </div>
 
 <!-- Chat Tab -->
@@ -2874,6 +2875,663 @@
     .fact-actions button.refresh { color:#2d7a3a; border-color:#b8d8c0; }
   </style>
 </div>
+
+<!-- ============================================================
+     🎉 Events tab — plan, run, and review community events
+     ============================================================ -->
+<div class="tab-content" id="tab-events" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1180px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🎉 Community Events</h2>
+        <p style="font-size:13px; color:#666;">Plan events, track vendor costs over time, capture waivers + attendance digitally.</p>
+      </div>
+      <button class="primary-btn" onclick="evShowCreateModal()" style="padding:9px 18px;">+ New event</button>
+    </div>
+
+    <!-- Filter bar -->
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center;">
+      <select id="ev-filter-community" class="draft-type-select" onchange="evLoadList()">
+        <option value="">All communities</option>
+      </select>
+      <select id="ev-filter-status" class="draft-type-select" onchange="evLoadList()">
+        <option value="">All statuses</option>
+        <option value="planned">Planned</option>
+        <option value="live">Live</option>
+        <option value="completed">Completed</option>
+        <option value="cancelled">Cancelled</option>
+      </select>
+      <button class="secondary-btn" onclick="evShowReports()" style="margin-left:auto;">📊 Vendor cost history</button>
+    </div>
+
+    <!-- List view -->
+    <div id="ev-list-view">
+      <div id="ev-list" style="display:flex; flex-direction:column; gap:10px;"></div>
+      <div id="ev-empty" style="display:none; background:#f5f8fc; border:1px dashed #c0d0e0; border-radius:8px; padding:32px; text-align:center; color:#5a7390;">
+        No events yet. Click "+ New event" to plan one.
+      </div>
+    </div>
+
+    <!-- Detail view (populated on click) -->
+    <div id="ev-detail-view" style="display:none;"></div>
+
+    <!-- Reports view -->
+    <div id="ev-reports-view" style="display:none;"></div>
+  </div>
+
+  <!-- Create-event modal -->
+  <div id="ev-create-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+    <div style="background:#fff; border-radius:12px; max-width:560px; width:100%; max-height:90vh; overflow-y:auto; padding:24px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+        <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Plan a new event</h3>
+        <button onclick="evHideCreateModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
+      </div>
+      <div class="prof-grid" style="display:grid; grid-template-columns: 1fr; gap:10px;">
+        <label class="prof-fld"><span>Community *</span>
+          <select id="ev-new-community"><option value="">—</option></select>
+        </label>
+        <label class="prof-fld"><span>Event name *</span><input id="ev-new-name" placeholder="Summer Pool Party 2026" /></label>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <label class="prof-fld"><span>Event type</span>
+            <select id="ev-new-type">
+              <option value="">—</option>
+              <option value="pool_party">Pool party</option>
+              <option value="holiday">Holiday event</option>
+              <option value="annual_meeting">Annual meeting</option>
+              <option value="workshop">Workshop / class</option>
+              <option value="social">Social mixer</option>
+              <option value="cleanup">Community cleanup</option>
+              <option value="other">Other</option>
+            </select>
+          </label>
+          <label class="prof-fld"><span>Location</span><input id="ev-new-location" placeholder="Pool deck / Clubhouse / 8201 Pine Forest Ln" /></label>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <label class="prof-fld"><span>Start date &amp; time *</span><input id="ev-new-start" type="datetime-local" /></label>
+          <label class="prof-fld"><span>End date &amp; time</span><input id="ev-new-end" type="datetime-local" /></label>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+          <label class="prof-fld"><span>Estimated attendance</span><input id="ev-new-estatt" type="number" placeholder="80" /></label>
+          <label class="prof-fld"><span>Budget ($)</span><input id="ev-new-budget" type="number" step="0.01" placeholder="1500" /></label>
+        </div>
+        <label class="prof-fld"><span>Description (also shown on public sign-in page)</span><textarea id="ev-new-desc" rows="2" placeholder="Annual pool party — pizza, swim, games for all ages."></textarea></label>
+        <label class="checkbox-row" style="margin-top:6px;">
+          <input id="ev-new-requires-minor" type="checkbox" checked />
+          <div class="lbl">Require parent/guardian consent for minors</div>
+        </label>
+      </div>
+      <div style="text-align:right; margin-top:16px;">
+        <button class="secondary-btn" onclick="evHideCreateModal()">Cancel</button>
+        <button class="primary-btn" onclick="evCreateEvent()" style="padding:8px 18px;">Create event</button>
+        <span id="ev-create-status" style="margin-left:10px; font-size:12px;"></span>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .ev-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 1fr 200px 160px 100px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; }
+    .ev-row:hover { border-color:#1a3a5c; }
+    .ev-row .ev-name { font-weight:700; color:#1a3a5c; font-size:14px; }
+    .ev-row .ev-sub { font-size:12px; color:#5a7390; margin-top:3px; }
+    .ev-row .ev-cost { font-size:13px; color:#1a3a5c; font-weight:600; text-align:right; }
+    .ev-row .ev-cost-sub { font-size:11px; color:#888; }
+    .ev-row .ev-att { font-size:13px; text-align:center; color:#445; }
+    .ev-status-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+    .ev-status-planned { background:#dbeafe; color:#1e3a8a; }
+    .ev-status-live { background:#dcfce7; color:#166534; }
+    .ev-status-completed { background:#e2e8f0; color:#475569; }
+    .ev-status-cancelled { background:#fee2e2; color:#991b1b; }
+
+    .ev-detail-card { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:16px; }
+    .ev-vendor-row { display:grid; grid-template-columns: 140px 1fr 120px 120px 100px 70px; gap:10px; padding:10px 12px; border:1px solid #e3e8ef; border-radius:6px; margin-bottom:6px; font-size:13px; align-items:center; }
+    .ev-vendor-row .role-chip { display:inline-block; background:#e8f0f8; color:#1a3a5c; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }
+
+    .ev-sig-row { display:grid; grid-template-columns: 1fr 200px 100px 70px; gap:10px; padding:8px 12px; border-bottom:1px solid #f0f2f5; font-size:13px; align-items:center; }
+    .ev-sig-row:last-child { border-bottom:none; }
+    .ev-sig-ho { background:#dbeafe; color:#1e3a8a; font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; text-transform:uppercase; letter-spacing:0.3px; }
+    .ev-sig-guest { background:#fef3c7; color:#92400e; font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; text-transform:uppercase; letter-spacing:0.3px; }
+    .ev-sig-minor { background:#e0e7ff; color:#3730a3; font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; text-transform:uppercase; letter-spacing:0.3px; margin-left:4px; }
+
+    .qr-box { background:#fff; border:2px solid #1a3a5c; border-radius:12px; padding:20px; text-align:center; }
+    .qr-box img { width:200px; height:200px; }
+    .qr-url { font-family: 'SF Mono', Consolas, monospace; font-size:11px; color:#1a3a5c; margin-top:8px; word-break: break-all; }
+  </style>
+</div>
+
+<script>
+  // ============================================================
+  // Events tab
+  // ============================================================
+  let evCommunities = [];
+  let evCurrentList = [];
+  let evCurrentDetail = null;
+
+  async function evInit() {
+    if (evCommunities.length > 0) { evLoadList(); return; }
+    try {
+      const r = await fetch('/api/billing/communities');
+      const j = await r.json();
+      evCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+      ['ev-filter-community','ev-new-community'].forEach(id => {
+        const sel = document.getElementById(id);
+        // wipe existing options except the first
+        while (sel.options.length > 1) sel.remove(1);
+        evCommunities.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id; opt.textContent = c.name;
+          sel.appendChild(opt);
+        });
+      });
+      evLoadList();
+    } catch (err) {
+      console.warn('evInit failed', err);
+    }
+  }
+
+  async function evLoadList() {
+    const cid = document.getElementById('ev-filter-community').value;
+    const status = document.getElementById('ev-filter-status').value;
+    const params = new URLSearchParams();
+    if (cid) params.set('community_id', cid);
+    if (status) params.set('status', status);
+    try {
+      const r = await fetch('/api/events?' + params.toString());
+      const j = await r.json();
+      evCurrentList = j.events || [];
+      evRenderList();
+    } catch (err) {
+      alert('Failed to load events: ' + err.message);
+    }
+  }
+
+  function evRenderList() {
+    const wrap = document.getElementById('ev-list');
+    const empty = document.getElementById('ev-empty');
+    if (evCurrentList.length === 0) {
+      wrap.innerHTML = ''; empty.style.display = ''; return;
+    }
+    empty.style.display = 'none';
+    wrap.innerHTML = evCurrentList.map(e => {
+      const dt = new Date(e.scheduled_start_at);
+      const dateStr = dt.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' });
+      const timeStr = dt.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      const cost = e.costs || {};
+      const actual = Number(cost.actual_total_estimate || 0);
+      const est = Number(cost.vendors_estimated_total || 0);
+      const costDisplay = actual > 0
+        ? `$${actual.toLocaleString(undefined, {maximumFractionDigits:0})}`
+        : (est > 0 ? `~$${est.toLocaleString(undefined, {maximumFractionDigits:0})}` : '—');
+      const att = e.attendance || {};
+      const attDisplay = att.signatures_count > 0
+        ? `${att.signatures_count} signed in`
+        : (e.estimated_attendance ? `est. ${e.estimated_attendance}` : '—');
+      return `
+        <div class="ev-row" onclick="evOpenDetail('${e.id}')">
+          <div>
+            <div class="ev-name">${evEsc(e.name)}</div>
+            <div class="ev-sub">${evEsc(e.community?.name || '')} · ${dateStr} · ${timeStr}${e.location ? ' · ' + evEsc(e.location) : ''}</div>
+          </div>
+          <div>
+            <span class="ev-status-pill ev-status-${e.status}">${e.status}</span>
+            ${e.public_signup_enabled ? '<span style="font-size:10px; color:#16a34a; margin-left:6px;">● live URL</span>' : ''}
+          </div>
+          <div class="ev-att">👥 ${attDisplay}</div>
+          <div>
+            <div class="ev-cost">${costDisplay}</div>
+            <div class="ev-cost-sub">${actual > 0 ? 'actual' : (est > 0 ? 'estimate' : '')}</div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  function evEsc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // ---------- Create event ----------
+  function evShowCreateModal() {
+    document.getElementById('ev-create-modal').style.display = 'flex';
+    document.getElementById('ev-new-name').focus();
+  }
+  function evHideCreateModal() {
+    document.getElementById('ev-create-modal').style.display = 'none';
+    document.getElementById('ev-create-status').textContent = '';
+    ['ev-new-name','ev-new-location','ev-new-start','ev-new-end','ev-new-estatt','ev-new-budget','ev-new-desc']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+  }
+
+  async function evCreateEvent() {
+    const body = {
+      community_id: document.getElementById('ev-new-community').value,
+      name: document.getElementById('ev-new-name').value.trim(),
+      event_type: document.getElementById('ev-new-type').value || null,
+      location: document.getElementById('ev-new-location').value.trim() || null,
+      scheduled_start_at: document.getElementById('ev-new-start').value || null,
+      scheduled_end_at: document.getElementById('ev-new-end').value || null,
+      estimated_attendance: Number(document.getElementById('ev-new-estatt').value) || null,
+      budget_estimated: Number(document.getElementById('ev-new-budget').value) || null,
+      description: document.getElementById('ev-new-desc').value.trim() || null,
+      requires_minor_consent: document.getElementById('ev-new-requires-minor').checked
+    };
+    if (!body.community_id || !body.name || !body.scheduled_start_at) {
+      document.getElementById('ev-create-status').textContent = 'Community, name, and start date are required.';
+      document.getElementById('ev-create-status').style.color = '#c0392b';
+      return;
+    }
+    const status = document.getElementById('ev-create-status');
+    status.textContent = 'Creating…'; status.style.color = '#888';
+    try {
+      const r = await fetch('/api/events', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evHideCreateModal();
+      await evLoadList();
+      evOpenDetail(j.event.id);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.style.color = '#c0392b';
+    }
+  }
+
+  // ---------- Detail view ----------
+  async function evOpenDetail(eventId) {
+    try {
+      const r = await fetch('/api/events/' + eventId);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evCurrentDetail = j;
+      evRenderDetail();
+    } catch (err) {
+      alert('Failed to load event: ' + err.message);
+    }
+  }
+
+  function evRenderDetail() {
+    const { event: e, vendors, signatures, costs, attendance } = evCurrentDetail;
+    document.getElementById('ev-list-view').style.display = 'none';
+    document.getElementById('ev-reports-view').style.display = 'none';
+    const view = document.getElementById('ev-detail-view');
+    view.style.display = '';
+
+    const dt = new Date(e.scheduled_start_at);
+    const dateStr = dt.toLocaleDateString(undefined, { weekday:'long', month:'long', day:'numeric', year:'numeric' });
+    const timeStr = dt.toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' });
+    const publicUrl = `${location.origin}/event/${e.slug}`;
+    const totalActual = Number(costs?.actual_total_estimate || 0);
+    const totalEst = Number(costs?.vendors_estimated_total || 0);
+    const sigCount = attendance?.signatures_count || 0;
+    const homeowners = attendance?.homeowner_count || 0;
+    const guests = attendance?.guest_count || 0;
+    const minors = attendance?.minor_count || 0;
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button class="secondary-btn" onclick="evBackToList()" style="font-size:13px;">← Back to events list</button>
+      </div>
+
+      <div class="ev-detail-card">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap;">
+          <div>
+            <h2 style="font-size:22px; font-weight:700; color:#1a3a5c;">${evEsc(e.name)}</h2>
+            <div style="font-size:13px; color:#5a7390; margin-top:4px;">
+              ${evEsc(e.community?.name || '')} · ${dateStr} · ${timeStr}${e.location ? ' · ' + evEsc(e.location) : ''}
+            </div>
+            <div style="margin-top:10px;">
+              <span class="ev-status-pill ev-status-${e.status}">${e.status}</span>
+              ${e.public_signup_enabled
+                ? '<span style="margin-left:8px; font-size:11px; color:#16a34a;">● Public sign-in is LIVE</span>'
+                : '<span style="margin-left:8px; font-size:11px; color:#888;">○ Public sign-in disabled</span>'}
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <select onchange="evUpdateStatus(this.value)" class="draft-type-select" style="font-size:13px;">
+              <option value="">Change status…</option>
+              <option value="planned">→ Planned</option>
+              <option value="live">→ Live</option>
+              <option value="completed">→ Completed</option>
+              <option value="cancelled">→ Cancelled</option>
+            </select>
+            <button class="secondary-btn" onclick="evTogglePublic()" style="font-size:13px;">${e.public_signup_enabled ? 'Disable public URL' : 'Enable public URL'}</button>
+          </div>
+        </div>
+        ${e.description ? `<div style="margin-top:12px; padding:10px 14px; background:#f5f8fc; border-radius:6px; font-size:13px; color:#334155;">${evEsc(e.description)}</div>` : ''}
+      </div>
+
+      <!-- Public URL / QR -->
+      ${e.public_signup_enabled ? `
+        <div class="ev-detail-card" style="display:grid; grid-template-columns: 240px 1fr; gap:18px; align-items:center;">
+          <div class="qr-box">
+            <img src="/api/events/${e.id}/qr" alt="QR code for ${evEsc(e.name)}" />
+            <div class="qr-url">${evEsc(publicUrl)}</div>
+          </div>
+          <div>
+            <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:6px;">Print this QR for the entrance</h3>
+            <p style="font-size:13px; color:#475569; line-height:1.5; margin-bottom:10px;">Anyone who scans it lands on the waiver + sign-in form. Their signature is captured digitally and they're checked in automatically.</p>
+            <a href="${publicUrl}" target="_blank" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px;">↗ Open public page</a>
+            <a href="/api/events/${e.id}/qr" download="event-qr-${e.slug}.png" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px; margin-left:6px;">⬇ Download QR PNG</a>
+          </div>
+        </div>` : ''}
+
+      <!-- Cost summary -->
+      <div class="ev-detail-card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <h3 style="font-size:14px; font-weight:700; color:#1a3a5c;">💰 Vendors &amp; costs</h3>
+          <button class="secondary-btn" onclick="evShowAddVendor()" style="font-size:13px;">+ Add vendor</button>
+        </div>
+        <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:14px;">
+          <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Budget</div>
+            <div style="font-size:18px; font-weight:700; color:#1a3a5c;">$${(e.budget_estimated || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+          </div>
+          <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Vendor estimates</div>
+            <div style="font-size:18px; font-weight:700; color:#1a3a5c;">$${totalEst.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+          </div>
+          <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Actual spend</div>
+            <div style="font-size:18px; font-weight:700; color:${totalActual > (e.budget_estimated || 0) && (e.budget_estimated || 0) > 0 ? '#c0392b' : '#1a3a5c'};">$${totalActual.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+          </div>
+          <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
+            <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Variance</div>
+            <div style="font-size:18px; font-weight:700; color:${totalActual > (e.budget_estimated || 0) && (e.budget_estimated || 0) > 0 ? '#c0392b' : '#16a34a'};">
+              ${(e.budget_estimated || 0) > 0 ? (totalActual - e.budget_estimated >= 0 ? '+' : '') + '$' + Math.abs(totalActual - (e.budget_estimated || 0)).toLocaleString(undefined,{maximumFractionDigits:0}) : '—'}
+            </div>
+          </div>
+        </div>
+
+        <div id="ev-add-vendor-form" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:12px;">
+          <div style="display:grid; grid-template-columns: 140px 1fr 1fr 1fr 100px; gap:8px; margin-bottom:8px;">
+            <select id="ev-new-vendor-role" class="draft-type-select" style="font-size:13px;">
+              <option value="catering">Catering</option>
+              <option value="entertainment">Entertainment</option>
+              <option value="dj">DJ / music</option>
+              <option value="photography">Photography</option>
+              <option value="security">Security</option>
+              <option value="bounce_house">Bounce house</option>
+              <option value="rental">Rental (tables/chairs)</option>
+              <option value="cleanup">Cleanup</option>
+              <option value="lifeguard">Lifeguard</option>
+              <option value="other">Other</option>
+            </select>
+            <input id="ev-new-vendor-name" placeholder="Vendor name (typed)" style="padding:7px 10px; border:1px solid #c0d0e0; border-radius:4px; font:inherit; font-size:13px;" />
+            <input id="ev-new-vendor-desc" placeholder="Description (e.g., 5 large pizzas + drinks)" style="padding:7px 10px; border:1px solid #c0d0e0; border-radius:4px; font:inherit; font-size:13px;" />
+            <input id="ev-new-vendor-est" type="number" step="0.01" placeholder="Est. $" style="padding:7px 10px; border:1px solid #c0d0e0; border-radius:4px; font:inherit; font-size:13px;" />
+            <button class="primary-btn" onclick="evAddVendor()" style="padding:6px 10px; font-size:13px;">Add</button>
+          </div>
+          <div style="text-align:right;"><button class="secondary-btn" onclick="evHideAddVendor()" style="padding:4px 12px; font-size:12px;">Cancel</button></div>
+        </div>
+
+        <div id="ev-vendors-list">
+          ${vendors.length === 0
+            ? '<div style="font-size:13px; color:#888; padding:10px;">No vendors added yet.</div>'
+            : vendors.map(v => `
+              <div class="ev-vendor-row">
+                <span class="role-chip">${evEsc(v.service_role)}</span>
+                <div>
+                  <div style="font-weight:600; color:#1a3a5c;">${evEsc(v.vendor_name_snapshot || v.vendor?.name || '(unnamed)')}</div>
+                  ${v.service_description ? `<div style="font-size:12px; color:#666; margin-top:2px;">${evEsc(v.service_description)}</div>` : ''}
+                </div>
+                <div style="text-align:right;">Est: <strong>$${(Number(v.estimated_cost) || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</strong></div>
+                <div style="text-align:right;">Actual: <input type="number" step="0.01" value="${v.actual_cost ?? ''}" onblur="evUpdateVendorActual('${v.id}', this.value)" style="width:80px; padding:4px 6px; border:1px solid #c0d0e0; border-radius:4px; text-align:right; font:inherit; font-size:13px;" /></div>
+                <div>
+                  <select onchange="evUpdateVendorPayment('${v.id}', this.value)" style="font-size:12px; padding:3px 4px; border:1px solid #c0d0e0; border-radius:4px;">
+                    <option value="pending" ${v.payment_status === 'pending' ? 'selected' : ''}>Pending</option>
+                    <option value="deposit_paid" ${v.payment_status === 'deposit_paid' ? 'selected' : ''}>Deposit</option>
+                    <option value="paid" ${v.payment_status === 'paid' ? 'selected' : ''}>Paid</option>
+                  </select>
+                </div>
+                <div style="text-align:right;"><button onclick="evDeleteVendor('${v.id}')" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:14px;">×</button></div>
+              </div>`).join('')
+          }
+        </div>
+      </div>
+
+      <!-- Attendance / signatures -->
+      <div class="ev-detail-card">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <h3 style="font-size:14px; font-weight:700; color:#1a3a5c;">👥 Attendance &amp; signatures (${sigCount})</h3>
+          <div style="font-size:12px; color:#5a7390;">
+            ${homeowners} homeowner${homeowners === 1 ? '' : 's'} · ${guests} guest${guests === 1 ? '' : 's'}${minors > 0 ? ' · ' + minors + ' minor' + (minors === 1 ? '' : 's') : ''}
+          </div>
+        </div>
+        ${signatures.length === 0
+          ? '<div style="font-size:13px; color:#888; padding:18px; text-align:center;">No sign-ins yet. ' + (e.public_signup_enabled ? 'Anyone who scans the QR will appear here in real-time.' : 'Enable public sign-in above to start collecting waivers.') + '</div>'
+          : signatures.map(s => `
+            <div class="ev-sig-row">
+              <div>
+                <strong>${evEsc(s.signer_name)}</strong>
+                ${s.is_homeowner ? '<span class="ev-sig-ho">Homeowner</span>' : '<span class="ev-sig-guest">Guest</span>'}
+                ${s.is_minor ? '<span class="ev-sig-minor">Minor</span>' : ''}
+                ${s.signer_address ? `<div style="font-size:11px; color:#888; margin-top:2px;">${evEsc(s.signer_address)}</div>` : ''}
+              </div>
+              <div style="font-size:12px; color:#666;">
+                ${s.signer_email ? evEsc(s.signer_email) + '<br>' : ''}
+                ${s.signer_phone ? evEsc(s.signer_phone) : ''}
+              </div>
+              <div style="font-size:12px; color:#445; text-align:center;">${new Date(s.signed_at).toLocaleTimeString(undefined, { hour:'numeric', minute:'2-digit' })}<br><span style="font-size:10px; color:#888;">${evEsc(s.device_type || '')}</span></div>
+              <div style="text-align:right;"><button class="secondary-btn" onclick="evViewSig('${s.id}')" style="font-size:11px; padding:3px 8px;">View</button></div>
+            </div>`).join('')
+        }
+      </div>
+
+      <!-- Danger zone -->
+      <div style="text-align:right; margin-top:18px;">
+        <button onclick="evDeleteEvent('${e.id}')" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete event</button>
+      </div>
+    `;
+  }
+
+  function evBackToList() {
+    document.getElementById('ev-detail-view').style.display = 'none';
+    document.getElementById('ev-reports-view').style.display = 'none';
+    document.getElementById('ev-list-view').style.display = '';
+    evLoadList();
+  }
+
+  async function evUpdateStatus(newStatus) {
+    if (!newStatus || !evCurrentDetail) return;
+    try {
+      const patch = { status: newStatus };
+      if (newStatus === 'live' && !evCurrentDetail.event.actual_start_at) patch.actual_start_at = new Date().toISOString();
+      if (newStatus === 'completed' && !evCurrentDetail.event.actual_end_at) patch.actual_end_at = new Date().toISOString();
+      const r = await fetch('/api/events/' + evCurrentDetail.event.id, {
+        method: 'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(patch)
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evOpenDetail(evCurrentDetail.event.id);
+    } catch (err) { alert('Status update failed: ' + err.message); }
+  }
+
+  async function evTogglePublic() {
+    if (!evCurrentDetail) return;
+    const next = !evCurrentDetail.event.public_signup_enabled;
+    try {
+      const r = await fetch('/api/events/' + evCurrentDetail.event.id, {
+        method: 'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ public_signup_enabled: next })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evOpenDetail(evCurrentDetail.event.id);
+    } catch (err) { alert('Toggle failed: ' + err.message); }
+  }
+
+  // ---------- Vendors ----------
+  function evShowAddVendor() { document.getElementById('ev-add-vendor-form').style.display = ''; }
+  function evHideAddVendor() {
+    document.getElementById('ev-add-vendor-form').style.display = 'none';
+    ['ev-new-vendor-name','ev-new-vendor-desc','ev-new-vendor-est'].forEach(id => document.getElementById(id).value = '');
+  }
+  async function evAddVendor() {
+    const body = {
+      service_role: document.getElementById('ev-new-vendor-role').value,
+      vendor_name_snapshot: document.getElementById('ev-new-vendor-name').value.trim() || null,
+      service_description: document.getElementById('ev-new-vendor-desc').value.trim() || null,
+      estimated_cost: Number(document.getElementById('ev-new-vendor-est').value) || null
+    };
+    if (!body.vendor_name_snapshot) { alert('Please enter a vendor name.'); return; }
+    try {
+      const r = await fetch('/api/events/' + evCurrentDetail.event.id + '/vendors', {
+        method: 'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify(body)
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evHideAddVendor();
+      evOpenDetail(evCurrentDetail.event.id);
+    } catch (err) { alert('Add vendor failed: ' + err.message); }
+  }
+  async function evUpdateVendorActual(rowId, val) {
+    const num = val === '' ? null : Number(val);
+    if (val !== '' && isNaN(num)) return;
+    try {
+      const r = await fetch('/api/events/vendors/' + rowId, {
+        method: 'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ actual_cost: num })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evOpenDetail(evCurrentDetail.event.id);
+    } catch (err) { alert('Update failed: ' + err.message); }
+  }
+  async function evUpdateVendorPayment(rowId, status) {
+    try {
+      const r = await fetch('/api/events/vendors/' + rowId, {
+        method: 'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ payment_status: status })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+    } catch (err) { alert('Update failed: ' + err.message); }
+  }
+  async function evDeleteVendor(rowId) {
+    if (!confirm('Remove this vendor from the event?')) return;
+    try {
+      const r = await fetch('/api/events/vendors/' + rowId, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evOpenDetail(evCurrentDetail.event.id);
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  async function evViewSig(sigId) {
+    // Simple inline lookup — full signature view not yet built. Show summary.
+    const s = evCurrentDetail.signatures.find(x => x.id === sigId);
+    if (!s) return;
+    alert(`Signed by: ${s.signer_name}\nAt: ${new Date(s.signed_at).toLocaleString()}\nDevice: ${s.device_type || 'unknown'}\nEmail: ${s.signer_email || '—'}\nPhone: ${s.signer_phone || '—'}\nAddress: ${s.signer_address || '—'}\n\nThe full signature PNG is stored and available for download / dispute resolution.`);
+  }
+
+  async function evDeleteEvent(eventId) {
+    if (!confirm('Delete this event? Vendors and signatures will also be removed. This cannot be undone.')) return;
+    try {
+      const r = await fetch('/api/events/' + eventId, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      evBackToList();
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  // ---------- Reports ----------
+  async function evShowReports() {
+    const view = document.getElementById('ev-reports-view');
+    document.getElementById('ev-list-view').style.display = 'none';
+    document.getElementById('ev-detail-view').style.display = 'none';
+    view.style.display = '';
+    view.innerHTML = '<div style="padding:24px; text-align:center; color:#888;">Loading vendor history…</div>';
+
+    const cid = document.getElementById('ev-filter-community').value;
+    const params = new URLSearchParams();
+    if (cid) params.set('community_id', cid);
+    try {
+      const [historyR, trendR] = await Promise.all([
+        fetch('/api/events/reports/vendor-history?' + params.toString()).then(r => r.json()),
+        fetch('/api/events/reports/cost-trend?' + params.toString()).then(r => r.json())
+      ]);
+      evRenderReports(historyR.rows || [], trendR.trend || []);
+    } catch (err) {
+      view.innerHTML = '<div style="color:#c0392b; padding:20px;">Failed to load reports: ' + evEsc(err.message) + '</div>';
+    }
+  }
+
+  function evRenderReports(rows, trend) {
+    const view = document.getElementById('ev-reports-view');
+    // Group by service_role for the table
+    const byRole = {};
+    for (const r of rows) {
+      const role = r.service_role || 'other';
+      if (!byRole[role]) byRole[role] = [];
+      byRole[role].push(r);
+    }
+
+    // Group trend by role for chart-like display
+    const trendByRole = {};
+    for (const t of trend) {
+      if (!trendByRole[t.role]) trendByRole[t.role] = [];
+      trendByRole[t.role].push(t);
+    }
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button class="secondary-btn" onclick="evBackToList()" style="font-size:13px;">← Back to events list</button>
+      </div>
+      <div class="ev-detail-card">
+        <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:14px;">📊 Cost trend by service category</h3>
+        ${Object.keys(trendByRole).length === 0
+          ? '<div style="font-size:13px; color:#888; padding:20px; text-align:center;">No vendor history yet. Add vendors to events to see cost trends appear here.</div>'
+          : Object.entries(trendByRole).map(([role, years]) => `
+            <div style="margin-bottom:18px;">
+              <div style="font-weight:700; color:#1a3a5c; font-size:13px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px;">${evEsc(role)}</div>
+              <div style="display:grid; grid-template-columns: repeat(${Math.min(years.length, 8)}, 1fr); gap:8px;">
+                ${years.map(y => `
+                  <div style="background:#f5f8fc; border-radius:6px; padding:10px; text-align:center;">
+                    <div style="font-size:11px; color:#666;">${y.year}</div>
+                    <div style="font-size:16px; font-weight:700; color:#1a3a5c;">$${Math.round(y.avg_cost).toLocaleString()}</div>
+                    <div style="font-size:10px; color:#888;">${y.count} event${y.count === 1 ? '' : 's'} avg</div>
+                  </div>`).join('')}
+              </div>
+            </div>`).join('')
+        }
+      </div>
+
+      <div class="ev-detail-card">
+        <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:14px;">📋 Vendor history — who did what, how much</h3>
+        ${Object.keys(byRole).length === 0
+          ? '<div style="font-size:13px; color:#888; padding:20px; text-align:center;">No data yet.</div>'
+          : Object.entries(byRole).map(([role, items]) => `
+            <details style="margin-bottom:10px;" ${items.length > 0 ? 'open' : ''}>
+              <summary style="cursor:pointer; padding:8px 10px; background:#f5f8fc; border-radius:6px; font-weight:600; color:#1a3a5c;">
+                ${evEsc(role)} <span style="font-weight:400; color:#888; font-size:12px;">(${items.length} entries)</span>
+              </summary>
+              <div style="margin-top:8px;">
+                ${items.map(i => `
+                  <div style="display:grid; grid-template-columns: 1fr 1fr 110px 110px; gap:10px; padding:8px 10px; border-bottom:1px solid #f0f2f5; font-size:12px;">
+                    <div>${evEsc(i.vendor_name_snapshot || '—')}</div>
+                    <div style="color:#666;">${evEsc(i.event?.name || '')} · ${evEsc(i.event?.community?.name || '')}</div>
+                    <div style="text-align:right;">${i.delivery_date ? new Date(i.delivery_date).toLocaleDateString() : (i.event?.scheduled_start_at ? new Date(i.event.scheduled_start_at).toLocaleDateString() : '')}</div>
+                    <div style="text-align:right; font-weight:600; color:#1a3a5c;">$${(Number(i.actual_cost ?? i.estimated_cost ?? 0)).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+                  </div>`).join('')}
+              </div>
+            </details>`).join('')
+        }
+      </div>
+    `;
+  }
+
+  // Hook into the existing switchTab
+  if (typeof switchTab === 'function') {
+    const _prevSwitch = switchTab;
+    switchTab = function(tab) {
+      _prevSwitch(tab);
+      if (tab === 'events') evInit();
+    };
+  }
+</script>
 
 <script>
   // ============================================================

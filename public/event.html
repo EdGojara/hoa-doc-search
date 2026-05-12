@@ -1,0 +1,495 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
+  <title>Community Event — Bedrock</title>
+  <meta name="theme-color" content="#1a3a5c" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937;
+      min-height: 100dvh;
+    }
+    .page {
+      max-width: 640px;
+      margin: 0 auto;
+      padding: 18px 18px 48px;
+    }
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 4px 18px;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 22px;
+    }
+    .brand-mark {
+      width: 36px; height: 36px; border-radius: 8px;
+      background: #1a3a5c; color: #fff;
+      display:flex; align-items:center; justify-content:center;
+      font-weight: 700; font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; color: #0f172a; }
+    .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+
+    h1 {
+      font-size: 24px; font-weight: 700; margin: 0 0 6px; color: #0f172a;
+      line-height: 1.2;
+    }
+    .event-meta {
+      font-size: 14px; color: #475569; margin-bottom: 18px; line-height: 1.5;
+    }
+    .event-meta strong { color: #1a3a5c; }
+    .description { font-size: 14px; color: #334155; line-height: 1.5; margin-bottom: 24px; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      padding: 18px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .card h2 {
+      font-size: 13px; font-weight: 700;
+      color: #1a3a5c; text-transform: uppercase; letter-spacing: 0.5px;
+      margin: 0 0 12px;
+    }
+
+    .fld { display:flex; flex-direction:column; gap:5px; margin-bottom: 12px; }
+    .fld label { font-size: 12px; font-weight: 600; color: #334155; }
+    .fld input, .fld select, .fld textarea {
+      padding: 11px 12px;
+      border: 1px solid #cbd5e1; border-radius: 8px;
+      font: inherit; font-size: 15px;
+      background: #fff;
+    }
+    .fld input:focus, .fld select:focus, .fld textarea:focus {
+      outline: none; border-color: #1a3a5c;
+      box-shadow: 0 0 0 3px rgba(26, 58, 92, 0.10);
+    }
+    .checkbox-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 12px; background: #f8fafc; border-radius: 8px;
+      border: 1px solid #e2e8f0; cursor: pointer;
+      margin-bottom: 12px;
+    }
+    .checkbox-row input { width: 20px; height: 20px; margin: 1px 0 0; flex-shrink: 0; cursor: pointer; }
+    .checkbox-row .lbl { font-size: 13px; color: #1e293b; line-height: 1.4; }
+
+    .waiver-box {
+      background: #fcfcfd;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 14px;
+      max-height: 240px; overflow-y: auto;
+      font-size: 13px; color: #334155; line-height: 1.55;
+      white-space: pre-wrap;
+      margin-bottom: 12px;
+    }
+
+    /* Signature pad */
+    .sig-wrap {
+      position: relative;
+      border: 2px dashed #cbd5e1;
+      border-radius: 8px;
+      background: #fcfcfd;
+      height: 180px;
+      overflow: hidden;
+      touch-action: none;          /* prevent page scroll while drawing */
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .sig-wrap.has-drawing { border-color: #1a3a5c; border-style: solid; }
+    .sig-wrap canvas { display:block; width: 100%; height: 100%; touch-action: none; }
+    .sig-placeholder {
+      position: absolute; inset: 0;
+      display: flex; align-items: center; justify-content: center;
+      color: #94a3b8; font-size: 13px; pointer-events: none;
+    }
+    .sig-wrap.has-drawing .sig-placeholder { display: none; }
+    .sig-actions {
+      display: flex; justify-content: space-between; align-items: center;
+      margin-top: 8px; font-size: 12px;
+    }
+    .sig-clear { background: none; border: none; color: #64748b; cursor: pointer; text-decoration: underline; font: inherit; font-size: 12px; padding: 4px 0; }
+
+    .submit-btn {
+      display: block; width: 100%;
+      background: #1a3a5c; color: #fff;
+      padding: 14px;
+      border: none; border-radius: 10px;
+      font: inherit; font-size: 16px; font-weight: 700;
+      cursor: pointer; margin-top: 6px;
+      box-shadow: 0 4px 12px rgba(26, 58, 92, 0.25);
+      transition: transform 0.08s;
+    }
+    .submit-btn:active { transform: scale(0.985); }
+    .submit-btn:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
+    .success-screen, .error-screen {
+      text-align: center;
+      padding: 48px 16px;
+      display: none;
+    }
+    .success-screen.show, .error-screen.show { display: block; }
+    .success-screen .icon, .error-screen .icon {
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      margin: 0 auto 16px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 40px;
+    }
+    .success-screen .icon { background: #dcfce7; color: #166534; }
+    .error-screen .icon { background: #fee2e2; color: #991b1b; }
+    .success-screen h2, .error-screen h2 {
+      font-size: 22px; font-weight: 700; color: #0f172a;
+      margin: 0 0 8px;
+    }
+    .success-screen p, .error-screen p {
+      font-size: 14px; color: #475569; line-height: 1.5;
+      margin: 0 auto 16px; max-width: 360px;
+    }
+    .success-screen .next-up {
+      background: #1a3a5c; color: #fff;
+      display: inline-block;
+      padding: 10px 22px; border-radius: 999px;
+      font-size: 14px; font-weight: 600;
+      text-decoration: none;
+      margin-top: 12px;
+      cursor: pointer; border: none;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 11px; color: #94a3b8;
+      margin-top: 28px;
+    }
+
+    @media (min-width: 640px) {
+      .sig-wrap { height: 200px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar">
+      <div class="brand-mark">B</div>
+      <div>
+        <div class="brand-title">Bedrock Association Management</div>
+        <div class="brand-sub">Community Event Sign-In</div>
+      </div>
+    </div>
+
+    <div id="loading" style="text-align:center; padding:48px 0; color:#64748b;">Loading event…</div>
+
+    <div id="form-screen" style="display:none;">
+      <h1 id="event-name"></h1>
+      <div class="event-meta" id="event-meta"></div>
+      <div class="description" id="event-description"></div>
+
+      <div class="card">
+        <h2>Your information</h2>
+        <div class="fld">
+          <label for="signer_name">Full name <span style="color:#dc2626;">*</span></label>
+          <input id="signer_name" type="text" autocomplete="name" required />
+        </div>
+        <div class="fld">
+          <label for="signer_email">Email</label>
+          <input id="signer_email" type="email" autocomplete="email" />
+        </div>
+        <div class="fld">
+          <label for="signer_phone">Phone</label>
+          <input id="signer_phone" type="tel" autocomplete="tel" inputmode="tel" />
+        </div>
+
+        <label class="checkbox-row">
+          <input id="is_homeowner" type="checkbox" />
+          <div class="lbl"><strong>I am a homeowner</strong> in this community</div>
+        </label>
+
+        <div class="fld" id="address-fld">
+          <label for="signer_address">Address in community</label>
+          <input id="signer_address" type="text" autocomplete="street-address" placeholder="8201 Pine Forest Ln" />
+        </div>
+        <div class="fld" id="guest-of-fld" style="display:none;">
+          <label for="guest_of_address">Guest of (homeowner address)</label>
+          <input id="guest_of_address" type="text" placeholder="If known, the address of the homeowner who invited you" />
+        </div>
+      </div>
+
+      <div class="card" id="minor-section" style="display:none;">
+        <h2>Minor consent</h2>
+        <label class="checkbox-row">
+          <input id="is_minor" type="checkbox" />
+          <div class="lbl">I am signing this on behalf of a <strong>minor child</strong></div>
+        </label>
+        <div id="minor-details" style="display:none;">
+          <div class="fld">
+            <label for="parent_guardian_name">Parent or guardian name</label>
+            <input id="parent_guardian_name" type="text" />
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2 id="waiver-title">Event Waiver</h2>
+        <div class="waiver-box" id="waiver-text"></div>
+        <label class="checkbox-row" id="agree-row">
+          <input id="agree_waiver" type="checkbox" required />
+          <div class="lbl">I have read the waiver above and <strong>agree to its terms</strong>.</div>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2>Signature</h2>
+        <p style="font-size:13px; color:#475569; margin: 0 0 8px;">Sign in the box below with your finger (or mouse on desktop).</p>
+        <div class="sig-wrap" id="sig-wrap">
+          <canvas id="sig-canvas"></canvas>
+          <div class="sig-placeholder">Sign here</div>
+        </div>
+        <div class="sig-actions">
+          <span id="sig-status" style="color:#64748b;">Empty</span>
+          <button type="button" class="sig-clear" id="sig-clear">Clear and start over</button>
+        </div>
+      </div>
+
+      <button type="button" id="submit-btn" class="submit-btn">✍️ Sign in &amp; submit</button>
+      <p id="submit-error" style="color:#b91c1c; font-size:13px; text-align:center; margin: 12px 0 0; display:none;"></p>
+    </div>
+
+    <div id="success-screen" class="success-screen">
+      <div class="icon">✓</div>
+      <h2>You're checked in</h2>
+      <p id="success-msg">Welcome to the event. Your waiver has been recorded.</p>
+      <button type="button" class="next-up" onclick="location.reload()">Sign in another person</button>
+    </div>
+
+    <div id="error-screen" class="error-screen">
+      <div class="icon">!</div>
+      <h2>We can't sign you in right now</h2>
+      <p id="error-msg"></p>
+    </div>
+
+    <div class="footer-note">
+      Powered by Bedrock Intelligence · bedrocktxai.com
+    </div>
+  </div>
+
+  <script>
+    // ========================================================================
+    // /event/:slug — public waiver + check-in page
+    // ========================================================================
+    const $ = (id) => document.getElementById(id);
+
+    // ---------- Slug resolution from URL ----------
+    const slug = location.pathname.split('/').filter(Boolean).pop();
+
+    // ---------- Load event details ----------
+    let eventData = null;
+    async function loadEvent() {
+      try {
+        const r = await fetch(`/api/events/public/${encodeURIComponent(slug)}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        eventData = j.event;
+        renderEvent();
+      } catch (err) {
+        showError(err.message);
+      }
+    }
+
+    function renderEvent() {
+      $('loading').style.display = 'none';
+      $('form-screen').style.display = '';
+
+      $('event-name').textContent = eventData.name;
+      const date = new Date(eventData.scheduled_start_at);
+      const endDate = eventData.scheduled_end_at ? new Date(eventData.scheduled_end_at) : null;
+      const dateStr = date.toLocaleDateString(undefined, { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+      const timeStr = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      const endTimeStr = endDate ? endDate.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : null;
+
+      const metaParts = [];
+      metaParts.push(`<strong>📅 ${dateStr}</strong>`);
+      metaParts.push(endTimeStr ? `🕒 ${timeStr} – ${endTimeStr}` : `🕒 ${timeStr}`);
+      if (eventData.location) metaParts.push(`📍 ${eventData.location}`);
+      if (eventData.community?.name) metaParts.push(`🏘️ ${eventData.community.name}`);
+      $('event-meta').innerHTML = metaParts.join('<br>');
+
+      $('event-description').textContent = eventData.description || '';
+
+      $('waiver-title').textContent = eventData.waiver_title || 'Event Waiver';
+      $('waiver-text').textContent = eventData.waiver_text || '';
+
+      $('minor-section').style.display = eventData.requires_minor_consent ? '' : 'none';
+
+      setupSignaturePad();
+    }
+
+    // ---------- Toggle address / guest fields ----------
+    $('is_homeowner').addEventListener('change', () => {
+      const isHO = $('is_homeowner').checked;
+      $('guest-of-fld').style.display = isHO ? 'none' : '';
+    });
+
+    // ---------- Toggle minor details ----------
+    $('is_minor')?.addEventListener('change', () => {
+      const isMinor = $('is_minor').checked;
+      $('minor-details').style.display = isMinor ? '' : 'none';
+    });
+
+    // ---------- Signature pad ----------
+    // Vanilla canvas implementation: capture pointer events, draw smooth lines.
+    let sigCanvas, sigCtx, sigDrawing = false, sigHasInk = false, sigLastX = 0, sigLastY = 0;
+
+    function setupSignaturePad() {
+      sigCanvas = $('sig-canvas');
+      // Match canvas pixel size to its CSS size × DPR for crispness
+      const dpr = window.devicePixelRatio || 1;
+      const rect = sigCanvas.parentNode.getBoundingClientRect();
+      sigCanvas.width = Math.floor(rect.width * dpr);
+      sigCanvas.height = Math.floor(rect.height * dpr);
+      sigCtx = sigCanvas.getContext('2d');
+      sigCtx.scale(dpr, dpr);
+      sigCtx.lineCap = 'round';
+      sigCtx.lineJoin = 'round';
+      sigCtx.strokeStyle = '#0f172a';
+      sigCtx.lineWidth = 2.5;
+
+      // Pointer events for unified touch + mouse + stylus
+      sigCanvas.addEventListener('pointerdown', sigStart, { passive: false });
+      sigCanvas.addEventListener('pointermove', sigMove, { passive: false });
+      sigCanvas.addEventListener('pointerup', sigEnd);
+      sigCanvas.addEventListener('pointercancel', sigEnd);
+      sigCanvas.addEventListener('pointerleave', sigEnd);
+      // Block default scroll on touch
+      sigCanvas.addEventListener('touchstart', (e) => e.preventDefault(), { passive: false });
+      sigCanvas.addEventListener('touchmove', (e) => e.preventDefault(), { passive: false });
+
+      $('sig-clear').addEventListener('click', clearSignature);
+
+      // Repaint on viewport change (orientation flip on phone)
+      window.addEventListener('resize', () => {
+        if (sigHasInk) return; // don't blow away in-progress drawing
+        setupSignaturePad();
+      });
+    }
+
+    function sigPos(ev) {
+      const rect = sigCanvas.getBoundingClientRect();
+      return { x: ev.clientX - rect.left, y: ev.clientY - rect.top };
+    }
+    function sigStart(ev) {
+      ev.preventDefault();
+      sigDrawing = true;
+      const p = sigPos(ev);
+      sigLastX = p.x; sigLastY = p.y;
+      // Small dot at start (so single-tap shows ink)
+      sigCtx.beginPath();
+      sigCtx.arc(p.x, p.y, sigCtx.lineWidth / 2, 0, Math.PI * 2);
+      sigCtx.fillStyle = '#0f172a';
+      sigCtx.fill();
+      sigHasInk = true;
+      $('sig-wrap').classList.add('has-drawing');
+      $('sig-status').textContent = 'Captured';
+    }
+    function sigMove(ev) {
+      if (!sigDrawing) return;
+      ev.preventDefault();
+      const p = sigPos(ev);
+      sigCtx.beginPath();
+      sigCtx.moveTo(sigLastX, sigLastY);
+      sigCtx.lineTo(p.x, p.y);
+      sigCtx.stroke();
+      sigLastX = p.x; sigLastY = p.y;
+    }
+    function sigEnd() { sigDrawing = false; }
+    function clearSignature() {
+      sigCtx.clearRect(0, 0, sigCanvas.width, sigCanvas.height);
+      sigHasInk = false;
+      $('sig-wrap').classList.remove('has-drawing');
+      $('sig-status').textContent = 'Empty';
+    }
+
+    // ---------- Submit ----------
+    $('submit-btn').addEventListener('click', async () => {
+      $('submit-error').style.display = 'none';
+
+      const name = $('signer_name').value.trim();
+      if (!name) return showSubmitError('Please enter your name.');
+      if (!$('agree_waiver').checked) return showSubmitError('Please agree to the waiver to continue.');
+      if (!sigHasInk) return showSubmitError('Please sign in the box above.');
+
+      const isMinor = !!$('is_minor')?.checked;
+      const isHO = $('is_homeowner').checked;
+
+      const body = {
+        signer_name: name,
+        signer_email: $('signer_email').value.trim() || null,
+        signer_phone: $('signer_phone').value.trim() || null,
+        signer_address: $('signer_address').value.trim() || null,
+        is_homeowner: isHO,
+        guest_of_address: !isHO ? ($('guest_of_address').value.trim() || null) : null,
+        is_minor: isMinor,
+        parent_guardian_name: isMinor ? ($('parent_guardian_name').value.trim() || null) : null,
+        signature_png: sigCanvas.toDataURL('image/png'),
+        device_type: detectDeviceType()
+      };
+
+      const btn = $('submit-btn');
+      const orig = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Submitting…';
+
+      try {
+        const r = await fetch(`/api/events/public/${encodeURIComponent(slug)}/sign`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        showSuccess(j.signature);
+      } catch (err) {
+        showSubmitError(err.message || 'Something went wrong. Please ask staff for help.');
+        btn.disabled = false;
+        btn.textContent = orig;
+      }
+    });
+
+    function detectDeviceType() {
+      const ua = navigator.userAgent;
+      if (/iPad|Tablet|Android(?!.*Mobile)/i.test(ua)) return 'tablet';
+      if (/Mobile|iPhone|Android/i.test(ua)) return 'phone';
+      return 'desktop';
+    }
+    function showSubmitError(msg) {
+      const e = $('submit-error');
+      e.textContent = msg; e.style.display = '';
+      e.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    function showSuccess(sig) {
+      $('form-screen').style.display = 'none';
+      $('success-screen').classList.add('show');
+      const t = new Date(sig.signed_at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      $('success-msg').textContent = `Welcome, ${sig.signer_name}. Checked in at ${t}.`;
+    }
+    function showError(msg) {
+      $('loading').style.display = 'none';
+      $('form-screen').style.display = 'none';
+      $('error-screen').classList.add('show');
+      $('error-msg').textContent = msg.includes('not currently accepting') || msg.includes('not accepting')
+        ? msg + ' Please check with on-site staff for assistance.'
+        : msg;
+    }
+
+    loadEvent();
+  </script>
+</body>
+</html>

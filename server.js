@@ -411,6 +411,15 @@ app.use('/api/help', helpRouter);
 const { router: communityProfileRouter, buildCommunityContextBlock } = require('./api/communities');
 app.use('/api/community-profile', communityProfileRouter);
 
+// Community events (planning, vendors, waivers + attendance, reporting)
+const { router: eventsRouter } = require('./api/events');
+app.use('/api/events', eventsRouter);
+
+// Public event page — served from /event/:slug → returns the standalone HTML
+app.get('/event/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'event.html'));
+});
+
 // Documents Tracker — Bedrock's canonical document library.
 // Endpoints under /api/documents/*. See api/documents.js and
 // migrations/012_documents_module.sql for the schema.
