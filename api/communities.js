@@ -426,6 +426,29 @@ async function buildCommunityContextBlock(communityNameOrId) {
     }
   } catch (_) { /* silent */ }
 
+  // Historical ACC decisions — INFORMATIONAL CONTEXT ONLY, not precedent.
+  // We surface the 10 most recent decisions so AskEd has a sense of what
+  // this community has approved/denied in the past. Semantic matching of
+  // specific applications happens in the AI assessment engine route.
+  try {
+    const { data: arcDecisions } = await supabase
+      .from('arc_historical_decisions')
+      .select('property_address, project_type, decision_type, decided_at, summary, conditions')
+      .eq('community_id', comm.id)
+      .order('decided_at', { ascending: false, nullsFirst: false })
+      .limit(10);
+    if (arcDecisions && arcDecisions.length > 0) {
+      lines.push('');
+      lines.push('HISTORICAL ACC DECISIONS (informational context only — NOT binding precedent. Current governing documents are the authority.)');
+      for (const d of arcDecisions) {
+        const when = d.decided_at ? new Date(d.decided_at).toISOString().slice(0, 10) : 'date unknown';
+        const tag = d.decision_type ? d.decision_type.toUpperCase() : '?';
+        const cond = d.conditions ? ` [conditions: ${d.conditions.slice(0, 80)}${d.conditions.length > 80 ? '…' : ''}]` : '';
+        lines.push(`  • [${tag}] ${when} — ${d.project_type || 'project'} at ${d.property_address || 'address unknown'}: ${d.summary || ''}${cond}`);
+      }
+    }
+  } catch (_) { /* silent */ }
+
   return lines.join('\n');
 }
 

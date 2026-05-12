@@ -248,6 +248,7 @@
   <div class="tab" onclick="switchTab('events')">🎉 Events</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
   <div class="tab" onclick="switchTab('recaps')">📰 Recaps</div>
+  <div class="tab" onclick="switchTab('archistory')">🏗️ ACC History</div>
 </div>
 
 <!-- Chat Tab -->
@@ -3583,6 +3584,535 @@
   // clicks the tab (e.g., page loads with tab already active from URL)
   // and the click-handler race we hit on first ship.
   try { inInit(); } catch (e) { console.warn('eager inInit', e); }
+</script>
+
+<!-- ============================================================
+     🏗️ ACC History tab — bulk upload past ARC decisions
+     ============================================================ -->
+<div class="tab-content" id="tab-archistory" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1180px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏗️ ACC History</h2>
+        <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. Claude extracts structured fields → review → save. The AI assessment engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
+      </div>
+    </div>
+
+    <div style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:18px; align-items:center;">
+      <select id="ah-filter-community" class="draft-type-select" onchange="ahLoadList()">
+        <option value="">All communities</option>
+      </select>
+      <select id="ah-filter-project" class="draft-type-select" onchange="ahLoadList()">
+        <option value="">All project types</option>
+        <option value="fence">Fence</option>
+        <option value="paint">Paint</option>
+        <option value="addition">Addition</option>
+        <option value="pool">Pool</option>
+        <option value="deck">Deck</option>
+        <option value="landscaping">Landscaping</option>
+        <option value="roof">Roof</option>
+        <option value="door">Door</option>
+        <option value="window">Window</option>
+        <option value="shed">Shed</option>
+        <option value="mailbox">Mailbox</option>
+        <option value="driveway">Driveway</option>
+        <option value="tree">Tree</option>
+        <option value="other">Other</option>
+      </select>
+      <select id="ah-filter-decision" class="draft-type-select" onchange="ahLoadList()">
+        <option value="">All decisions</option>
+        <option value="approved">✓ Approved</option>
+        <option value="denied">✗ Denied</option>
+        <option value="conditional">⚠ Conditional</option>
+        <option value="withdrawn">↩ Withdrawn</option>
+        <option value="tabled">⏸ Tabled</option>
+      </select>
+      <input id="ah-search" type="search" placeholder="Address, owner, or project…" oninput="ahSearchDebounced()" style="flex:1; min-width:220px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
+    </div>
+
+    <!-- Drop zone -->
+    <div id="ah-drop-zone" style="border:2px dashed #c0d0e0; border-radius:10px; padding:24px; text-align:center; background:#f7f9fc; margin-bottom:18px; cursor:pointer; transition: all 0.2s;">
+      <div style="font-size:28px; color:#5a7390;">📥</div>
+      <div style="font-size:14px; font-weight:600; color:#1a3a5c; margin-top:6px;">Drop ARC decision letters here</div>
+      <div style="font-size:12px; color:#5a7390; margin-top:4px;">
+        Accepts <strong>PDF</strong>, <strong>image</strong> (jpg/png), <strong>.eml</strong>, or <strong>.txt</strong> — or
+        <button onclick="document.getElementById('ah-file-picker').click(); event.stopPropagation();" style="background:none; border:none; color:#1a3a5c; text-decoration:underline; cursor:pointer; font:inherit; font-size:12px; padding:0;">click to pick files</button>
+      </div>
+      <div style="font-size:11px; color:#888; margin-top:8px;">
+        For best results: pick the community below first, then drop one decision at a time. Bulk drops are processed sequentially.
+      </div>
+      <input type="file" id="ah-file-picker" multiple accept=".pdf,.png,.jpg,.jpeg,.eml,.txt,image/*,application/pdf" style="display:none;" />
+      <select id="ah-drop-community" class="draft-type-select" style="margin-top:10px; width:auto;">
+        <option value="">— Pick community for these decisions —</option>
+      </select>
+    </div>
+
+    <!-- Extraction queue -->
+    <div id="ah-queue" style="display:none; background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-bottom:14px;">
+      <div style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Processing…</div>
+      <div id="ah-queue-items" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+
+    <!-- Stats by community -->
+    <div id="ah-summary" style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; margin-bottom:14px; font-size:12px; color:#5a7390; display:none;"></div>
+
+    <!-- Decisions list -->
+    <div id="ah-list-view">
+      <div id="ah-list" style="display:flex; flex-direction:column; gap:8px;"></div>
+      <div id="ah-empty" style="display:none; background:#f5f8fc; border:1px dashed #c0d0e0; border-radius:8px; padding:32px; text-align:center; color:#5a7390;">
+        No ACC decisions in the library yet. Drop your historical letters above to start building institutional memory.
+      </div>
+    </div>
+
+    <!-- Detail view -->
+    <div id="ah-detail-view" style="display:none;"></div>
+
+    <!-- Review-and-save modal (after extraction) -->
+    <div id="ah-review-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
+      <div style="background:#fff; border-radius:12px; max-width:720px; width:100%; max-height:92vh; overflow-y:auto; padding:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Review extracted decision</h3>
+          <button onclick="ahHideReviewModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
+        </div>
+        <div id="ah-review-meta" style="font-size:12px; color:#666; margin-bottom:14px;"></div>
+        <div id="ah-review-form" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;"></div>
+        <details style="margin-top:14px;">
+          <summary style="cursor:pointer; font-size:12px; font-weight:600; color:#1a3a5c;">📄 Source excerpt (first 600 chars)</summary>
+          <pre id="ah-review-excerpt" style="white-space:pre-wrap; font-size:11px; color:#555; padding:10px; background:#f7f9fc; border:1px solid #e3e8ef; border-radius:4px; max-height:200px; overflow-y:auto; margin-top:8px;"></pre>
+        </details>
+        <div style="text-align:right; margin-top:16px;">
+          <button class="secondary-btn" onclick="ahHideReviewModal()">Cancel</button>
+          <button class="primary-btn" onclick="ahCommitReview()" style="padding:8px 22px;" id="ah-commit-btn">✓ Save to library</button>
+          <span id="ah-review-status" style="margin-left:10px; font-size:12px;"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <style>
+    .ah-row { background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:12px 16px; display:grid; grid-template-columns: 110px 1fr 130px 90px 60px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; font-size:13px; }
+    .ah-row:hover { border-color:#1a3a5c; }
+    .ah-row .date { color:#5a7390; font-weight:600; }
+    .ah-row .addr { font-weight:700; color:#1a3a5c; }
+    .ah-row .summary { color:#444; font-size:12px; margin-top:3px; }
+    .ah-decision-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+    .ah-approved { background:#dcfce7; color:#166534; }
+    .ah-denied { background:#fee2e2; color:#991b1b; }
+    .ah-conditional { background:#fef3c7; color:#92400e; }
+    .ah-withdrawn { background:#e0e7ff; color:#3730a3; }
+    .ah-tabled { background:#e2e8f0; color:#475569; }
+    .ah-pending { background:#f1f5f9; color:#475569; }
+    .ah-project-chip { display:inline-block; padding:2px 9px; border-radius:99px; font-size:10px; font-weight:600; background:#e8f0f8; color:#1a3a5c; text-transform:capitalize; }
+    .ahq-row { display:grid; grid-template-columns: 24px 1fr 130px 80px; gap:10px; padding:8px 10px; background:#fcfcfd; border:1px solid #f0f2f5; border-radius:6px; font-size:12px; align-items:center; }
+  </style>
+</div>
+
+<script>
+  // ============================================================
+  // ACC History tab
+  // ============================================================
+  let ahCommunities = [];
+  let ahCurrentList = [];
+  let ahCurrent = null;
+  let ahPendingReview = null;   // { file, extracted, source_excerpt, source_filename, content_hash }
+
+  async function ahInit() {
+    if (ahCommunities.length === 0) {
+      try {
+        const r = await fetch('/api/billing/communities');
+        const j = await r.json();
+        ahCommunities = (j.communities || []).slice().sort((a,b) => (a.name||'').localeCompare(b.name||''));
+        ['ah-filter-community','ah-drop-community'].forEach(id => {
+          const sel = document.getElementById(id);
+          if (!sel) return;
+          while (sel.options.length > 1) sel.remove(1);
+          ahCommunities.forEach(c => {
+            const opt = document.createElement('option');
+            opt.value = c.id; opt.textContent = c.name;
+            sel.appendChild(opt);
+          });
+        });
+      } catch (err) { console.warn('ahInit', err); }
+    }
+    ahSetupDropZone();
+    ahLoadList();
+    ahLoadSummary();
+  }
+
+  let ahDropReady = false;
+  function ahSetupDropZone() {
+    if (ahDropReady) return;
+    ahDropReady = true;
+    const zone = document.getElementById('ah-drop-zone');
+    const picker = document.getElementById('ah-file-picker');
+    if (!zone) return;
+    zone.addEventListener('click', () => picker.click());
+    picker.addEventListener('change', (e) => {
+      const files = Array.from(e.target.files || []);
+      if (files.length > 0) ahProcessFiles(files);
+      picker.value = '';
+    });
+    ['dragenter','dragover'].forEach(ev => {
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = '#1a3a5c';
+        zone.style.background = '#e8f0f8';
+      });
+    });
+    ['dragleave','drop'].forEach(ev => {
+      zone.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        zone.style.borderColor = '#c0d0e0';
+        zone.style.background = '#f7f9fc';
+      });
+    });
+    zone.addEventListener('drop', (e) => {
+      const files = Array.from(e.dataTransfer?.files || []);
+      if (files.length > 0) ahProcessFiles(files);
+    });
+  }
+
+  async function ahProcessFiles(files) {
+    const communityId = document.getElementById('ah-drop-community').value;
+    if (!communityId) {
+      alert('Pick a community before dropping files — the community context matters for AI extraction.');
+      return;
+    }
+    const queue = document.getElementById('ah-queue');
+    const items = document.getElementById('ah-queue-items');
+    queue.style.display = '';
+    items.innerHTML = '';
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const row = document.createElement('div');
+      row.className = 'ahq-row';
+      row.innerHTML = `
+        <span class="icon" style="font-size:14px;">⏳</span>
+        <span style="font-weight:600; color:#1a3a5c;">${ahEsc(file.name)} <span style="font-weight:400; color:#888;">(${(file.size/1024).toFixed(1)} kb)</span></span>
+        <span class="status" style="color:#888;">extracting…</span>
+        <span class="action" style="text-align:right;"></span>
+      `;
+      items.appendChild(row);
+
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('community_id', communityId);
+        const r = await fetch('/api/arc-history/extract', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+
+        row.querySelector('.icon').textContent = '🔍';
+        row.querySelector('.status').textContent = 'extracted';
+        const reviewBtn = document.createElement('button');
+        reviewBtn.textContent = 'Review →';
+        reviewBtn.className = 'secondary-btn';
+        reviewBtn.style.cssText = 'font-size:11px; padding:4px 10px;';
+        reviewBtn.onclick = () => {
+          ahPendingReview = {
+            file,
+            community_id: communityId,
+            extracted: j.preview,
+            source_excerpt: j.source_excerpt,
+            source_filename: j.source_filename,
+            content_hash: j.content_hash
+          };
+          ahShowReviewModal();
+        };
+        row.querySelector('.action').appendChild(reviewBtn);
+      } catch (err) {
+        row.querySelector('.icon').textContent = '❌';
+        row.querySelector('.status').textContent = 'error';
+        row.querySelector('.status').style.color = '#c0392b';
+        row.querySelector('.action').textContent = err.message.slice(0, 50);
+      }
+    }
+  }
+
+  // --- Review modal ---
+  function ahShowReviewModal() {
+    if (!ahPendingReview) return;
+    const e = ahPendingReview.extracted || {};
+    document.getElementById('ah-review-meta').innerHTML = `
+      <strong>Source:</strong> ${ahEsc(ahPendingReview.source_filename || '(no name)')}
+      · <strong>Confidence:</strong> <span style="color:${e.confidence === 'high' ? '#166534' : e.confidence === 'medium' ? '#b45309' : '#c0392b'};">${ahEsc(e.confidence || '—')}</span>
+    `;
+
+    const fields = [
+      { key: 'property_address', label: 'Property address', type: 'text' },
+      { key: 'homeowner_name', label: 'Homeowner name', type: 'text' },
+      { key: 'project_type', label: 'Project type', type: 'select', options: ['fence','paint','addition','pool','deck','landscaping','roof','door','window','shed','mailbox','driveway','tree','other'] },
+      { key: 'decision_type', label: 'Decision', type: 'select', options: ['approved','denied','conditional','withdrawn','pending','tabled'] },
+      { key: 'decided_at', label: 'Decided on', type: 'date' },
+      { key: 'decided_by', label: 'Decided by', type: 'text' },
+      { key: 'project_description', label: 'Project description', type: 'textarea', span: 2 },
+      { key: 'conditions', label: 'Conditions (if conditional)', type: 'textarea', span: 2 },
+      { key: 'reasoning', label: 'Reasoning', type: 'textarea', span: 2 },
+      { key: 'summary', label: 'Summary (1-2 sentences)', type: 'textarea', span: 2 }
+    ];
+
+    document.getElementById('ah-review-form').innerHTML = fields.map(f => {
+      const v = e[f.key] ?? '';
+      const span = f.span === 2 ? 'grid-column: 1 / -1;' : '';
+      let input = '';
+      if (f.type === 'select') {
+        input = `<select id="ah-rv-${f.key}" style="padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;">
+          <option value="">—</option>
+          ${f.options.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>`;
+      } else if (f.type === 'textarea') {
+        input = `<textarea id="ah-rv-${f.key}" rows="2" style="padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;">${ahEsc(v)}</textarea>`;
+      } else {
+        input = `<input id="ah-rv-${f.key}" type="${f.type}" value="${ahEsc(v)}" style="padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />`;
+      }
+      return `<label class="prof-fld" style="${span}"><span>${f.label}</span>${input}</label>`;
+    }).join('');
+    document.getElementById('ah-review-excerpt').textContent = ahPendingReview.source_excerpt || '(no text — image-only PDF)';
+    document.getElementById('ah-review-modal').style.display = 'flex';
+    document.getElementById('ah-review-status').textContent = '';
+  }
+
+  function ahHideReviewModal() {
+    document.getElementById('ah-review-modal').style.display = 'none';
+    ahPendingReview = null;
+  }
+
+  async function ahCommitReview() {
+    if (!ahPendingReview) return;
+    const get = (k) => document.getElementById('ah-rv-' + k).value.trim();
+    const extracted = {
+      property_address: get('property_address') || null,
+      homeowner_name: get('homeowner_name') || null,
+      project_type: get('project_type') || null,
+      project_description: get('project_description') || null,
+      decision_type: get('decision_type') || null,
+      decided_at: get('decided_at') || null,
+      decided_by: get('decided_by') || null,
+      conditions: get('conditions') || null,
+      reasoning: get('reasoning') || null,
+      summary: get('summary') || null,
+      confidence: ahPendingReview.extracted?.confidence || null
+    };
+
+    // Was anything changed vs the AI's extraction?
+    const manuallyEdited = JSON.stringify(extracted) !== JSON.stringify({
+      ...ahPendingReview.extracted,
+      property_address: ahPendingReview.extracted.property_address || null,
+      homeowner_name: ahPendingReview.extracted.homeowner_name || null,
+      project_type: ahPendingReview.extracted.project_type || null,
+      project_description: ahPendingReview.extracted.project_description || null,
+      decision_type: ahPendingReview.extracted.decision_type || null,
+      decided_at: ahPendingReview.extracted.decided_at || null,
+      decided_by: ahPendingReview.extracted.decided_by || null,
+      conditions: ahPendingReview.extracted.conditions || null,
+      reasoning: ahPendingReview.extracted.reasoning || null,
+      summary: ahPendingReview.extracted.summary || null
+    });
+
+    const status = document.getElementById('ah-review-status');
+    status.textContent = 'Saving + embedding…';
+    status.style.color = '#888';
+    document.getElementById('ah-commit-btn').disabled = true;
+
+    try {
+      const fd = new FormData();
+      fd.append('community_id', ahPendingReview.community_id);
+      fd.append('extracted', JSON.stringify(extracted));
+      fd.append('source_filename', ahPendingReview.source_filename || '');
+      fd.append('source_excerpt', ahPendingReview.source_excerpt || '');
+      fd.append('manually_edited', manuallyEdited ? 'true' : 'false');
+      const r = await fetch('/api/arc-history', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      ahHideReviewModal();
+      await ahLoadList();
+      await ahLoadSummary();
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message;
+      status.style.color = '#c0392b';
+      document.getElementById('ah-commit-btn').disabled = false;
+    }
+  }
+
+  // --- List ---
+  let ahSearchTimer = null;
+  function ahSearchDebounced() {
+    clearTimeout(ahSearchTimer);
+    ahSearchTimer = setTimeout(ahLoadList, 250);
+  }
+  async function ahLoadList() {
+    const params = new URLSearchParams();
+    const cid = document.getElementById('ah-filter-community').value;
+    const proj = document.getElementById('ah-filter-project').value;
+    const dec = document.getElementById('ah-filter-decision').value;
+    const q = document.getElementById('ah-search').value.trim();
+    if (cid) params.set('community_id', cid);
+    if (proj) params.set('project_type', proj);
+    if (dec) params.set('decision_type', dec);
+    if (q) params.set('q', q);
+    try {
+      const r = await fetch('/api/arc-history?' + params.toString());
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      ahCurrentList = j.decisions || [];
+      ahRenderList();
+    } catch (err) {
+      console.warn('ahLoadList', err);
+    }
+  }
+
+  function ahRenderList() {
+    const wrap = document.getElementById('ah-list');
+    const empty = document.getElementById('ah-empty');
+    if (ahCurrentList.length === 0) {
+      wrap.innerHTML = '';
+      empty.style.display = '';
+      return;
+    }
+    empty.style.display = 'none';
+    wrap.innerHTML = ahCurrentList.map(d => `
+      <div class="ah-row" onclick="ahOpenDetail('${d.id}')">
+        <div class="date">${d.decided_at ? new Date(d.decided_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—'}</div>
+        <div>
+          <div class="addr">${ahEsc(d.property_address || '—')}</div>
+          <div class="summary">${ahEsc(d.summary || d.project_description || '')}</div>
+          <div style="margin-top:4px;">
+            ${d.project_type ? `<span class="ah-project-chip">${ahEsc(d.project_type)}</span>` : ''}
+            <span style="font-size:11px; color:#888; margin-left:6px;">${ahEsc(d.community?.name || '')}</span>
+          </div>
+        </div>
+        <div><span class="ah-decision-pill ah-${d.decision_type}">${ahEsc(d.decision_type || '—')}</span></div>
+        <div style="font-size:11px; color:#888;">${ahEsc(d.decided_by || '')}</div>
+        <div style="text-align:right;"><button onclick="event.stopPropagation(); ahDelete('${d.id}');" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:14px;" title="Delete">×</button></div>
+      </div>
+    `).join('');
+  }
+
+  async function ahLoadSummary() {
+    try {
+      const r = await fetch('/api/arc-history/summary');
+      const j = await r.json();
+      const summaries = j.summaries || [];
+      if (summaries.length === 0) { document.getElementById('ah-summary').style.display = 'none'; return; }
+      const wrap = document.getElementById('ah-summary');
+      wrap.style.display = '';
+      wrap.innerHTML = summaries.map(s => `
+        <span style="margin-right:18px;">
+          <strong>${ahEsc(s.community?.name || 'Community')}:</strong>
+          ${s.total_decisions} total
+          · <span style="color:#166534;">${s.approved_count} ✓</span>
+          · <span style="color:#991b1b;">${s.denied_count} ✗</span>
+          · <span style="color:#92400e;">${s.conditional_count} ⚠</span>
+        </span>
+      `).join('');
+    } catch (err) { /* silent */ }
+  }
+
+  async function ahOpenDetail(id) {
+    try {
+      const r = await fetch('/api/arc-history/' + id);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      ahCurrent = j.decision;
+      ahRenderDetail();
+    } catch (err) { alert('Load failed: ' + err.message); }
+  }
+
+  function ahBackToList() {
+    document.getElementById('ah-detail-view').style.display = 'none';
+    document.getElementById('ah-list-view').style.display = '';
+    ahLoadList();
+  }
+
+  function ahRenderDetail() {
+    const d = ahCurrent;
+    document.getElementById('ah-list-view').style.display = 'none';
+    const view = document.getElementById('ah-detail-view');
+    view.style.display = '';
+    view.innerHTML = `
+      <div style="margin-bottom:14px;">
+        <button class="secondary-btn" onclick="ahBackToList()" style="font-size:13px;">← Back to ACC History list</button>
+      </div>
+      <div class="ev-detail-card">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+          <div style="flex:1;">
+            <h2 style="font-size:20px; font-weight:700; color:#1a3a5c;">${ahEsc(d.property_address || 'No address recorded')}</h2>
+            <div style="font-size:13px; color:#5a7390; margin-top:4px;">
+              ${ahEsc(d.community?.name || '')}${d.homeowner_name ? ' · ' + ahEsc(d.homeowner_name) : ''}${d.decided_at ? ' · ' + new Date(d.decided_at).toLocaleDateString() : ''}
+            </div>
+            <div style="margin-top:10px;">
+              ${d.project_type ? `<span class="ah-project-chip" style="margin-right:6px;">${ahEsc(d.project_type)}</span>` : ''}
+              <span class="ah-decision-pill ah-${d.decision_type}">${ahEsc(d.decision_type || '—')}</span>
+              ${d.decided_by ? `<span style="font-size:11px; color:#888; margin-left:8px;">by ${ahEsc(d.decided_by)}</span>` : ''}
+            </div>
+          </div>
+          <button onclick="ahDelete('${d.id}', true)" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
+        </div>
+      </div>
+
+      <div class="ev-detail-card">
+        <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Summary</h3>
+        <div style="font-size:14px; line-height:1.6;">${ahEsc(d.summary || '—')}</div>
+      </div>
+
+      ${d.project_description ? `
+        <div class="ev-detail-card">
+          <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Project description</h3>
+          <div style="font-size:14px; line-height:1.6; white-space:pre-wrap;">${ahEsc(d.project_description)}</div>
+        </div>` : ''
+      }
+
+      ${d.conditions ? `
+        <div class="ev-detail-card" style="background:#fffaf0; border-color:#e8c97a;">
+          <h3 style="font-size:13px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Conditions imposed</h3>
+          <div style="font-size:14px; line-height:1.6; white-space:pre-wrap; color:#78350f;">${ahEsc(d.conditions)}</div>
+        </div>` : ''
+      }
+
+      ${d.reasoning ? `
+        <div class="ev-detail-card">
+          <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Reasoning</h3>
+          <div style="font-size:14px; line-height:1.6; white-space:pre-wrap;">${ahEsc(d.reasoning)}</div>
+        </div>` : ''
+      }
+
+      ${d.source_excerpt ? `
+        <details style="margin-top:14px; background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px;">
+          <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">📄 Source excerpt</summary>
+          <pre style="white-space:pre-wrap; font-size:12px; color:#444; margin-top:10px; padding:12px; background:#fff; border:1px solid #f0f2f5; border-radius:4px; max-height:300px; overflow-y:auto;">${ahEsc(d.source_excerpt)}</pre>
+          <div style="font-size:11px; color:#888; margin-top:6px;">From: ${ahEsc(d.source_filename || 'unknown')}</div>
+        </details>` : ''
+      }
+
+      <div style="margin-top:18px; padding:12px 14px; background:#f5f8fc; border-radius:8px; font-size:12px; color:#475569;">
+        💡 <strong>How AskEd uses this:</strong> when a new application looks similar to this past decision (same project type, similar description), AskEd surfaces this row as informational context — never as binding precedent. Bedrock always applies current governing documents as the authority.
+      </div>
+    `;
+  }
+
+  async function ahDelete(id, fromDetail) {
+    if (!confirm('Delete this decision from the ACC History library?')) return;
+    try {
+      const r = await fetch('/api/arc-history/' + id, { method: 'DELETE' });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      if (fromDetail) ahBackToList();
+      else ahLoadList();
+      ahLoadSummary();
+    } catch (err) { alert('Delete failed: ' + err.message); }
+  }
+
+  function ahEsc(s) {
+    return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Wire up
+  (function() {
+    const t = document.querySelector('.tab[onclick*="\'archistory\'"]');
+    if (t) t.addEventListener('click', () => ahInit());
+  })();
+  try { ahInit(); } catch (e) { console.warn('eager ahInit', e); }
 </script>
 
 <!-- ============================================================

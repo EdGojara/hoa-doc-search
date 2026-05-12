@@ -419,6 +419,11 @@ app.use('/api/events', eventsRouter);
 const { router: emailIntakeRouter } = require('./api/email_intake');
 app.use('/api/email-intelligence', emailIntakeRouter);
 
+// ARC historical decisions — structured library of past approvals/denials
+// (informational context for the AI assessment engine; never binding precedent)
+const { router: arcHistoryRouter } = require('./api/arc_history');
+app.use('/api/arc-history', arcHistoryRouter);
+
 // Public event page — served from /event/:slug → returns the standalone HTML
 app.get('/event/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'event.html'));
