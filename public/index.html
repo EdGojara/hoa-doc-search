@@ -3672,6 +3672,7 @@
         <option value="high">🟢 High</option>
       </select>
       <input id="ah-search" type="search" placeholder="Address, owner, or project…" oninput="ahSearchDebounced()" style="flex:1; min-width:220px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
+      <button class="secondary-btn" onclick="ahFindDuplicates()" style="font-size:13px; padding:7px 14px;">🔍 Find &amp; dedupe</button>
     </div>
 
     <!-- Drop zone -->
@@ -3868,18 +3869,30 @@
         const saveJ = await saveResp.json();
         if (saveJ.error) throw new Error(saveJ.error);
 
-        // Render success with confidence badge
-        const conf = j.preview?.confidence || 'unknown';
-        const confColor = conf === 'high' ? '#166534' : conf === 'medium' ? '#92400e' : '#c0392b';
-        row.querySelector('.icon').textContent = '✓';
-        row.querySelector('.status').innerHTML = `<span style="color:#166534;">saved</span> · <span style="color:${confColor}; font-weight:600;">${conf} confidence</span>`;
-        const editLink = document.createElement('button');
-        editLink.textContent = 'Open →';
-        editLink.className = 'secondary-btn';
-        editLink.style.cssText = 'font-size:11px; padding:4px 10px;';
-        editLink.onclick = () => ahOpenDetail(saveJ.decision.id);
-        row.querySelector('.action').appendChild(editLink);
-        savedCount++;
+        // Server may flag this as a duplicate (composite-key match)
+        if (saveJ.duplicate) {
+          row.querySelector('.icon').textContent = '🔁';
+          row.querySelector('.status').innerHTML = '<span style="color:#92400e;">duplicate — skipped</span>';
+          const link = document.createElement('button');
+          link.textContent = 'View existing →';
+          link.className = 'secondary-btn';
+          link.style.cssText = 'font-size:11px; padding:4px 10px;';
+          link.onclick = () => ahOpenDetail(saveJ.decision.id);
+          row.querySelector('.action').appendChild(link);
+        } else {
+          // Render success with confidence badge
+          const conf = j.preview?.confidence || 'unknown';
+          const confColor = conf === 'high' ? '#166534' : conf === 'medium' ? '#92400e' : '#c0392b';
+          row.querySelector('.icon').textContent = '✓';
+          row.querySelector('.status').innerHTML = `<span style="color:#166534;">saved</span> · <span style="color:${confColor}; font-weight:600;">${conf} confidence</span>`;
+          const editLink = document.createElement('button');
+          editLink.textContent = 'Open →';
+          editLink.className = 'secondary-btn';
+          editLink.style.cssText = 'font-size:11px; padding:4px 10px;';
+          editLink.onclick = () => ahOpenDetail(saveJ.decision.id);
+          row.querySelector('.action').appendChild(editLink);
+          savedCount++;
+        }
       } catch (err) {
         row.querySelector('.icon').textContent = '❌';
         row.querySelector('.status').textContent = 'error';
@@ -4276,6 +4289,100 @@
   function ahEsc(s) {
     return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
+
+  // ============================================================
+  // Find & dedupe — surface groups of likely duplicates + one-click cleanup
+  // ============================================================
+  async function ahFindDuplicates() {
+    const cid = document.getElementById('ah-filter-community').value;
+    const params = new URLSearchParams();
+    if (cid) params.set('community_id', cid);
+    try {
+      const r = await fetch('/api/arc-history/find-duplicates?' + params.toString());
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      ahRenderDuplicates(j);
+    } catch (err) { alert('Find duplicates failed: ' + err.message); }
+  }
+  window.ahFindDuplicates = ahFindDuplicates;
+
+  function ahRenderDuplicates(payload) {
+    const view = document.getElementById('ah-detail-view');
+    document.getElementById('ah-list-view').style.display = 'none';
+    view.style.display = '';
+    const groups = payload.groups || [];
+
+    if (groups.length === 0) {
+      view.innerHTML = `
+        <div style="margin-bottom:14px;">
+          <button class="secondary-btn" onclick="ahBackToList()" style="font-size:13px;">← Back</button>
+        </div>
+        <div class="ev-detail-card" style="text-align:center; padding:48px;">
+          <div style="font-size:48px;">✓</div>
+          <h2 style="font-size:18px; color:#166534; margin-top:12px;">No duplicates found</h2>
+          <p style="color:#5a7390; font-size:14px;">Every decision in this view is unique (by community + address + decided date + project type).</p>
+        </div>
+      `;
+      return;
+    }
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+        <button class="secondary-btn" onclick="ahBackToList()" style="font-size:13px;">← Back</button>
+        <button class="primary-btn" onclick="ahRunAutoDedupe()" style="padding:7px 18px; font-size:13px; background:#dc2626;">⚡ Auto-dedupe — delete ${payload.total_duplicates} duplicate${payload.total_duplicates === 1 ? '' : 's'}</button>
+        <span style="font-size:12px; color:#5a7390;">Keeps the best row in each group (manually edited > high confidence > oldest)</span>
+      </div>
+      <div class="ev-detail-card" style="background:#fffbeb; border-color:#fcd34d;">
+        <h3 style="font-size:13px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">
+          Found ${payload.total_groups} duplicate group${payload.total_groups === 1 ? '' : 's'} — ${payload.total_duplicates} extra row${payload.total_duplicates === 1 ? '' : 's'} can be removed
+        </h3>
+        <p style="font-size:13px; color:#78350f; margin-bottom:10px;">Grouped by community + property + decided date + project type. The <strong>green-bordered</strong> row in each group is what auto-dedupe will keep; others will be deleted.</p>
+      </div>
+      ${groups.map((g, gi) => `
+        <div class="ev-detail-card">
+          <div style="font-size:12px; color:#5a7390; margin-bottom:8px;">
+            <strong>Group ${gi + 1}:</strong> ${ahEsc(g.sample.community?.name || '')} ·
+            ${ahEsc(g.sample.property_address || '')} ·
+            ${g.sample.decided_at ? new Date(g.sample.decided_at).toLocaleDateString() : '(no date)'} ·
+            ${ahEsc(g.sample.project_type || '')}
+          </div>
+          ${g.rows.map((r, ri) => `
+            <div style="display:grid; grid-template-columns: 80px 1fr 120px 90px 60px; gap:10px; padding:10px 12px; margin-bottom:6px; border:2px solid ${ri === 0 ? '#86efac' : '#e3e8ef'}; border-radius:6px; background:${ri === 0 ? '#f0fdf4' : '#fff'}; font-size:12px; align-items:center;">
+              <div style="font-weight:700; color:${ri === 0 ? '#166534' : '#888'};">${ri === 0 ? '✓ KEEP' : '✗ DELETE'}</div>
+              <div>
+                <div style="color:#1a3a5c; font-weight:600;">${ahEsc(r.summary || r.project_description || '(no summary)')}</div>
+                <div style="color:#888; font-size:11px; margin-top:2px;">From: ${ahEsc(r.source_filename || 'unknown')} · Added ${new Date(r.created_at).toLocaleString()}</div>
+              </div>
+              <div style="font-size:11px;">${r.manually_edited ? '<span style="color:#1e3a8a;">✓ verified</span>' : '<span style="color:#888;">not edited</span>'}</div>
+              <div style="font-size:11px; color:${r.extraction_confidence === 'high' ? '#16a34a' : r.extraction_confidence === 'medium' ? '#d97706' : '#dc2626'};">● ${ahEsc(r.extraction_confidence || '?')}</div>
+              <div style="text-align:right;"><button onclick="ahOpenDetail('${r.id}')" style="background:none; border:none; color:#1a3a5c; cursor:pointer; font-size:11px; text-decoration:underline;">view</button></div>
+            </div>
+          `).join('')}
+        </div>
+      `).join('')}
+    `;
+    window._ahDupePayload = payload;
+  }
+
+  async function ahRunAutoDedupe() {
+    const payload = window._ahDupePayload;
+    if (!payload) return;
+    if (!confirm(`Delete ${payload.total_duplicates} duplicate row${payload.total_duplicates === 1 ? '' : 's'}? The KEEP row in each group stays; the rest are permanently removed. This cannot be undone.`)) return;
+    const cid = document.getElementById('ah-filter-community').value;
+    try {
+      const r = await fetch('/api/arc-history/auto-dedupe', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: cid || null })
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      alert(`✓ Cleaned up: ${j.deleted} duplicate${j.deleted === 1 ? '' : 's'} removed across ${j.groups_processed} group${j.groups_processed === 1 ? '' : 's'}.`);
+      ahBackToList();
+      ahLoadSummary();
+    } catch (err) { alert('Auto-dedupe failed: ' + err.message); }
+  }
+  window.ahRunAutoDedupe = ahRunAutoDedupe;
 
   // Wire up
   (function() {

@@ -183,6 +183,31 @@ router.post('/', upload.single('file'), async (req, res) => {
 
     const embedding = await embed(embedSource);
 
+    // Dedup pre-check: same community + same normalized address + same
+    // decided_at + same project_type → almost certainly a duplicate.
+    // Skip the insert and return the existing row.
+    if (extracted.property_address && extracted.decided_at && extracted.project_type) {
+      const addrNorm = String(extracted.property_address).toLowerCase().replace(/\s+/g, ' ').trim();
+      const { data: existing } = await supabase
+        .from('arc_historical_decisions')
+        .select('id, property_address, decided_at, project_type, decision_type, summary, source_filename, created_at')
+        .eq('community_id', communityId)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('decided_at', extracted.decided_at)
+        .eq('project_type', extracted.project_type);
+      const dupe = (existing || []).find((r) =>
+        String(r.property_address || '').toLowerCase().replace(/\s+/g, ' ').trim() === addrNorm
+      );
+      if (dupe) {
+        return res.json({
+          ok: true,
+          duplicate: true,
+          decision: dupe,
+          message: `Skipped — a decision for ${dupe.property_address} on ${dupe.decided_at} (${dupe.project_type}) is already in the library.`
+        });
+      }
+    }
+
     const insert = {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id: communityId,
@@ -356,6 +381,128 @@ router.delete('/:id', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     console.error('[arc-history] delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/arc-history/find-duplicates — list groups of likely duplicates
+// Query: ?community_id= (optional)
+// Returns groups where (community + normalized_address + decided_at + project_type) collide
+// ----------------------------------------------------------------------------
+router.get('/find-duplicates', async (req, res) => {
+  try {
+    let q = supabase
+      .from('arc_historical_decisions')
+      .select('id, community_id, property_address, homeowner_name, project_type, decision_type, decided_at, summary, source_filename, manually_edited, extraction_confidence, created_at, community:communities(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Group client-side by (community_id, normalized address, decided_at, project_type)
+    const groups = new Map();
+    for (const r of data || []) {
+      const addr = String(r.property_address || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!addr || !r.decided_at || !r.project_type) continue;
+      const key = `${r.community_id}|${addr}|${r.decided_at}|${r.project_type}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+
+    // Only return groups with >1 row
+    const dupes = [];
+    for (const [key, rows] of groups.entries()) {
+      if (rows.length < 2) continue;
+      dupes.push({
+        key,
+        sample: rows[0],
+        rows: rows.sort(rankByKeepPreference)
+      });
+    }
+
+    res.json({ groups: dupes, total_groups: dupes.length, total_duplicates: dupes.reduce((sum, g) => sum + g.rows.length - 1, 0) });
+  } catch (err) {
+    console.error('[arc-history] find-duplicates failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// rankByKeepPreference — prefer manually-edited, then high confidence, then oldest
+function rankByKeepPreference(a, b) {
+  if (a.manually_edited !== b.manually_edited) return a.manually_edited ? -1 : 1;
+  const confOrder = { high: 0, medium: 1, low: 2 };
+  const ca = confOrder[a.extraction_confidence] ?? 3;
+  const cb = confOrder[b.extraction_confidence] ?? 3;
+  if (ca !== cb) return ca - cb;
+  return new Date(a.created_at).getTime() - new Date(b.created_at).getTime();
+}
+
+// ----------------------------------------------------------------------------
+// POST /api/arc-history/auto-dedupe — keep best row in each group, delete rest
+// Body (optional): { community_id, dry_run: true|false }
+// ----------------------------------------------------------------------------
+router.post('/auto-dedupe', express.json(), async (req, res) => {
+  try {
+    const { community_id, dry_run } = req.body || {};
+    let q = supabase
+      .from('arc_historical_decisions')
+      .select('id, community_id, property_address, project_type, decision_type, decided_at, manually_edited, extraction_confidence, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (community_id) q = q.eq('community_id', community_id);
+    const { data, error } = await q;
+    if (error) throw error;
+
+    // Group
+    const groups = new Map();
+    for (const r of data || []) {
+      const addr = String(r.property_address || '').toLowerCase().replace(/\s+/g, ' ').trim();
+      if (!addr || !r.decided_at || !r.project_type) continue;
+      const key = `${r.community_id}|${addr}|${r.decided_at}|${r.project_type}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(r);
+    }
+
+    // Build delete list: in each group with >1 row, sort by keep-preference,
+    // mark all but the first for deletion.
+    const toDelete = [];
+    const kept = [];
+    let groupsProcessed = 0;
+    for (const rows of groups.values()) {
+      if (rows.length < 2) continue;
+      groupsProcessed++;
+      const sorted = rows.sort(rankByKeepPreference);
+      kept.push(sorted[0].id);
+      for (let i = 1; i < sorted.length; i++) toDelete.push(sorted[i].id);
+    }
+
+    if (dry_run) {
+      return res.json({
+        dry_run: true,
+        groups_processed: groupsProcessed,
+        would_delete: toDelete.length,
+        would_keep: kept.length
+      });
+    }
+
+    if (toDelete.length === 0) {
+      return res.json({ groups_processed: 0, deleted: 0, kept: 0, message: 'No duplicates found.' });
+    }
+
+    const { error: delErr } = await supabase
+      .from('arc_historical_decisions')
+      .delete()
+      .in('id', toDelete);
+    if (delErr) throw delErr;
+
+    res.json({
+      ok: true,
+      groups_processed: groupsProcessed,
+      deleted: toDelete.length,
+      kept: kept.length
+    });
+  } catch (err) {
+    console.error('[arc-history] auto-dedupe failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
