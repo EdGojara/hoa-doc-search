@@ -3628,6 +3628,12 @@
         <option value="withdrawn">↩ Withdrawn</option>
         <option value="tabled">⏸ Tabled</option>
       </select>
+      <select id="ah-filter-confidence" class="draft-type-select" onchange="ahLoadList()">
+        <option value="">All confidence</option>
+        <option value="low">🔴 Low (review)</option>
+        <option value="medium">🟡 Medium</option>
+        <option value="high">🟢 High</option>
+      </select>
       <input id="ah-search" type="search" placeholder="Address, owner, or project…" oninput="ahSearchDebounced()" style="flex:1; min-width:220px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
     </div>
 
@@ -3790,6 +3796,7 @@
     queue.style.display = '';
     items.innerHTML = '';
 
+    let savedCount = 0;
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       const row = document.createElement('div');
@@ -3803,6 +3810,7 @@
       items.appendChild(row);
 
       try {
+        // Step 1: Claude extracts structured fields
         const fd = new FormData();
         fd.append('file', file);
         fd.append('community_id', communityId);
@@ -3810,31 +3818,50 @@
         const j = await r.json();
         if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
 
-        row.querySelector('.icon').textContent = '🔍';
-        row.querySelector('.status').textContent = 'extracted';
-        const reviewBtn = document.createElement('button');
-        reviewBtn.textContent = 'Review →';
-        reviewBtn.className = 'secondary-btn';
-        reviewBtn.style.cssText = 'font-size:11px; padding:4px 10px;';
-        reviewBtn.onclick = () => {
-          ahPendingReview = {
-            file,
-            community_id: communityId,
-            extracted: j.preview,
-            source_excerpt: j.source_excerpt,
-            source_filename: j.source_filename,
-            content_hash: j.content_hash
-          };
-          ahShowReviewModal();
-        };
-        row.querySelector('.action').appendChild(reviewBtn);
+        row.querySelector('.status').textContent = 'saving…';
+
+        // Step 2: AUTO-SAVE immediately — no review modal. Edit later if needed.
+        const saveBody = new FormData();
+        saveBody.append('community_id', communityId);
+        saveBody.append('extracted', JSON.stringify(j.preview || {}));
+        saveBody.append('source_filename', j.source_filename || file.name);
+        saveBody.append('source_excerpt', j.source_excerpt || '');
+        saveBody.append('manually_edited', 'false');
+        const saveResp = await fetch('/api/arc-history', { method: 'POST', body: saveBody });
+        const saveJ = await saveResp.json();
+        if (saveJ.error) throw new Error(saveJ.error);
+
+        // Render success with confidence badge
+        const conf = j.preview?.confidence || 'unknown';
+        const confColor = conf === 'high' ? '#166534' : conf === 'medium' ? '#92400e' : '#c0392b';
+        row.querySelector('.icon').textContent = '✓';
+        row.querySelector('.status').innerHTML = `<span style="color:#166534;">saved</span> · <span style="color:${confColor}; font-weight:600;">${conf} confidence</span>`;
+        const editLink = document.createElement('button');
+        editLink.textContent = 'Open →';
+        editLink.className = 'secondary-btn';
+        editLink.style.cssText = 'font-size:11px; padding:4px 10px;';
+        editLink.onclick = () => ahOpenDetail(saveJ.decision.id);
+        row.querySelector('.action').appendChild(editLink);
+        savedCount++;
       } catch (err) {
         row.querySelector('.icon').textContent = '❌';
         row.querySelector('.status').textContent = 'error';
         row.querySelector('.status').style.color = '#c0392b';
-        row.querySelector('.action').textContent = err.message.slice(0, 50);
+        row.querySelector('.action').textContent = err.message.slice(0, 60);
       }
     }
+
+    if (savedCount > 0) {
+      ahLoadList();
+      ahLoadSummary();
+    }
+
+    // Auto-hide queue 25 seconds after the last finishes (only if all clean)
+    setTimeout(() => {
+      const stillErrors = items.querySelectorAll('.icon');
+      const allGood = Array.from(stillErrors).every(s => s.textContent === '✓');
+      if (allGood) queue.style.display = 'none';
+    }, 25000);
   }
 
   // --- Review modal ---
@@ -3962,7 +3989,11 @@
       const r = await fetch('/api/arc-history?' + params.toString());
       const j = await r.json();
       if (j.error) throw new Error(j.error);
-      ahCurrentList = j.decisions || [];
+      let list = j.decisions || [];
+      // Client-side confidence filter (server doesn't accept this param)
+      const conf = document.getElementById('ah-filter-confidence').value;
+      if (conf) list = list.filter(d => (d.extraction_confidence || '').toLowerCase() === conf);
+      ahCurrentList = list;
       ahRenderList();
     } catch (err) {
       console.warn('ahLoadList', err);
@@ -3978,11 +4009,17 @@
       return;
     }
     empty.style.display = 'none';
-    wrap.innerHTML = ahCurrentList.map(d => `
+    wrap.innerHTML = ahCurrentList.map(d => {
+      const conf = (d.extraction_confidence || '').toLowerCase();
+      const confDot = conf === 'high' ? '<span title="High confidence extraction" style="color:#16a34a; font-size:10px;">●</span>'
+                     : conf === 'medium' ? '<span title="Medium confidence — worth a quick look" style="color:#d97706; font-size:10px;">●</span>'
+                     : conf === 'low' ? '<span title="Low confidence — review recommended" style="color:#dc2626; font-size:10px;">●</span>'
+                     : '';
+      return `
       <div class="ah-row" onclick="ahOpenDetail('${d.id}')">
         <div class="date">${d.decided_at ? new Date(d.decided_at).toLocaleDateString('en-US', { month:'short', day:'numeric', year:'numeric' }) : '—'}</div>
         <div>
-          <div class="addr">${ahEsc(d.property_address || '—')}</div>
+          <div class="addr">${confDot} ${ahEsc(d.property_address || '—')}</div>
           <div class="summary">${ahEsc(d.summary || d.project_description || '')}</div>
           <div style="margin-top:4px;">
             ${d.project_type ? `<span class="ah-project-chip">${ahEsc(d.project_type)}</span>` : ''}
@@ -3992,8 +4029,8 @@
         <div><span class="ah-decision-pill ah-${d.decision_type}">${ahEsc(d.decision_type || '—')}</span></div>
         <div style="font-size:11px; color:#888;">${ahEsc(d.decided_by || '')}</div>
         <div style="text-align:right;"><button onclick="event.stopPropagation(); ahDelete('${d.id}');" style="background:none; border:none; color:#c0392b; cursor:pointer; font-size:14px;" title="Delete">×</button></div>
-      </div>
-    `).join('');
+      </div>`;
+    }).join('');
   }
 
   async function ahLoadSummary() {
@@ -4038,8 +4075,9 @@
     const view = document.getElementById('ah-detail-view');
     view.style.display = '';
     view.innerHTML = `
-      <div style="margin-bottom:14px;">
+      <div style="margin-bottom:14px; display:flex; gap:8px; align-items:center;">
         <button class="secondary-btn" onclick="ahBackToList()" style="font-size:13px;">← Back to ACC History list</button>
+        <button class="secondary-btn" onclick="ahEnterEditMode()" style="font-size:13px;">✏️ Edit fields</button>
       </div>
       <div class="ev-detail-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
@@ -4052,6 +4090,8 @@
               ${d.project_type ? `<span class="ah-project-chip" style="margin-right:6px;">${ahEsc(d.project_type)}</span>` : ''}
               <span class="ah-decision-pill ah-${d.decision_type}">${ahEsc(d.decision_type || '—')}</span>
               ${d.decided_by ? `<span style="font-size:11px; color:#888; margin-left:8px;">by ${ahEsc(d.decided_by)}</span>` : ''}
+              ${d.extraction_confidence ? `<span style="font-size:11px; color:${d.extraction_confidence === 'high' ? '#16a34a' : d.extraction_confidence === 'medium' ? '#d97706' : '#dc2626'}; margin-left:8px; font-weight:600;">● ${ahEsc(d.extraction_confidence)} confidence</span>` : ''}
+              ${d.manually_edited ? '<span style="font-size:11px; color:#1e3a8a; margin-left:8px;">✓ verified by staff</span>' : ''}
             </div>
           </div>
           <button onclick="ahDelete('${d.id}', true)" style="background:none; border:1px solid #fcc; color:#c0392b; padding:6px 14px; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
@@ -4097,6 +4137,92 @@
       </div>
     `;
   }
+
+  function ahEnterEditMode() {
+    if (!ahCurrent) return;
+    const d = ahCurrent;
+    const view = document.getElementById('ah-detail-view');
+    const projectOptions = ['fence','paint','addition','pool','deck','landscaping','roof','door','window','shed','mailbox','driveway','tree','other'];
+    const decisionOptions = ['approved','denied','conditional','withdrawn','pending','tabled'];
+
+    const fld = (id, label, value, type = 'text', opts = null) => {
+      const v = value ?? '';
+      const span = type === 'textarea' ? 'grid-column: 1 / -1;' : '';
+      let input;
+      if (type === 'select') {
+        input = `<select id="ahed-${id}" style="padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;">
+          <option value="">—</option>
+          ${opts.map(o => `<option value="${o}" ${o === v ? 'selected' : ''}>${o}</option>`).join('')}
+        </select>`;
+      } else if (type === 'textarea') {
+        input = `<textarea id="ahed-${id}" rows="3" style="padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;">${ahEsc(v)}</textarea>`;
+      } else {
+        input = `<input id="ahed-${id}" type="${type}" value="${ahEsc(v)}" style="padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />`;
+      }
+      return `<label class="prof-fld" style="${span}"><span>${label}</span>${input}</label>`;
+    };
+
+    view.innerHTML = `
+      <div style="margin-bottom:14px; display:flex; gap:8px; align-items:center;">
+        <button class="secondary-btn" onclick="ahOpenDetail('${d.id}')" style="font-size:13px;">← Cancel</button>
+        <button class="primary-btn" onclick="ahSaveEdit('${d.id}')" style="padding:7px 18px; font-size:13px;">💾 Save changes</button>
+        <span id="ah-edit-status" style="margin-left:6px; font-size:12px;"></span>
+      </div>
+      <div class="ev-detail-card">
+        <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:12px;">Edit decision</h3>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px;">
+          ${fld('property_address', 'Property address', d.property_address)}
+          ${fld('homeowner_name', 'Homeowner name', d.homeowner_name)}
+          ${fld('project_type', 'Project type', d.project_type, 'select', projectOptions)}
+          ${fld('decision_type', 'Decision', d.decision_type, 'select', decisionOptions)}
+          ${fld('decided_at', 'Decided on', d.decided_at ? d.decided_at.slice(0,10) : '', 'date')}
+          ${fld('decided_by', 'Decided by', d.decided_by)}
+          ${fld('project_description', 'Project description', d.project_description, 'textarea')}
+          ${fld('conditions', 'Conditions (if conditional)', d.conditions, 'textarea')}
+          ${fld('reasoning', 'Reasoning', d.reasoning, 'textarea')}
+          ${fld('summary', 'Summary', d.summary, 'textarea')}
+          ${fld('notes', 'Internal notes (your own)', d.notes, 'textarea')}
+        </div>
+      </div>
+    `;
+  }
+  window.ahEnterEditMode = ahEnterEditMode;
+
+  async function ahSaveEdit(id) {
+    const get = (k) => {
+      const el = document.getElementById('ahed-' + k);
+      return el ? el.value.trim() : null;
+    };
+    const patch = {
+      property_address: get('property_address') || null,
+      homeowner_name: get('homeowner_name') || null,
+      project_type: get('project_type') || null,
+      decision_type: get('decision_type') || null,
+      decided_at: get('decided_at') || null,
+      decided_by: get('decided_by') || null,
+      project_description: get('project_description') || null,
+      conditions: get('conditions') || null,
+      reasoning: get('reasoning') || null,
+      summary: get('summary') || null,
+      notes: get('notes') || null
+    };
+    const status = document.getElementById('ah-edit-status');
+    status.textContent = 'Saving…'; status.style.color = '#888';
+    try {
+      const r = await fetch('/api/arc-history/' + id, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch)
+      });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      status.textContent = '✓ Saved'; status.style.color = '#166534';
+      setTimeout(() => ahOpenDetail(id), 700);
+    } catch (err) {
+      status.textContent = 'Error: ' + err.message; status.style.color = '#c0392b';
+    }
+  }
+  window.ahSaveEdit = ahSaveEdit;
 
   async function ahDelete(id, fromDetail) {
     if (!confirm('Delete this decision from the ACC History library?')) return;
