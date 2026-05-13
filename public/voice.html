@@ -1065,18 +1065,25 @@
 
     // Auto-linkify US phone numbers (tel:) and email addresses (mailto:) in
     // already-rendered HTML. Skips anything already inside an <a> tag.
+    // The leading "📞 " or "✉ " emoji is absorbed into the match so we don't
+    // end up with double emojis when the model also prepends one.
     function linkifyContacts(html) {
       if (!html) return '';
       return html.split(/(<a [^>]*>.*?<\/a>)/g).map((seg, i) => {
         if (i % 2 === 1) return seg; // already an anchor — leave it
         let s = seg;
+        // Phone — absorb optional leading 📞 to prevent double emoji
         s = s.replace(
-          /(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g,
-          (m) => `<a href="tel:${m.replace(/[^\d+]/g, '')}" style="color:#1E2761; font-weight:600; text-decoration:none;">📞 ${m}</a>`
+          /(?:📞\s*)?((?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g,
+          (m, num) => {
+            const digits = num.replace(/[^\d+]/g, '');
+            return `<a href="tel:${digits}" style="color:#0d4dd0; font-weight:700; text-decoration:underline; white-space:nowrap;">📞 ${num}</a>`;
+          }
         );
+        // Email — absorb optional leading ✉ or ✉️
         s = s.replace(
-          /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
-          (m) => `<a href="mailto:${m}" style="color:#1E2761; text-decoration:none;">✉️ ${m}</a>`
+          /(?:✉️?\s*)?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g,
+          (m, addr) => `<a href="mailto:${addr}" style="color:#0d4dd0; font-weight:700; text-decoration:underline;">✉️ ${addr}</a>`
         );
         return s;
       }).join('');

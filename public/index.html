@@ -6226,19 +6226,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   // Linkify a free-form string: phone numbers → tel:, emails → mailto:.
-  // Used in fact rows so any "281-555-0100" becomes a tappable link.
+  // Used in fact rows and the ⚡ Quick response. Absorbs a leading 📞 / ✉
+  // emoji into the match so we don't end up with double emojis when the
+  // model already prefixes one.
   function profLinkify(raw) {
     if (raw == null) return '';
-    // Escape first, then replace with anchor tags
     let s = profEsc(raw);
-    // Email
-    s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (m) =>
-      `<a href="mailto:${m}" style="color:#1E2761;">${m}</a>`
-    );
-    // US phone — matches (281) 555-0100, 281.555.0100, 281-555-0100, +1 281 555 0100
+    // Phone — absorb optional leading 📞 to prevent double emoji
     s = s.replace(
-      /(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g,
-      (m) => `<a href="tel:${profPhoneHref(m)}" style="color:#1E2761; font-weight:600; text-decoration:none;">📞 ${m}</a>`
+      /(?:📞\s*)?((?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4})/g,
+      (m, num) => `<a href="tel:${profPhoneHref(num)}" style="color:#0d4dd0; font-weight:700; text-decoration:underline; white-space:nowrap;">📞 ${num}</a>`
+    );
+    // Email — absorb optional leading ✉ or ✉️
+    s = s.replace(
+      /(?:✉️?\s*)?([A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,})/g,
+      (m, addr) => `<a href="mailto:${addr}" style="color:#0d4dd0; font-weight:700; text-decoration:underline;">✉️ ${addr}</a>`
     );
     return s;
   }
