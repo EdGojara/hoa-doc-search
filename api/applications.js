@@ -313,8 +313,8 @@ router.get('/community-landing/:slug', async (req, res) => {
       .select(`
         id, name, slug, profile, total_lots,
         services:community_services(
-          id, service_type, owner_payable_fee, fee_paid_by,
-          notice_period_days, notice_period_enforcement, service_config, active
+          id, service_type, application_fee_usd, paid_by,
+          fee_structure_notes, service_config, enabled
         )
       `)
       .eq('slug', slug)
@@ -323,7 +323,19 @@ router.get('/community-landing/:slug', async (req, res) => {
     if (error) throw error;
     if (!comm) return res.status(404).json({ error: 'Community not found' });
 
-    const activeServices = (comm.services || []).filter(s => s.active !== false);
+    // Map schema fields to the UI-friendly names the front-end uses
+    const activeServices = (comm.services || [])
+      .filter(s => s.enabled !== false)
+      .map(s => ({
+        id: s.id,
+        service_type: s.service_type,
+        // UI uses these legacy names — keep stable to avoid client changes
+        owner_payable_fee: s.application_fee_usd,
+        fee_paid_by: s.paid_by,
+        fee_structure_notes: s.fee_structure_notes,
+        service_config: s.service_config,
+        enabled: s.enabled
+      }));
 
     // Look up upcoming events (next 60 days, public_signup_enabled)
     const future60 = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000).toISOString();
@@ -366,7 +378,7 @@ router.get('/public/:slug', async (req, res) => {
       .from('communities')
       .select(`
         id, name, slug, profile, total_lots,
-        services:community_services(id, service_type, owner_payable_fee, fee_paid_by, payment_required_before_review, notice_period_days, notice_period_enforcement, service_config)
+        services:community_services(id, service_type, application_fee_usd, paid_by, fee_structure_notes, service_config, enabled)
       `)
       .eq('slug', req.params.slug)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -374,10 +386,19 @@ router.get('/public/:slug', async (req, res) => {
     if (error) throw error;
     if (!comm) return res.status(404).json({ error: 'Community not found' });
 
-    const arcService = (comm.services || []).find(s => s.service_type === 'arc_application');
+    const arcRow = (comm.services || []).find(s => s.service_type === 'arc');
+    const arcService = arcRow ? {
+      id: arcRow.id,
+      service_type: arcRow.service_type,
+      owner_payable_fee: arcRow.application_fee_usd,
+      fee_paid_by: arcRow.paid_by,
+      fee_structure_notes: arcRow.fee_structure_notes,
+      service_config: arcRow.service_config,
+      enabled: arcRow.enabled
+    } : null;
     res.json({
       community: { id: comm.id, name: comm.name, slug: comm.slug, profile: comm.profile },
-      service: arcService || null
+      service: arcService
     });
   } catch (err) {
     console.error('[applications] public-meta failed:', err.message);
@@ -404,12 +425,12 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
       .maybeSingle();
     if (!comm) return res.status(404).json({ error: 'Community not found' });
 
-    // Resolve service (arc_application)
+    // Resolve service (arc — schema constraint uses 'arc', not 'arc_application')
     const { data: service } = await supabase
       .from('community_services')
-      .select('id, service_type, owner_payable_fee, fee_paid_by, payment_required_before_review')
+      .select('id, service_type, application_fee_usd, paid_by, fee_structure_notes, service_config')
       .eq('community_id', comm.id)
-      .eq('service_type', 'arc_application')
+      .eq('service_type', 'arc')
       .maybeSingle();
     if (!service) {
       return res.status(400).json({ error: 'This community has not enabled ARC applications. Contact management.' });
@@ -417,7 +438,7 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
 
     // Reference number (e.g., LPF-ARC-2026-0042)
     const prefix = (comm.name || 'APP').replace(/[^A-Z]/gi, '').slice(0, 3).toUpperCase() + '-ARC';
-    const reference = await nextReferenceNumber(comm.id, 'arc_application', prefix);
+    const reference = await nextReferenceNumber(comm.id, 'arc', prefix);
 
     // Roster match (optional — used as flag only, no auth gate)
     const normalized = normalizeAddress(b.property_address);
@@ -433,14 +454,14 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
       if (addr) propertyAddressId = addr.id;
     }
 
-    // Determine fee
+    // Determine fee — schema uses paid_by + application_fee_usd
     let calculatedFee = null;
     let feeBasis = null;
     let paymentStatus = 'not_required';
-    if (service.fee_paid_by === 'owner' && service.owner_payable_fee != null) {
-      calculatedFee = service.owner_payable_fee;
-      feeBasis = `Owner-paid ARC fee: $${service.owner_payable_fee}`;
-      paymentStatus = service.payment_required_before_review ? 'pending' : 'pending';
+    if (service.paid_by === 'owner' && service.application_fee_usd != null) {
+      calculatedFee = Number(service.application_fee_usd);
+      feeBasis = `Owner-paid ARC fee: $${calculatedFee.toFixed(2)}`;
+      paymentStatus = 'pending';
     }
 
     // Insert application
@@ -449,7 +470,7 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
       community_id: comm.id,
       community_service_id: service.id,
       reference_number: reference,
-      service_type: 'arc_application',
+      service_type: 'arc',
       submitter_name: b.submitter_name,
       submitter_email: b.submitter_email,
       submitter_phone: b.submitter_phone || null,
@@ -500,13 +521,15 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
 // ============================================================================
 
 // GET /api/applications/public/:slug/fob-meta — what the fob form needs
+// "Fob" here maps to pool_amenity or gate_vehicle in the schema. We pick the
+// first enabled one. Communities that only have ARC enabled return 404.
 router.get('/public/:slug/fob-meta', async (req, res) => {
   try {
     const { data: comm, error } = await supabase
       .from('communities')
       .select(`
         id, name, slug, profile,
-        services:community_services(id, service_type, owner_payable_fee, fee_paid_by, service_config, active)
+        services:community_services(id, service_type, application_fee_usd, paid_by, fee_structure_notes, service_config, enabled)
       `)
       .eq('slug', req.params.slug)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -514,14 +537,26 @@ router.get('/public/:slug/fob-meta', async (req, res) => {
     if (error) throw error;
     if (!comm) return res.status(404).json({ error: 'Community not found' });
 
-    const fobService = (comm.services || []).find(s => s.service_type === 'key_fob' && s.active !== false);
-    if (!fobService) {
+    // "Fob" can be pool_amenity (pool fob) or gate_vehicle (gate fob).
+    // Pick the first enabled match — pool wins ties.
+    const candidates = ['pool_amenity', 'gate_vehicle'];
+    const fobRow = candidates
+      .map(t => (comm.services || []).find(s => s.service_type === t && s.enabled !== false))
+      .find(Boolean);
+    if (!fobRow) {
       return res.status(404).json({ error: 'This community does not offer key/fob requests.' });
     }
 
     res.json({
       community: { id: comm.id, name: comm.name, slug: comm.slug, profile: comm.profile || {} },
-      service: fobService
+      service: {
+        id: fobRow.id,
+        service_type: fobRow.service_type,
+        owner_payable_fee: fobRow.application_fee_usd,
+        fee_paid_by: fobRow.paid_by,
+        fee_structure_notes: fobRow.fee_structure_notes,
+        service_config: fobRow.service_config
+      }
     });
   } catch (err) {
     console.error('[applications] fob-meta failed:', err.message);
@@ -547,32 +582,40 @@ router.post('/public/:slug/submit-fob', express.json({ limit: '1mb' }), async (r
       .maybeSingle();
     if (!comm) return res.status(404).json({ error: 'Community not found' });
 
-    const { data: service } = await supabase
-      .from('community_services')
-      .select('id, service_type, owner_payable_fee, fee_paid_by, service_config')
-      .eq('community_id', comm.id)
-      .eq('service_type', 'key_fob')
-      .maybeSingle();
+    // Look for pool_amenity first, then gate_vehicle. This is what "fob"
+    // maps to in this schema.
+    const fobCandidates = ['pool_amenity', 'gate_vehicle'];
+    let service = null;
+    for (const t of fobCandidates) {
+      const { data } = await supabase
+        .from('community_services')
+        .select('id, service_type, application_fee_usd, paid_by, fee_structure_notes, service_config')
+        .eq('community_id', comm.id)
+        .eq('service_type', t)
+        .eq('enabled', true)
+        .maybeSingle();
+      if (data) { service = data; break; }
+    }
     if (!service) {
       return res.status(400).json({ error: 'This community has not enabled fob requests. Contact management.' });
     }
 
     // Reference number — e.g., LPF-FOB-2026-0042
     const prefix = (comm.name || 'APP').replace(/[^A-Z]/gi, '').slice(0, 3).toUpperCase() + '-FOB';
-    const reference = await nextReferenceNumber(comm.id, 'key_fob', prefix);
+    const reference = await nextReferenceNumber(comm.id, service.service_type, prefix);
 
     const appData = b.application_data || {};
     const numFobs = Math.max(1, Math.min(10, Number(appData.num_fobs) || 1));
     const requestType = appData.request_type || 'replacement';
 
     // Fee calculation: per-fob fee × count, but new-owner first fob is often free
-    // per the service_config. Honor service_config.first_fob_free for first-time owners.
+    // per the service_config (the schema example shows `first_unit_free`).
     let calculatedFee = null;
     let feeBasis = null;
-    if (service.fee_paid_by === 'owner') {
-      const perFob = Number(service.owner_payable_fee) || 0;
+    if (service.paid_by === 'owner') {
+      const perFob = Number(service.application_fee_usd) || 0;
       const cfg = service.service_config || {};
-      const firstFree = cfg.first_fob_free && requestType === 'new_owner';
+      const firstFree = (cfg.first_unit_free || cfg.first_fob_free) && requestType === 'new_owner';
       const billable = firstFree ? Math.max(0, numFobs - 1) : numFobs;
       calculatedFee = perFob * billable;
       feeBasis = billable === 0
@@ -585,7 +628,7 @@ router.post('/public/:slug/submit-fob', express.json({ limit: '1mb' }), async (r
       community_id: comm.id,
       community_service_id: service.id,
       reference_number: reference,
-      service_type: 'key_fob',
+      service_type: service.service_type,
       submitter_name: b.submitter_name,
       submitter_email: b.submitter_email,
       submitter_phone: b.submitter_phone || null,

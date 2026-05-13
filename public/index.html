@@ -4413,8 +4413,8 @@
       </select>
       <select id="acc-filter-type" class="draft-type-select" onchange="accLoadList()">
         <option value="">All types</option>
-        <option value="arc_application">🏗️ ARC applications</option>
-        <option value="key_fob">🔑 Pool / key fobs</option>
+        <option value="arc">🏗️ ARC applications</option>
+        <option value="fob">🔑 Pool / key fobs</option>
       </select>
       <select id="acc-filter-status" class="draft-type-select" onchange="accLoadList()">
         <option value="pending_committee_review">⏳ Awaiting review (default)</option>
@@ -4528,8 +4528,13 @@
       if (j.error) throw new Error(j.error);
       accCurrentList = j.applications || [];
       // Apply service-type + free-text search client-side
-      if (typeFilter) {
-        accCurrentList = accCurrentList.filter(a => a.service_type === typeFilter);
+      // "fob" maps to pool_amenity / gate_vehicle / gym_access; "arc" maps to arc.
+      if (typeFilter === 'arc') {
+        accCurrentList = accCurrentList.filter(a => a.service_type === 'arc');
+      } else if (typeFilter === 'fob') {
+        accCurrentList = accCurrentList.filter(a =>
+          a.service_type === 'pool_amenity' || a.service_type === 'gate_vehicle' || a.service_type === 'gym_access'
+        );
       }
       const q = document.getElementById('acc-search').value.trim().toLowerCase();
       if (q) {
@@ -4576,7 +4581,7 @@
       const urgent = a.final_status === 'pending_committee_review' && ageHours > 24;
 
       // Service-type badge — distinguishes ARC apps (judgment) from fobs (transactional)
-      const isFob = a.service_type === 'key_fob';
+      const isFob = a.service_type === 'pool_amenity' || a.service_type === 'gate_vehicle' || a.service_type === 'gym_access';
       const serviceBadge = isFob
         ? '<span class="acc-pill" style="background:#dbeafe; color:#1e3a8a;">🔑 Fob</span>'
         : '<span class="acc-pill" style="background:#e0e7ff; color:#3730a3;">🏗️ ARC</span>';
