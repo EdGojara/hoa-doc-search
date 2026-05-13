@@ -21,14 +21,68 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
+const Anthropic = require('@anthropic-ai/sdk');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 
 const router = express.Router();
+
+// ----------------------------------------------------------------------------
+// POST /extract-contact-from-email
+// Body: { email_text }
+// Returns: { ok, contact: { vendor_name, vendor_category, contact_name, role,
+//                            phone, email, notes } }
+// Used by the Profile → Contacts UI to pre-fill the structured contact form
+// from a pasted email (or signature block). The model returns ONLY JSON; any
+// field can be null if the email doesn't mention it.
+// ----------------------------------------------------------------------------
+router.post('/extract-contact-from-email', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const { email_text } = req.body || {};
+    if (!email_text || email_text.trim().length < 20) {
+      return res.status(400).json({ error: 'Provide the email text (at least 20 characters).' });
+    }
+
+    const system =
+      "You extract a single business contact from an email body or signature block. " +
+      "Output ONLY a JSON object — no prose, no markdown fences — with these keys " +
+      "(use null when the email does not mention them):\n" +
+      "  vendor_name: company name\n" +
+      "  vendor_category: one of pool|landscape|security|gate|electrical|plumbing|hvac|pest_control|irrigation|cleaning|attorney|accountant|insurance|banking|board_member|onsite_staff|other\n" +
+      "  contact_name: full name of the person\n" +
+      "  role: title or role (e.g., 'Account manager')\n" +
+      "  phone: formatted as 281-555-0100 (US 10-digit). If multiple, pick the most-likely-primary.\n" +
+      "  email: best email address\n" +
+      "  notes: anything useful that isn't already captured — license number, after-hours line, backup contact, scope of service, etc.\n" +
+      "Never fabricate. If unsure of vendor_category, use 'other'.";
+
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 600,
+      system,
+      messages: [{ role: 'user', content: 'Email:\n\n' + email_text }],
+    });
+
+    const raw = (response.content?.[0]?.text || '').trim();
+    let contact = {};
+    try {
+      const m = raw.match(/\{[\s\S]*\}/);
+      contact = JSON.parse(m ? m[0] : raw);
+    } catch (e) {
+      console.warn('[extract-contact] JSON parse failed:', e.message);
+    }
+
+    res.json({ ok: true, contact });
+  } catch (err) {
+    console.error('[extract-contact-from-email] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ----------------------------------------------------------------------------
 // Helpers

@@ -1,4 +1,4 @@
-require('dotenv').config();
+require('dotenv').config({ override: true });
 const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
@@ -410,6 +410,9 @@ app.use('/api/help', helpRouter);
 // Community profile + facts (per-community operational knowledge layer)
 const { router: communityProfileRouter, buildCommunityContextBlock } = require('./api/communities');
 app.use('/api/community-profile', communityProfileRouter);
+
+// askEd tools — deterministic function-calling for vendor lookups, etc.
+const askEdTools = require('./lib/askEdTools');
 
 // Community events (planning, vendors, waivers + attendance, reporting)
 const { router: eventsRouter } = require('./api/events');
@@ -1100,7 +1103,8 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
 
 app.post('/ask-ed', upload.single('attachment'), async (req, res) => {
   try {
-    const { situation, community } = req.body;
+    const { situation, community, mode } = req.body;
+    const quickMode = (mode || '').toString().toLowerCase().trim() === 'quick';
 
     // Build attachment content if a file was uploaded
     let attachmentContent = null;
@@ -1136,10 +1140,7 @@ app.post('/ask-ed', upload.single('attachment'), async (req, res) => {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
     }) || 'No relevant playbook examples for this question.';
 
-    const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      system: `${GLOBAL_RULES}
+    const askEdSystemPrompt = `${GLOBAL_RULES}
 
 You are "Ask Ed" — an AI advisor that thinks and responds exactly like Ed Gojara, owner of Bedrock Association Management. Ed has 15+ years of business experience, an MBA, CPA license, Certified Fraud Examiner designation, and prior experience as a hedge fund executive. He is the trusted advisor his boards rely on — not just a property manager.
 
@@ -1220,16 +1221,42 @@ INTERNAL OPERATIONS AND TECHNOLOGY: When implementing changes explain why, give 
 
 HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and what you don't, lead with the solution not just the problem, communicate deadlines clearly, stay professional with all parties including attorneys, document everything.
 
-When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`,
+When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.
+
+TOOL USE: You have a lookup_community_vendor tool that returns the active vendor contact (vendor name, contact person, phone, email, last-updated date) for a community + service category. Whenever the user asks for any phone number, email address, or vendor contact for a specific community, ALWAYS call this tool — never recite phone numbers or emails from memory or summary text. The tool's response is the source of truth. After it returns, format the phone number clearly so the user can dial it.`;
+
+    // Quick-lookup mode for internal staff — terse, no preamble, no strategic commentary.
+    // Same backend, same tool; just a different voice.
+    const askEdQuickPrompt = `${GLOBAL_RULES}
+
+You are the trustEd quick-lookup assistant for Bedrock Association Management internal staff. The audience is a manager, assistant, or onsite team member who needs a fact fast — already has the business context.
+
+ANSWER STYLE:
+- 1 to 2 short sentences max. Lead with the answer. NO preamble, NO "here's what you need to know," NO strategic commentary, NO disclosure warnings, NO moralizing about who to share info with — this is internal use.
+- Phone numbers: format as 281-555-0100 (no parentheses, with dashes).
+- If multiple contacts match for the same category, list them compactly on separate short lines, e.g.:
+    Joe Smith (Account Mgr) — 281-555-0100
+    Sara Lee (Field Sup) — 281-555-0102
+- If a contact is marked expired or unverified > 1 year, mention that in one short phrase ("⚠ verify — record is 14 months old").
+- If no record exists, say so in one sentence and suggest adding it in Profile → Contacts.
+
+TOOL USE: For any phone, email, or vendor contact question, ALWAYS call lookup_community_vendor. Never recite from memory. The tool returns ALL matching contacts as an array — surface all of them when the user didn't name a specific person.
+
+Do not mention you are an AI. Do not apologize. Do not editorialize. Just the facts.`;
+
+    const { text: guidance } = await askEdTools.runAskEdWithTools({
+      anthropic,
       messages: [{
         role: 'user',
         content: buildAskEdUserMessage({
           situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote
         })
-      }]
+      }],
+      system: quickMode ? askEdQuickPrompt : askEdSystemPrompt,
+      max_tokens: quickMode ? 400 : 1500,
     });
 
-    res.json({ guidance: response.content[0].text });
+    res.json({ guidance });
   } catch (err) {
     console.error(err);
     res.status(500).json({ guidance: 'Error getting guidance. Please try again.' });
@@ -3507,6 +3534,197 @@ app.post('/community-counts', (req, res) => {
   COMMUNITY_HOME_COUNTS[community.toLowerCase().trim()] = parseInt(homeCount);
   res.json({ success: true, community, homeCount: parseInt(homeCount) });
 });
+
+// ============================================================================
+// Presentations module — generate branded .pptx decks from templates + form
+// variables + optional uploaded images. Every generation is stored so the user
+// can re-download past decks and so the pitch history compounds into data.
+// ============================================================================
+const presentationsRegistry = require('./lib/presentations');
+const PPTX_MIME = 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+app.get('/api/presentations/templates', (req, res) => {
+  res.json({ templates: presentationsRegistry.listTemplates() });
+});
+
+app.get('/api/presentations/instances', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('presentation_instances')
+      .select('id, template_slug, title, variables, output_filename, status, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+    res.json({ instances: data || [] });
+  } catch (err) {
+    console.error('Presentation list error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/presentations/generate', upload.any(), async (req, res) => {
+  try {
+    const templateSlug = (req.body.template_slug || '').trim();
+    const template = presentationsRegistry.getTemplate(templateSlug);
+    if (!template) return res.status(400).json({ error: 'Unknown template: ' + templateSlug });
+
+    let variables = {};
+    if (req.body.variables) {
+      try { variables = JSON.parse(req.body.variables); } catch { variables = {}; }
+    } else {
+      (template.variables || []).forEach(v => {
+        if (req.body[v.key] !== undefined) variables[v.key] = req.body[v.key];
+      });
+    }
+
+    const ctx = {};
+    const files = req.files || [];
+    files.forEach(f => {
+      if (f.fieldname === 'cover_image') {
+        ctx.coverImageBuffer = f.buffer;
+        ctx.coverImageMime = f.mimetype;
+      }
+    });
+
+    const titleParts = [template.title];
+    if (variables.community) titleParts.push(variables.community);
+    const title = titleParts.join(' — ');
+
+    const pres = template.build(variables, ctx);
+    const pptxBuffer = await pres.write({ outputType: 'nodebuffer' });
+
+    const safeStem = (variables.community || template.slug).replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'presentation';
+    const filename = `${safeStem}_${template.slug}_${new Date().toISOString().slice(0,10)}.pptx`;
+
+    const { data: instance, error: insErr } = await supabase
+      .from('presentation_instances')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        template_slug: template.slug,
+        title,
+        variables,
+        output_filename: filename,
+        status: 'generated',
+      })
+      .select()
+      .single();
+
+    if (insErr) {
+      console.warn('Presentation history write failed:', insErr.message);
+    } else if (instance) {
+      const storagePath = `presentations/${instance.id}/${filename}`;
+      const { error: stErr } = await supabase.storage
+        .from('documents')
+        .upload(storagePath, pptxBuffer, { contentType: PPTX_MIME, upsert: true });
+      if (stErr) {
+        console.warn('Presentation storage save failed:', stErr.message);
+      } else {
+        await supabase
+          .from('presentation_instances')
+          .update({ output_storage_path: storagePath, updated_at: new Date().toISOString() })
+          .eq('id', instance.id);
+      }
+
+      for (const f of files) {
+        try {
+          const slotKey = f.fieldname;
+          const ext = (f.originalname.split('.').pop() || 'bin').toLowerCase();
+          const assetPath = `presentations/${instance.id}/${slotKey}_${Date.now()}.${ext}`;
+          const { error: aErr } = await supabase.storage
+            .from('documents')
+            .upload(assetPath, f.buffer, { contentType: f.mimetype, upsert: true });
+          if (!aErr) {
+            await supabase
+              .from('presentation_assets')
+              .insert({
+                instance_id: instance.id,
+                slot_key: slotKey,
+                storage_path: assetPath,
+                mime_type: f.mimetype,
+                meta: { original_filename: f.originalname },
+              });
+          }
+        } catch (e) {
+          console.warn('Asset save failed:', e.message);
+        }
+      }
+    }
+
+    res.setHeader('Content-Type', PPTX_MIME);
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.send(pptxBuffer);
+  } catch (err) {
+    console.error('Presentation generate error:', err);
+    res.status(500).json({ error: 'Generation failed: ' + err.message });
+  }
+});
+
+app.get('/api/presentations/instances/:id/download', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: instance, error: qErr } = await supabase
+      .from('presentation_instances')
+      .select('id, output_storage_path, output_filename, template_slug, variables')
+      .eq('id', id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (qErr || !instance) return res.status(404).json({ error: 'Not found' });
+
+    if (instance.output_storage_path) {
+      const { data: blob, error: dErr } = await supabase.storage
+        .from('documents')
+        .download(instance.output_storage_path);
+      if (!dErr && blob) {
+        const arr = await blob.arrayBuffer();
+        res.setHeader('Content-Type', PPTX_MIME);
+        res.setHeader('Content-Disposition', `attachment; filename="${instance.output_filename || 'presentation.pptx'}"`);
+        return res.send(Buffer.from(arr));
+      }
+    }
+
+    const template = presentationsRegistry.getTemplate(instance.template_slug);
+    if (!template) return res.status(500).json({ error: 'Template no longer available' });
+    const pres = template.build(instance.variables || {}, {});
+    const buf = await pres.write({ outputType: 'nodebuffer' });
+    res.setHeader('Content-Type', PPTX_MIME);
+    res.setHeader('Content-Disposition', `attachment; filename="${instance.output_filename || 'presentation.pptx'}"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('Presentation download error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/presentations/instances/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: instance, error: qErr } = await supabase
+      .from('presentation_instances')
+      .select('id, output_storage_path')
+      .eq('id', id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (qErr || !instance) return res.status(404).json({ error: 'Not found' });
+
+    if (instance.output_storage_path) {
+      await supabase.storage.from('documents').remove([instance.output_storage_path]);
+    }
+    const { data: assets } = await supabase
+      .from('presentation_assets')
+      .select('storage_path')
+      .eq('instance_id', id);
+    if (assets && assets.length) {
+      await supabase.storage.from('documents').remove(assets.map(a => a.storage_path));
+    }
+    await supabase.from('presentation_instances').delete().eq('id', id);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Presentation delete error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });

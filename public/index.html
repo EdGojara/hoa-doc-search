@@ -230,26 +230,52 @@
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('asked')">🧠 askEd</div>
+  <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
   <div class="tab" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
-  <div class="tab" onclick="switchTab('vendor')">📊 Vendor Workflow</div>
-  <div class="tab" onclick="switchTab('agenda')">📋 Agenda Generator</div>
+  <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
-  <div class="tab" onclick="switchTab('billing')">💼 Bedrock Office</div>
+  <div class="tab" data-group="board" onclick="openTabGroup('board')">🏛️ Board</div>
+  <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
-  <div class="tab" onclick="switchTab('vendors')">🏢 Vendors</div>
   <div class="tab" onclick="switchTab('help')">📚 Help</div>
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
-  <div class="tab" onclick="switchTab('packets')">📋 Board Packets</div>
   <div class="tab" onclick="switchTab('profile')">🏘️ Profile</div>
   <div class="tab" onclick="switchTab('events')">🎉 Events</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
-  <div class="tab" onclick="switchTab('recaps')">📰 Recaps</div>
   <div class="tab" onclick="switchTab('archistory')">🏗️ ACC History</div>
   <div class="tab" onclick="switchTab('accqueue')">📋 Requests</div>
+</div>
+<div class="tab-subbar" id="tabSubbar"
+     style="display:none; gap:6px; padding:8px 12px; background:#f1f5fb; border-bottom:1px solid #d9dfea; flex-wrap:wrap;"></div>
+
+<!-- ===========================================================================
+     Quick Lookup — terse, internal-staff-facing assistant. Hits /ask-ed with
+     mode='quick', which swaps the system prompt for a one-or-two-sentence
+     response. Shares the lookup_community_vendor tool with full askEd.
+     ========================================================================= -->
+<div class="tab-content" id="tab-quick" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 760px; margin: 0 auto;">
+    <div style="margin-bottom: 14px;">
+      <h2 style="margin: 0 0 4px; font-size: 22px;">⚡ Quick Lookup</h2>
+      <p style="font-size: 13px; color: #666; margin: 0;">
+        Fast answers for the team. <em>"Pool contact for LPF?"</em> → just the number, tap-to-dial. Pick a community in the dropdown above, then ask.
+      </p>
+    </div>
+    <textarea id="quickQuestion" rows="2"
+      placeholder='e.g., "What is the pool company phone number?"  or  "Who is the landscape contact?"'
+      style="width:100%; padding:12px 14px; font-size:15px; border:1px solid #d0d7de; border-radius:10px; outline:none; box-sizing:border-box; resize:vertical; font-family:inherit;"
+      onkeydown="if (event.key === 'Enter' &amp;&amp; !event.shiftKey) { event.preventDefault(); quickSubmit(); }"></textarea>
+    <div style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+      <button class="action-btn" id="quickSubmitBtn" onclick="quickSubmit()" style="padding:10px 22px; font-size:14px;">🔎 Find</button>
+      <button class="secondary-btn" onclick="quickClear()" style="padding:10px 16px; font-size:13px;">Clear</button>
+      <span id="quickStatus" style="font-size:13px; color:#666;"></span>
+    </div>
+    <div id="quickResponse" style="margin-top:18px; padding:16px 20px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; line-height:1.6; font-size:15px; color:#1a3a5c; display:none; white-space:pre-wrap;"></div>
+  </div>
 </div>
 
 <!-- Chat Tab -->
@@ -716,6 +742,55 @@
         Upload your Vantaca PDF and click Generate Mailing.
       </div>
     </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     Presentations — branded .pptx decks from templates + variables + images.
+     Powered by lib/presentations/* on the server. Generated decks are stored
+     in Supabase storage and indexed in presentation_instances for re-download.
+     ========================================================================= -->
+<div class="tab-content" id="tab-presentations" style="overflow-y: auto; padding: 24px;">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">🎬 Presentations</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Pick a template, fill in the variables, optionally add a community photo, and download a Bedrock-rendered .pptx in seconds. Past generations are saved below.
+    </p>
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1.4fr 1fr; gap:24px; align-items:flex-start;">
+
+    <!-- LEFT: template picker + form -->
+    <div>
+      <div class="section-label" style="margin-bottom:8px;">Choose a template</div>
+      <div id="presTemplateGrid" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:18px;">
+        <div style="color:#999; font-size:13px; padding:12px;">Loading templates…</div>
+      </div>
+
+      <div id="presFormCard" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:18px; background:#fff;">
+        <div id="presFormHeader" style="margin-bottom:12px;">
+          <div style="font-weight:600; color:#1E2761; font-size:16px;" id="presFormTitle"></div>
+          <div style="font-size:12px; color:#888; margin-top:2px;" id="presFormDesc"></div>
+        </div>
+        <div id="presFormFields"></div>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:14px;">
+          <button class="action-btn" id="presGenerateBtn" onclick="presGenerate()">🎬 Generate &amp; download</button>
+          <span id="presGenerateStatus" style="font-size:13px; color:#666;"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- RIGHT: history -->
+    <div>
+      <div class="section-label" style="margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+        <span>Past generations</span>
+        <button class="secondary-btn" style="font-size:11px; padding:4px 10px;" onclick="presLoadHistory()">Refresh</button>
+      </div>
+      <div id="presHistoryList" style="border:1px solid #e2e8f0; border-radius:10px; background:#fff; min-height:120px;">
+        <div style="color:#999; font-size:13px; padding:14px;">Loading…</div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -2838,6 +2913,85 @@
         <div style="margin-top:14px; text-align:right;">
           <button class="primary-btn" onclick="profSaveProfile()" style="padding:8px 18px;">💾 Save profile</button>
           <span id="prof-save-status" style="margin-left:10px; font-size:12px; color:#2d7a3a;"></span>
+        </div>
+      </div>
+
+      <!-- ===== Contacts (structured — vendors, board members, key people) ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <div>
+            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">📞 Contacts</h3>
+            <p style="font-size:12px; color:#888; margin-top:2px;">Pool company, landscape, security, attorney, board members — anyone you need to reach. Phone is tap-to-dial. Rows turn yellow if the contract expired or it's been over a year since you verified the info. Multiple contacts per vendor are fine — add the account manager, the field supervisor, and the owner as separate rows.</p>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button class="secondary-btn" onclick="profShowPasteEmail()" style="font-size:13px;">📥 Paste email</button>
+            <button class="secondary-btn" onclick="profShowAddContact()" style="font-size:13px;">+ Add contact</button>
+          </div>
+        </div>
+
+        <div id="prof-paste-email-form" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:14px;">
+          <div style="margin-bottom:8px; font-size:13px; color:#555;">
+            Paste an email body or signature block. AI extracts the contact (vendor, name, role, phone, email, notes) and pre-fills the add-contact form below for you to review and save.
+          </div>
+          <textarea id="prof-paste-email-text" rows="6" placeholder="From: Joe Smith <joe@bluewater.com>
+Subject: Re: Pool service this week
+...
+Joe Smith
+Account Manager
+Bluewater Pool Services
+281-555-0100
+www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:13px; font-family:Consolas, monospace; box-sizing:border-box;"></textarea>
+          <div style="text-align:right; margin-top:8px;">
+            <button class="secondary-btn" onclick="profHidePasteEmail()" style="padding:6px 14px;">Cancel</button>
+            <button class="primary-btn" onclick="profExtractFromEmail()" style="padding:6px 14px;">✨ Extract contact</button>
+            <span id="prof-paste-email-status" style="margin-left:8px; font-size:12px;"></span>
+          </div>
+        </div>
+
+        <div id="prof-add-contact-form" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:14px;">
+          <input type="hidden" id="prof-contact-edit-id" value="">
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px 12px; margin-bottom:10px;">
+            <label class="prof-fld"><span>Category</span>
+              <select id="prof-contact-category">
+                <option value="">—</option>
+                <option value="pool">Pool</option>
+                <option value="landscape">Landscape</option>
+                <option value="security">Security / patrol</option>
+                <option value="gate">Gate / fobs</option>
+                <option value="electrical">Electrical</option>
+                <option value="plumbing">Plumbing</option>
+                <option value="hvac">HVAC</option>
+                <option value="pest_control">Pest control</option>
+                <option value="irrigation">Irrigation</option>
+                <option value="cleaning">Cleaning / janitorial</option>
+                <option value="attorney">Attorney</option>
+                <option value="accountant">Accountant</option>
+                <option value="insurance">Insurance</option>
+                <option value="banking">Banking</option>
+                <option value="board_member">Board member</option>
+                <option value="onsite_staff">Onsite staff</option>
+                <option value="other">Other</option>
+              </select>
+            </label>
+            <label class="prof-fld" style="grid-column: span 2;"><span>Vendor / company name</span><input id="prof-contact-vendor" placeholder="e.g., Bluewater Pool Services" /></label>
+            <label class="prof-fld"><span>Contact person</span><input id="prof-contact-name" placeholder="Jane Smith" /></label>
+            <label class="prof-fld"><span>Role / title (optional)</span><input id="prof-contact-role" placeholder="Account manager" /></label>
+            <label class="prof-fld"><span>Phone</span><input id="prof-contact-phone" placeholder="281-555-0100" /></label>
+            <label class="prof-fld" style="grid-column: span 3;"><span>Email</span><input id="prof-contact-email" type="email" placeholder="jane@bluewater.com" /></label>
+            <label class="prof-fld"><span>Start date (optional)</span><input id="prof-contact-start" type="date" /></label>
+            <label class="prof-fld"><span>End date / expiration (optional)</span><input id="prof-contact-end" type="date" /></label>
+            <label class="prof-fld"><span>Last verified (optional)</span><input id="prof-contact-verified" type="date" /></label>
+            <label class="prof-fld" style="grid-column: 1 / -1;"><span>Notes (optional)</span><textarea id="prof-contact-notes" rows="2" placeholder="Backup number, after-hours, special instructions, etc."></textarea></label>
+          </div>
+          <div style="text-align:right;">
+            <button class="secondary-btn" onclick="profHideAddContact()" style="padding:6px 14px;">Cancel</button>
+            <button class="primary-btn" onclick="profSaveContact()" style="padding:6px 14px;">Save contact</button>
+            <span id="prof-new-contact-status" style="margin-left:8px; font-size:12px;"></span>
+          </div>
+        </div>
+
+        <div id="prof-contacts-list">
+          <!-- populated by profRenderContacts() -->
         </div>
       </div>
 
@@ -5953,6 +6107,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       profFacts = j.facts || [];
       profComputed = j.computed_facts || [];
       profPopulateForm(j.profile || {}, j.community || {});
+      profRenderContacts();
       profRenderFacts();
       profRenderComputed();
     } catch (err) {
@@ -6019,11 +6174,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ---------- Facts ----------
   function profRenderFacts() {
     const wrap = document.getElementById('prof-facts-list');
-    if (!profFacts || profFacts.length === 0) {
+    // Contacts render in their own dedicated section above — don't double-show them here.
+    const regular = (profFacts || []).filter(f => (f.category || '').toLowerCase() !== 'contact');
+    if (regular.length === 0) {
       wrap.innerHTML = '<div style="font-size:13px; color:#888; padding:14px; text-align:center;">No facts yet. Click "+ Add fact" above.</div>';
       return;
     }
-    wrap.innerHTML = profFacts.map(profFactRowHtml).join('');
+    wrap.innerHTML = regular.map(profFactRowHtml).join('');
   }
 
   function profFactRowHtml(f) {
@@ -6035,7 +6192,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div class="fact-cat">${(f.category || '—').toUpperCase()}</div>
         <div class="fact-body">
           <div class="fact-label">${profEsc(f.label || f.key)}${stale ? '<span class="fact-stale-tag">⚠ EXPIRED</span>' : ''}</div>
-          <div style="white-space:pre-wrap;">${profEsc(f.value)}</div>
+          <div style="white-space:pre-wrap;">${profLinkify(f.value)}</div>
           ${f.review_note ? `<div class="fact-meta" style="margin-top:4px;">📌 ${profEsc(f.review_note)}</div>` : ''}
         </div>
         <div class="fact-meta">
@@ -6053,6 +6210,32 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function profEsc(s) {
     return (s == null ? '' : String(s))
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // tel: href — strip everything except digits and a leading +
+  function profPhoneHref(raw) {
+    if (!raw) return '';
+    const s = String(raw).trim();
+    const plus = s.startsWith('+') ? '+' : '';
+    return plus + s.replace(/[^\d]/g, '');
+  }
+
+  // Linkify a free-form string: phone numbers → tel:, emails → mailto:.
+  // Used in fact rows so any "281-555-0100" becomes a tappable link.
+  function profLinkify(raw) {
+    if (raw == null) return '';
+    // Escape first, then replace with anchor tags
+    let s = profEsc(raw);
+    // Email
+    s = s.replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, (m) =>
+      `<a href="mailto:${m}" style="color:#1E2761;">${m}</a>`
+    );
+    // US phone — matches (281) 555-0100, 281.555.0100, 281-555-0100, +1 281 555 0100
+    s = s.replace(
+      /(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g,
+      (m) => `<a href="tel:${profPhoneHref(m)}" style="color:#1E2761; font-weight:600; text-decoration:none;">📞 ${m}</a>`
+    );
+    return s;
   }
 
   function profShowAddFact() {
@@ -6147,14 +6330,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     wrap.innerHTML = profComputed.map(c => {
       const d = c.details || {};
-      const contact = [d.contact_name, d.phone, d.email].filter(Boolean).join(' · ');
+      const bits = [];
+      if (d.contact_name) bits.push(profEsc(d.contact_name));
+      if (d.phone) bits.push(`<a href="tel:${profPhoneHref(d.phone)}" style="color:#1E2761; text-decoration:none; font-weight:600;">📞 ${profEsc(d.phone)}</a>`);
+      if (d.email) bits.push(`<a href="mailto:${profEsc(d.email)}" style="color:#1E2761; text-decoration:none;">✉️ ${profEsc(d.email)}</a>`);
+      const contact = bits.join(' · ');
       return `
         <div class="fact-row" style="grid-template-columns: 110px 1fr 200px 130px;">
           <div class="fact-cat">${(c.category || 'AUTO').toUpperCase()}</div>
           <div class="fact-body">
             <div class="fact-label">${profEsc(c.label)}</div>
-            <div>${profEsc(c.value)}</div>
-            ${contact ? `<div class="fact-meta" style="margin-top:3px;">${profEsc(contact)}</div>` : ''}
+            <div>${profLinkify(c.value)}</div>
+            ${contact ? `<div class="fact-meta" style="margin-top:3px;">${contact}</div>` : ''}
           </div>
           <div class="fact-meta">
             ${c.expires_at ? `Contract ends: <strong>${new Date(c.expires_at).toISOString().slice(0,10)}</strong>` : ''}
@@ -6175,6 +6362,276 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     valEl.value = currentValue;
     catEl.value = 'vendor';
     labelEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  // ============================================================
+  // Contacts (sub-section of the Profile tab)
+  // Structured per-vendor/role/board-member contacts, stored as
+  // community_facts rows with category='contact' and a richer
+  // details JSONB (phone, email, dates). Yellow tint if expired
+  // or last_verified_at > 1 year old.
+  // ============================================================
+
+  function profIsContactStale(c) {
+    if (c.is_expired) return true;
+    const d = c.details || {};
+    const verified = d.last_verified_at || c.last_updated_at;
+    if (!verified) return true;
+    const age = Date.now() - new Date(verified).getTime();
+    return age > 365 * 24 * 60 * 60 * 1000;
+  }
+
+  function profContactRowHtml(c) {
+    const d = c.details || {};
+    const stale = profIsContactStale(c);
+    const phone = d.phone || '';
+    const email = d.email || '';
+    const name = d.contact_name || '';
+    const role = d.role || '';
+    const vendor = d.vendor_name || c.label || '';
+    const cat = d.vendor_category || c.category || '';
+    const start = d.start_date ? new Date(d.start_date).toISOString().slice(0,10) : '';
+    const end = d.end_date ? new Date(d.end_date).toISOString().slice(0,10) : '';
+    const verified = d.last_verified_at ? new Date(d.last_verified_at).toISOString().slice(0,10) : '';
+    const lastUpdated = c.last_updated_at ? new Date(c.last_updated_at).toISOString().slice(0,10) : '';
+    const notes = d.notes || '';
+
+    // Status badges
+    const badges = [];
+    if (c.is_expired) badges.push('<span class="fact-stale-tag">⚠ EXPIRED</span>');
+    else if (stale) badges.push('<span class="fact-stale-tag">⚠ VERIFY</span>');
+
+    const phoneLink = phone
+      ? `<a href="tel:${profPhoneHref(phone)}" style="color:#1E2761; font-weight:600; text-decoration:none;">📞 ${profEsc(phone)}</a>`
+      : '<span style="color:#aaa;">—</span>';
+    const emailLink = email
+      ? `<a href="mailto:${profEsc(email)}" style="color:#1E2761; text-decoration:none;">✉️ ${profEsc(email)}</a>`
+      : '<span style="color:#aaa;">—</span>';
+
+    const dateLine = [];
+    if (start) dateLine.push(`Start: <strong>${start}</strong>`);
+    if (end) dateLine.push(`Ends: <strong>${end}</strong>`);
+    if (verified) dateLine.push(`Verified: <strong>${verified}</strong>`);
+    else if (lastUpdated) dateLine.push(`Updated: ${lastUpdated}`);
+
+    return `
+      <div class="fact-row ${stale ? 'stale' : ''}" data-fact-id="${c.id}"
+           style="grid-template-columns: 110px 1fr 230px 150px;">
+        <div class="fact-cat">${profEsc((cat || 'CONTACT').toUpperCase())}</div>
+        <div class="fact-body">
+          <div class="fact-label">${profEsc(vendor)}${badges.length ? ' ' + badges.join('') : ''}</div>
+          <div style="margin-top:2px; font-size:13px;">
+            ${profEsc(name)}${role ? ' <span style="color:#888;">— ' + profEsc(role) + '</span>' : ''}
+          </div>
+          <div style="margin-top:4px; font-size:13px;">
+            ${phoneLink}${phone && email ? ' &nbsp;·&nbsp; ' : ''}${emailLink}
+          </div>
+          ${notes ? `<div class="fact-meta" style="margin-top:4px;">📌 ${profEsc(notes)}</div>` : ''}
+        </div>
+        <div class="fact-meta">${dateLine.join('<br>') || ''}</div>
+        <div class="fact-actions" style="text-align:right;">
+          <button onclick="profMarkContactVerified('${c.id}')">Verified now</button>
+          <button onclick="profEditContact('${c.id}')">Edit</button>
+          <button class="danger" onclick="profDeleteContact('${c.id}')">Delete</button>
+        </div>
+      </div>`;
+  }
+
+  function profRenderContacts() {
+    const wrap = document.getElementById('prof-contacts-list');
+    if (!wrap) return;
+    const contacts = (profFacts || []).filter(f => (f.category || '').toLowerCase() === 'contact');
+    if (contacts.length === 0) {
+      wrap.innerHTML = '<div style="font-size:13px; color:#888; padding:14px; text-align:center;">No contacts yet. Click "+ Add contact" above.</div>';
+      return;
+    }
+    wrap.innerHTML = contacts.map(profContactRowHtml).join('');
+  }
+
+  function profShowAddContact() {
+    document.getElementById('prof-add-contact-form').style.display = '';
+    ['prof-contact-edit-id','prof-contact-category','prof-contact-vendor','prof-contact-name','prof-contact-role','prof-contact-phone','prof-contact-email','prof-contact-start','prof-contact-end','prof-contact-verified','prof-contact-notes']
+      .forEach(id => { const el = document.getElementById(id); if (el) el.value = ''; });
+    // default last-verified to today since we're entering/confirming the record now
+    const today = new Date().toISOString().slice(0,10);
+    const vEl = document.getElementById('prof-contact-verified');
+    if (vEl) vEl.value = today;
+    document.getElementById('prof-new-contact-status').textContent = '';
+    document.getElementById('prof-add-contact-form').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function profHideAddContact() {
+    document.getElementById('prof-add-contact-form').style.display = 'none';
+  }
+
+  function profSlug(s) {
+    return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  }
+
+  async function profSaveContact() {
+    if (!profCurrent) return;
+    const editId = document.getElementById('prof-contact-edit-id').value;
+    const v = (id) => (document.getElementById(id)?.value || '').trim();
+    const category = v('prof-contact-category');
+    const vendor = v('prof-contact-vendor');
+    const name = v('prof-contact-name');
+    const role = v('prof-contact-role');
+    const phone = v('prof-contact-phone');
+    const email = v('prof-contact-email');
+    const start = v('prof-contact-start');
+    const end = v('prof-contact-end');
+    const verified = v('prof-contact-verified');
+    const notes = v('prof-contact-notes');
+
+    if (!category) { document.getElementById('prof-new-contact-status').innerHTML = '<span style="color:#b91c1c;">Pick a category.</span>'; return; }
+    if (!name && !vendor) { document.getElementById('prof-new-contact-status').innerHTML = '<span style="color:#b91c1c;">Need at least a vendor name or contact name.</span>'; return; }
+    if (!phone && !email) { document.getElementById('prof-new-contact-status').innerHTML = '<span style="color:#b91c1c;">Need at least a phone or email.</span>'; return; }
+
+    const details = {
+      vendor_name: vendor || null,
+      vendor_category: category,
+      contact_name: name || null,
+      role: role || null,
+      phone: phone || null,
+      email: email || null,
+      start_date: start || null,
+      end_date: end || null,
+      last_verified_at: verified || null,
+      notes: notes || null,
+    };
+
+    const label = vendor ? `${vendor}${name ? ' — ' + name : ''}` : name;
+    const valueParts = [name, vendor, phone, email].filter(Boolean);
+    const value = valueParts.join(' · ');
+
+    const payload = {
+      category: 'contact',
+      label,
+      value,
+      details,
+      expires_at: end || null,
+      review_note: notes || null,
+    };
+
+    const status = document.getElementById('prof-new-contact-status');
+    status.innerHTML = '<span style="color:#888;">Saving…</span>';
+    try {
+      let r;
+      if (editId) {
+        r = await fetch(`/api/community-profile/facts/${editId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+      } else {
+        const key = `contact_${profSlug(category)}_${profSlug(vendor || name)}_${Date.now()}`;
+        r = await fetch(`/api/community-profile/${profCurrent.id}/facts`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ...payload, key }),
+        });
+      }
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      status.innerHTML = '<span style="color:#15803d;">Saved.</span>';
+      profHideAddContact();
+      await profLoadFull(profCurrent.id);
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + profEsc(e.message) + '</span>';
+    }
+  }
+
+  function profEditContact(factId) {
+    const c = (profFacts || []).find(f => f.id === factId);
+    if (!c) return;
+    const d = c.details || {};
+    profShowAddContact();
+    const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val || ''; };
+    set('prof-contact-edit-id', c.id);
+    set('prof-contact-category', d.vendor_category || c.category || '');
+    set('prof-contact-vendor', d.vendor_name || '');
+    set('prof-contact-name', d.contact_name || '');
+    set('prof-contact-role', d.role || '');
+    set('prof-contact-phone', d.phone || '');
+    set('prof-contact-email', d.email || '');
+    set('prof-contact-start', d.start_date ? d.start_date.slice(0,10) : '');
+    set('prof-contact-end', d.end_date ? d.end_date.slice(0,10) : '');
+    set('prof-contact-verified', d.last_verified_at ? d.last_verified_at.slice(0,10) : '');
+    set('prof-contact-notes', d.notes || '');
+  }
+
+  async function profDeleteContact(factId) {
+    if (!confirm('Delete this contact?')) return;
+    try {
+      const r = await fetch(`/api/community-profile/facts/${factId}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || ('HTTP ' + r.status));
+      }
+      if (profCurrent) await profLoadFull(profCurrent.id);
+    } catch (e) { alert('Delete failed: ' + e.message); }
+  }
+
+  function profShowPasteEmail() {
+    const f = document.getElementById('prof-paste-email-form');
+    f.style.display = '';
+    document.getElementById('prof-paste-email-text').value = '';
+    document.getElementById('prof-paste-email-status').textContent = '';
+    f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
+
+  function profHidePasteEmail() {
+    document.getElementById('prof-paste-email-form').style.display = 'none';
+  }
+
+  async function profExtractFromEmail() {
+    if (!profCurrent) return;
+    const text = (document.getElementById('prof-paste-email-text').value || '').trim();
+    const status = document.getElementById('prof-paste-email-status');
+    if (text.length < 20) {
+      status.innerHTML = '<span style="color:#b91c1c;">Paste at least a signature block — I need something to work with.</span>';
+      return;
+    }
+    status.innerHTML = '<span style="color:#888;">Extracting…</span>';
+    try {
+      const r = await fetch('/api/community-profile/extract-contact-from-email', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email_text: text }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      const c = j.contact || {};
+      profHidePasteEmail();
+      profShowAddContact();
+      const set = (id, v) => { const el = document.getElementById(id); if (el && v) el.value = v; };
+      set('prof-contact-category', c.vendor_category || 'other');
+      set('prof-contact-vendor', c.vendor_name || '');
+      set('prof-contact-name', c.contact_name || '');
+      set('prof-contact-role', c.role || '');
+      set('prof-contact-phone', c.phone || '');
+      set('prof-contact-email', c.email || '');
+      set('prof-contact-notes', c.notes || '');
+      document.getElementById('prof-new-contact-status').innerHTML = '<span style="color:#15803d;">Pre-filled from email — review and save.</span>';
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + profEsc(e.message) + '</span>';
+    }
+  }
+
+  async function profMarkContactVerified(factId) {
+    const c = (profFacts || []).find(f => f.id === factId);
+    if (!c) return;
+    const details = { ...(c.details || {}), last_verified_at: new Date().toISOString().slice(0,10) };
+    try {
+      const r = await fetch(`/api/community-profile/facts/${factId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ details }),
+      });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      if (profCurrent) await profLoadFull(profCurrent.id);
+    } catch (e) { alert('Failed: ' + e.message); }
   }
 
   // ============================================================
@@ -6685,8 +7142,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function switchTab(tab) {
     document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`).classList.add('active');
-    document.getElementById(`tab-${tab}`).classList.add('active');
+    // Grouped children no longer have a top-level .tab entry — null-tolerate the lookup;
+    // parent highlight is handled separately by the TAB_GROUPS patch below.
+    document.querySelector(`.tab[onclick="switchTab('${tab}')"]`)?.classList.add('active');
+    document.getElementById(`tab-${tab}`)?.classList.add('active');
   }
 
   function onCommunityChange() {
@@ -10985,6 +11444,341 @@ ${questionsPage}
       }
     });
   });
+
+  // =========================================================================
+  // Quick Lookup — terse internal-staff assistant. POSTs to /ask-ed with
+  // mode='quick'; backend swaps to a 1-2 sentence system prompt and uses the
+  // lookup_community_vendor tool for deterministic contact answers.
+  // =========================================================================
+  async function quickSubmit() {
+    const q = (document.getElementById('quickQuestion')?.value || '').trim();
+    if (!q) return;
+    const commSel = document.getElementById('communitySelect');
+    const community = commSel ? (commSel.value || '') : '';
+    const btn = document.getElementById('quickSubmitBtn');
+    const status = document.getElementById('quickStatus');
+    const out = document.getElementById('quickResponse');
+    btn.disabled = true; btn.textContent = '⏳';
+    status.textContent = community ? '' : 'No community selected — ask broadly or pick one above.';
+    out.style.display = 'block';
+    out.innerHTML = '<span style="color:#999;">Looking up…</span>';
+    try {
+      const form = new FormData();
+      form.append('situation', q);
+      if (community) form.append('community', community);
+      form.append('mode', 'quick');
+      const r = await fetch('/ask-ed', { method: 'POST', body: form });
+      const j = await r.json();
+      const text = j.guidance || '(no answer)';
+      const html = (typeof profLinkify === 'function' ? profLinkify(text) : text);
+      out.innerHTML = html;
+      status.textContent = '';
+    } catch (e) {
+      out.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Lookup failed') + '</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '🔎 Find';
+    }
+  }
+
+  function quickClear() {
+    const t = document.getElementById('quickQuestion'); if (t) t.value = '';
+    const out = document.getElementById('quickResponse'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
+    document.getElementById('quickStatus').textContent = '';
+    if (t) t.focus();
+  }
+
+  // =========================================================================
+  // Tab groups — two-tier nav: parent tab opens a sub-toolbar of children.
+  // Adding a group is a one-line edit to TAB_GROUPS below; the framework
+  // handles activation, sub-toolbar render, parent highlight on child select.
+  // =========================================================================
+  const TAB_GROUPS = {
+    vendor: {
+      label: '🏢 Vendor',
+      children: [
+        { id: 'vendor',  label: '📊 Vendor Workflow' },
+        { id: 'vendors', label: '🏢 Vendor Directory' },
+      ],
+    },
+    board: {
+      label: '🏛️ Board',
+      children: [
+        { id: 'packets', label: '📋 Board Packets' },
+        { id: 'recaps',  label: '📰 Recaps' },
+        { id: 'agenda',  label: '📋 Agenda Generator' },
+      ],
+    },
+    office: {
+      label: '💼 Bedrock Office',
+      children: [
+        { id: 'billing',        label: '💼 Billing' },
+        { id: 'presentations',  label: '🎬 Presentations' },
+      ],
+    },
+  };
+
+  function tabParentGroup(tabId) {
+    for (const [key, g] of Object.entries(TAB_GROUPS)) {
+      if (g.children.some(c => c.id === tabId)) return key;
+    }
+    return null;
+  }
+
+  function renderTabSubbar(groupKey, activeTabId) {
+    const bar = document.getElementById('tabSubbar');
+    if (!bar) return;
+    if (!groupKey) {
+      bar.style.display = 'none';
+      bar.innerHTML = '';
+      return;
+    }
+    const g = TAB_GROUPS[groupKey];
+    if (!g) return;
+    bar.style.display = 'flex';
+    bar.innerHTML = g.children.map(c => `
+      <div class="tab-sub" data-tab="${c.id}" onclick="switchTab('${c.id}')"
+           style="font-size:12px; padding:6px 12px; border-radius:6px; cursor:pointer;
+                  background:${c.id === activeTabId ? '#1E2761' : '#fff'};
+                  color:${c.id === activeTabId ? '#fff' : '#1E2761'};
+                  border:1px solid ${c.id === activeTabId ? '#1E2761' : '#cbd5e1'};
+                  font-weight:${c.id === activeTabId ? '600' : '500'};">${c.label}</div>
+    `).join('');
+  }
+
+  function highlightParentGroup(groupKey) {
+    document.querySelectorAll('.tab[data-group]').forEach(el => {
+      el.classList.toggle('active', el.dataset.group === groupKey);
+    });
+  }
+
+  function openTabGroup(groupKey) {
+    const g = TAB_GROUPS[groupKey];
+    if (!g) return;
+    const currentActive = document.querySelector('.tab-content.active');
+    const currentTabId = currentActive ? currentActive.id.replace(/^tab-/, '') : null;
+    const inGroup = g.children.some(c => c.id === currentTabId);
+    if (inGroup) {
+      // already on a child — just (re)render the subbar with highlight
+      renderTabSubbar(groupKey, currentTabId);
+      highlightParentGroup(groupKey);
+    } else {
+      switchTab(g.children[0].id); // patched switchTab handles the rest
+    }
+  }
+
+  // Patch switchTab to manage parent highlight + subbar visibility
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const result = orig.apply(this, arguments);
+      const groupKey = tabParentGroup(tab);
+      if (groupKey) {
+        renderTabSubbar(groupKey, tab);
+        highlightParentGroup(groupKey);
+      } else {
+        renderTabSubbar(null);
+        highlightParentGroup(null);
+      }
+      return result;
+    };
+  })();
+
+  // =========================================================================
+  // Presentations module — template picker, dynamic form, generate & download
+  // =========================================================================
+  let presTemplates = [];
+  let presSelectedSlug = null;
+  let presLoaded = false;
+
+  async function presInit() {
+    if (presLoaded) return;
+    presLoaded = true;
+    try {
+      const r = await fetch('/api/presentations/templates');
+      const j = await r.json();
+      presTemplates = j.templates || [];
+      presRenderTemplates();
+    } catch (e) {
+      document.getElementById('presTemplateGrid').innerHTML = '<div style="color:#b91c1c; font-size:13px;">Could not load templates: ' + e.message + '</div>';
+    }
+    presLoadHistory();
+  }
+
+  function presRenderTemplates() {
+    const grid = document.getElementById('presTemplateGrid');
+    if (!presTemplates.length) {
+      grid.innerHTML = '<div style="color:#999; font-size:13px;">No templates available.</div>';
+      return;
+    }
+    grid.innerHTML = presTemplates.map(t => `
+      <div class="pres-template-card" onclick="presSelectTemplate('${t.slug}')"
+           style="border:1px solid ${presSelectedSlug === t.slug ? '#1E2761' : '#d0d7de'};
+                  background:${presSelectedSlug === t.slug ? '#f1f5fb' : '#fff'};
+                  border-radius:10px; padding:14px; cursor:pointer; transition:all .15s;">
+        <div style="font-weight:600; color:#1E2761; font-size:15px;">${escapeHtml(t.title)}</div>
+        <div style="font-size:12px; color:#666; margin-top:4px; line-height:1.4;">${escapeHtml(t.description || '')}</div>
+        <div style="font-size:11px; color:#94A3B8; margin-top:8px; letter-spacing:1px; text-transform:uppercase;">
+          ${(t.variables || []).length} variable${(t.variables || []).length === 1 ? '' : 's'}
+          ${(t.imageSlots || []).length ? ' · ' + (t.imageSlots || []).length + ' image' + ((t.imageSlots || []).length === 1 ? '' : 's') : ''}
+        </div>
+      </div>
+    `).join('');
+  }
+
+  function presSelectTemplate(slug) {
+    presSelectedSlug = slug;
+    presRenderTemplates();
+    const t = presTemplates.find(x => x.slug === slug);
+    if (!t) return;
+    document.getElementById('presFormCard').style.display = 'block';
+    document.getElementById('presFormTitle').textContent = t.title;
+    document.getElementById('presFormDesc').textContent = t.description || '';
+    const fields = document.getElementById('presFormFields');
+    const vars = (t.variables || []).map(v => `
+      <div style="margin-bottom:10px;">
+        <div class="section-label" style="margin-bottom:4px;">${escapeHtml(v.label)}${v.required ? ' <span style="color:#b91c1c;">*</span>' : ''}</div>
+        <input type="text" data-key="${v.key}" placeholder="${escapeHtml(v.placeholder || '')}"
+               style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 12px; font-size:14px; outline:none;">
+      </div>
+    `).join('');
+    const slots = (t.imageSlots || []).map(s => `
+      <div style="margin-bottom:10px;">
+        <div class="section-label" style="margin-bottom:4px;">${escapeHtml(s.label)}</div>
+        <input type="file" data-slot="${s.key}" accept="${s.accept || 'image/*'}"
+               style="width:100%; font-size:13px;">
+      </div>
+    `).join('');
+    fields.innerHTML = vars + slots || '<div style="color:#888; font-size:13px;">This template has no variables. Click Generate to produce the standard deck.</div>';
+    document.getElementById('presGenerateStatus').textContent = '';
+  }
+
+  async function presGenerate() {
+    if (!presSelectedSlug) return;
+    const t = presTemplates.find(x => x.slug === presSelectedSlug);
+    const form = new FormData();
+    form.append('template_slug', presSelectedSlug);
+
+    const card = document.getElementById('presFormFields');
+    let missing = [];
+    (t.variables || []).forEach(v => {
+      const el = card.querySelector(`input[data-key="${v.key}"]`);
+      const val = el ? el.value.trim() : '';
+      if (v.required && !val) missing.push(v.label);
+      if (val) form.append(v.key, val);
+    });
+    if (missing.length) {
+      document.getElementById('presGenerateStatus').innerHTML = '<span style="color:#b91c1c;">Missing: ' + missing.join(', ') + '</span>';
+      return;
+    }
+    (t.imageSlots || []).forEach(s => {
+      const el = card.querySelector(`input[data-slot="${s.key}"]`);
+      if (el && el.files && el.files[0]) form.append(s.key, el.files[0]);
+    });
+
+    const btn = document.getElementById('presGenerateBtn');
+    const status = document.getElementById('presGenerateStatus');
+    btn.disabled = true; btn.textContent = '⏳ Generating…';
+    status.textContent = '';
+    try {
+      const r = await fetch('/api/presentations/generate', { method: 'POST', body: form });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({ error: 'Generation failed' }));
+        throw new Error(j.error || ('HTTP ' + r.status));
+      }
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : (presSelectedSlug + '.pptx');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + escapeHtml(filename) + '</span>';
+      presLoadHistory();
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + escapeHtml(e.message) + '</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '🎬 Generate & download';
+    }
+  }
+
+  async function presLoadHistory() {
+    const list = document.getElementById('presHistoryList');
+    try {
+      const r = await fetch('/api/presentations/instances');
+      const j = await r.json();
+      const items = j.instances || [];
+      if (!items.length) {
+        list.innerHTML = '<div style="color:#999; font-size:13px; padding:14px;">No generations yet.</div>';
+        return;
+      }
+      list.innerHTML = items.map(i => {
+        const dt = new Date(i.created_at);
+        const dateStr = dt.toLocaleDateString() + ' ' + dt.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        return `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; border-bottom:1px solid #f1f5f9;">
+            <div style="min-width:0; flex:1;">
+              <div style="font-weight:500; color:#1E2761; font-size:13px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">${escapeHtml(i.title || i.template_slug)}</div>
+              <div style="font-size:11px; color:#94A3B8; margin-top:2px;">${escapeHtml(i.template_slug)} · ${dateStr}</div>
+            </div>
+            <div style="display:flex; gap:4px; flex-shrink:0;">
+              <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="presRedownload('${i.id}')">⬇</button>
+              <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="presDelete('${i.id}')">✕</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = '<div style="color:#b91c1c; font-size:13px; padding:14px;">Could not load history: ' + e.message + '</div>';
+    }
+  }
+
+  async function presRedownload(id) {
+    try {
+      const r = await fetch('/api/presentations/instances/' + id + '/download');
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'presentation.pptx';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      alert('Re-download failed: ' + e.message);
+    }
+  }
+
+  async function presDelete(id) {
+    if (!confirm('Delete this generation from history? The .pptx will be removed from storage.')) return;
+    try {
+      const r = await fetch('/api/presentations/instances/' + id, { method: 'DELETE' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      presLoadHistory();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
+    }
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+  }
+
+  // Lazy-init on first tab activation. switchTab() is defined elsewhere; we
+  // patch it once on load to hook tab='presentations'.
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const result = orig.apply(this, arguments);
+      if (tab === 'presentations') presInit();
+      return result;
+    };
+  })();
 </script>
 </body>
 </html>
