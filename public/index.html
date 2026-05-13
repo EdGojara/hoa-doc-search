@@ -11470,9 +11470,11 @@ ${questionsPage}
 
   // =========================================================================
   // Customer-page shortcuts — pills that open the homeowner-facing URLs in a
-  // new tab. Maps community display name → URL slug (seeded in migration 020).
+  // new tab. Real slugs come from /api/billing/communities so we can't drift
+  // from what's actually in the DB. Hardcoded fallback for known names if the
+  // API fails to load (e.g., offline).
   // =========================================================================
-  const COMMUNITY_SLUGS = {
+  const COMMUNITY_SLUGS_FALLBACK = {
     'Lakes of Pine Forest': 'lpf',
     'Canyon Gate at Cinco Ranch': 'canyon-gate',
     'Eaglewood': 'eaglewood',
@@ -11481,6 +11483,23 @@ ${questionsPage}
     'Still Creek Ranch': 'still-creek-ranch',
     'August Meadows': 'august-meadows',
   };
+  let COMMUNITY_SLUGS = { ...COMMUNITY_SLUGS_FALLBACK };
+
+  async function loadCommunitySlugs() {
+    try {
+      const r = await fetch('/api/billing/communities');
+      const j = await r.json();
+      const map = {};
+      for (const c of (j.communities || [])) {
+        if (c && c.name && c.slug) map[c.name] = c.slug;
+      }
+      // merge — fetched slugs win, fallback fills any gaps
+      COMMUNITY_SLUGS = { ...COMMUNITY_SLUGS_FALLBACK, ...map };
+      updateCustomerLinks();
+    } catch (e) {
+      console.warn('loadCommunitySlugs failed, using fallback:', e.message);
+    }
+  }
 
   function updateCustomerLinks() {
     const bar = document.getElementById('customerLinksBar');
@@ -11496,7 +11515,6 @@ ${questionsPage}
     document.getElementById('custLinkArc').href = `/apply/${slug}`;
     document.getElementById('custLinkFob').href = `/fob/${slug}`;
     document.getElementById('custLinkCommunity').href = `/c/${slug}`;
-    // Status lookup landing page accepts a reference number on arrival.
     document.getElementById('custLinkStatus').href = `/apply/status/`;
   }
 
@@ -11504,9 +11522,12 @@ ${questionsPage}
   (function () {
     const sel = document.getElementById('communitySelect');
     if (sel) sel.addEventListener('change', updateCustomerLinks);
-    document.addEventListener('DOMContentLoaded', updateCustomerLinks);
-    // also run once now in case DOMContentLoaded already fired
+    document.addEventListener('DOMContentLoaded', () => {
+      updateCustomerLinks();
+      loadCommunitySlugs();
+    });
     try { updateCustomerLinks(); } catch (_) {}
+    loadCommunitySlugs();
   })();
 
   // =========================================================================

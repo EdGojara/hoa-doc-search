@@ -107,7 +107,7 @@ router.get('/communities', async (req, res) => {
     const { data: communities, error } = await supabase
       .from('communities')
       .select(`
-        id, name, legal_name, vantaca_code, total_lots, active,
+        id, name, legal_name, slug, vantaca_code, total_lots, active,
         contracts:contracts(id, version, effective_date, escalator_kind, escalator_pct, status)
       `)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
@@ -123,6 +123,7 @@ router.get('/communities', async (req, res) => {
         id: c.id,
         name: c.name,
         legal_name: c.legal_name,
+        slug: c.slug,
         vantaca_code: c.vantaca_code,
         total_lots: c.total_lots,
         active_contract: active
