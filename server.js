@@ -657,7 +657,10 @@ app.post('/acc-review', upload.any(), async (req, res) => {
       `FROM EACH PHOTO (label them Photo 1, Photo 2, etc.):\n- Describe what you see plainly — the structure, the material, the color, the surroundings\n- Estimate scale where possible (compare to a door, person, car if visible)\n- Note neighbor properties visible in frame (e.g., adjacent fence height, paint color)\n- Note property condition issues that may matter to the review (drainage slope, easement markers, utility boxes, trees)\n- If a photo appears to be a contractor rendering vs an existing condition, say so\n\n` +
       `CROSS-CHECK:\n- If the application says one thing and a photo shows another, flag the discrepancy explicitly\n- If something a complete application normally has is MISSING (no survey, no dimensions, no contractor), flag it explicitly\n\n` +
       (typedDetails && typedDetails.trim() ? `\nALSO factor in these additional details typed by the manager:\n${typedDetails.trim()}\n` : '') +
-      `\nOutput a clear structured summary the ACC reviewer can use to make a decision. Do not approve or deny — just extract.`;
+      `\nOutput a clear structured summary the ACC reviewer can use to make a decision. Do not approve or deny — just extract.\n\n` +
+      `IMPORTANT: At the very end of your output, on its own line, append a single-line JSON object with these exact keys (use null when a field truly is not present — do NOT invent values):\n` +
+      `<<<EXTRACTED_JSON>>>{"homeowner_name":"...","homeowner_address":"...","project_summary":"... (one line, e.g., '6ft cedar fence — rear yard')","reference_number":"..." }<<<END_JSON>>>\n` +
+      `homeowner_address should be street address + city/state if available. project_summary is a single-line description suitable for a "Re:" line on a letter. reference_number is whatever application reference is on the document.`;
     extractContent.push({ type: 'text', text: extractText });
 
     // Opus 4.7 has the strongest vision recall for material/color/scale — use it
@@ -668,7 +671,27 @@ app.post('/acc-review', upload.any(), async (req, res) => {
       messages: [{ role: 'user', content: extractContent }],
     });
 
-    const appDetails = extractResponse.content[0].text;
+    const rawExtract = extractResponse.content[0].text;
+    // Pull out the structured JSON block at the end of the extract — used to
+    // auto-fill the decision letter form on the client. Strip it from the
+    // text shown to the decision model so the JSON doesn't muddy the prompt.
+    let extracted = { homeowner_name: null, homeowner_address: null, project_summary: null, reference_number: null };
+    let appDetails = rawExtract;
+    const m = rawExtract.match(/<<<EXTRACTED_JSON>>>([\s\S]*?)<<<END_JSON>>>/);
+    if (m) {
+      try {
+        const parsed = JSON.parse(m[1].trim());
+        extracted = {
+          homeowner_name: parsed.homeowner_name || null,
+          homeowner_address: parsed.homeowner_address || null,
+          project_summary: parsed.project_summary || null,
+          reference_number: parsed.reference_number || null,
+        };
+      } catch (e) {
+        console.warn('[acc-review] extracted JSON parse failed:', e.message);
+      }
+      appDetails = rawExtract.replace(/<<<EXTRACTED_JSON>>>[\s\S]*?<<<END_JSON>>>/, '').trim();
+    }
     const context = await getRelevantChunks(appDetails, community);
 
     const { data: playbookEntries } = await supabase
@@ -844,7 +867,7 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
       }],
     });
 
-    res.json({ review: reviewResponse.content[0].text });
+    res.json({ review: reviewResponse.content[0].text, extracted });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error processing ACC application: ' + err.message });

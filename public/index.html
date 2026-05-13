@@ -7409,6 +7409,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         if (sec) sec.style.display = 'block';
         const body = document.getElementById('accLetterBody');
         if (body) body.value = data.review;
+        // Auto-fill homeowner / project / reference from the AI's structured extract
+        const ex = data.extracted || {};
+        const setIfBlank = (id, val) => {
+          if (!val) return;
+          const el = document.getElementById(id);
+          if (el && !el.value) el.value = val;
+        };
+        setIfBlank('accLetterName',    ex.homeowner_name);
+        setIfBlank('accLetterAddress', ex.homeowner_address);
+        setIfBlank('accLetterProject', ex.project_summary);
+        setIfBlank('accLetterRef',     ex.reference_number);
         // Map the manager's override dropdown to the letter decision dropdown.
         const overrideMap = {
           'approved with conditions': 'approved_with_conditions',
