@@ -622,29 +622,50 @@ CRITICAL RULES:
   }
 });
 
-app.post('/acc-review', upload.single('pdf'), async (req, res) => {
+app.post('/acc-review', upload.any(), async (req, res) => {
   try {
-    const { community, notes, additionalContext, decision, conditions } = req.body;
-    if (!req.file) return res.status(400).json({ error: 'No PDF uploaded.' });
+    const { community, details: typedDetails, notes, additionalContext, decision, conditions } = req.body;
+    const files = req.files || [];
+    const pdfFile = files.find((f) => f.fieldname === 'pdf');
+    const imageFiles = files.filter((f) => f.fieldname === 'images');
+    if (!pdfFile && imageFiles.length === 0 && !(typedDetails && typedDetails.trim())) {
+      return res.status(400).json({ error: 'Provide application details, a PDF, or photos.' });
+    }
 
-    const pdfBase64 = req.file.buffer.toString('base64');
+    // Build the multimodal content array for extraction. The vision model sees
+    // the PDF AND every photo, then produces a unified summary that includes
+    // what's visible in the photos (color, scale, materials, neighbor context).
+    const extractContent = [];
+    if (pdfFile) {
+      extractContent.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: pdfFile.buffer.toString('base64') },
+      });
+    }
+    imageFiles.forEach((img, idx) => {
+      const mt = img.mimetype && img.mimetype.startsWith('image/') ? img.mimetype : 'image/jpeg';
+      extractContent.push({
+        type: 'image',
+        source: { type: 'base64', media_type: mt, data: img.buffer.toString('base64') },
+      });
+    });
 
+    const extractText =
+      `You are extracting facts from an HOA Architectural Control Committee (ACC) application package. The package may include a PDF application form and one or more photos (the property today, neighboring fences/structures for context, contractor renderings, or color/material samples).\n\n` +
+      `Extract and list every concrete detail you can identify, both from the PDF AND from each photo. Be thorough — your output is the only thing downstream reviewers will see:\n\n` +
+      `FROM THE APPLICATION FORM:\n- Homeowner name, address, phone, email\n- Project type (fence, pool, deck, paint, roof, room addition, etc.)\n- Written description / scope of work\n- Materials stated (with brand/grade if given)\n- Colors stated (with color name / hex / sample number if given)\n- Dimensions (height, length, width, square footage)\n- Setbacks / distances from property lines\n- Contractor name + license if listed\n- Start / completion dates\n- Estimated cost\n- Anything signed or dated\n\n` +
+      `FROM EACH PHOTO (label them Photo 1, Photo 2, etc.):\n- Describe what you see plainly — the structure, the material, the color, the surroundings\n- Estimate scale where possible (compare to a door, person, car if visible)\n- Note neighbor properties visible in frame (e.g., adjacent fence height, paint color)\n- Note property condition issues that may matter to the review (drainage slope, easement markers, utility boxes, trees)\n- If a photo appears to be a contractor rendering vs an existing condition, say so\n\n` +
+      `CROSS-CHECK:\n- If the application says one thing and a photo shows another, flag the discrepancy explicitly\n- If something a complete application normally has is MISSING (no survey, no dimensions, no contractor), flag it explicitly\n\n` +
+      (typedDetails && typedDetails.trim() ? `\nALSO factor in these additional details typed by the manager:\n${typedDetails.trim()}\n` : '') +
+      `\nOutput a clear structured summary the ACC reviewer can use to make a decision. Do not approve or deny — just extract.`;
+    extractContent.push({ type: 'text', text: extractText });
+
+    // Opus 4.7 has the strongest vision recall for material/color/scale — use it
+    // for the extract step. The downstream decision call stays on Sonnet 4.6 for cost.
     const extractResponse = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 1000,
-      messages: [{
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
-          },
-          {
-            type: 'text',
-            text: 'This is an HOA Architectural Control Committee (ACC) application. Please extract: homeowner name, address, phone, email, type of improvement requested, description of the project, materials, colors, dimensions, and any other relevant details. Be thorough.'
-          }
-        ]
-      }]
+      model: 'claude-opus-4-7',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: extractContent }],
     });
 
     const appDetails = extractResponse.content[0].text;
@@ -816,6 +837,55 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error processing ACC application: ' + err.message });
+  }
+});
+
+// ============================================================================
+// POST /acc-review/letter — render a printable PDF decision letter
+// ----------------------------------------------------------------------------
+// Body: { community, homeowner_name, homeowner_address, project_summary,
+//         reference_number, decision_type, body_text, date_str }
+// Returns: application/pdf with Bedrock letterhead, decision badge, and the
+// manager-reviewed body. All fields optional except community+body_text — the
+// template will fall back to defaults so a letter still renders cleanly.
+// ============================================================================
+const { renderDecisionLetterHTML } = require('./lib/decision_letter');
+const _puppeteer_lazy = () => require('puppeteer');
+
+app.post('/acc-review/letter', express.json({ limit: '2mb' }), async (req, res) => {
+  let browser = null;
+  try {
+    const body = req.body || {};
+    if (!body.body_text || !body.body_text.trim()) {
+      return res.status(400).json({ error: 'body_text is required' });
+    }
+    const html = renderDecisionLetterHTML(body);
+    const puppeteer = _puppeteer_lazy();
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+    });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true,
+    });
+
+    const stem = (body.homeowner_name || body.community || 'decision')
+      .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
+    const filename = `${stem}_ACC_decision_${new Date().toISOString().slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[acc-review/letter] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  } finally {
+    if (browser) try { await browser.close(); } catch (_) {}
   }
 });
 
