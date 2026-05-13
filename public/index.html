@@ -228,6 +228,22 @@
   </select>
 </div>
 
+<!-- Customer-facing page shortcuts — open in a new tab so staff can walk a
+     homeowner through what they're seeing without typing the URL. Updates
+     when the community above changes. -->
+<div id="customerLinksBar" style="display:none; padding:8px 16px; background:#f1f5fb; border-bottom:1px solid #d9dfea; gap:8px; flex-wrap:wrap; align-items:center; font-size:13px;">
+  <span style="color:#5a7390; font-weight:600; margin-right:4px;">Customer pages →</span>
+  <a id="custLinkArc" href="#" target="_blank" rel="noopener" class="customer-link-btn"
+     style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background:#fff; border:1px solid #1E2761; border-radius:8px; color:#1E2761; text-decoration:none; font-weight:600;">🏗️ ARC form</a>
+  <a id="custLinkFob" href="#" target="_blank" rel="noopener" class="customer-link-btn"
+     style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background:#fff; border:1px solid #1E2761; border-radius:8px; color:#1E2761; text-decoration:none; font-weight:600;">🔑 Fob request</a>
+  <a id="custLinkCommunity" href="#" target="_blank" rel="noopener" class="customer-link-btn"
+     style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background:#fff; border:1px solid #1E2761; border-radius:8px; color:#1E2761; text-decoration:none; font-weight:600;">🏘️ Community page</a>
+  <a id="custLinkStatus" href="#" target="_blank" rel="noopener" class="customer-link-btn"
+     style="display:inline-flex; align-items:center; gap:6px; padding:6px 12px; background:#fff; border:1px solid #1E2761; border-radius:8px; color:#1E2761; text-decoration:none; font-weight:600;">🔎 Status lookup</a>
+  <span id="custLinksHint" style="color:#94A3B8; font-size:12px; margin-left:4px;">opens in a new tab</span>
+</div>
+
 <div class="tabs">
   <div class="tab active" onclick="switchTab('asked')">🧠 askEd</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
@@ -11451,6 +11467,47 @@ ${questionsPage}
       }
     });
   });
+
+  // =========================================================================
+  // Customer-page shortcuts — pills that open the homeowner-facing URLs in a
+  // new tab. Maps community display name → URL slug (seeded in migration 020).
+  // =========================================================================
+  const COMMUNITY_SLUGS = {
+    'Lakes of Pine Forest': 'lpf',
+    'Canyon Gate at Cinco Ranch': 'canyon-gate',
+    'Eaglewood': 'eaglewood',
+    'Waterview Estates': 'waterview',
+    'Quail Ridge': 'quail-ridge',
+    'Still Creek Ranch': 'still-creek-ranch',
+    'August Meadows': 'august-meadows',
+  };
+
+  function updateCustomerLinks() {
+    const bar = document.getElementById('customerLinksBar');
+    if (!bar) return;
+    const sel = document.getElementById('communitySelect');
+    const name = sel ? sel.value : '';
+    const slug = COMMUNITY_SLUGS[name];
+    if (!slug) {
+      bar.style.display = 'none';
+      return;
+    }
+    bar.style.display = 'flex';
+    document.getElementById('custLinkArc').href = `/apply/${slug}`;
+    document.getElementById('custLinkFob').href = `/fob/${slug}`;
+    document.getElementById('custLinkCommunity').href = `/c/${slug}`;
+    // Status lookup landing page accepts a reference number on arrival.
+    document.getElementById('custLinkStatus').href = `/apply/status/`;
+  }
+
+  // Wire into the existing community-change handler without modifying it.
+  (function () {
+    const sel = document.getElementById('communitySelect');
+    if (sel) sel.addEventListener('change', updateCustomerLinks);
+    document.addEventListener('DOMContentLoaded', updateCustomerLinks);
+    // also run once now in case DOMContentLoaded already fired
+    try { updateCustomerLinks(); } catch (_) {}
+  })();
 
   // =========================================================================
   // Quick Lookup — terse internal-staff assistant. POSTs to /ask-ed with
