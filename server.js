@@ -900,7 +900,10 @@ app.post('/acc-review/letter', express.json({ limit: '2mb' }), async (req, res) 
       args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
     });
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 30000 });
+    // 'load' is much faster than networkidle0 — our HTML is fully self-contained
+    // (inline CSS, base64 logo, system fonts) so there's no point waiting for
+    // network idle. networkidle0 was timing out on Render's slower free-tier.
+    await page.setContent(html, { waitUntil: 'load', timeout: 60000 });
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
