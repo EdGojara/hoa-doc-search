@@ -897,13 +897,25 @@ app.post('/acc-review/letter', express.json({ limit: '2mb' }), async (req, res) 
     const puppeteer = _puppeteer_lazy();
     browser = await puppeteer.launch({
       headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'],
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu',
+        '--no-zygote',
+        '--single-process',
+      ],
     });
     const page = await browser.newPage();
-    // 'load' is much faster than networkidle0 — our HTML is fully self-contained
-    // (inline CSS, base64 logo, system fonts) so there's no point waiting for
-    // network idle. networkidle0 was timing out on Render's slower free-tier.
-    await page.setContent(html, { waitUntil: 'load', timeout: 60000 });
+    // Page is fully self-contained (inline CSS, base64 logo, system fonts), so
+    // domcontentloaded is the earliest valid signal. If even that times out on
+    // Render's slow free-tier, swallow the timeout and try to render anyway —
+    // a parsed DOM is usually enough to PDF.
+    try {
+      await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    } catch (waitErr) {
+      console.warn('[acc-review/letter] setContent wait timed out — rendering anyway:', waitErr.message);
+    }
     const pdfBuffer = await page.pdf({
       format: 'Letter',
       printBackground: true,
