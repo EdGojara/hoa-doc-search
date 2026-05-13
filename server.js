@@ -440,6 +440,11 @@ app.get('/c/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community_landing.html'));
 });
 
+// Pool / key fob request — transactional, no AI assessment
+app.get('/fob/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'fob_request.html'));
+});
+
 // Shared helper: scrub vendor names from error messages before they reach
 // the user. Anthropic SDK errors can include "claude" / model IDs that
 // should never appear in user-facing strings.

@@ -249,7 +249,7 @@
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
   <div class="tab" onclick="switchTab('recaps')">📰 Recaps</div>
   <div class="tab" onclick="switchTab('archistory')">🏗️ ACC History</div>
-  <div class="tab" onclick="switchTab('accqueue')">📋 ACC Queue</div>
+  <div class="tab" onclick="switchTab('accqueue')">📋 Requests</div>
 </div>
 
 <!-- Chat Tab -->
@@ -4411,6 +4411,11 @@
       <select id="acc-filter-community" class="draft-type-select" onchange="accLoadList()">
         <option value="">All communities</option>
       </select>
+      <select id="acc-filter-type" class="draft-type-select" onchange="accLoadList()">
+        <option value="">All types</option>
+        <option value="arc_application">🏗️ ARC applications</option>
+        <option value="key_fob">🔑 Pool / key fobs</option>
+      </select>
       <select id="acc-filter-status" class="draft-type-select" onchange="accLoadList()">
         <option value="pending_committee_review">⏳ Awaiting review (default)</option>
         <option value="">All statuses</option>
@@ -4514,6 +4519,7 @@
     const params = new URLSearchParams();
     const cid = document.getElementById('acc-filter-community').value;
     const status = document.getElementById('acc-filter-status').value;
+    const typeFilter = document.getElementById('acc-filter-type').value;
     if (cid) params.set('community_id', cid);
     if (status) params.set('final_status', status);
     try {
@@ -4521,7 +4527,10 @@
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       accCurrentList = j.applications || [];
-      // Apply free-text search client-side
+      // Apply service-type + free-text search client-side
+      if (typeFilter) {
+        accCurrentList = accCurrentList.filter(a => a.service_type === typeFilter);
+      }
       const q = document.getElementById('acc-search').value.trim().toLowerCase();
       if (q) {
         accCurrentList = accCurrentList.filter(a => {
@@ -4566,7 +4575,22 @@
       const ageTxt = ageHours == null ? '—' : (ageHours < 1 ? `${Math.round(ageHours*60)}m ago` : ageHours < 24 ? `${Math.round(ageHours)}h ago` : `${Math.round(ageHours/24)}d ago`);
       const urgent = a.final_status === 'pending_committee_review' && ageHours > 24;
 
-      const aiPill = a.assessment_status ? `<span class="acc-pill acc-pill-${a.assessment_status === 'likely_approved' ? 'likely' : a.assessment_status === 'concerns_identified' ? 'concerns' : a.assessment_status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(a.assessment_status)}</span>` : '';
+      // Service-type badge — distinguishes ARC apps (judgment) from fobs (transactional)
+      const isFob = a.service_type === 'key_fob';
+      const serviceBadge = isFob
+        ? '<span class="acc-pill" style="background:#dbeafe; color:#1e3a8a;">🔑 Fob</span>'
+        : '<span class="acc-pill" style="background:#e0e7ff; color:#3730a3;">🏗️ ARC</span>';
+
+      // ARC has AI assessment; fobs do not
+      const middleCell = isFob
+        ? `<div>
+             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Request</strong>
+             <span style="font-size:12px; color:#444;">${accEsc((a.assessment_summary || '').slice(0, 80) || (a.application_data?.request_type ? a.application_data.request_type.replace(/_/g,' ') : '—'))}</span>
+           </div>`
+        : `<div>
+             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">AI assessment</strong>
+             ${a.assessment_status ? `<span class="acc-pill acc-pill-${a.assessment_status === 'likely_approved' ? 'likely' : a.assessment_status === 'concerns_identified' ? 'concerns' : a.assessment_status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(a.assessment_status)}</span>` : ''}
+           </div>`;
 
       const finalPill = a.final_status === 'approved' ? '<span class="acc-pill acc-pill-approved">✓ Approved</span>'
                        : a.final_status === 'denied' ? '<span class="acc-pill acc-pill-denied">✗ Denied</span>'
@@ -4577,16 +4601,14 @@
           <div>
             <div class="ref">${accEsc(a.reference_number)}</div>
             <div style="font-size:11px; color:#888; margin-top:3px;">${accEsc(a.community?.name || '')}</div>
+            <div style="margin-top:4px;">${serviceBadge}</div>
           </div>
           <div>
             <div class="submitter">${accEsc(a.submitter_name)}</div>
             <div class="addr">${accEsc(a.property_address)}</div>
-            ${a.assessment_summary ? `<div class="summary">${accEsc(a.assessment_summary)}</div>` : ''}
+            ${a.assessment_summary && !isFob ? `<div class="summary">${accEsc(a.assessment_summary)}</div>` : ''}
           </div>
-          <div>
-            <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">AI assessment</strong>
-            ${aiPill}
-          </div>
+          ${middleCell}
           <div>
             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Status</strong>
             ${finalPill}

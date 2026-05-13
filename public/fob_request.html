@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Pool / Key Fob Request — Bedrock</title>
+  <meta name="theme-color" content="#1a3a5c" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937; min-height: 100dvh;
+    }
+    .page { max-width: 640px; margin: 0 auto; padding: 18px 18px 48px; }
+
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 4px 20px;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 24px;
+    }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 8px;
+      background: #1a3a5c; color: #fff;
+      display:flex; align-items:center; justify-content:center;
+      font-weight: 700; font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; color: #0f172a; }
+    .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+
+    h1 { font-size: 26px; font-weight: 700; margin: 0 0 8px; color: #0f172a; line-height: 1.2; }
+    .lede { font-size: 14px; color: #475569; line-height: 1.55; margin-bottom: 22px; }
+    .lede strong { color: #1a3a5c; }
+
+    .card {
+      background: #fff; border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 18px; margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .card h2 {
+      font-size: 13px; font-weight: 700; color: #1a3a5c;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px;
+    }
+    .fld { display:flex; flex-direction:column; gap:5px; margin-bottom: 12px; }
+    .fld label { font-size: 12px; font-weight: 600; color: #334155; }
+    .fld .req { color: #dc2626; }
+    .fld input, .fld select, .fld textarea {
+      padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
+      font: inherit; font-size: 15px; background: #fff;
+    }
+    .fld input:focus, .fld select:focus, .fld textarea:focus {
+      outline: none; border-color: #1a3a5c;
+      box-shadow: 0 0 0 3px rgba(26, 58, 92, 0.10);
+    }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .submit-btn {
+      display: block; width: 100%;
+      background: #1a3a5c; color: #fff;
+      padding: 16px; border: none; border-radius: 10px;
+      font: inherit; font-size: 16px; font-weight: 700;
+      cursor: pointer; margin-top: 8px;
+      box-shadow: 0 4px 12px rgba(26, 58, 92, 0.25);
+    }
+    .submit-btn:active { transform: scale(0.985); }
+    .submit-btn:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
+    .fee-banner {
+      background: #fff7ed; border: 1px solid #fbbf24;
+      padding: 12px 16px; border-radius: 10px; margin-bottom: 16px;
+      font-size: 13px; color: #78350f;
+    }
+    .fee-banner strong { color: #b45309; }
+
+    .request-type-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    }
+    .request-type-grid input[type="radio"] {
+      position: absolute; opacity: 0;
+    }
+    .request-type-grid label {
+      display: block; padding: 14px 12px;
+      border: 2px solid #cbd5e1; border-radius: 10px;
+      cursor: pointer; text-align: center;
+      background: #fff;
+      transition: all 0.15s;
+    }
+    .request-type-grid label:hover { border-color: #94a3b8; }
+    .request-type-grid input[type="radio"]:checked + label {
+      border-color: #1a3a5c;
+      background: #f0f4fa;
+      color: #1a3a5c;
+    }
+    .request-type-grid .rt-emoji { font-size: 22px; }
+    .request-type-grid .rt-title { font-weight: 700; font-size: 14px; margin-top: 4px; }
+    .request-type-grid .rt-desc { font-size: 11px; color: #64748b; margin-top: 2px; line-height: 1.3; }
+
+    .loading-screen { display:none; text-align:center; padding:32px 16px; }
+    .loading-screen.show { display:block; }
+    .spinner {
+      width: 48px; height: 48px;
+      border: 4px solid #cbd5e1; border-top-color: #1a3a5c;
+      border-radius: 50%; margin: 0 auto 14px;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .result-screen { display:none; padding: 8px 0; }
+    .result-screen.show { display: block; }
+    .result-icon {
+      width: 72px; height: 72px; border-radius: 50%;
+      background: #dcfce7; color: #166534;
+      margin: 0 auto 14px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 36px;
+    }
+    .result-screen h2 { text-align: center; font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+    .result-screen .ref { text-align: center; font-size: 13px; color: #64748b; margin-bottom: 22px; }
+    .result-screen .ref code {
+      background: #f1f5f9; padding: 2px 10px; border-radius: 6px;
+      font-family: ui-monospace, SFMono-Regular, monospace; font-weight: 600;
+      color: #1a3a5c;
+    }
+    .result-card {
+      background: #fff; border-radius: 12px; padding: 18px;
+      border: 1px solid #e2e8f0; margin-bottom: 14px;
+    }
+    .result-card h3 {
+      font-size: 12px; font-weight: 700; color: #1a3a5c;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 10px;
+    }
+    .result-card .body { font-size: 14px; color: #1f2937; line-height: 1.6; }
+    .footer-note { text-align: center; font-size: 11px; color: #94a3b8; margin-top: 28px; }
+    .err-msg { color: #b91c1c; font-size: 13px; text-align: center; margin: 10px 0; }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <div class="topbar">
+      <div class="brand-mark">B</div>
+      <div>
+        <div class="brand-title">Bedrock Association Management</div>
+        <div class="brand-sub" id="topbar-sub">Pool / Key Fob Request</div>
+      </div>
+    </div>
+
+    <div id="loading-meta" style="text-align:center; padding:48px 0; color:#64748b;">Loading…</div>
+
+    <!-- FORM SCREEN -->
+    <div id="form-screen" style="display:none;">
+      <h1 id="page-title">Request a Pool or Key Fob</h1>
+      <p class="lede" id="page-lede">
+        Request a fob for pool, gym, or community access. Your community manager will verify your homeownership and ship the fob to your address.
+      </p>
+
+      <div class="fee-banner" id="fee-banner" style="display:none;"></div>
+
+      <div class="card">
+        <h2>Your information</h2>
+        <div class="fld">
+          <label>Full name <span class="req">*</span></label>
+          <input id="submitter_name" type="text" autocomplete="name" />
+        </div>
+        <div class="grid-2">
+          <div class="fld">
+            <label>Email <span class="req">*</span></label>
+            <input id="submitter_email" type="email" autocomplete="email" />
+          </div>
+          <div class="fld">
+            <label>Phone</label>
+            <input id="submitter_phone" type="tel" autocomplete="tel" inputmode="tel" />
+          </div>
+        </div>
+        <div class="fld">
+          <label>Property address (in this community) <span class="req">*</span></label>
+          <input id="property_address" type="text" autocomplete="street-address" placeholder="8201 Pine Forest Ln" />
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Request details</h2>
+        <div class="fld">
+          <label>Request type <span class="req">*</span></label>
+          <div class="request-type-grid">
+            <input type="radio" name="request_type" value="new_owner" id="rt-new" />
+            <label for="rt-new">
+              <div class="rt-emoji">🔑</div>
+              <div class="rt-title">New owner</div>
+              <div class="rt-desc">First fob for a new homeowner</div>
+            </label>
+            <input type="radio" name="request_type" value="replacement" id="rt-replace" checked />
+            <label for="rt-replace">
+              <div class="rt-emoji">🔄</div>
+              <div class="rt-title">Replacement</div>
+              <div class="rt-desc">Lost, damaged, or stolen fob</div>
+            </label>
+            <input type="radio" name="request_type" value="additional" id="rt-add" />
+            <label for="rt-add">
+              <div class="rt-emoji">➕</div>
+              <div class="rt-title">Additional</div>
+              <div class="rt-desc">Need an extra fob</div>
+            </label>
+            <input type="radio" name="request_type" value="other" id="rt-other" />
+            <label for="rt-other">
+              <div class="rt-emoji">❓</div>
+              <div class="rt-title">Other</div>
+              <div class="rt-desc">Tell us in notes below</div>
+            </label>
+          </div>
+        </div>
+        <div class="fld" style="margin-top:12px;">
+          <label>How many fobs? <span class="req">*</span></label>
+          <input id="num_fobs" type="number" min="1" max="10" value="1" style="max-width:120px;" />
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">Most homeowners request 1-2.</div>
+        </div>
+        <div class="fld" id="reason-fld">
+          <label>Reason / details</label>
+          <input id="reason" type="text" placeholder="Lost, damaged in pool, etc." />
+        </div>
+        <div class="fld">
+          <label>Mailing instructions (optional)</label>
+          <input id="mailing_instructions" type="text" placeholder="Defaults to property address above" />
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">Leave blank to use the property address.</div>
+        </div>
+        <div class="fld">
+          <label>Anything else?</label>
+          <textarea id="notes" rows="2" placeholder="Optional"></textarea>
+        </div>
+      </div>
+
+      <button id="submit-btn" class="submit-btn">Submit request →</button>
+      <p id="form-err" class="err-msg" style="display:none;"></p>
+    </div>
+
+    <!-- LOADING -->
+    <div id="loading-screen" class="loading-screen">
+      <div class="spinner"></div>
+      <h2 style="font-size:16px; color:#0f172a;">Submitting your request…</h2>
+    </div>
+
+    <!-- RESULT -->
+    <div id="result-screen" class="result-screen">
+      <div class="result-icon">✓</div>
+      <h2>Request received</h2>
+      <p class="ref">Reference: <code id="ref-code"></code></p>
+
+      <div class="result-card">
+        <h3>What happens next</h3>
+        <div class="body">
+          Your community manager will:
+          <ol style="margin: 8px 0 0; padding-left: 22px;">
+            <li>Verify you're a homeowner at the address provided</li>
+            <li>Process your request and (if applicable) confirm payment</li>
+            <li>Mail your fob(s) to the address on file</li>
+            <li>Send you an email when it's on the way</li>
+          </ol>
+        </div>
+      </div>
+
+      <div class="result-card" id="fee-card" style="display:none;">
+        <h3>💵 Fee</h3>
+        <div class="body" id="fee-body"></div>
+      </div>
+
+      <p style="text-align:center; margin-top:22px;">
+        <a id="status-link" href="#" style="background: #fff; color: #1a3a5c; border: 1px solid #1a3a5c; padding: 11px 22px; border-radius: 8px; text-decoration: none; font-size: 14px; font-weight: 600;">Check status anytime</a>
+      </p>
+      <p style="text-align:center; margin-top:14px;">
+        <button onclick="location.reload()" style="background: none; border: none; color: #64748b; text-decoration: underline; cursor: pointer; font: inherit; font-size: 12px;">Submit another request</button>
+      </p>
+    </div>
+
+    <div class="footer-note">Powered by Bedrock Intelligence · bedrocktxai.com</div>
+  </div>
+
+  <script>
+    // Cold-start retry wrapper for Render free-tier wake-ups
+    (function () {
+      const origFetch = window.fetch.bind(window);
+      window.fetch = async function (i, init) {
+        let last = null;
+        for (let n = 0; n < 3; n++) {
+          try { return await origFetch(i, init); }
+          catch (e) {
+            last = e;
+            if (!/Failed to fetch|NetworkError|fetch failed/i.test(e.message || '')) throw e;
+            if (n < 2) await new Promise(r => setTimeout(r, n === 0 ? 4000 : 10000));
+          }
+        }
+        throw last;
+      };
+    })();
+
+    const $ = (id) => document.getElementById(id);
+    const slug = location.pathname.split('/').filter(Boolean).pop();
+    let meta = null;
+
+    async function loadMeta() {
+      try {
+        const r = await fetch(`/api/applications/public/${encodeURIComponent(slug)}/fob-meta`);
+        if (!r.ok) {
+          const j = await r.json().catch(() => ({}));
+          throw new Error(j.error || ('HTTP ' + r.status));
+        }
+        meta = await r.json();
+        renderMeta();
+      } catch (err) {
+        $('loading-meta').innerHTML = `<div style="color:#b91c1c; padding:24px;">Couldn't load this community's fob form: ${escapeHtml(err.message)}<br><br><small>If you need help, contact your manager.</small></div>`;
+      }
+    }
+
+    function renderMeta() {
+      $('loading-meta').style.display = 'none';
+      $('form-screen').style.display = '';
+      $('page-title').textContent = `Pool / Key Fob — ${meta.community.name}`;
+      $('topbar-sub').textContent = `Pool / Key Fob · ${meta.community.name}`;
+      document.title = `${meta.community.name} — Fob Request`;
+
+      const svc = meta.service;
+      const fee = Number(svc.owner_payable_fee) || 0;
+      if (svc.fee_paid_by === 'owner' && fee > 0) {
+        const cfg = svc.service_config || {};
+        const firstFreeNote = cfg.first_fob_free
+          ? `<br><strong>New owners</strong>: your first fob is complimentary; additional fobs are $${fee.toFixed(2)} each.`
+          : '';
+        $('fee-banner').style.display = '';
+        $('fee-banner').innerHTML = `💵 <strong>Fee: $${fee.toFixed(2)} per fob</strong>. Payment instructions follow once your manager reviews this request.${firstFreeNote}`;
+      }
+    }
+
+    $('submit-btn').addEventListener('click', async () => {
+      $('form-err').style.display = 'none';
+      const name = $('submitter_name').value.trim();
+      const email = $('submitter_email').value.trim();
+      const addr = $('property_address').value.trim();
+      if (!name || !email || !addr) {
+        showFormErr('Please fill in name, email, and property address.');
+        return;
+      }
+      const requestType = document.querySelector('input[name="request_type"]:checked').value;
+      const numFobs = Math.max(1, Math.min(10, Number($('num_fobs').value) || 1));
+
+      $('form-screen').style.display = 'none';
+      $('loading-screen').classList.add('show');
+
+      const body = {
+        submitter_name: name,
+        submitter_email: email,
+        submitter_phone: $('submitter_phone').value.trim() || null,
+        property_address: addr,
+        application_data: {
+          request_type: requestType,
+          num_fobs: numFobs,
+          reason: $('reason').value.trim() || null,
+          mailing_instructions: $('mailing_instructions').value.trim() || null,
+          notes: $('notes').value.trim() || null
+        }
+      };
+
+      try {
+        const r = await fetch(`/api/applications/public/${encodeURIComponent(slug)}/submit-fob`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body)
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+        $('loading-screen').classList.remove('show');
+        renderResult(j);
+      } catch (err) {
+        $('loading-screen').classList.remove('show');
+        $('form-screen').style.display = '';
+        showFormErr(err.message);
+      }
+    });
+
+    function renderResult(payload) {
+      $('ref-code').textContent = payload.reference_number;
+      $('status-link').href = payload.status_url;
+      $('result-screen').classList.add('show');
+
+      if (payload.calculated_fee_usd != null && payload.calculated_fee_usd > 0) {
+        $('fee-card').style.display = '';
+        $('fee-body').innerHTML = `
+          <div><strong>$${Number(payload.calculated_fee_usd).toFixed(2)}</strong></div>
+          ${payload.fee_basis ? `<div style="font-size:12px; color:#64748b; margin-top:4px;">${escapeHtml(payload.fee_basis)}</div>` : ''}
+          <div style="font-size:12px; color:#64748b; margin-top:8px;">Your manager will reach out with payment instructions.</div>
+        `;
+      }
+    }
+
+    function showFormErr(msg) {
+      const e = $('form-err');
+      e.textContent = msg; e.style.display = '';
+      e.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function escapeHtml(s) {
+      return (s == null ? '' : String(s)).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    loadMeta();
+  </script>
+</body>
+</html>

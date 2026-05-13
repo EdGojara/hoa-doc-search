@@ -490,6 +490,144 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
   }
 });
 
+// ============================================================================
+// FOB / KEY REQUESTS — separate flow, transactional, no AI assessment
+// ----------------------------------------------------------------------------
+// Per Ed: fobs are transactional, not judgment-driven. They don't belong in
+// the ARC pipeline (would dilute the AI's precedent library with admin
+// noise). Same community_applications table but service_type='key_fob',
+// no AI assessment, simpler manager workflow.
+// ============================================================================
+
+// GET /api/applications/public/:slug/fob-meta — what the fob form needs
+router.get('/public/:slug/fob-meta', async (req, res) => {
+  try {
+    const { data: comm, error } = await supabase
+      .from('communities')
+      .select(`
+        id, name, slug, profile,
+        services:community_services(id, service_type, owner_payable_fee, fee_paid_by, service_config, active)
+      `)
+      .eq('slug', req.params.slug)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) throw error;
+    if (!comm) return res.status(404).json({ error: 'Community not found' });
+
+    const fobService = (comm.services || []).find(s => s.service_type === 'key_fob' && s.active !== false);
+    if (!fobService) {
+      return res.status(404).json({ error: 'This community does not offer key/fob requests.' });
+    }
+
+    res.json({
+      community: { id: comm.id, name: comm.name, slug: comm.slug, profile: comm.profile || {} },
+      service: fobService
+    });
+  } catch (err) {
+    console.error('[applications] fob-meta failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/applications/public/:slug/submit-fob — submit a fob request
+// Body: { submitter_name, submitter_email, submitter_phone?, property_address,
+//          application_data: { request_type, num_fobs, reason?, mailing_instructions? } }
+router.post('/public/:slug/submit-fob', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.submitter_name || !b.submitter_email || !b.property_address) {
+      return res.status(400).json({ error: 'submitter_name, submitter_email, and property_address are required' });
+    }
+
+    const { data: comm } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('slug', req.params.slug)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'Community not found' });
+
+    const { data: service } = await supabase
+      .from('community_services')
+      .select('id, service_type, owner_payable_fee, fee_paid_by, service_config')
+      .eq('community_id', comm.id)
+      .eq('service_type', 'key_fob')
+      .maybeSingle();
+    if (!service) {
+      return res.status(400).json({ error: 'This community has not enabled fob requests. Contact management.' });
+    }
+
+    // Reference number — e.g., LPF-FOB-2026-0042
+    const prefix = (comm.name || 'APP').replace(/[^A-Z]/gi, '').slice(0, 3).toUpperCase() + '-FOB';
+    const reference = await nextReferenceNumber(comm.id, 'key_fob', prefix);
+
+    const appData = b.application_data || {};
+    const numFobs = Math.max(1, Math.min(10, Number(appData.num_fobs) || 1));
+    const requestType = appData.request_type || 'replacement';
+
+    // Fee calculation: per-fob fee × count, but new-owner first fob is often free
+    // per the service_config. Honor service_config.first_fob_free for first-time owners.
+    let calculatedFee = null;
+    let feeBasis = null;
+    if (service.fee_paid_by === 'owner') {
+      const perFob = Number(service.owner_payable_fee) || 0;
+      const cfg = service.service_config || {};
+      const firstFree = cfg.first_fob_free && requestType === 'new_owner';
+      const billable = firstFree ? Math.max(0, numFobs - 1) : numFobs;
+      calculatedFee = perFob * billable;
+      feeBasis = billable === 0
+        ? 'First fob complimentary for new owners'
+        : `${billable} × $${perFob.toFixed(2)} = $${calculatedFee.toFixed(2)}`;
+    }
+
+    const insert = {
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id: comm.id,
+      community_service_id: service.id,
+      reference_number: reference,
+      service_type: 'key_fob',
+      submitter_name: b.submitter_name,
+      submitter_email: b.submitter_email,
+      submitter_phone: b.submitter_phone || null,
+      property_address: b.property_address,
+      property_unit: b.property_unit || null,
+      application_data: {
+        request_type: requestType,
+        num_fobs: numFobs,
+        reason: appData.reason || null,
+        mailing_instructions: appData.mailing_instructions || null,
+        notes: appData.notes || null
+      },
+      final_status: 'pending_committee_review',
+      submitted_at: new Date().toISOString(),
+      calculated_fee_usd: calculatedFee,
+      fee_basis: feeBasis,
+      payment_status: (calculatedFee && calculatedFee > 0) ? 'pending' : 'not_required',
+      client_ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim() || null,
+      user_agent: req.headers['user-agent'] || null
+    };
+
+    const { data: app, error } = await supabase
+      .from('community_applications')
+      .insert(insert)
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.json({
+      ok: true,
+      reference_number: reference,
+      application_id: app.id,
+      status_url: `/apply/status/${encodeURIComponent(reference)}`,
+      calculated_fee_usd: calculatedFee,
+      fee_basis: feeBasis
+    });
+  } catch (err) {
+    console.error('[applications] fob submit failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /api/applications/public/status/:reference — homeowner status check
 router.get('/public/status/:reference', async (req, res) => {
   try {
