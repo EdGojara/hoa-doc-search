@@ -840,7 +840,24 @@ For INCOMPLETE APPLICATIONS use this format:
 For DENIALS use this format:
 Thank the homeowner, state the specific governing document provision that cannot be met, leave the door open for a revised application that addresses the issue, keep it professional and warm never harsh.
 
-ALWAYS sign off as Bedrock Association Management — never use a personal name.`,
+ALWAYS sign off as Bedrock Association Management — never use a personal name.
+
+CRITICAL — APPEND A CLEAN LETTER BODY:
+After your full response (whatever sections it has), append a homeowner-facing letter body wrapped in <<<LETTER_BODY>>>...<<<END_LETTER>>> markers. This block is what gets printed and mailed to the homeowner, so it must be PLAIN PROSE:
+- Start with the salutation: "Dear Mr. and Mrs. ___," (use the actual courtesy title where appropriate; if first names are unisex or unknown, use "Dear [First Last],")
+- Then 1-3 short body paragraphs explaining the decision in warm professional language
+- If conditions apply, list them as a numbered list — "1. ...", "2. ...", etc.
+- End with: "Please retain a copy of this letter for your records. If you have any questions please contact our office at (832) 588-2485 or info@bedrocktx.com."
+
+The LETTER_BODY must NOT contain:
+- ANY markdown headings (no #, ##, ###)
+- ANY markdown bold/italic markers (no **, no _italic_)
+- ANY internal section labels like "APPLICANT SUMMARY", "COMPLETENESS CHECK", "RECOMMENDATION", "CONDITIONS"
+- A letterhead, return address, or recipient block — the template renders all of that
+- A signature/closing — the template renders "On behalf of the [Community] ACC, Bedrock Association Management..." automatically
+- The word "INTERNAL" or any analysis text — this is what the homeowner reads
+
+Write LETTER_BODY in the warm, professional voice the homeowner will receive. The rest of your response (analysis, sections) is for the manager's reference and is shown separately in the admin UI.`,
       messages: [{
         role: 'user',
         content: (() => {
@@ -867,7 +884,18 @@ ALWAYS sign off as Bedrock Association Management — never use a personal name.
       }],
     });
 
-    res.json({ review: reviewResponse.content[0].text, extracted });
+    // Pull the clean homeowner-facing letter body out of the review and return
+    // it separately. UI pre-fills the letter form with this clean prose
+    // (instead of the full markdown analysis).
+    const rawReview = reviewResponse.content[0].text;
+    let letterBody = '';
+    let reviewText = rawReview;
+    const lm = rawReview.match(/<<<LETTER_BODY>>>([\s\S]*?)<<<END_LETTER>>>/);
+    if (lm) {
+      letterBody = lm[1].trim();
+      reviewText = rawReview.replace(/<<<LETTER_BODY>>>[\s\S]*?<<<END_LETTER>>>/, '').trim();
+    }
+    res.json({ review: reviewText, extracted, letter_body: letterBody });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error processing ACC application: ' + err.message });
