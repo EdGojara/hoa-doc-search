@@ -432,16 +432,17 @@
       </select>
       <div class="section-label" style="margin-top:8px;">Situation or Email</div>
       <textarea id="edSituation" placeholder="Describe the situation or paste an email here..." style="min-height:200px;"></textarea>
-      <div class="section-label" style="margin-top:8px;">Attach a File (optional)</div>
+      <div class="section-label" style="margin-top:8px;">Attach Files (optional — multiple OK)</div>
       <div class="upload-area" id="edUploadArea"
            onclick="document.getElementById('edAttachment').click()"
            ondragover="handleDragOver(event)"
            ondragleave="handleDragLeave(event)"
-           ondrop="handleDrop(event, 'edAttachment', handleEdAttachmentSelect)">
+           ondrop="handleDrop(event, 'edAttachment', handleEdAttachmentSelect, {multiple: true})">
         <span style="font-size:24px">📎</span>
-        <p id="edAttachmentLabel">Click or drag a PDF or image here (homeowner letter, photo, screenshot)</p>
-        <input type="file" id="edAttachment" accept=".pdf,image/*" onchange="handleEdAttachmentSelect(this)">
+        <p id="edAttachmentLabel">Click or drag PDFs / images here — tap again to add more</p>
+        <input type="file" id="edAttachment" accept=".pdf,image/*" multiple onchange="handleEdAttachmentSelect(this)">
       </div>
+      <div id="edAttachmentPreviews" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px;"></div>
       <button class="action-btn" id="askEdBtn" onclick="askEd()" style="margin-top:8px;">🧠 Get Guidance</button>
 
       <div style="margin-top:16px;">
@@ -7175,7 +7176,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   const suggestions = document.getElementById('suggestions');
   let conversationHistory = [];
   let currentCommunity = '';
-  let selectedImages = [];
+  let accSelectedFiles = [];   // ACC photo uploads — File objects, accumulated
+  let edSelectedFiles = [];    // askEd attachments — File objects, accumulated
 
   let vwState = {
     path: 'A',
@@ -7328,24 +7330,49 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   function handleImageSelect(input) {
     if (!input.files || input.files.length === 0) return;
+    // Accumulate — successive picks ADD to the list, don't replace it.
+    for (const f of input.files) {
+      if (accSelectedFiles.length >= 10) break;
+      accSelectedFiles.push(f);
+    }
+    input.value = ''; // clear so same file can be re-picked if needed
+    renderAccImagePreviews();
+  }
+
+  function renderAccImagePreviews() {
     const previews = document.getElementById('imagePreviews');
     previews.innerHTML = '';
-    selectedImages = [];
-    const count = Math.min(input.files.length, 5);
-    document.getElementById('imgLabel').textContent = `✅ ${count} image(s) selected`;
-    document.getElementById('imgUploadArea').classList.add('has-file');
-    for (let i = 0; i < count; i++) {
-      const file = input.files[i];
-      const reader = new FileReader();
-      reader.onload = (e) => {
-        selectedImages.push({ base64: e.target.result.split(',')[1], type: file.type });
-        const img = document.createElement('img');
-        img.src = e.target.result;
-        img.className = 'image-preview';
-        previews.appendChild(img);
-      };
-      reader.readAsDataURL(file);
+    const label = document.getElementById('imgLabel');
+    const area = document.getElementById('imgUploadArea');
+    if (accSelectedFiles.length === 0) {
+      label.textContent = 'Click or drag photos or color samples here';
+      area.classList.remove('has-file');
+      return;
     }
+    label.textContent = `✅ ${accSelectedFiles.length} photo${accSelectedFiles.length === 1 ? '' : 's'} attached — tap again to add more`;
+    area.classList.add('has-file');
+    accSelectedFiles.forEach((file, idx) => {
+      const wrap = document.createElement('div');
+      wrap.style.cssText = 'position:relative; display:inline-block; margin:4px;';
+      const img = document.createElement('img');
+      img.className = 'image-preview';
+      const reader = new FileReader();
+      reader.onload = (e) => { img.src = e.target.result; };
+      reader.readAsDataURL(file);
+      const remove = document.createElement('button');
+      remove.type = 'button';
+      remove.textContent = '×';
+      remove.title = 'Remove this photo';
+      remove.style.cssText = 'position:absolute; top:-6px; right:-6px; width:22px; height:22px; border-radius:50%; border:none; background:#dc2626; color:#fff; font-weight:700; cursor:pointer; font-size:14px; line-height:1; box-shadow:0 1px 3px rgba(0,0,0,0.3);';
+      remove.onclick = (e) => {
+        e.stopPropagation();
+        accSelectedFiles.splice(idx, 1);
+        renderAccImagePreviews();
+      };
+      wrap.appendChild(img);
+      wrap.appendChild(remove);
+      previews.appendChild(wrap);
+    });
   }
 
   async function reviewACC() {
@@ -7369,9 +7396,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       formData.append('conditions', document.getElementById('accConditions').value);
       if (details) formData.append('details', details);
       if (pdfFile) formData.append('pdf', pdfFile);
-      const imgInput = document.getElementById('accImages');
-      const imgFiles = imgInput && imgInput.files ? Array.from(imgInput.files) : [];
-      imgFiles.forEach((f) => formData.append('images', f));
+      accSelectedFiles.forEach((f) => formData.append('images', f));
       const res = await fetch('/acc-review', { method: 'POST', body: formData });
       const data = await res.json();
       accOutput.className = 'output-box';
@@ -7451,16 +7476,51 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   function handleEdAttachmentSelect(input) {
-    if (input.files && input.files[0]) {
-      document.getElementById('edAttachmentLabel').textContent = `✅ ${input.files[0].name}`;
-      document.getElementById('edUploadArea').classList.add('has-file');
+    if (!input.files || input.files.length === 0) return;
+    for (const f of input.files) {
+      if (edSelectedFiles.length >= 10) break;
+      edSelectedFiles.push(f);
     }
+    input.value = '';
+    renderEdAttachmentPreviews();
+  }
+
+  function renderEdAttachmentPreviews() {
+    const wrap = document.getElementById('edAttachmentPreviews');
+    const label = document.getElementById('edAttachmentLabel');
+    const area = document.getElementById('edUploadArea');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+    if (edSelectedFiles.length === 0) {
+      label.textContent = 'Click or drag PDFs / images here — tap again to add more';
+      area.classList.remove('has-file');
+      return;
+    }
+    label.textContent = `✅ ${edSelectedFiles.length} file${edSelectedFiles.length === 1 ? '' : 's'} attached — tap again to add more`;
+    area.classList.add('has-file');
+    edSelectedFiles.forEach((file, idx) => {
+      const pill = document.createElement('div');
+      pill.style.cssText = 'display:inline-flex; align-items:center; gap:6px; padding:4px 8px; background:#f1f5fb; border:1px solid #c0d0e0; border-radius:6px; font-size:12px; color:#1E2761;';
+      const icon = file.type.startsWith('image/') ? '🖼️' : '📄';
+      pill.innerHTML = `${icon} <span>${file.name.length > 28 ? file.name.slice(0, 25) + '…' : file.name}</span>`;
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '×';
+      x.title = 'Remove';
+      x.style.cssText = 'background:none; border:none; color:#dc2626; cursor:pointer; font-size:14px; font-weight:700; padding:0 2px;';
+      x.onclick = (e) => {
+        e.stopPropagation();
+        edSelectedFiles.splice(idx, 1);
+        renderEdAttachmentPreviews();
+      };
+      pill.appendChild(x);
+      wrap.appendChild(pill);
+    });
   }
 
   async function askEd() {
     const situation = document.getElementById('edSituation').value.trim();
-    const attachmentFile = document.getElementById('edAttachment').files[0];
-    if (!situation && !attachmentFile) { alert('Please describe the situation or attach a file first.'); return; }
+    if (!situation && edSelectedFiles.length === 0) { alert('Please describe the situation or attach a file first.'); return; }
 
     // Resolve community context: tab-specific dropdown wins, then global, then nothing
     const edCommunityChoice = document.getElementById('edCommunitySelect').value;
@@ -7489,7 +7549,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const formData = new FormData();
       formData.append('situation', situation);
       if (resolvedCommunity) formData.append('community', resolvedCommunity);
-      if (attachmentFile) formData.append('attachment', attachmentFile);
+      edSelectedFiles.forEach((f) => formData.append('attachment', f));
       const res = await fetch('/ask-ed', {
         method: 'POST',
         body: formData

@@ -1092,13 +1092,19 @@ HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and 
 When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`;
 }
 
-function buildAskEdUserMessage({ situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote }) {
+function buildAskEdUserMessage({ situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote, attachmentContents }) {
   const profileBlock = communityContext
     ? `\n\n${communityContext}\n\n(Quote the facts above verbatim when relevant. If a fact is marked ⚠ EXPIRED, mention that it should be verified before quoting.)\n`
     : '';
-  const textBody = `${playbookContext}${profileBlock}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation || '(no text provided — see attached file above)'}\n\n${community ? `Community: ${community}` : ''}${attachmentNote || ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`;
-  if (attachmentContent) {
-    return [attachmentContent, { type: 'text', text: textBody }];
+  const textBody = `${playbookContext}${profileBlock}\n\nRelevant governing documents:\n${docContext}\n\nSituation to handle:\n${situation || '(no text provided — see attached file(s) above)'}\n\n${community ? `Community: ${community}` : ''}${attachmentNote || ''}\n\nProvide:\n1. RECOMMENDED ACTION - What to do\n2. HOW TO RESPOND - Draft response or talking points\n3. REASONING - Why handle it this way\n4. WATCH OUTS - What to be careful about`;
+  // attachmentContents is the new multi-attachment array; attachmentContent is
+  // kept for backwards compatibility with any internal caller still passing a
+  // single object.
+  const atts = Array.isArray(attachmentContents)
+    ? attachmentContents
+    : (attachmentContent ? [attachmentContent] : []);
+  if (atts.length > 0) {
+    return [...atts, { type: 'text', text: textBody }];
   }
   return textBody;
 }
@@ -1117,7 +1123,7 @@ function buildAskEdUserMessage({ situation, community, communityContext, playboo
 //   data: {"type":"done"}                   (terminal)
 //   data: {"type":"error","message":"..."}  (failure)
 // ============================================================================
-app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
+app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -1139,21 +1145,28 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
     const { situation, community, mode } = req.body;
     const quickMode = (mode || '').toString().toLowerCase().trim() === 'quick';
 
-    let attachmentContent = null;
+    const attachmentContents = [];
     let attachmentNote = '';
-    if (req.file) {
-      const mimeType = req.file.mimetype;
-      const base64Data = req.file.buffer.toString('base64');
+    const incomingFiles = Array.isArray(req.files) ? req.files : (req.file ? [req.file] : []);
+    for (const f of incomingFiles) {
+      const mimeType = f.mimetype || '';
+      const base64Data = f.buffer.toString('base64');
       if (mimeType === 'application/pdf') {
-        attachmentContent = { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Data } };
-        attachmentNote = `\n\nNote: A PDF document is attached above. Read it carefully and factor it into your guidance.`;
+        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Data } });
       } else if (mimeType.startsWith('image/')) {
-        attachmentContent = { type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } };
-        attachmentNote = `\n\nNote: An image is attached above. Look at it carefully and factor it into your guidance.`;
+        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } });
       } else {
-        send({ type: 'error', message: 'Unsupported file type. Please upload a PDF or image (PNG, JPG).' });
+        send({ type: 'error', message: `Unsupported file type: ${f.originalname || mimeType}. PDFs and images only.` });
         return res.end();
       }
+    }
+    if (attachmentContents.length > 0) {
+      const pdfs = attachmentContents.filter((c) => c.type === 'document').length;
+      const imgs = attachmentContents.filter((c) => c.type === 'image').length;
+      const parts = [];
+      if (pdfs > 0) parts.push(`${pdfs} PDF${pdfs === 1 ? '' : 's'}`);
+      if (imgs > 0) parts.push(`${imgs} image${imgs === 1 ? '' : 's'}`);
+      attachmentNote = `\n\nNote: ${parts.join(' and ')} attached above. Examine each carefully and factor them into your guidance.`;
     }
 
     // Quick mode skips playbook + doc retrieval — lookups don't need it and
@@ -1174,7 +1187,7 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
     send({ type: 'meta', model: 'claude-sonnet-4-6', mode: quickMode ? 'quick' : 'full' });
 
     const userContent = buildAskEdUserMessage({
-      situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote
+      situation, community, communityContext, playbookContext, docContext, attachmentContents, attachmentNote
     });
 
     // Raw SSE iterator (stream:true on create). Avoids the listener-timing
@@ -1208,32 +1221,33 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
   }
 });
 
-app.post('/ask-ed', upload.single('attachment'), async (req, res) => {
+app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
   try {
     const { situation, community, mode } = req.body;
     const quickMode = (mode || '').toString().toLowerCase().trim() === 'quick';
 
-    // Build attachment content if a file was uploaded
-    let attachmentContent = null;
+    // Build attachment content blocks — supports multiple files
+    const attachmentContents = [];
     let attachmentNote = '';
-    if (req.file) {
-      const mimeType = req.file.mimetype;
-      const base64Data = req.file.buffer.toString('base64');
+    const incomingFiles = Array.isArray(req.files) ? req.files : (req.file ? [req.file] : []);
+    for (const f of incomingFiles) {
+      const mimeType = f.mimetype || '';
+      const base64Data = f.buffer.toString('base64');
       if (mimeType === 'application/pdf') {
-        attachmentContent = {
-          type: 'document',
-          source: { type: 'base64', media_type: 'application/pdf', data: base64Data }
-        };
-        attachmentNote = `\n\nNote: A PDF document is attached above. Read it carefully and factor it into your guidance.`;
+        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Data } });
       } else if (mimeType.startsWith('image/')) {
-        attachmentContent = {
-          type: 'image',
-          source: { type: 'base64', media_type: mimeType, data: base64Data }
-        };
-        attachmentNote = `\n\nNote: An image is attached above. Look at it carefully (it may be a screenshot, photo of a letter, photo of a property condition, etc.) and factor it into your guidance.`;
+        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } });
       } else {
-        return res.status(400).json({ guidance: 'Unsupported file type. Please upload a PDF or image (PNG, JPG).' });
+        return res.status(400).json({ guidance: `Unsupported file type: ${f.originalname || mimeType}. PDFs and images only.` });
       }
+    }
+    if (attachmentContents.length > 0) {
+      const pdfs = attachmentContents.filter((c) => c.type === 'document').length;
+      const imgs = attachmentContents.filter((c) => c.type === 'image').length;
+      const parts = [];
+      if (pdfs > 0) parts.push(`${pdfs} PDF${pdfs === 1 ? '' : 's'}`);
+      if (imgs > 0) parts.push(`${imgs} image${imgs === 1 ? '' : 's'}`);
+      attachmentNote = `\n\nNote: ${parts.join(' and ')} attached above. Examine each carefully (screenshots, letters, photos of property conditions, etc.) and factor them into your guidance.`;
     }
 
     // Semantic playbook retrieval + community docs + community profile,
@@ -1356,7 +1370,7 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
       messages: [{
         role: 'user',
         content: buildAskEdUserMessage({
-          situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote
+          situation, community, communityContext, playbookContext, docContext, attachmentContents, attachmentNote
         })
       }],
       system: quickMode ? askEdQuickPrompt : askEdSystemPrompt,
