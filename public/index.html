@@ -266,15 +266,20 @@
       </p>
     </div>
     <textarea id="quickQuestion" rows="2"
-      placeholder='e.g., "What is the pool company phone number?"  or  "Who is the landscape contact?"'
+      placeholder='Tap the mic and ask, or type. e.g., "Pool company phone for Lakes of Pine Forest"'
       style="width:100%; padding:12px 14px; font-size:15px; border:1px solid #d0d7de; border-radius:10px; outline:none; box-sizing:border-box; resize:vertical; font-family:inherit;"
       onkeydown="if (event.key === 'Enter' &amp;&amp; !event.shiftKey) { event.preventDefault(); quickSubmit(); }"></textarea>
-    <div style="display:flex; gap:10px; margin-top:10px; align-items:center;">
+    <div style="display:flex; gap:10px; margin-top:10px; align-items:center; flex-wrap:wrap;">
+      <button id="quickMicBtn" onclick="quickToggleMic()"
+        style="padding:10px 20px; font-size:15px; background:#1E2761; color:#fff; border:none; border-radius:10px; cursor:pointer; font-weight:600;">🎤 Hold &amp; speak</button>
       <button class="action-btn" id="quickSubmitBtn" onclick="quickSubmit()" style="padding:10px 22px; font-size:14px;">🔎 Find</button>
       <button class="secondary-btn" onclick="quickClear()" style="padding:10px 16px; font-size:13px;">Clear</button>
+      <button id="quickStopSpeakBtn" onclick="quickStopSpeaking()"
+        style="display:none; padding:10px 16px; font-size:13px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; border-radius:10px; cursor:pointer;">⏹ Stop talking</button>
       <span id="quickStatus" style="font-size:13px; color:#666;"></span>
     </div>
     <div id="quickResponse" style="margin-top:18px; padding:16px 20px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; line-height:1.6; font-size:15px; color:#1a3a5c; display:none; white-space:pre-wrap;"></div>
+    <audio id="quickAudio" preload="auto" style="display:none;"></audio>
   </div>
 </div>
 
@@ -11450,6 +11455,121 @@ ${questionsPage}
   // mode='quick'; backend swaps to a 1-2 sentence system prompt and uses the
   // lookup_community_vendor tool for deterministic contact answers.
   // =========================================================================
+  // Voice state — mirrors voice.html's MediaRecorder pattern
+  let quickMediaRecorder = null;
+  let quickRecordedChunks = [];
+  let quickListening = false;
+  let quickInvokedViaVoice = false; // when true, auto-speak the response
+  let quickAudioUnlocked = false;
+
+  function quickPickAudioMime() {
+    const candidates = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/mp4',
+      'audio/mp4;codecs=mp4a.40.2',
+      'audio/ogg;codecs=opus',
+    ];
+    for (const m of candidates) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) {
+        return m;
+      }
+    }
+    return '';
+  }
+
+  // iOS Safari requires audio playback to start inside a user gesture. The first
+  // mic tap qualifies — we kick off a silent play() to unlock subsequent TTS.
+  function quickUnlockAudio() {
+    if (quickAudioUnlocked) return;
+    const a = document.getElementById('quickAudio');
+    try {
+      a.muted = true;
+      const p = a.play();
+      if (p && p.catch) p.catch(() => {});
+      setTimeout(() => { try { a.pause(); a.currentTime = 0; a.muted = false; } catch (_) {} }, 50);
+      quickAudioUnlocked = true;
+    } catch (_) {}
+  }
+
+  async function quickToggleMic() {
+    if (quickListening) return quickStopListening();
+    return quickStartListening();
+  }
+
+  async function quickStartListening() {
+    if (quickListening) return;
+    quickUnlockAudio();
+    quickStopSpeaking();
+    const status = document.getElementById('quickStatus');
+    const btn = document.getElementById('quickMicBtn');
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mime = quickPickAudioMime();
+      const opts = mime ? { mimeType: mime } : {};
+      quickMediaRecorder = new MediaRecorder(stream, opts);
+      quickRecordedChunks = [];
+      quickMediaRecorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) quickRecordedChunks.push(e.data);
+      };
+      quickMediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((t) => t.stop());
+        quickListening = false;
+        btn.textContent = '🎤 Hold & speak';
+        btn.style.background = '#1E2761';
+        if (quickRecordedChunks.length === 0) {
+          status.textContent = 'No audio captured — try again.';
+          return;
+        }
+        const blob = new Blob(quickRecordedChunks, { type: quickMediaRecorder.mimeType || mime || 'audio/webm' });
+        await quickTranscribeAndSubmit(blob);
+      };
+      quickMediaRecorder.start();
+      quickListening = true;
+      btn.textContent = '🛑 Stop & ask';
+      btn.style.background = '#b91c1c';
+      status.textContent = '🎤 Listening… tap again when done.';
+    } catch (err) {
+      console.warn('quickMic error', err);
+      if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+        status.innerHTML = '<span style="color:#b91c1c;">🚫 Mic blocked. iOS: Settings → Safari → Microphone → Allow.</span>';
+      } else if (err.name === 'NotFoundError') {
+        status.innerHTML = '<span style="color:#b91c1c;">🚫 No microphone found.</span>';
+      } else {
+        status.innerHTML = '<span style="color:#b91c1c;">Mic error: ' + (err.message || err.name) + '</span>';
+      }
+    }
+  }
+
+  function quickStopListening() {
+    if (!quickListening || !quickMediaRecorder) return;
+    try { quickMediaRecorder.stop(); } catch (err) { console.warn('quickStop err', err); }
+  }
+
+  async function quickTranscribeAndSubmit(blob) {
+    const status = document.getElementById('quickStatus');
+    status.textContent = '✍️ Transcribing…';
+    try {
+      const form = new FormData();
+      const t = (blob.type || '');
+      const ext = t.includes('mp4') ? 'mp4' : t.includes('mpeg') ? 'mp3' : t.includes('ogg') ? 'ogg' : 'webm';
+      form.append('audio', blob, `voice.${ext}`);
+      const res = await fetch('/api/stt', { method: 'POST', body: form });
+      const data = await res.json();
+      if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+      const text = (data.text || '').trim();
+      if (!text) {
+        status.textContent = "Didn't catch that — try again.";
+        return;
+      }
+      document.getElementById('quickQuestion').value = text;
+      quickInvokedViaVoice = true;
+      await quickSubmit();
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">Transcribe failed: ' + (e.message || e) + '</span>';
+    }
+  }
+
   async function quickSubmit() {
     const q = (document.getElementById('quickQuestion')?.value || '').trim();
     if (!q) return;
@@ -11459,7 +11579,7 @@ ${questionsPage}
     const status = document.getElementById('quickStatus');
     const out = document.getElementById('quickResponse');
     btn.disabled = true; btn.textContent = '⏳';
-    status.textContent = community ? '' : 'No community selected — ask broadly or pick one above.';
+    status.textContent = community ? '' : 'No community selected — pick one above for accurate lookups.';
     out.style.display = 'block';
     out.innerHTML = '<span style="color:#999;">Looking up…</span>';
     try {
@@ -11473,6 +11593,11 @@ ${questionsPage}
       const html = (typeof profLinkify === 'function' ? profLinkify(text) : text);
       out.innerHTML = html;
       status.textContent = '';
+      // Auto-speak ONLY if invoked via voice — keyboard users don't need TTS by default
+      if (quickInvokedViaVoice) {
+        quickInvokedViaVoice = false;
+        quickSpeak(text);
+      }
     } catch (e) {
       out.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Lookup failed') + '</span>';
     } finally {
@@ -11480,10 +11605,49 @@ ${questionsPage}
     }
   }
 
+  async function quickSpeak(text) {
+    // Strip markdown and the icon decorations our text rendering adds.
+    const clean = String(text || '')
+      .replace(/^#{1,6}\s+/gm, '')
+      .replace(/[*_`]/g, '')
+      .replace(/\[(.*?)\]\(.*?\)/g, '$1')
+      .replace(/📞|✉️/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!clean) return;
+    try {
+      const r = await fetch('/api/tts', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: clean, voice: 'onyx' }),
+      });
+      if (!r.ok) throw new Error('TTS HTTP ' + r.status);
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.getElementById('quickAudio');
+      a.src = url;
+      a.onended = () => {
+        document.getElementById('quickStopSpeakBtn').style.display = 'none';
+        URL.revokeObjectURL(url);
+      };
+      document.getElementById('quickStopSpeakBtn').style.display = 'inline-block';
+      await a.play();
+    } catch (e) {
+      console.warn('quickSpeak failed', e);
+    }
+  }
+
+  function quickStopSpeaking() {
+    const a = document.getElementById('quickAudio');
+    try { a.pause(); a.currentTime = 0; } catch (_) {}
+    document.getElementById('quickStopSpeakBtn').style.display = 'none';
+  }
+
   function quickClear() {
     const t = document.getElementById('quickQuestion'); if (t) t.value = '';
     const out = document.getElementById('quickResponse'); if (out) { out.style.display = 'none'; out.innerHTML = ''; }
     document.getElementById('quickStatus').textContent = '';
+    quickStopSpeaking();
     if (t) t.focus();
   }
 
