@@ -884,17 +884,59 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
       }],
     });
 
-    // Pull the clean homeowner-facing letter body out of the review and return
-    // it separately. UI pre-fills the letter form with this clean prose
-    // (instead of the full markdown analysis).
     const rawReview = reviewResponse.content[0].text;
+    // Strip any LETTER_BODY block the analysis call may have emitted — we
+    // generate the canonical clean letter via a dedicated second call below.
+    const reviewText = rawReview.replace(/<<<LETTER_BODY>>>[\s\S]*?<<<END_LETTER>>>/, '').trim();
+
+    // Dedicated SECOND call: produce ONLY the clean homeowner-facing letter
+    // body. Haiku is fast + cheap, and a focused prompt with no permission to
+    // emit anything else is the most reliable way to keep the analysis out of
+    // the printed letter.
     let letterBody = '';
-    let reviewText = rawReview;
-    const lm = rawReview.match(/<<<LETTER_BODY>>>([\s\S]*?)<<<END_LETTER>>>/);
-    if (lm) {
-      letterBody = lm[1].trim();
-      reviewText = rawReview.replace(/<<<LETTER_BODY>>>[\s\S]*?<<<END_LETTER>>>/, '').trim();
+    try {
+      const letterResp = await anthropic.messages.create({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1200,
+        system:
+          'You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template will add the salutation ("Dear ___,"), the signature ("On behalf of the [Community] ACC, Bedrock Association Management, (832) 588-2485 | bedrocktx.com"), and the recipient/return address blocks. You output ONLY the salutation through the closing sentence — body paragraphs and numbered conditions if applicable.\n\n' +
+          'STRICT RULES:\n' +
+          '- Start with "Dear [Name]," — use the homeowner\'s name from the extracted info. Use "Mr." / "Mrs." / "Mr. and Mrs." courtesy where appropriate. If the name is unisex or unclear, use the first + last name.\n' +
+          '- One or two short opening paragraphs explaining the decision.\n' +
+          '- If approving with conditions or denying, include the conditions / reasons as a numbered list: "1. ...", "2. ..." etc. Plain numbers, no markdown.\n' +
+          '- End with EXACTLY: "Please retain a copy of this letter for your records. If you have any questions please contact our office at (832) 588-2485 or info@bedrocktx.com."\n' +
+          '- NO markdown — no #, ##, **, *, _, ---, no code formatting.\n' +
+          '- NO internal section labels (no "APPLICANT SUMMARY", "RECOMMENDATION", etc).\n' +
+          '- NO letterhead, return address, recipient block — those are template-rendered.\n' +
+          '- NO signature line at the end — that\'s template-rendered.\n' +
+          '- NO "Re:" line, "Sincerely,", "Bedrock Association Management" — all template-rendered.\n' +
+          '- Warm professional voice, paragraphs separated by blank lines.\n' +
+          '- Sign off as Bedrock Association Management — but the template adds that, so DO NOT include it in your output.\n\n' +
+          'Output ONLY the letter body. Do not preface with "Here is the letter:" or explain anything.',
+        messages: [{
+          role: 'user',
+          content:
+            `Community: ${community}\n` +
+            `Homeowner: ${extracted.homeowner_name || '(name not in extract)'}\n` +
+            `Property: ${extracted.homeowner_address || '(address not in extract)'}\n` +
+            `Project: ${extracted.project_summary || '(project not in extract)'}\n` +
+            `Decision: ${decision || '(see review)'}\n\n` +
+            `Internal review analysis (use as your source for the decision content but DO NOT include internal section labels or analysis in the letter):\n\n${reviewText}\n\n` +
+            `Write the clean homeowner letter body now. Start with "Dear" and end with the contact-our-office sentence.`,
+        }],
+      });
+      letterBody = (letterResp.content?.[0]?.text || '').trim();
+      // Defensive: strip any markdown bold/italic/headings that slipped through
+      letterBody = letterBody
+        .replace(/^#{1,6}\s+.*$/gm, '')
+        .replace(/\*\*([^*]+)\*\*/g, '$1')
+        .replace(/(?<![A-Za-z])_([^_\n]+)_(?![A-Za-z])/g, '$1')
+        .replace(/^-{3,}\s*$/gm, '')
+        .trim();
+    } catch (e) {
+      console.warn('[acc-review] letter-body call failed, falling back to review:', e.message);
     }
+
     res.json({ review: reviewText, extracted, letter_body: letterBody });
   } catch (err) {
     console.error(err);
