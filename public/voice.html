@@ -1060,7 +1060,26 @@
         if (/^<(h2|ul|ol)/.test(para.trim())) return para;
         return `<p>${para.replace(/\n/g, '<br>')}</p>`;
       }).join('\n');
-      return html;
+      return linkifyContacts(html);
+    }
+
+    // Auto-linkify US phone numbers (tel:) and email addresses (mailto:) in
+    // already-rendered HTML. Skips anything already inside an <a> tag.
+    function linkifyContacts(html) {
+      if (!html) return '';
+      return html.split(/(<a [^>]*>.*?<\/a>)/g).map((seg, i) => {
+        if (i % 2 === 1) return seg; // already an anchor — leave it
+        let s = seg;
+        s = s.replace(
+          /(?:\+?1[-.\s]?)?\(?[2-9]\d{2}\)?[-.\s]?\d{3}[-.\s]?\d{4}/g,
+          (m) => `<a href="tel:${m.replace(/[^\d+]/g, '')}" style="color:#1E2761; font-weight:600; text-decoration:none;">📞 ${m}</a>`
+        );
+        s = s.replace(
+          /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g,
+          (m) => `<a href="mailto:${m}" style="color:#1E2761; text-decoration:none;">✉️ ${m}</a>`
+        );
+        return s;
+      }).join('');
     }
 
     // Prevent iOS rubber-band scroll inside the stream from yanking the page
