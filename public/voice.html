@@ -354,6 +354,13 @@
           <option value="">All communities</option>
         </select>
       </div>
+      <label class="pill" title="Off = quick lookup (1-2 sentences). On = full Ed-style guidance." style="cursor:pointer;">
+        <input type="checkbox" id="voiceFullModeToggle" style="margin-right:6px;">
+        <span>🧠 Full mode</span>
+      </label>
+      <a href="/" class="pill" title="Back to the main trustEd app" style="text-decoration:none; color:inherit;">
+        <span aria-hidden="true">←</span> App
+      </a>
     </div>
   </div>
 
@@ -880,6 +887,12 @@
       form.append('situation', question);
       const communityId = communitySelect.value;
       if (communityId) form.append('community', communityId);
+      // Voice page defaults to Quick mode — field-staff use case. Long-form
+      // strategic guidance lives in the main app (askEd tab). Override by
+      // checking the "Full mode" toggle if it's present in the DOM.
+      const fullToggle = document.getElementById('voiceFullModeToggle');
+      const useQuick = !(fullToggle && fullToggle.checked);
+      if (useQuick) form.append('mode', 'quick');
 
       try {
         const res = await fetch('/ask-ed-stream', { method: 'POST', body: form });

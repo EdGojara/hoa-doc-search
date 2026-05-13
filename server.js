@@ -906,6 +906,26 @@ app.post('/api/tts', async (req, res) => {
 // askEd shared system prompt — same text used by /ask-ed and /ask-ed-stream
 // Defined once so the streaming and non-streaming endpoints stay in sync.
 // ============================================================================
+// Terse internal-staff voice/text prompt — same prompt used by /ask-ed?mode=quick
+// and /ask-ed-stream?mode=quick. Mobile field-staff scenario: hear the answer in
+// 1-2 sentences, no preamble, phone numbers spoken as digits with dashes.
+function askEdQuickSystem() {
+  return `${GLOBAL_RULES}
+
+You are the trustEd quick-lookup assistant for Bedrock Association Management internal staff. The audience is a manager, assistant, or onsite team member — already has the business context.
+
+ANSWER STYLE:
+- 1 to 2 short sentences max. Lead with the answer. NO preamble, NO strategic commentary, NO disclosure warnings, NO moralizing.
+- Phone numbers: format as "281-555-0100" (with dashes — the spoken voice will read each digit).
+- If multiple contacts match a category, list them compactly on separate short lines, e.g.:
+    Joe Smith (Account Mgr) — 281-555-0100
+    Sara Lee (Field Sup) — 281-555-0102
+- If a contact is marked expired or unverified > 1 year, mention that in one short phrase.
+- If no record exists, say so in one sentence and suggest adding it in Profile → Contacts.
+
+Do not mention you are an AI. Do not apologize. Do not editorialize. Just the facts.`;
+}
+
 function askEdSystem() {
   return `${GLOBAL_RULES}
 
@@ -1035,7 +1055,8 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
   res.on('close', () => { aborted = true; });
 
   try {
-    const { situation, community } = req.body;
+    const { situation, community, mode } = req.body;
+    const quickMode = (mode || '').toString().toLowerCase().trim() === 'quick';
 
     let attachmentContent = null;
     let attachmentNote = '';
@@ -1054,17 +1075,22 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
       }
     }
 
-    // Run playbook + community-docs + community-profile retrieval in parallel
-    const [playbookEntries, docContext, communityContext] = await Promise.all([
-      getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
-      getRelevantChunks(situation || 'general guidance', community),
-      buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })
-    ]);
-    const playbookContext = formatPlaybookContext(playbookEntries, {
-      heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
-    }) || 'No relevant playbook examples for this question.';
+    // Quick mode skips playbook + doc retrieval — lookups don't need it and
+    // every second of latency matters on a field-staff voice query.
+    const [playbookEntries, docContext, communityContext] = quickMode
+      ? [[], '', await buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })]
+      : await Promise.all([
+          getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
+          getRelevantChunks(situation || 'general guidance', community),
+          buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; }),
+        ]);
+    const playbookContext = quickMode
+      ? ''
+      : (formatPlaybookContext(playbookEntries, {
+          heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
+        }) || 'No relevant playbook examples for this question.');
 
-    send({ type: 'meta', model: 'claude-sonnet-4-6' });
+    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: quickMode ? 'quick' : 'full' });
 
     const userContent = buildAskEdUserMessage({
       situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote
@@ -1074,8 +1100,8 @@ app.post('/ask-ed-stream', upload.single('attachment'), async (req, res) => {
     // race of the higher-level .stream() + .on('text') API.
     const streamResp = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 1500,
-      system: askEdSystem(),
+      max_tokens: quickMode ? 400 : 1500,
+      system: quickMode ? askEdQuickSystem() : askEdSystem(),
       messages: [{ role: 'user', content: userContent }],
       stream: true
     });
