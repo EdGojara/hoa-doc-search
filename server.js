@@ -820,17 +820,28 @@ Thank the homeowner, state the specific governing document provision that cannot
 ALWAYS sign off as Bedrock Association Management — never use a personal name.`,
       messages: [{
         role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: pdfBase64 }
-          },
-          {
-            type: 'text',
-            text: `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\nCommunity: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${conditions ? `Staff notes: ${conditions}\n\n` : ''}${notes ? `Additional notes: ${notes}\n\n` : ''}Relevant Relevant governing documents:\n${context}\n${playbookContext}\n${decision === 'approved with conditions' ? `STAFF DECISION: APPROVED WITH CONDITIONS\n\nThe staff has decided to approve this application. Do NOT second guess this decision.\n\nGenerate a complete professional approval letter. For conditions: search the governing documents and pull the appropriate standard conditions for this specific project type in this community. Use the actual document sections to determine what conditions apply. Do not make up generic conditions — base them on what the governing documents actually require for this type of improvement. Include the standard permit disclaimer. Format as a complete ready to send approval letter.` : decision === 'approved no conditions' ? `STAFF DECISION: APPROVED — NO CONDITIONS\n\nThe staff has decided to approve this application with no conditions. Do NOT second guess this decision.\n\nGenerate a clean simple approval letter confirming the approval. Include only the standard permit disclaimer. Keep it warm and brief.` : decision === 'incomplete' ? `STAFF DECISION: REQUEST MISSING INFORMATION\n\nGenerate a warm helpful letter requesting the missing information. Identify what is missing based on the application and governing document requirements. Keep it encouraging and specific about what is needed and why. Do not make the homeowner feel rejected.` : decision === 'denied' ? `STAFF DECISION: DENIED\n\nGenerate a professional warm denial letter. Cite the specific governing document provision that cannot be met. Leave the door open for a revised application. Never be harsh or cold.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`
+        content: (() => {
+          const parts = [];
+          if (pdfFile) {
+            parts.push({
+              type: 'document',
+              source: { type: 'base64', media_type: 'application/pdf', data: pdfFile.buffer.toString('base64') },
+            });
           }
-        ]
-      }]
+          for (const img of imageFiles) {
+            const mt = img.mimetype && img.mimetype.startsWith('image/') ? img.mimetype : 'image/jpeg';
+            parts.push({
+              type: 'image',
+              source: { type: 'base64', media_type: mt, data: img.buffer.toString('base64') },
+            });
+          }
+          parts.push({
+            type: 'text',
+            text: `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\nCommunity: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${conditions ? `Staff notes: ${conditions}\n\n` : ''}${notes ? `Additional notes: ${notes}\n\n` : ''}Relevant governing documents:\n${context}\n${playbookContext}\n${decision === 'approved with conditions' ? `STAFF DECISION: APPROVED WITH CONDITIONS\n\nThe staff has decided to approve this application. Do NOT second guess this decision.\n\nGenerate a complete professional approval letter. For conditions: search the governing documents and pull the appropriate standard conditions for this specific project type in this community. Use the actual document sections to determine what conditions apply. Do not make up generic conditions — base them on what the governing documents actually require for this type of improvement. Include the standard permit disclaimer. Format as a complete ready to send approval letter.` : decision === 'approved no conditions' ? `STAFF DECISION: APPROVED — NO CONDITIONS\n\nThe staff has decided to approve this application with no conditions. Do NOT second guess this decision.\n\nGenerate a clean simple approval letter confirming the approval. Include only the standard permit disclaimer. Keep it warm and brief.` : decision === 'incomplete' ? `STAFF DECISION: REQUEST MISSING INFORMATION\n\nGenerate a warm helpful letter requesting the missing information. Identify what is missing based on the application and governing document requirements. Keep it encouraging and specific about what is needed and why. Do not make the homeowner feel rejected.` : decision === 'denied' ? `STAFF DECISION: DENIED\n\nGenerate a professional warm denial letter. Cite the specific governing document provision that cannot be met. Leave the door open for a revised application. Never be harsh or cold.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`,
+          });
+          return parts;
+        })(),
+      }],
     });
 
     res.json({ review: reviewResponse.content[0].text });
