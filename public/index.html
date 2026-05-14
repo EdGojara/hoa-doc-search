@@ -2411,10 +2411,8 @@
         <p style="margin:0; font-size:12px; color:#666;">Upload a Vantaca balance sheet PDF — AI extracts the numbers and re-renders it on Bedrock letterhead with community logo and "Reviewed by Bedrock" findings.</p>
       </div>
     </div>
-    <div style="display:grid; grid-template-columns: 1.4fr 1fr 0.9fr; gap:8px; margin-bottom:10px;">
-      <input id="fin-community" placeholder="Community name (e.g., Canyon Gate at Cinco Ranch)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
-      <input id="fin-period-label" placeholder="Period (e.g., April 30, 2026)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
-      <input id="fin-period-end" type="date" placeholder="Month-end date" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+    <div id="fin-community-hint" style="margin-bottom:10px; padding:8px 12px; background:#f1f5fb; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:12px; color:#1E2761;">
+      Statement will be branded for <strong id="fin-community-display">— select a community above —</strong>. Change the community by picking a different one in the dropdown at the top of trustEd.
     </div>
     <div id="fin-drop" onclick="document.getElementById('fin-pdf-input').click()"
          style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; cursor:pointer; background:#f8fafc; margin-bottom:8px;">
@@ -2422,11 +2420,10 @@
       <input id="fin-pdf-input" type="file" accept=".pdf,application/pdf" style="display:none;" onchange="finPdfPicked(this)">
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-      <button class="secondary-btn" id="fin-parse-btn" onclick="finParse()" style="font-size:13px; padding:8px 14px;" disabled>🤖 Parse PDF</button>
-      <button class="action-btn" id="fin-generate-btn" onclick="finGenerate()" style="font-size:13px; padding:8px 14px;" disabled>📥 Generate &amp; download branded PDF</button>
+      <button class="action-btn" id="fin-generate-btn" onclick="finGenerate()" style="font-size:13px; padding:8px 14px;" disabled>📥 Read &amp; generate branded PDF</button>
       <span id="fin-status" style="font-size:12px; color:#666;"></span>
     </div>
-    <div id="fin-extract-preview" style="display:none; margin-top:12px; padding:10px 14px; background:#f1f5fb; border:1px solid #c0d0e0; border-radius:6px; font-size:12px; color:#1E2761;"></div>
+    <div id="fin-extract-preview" style="display:none; margin-top:12px; padding:12px 16px; background:#f1f5fb; border:1px solid #c0d0e0; border-radius:6px; font-size:12px; color:#1E2761;"></div>
 
     <div style="margin-top:18px; border-top:1px solid #e2e8f0; padding-top:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
@@ -12137,90 +12134,128 @@ ${questionsPage}
   }
 
   // =========================================================================
-  // Branded monthly financial statements
+  // Branded monthly financial statements — one-button parse + render + save
   // =========================================================================
   let finSelectedFile = null;
-  let finExtractedData = null;
 
   function finPdfPicked(input) {
     finSelectedFile = (input.files && input.files[0]) || null;
-    finExtractedData = null;
     document.getElementById('fin-extract-preview').style.display = 'none';
     document.getElementById('fin-pdf-label').textContent = finSelectedFile
       ? `✅ ${finSelectedFile.name}`
       : '📄 Click to pick the Vantaca balance sheet PDF';
-    document.getElementById('fin-parse-btn').disabled = !finSelectedFile;
-    document.getElementById('fin-generate-btn').disabled = true;
+    document.getElementById('fin-generate-btn').disabled = !finSelectedFile;
     document.getElementById('fin-status').textContent = '';
   }
 
-  async function finParse() {
-    if (!finSelectedFile) return;
-    const btn = document.getElementById('fin-parse-btn');
-    const status = document.getElementById('fin-status');
-    btn.disabled = true; btn.textContent = '⏳ Extracting…';
-    status.textContent = '';
-    try {
-      const form = new FormData();
-      form.append('pdf', finSelectedFile);
-      form.append('statement_type', 'balance_sheet');
-      const r = await fetch('/api/financials/parse', { method: 'POST', body: form });
-      const j = await r.json();
-      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
-      finExtractedData = j.data || {};
-      // Pre-fill period fields from the extract if blank
-      const periodEl = document.getElementById('fin-period-label');
-      const dateEl = document.getElementById('fin-period-end');
-      if (!periodEl.value && finExtractedData.period_label) periodEl.value = finExtractedData.period_label;
-      if (!dateEl.value && finExtractedData.period_end_date) dateEl.value = finExtractedData.period_end_date;
-      // Show a compact preview
-      const preview = document.getElementById('fin-extract-preview');
-      const totalAssets = finExtractedData?.totals?.total_assets?.Total;
-      const funds = (finExtractedData.funds || []).join(' · ');
-      const assetCats = (finExtractedData.assets || []).length;
-      const liabCats = (finExtractedData.liabilities || []).length;
-      preview.innerHTML = `
-        <div style="font-weight:600; margin-bottom:4px;">Extraction preview</div>
-        <div>Period: <strong>${escapeHtml(finExtractedData.period_label || '—')}</strong></div>
-        <div>Funds: ${escapeHtml(funds || '—')}</div>
-        <div>Asset categories: ${assetCats} · Liability/equity categories: ${liabCats + ((finExtractedData.equity || []).length)}</div>
-        ${totalAssets != null ? `<div>Total Assets: <strong>$${Number(totalAssets).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>` : ''}
-      `;
-      preview.style.display = 'block';
-      document.getElementById('fin-generate-btn').disabled = false;
-      status.innerHTML = '<span style="color:#15803d;">Parsed. Review the period fields then click Generate.</span>';
-    } catch (e) {
-      status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Parse failed') + '</span>';
-    } finally {
-      btn.disabled = false; btn.textContent = '🤖 Parse PDF';
-    }
+  function finUpdateCommunityHint() {
+    const el = document.getElementById('fin-community-display');
+    if (el) el.textContent = currentCommunity || '— select a community above —';
+  }
+
+  // Compute the most useful CFO-grade metrics from the parsed balance sheet.
+  function finMetrics(data) {
+    const total = (path) => {
+      try { return path.reduce((o, k) => (o && o[k] != null ? o[k] : null), data); }
+      catch (_) { return null; }
+    };
+    const findLine = (groupKey, labelRegex) => {
+      const groups = (data[groupKey] || []);
+      for (const g of groups) {
+        for (const ln of (g.lines || [])) {
+          if (labelRegex.test(String(ln.label || ''))) return ln.values || {};
+        }
+      }
+      return null;
+    };
+    const totalAssets = total(['totals', 'total_assets', 'Total']);
+    const totalLiab = total(['totals', 'total_liabilities', 'Total']);
+    const totalEquity = total(['totals', 'total_equity', 'Total']);
+    const cashLine = findLine('assets', /cash/i);
+    const investLine = findLine('assets', /reserve|investment/i);
+    const arLine = findLine('assets', /^[0-9 -]*accounts receivable/i);
+    const allowanceLine = findLine('assets', /allowance|doubtful/i);
+    const opCash = cashLine ? cashLine.Operating || cashLine.Total : null;
+    const reserve = investLine ? (investLine.Reserve || investLine.Total) : null;
+    const arGross = arLine ? (arLine.Operating || arLine.Total) : null;
+    const arAllowance = allowanceLine ? (allowanceLine.Operating || allowanceLine.Total) : null;
+    return { totalAssets, totalLiab, totalEquity, opCash, reserve, arGross, arAllowance };
+  }
+
+  function finRenderPreview(data, findings) {
+    const m = finMetrics(data);
+    const fmt = (n) => n == null ? '—' : '$' + Math.round(Number(n)).toLocaleString('en-US');
+    const findingPills = (findings || []).slice(0, 4).map((f) => {
+      const colors = { good:'#15803d', note:'#475569', warn:'#a16207', alert:'#b91c1c' };
+      const icons = { good:'✓', note:'•', warn:'⚠', alert:'🛑' };
+      const c = colors[f.severity] || '#475569';
+      const i = icons[f.severity] || '•';
+      return `<div style="margin:5px 0; padding:6px 10px; background:#fff; border-left:3px solid ${c}; border-radius:3px; font-size:12px; color:#1a1a1a;"><span style="color:${c}; font-weight:700; margin-right:6px;">${i}</span>${escapeHtml(f.text || '')}</div>`;
+    }).join('');
+    return `
+      <div style="font-weight:700; color:#1E2761; margin-bottom:8px; font-size:13px;">📊 Snapshot</div>
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:8px; margin-bottom:12px;">
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px;">
+          <div style="font-size:10px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px;">Total Assets</div>
+          <div style="font-size:14px; font-weight:700; color:#1E2761; margin-top:2px;">${fmt(m.totalAssets)}</div>
+        </div>
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px;">
+          <div style="font-size:10px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px;">Operating Cash</div>
+          <div style="font-size:14px; font-weight:700; color:#1E2761; margin-top:2px;">${fmt(m.opCash)}</div>
+        </div>
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px;">
+          <div style="font-size:10px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px;">Reserve / Investments</div>
+          <div style="font-size:14px; font-weight:700; color:#1E2761; margin-top:2px;">${fmt(m.reserve)}</div>
+        </div>
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px;">
+          <div style="font-size:10px; color:#94A3B8; text-transform:uppercase; letter-spacing:1px;">A/R (net of allowance)</div>
+          <div style="font-size:14px; font-weight:700; color:#1E2761; margin-top:2px;">${
+            (m.arGross != null && m.arAllowance != null)
+              ? fmt(Number(m.arGross) + Number(m.arAllowance))
+              : fmt(m.arGross)
+          }</div>
+          ${m.arAllowance != null ? `<div style="font-size:10px; color:#94A3B8; margin-top:2px;">Reserved: ${fmt(Math.abs(m.arAllowance))}</div>` : ''}
+        </div>
+      </div>
+      ${findingPills ? `<div style="font-weight:700; color:#1E2761; margin-bottom:6px; font-size:13px;">🎯 Bedrock Observations</div>${findingPills}` : ''}
+    `;
   }
 
   async function finGenerate() {
-    if (!finSelectedFile || !finExtractedData) return;
-    const community = (document.getElementById('fin-community').value || '').trim();
+    if (!finSelectedFile) return;
+    const community = currentCommunity || '';
     if (!community) {
-      document.getElementById('fin-status').innerHTML = '<span style="color:#b91c1c;">Enter the community name (matches a community logo if available).</span>';
+      document.getElementById('fin-status').innerHTML = '<span style="color:#b91c1c;">Pick a community in the top dropdown first.</span>';
       return;
     }
-    const periodLabel = (document.getElementById('fin-period-label').value || '').trim();
-    const periodEnd = document.getElementById('fin-period-end').value || '';
     const btn = document.getElementById('fin-generate-btn');
     const status = document.getElementById('fin-status');
-    btn.disabled = true; btn.textContent = '⏳ Generating…';
+    btn.disabled = true; btn.textContent = '⏳ Reading the PDF…';
     status.textContent = '';
     try {
-      const form = new FormData();
-      form.append('pdf', finSelectedFile);
-      form.append('community', community);
-      form.append('statement_type', 'balance_sheet');
-      form.append('period_label', periodLabel);
-      if (periodEnd) form.append('period_end_date', periodEnd);
-      form.append('data', JSON.stringify(finExtractedData));
-      const r = await fetch('/api/financials/generate', { method: 'POST', body: form });
+      // Step 1: parse the PDF (extract structured data)
+      const parseForm = new FormData();
+      parseForm.append('pdf', finSelectedFile);
+      parseForm.append('statement_type', 'balance_sheet');
+      const pr = await fetch('/api/financials/parse', { method: 'POST', body: parseForm });
+      const pj = await pr.json();
+      if (!pr.ok || pj.error) throw new Error(pj.error || ('Parse HTTP ' + pr.status));
+      const data = pj.data || {};
+
+      btn.textContent = '⏳ Generating branded PDF…';
+
+      // Step 2: render + save + download
+      const genForm = new FormData();
+      genForm.append('pdf', finSelectedFile);
+      genForm.append('community', community);
+      genForm.append('statement_type', 'balance_sheet');
+      genForm.append('period_label', data.period_label || '');
+      if (data.period_end_date) genForm.append('period_end_date', data.period_end_date);
+      genForm.append('data', JSON.stringify(data));
+      const r = await fetch('/api/financials/generate', { method: 'POST', body: genForm });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || ('HTTP ' + r.status));
+        throw new Error(j.error || ('Generate HTTP ' + r.status));
       }
       const blob = await r.blob();
       const disp = r.headers.get('Content-Disposition') || '';
@@ -12231,12 +12266,28 @@ ${questionsPage}
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      // Step 3: pull the saved record back to get the findings for the preview
+      const stmtId = r.headers.get('X-Statement-Id');
+      let findings = [];
+      if (stmtId) {
+        try {
+          const lr = await fetch('/api/financials');
+          const lj = await lr.json();
+          const found = (lj.statements || []).find((s) => s.id === stmtId);
+          if (found && Array.isArray(found.findings)) findings = found.findings;
+        } catch (_) {}
+      }
+
+      const preview = document.getElementById('fin-extract-preview');
+      preview.innerHTML = finRenderPreview(data, findings);
+      preview.style.display = 'block';
       status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved to history</span>';
       finLoadHistory();
     } catch (e) {
-      status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Generate failed') + '</span>';
+      status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Failed') + '</span>';
     } finally {
-      btn.disabled = false; btn.textContent = '📥 Generate & download branded PDF';
+      btn.disabled = false; btn.textContent = '📥 Read & generate branded PDF';
     }
   }
 
@@ -12304,15 +12355,23 @@ ${questionsPage}
     });
   })();
 
-  // Auto-load history when Financial Review tab is opened
+  // Auto-load history + community hint when Financial Review tab is opened
   (function () {
     const orig = window.switchTab;
     if (typeof orig !== 'function') return;
     window.switchTab = function (tab) {
       const r = orig.apply(this, arguments);
-      if (tab === 'finrev') { try { finLoadHistory(); } catch (_) {} }
+      if (tab === 'finrev') {
+        try { finLoadHistory(); } catch (_) {}
+        try { finUpdateCommunityHint(); } catch (_) {}
+      }
       return r;
     };
+  })();
+  // Refresh the community hint whenever the global community changes
+  (function () {
+    const sel = document.getElementById('communitySelect');
+    if (sel) sel.addEventListener('change', () => { try { finUpdateCommunityHint(); } catch (_) {} });
   })();
 
   // =========================================================================
