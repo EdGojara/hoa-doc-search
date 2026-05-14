@@ -4198,11 +4198,14 @@ app.delete('/api/presentations/instances/:id', async (req, res) => {
 // pdfParse already required at the top of the file
 const { renderBalanceSheetHTML } = require('./lib/financial_statements/balance_sheet');
 const { renderInvestmentStatementHTML } = require('./lib/financial_statements/investment_statement');
+const { renderIncomeStatementHTML } = require('./lib/financial_statements/income_statement');
 const {
   parseBalanceSheetText,
   generateBalanceSheetFindings,
   parseInvestmentStatementText,
   generateInvestmentStatementFindings,
+  parseIncomeStatementText,
+  generateIncomeStatementFindings,
 } = require('./lib/financial_statements/parser');
 
 async function renderFinancialPdfBuffer(html) {
@@ -4241,6 +4244,8 @@ app.post('/api/financials/parse', upload.single('pdf'), async (req, res) => {
       data = await parseBalanceSheetText(text);
     } else if (statementType === 'investment_statement') {
       data = await parseInvestmentStatementText(text);
+    } else if (statementType === 'income_statement') {
+      data = await parseIncomeStatementText(text);
     } else {
       return res.status(400).json({ error: `Unsupported statement type: ${statementType}.` });
     }
@@ -4264,20 +4269,42 @@ app.post('/api/financials/generate', upload.single('pdf'), async (req, res) => {
     const periodLabel = (req.body.period_label || data.period_label || '').trim();
     const periodEndDate = (req.body.period_end_date || data.period_end_date || null);
 
-    // Generate findings (fire-and-forget if fails)
+    // Generate findings (fire-and-forget if fails). The income-statement
+    // finding generator can also accept the latest balance sheet + investment
+    // context for cross-referencing — pull both for this community.
     let findings = [];
     try {
       if (statementType === 'investment_statement') {
         findings = await generateInvestmentStatementFindings(data, community);
+      } else if (statementType === 'income_statement') {
+        // Pull latest balance sheet + investment statement for the same community
+        // so the IS commentary can cross-reference (e.g., unrealized losses)
+        let bsCtx = null, invCtx = null;
+        try {
+          const { data: ctx } = await supabase
+            .from('financial_statements')
+            .select('statement_type, extracted_data')
+            .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+            .ilike('community_name', `%${community}%`)
+            .in('statement_type', ['balance_sheet', 'investment_statement'])
+            .order('period_end_date', { ascending: false })
+            .limit(10);
+          if (Array.isArray(ctx)) {
+            bsCtx = (ctx.find((r) => r.statement_type === 'balance_sheet') || {}).extracted_data || null;
+            invCtx = (ctx.find((r) => r.statement_type === 'investment_statement') || {}).extracted_data || null;
+          }
+        } catch (_) {}
+        findings = await generateIncomeStatementFindings(data, community, { balance_sheet: bsCtx, investment: invCtx });
       } else {
         findings = await generateBalanceSheetFindings(data, community);
       }
     } catch (e) { console.warn('[financials/generate] findings failed:', e.message); }
 
-    // Render Bedrock PDF
-    const html = statementType === 'investment_statement'
-      ? renderInvestmentStatementHTML({ community, data, findings })
-      : renderBalanceSheetHTML({ community, data, findings });
+    // Render Bedrock PDF — pick template by type
+    let html;
+    if (statementType === 'investment_statement') html = renderInvestmentStatementHTML({ community, data, findings });
+    else if (statementType === 'income_statement') html = renderIncomeStatementHTML({ community, data, findings });
+    else html = renderBalanceSheetHTML({ community, data, findings });
     const brandedPdf = await renderFinancialPdfBuffer(html);
 
     // Resolve community_id
@@ -4338,7 +4365,9 @@ app.post('/api/financials/generate', upload.single('pdf'), async (req, res) => {
 
     const stem = (community + '_' + (periodLabel || 'statement'))
       .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'financial';
-    const typeSlug = statementType === 'investment_statement' ? 'reserve_performance' : 'balance_sheet';
+    const typeSlug = statementType === 'investment_statement' ? 'reserve_performance'
+      : statementType === 'income_statement' ? 'income_statement'
+      : 'balance_sheet';
     const filename = `${stem}_${typeSlug}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
@@ -4393,23 +4422,22 @@ app.get('/api/financials/:id/branded', async (req, res) => {
     }
     if (!pdfBuffer) {
       // Regenerate from stored data — pick the right template by type
-      const html = row.statement_type === 'investment_statement'
-        ? renderInvestmentStatementHTML({
-            community: row.community_name,
-            data: row.extracted_data || {},
-            findings: row.findings || [],
-          })
-        : renderBalanceSheetHTML({
-            community: row.community_name,
-            data: row.extracted_data || {},
-            findings: row.findings || [],
-          });
+      let html;
+      if (row.statement_type === 'investment_statement') {
+        html = renderInvestmentStatementHTML({ community: row.community_name, data: row.extracted_data || {}, findings: row.findings || [] });
+      } else if (row.statement_type === 'income_statement') {
+        html = renderIncomeStatementHTML({ community: row.community_name, data: row.extracted_data || {}, findings: row.findings || [] });
+      } else {
+        html = renderBalanceSheetHTML({ community: row.community_name, data: row.extracted_data || {}, findings: row.findings || [] });
+      }
       pdfBuffer = await renderFinancialPdfBuffer(html);
     }
 
     const stem = (row.community_name + '_' + (row.period_label || 'statement'))
       .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'financial';
-    const typeSlug = row.statement_type === 'investment_statement' ? 'reserve_performance' : 'balance_sheet';
+    const typeSlug = row.statement_type === 'investment_statement' ? 'reserve_performance'
+      : row.statement_type === 'income_statement' ? 'income_statement'
+      : 'balance_sheet';
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${stem}_${typeSlug}.pdf"`);
     res.send(pdfBuffer);
