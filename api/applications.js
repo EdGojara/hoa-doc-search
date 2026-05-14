@@ -407,14 +407,36 @@ router.get('/public/:slug', async (req, res) => {
 });
 
 // POST /api/applications/public/:slug/submit — homeowner submits, AI assesses instantly
-// Body (JSON): { submitter_name, submitter_email, submitter_phone?, property_address,
-//                application_data: {...}, signature_png? }
-router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, res) => {
+// Multipart form: text fields for submitter + application_data (JSON-encoded)
+// + signed_by_name + agreed_to_indemnification, plus file fields
+// 'documents' (PDFs — survey, plans, contractor bid) and 'photos' (images).
+router.post('/public/:slug/submit', upload.any(), async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.submitter_name || !b.submitter_email || !b.property_address) {
       return res.status(400).json({ error: 'submitter_name, submitter_email, and property_address are required' });
     }
+    if (!b.signed_by_name || !b.signed_by_name.trim() || b.signed_by_name.trim().length < 2) {
+      return res.status(400).json({ error: 'Electronic signature (full legal name) is required to submit.' });
+    }
+    if (String(b.agreed_to_indemnification || '').toLowerCase() !== 'true') {
+      return res.status(400).json({ error: 'You must acknowledge the indemnification terms before submitting.' });
+    }
+
+    // application_data may arrive as a JSON-encoded string (from multipart) or
+    // as individual fields. Prefer the JSON blob; fall back to assembling from
+    // top-level field names that match the old schema.
+    let applicationData = {};
+    if (b.application_data) {
+      try { applicationData = JSON.parse(b.application_data); } catch (_) { applicationData = {}; }
+    }
+    // Stamp the signature + ack into application_data so it's preserved with the
+    // record and exposed to the manager / AI assessment.
+    applicationData.signature = {
+      signed_by_name: b.signed_by_name.trim(),
+      signed_at: new Date().toISOString(),
+      agreed_to_indemnification: true,
+    };
 
     // Resolve community
     const { data: comm } = await supabase
@@ -477,7 +499,7 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
       property_address: b.property_address,
       property_unit: b.property_unit || null,
       property_address_id: propertyAddressId,
-      application_data: b.application_data || {},
+      application_data: applicationData,
       final_status: 'pending_committee_review',
       submitted_at: new Date().toISOString(),
       calculated_fee_usd: calculatedFee,
@@ -493,6 +515,35 @@ router.post('/public/:slug/submit', express.json({ limit: '4mb' }), async (req, 
       .select()
       .single();
     if (error) throw error;
+
+    // Save uploaded files to Supabase storage + index in application_attachments.
+    // 'documents' fieldname → attachment_type='site_plan' (good default for surveys,
+    // plans, contractor bids). 'photos' fieldname → attachment_type='photo_current'.
+    const files = req.files || [];
+    for (const f of files) {
+      try {
+        const isDoc = f.fieldname === 'documents';
+        const isPhoto = f.fieldname === 'photos';
+        if (!isDoc && !isPhoto) continue;
+        const safeName = (f.originalname || 'upload')
+          .replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'upload';
+        const storagePath = `applications/${app.id}/${Date.now()}_${safeName}`;
+        const { error: stErr } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, f.buffer, { contentType: f.mimetype, upsert: false });
+        if (stErr) { console.warn('[applications] file upload failed:', stErr.message); continue; }
+        await supabase.from('application_attachments').insert({
+          application_id: app.id,
+          attachment_type: isDoc ? 'site_plan' : 'photo_current',
+          file_path: storagePath,
+          original_filename: f.originalname,
+          file_size_bytes: f.size,
+          file_mime_type: f.mimetype,
+        });
+      } catch (e) {
+        console.warn('[applications] attachment record failed:', e.message);
+      }
+    }
 
     // Run AI assessment SYNCHRONOUSLY — the instant-feedback wedge
     const assessmentResult = await runAssessment(app);

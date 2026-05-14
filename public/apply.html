@@ -252,6 +252,93 @@
         </div>
       </div>
 
+      <!-- Dynamic checklist of what to attach based on the project type the
+           homeowner picked — pulled verbatim from the LPF General Instructions. -->
+      <div id="reqs-card" class="card" style="display:none; background:#fef9e7; border-color:#f4cf6b;">
+        <h2 style="color:#7a5c00;">📋 For this project type, please attach</h2>
+        <p id="reqs-text" style="margin:0; color:#5a3f00; font-size:14px; line-height:1.5;"></p>
+      </div>
+
+      <div class="card">
+        <h2>📐 Plans, drawings &amp; documents</h2>
+        <p style="margin:0 0 10px 0; color:#666; font-size:13px;">
+          Lot survey or plot plan, structural drawings, contractor bids, product brochures, etc.
+          Multiple PDFs OK. Drag to add or tap to pick.
+        </p>
+        <div id="doc-drop" class="upload-area" tabindex="0"
+             onclick="document.getElementById('doc-input').click()"
+             style="border:2px dashed #c0d0e0; border-radius:10px; padding:16px; text-align:center; cursor:pointer; background:#f8fafc;">
+          <div style="font-size:24px;">📄</div>
+          <div id="doc-label" style="margin-top:6px; font-size:13px; color:#475569;">Tap or drag PDFs here — tap again to add more</div>
+        </div>
+        <input id="doc-input" type="file" accept=".pdf,application/pdf" multiple style="display:none;">
+        <div id="doc-previews" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+      </div>
+
+      <div class="card">
+        <h2>📷 Photos</h2>
+        <p style="margin:0 0 10px 0; color:#666; font-size:13px;">
+          Photos of the area, the existing home (for paint matching), color samples, brochures, etc.
+          Multiple images OK.
+        </p>
+        <div id="photo-drop" class="upload-area" tabindex="0"
+             onclick="document.getElementById('photo-input').click()"
+             style="border:2px dashed #c0d0e0; border-radius:10px; padding:16px; text-align:center; cursor:pointer; background:#f8fafc;">
+          <div style="font-size:24px;">🖼️</div>
+          <div id="photo-label" style="margin-top:6px; font-size:13px; color:#475569;">Tap or drag photos here — tap again to add more</div>
+        </div>
+        <input id="photo-input" type="file" accept="image/*" multiple style="display:none;">
+        <div id="photo-previews" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:8px;"></div>
+      </div>
+
+      <!-- Indemnification + electronic signature — required for legal sufficiency.
+           Typed full legal name + checkbox + auto-captured timestamp/IP is the
+           industry-standard e-signature pattern for HOA applications. -->
+      <div class="card">
+        <h2>🖊️ Acknowledgment &amp; signature</h2>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:14px; font-size:13px; line-height:1.55; color:#334155; max-height:220px; overflow-y:auto; margin-bottom:12px;">
+          <p style="margin:0 0 8px 0;">
+            The Declaration of Covenants, Conditions and Restrictions (the "Deed Restrictions") specifies that all
+            improvements as defined in the Deed Restrictions must be approved in writing by the Architectural Control
+            Committee at least <strong>45 days</strong> prior to beginning construction or improvement.
+          </p>
+          <p style="margin:0 0 8px 0;">
+            <strong>I understand and agree</strong> that it is the duty of the property owner and any contractor or
+            consultant employed by the owner to determine that the proposed improvement(s) are structurally,
+            mechanically, and otherwise safe and that they are designed and will be constructed in accordance with
+            the applicable architectural restrictions.
+          </p>
+          <p style="margin:0;">
+            <strong>I agree</strong> that neither the Association, nor any Director, Officer, Committee, Managing
+            Agent, member, or employee thereof, shall be liable for damage or otherwise because of the approval or
+            non-approval of this application or any facet thereof. I hereby release, indemnify and hold harmless
+            the Indemnified Parties from any claim, liability, damage, suit and attorney's fees arising out of any
+            action or omission of any of the Indemnified Parties with regard to this application and the design,
+            plan review, construction, or inspection of the proposed improvements, including any potential claims.
+          </p>
+        </div>
+
+        <label class="ind-ack" style="display:flex; gap:10px; align-items:flex-start; cursor:pointer; padding:10px 12px; background:#fff; border:1px solid #d0d7de; border-radius:8px; margin-bottom:12px;">
+          <input id="agree_indemnification" type="checkbox" style="margin-top:3px; flex:0 0 auto; width:18px; height:18px;">
+          <span style="font-size:13px; color:#1a3a5c;">
+            I have read and agree to the terms above. I understand this submission is subject to the 45-day
+            review period and that all improvements must be approved in writing before construction begins.
+          </span>
+        </label>
+
+        <div class="grid-2">
+          <div class="fld">
+            <label>Type your full legal name <span class="req">*</span></label>
+            <input id="signed_by_name" type="text" placeholder="Jane Q. Homeowner" autocomplete="name" />
+            <div style="font-size:11px; color:#94a3b8; margin-top:4px;">This typed name is your electronic signature under the federal E-SIGN Act.</div>
+          </div>
+          <div class="fld">
+            <label>Date</label>
+            <input id="signed_at_display" type="text" readonly style="background:#f5f8fc; color:#475569;" />
+          </div>
+        </div>
+      </div>
+
       <button id="submit-btn" class="submit-btn">Submit application →</button>
       <p id="form-err" class="err-msg" style="display:none;"></p>
     </div>
@@ -354,6 +441,131 @@
       }
     }
 
+    // Per-project-type guidance, distilled from the LPF General Instructions list.
+    const PROJECT_REQS = {
+      fence:       'Height, materials, location, and a copy of the survey if the fence line is moving.',
+      paint:       'Paint brand and color name, plus a photo of your home showing the existing exterior palette. For custom colors, include a photo of the paint chip.',
+      addition:    'Engineered or structural drawing showing how the structure attaches to the home or is placed on the lot, plus size, height, color, materials, roofing, and a copy of the lot survey indicating placement.',
+      pool:        'Detailed pool drawing and lot survey showing placement, drainage to the street, self-latching gate location, and decking material/thickness. Drainage must not affect neighboring lots. Construction may NOT access through any common areas.',
+      deck:        'Lot survey showing location, materials to be used, and height of decking.',
+      landscaping: 'Reason for any tree removal (with arborist bid if obtained), tree dimensions and species, and placement on the lot survey.',
+      roof:        'Manufacturer/brand, type of shingles, color name, and confirmation of 30 lb felt paper or better. If details are not finalized, attach your contractor bid with full scope of work.',
+      door:        'Photo or brochure of the door, material, and stain/paint sample. Most communities require full-view glass and the door color to match the existing trim.',
+      window:      'Brochure/specifications for the product. No reflective material will be approved.',
+      shed:        'Engineered or structural drawing, size, height, color, materials, roofing, and lot survey showing placement.',
+      mailbox:     'Photo or brochure, size, dimensions, and placement on the lot survey.',
+      driveway:    'Lot survey showing location, dimensions, and materials.',
+      other:       'Provide as much detail as possible — drawings, photos, materials, dimensions, and placement. The more we have, the faster we can review.',
+    };
+
+    function refreshReqsCard() {
+      const t = $('project_type').value;
+      const card = $('reqs-card');
+      const text = $('reqs-text');
+      if (t && PROJECT_REQS[t]) {
+        text.textContent = PROJECT_REQS[t];
+        card.style.display = '';
+      } else {
+        card.style.display = 'none';
+      }
+    }
+    $('project_type').addEventListener('change', refreshReqsCard);
+
+    // Auto-fill today's date in the signature display field
+    (function setSignedDate() {
+      const d = new Date();
+      const fmt = d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+      $('signed_at_display').value = fmt;
+    })();
+
+    // ----- File accumulators (documents + photos) -----
+    let docFiles = [];
+    let photoFiles = [];
+
+    function renderDocPreviews() {
+      const wrap = $('doc-previews');
+      const label = $('doc-label');
+      if (docFiles.length === 0) {
+        wrap.innerHTML = '';
+        label.textContent = 'Tap or drag PDFs here — tap again to add more';
+        return;
+      }
+      label.textContent = `✅ ${docFiles.length} document${docFiles.length === 1 ? '' : 's'} attached — tap to add more`;
+      wrap.innerHTML = docFiles.map((f, i) => `
+        <span style="display:inline-flex; gap:6px; align-items:center; padding:6px 10px; background:#eff6ff; color:#1e40af; border:1px solid #bfdbfe; border-radius:6px; font-size:12px;">
+          📄 ${escapeHtml(f.name.length > 30 ? f.name.slice(0, 27) + '…' : f.name)}
+          <button type="button" data-idx="${i}" data-kind="doc" class="rm-file" style="background:none; border:none; color:#dc2626; cursor:pointer; font-weight:700; padding:0 2px;">×</button>
+        </span>
+      `).join('');
+    }
+
+    function renderPhotoPreviews() {
+      const wrap = $('photo-previews');
+      const label = $('photo-label');
+      if (photoFiles.length === 0) {
+        wrap.innerHTML = '';
+        label.textContent = 'Tap or drag photos here — tap again to add more';
+        return;
+      }
+      label.textContent = `✅ ${photoFiles.length} photo${photoFiles.length === 1 ? '' : 's'} attached — tap to add more`;
+      wrap.innerHTML = photoFiles.map((f, i) => `
+        <span style="display:inline-flex; gap:6px; align-items:center; padding:6px 10px; background:#f0fdf4; color:#166534; border:1px solid #bbf7d0; border-radius:6px; font-size:12px;">
+          🖼️ ${escapeHtml(f.name.length > 30 ? f.name.slice(0, 27) + '…' : f.name)}
+          <button type="button" data-idx="${i}" data-kind="photo" class="rm-file" style="background:none; border:none; color:#dc2626; cursor:pointer; font-weight:700; padding:0 2px;">×</button>
+        </span>
+      `).join('');
+    }
+
+    document.addEventListener('click', (e) => {
+      const btn = e.target.closest('.rm-file');
+      if (!btn) return;
+      const i = parseInt(btn.getAttribute('data-idx'), 10);
+      const kind = btn.getAttribute('data-kind');
+      if (kind === 'doc') { docFiles.splice(i, 1); renderDocPreviews(); }
+      else if (kind === 'photo') { photoFiles.splice(i, 1); renderPhotoPreviews(); }
+    });
+
+    $('doc-input').addEventListener('change', (e) => {
+      for (const f of e.target.files) {
+        if (docFiles.length >= 15) break;
+        docFiles.push(f);
+      }
+      e.target.value = '';
+      renderDocPreviews();
+    });
+    $('photo-input').addEventListener('change', (e) => {
+      for (const f of e.target.files) {
+        if (photoFiles.length >= 15) break;
+        photoFiles.push(f);
+      }
+      e.target.value = '';
+      renderPhotoPreviews();
+    });
+
+    // Drag-and-drop
+    function wireDrop(zoneId, isDoc) {
+      const zone = $(zoneId);
+      zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.background = '#e0e7ff'; });
+      zone.addEventListener('dragleave', () => { zone.style.background = '#f8fafc'; });
+      zone.addEventListener('drop', (e) => {
+        e.preventDefault(); zone.style.background = '#f8fafc';
+        for (const f of e.dataTransfer.files) {
+          if (isDoc) {
+            if (docFiles.length >= 15) break;
+            if (!/pdf/i.test(f.type)) continue;
+            docFiles.push(f);
+          } else {
+            if (photoFiles.length >= 15) break;
+            if (!f.type.startsWith('image/')) continue;
+            photoFiles.push(f);
+          }
+        }
+        isDoc ? renderDocPreviews() : renderPhotoPreviews();
+      });
+    }
+    wireDrop('doc-drop', true);
+    wireDrop('photo-drop', false);
+
     $('submit-btn').addEventListener('click', async () => {
       $('form-err').style.display = 'none';
       const required = ['submitter_name', 'submitter_email', 'property_address', 'project_type', 'project_description'];
@@ -364,34 +576,48 @@
           return;
         }
       }
+      if (!$('agree_indemnification').checked) {
+        showFormErr('Please acknowledge the indemnification terms.');
+        $('agree_indemnification').focus();
+        return;
+      }
+      const signedName = $('signed_by_name').value.trim();
+      if (!signedName || signedName.length < 2) {
+        showFormErr('Please type your full legal name as your electronic signature.');
+        $('signed_by_name').focus();
+        return;
+      }
 
       $('form-screen').style.display = 'none';
       $('loading-screen').classList.add('show');
 
-      const body = {
-        submitter_name: $('submitter_name').value.trim(),
-        submitter_email: $('submitter_email').value.trim(),
-        submitter_phone: $('submitter_phone').value.trim() || null,
-        property_address: $('property_address').value.trim(),
-        application_data: {
-          project_type: $('project_type').value,
-          project_description: $('project_description').value.trim(),
-          materials: $('materials').value.trim() || null,
-          dimensions: $('dimensions').value.trim() || null,
-          location_on_property: $('location_on_property').value.trim() || null,
-          start_date: $('start_date').value || null,
-          completion_date: $('completion_date').value || null,
-          contractor: $('contractor').value.trim() || null,
-          estimated_cost: Number($('estimated_cost').value) || null,
-          additional_notes: $('additional_notes').value.trim() || null
-        }
-      };
+      const form = new FormData();
+      form.append('submitter_name', $('submitter_name').value.trim());
+      form.append('submitter_email', $('submitter_email').value.trim());
+      const phone = $('submitter_phone').value.trim();
+      if (phone) form.append('submitter_phone', phone);
+      form.append('property_address', $('property_address').value.trim());
+      form.append('signed_by_name', signedName);
+      form.append('agreed_to_indemnification', 'true');
+      form.append('application_data', JSON.stringify({
+        project_type: $('project_type').value,
+        project_description: $('project_description').value.trim(),
+        materials: $('materials').value.trim() || null,
+        dimensions: $('dimensions').value.trim() || null,
+        location_on_property: $('location_on_property').value.trim() || null,
+        start_date: $('start_date').value || null,
+        completion_date: $('completion_date').value || null,
+        contractor: $('contractor').value.trim() || null,
+        estimated_cost: Number($('estimated_cost').value) || null,
+        additional_notes: $('additional_notes').value.trim() || null,
+      }));
+      docFiles.forEach((f) => form.append('documents', f));
+      photoFiles.forEach((f) => form.append('photos', f));
 
       try {
         const r = await fetch(`/api/applications/public/${encodeURIComponent(slug)}/submit`, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body)
+          body: form,
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
