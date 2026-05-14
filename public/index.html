@@ -686,7 +686,11 @@
               <textarea id="vwAdditionalReqA" placeholder="Any changes from current scope, special instructions..." rows="2"></textarea>
             </div>
           </div>
-          <button class="action-btn" onclick="generateRFPPathA()">📊 Generate RFP</button>
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <button class="action-btn" onclick="generateRFPPathA()">📊 Generate RFP</button>
+            <button class="secondary-btn" id="vwSaveDraftBtn" onclick="vwSaveDraft()" style="padding:10px 16px;">💾 Save draft</button>
+            <span id="vwDraftStatus" style="font-size:12px; color:#6B7280;"></span>
+          </div>
         </div>
 
         <!-- Path B form -->
@@ -794,6 +798,15 @@
         <div id="vwLibraryContainer" style="margin-top: 12px;">
           <div style="color:#888; font-size: 13px; padding: 10px;">Loading…</div>
         </div>
+      </div>
+
+      <!-- Saved vendor workflow drafts -->
+      <div data-drafts-panel="vendor_workflow" style="margin-top:16px; background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:12px 14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <h3 style="margin:0; font-size:14px; color:#1a3a5c;">🗂️ Saved workflow drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
+          <button class="secondary-btn" onclick="Drafts.refreshPanel('vendor_workflow')" style="font-size:11px; padding:4px 8px;">Refresh</button>
+        </div>
+        <div data-drafts-list="vendor_workflow" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
       </div>
 
     </div>
@@ -915,9 +928,11 @@ Mary Lee, Treasurer, 2026" style="width:100%; border:1px solid #d0d7de; border-r
         <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Homeowners will submit at <code id="nomSlugPreview">/nominate/&lt;slug&gt;</code></div>
       </div>
 
-      <div style="display:flex; gap:8px; margin-top:14px;">
+      <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
         <button class="action-btn" id="nomCreateBtn" onclick="nomCreateCycle()">💾 Save cycle</button>
         <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF</button>
+        <button class="secondary-btn" id="nomSaveDraftBtn" onclick="nomSaveDraft()">📝 Save as draft</button>
+        <span id="nomDraftStatus" style="font-size:12px; color:#6B7280; flex-basis:100%; margin-top:4px;"></span>
       </div>
       <div id="nomCreateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
     </div>
@@ -939,6 +954,14 @@ Mary Lee, Treasurer, 2026" style="width:100%; border:1px solid #d0d7de; border-r
         </div>
         <div id="nomPublicLinkBox" style="font-size:12px; color:#475569; margin-bottom:10px;"></div>
         <div id="nomList" style="font-size:13px; color:#6B7280;">No nominations submitted yet.</div>
+      </div>
+
+      <div data-drafts-panel="nominations_cycle" style="margin-top:14px; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0; font-size:14px; color:#1E2761;">🗂️ Saved cycle drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
+          <button class="secondary-btn" onclick="Drafts.refreshPanel('nominations_cycle')" style="font-size:11px; padding:4px 8px;">Refresh</button>
+        </div>
+        <div data-drafts-list="nominations_cycle" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
       </div>
     </div>
 
@@ -3107,10 +3130,21 @@ Mary Lee, Treasurer, 2026" style="width:100%; border:1px solid #d0d7de; border-r
           <span style="color:#888; font-size:12px;">Loading section templates…</span>
         </div>
       </div>
-      <div style="margin-top:12px; display:flex; justify-content:flex-end;">
+      <div style="margin-top:12px; display:flex; justify-content:flex-end; gap:8px;">
+        <button class="secondary-btn" id="packetsSaveDraftBtn" onclick="packetsSaveDraft()" style="padding:8px 14px; font-size:13px;">💾 Save draft</button>
         <button class="action-btn" onclick="packetsCreate()">Create Packet →</button>
       </div>
       <div id="packets-create-result" style="margin-top:8px;"></div>
+      <div id="packetsDraftStatus" style="margin-top:4px; font-size:12px; color:#6B7280;"></div>
+    </div>
+
+    <!-- Saved packet drafts — pre-create work in progress -->
+    <div data-drafts-panel="board_packet" class="panel" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h3 style="margin:0;">🗂️ Saved packet drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(pre-creation work in progress)</span></h3>
+        <button class="secondary-btn" onclick="Drafts.refreshPanel('board_packet')" style="font-size:11px; padding:4px 8px;">Refresh</button>
+      </div>
+      <div data-drafts-list="board_packet" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
     </div>
 
     <!-- Existing packets list -->
@@ -5712,12 +5746,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div class="lbl">Require parent/guardian consent for minors</div>
         </label>
       </div>
-      <div style="text-align:right; margin-top:16px;">
+      <div style="text-align:right; margin-top:16px; display:flex; justify-content:flex-end; gap:8px; align-items:center; flex-wrap:wrap;">
         <button class="secondary-btn" onclick="evHideCreateModal()">Cancel</button>
+        <button class="secondary-btn" id="evSaveDraftBtn" onclick="evSaveDraft()" style="padding:8px 14px;">💾 Save draft</button>
         <button class="primary-btn" onclick="evCreateEvent()" style="padding:8px 18px;">Create event</button>
         <span id="ev-create-status" style="margin-left:10px; font-size:12px;"></span>
       </div>
+      <div id="evDraftStatus" style="margin-top:6px; font-size:12px; color:#6B7280; text-align:right;"></div>
     </div>
+  </div>
+
+  <!-- Saved event drafts panel — sits below the filter bar, above the list -->
+  <div data-drafts-panel="event_plan" style="margin: 0 0 18px 0; background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:12px 14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+      <h3 style="margin:0; font-size:14px; color:#1a3a5c;">🗂️ Saved event drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
+      <button class="secondary-btn" onclick="Drafts.refreshPanel('event_plan')" style="font-size:11px; padding:4px 8px;">Refresh</button>
+    </div>
+    <div data-drafts-list="event_plan" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
   </div>
 
   <style>
@@ -13477,6 +13522,228 @@ ${questionsPage}
       document.getElementById('accDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
     },
   });
+
+  // =========================================================================
+  // Call for Nominations cycle draft adapter
+  // =========================================================================
+  Drafts.register('nominations_cycle', {
+    label(state) {
+      return `${state.community_name || 'Cycle'} — meeting ${state.annual_meeting_date || 'TBD'}`;
+    },
+    async collect() {
+      const state = {
+        community_name:           (document.getElementById('communitySelect') || {}).value || null,
+        annual_meeting_date:      document.getElementById('nomMeetingDate').value,
+        annual_meeting_time:      document.getElementById('nomMeetingTime').value,
+        annual_meeting_location:  document.getElementById('nomMeetingLocation').value,
+        nominations_open_at:      document.getElementById('nomOpenAt').value,
+        nominations_close_at:     document.getElementById('nomCloseAt').value,
+        seats_open:               document.getElementById('nomSeatsOpen').value,
+        current_board:            document.getElementById('nomCurrentBoard').value,
+        description:              document.getElementById('nomDescription').value,
+        expectations_blurb:       document.getElementById('nomExpectations').value,
+        bio_prompt_style:         document.getElementById('nomBioStyle').value,
+        proxy_teaser:             document.getElementById('nomProxyTeaser').checked,
+        onsite_enabled:           document.getElementById('nomOnsiteEnabled').checked,
+        onsite_location:          document.getElementById('nomOnsiteLocation').value,
+        onsite_address:           document.getElementById('nomOnsiteAddress').value,
+        public_slug:              document.getElementById('nomPublicSlug').value,
+      };
+      const files = [];
+      const ref = document.getElementById('nomReferenceLetter');
+      if (ref && ref.files && ref.files[0]) {
+        files.push({ field: 'reference_letter', file: ref.files[0], name: ref.files[0].name });
+      }
+      return { state, files };
+    },
+    async hydrate(draft) {
+      const s = draft.state || {};
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('nomMeetingDate',     s.annual_meeting_date);
+      set('nomMeetingTime',     s.annual_meeting_time);
+      set('nomMeetingLocation', s.annual_meeting_location);
+      set('nomOpenAt',          s.nominations_open_at);
+      set('nomCloseAt',         s.nominations_close_at);
+      set('nomSeatsOpen',       s.seats_open);
+      set('nomCurrentBoard',    s.current_board);
+      set('nomDescription',     s.description);
+      set('nomExpectations',    s.expectations_blurb);
+      set('nomBioStyle',        s.bio_prompt_style || 'simple');
+      set('nomOnsiteLocation',  s.onsite_location);
+      set('nomOnsiteAddress',   s.onsite_address);
+      set('nomPublicSlug',      s.public_slug);
+      document.getElementById('nomProxyTeaser').checked  = !!s.proxy_teaser;
+      document.getElementById('nomOnsiteEnabled').checked = !!s.onsite_enabled;
+      try { nomToggleOnsite(); } catch (_) {}
+      try { switchTab('nominations'); } catch (_) {}
+      document.getElementById('nomDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+    },
+  });
+
+  async function nomSaveDraft() {
+    const btn = document.getElementById('nomSaveDraftBtn');
+    const status = document.getElementById('nomDraftStatus');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      await Drafts.save('nominations_cycle', { replaceFiles: true });
+      status.innerHTML = `<span style="color:#15803d;">✓ Draft saved</span> · resume from the panel below`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '📝 Save as draft';
+    }
+  }
+
+  // =========================================================================
+  // Board Packets — pre-create draft adapter
+  // =========================================================================
+  Drafts.register('board_packet', {
+    label(state) { return `${state.period_label || 'Packet'} — ${state.type || 'regular'}`; },
+    async collect() {
+      const state = {
+        community_id:    document.getElementById('packets-new-community').value,
+        community_label: (document.getElementById('packets-new-community').selectedOptions[0] || {}).text || '',
+        period_label:    document.getElementById('packets-new-period').value,
+        meeting_date:    document.getElementById('packets-new-date').value,
+        type:            document.getElementById('packets-new-type').value,
+        sections:        Array.from(document.querySelectorAll('#packets-create-sections input[type=checkbox]:checked')).map((c) => c.value || c.dataset.section || c.id),
+      };
+      return { state, files: [] };
+    },
+    async hydrate(draft) {
+      const s = draft.state || {};
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('packets-new-community', s.community_id);
+      set('packets-new-period',    s.period_label);
+      set('packets-new-date',      s.meeting_date);
+      set('packets-new-type',      s.type || 'regular');
+      if (Array.isArray(s.sections)) {
+        document.querySelectorAll('#packets-create-sections input[type=checkbox]').forEach((c) => {
+          const id = c.value || c.dataset.section || c.id;
+          c.checked = s.sections.includes(id);
+        });
+      }
+      try { switchTab('packets'); } catch (_) {}
+      document.getElementById('packetsDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+    },
+  });
+
+  async function packetsSaveDraft() {
+    const btn = document.getElementById('packetsSaveDraftBtn');
+    const status = document.getElementById('packetsDraftStatus');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      await Drafts.save('board_packet', { replaceFiles: true });
+      status.innerHTML = `<span style="color:#15803d;">✓ Draft saved</span>`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save draft';
+    }
+  }
+
+  // =========================================================================
+  // Events — pre-create draft adapter
+  // =========================================================================
+  Drafts.register('event_plan', {
+    label(state) { return `${state.name || 'Event'} — ${state.start ? new Date(state.start).toLocaleDateString() : 'TBD'}`; },
+    async collect() {
+      const get = (id) => (document.getElementById(id) || {}).value || '';
+      const state = {
+        community_id:    get('ev-new-community'),
+        community_label: ((document.getElementById('ev-new-community') || {}).selectedOptions || [{}])[0]?.text || '',
+        name:            get('ev-new-name'),
+        type:            get('ev-new-type'),
+        location:        get('ev-new-location'),
+        start:           get('ev-new-start'),
+        end:             get('ev-new-end'),
+        est_attendance:  get('ev-new-estatt'),
+        budget:          get('ev-new-budget'),
+        description:     get('ev-new-desc'),
+        requires_minor_consent: (document.getElementById('ev-new-requires-minor') || {}).checked,
+      };
+      return { state, files: [] };
+    },
+    async hydrate(draft) {
+      const s = draft.state || {};
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('ev-new-community', s.community_id);
+      set('ev-new-name',      s.name);
+      set('ev-new-type',      s.type);
+      set('ev-new-location',  s.location);
+      set('ev-new-start',     s.start);
+      set('ev-new-end',       s.end);
+      set('ev-new-estatt',    s.est_attendance);
+      set('ev-new-budget',    s.budget);
+      set('ev-new-desc',      s.description);
+      const mc = document.getElementById('ev-new-requires-minor');
+      if (mc) mc.checked = !!s.requires_minor_consent;
+      try { switchTab('events'); } catch (_) {}
+      try { evShowCreateModal(); } catch (_) {}
+      document.getElementById('evDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+    },
+  });
+
+  async function evSaveDraft() {
+    const btn = document.getElementById('evSaveDraftBtn');
+    const status = document.getElementById('evDraftStatus');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      await Drafts.save('event_plan', { replaceFiles: true });
+      status.innerHTML = `<span style="color:#15803d;">✓ Draft saved</span> · resume from the panel on the main list`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save draft';
+    }
+  }
+
+  // =========================================================================
+  // Vendor Workflow — Path A RFP draft adapter
+  // =========================================================================
+  Drafts.register('vendor_workflow', {
+    label(state) { return `${state.vendor_type || 'RFP'} — ${state.contract_term || ''}`.trim(); },
+    async collect() {
+      const get = (id) => (document.getElementById(id) || {}).value || '';
+      const state = {
+        path: 'A',
+        vendor_type:        get('vwVendorTypeA'),
+        contract_term:      get('vwContractTermA'),
+        bid_deadline:       get('vwBidDeadlineA'),
+        manual_scope:       get('vwManualScopeA'),
+        additional_req:     get('vwAdditionalReqA'),
+      };
+      const files = [];
+      const c = document.getElementById('vwContractA');
+      if (c && c.files && c.files[0]) files.push({ field: 'contract', file: c.files[0], name: c.files[0].name });
+      return { state, files };
+    },
+    async hydrate(draft) {
+      const s = draft.state || {};
+      const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      set('vwVendorTypeA',   s.vendor_type);
+      set('vwContractTermA', s.contract_term);
+      set('vwBidDeadlineA',  s.bid_deadline);
+      set('vwManualScopeA',  s.manual_scope);
+      set('vwAdditionalReqA', s.additional_req);
+      try { switchTab('vendor'); setPath('A'); } catch (_) {}
+      document.getElementById('vwDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+    },
+  });
+
+  async function vwSaveDraft() {
+    const btn = document.getElementById('vwSaveDraftBtn');
+    const status = document.getElementById('vwDraftStatus');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      await Drafts.save('vendor_workflow', { replaceFiles: true });
+      status.innerHTML = `<span style="color:#15803d;">✓ Draft saved</span>`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save draft';
+    }
+  }
 
   async function accSaveDraft() {
     const btn = document.getElementById('accSaveDraftBtn');
