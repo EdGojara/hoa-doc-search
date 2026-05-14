@@ -388,14 +388,28 @@
       <!-- Decision letter (renders a Bedrock-letterhead PDF for the homeowner) -->
       <div id="accLetterSection" style="display:none; margin-top:18px; padding:16px; background:#f1f5fb; border:1px solid #c0d0e0; border-radius:10px;">
         <div style="font-weight:700; color:#1E2761; font-size:14px; margin-bottom:10px;">📨 Decision letter (PDF for the homeowner)</div>
-        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
-          <input id="accLetterName" placeholder="Homeowner name" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
-          <input id="accLetterAddress" placeholder="Property address" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+
+        <!-- Auto-extracted recipient info, shown read-only by default. Tap "Edit recipient" to reveal the inputs if anything needs fixing. -->
+        <div id="accRecipientSummary" style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; padding:10px 12px; background:#fff; border:1px solid #d0d7de; border-radius:6px; margin-bottom:8px; font-size:13px;">
+          <div style="flex:1; min-width:0;">
+            <div style="color:#1E2761; font-weight:600;" id="accRecipSumName">—</div>
+            <div style="color:#475569; margin-top:2px;" id="accRecipSumAddress">—</div>
+            <div style="color:#94A3B8; margin-top:2px; font-style:italic;" id="accRecipSumProject"></div>
+          </div>
+          <button type="button" onclick="accToggleRecipientEdit()" style="background:none; border:none; color:#1E2761; font-size:12px; cursor:pointer; padding:2px 6px; white-space:nowrap;" id="accRecipEditBtn">✏️ Edit</button>
         </div>
-        <div style="display:grid; grid-template-columns: 2fr 1fr; gap:8px; margin-bottom:8px;">
-          <input id="accLetterProject" placeholder="Project summary (e.g., 6ft cedar fence — rear yard)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
-          <input id="accLetterRef" placeholder="Reference # (optional)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+
+        <div id="accRecipientInputs" style="display:none;">
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-bottom:8px;">
+            <input id="accLetterName" placeholder="Homeowner name" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;" oninput="accUpdateRecipientSummary()">
+            <input id="accLetterAddress" placeholder="Property address" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;" oninput="accUpdateRecipientSummary()">
+          </div>
+          <div style="display:grid; grid-template-columns: 2fr 1fr; gap:8px; margin-bottom:8px;">
+            <input id="accLetterProject" placeholder="Project summary (e.g., 6ft cedar fence — rear yard)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;" oninput="accUpdateRecipientSummary()">
+            <input id="accLetterRef" placeholder="Reference # (optional)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+          </div>
         </div>
+
         <select id="accLetterDecision" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none; background:#fff; margin-bottom:8px;">
           <option value="approved">✓ Approved</option>
           <option value="approved_with_conditions" selected>✓ Approved with conditions</option>
@@ -404,7 +418,8 @@
         </select>
         <textarea id="accLetterBody" rows="8" placeholder="Letter body — pre-filled from the review above. Edit any text before downloading." style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:10px 12px; font-size:13px; font-family:inherit; outline:none; resize:vertical; box-sizing:border-box; margin-bottom:8px;"></textarea>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <button class="action-btn" id="accDownloadLetterBtn" onclick="accDownloadLetter()" style="padding:10px 18px;">📥 Download decision letter PDF</button>
+          <button class="action-btn" id="accDownloadLetterBtn" onclick="accDownloadLetter()" style="padding:10px 18px;">📥 Download letter</button>
+          <button class="action-btn" id="accDownloadPacketBtn" onclick="accDownloadPacket()" style="padding:10px 18px; display:none; background:#1E2761;">📦 Download complete packet (letter + application + photos)</button>
           <span id="accLetterStatus" style="font-size:13px; color:#666;"></span>
         </div>
       </div>
@@ -7412,6 +7427,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         if (sec) sec.style.display = 'block';
         const body = document.getElementById('accLetterBody');
         if (body) body.value = (data.letter_body && data.letter_body.trim()) ? data.letter_body : data.review;
+        // Stash extracted data + uploaded files for the packet endpoint.
+        accLastReview = {
+          extracted: data.extracted || {},
+          decision_id: null,
+        };
         // Auto-fill homeowner / project / reference from the AI's structured extract
         const ex = data.extracted || {};
         const setIfBlank = (id, val) => {
@@ -7423,6 +7443,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         setIfBlank('accLetterAddress', ex.homeowner_address);
         setIfBlank('accLetterProject', ex.project_summary);
         setIfBlank('accLetterRef',     ex.reference_number);
+        accUpdateRecipientSummary();
         // Map the manager's override dropdown to the letter decision dropdown.
         const overrideMap = {
           'approved with conditions': 'approved_with_conditions',
@@ -7442,6 +7463,32 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     reviewBtn.textContent = '🔍 Review Application';
   }
 
+  // Decision-letter state — extracted info from the last review + the decision
+  // record id once saved (lets the packet endpoint know which artifacts to merge).
+  let accLastReview = { extracted: {}, decision_id: null };
+
+  function accToggleRecipientEdit() {
+    const inputs = document.getElementById('accRecipientInputs');
+    const btn = document.getElementById('accRecipEditBtn');
+    if (!inputs) return;
+    const showing = inputs.style.display !== 'none';
+    inputs.style.display = showing ? 'none' : 'block';
+    if (btn) btn.textContent = showing ? '✏️ Edit' : '✓ Done';
+  }
+
+  function accUpdateRecipientSummary() {
+    const v = (id) => (document.getElementById(id)?.value || '').trim();
+    const name = v('accLetterName');
+    const addr = v('accLetterAddress');
+    const proj = v('accLetterProject');
+    const ref  = v('accLetterRef');
+    document.getElementById('accRecipSumName').textContent    = name || 'Homeowner name needed';
+    document.getElementById('accRecipSumAddress').textContent = addr || 'Property address needed';
+    document.getElementById('accRecipSumProject').textContent = [proj, ref ? `Ref ${ref}` : ''].filter(Boolean).join(' · ');
+    const nameEl = document.getElementById('accRecipSumName');
+    if (nameEl) nameEl.style.color = name ? '#1E2761' : '#b91c1c';
+  }
+
   async function accDownloadLetter() {
     const body_text = (document.getElementById('accLetterBody').value || '').trim();
     if (!body_text) {
@@ -7449,29 +7496,32 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         '<span style="color:#b91c1c;">Body text is empty — paste or write the letter content.</span>';
       return;
     }
-    const payload = {
-      community: currentCommunity || '',
-      homeowner_name: document.getElementById('accLetterName').value.trim(),
-      homeowner_address: document.getElementById('accLetterAddress').value.trim(),
-      project_summary: document.getElementById('accLetterProject').value.trim(),
-      reference_number: document.getElementById('accLetterRef').value.trim(),
-      decision_type: document.getElementById('accLetterDecision').value,
-      body_text,
-    };
+    // Send the original application PDF + photos alongside the letter request
+    // so the server saves the complete decision record (for history + packet).
+    const form = new FormData();
+    form.append('community', currentCommunity || '');
+    form.append('homeowner_name', document.getElementById('accLetterName').value.trim());
+    form.append('homeowner_address', document.getElementById('accLetterAddress').value.trim());
+    form.append('project_summary', document.getElementById('accLetterProject').value.trim());
+    form.append('reference_number', document.getElementById('accLetterRef').value.trim());
+    form.append('decision_type', document.getElementById('accLetterDecision').value);
+    form.append('body_text', body_text);
+    const applicationPdf = document.getElementById('accPdf').files[0];
+    if (applicationPdf) form.append('application_pdf', applicationPdf);
+    (accSelectedFiles || []).forEach((f) => form.append('photos', f));
+
     const btn = document.getElementById('accDownloadLetterBtn');
+    const packetBtn = document.getElementById('accDownloadPacketBtn');
     const status = document.getElementById('accLetterStatus');
-    btn.disabled = true; btn.textContent = '⏳ Generating PDF…';
+    btn.disabled = true; btn.textContent = '⏳ Generating + saving…';
     status.textContent = '';
     try {
-      const r = await fetch('/acc-review/letter', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const r = await fetch('/acc-review/letter', { method: 'POST', body: form });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || ('HTTP ' + r.status));
       }
+      const decisionId = r.headers.get('X-Decision-Id');
       const blob = await r.blob();
       const disp = r.headers.get('Content-Disposition') || '';
       const m = disp.match(/filename="([^"]+)"/);
@@ -7481,11 +7531,46 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       a.href = url; a.download = filename;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(url), 1000);
-      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + '</span>';
+      if (decisionId) {
+        accLastReview.decision_id = decisionId;
+        if (packetBtn) packetBtn.style.display = 'inline-flex';
+      }
+      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved to ACC history</span>';
     } catch (e) {
       status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Failed') + '</span>';
     } finally {
-      btn.disabled = false; btn.textContent = '📥 Download decision letter PDF';
+      btn.disabled = false; btn.textContent = '📥 Download letter';
+    }
+  }
+
+  async function accDownloadPacket() {
+    if (!accLastReview.decision_id) {
+      document.getElementById('accLetterStatus').innerHTML = '<span style="color:#b91c1c;">Download the letter first — that saves the decision and lets us merge the packet.</span>';
+      return;
+    }
+    const btn = document.getElementById('accDownloadPacketBtn');
+    const status = document.getElementById('accLetterStatus');
+    btn.disabled = true; btn.textContent = '⏳ Merging packet…';
+    try {
+      const r = await fetch(`/acc-review/decisions/${accLastReview.decision_id}/packet`);
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || ('HTTP ' + r.status));
+      }
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'acc_packet.pdf';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + '</span>';
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Packet failed') + '</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '📦 Download complete packet (letter + application + photos)';
     }
   }
 

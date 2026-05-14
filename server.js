@@ -963,56 +963,235 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
 // ============================================================================
 const { renderDecisionLetterHTML } = require('./lib/decision_letter');
 const _puppeteer_lazy = () => require('puppeteer');
+const _pdflib_lazy = () => require('pdf-lib');
 
-app.post('/acc-review/letter', express.json({ limit: '2mb' }), async (req, res) => {
-  let browser = null;
+async function renderLetterPdfBuffer(body) {
+  const html = renderDecisionLetterHTML(body);
+  const puppeteer = _puppeteer_lazy();
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+  });
   try {
-    const body = req.body || {};
-    if (!body.body_text || !body.body_text.trim()) {
-      return res.status(400).json({ error: 'body_text is required' });
-    }
-    const html = renderDecisionLetterHTML(body);
-    const puppeteer = _puppeteer_lazy();
-    browser = await puppeteer.launch({
-      headless: 'new',
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--no-zygote',
-        '--single-process',
-      ],
-    });
     const page = await browser.newPage();
-    // Page is fully self-contained (inline CSS, base64 logo, system fonts), so
-    // domcontentloaded is the earliest valid signal. If even that times out on
-    // Render's slow free-tier, swallow the timeout and try to render anyway —
-    // a parsed DOM is usually enough to PDF.
     try {
       await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
-    } catch (waitErr) {
-      console.warn('[acc-review/letter] setContent wait timed out — rendering anyway:', waitErr.message);
-    }
-    const pdfBuffer = await page.pdf({
+    } catch (_) { /* swallow — render anyway */ }
+    return await page.pdf({
       format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true,
     });
+  } finally {
+    try { await browser.close(); } catch (_) {}
+  }
+}
 
-    const stem = (body.homeowner_name || body.community || 'decision')
+// /acc-review/letter accepts multipart so it can save the original application
+// PDF + photos alongside the generated decision letter. All artifacts go to
+// Supabase storage; a row in acc_decisions stitches them together for history
+// lookup + on-demand packet generation.
+app.post('/acc-review/letter', upload.any(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.body_text || !body.body_text.trim()) {
+      return res.status(400).json({ error: 'body_text is required' });
+    }
+    const files = req.files || [];
+    const applicationFile = files.find((f) => f.fieldname === 'application_pdf');
+    const photoFiles = files.filter((f) => f.fieldname === 'photos');
+
+    // 1) Render the letter PDF first — if this fails, nothing else matters.
+    const pdfBuffer = await renderLetterPdfBuffer(body);
+
+    // 2) Insert the decision row so we have an id to namespace storage paths.
+    let decisionId = null;
+    let letterStoragePath = null;
+    let applicationStoragePath = null;
+    const photoStoragePaths = [];
+    try {
+      const { data: instance, error: insErr } = await supabase
+        .from('acc_decisions')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          community_name: body.community || '',
+          homeowner_name: body.homeowner_name || null,
+          homeowner_address: body.homeowner_address || null,
+          project_summary: body.project_summary || null,
+          reference_number: body.reference_number || null,
+          decision_type: body.decision_type || null,
+          letter_body: body.body_text || null,
+        })
+        .select()
+        .single();
+      if (insErr) throw insErr;
+      decisionId = instance.id;
+
+      const stemBase = (body.homeowner_address || body.homeowner_name || body.community || 'decision')
+        .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
+
+      // 3) Upload the letter PDF
+      letterStoragePath = `acc_decisions/${decisionId}/letter.pdf`;
+      const { error: lErr } = await supabase.storage.from('documents').upload(letterStoragePath, pdfBuffer, {
+        contentType: 'application/pdf', upsert: true,
+      });
+      if (lErr) console.warn('[acc-decision] letter upload failed:', lErr.message);
+
+      // 4) Upload the application PDF if provided
+      if (applicationFile) {
+        applicationStoragePath = `acc_decisions/${decisionId}/application.pdf`;
+        const { error: aErr } = await supabase.storage.from('documents').upload(applicationStoragePath, applicationFile.buffer, {
+          contentType: applicationFile.mimetype || 'application/pdf', upsert: true,
+        });
+        if (aErr) console.warn('[acc-decision] application upload failed:', aErr.message);
+      }
+
+      // 5) Upload each photo
+      for (let i = 0; i < photoFiles.length; i++) {
+        const f = photoFiles[i];
+        const ext = (f.mimetype || '').includes('png') ? 'png' : (f.mimetype || '').includes('webp') ? 'webp' : 'jpg';
+        const path = `acc_decisions/${decisionId}/photo_${i + 1}.${ext}`;
+        const { error: pErr } = await supabase.storage.from('documents').upload(path, f.buffer, {
+          contentType: f.mimetype || 'image/jpeg', upsert: true,
+        });
+        if (!pErr) photoStoragePaths.push(path);
+        else console.warn('[acc-decision] photo upload failed:', pErr.message);
+      }
+
+      // 6) Update the row with storage paths
+      await supabase.from('acc_decisions').update({
+        letter_pdf_storage_path: letterStoragePath,
+        application_pdf_storage_path: applicationStoragePath,
+        photo_storage_paths: photoStoragePaths,
+        updated_at: new Date().toISOString(),
+      }).eq('id', decisionId);
+    } catch (saveErr) {
+      console.warn('[acc-decision] save failed (returning letter anyway):', saveErr.message);
+    }
+
+    const stem = (body.homeowner_address || body.homeowner_name || body.community || 'decision')
       .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
     const filename = `${stem}_ACC_decision_${new Date().toISOString().slice(0, 10)}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     res.setHeader('Cache-Control', 'no-store');
+    if (decisionId) {
+      res.setHeader('X-Decision-Id', decisionId);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Decision-Id, Content-Disposition');
+    }
     res.send(pdfBuffer);
   } catch (err) {
     console.error('[acc-review/letter] failed:', err.message);
     res.status(500).json({ error: err.message });
-  } finally {
-    if (browser) try { await browser.close(); } catch (_) {}
+  }
+});
+
+// /acc-review/decisions — list past decisions, optionally filtered by address.
+app.get('/acc-review/decisions', async (req, res) => {
+  try {
+    const { address, community, q } = req.query;
+    let query = supabase
+      .from('acc_decisions')
+      .select('id, community_name, homeowner_name, homeowner_address, project_summary, reference_number, decision_type, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('created_at', { ascending: false })
+      .limit(200);
+    if (address) query = query.ilike('homeowner_address', `%${address}%`);
+    if (community) query = query.ilike('community_name', `%${community}%`);
+    if (q) query = query.or(`homeowner_name.ilike.%${q}%,homeowner_address.ilike.%${q}%,project_summary.ilike.%${q}%`);
+    const { data, error } = await query;
+    if (error) throw error;
+    res.json({ decisions: data || [] });
+  } catch (err) {
+    console.error('[acc-review/decisions] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// /acc-review/decisions/:id/packet — merge letter + application + photos into a
+// single PDF for the file record. Photos are added as their own PDF pages.
+app.get('/acc-review/decisions/:id/packet', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: dec, error: qErr } = await supabase
+      .from('acc_decisions')
+      .select('*')
+      .eq('id', id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
+
+    const { PDFDocument } = _pdflib_lazy();
+    const out = await PDFDocument.create();
+
+    async function fetchBytes(path) {
+      if (!path) return null;
+      const { data: blob, error } = await supabase.storage.from('documents').download(path);
+      if (error || !blob) return null;
+      return Buffer.from(await blob.arrayBuffer());
+    }
+
+    async function mergePdf(path) {
+      const bytes = await fetchBytes(path);
+      if (!bytes) return;
+      try {
+        const src = await PDFDocument.load(bytes, { ignoreEncryption: true });
+        const pages = await out.copyPages(src, src.getPageIndices());
+        pages.forEach((p) => out.addPage(p));
+      } catch (e) {
+        console.warn('[packet] merge pdf failed for', path, e.message);
+      }
+    }
+
+    async function addImageAsPage(path) {
+      const bytes = await fetchBytes(path);
+      if (!bytes) return;
+      try {
+        const isPng = path.toLowerCase().endsWith('.png');
+        const img = isPng ? await out.embedPng(bytes) : await out.embedJpg(bytes);
+        // Letter-size page, fit image preserving aspect ratio
+        const pageW = 612, pageH = 792;
+        const margin = 36;
+        const maxW = pageW - margin * 2;
+        const maxH = pageH - margin * 2;
+        const scale = Math.min(maxW / img.width, maxH / img.height);
+        const w = img.width * scale, h = img.height * scale;
+        const page = out.addPage([pageW, pageH]);
+        page.drawImage(img, { x: (pageW - w) / 2, y: (pageH - h) / 2, width: w, height: h });
+      } catch (e) {
+        console.warn('[packet] embed image failed for', path, e.message);
+      }
+    }
+
+    // Order: letter first, then application, then photos
+    await mergePdf(dec.letter_pdf_storage_path);
+    await mergePdf(dec.application_pdf_storage_path);
+    for (const p of (dec.photo_storage_paths || [])) {
+      await addImageAsPage(p);
+    }
+
+    const bytes = await out.save();
+    const stem = (dec.homeowner_address || dec.homeowner_name || dec.community_name || 'decision')
+      .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
+    const filename = `${stem}_ACC_packet_${(dec.created_at || new Date().toISOString()).slice(0, 10)}.pdf`;
+
+    // Cache the packet on storage for re-download
+    const packetPath = `acc_decisions/${id}/packet.pdf`;
+    try {
+      await supabase.storage.from('documents').upload(packetPath, Buffer.from(bytes), {
+        contentType: 'application/pdf', upsert: true,
+      });
+      await supabase.from('acc_decisions').update({ packet_pdf_storage_path: packetPath, updated_at: new Date().toISOString() }).eq('id', id);
+    } catch (_) {}
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(Buffer.from(bytes));
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/packet] failed:', err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
