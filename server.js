@@ -4497,7 +4497,7 @@ async function nomCountByCycle(cycleIds) {
   } catch (_) { return {}; }
 }
 
-app.post('/api/nominations/cycles', async (req, res) => {
+app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.community_name) return res.status(400).json({ error: 'community_name is required' });
@@ -4509,6 +4509,15 @@ app.post('/api/nominations/cycles', async (req, res) => {
     const slug = (b.public_slug && nomSlugify(b.public_slug)) ||
                  (comm && comm.slug) ||
                  nomSlugify(b.community_name);
+
+    // multipart fields arrive as strings — coerce JSON-shaped ones back to objects.
+    let currentBoard = [];
+    try { currentBoard = b.current_board ? (Array.isArray(b.current_board) ? b.current_board : JSON.parse(b.current_board)) : []; } catch (_) { currentBoard = []; }
+    let onsite = { enabled: false };
+    try { onsite = b.onsite_drop_off ? (typeof b.onsite_drop_off === 'object' ? b.onsite_drop_off : JSON.parse(b.onsite_drop_off)) : { enabled: false }; } catch (_) { onsite = { enabled: false }; }
+
+    const bioStyle = (b.bio_prompt_style === 'structured') ? 'structured' : 'simple';
+    const proxyTeaser = !(b.proxy_teaser === '0' || b.proxy_teaser === 'false' || b.proxy_teaser === false);
 
     const { data: row, error } = await supabase
       .from('nomination_cycles')
@@ -4522,18 +4531,62 @@ app.post('/api/nominations/cycles', async (req, res) => {
         nominations_open_at: b.nominations_open_at,
         nominations_close_at: b.nominations_close_at,
         seats_open: Number(b.seats_open) || 1,
-        current_board: Array.isArray(b.current_board) ? b.current_board : [],
+        current_board: currentBoard,
         description: b.description || null,
+        expectations_blurb: b.expectations_blurb || null,
+        bio_prompt_style: bioStyle,
+        proxy_teaser: proxyTeaser,
+        onsite_drop_off: onsite,
         public_slug: slug,
         status: 'planned',
       })
       .select()
       .single();
     if (error) return res.status(500).json({ error: error.message });
+
+    // Optional reference PDF upload — store alongside the cycle for next-year recall.
+    try {
+      const refFile = (req.files || []).find((f) => f.fieldname === 'reference_letter');
+      if (refFile && row) {
+        const safeName = (refFile.originalname || 'reference.pdf').replace(/[^A-Za-z0-9._-]+/g, '_');
+        const refPath = `nominations/${row.id}/reference_${safeName}`;
+        const { error: upErr } = await supabase.storage.from('documents').upload(refPath, refFile.buffer, {
+          contentType: refFile.mimetype || 'application/pdf', upsert: true,
+        });
+        if (!upErr) {
+          await supabase.from('nomination_cycles')
+            .update({ reference_letter_path: refPath, updated_at: new Date().toISOString() })
+            .eq('id', row.id);
+          row.reference_letter_path = refPath;
+        }
+      }
+    } catch (e) { console.warn('[nominations/cycles] reference upload failed:', e.message); }
+
     res.json({ cycle: row });
   } catch (err) {
     console.error('[nominations/cycles POST]', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// Download the prior-year reference letter attached to a cycle
+app.get('/api/nominations/cycles/:id/reference', async (req, res) => {
+  try {
+    const { data: cycle } = await supabase
+      .from('nomination_cycles')
+      .select('reference_letter_path, community_name')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!cycle || !cycle.reference_letter_path) return res.status(404).send('No reference letter on file');
+    const { data: blob, error } = await supabase.storage.from('documents').download(cycle.reference_letter_path);
+    if (error || !blob) return res.status(404).send('Reference letter not found');
+    const buf = Buffer.from(await blob.arrayBuffer());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${(cycle.community_name||'community').replace(/\W+/g,'_')}_prior_call_for_nominations.pdf"`);
+    res.send(buf);
+  } catch (err) {
+    res.status(500).send('Error: ' + err.message);
   }
 });
 
@@ -4726,6 +4779,10 @@ app.post('/api/nominations/public/:slug/submit', async (req, res) => {
         nominee_email: b.nominee_email || null,
         nominee_phone: b.nominee_phone || null,
         nominee_bio: b.nominee_bio || null,
+        occupation: b.occupation || null,
+        education: b.education || null,
+        outside_activities: b.outside_activities || null,
+        asset_reason: b.asset_reason || null,
         is_self_nomination: !!b.is_self_nomination,
         nominator_name: b.is_self_nomination ? null : (b.nominator_name || null),
         nominator_email: b.is_self_nomination ? null : (b.nominator_email || null),

@@ -202,9 +202,31 @@
             <input type="tel" id="nomineePhone" autocomplete="tel">
           </div>
         </div>
-        <div class="fld">
+
+        <!-- Simple bio (default) -->
+        <div id="bioSimple" class="fld">
           <label>Bio statement / why they'd be a great Board member</label>
           <textarea id="nomineeBio" placeholder="Background, qualifications, what they'd bring to the Board. This will be shared with homeowners ahead of the election."></textarea>
+        </div>
+
+        <!-- Structured bio (shown when cycle.bio_prompt_style === 'structured') -->
+        <div id="bioStructured" style="display:none;">
+          <div class="fld">
+            <label>Occupation</label>
+            <input type="text" id="occupation" placeholder="e.g., Software engineer at Hewlett-Packard">
+          </div>
+          <div class="fld">
+            <label>Education</label>
+            <input type="text" id="education" placeholder="e.g., BS Civil Engineering, Texas A&amp;M (2008)">
+          </div>
+          <div class="fld">
+            <label>Outside activities and prior board experience</label>
+            <textarea id="outsideActivities" placeholder="Civic involvement, prior HOA / nonprofit / professional boards, volunteer work."></textarea>
+          </div>
+          <div class="fld">
+            <label>Why you'd be an asset to the Board</label>
+            <textarea id="assetReason" placeholder="What specific skills, experience, or perspective you'd bring."></textarea>
+          </div>
         </div>
       </div>
 
@@ -242,6 +264,7 @@
     let cycleId = null;
     let isOpen = false;
     let isSelf = true;
+    let bioStyle = 'simple';
 
     function fmtDate(s) {
       if (!s) return '';
@@ -266,6 +289,11 @@
         const c = j.cycle;
         cycleId = c.id;
         isOpen = !!j.is_open;
+        bioStyle = c.bio_prompt_style === 'structured' ? 'structured' : 'simple';
+        if (bioStyle === 'structured') {
+          document.getElementById('bioSimple').style.display = 'none';
+          document.getElementById('bioStructured').style.display = 'block';
+        }
         document.getElementById('communityLine').textContent = c.community_name + ' · Call for Nominations';
         document.getElementById('pageHeading').textContent = 'Nominate a candidate — ' + c.community_name;
         document.getElementById('mcDate').textContent = fmtDate(c.annual_meeting_date) + (c.annual_meeting_time ? ' at ' + c.annual_meeting_time : '');
@@ -304,7 +332,11 @@
         nominee_address: document.getElementById('nomineeAddress').value.trim(),
         nominee_email: document.getElementById('nomineeEmail').value.trim() || null,
         nominee_phone: document.getElementById('nomineePhone').value.trim() || null,
-        nominee_bio: document.getElementById('nomineeBio').value.trim() || null,
+        nominee_bio: bioStyle === 'simple' ? (document.getElementById('nomineeBio').value.trim() || null) : null,
+        occupation: bioStyle === 'structured' ? (document.getElementById('occupation').value.trim() || null) : null,
+        education: bioStyle === 'structured' ? (document.getElementById('education').value.trim() || null) : null,
+        outside_activities: bioStyle === 'structured' ? (document.getElementById('outsideActivities').value.trim() || null) : null,
+        asset_reason: bioStyle === 'structured' ? (document.getElementById('assetReason').value.trim() || null) : null,
         signature_name: document.getElementById('signatureName').value.trim(),
         agreed_to_terms: document.getElementById('agreedToTerms').checked,
       };

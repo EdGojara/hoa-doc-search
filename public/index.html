@@ -849,8 +849,51 @@ Mary Lee, Treasurer, 2026" style="width:100%; border:1px solid #d0d7de; border-r
       </div>
 
       <div style="margin-top:10px;">
-        <div class="section-label">Letter context (optional)</div>
+        <div class="section-label">Letter context (optional — appears in the body)</div>
         <textarea id="nomDescription" rows="3" placeholder="e.g., Two seats are open this cycle — one President seat (term ending 2026) and one At-Large seat." style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div class="section-label">What's expected of a Board member (optional override)</div>
+        <textarea id="nomExpectations" rows="3" placeholder="Leave blank for default: 'Volunteer term, ~6 meetings/year, approve budget, oversee management agent…'" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
+        <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Appears as an italicized sidebar in the letter — sets honest expectations so we get serious nominees.</div>
+      </div>
+
+      <div style="margin-top:10px; padding:10px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc;">
+        <div class="section-label" style="margin-bottom:6px;">Bespoke options</div>
+
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+          <label style="font-size:13px; font-weight:600; color:#334155; min-width:140px;">Bio prompt style</label>
+          <select id="nomBioStyle" style="border:1px solid #d0d7de; border-radius:6px; padding:5px 8px; font-size:13px; background:#fff;">
+            <option value="simple">Simple — one bio textarea</option>
+            <option value="structured">Structured — occupation / education / experience / why</option>
+          </select>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
+          <label style="font-size:13px; font-weight:600; color:#334155; min-width:140px;">Proxy teaser</label>
+          <label style="font-size:13px; color:#475569; display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="nomProxyTeaser" checked>
+            Mention "proxy + absentee ballot to follow"
+          </label>
+        </div>
+
+        <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #cbd5e1;">
+          <label style="font-size:13px; font-weight:600; color:#334155; display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="nomOnsiteEnabled" onchange="nomToggleOnsite()">
+            On-site drop-off available
+          </label>
+          <div id="nomOnsiteFields" style="display:none; margin-top:6px; padding-left:22px;">
+            <input type="text" id="nomOnsiteLocation" placeholder="Location name (e.g., Waterview Clubhouse)" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:13px; margin-bottom:5px;">
+            <input type="text" id="nomOnsiteAddress" placeholder="Drop-off address (street, city, ZIP)" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:13px;">
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div class="section-label">Reference: prior year letter (optional)</div>
+        <input type="file" id="nomReferenceLetter" accept=".pdf" style="font-size:12px;">
+        <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Stored with the cycle so next year's cycle can pull it up — does not change what gets printed.</div>
       </div>
 
       <div style="margin-top:10px;">
@@ -13039,6 +13082,11 @@ ${questionsPage}
     return out;
   }
 
+  function nomToggleOnsite() {
+    const on = document.getElementById('nomOnsiteEnabled').checked;
+    document.getElementById('nomOnsiteFields').style.display = on ? 'block' : 'none';
+  }
+
   async function nomCreateCycle() {
     const community = nomSelectedCommunity();
     if (!community) { alert('Pick a community first (top of page).'); return; }
@@ -13047,28 +13095,37 @@ ${questionsPage}
     const close   = document.getElementById('nomCloseAt').value;
     if (!meeting || !open || !close) { alert('Annual meeting date and nominations open/close dates are required.'); return; }
 
-    const payload = {
-      community_name: community,
-      annual_meeting_date: meeting,
-      annual_meeting_time: document.getElementById('nomMeetingTime').value || null,
-      annual_meeting_location: document.getElementById('nomMeetingLocation').value || null,
-      nominations_open_at: open,
-      nominations_close_at: close,
-      seats_open: Number(document.getElementById('nomSeatsOpen').value || 1),
-      current_board: nomParseBoard(document.getElementById('nomCurrentBoard').value),
-      description: document.getElementById('nomDescription').value || null,
-      public_slug: (document.getElementById('nomPublicSlug').value || '').trim() || null,
-    };
+    const onsiteEnabled = document.getElementById('nomOnsiteEnabled').checked;
+    const onsite = onsiteEnabled ? {
+      enabled: true,
+      location_name: document.getElementById('nomOnsiteLocation').value.trim() || null,
+      address: document.getElementById('nomOnsiteAddress').value.trim() || null,
+    } : { enabled: false };
+
+    const fd = new FormData();
+    fd.append('community_name', community);
+    fd.append('annual_meeting_date', meeting);
+    fd.append('annual_meeting_time', document.getElementById('nomMeetingTime').value || '');
+    fd.append('annual_meeting_location', document.getElementById('nomMeetingLocation').value || '');
+    fd.append('nominations_open_at', open);
+    fd.append('nominations_close_at', close);
+    fd.append('seats_open', String(Number(document.getElementById('nomSeatsOpen').value || 1)));
+    fd.append('current_board', JSON.stringify(nomParseBoard(document.getElementById('nomCurrentBoard').value)));
+    fd.append('description', document.getElementById('nomDescription').value || '');
+    fd.append('expectations_blurb', document.getElementById('nomExpectations').value || '');
+    fd.append('bio_prompt_style', document.getElementById('nomBioStyle').value || 'simple');
+    fd.append('proxy_teaser', document.getElementById('nomProxyTeaser').checked ? '1' : '0');
+    fd.append('onsite_drop_off', JSON.stringify(onsite));
+    fd.append('public_slug', (document.getElementById('nomPublicSlug').value || '').trim());
+    const refFile = document.getElementById('nomReferenceLetter').files[0];
+    if (refFile) fd.append('reference_letter', refFile);
 
     const btn = document.getElementById('nomCreateBtn');
     const status = document.getElementById('nomCreateStatus');
     btn.disabled = true; btn.textContent = '⏳ Saving…';
     status.textContent = '';
     try {
-      const r = await fetch('/api/nominations/cycles', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-      });
+      const r = await fetch('/api/nominations/cycles', { method: 'POST', body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       status.innerHTML = `<span style="color:#15803d;">✓ Cycle saved.</span> Public link: <code>/nominate/${j.cycle.public_slug || j.cycle.id}</code>`;
@@ -13124,11 +13181,15 @@ ${questionsPage}
     document.getElementById('nomLetterBtn').style.opacity = '1';
     if (cycle) {
       document.getElementById('nomPanelTitle').textContent = `${cycle.community_name} — ${cycle.annual_meeting_date}`;
-      document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'}`;
+      document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'} · ${cycle.bio_prompt_style || 'simple'} bio`;
       const url = `${window.location.origin}/nominate/${cycle.public_slug || cycle.id}`;
+      const refLink = cycle.reference_letter_path
+        ? ` &nbsp;·&nbsp; <a href="/api/nominations/cycles/${cycle.id}/reference" target="_blank" rel="noopener">📎 Prior year letter</a>`
+        : '';
       document.getElementById('nomPublicLinkBox').innerHTML = `
         Public form: <a href="${url}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
         &nbsp;·&nbsp; <button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="navigator.clipboard.writeText('${url}'); this.textContent='✓ Copied';">📋 Copy link</button>
+        ${refLink}
       `;
     }
     // refresh cycle list highlight
@@ -13142,24 +13203,39 @@ ${questionsPage}
         list.textContent = 'No nominations submitted yet. Homeowners can submit at the public link above.';
         return;
       }
-      list.innerHTML = noms.map((n) => `
-        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <div>
-              <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
-              <div style="font-size:12px; color:#6B7280;">${escapeHtml(n.nominee_address)}${n.nominee_email ? ' · ' + escapeHtml(n.nominee_email) : ''}${n.nominee_phone ? ' · ' + escapeHtml(n.nominee_phone) : ''}</div>
-              <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
-                ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(n.nominator_name || 'unknown')}
-                · submitted ${new Date(n.signed_at).toLocaleString()}
-              </div>
-              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761;">${escapeHtml(n.nominee_bio)}</div>` : ''}
-            </div>
-            <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px;">
-              ${['submitted','verified','on_slate','withdrawn','rejected'].map(s => `<option value="${s}" ${s===n.status?'selected':''}>${s}</option>`).join('')}
-            </select>
+      list.innerHTML = noms.map((n) => {
+        const structured = (n.occupation || n.education || n.outside_activities || n.asset_reason);
+        const structuredHtml = structured ? `
+          <div style="margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761; font-size:12px; color:#334155; line-height:1.5;">
+            ${n.occupation         ? `<div><b>Occupation:</b> ${escapeHtml(n.occupation)}</div>` : ''}
+            ${n.education          ? `<div><b>Education:</b> ${escapeHtml(n.education)}</div>` : ''}
+            ${n.outside_activities ? `<div><b>Outside activities / prior board:</b> ${escapeHtml(n.outside_activities)}</div>` : ''}
+            ${n.asset_reason       ? `<div><b>Why they'd be an asset:</b> ${escapeHtml(n.asset_reason)}</div>` : ''}
           </div>
-        </div>
-      `).join('');
+        ` : '';
+        const bioHtml = (!structured && n.nominee_bio)
+          ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761;">${escapeHtml(n.nominee_bio)}</div>`
+          : '';
+        return `
+          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+              <div style="flex:1;">
+                <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
+                <div style="font-size:12px; color:#6B7280;">${escapeHtml(n.nominee_address)}${n.nominee_email ? ' · ' + escapeHtml(n.nominee_email) : ''}${n.nominee_phone ? ' · ' + escapeHtml(n.nominee_phone) : ''}</div>
+                <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
+                  ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(n.nominator_name || 'unknown')}
+                  · submitted ${new Date(n.signed_at).toLocaleString()}
+                </div>
+                ${bioHtml}
+                ${structuredHtml}
+              </div>
+              <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px; margin-left:8px;">
+                ${['submitted','verified','on_slate','withdrawn','rejected'].map(s => `<option value="${s}" ${s===n.status?'selected':''}>${s}</option>`).join('')}
+              </select>
+            </div>
+          </div>
+        `;
+      }).join('');
     } catch (e) {
       document.getElementById('nomList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     }
