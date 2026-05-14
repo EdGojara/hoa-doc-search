@@ -4187,6 +4187,215 @@ app.delete('/api/presentations/instances/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Financial Statements — Bedrock-branded monthly packages
+// ----------------------------------------------------------------------------
+// Manager uploads a Vantaca PDF (or other source). AI extracts the line items
+// into structured JSON. We generate a branded Bedrock PDF and save both
+// artifacts to Supabase storage + index in financial_statements. Pull into
+// board packets later.
+// ============================================================================
+// pdfParse already required at the top of the file
+const { renderBalanceSheetHTML } = require('./lib/financial_statements/balance_sheet');
+const { parseBalanceSheetText, generateBalanceSheetFindings } = require('./lib/financial_statements/parser');
+
+async function renderFinancialPdfBuffer(html) {
+  const puppeteer = _puppeteer_lazy();
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+  });
+  try {
+    const page = await browser.newPage();
+    try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); }
+    catch (_) { /* swallow — render anyway */ }
+    return await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true,
+    });
+  } finally {
+    try { await browser.close(); } catch (_) {}
+  }
+}
+
+// POST /api/financials/parse — upload Vantaca PDF, return structured JSON.
+// Does NOT save — manager can review the extraction before saving.
+app.post('/api/financials/parse', upload.single('pdf'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'PDF file required (field "pdf").' });
+    const statementType = (req.body.statement_type || 'balance_sheet').toString();
+    const parsedPdf = await pdfParse(req.file.buffer);
+    const text = parsedPdf.text || '';
+    if (!text.trim()) return res.status(400).json({ error: 'Could not extract text from the uploaded PDF.' });
+
+    let data;
+    if (statementType === 'balance_sheet') {
+      data = await parseBalanceSheetText(text);
+    } else {
+      return res.status(400).json({ error: `Unsupported statement type: ${statementType}. Only balance_sheet supported in v1.` });
+    }
+    res.json({ ok: true, data, source_filename: req.file.originalname });
+  } catch (err) {
+    console.error('[financials/parse] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/financials/generate — produce the Bedrock-branded PDF + save record.
+// Accepts multipart: pdf (original Vantaca), data (JSON of parsed line items),
+// community, statement_type, period_label, period_end_date.
+app.post('/api/financials/generate', upload.single('pdf'), async (req, res) => {
+  try {
+    const community = (req.body.community || '').trim();
+    if (!community) return res.status(400).json({ error: 'community is required.' });
+    const statementType = (req.body.statement_type || 'balance_sheet').toString();
+    let data = {};
+    try { data = JSON.parse(req.body.data || '{}'); } catch (_) { return res.status(400).json({ error: 'data must be valid JSON.' }); }
+    const periodLabel = (req.body.period_label || data.period_label || '').trim();
+    const periodEndDate = (req.body.period_end_date || data.period_end_date || null);
+
+    // Generate findings (fire-and-forget if fails)
+    let findings = [];
+    try { findings = await generateBalanceSheetFindings(data, community); }
+    catch (e) { console.warn('[financials/generate] findings failed:', e.message); }
+
+    // Render Bedrock PDF
+    const html = renderBalanceSheetHTML({ community, data, findings });
+    const brandedPdf = await renderFinancialPdfBuffer(html);
+
+    // Resolve community_id
+    let communityId = null;
+    try {
+      const { data: comm } = await supabase
+        .from('communities')
+        .select('id')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .ilike('name', `%${community.split(' at ')[0]}%`)
+        .limit(1)
+        .maybeSingle();
+      if (comm) communityId = comm.id;
+    } catch (_) {}
+
+    // Insert record
+    const { data: row, error: insErr } = await supabase
+      .from('financial_statements')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: communityId,
+        community_name: community,
+        statement_type: statementType,
+        period_label: periodLabel,
+        period_end_date: periodEndDate,
+        source_filename: req.file ? req.file.originalname : null,
+        extracted_data: data,
+        findings,
+        status: 'generated',
+      })
+      .select()
+      .single();
+    if (insErr) console.warn('[financials/generate] insert failed:', insErr.message);
+
+    // Upload source + branded PDFs to storage if we got a row
+    let brandedPath = null;
+    if (row) {
+      try {
+        if (req.file) {
+          const srcPath = `financial_statements/${row.id}/source.pdf`;
+          await supabase.storage.from('documents').upload(srcPath, req.file.buffer, {
+            contentType: 'application/pdf', upsert: true,
+          });
+          await supabase.from('financial_statements').update({ source_pdf_storage_path: srcPath }).eq('id', row.id);
+        }
+        brandedPath = `financial_statements/${row.id}/branded.pdf`;
+        await supabase.storage.from('documents').upload(brandedPath, brandedPdf, {
+          contentType: 'application/pdf', upsert: true,
+        });
+        await supabase.from('financial_statements').update({
+          branded_pdf_storage_path: brandedPath,
+          updated_at: new Date().toISOString(),
+        }).eq('id', row.id);
+      } catch (e) {
+        console.warn('[financials/generate] storage upload failed:', e.message);
+      }
+    }
+
+    const stem = (community + '_' + (periodLabel || 'statement'))
+      .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'financial';
+    const filename = `${stem}_balance_sheet.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    if (row) {
+      res.setHeader('X-Statement-Id', row.id);
+      res.setHeader('Access-Control-Expose-Headers', 'X-Statement-Id, Content-Disposition');
+    }
+    res.send(brandedPdf);
+  } catch (err) {
+    console.error('[financials/generate] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/financials — list past statements (community filter optional)
+app.get('/api/financials', async (req, res) => {
+  try {
+    const { community, statement_type } = req.query;
+    let q = supabase
+      .from('financial_statements')
+      .select('id, community_name, statement_type, period_label, period_end_date, source_filename, branded_pdf_storage_path, findings, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('created_at', { ascending: false })
+      .limit(100);
+    if (community) q = q.ilike('community_name', `%${community}%`);
+    if (statement_type) q = q.eq('statement_type', statement_type);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ statements: data || [] });
+  } catch (err) {
+    console.error('[financials] list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/financials/:id/branded — re-download a saved branded PDF
+app.get('/api/financials/:id/branded', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: row, error } = await supabase
+      .from('financial_statements')
+      .select('community_name, period_label, statement_type, branded_pdf_storage_path, extracted_data, findings')
+      .eq('id', id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (error || !row) return res.status(404).json({ error: 'Statement not found' });
+
+    let pdfBuffer = null;
+    if (row.branded_pdf_storage_path) {
+      const { data: blob } = await supabase.storage.from('documents').download(row.branded_pdf_storage_path);
+      if (blob) pdfBuffer = Buffer.from(await blob.arrayBuffer());
+    }
+    if (!pdfBuffer) {
+      // Regenerate from stored data
+      const html = renderBalanceSheetHTML({
+        community: row.community_name,
+        data: row.extracted_data || {},
+        findings: row.findings || [],
+      });
+      pdfBuffer = await renderFinancialPdfBuffer(html);
+    }
+
+    const stem = (row.community_name + '_' + (row.period_label || 'statement'))
+      .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'financial';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${stem}_balance_sheet.pdf"`);
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[financials/:id/branded] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });

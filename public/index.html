@@ -2403,6 +2403,42 @@
     </p>
   </div>
 
+  <!-- Branded Monthly Statements — re-render Vantaca exports as Bedrock-branded PDFs -->
+  <div style="margin-bottom:24px; padding:18px; background:#fff; border:1px solid #e3e8ef; border-radius:10px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
+      <div>
+        <h3 style="margin:0 0 4px 0; font-size:15px; color:#1a3a5c;">📑 Branded monthly statements</h3>
+        <p style="margin:0; font-size:12px; color:#666;">Upload a Vantaca balance sheet PDF — AI extracts the numbers and re-renders it on Bedrock letterhead with community logo and "Reviewed by Bedrock" findings.</p>
+      </div>
+    </div>
+    <div style="display:grid; grid-template-columns: 1.4fr 1fr 0.9fr; gap:8px; margin-bottom:10px;">
+      <input id="fin-community" placeholder="Community name (e.g., Canyon Gate at Cinco Ranch)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+      <input id="fin-period-label" placeholder="Period (e.g., April 30, 2026)" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+      <input id="fin-period-end" type="date" placeholder="Month-end date" style="border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none;">
+    </div>
+    <div id="fin-drop" onclick="document.getElementById('fin-pdf-input').click()"
+         style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; cursor:pointer; background:#f8fafc; margin-bottom:8px;">
+      <span id="fin-pdf-label" style="font-size:13px; color:#475569;">📄 Click to pick the Vantaca balance sheet PDF</span>
+      <input id="fin-pdf-input" type="file" accept=".pdf,application/pdf" style="display:none;" onchange="finPdfPicked(this)">
+    </div>
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <button class="secondary-btn" id="fin-parse-btn" onclick="finParse()" style="font-size:13px; padding:8px 14px;" disabled>🤖 Parse PDF</button>
+      <button class="action-btn" id="fin-generate-btn" onclick="finGenerate()" style="font-size:13px; padding:8px 14px;" disabled>📥 Generate &amp; download branded PDF</button>
+      <span id="fin-status" style="font-size:12px; color:#666;"></span>
+    </div>
+    <div id="fin-extract-preview" style="display:none; margin-top:12px; padding:10px 14px; background:#f1f5fb; border:1px solid #c0d0e0; border-radius:6px; font-size:12px; color:#1E2761;"></div>
+
+    <div style="margin-top:18px; border-top:1px solid #e2e8f0; padding-top:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div style="font-weight:600; color:#1a3a5c; font-size:13px;">📋 Past branded statements</div>
+        <button class="secondary-btn" onclick="finLoadHistory()" style="font-size:11px; padding:4px 10px;">Refresh</button>
+      </div>
+      <div id="fin-history" style="border:1px solid #e2e8f0; border-radius:6px; min-height:50px;">
+        <div style="color:#999; font-size:13px; padding:14px;">No saved statements yet.</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Community picker view -->
   <div id="finrev-picker-view">
     <div id="finrev-loading" style="padding:20px; text-align:center; color:#888;">Loading communities…</div>
@@ -12099,6 +12135,185 @@ ${questionsPage}
     quickStopSpeaking();
     if (t) t.focus();
   }
+
+  // =========================================================================
+  // Branded monthly financial statements
+  // =========================================================================
+  let finSelectedFile = null;
+  let finExtractedData = null;
+
+  function finPdfPicked(input) {
+    finSelectedFile = (input.files && input.files[0]) || null;
+    finExtractedData = null;
+    document.getElementById('fin-extract-preview').style.display = 'none';
+    document.getElementById('fin-pdf-label').textContent = finSelectedFile
+      ? `✅ ${finSelectedFile.name}`
+      : '📄 Click to pick the Vantaca balance sheet PDF';
+    document.getElementById('fin-parse-btn').disabled = !finSelectedFile;
+    document.getElementById('fin-generate-btn').disabled = true;
+    document.getElementById('fin-status').textContent = '';
+  }
+
+  async function finParse() {
+    if (!finSelectedFile) return;
+    const btn = document.getElementById('fin-parse-btn');
+    const status = document.getElementById('fin-status');
+    btn.disabled = true; btn.textContent = '⏳ Extracting…';
+    status.textContent = '';
+    try {
+      const form = new FormData();
+      form.append('pdf', finSelectedFile);
+      form.append('statement_type', 'balance_sheet');
+      const r = await fetch('/api/financials/parse', { method: 'POST', body: form });
+      const j = await r.json();
+      if (!r.ok || j.error) throw new Error(j.error || ('HTTP ' + r.status));
+      finExtractedData = j.data || {};
+      // Pre-fill period fields from the extract if blank
+      const periodEl = document.getElementById('fin-period-label');
+      const dateEl = document.getElementById('fin-period-end');
+      if (!periodEl.value && finExtractedData.period_label) periodEl.value = finExtractedData.period_label;
+      if (!dateEl.value && finExtractedData.period_end_date) dateEl.value = finExtractedData.period_end_date;
+      // Show a compact preview
+      const preview = document.getElementById('fin-extract-preview');
+      const totalAssets = finExtractedData?.totals?.total_assets?.Total;
+      const funds = (finExtractedData.funds || []).join(' · ');
+      const assetCats = (finExtractedData.assets || []).length;
+      const liabCats = (finExtractedData.liabilities || []).length;
+      preview.innerHTML = `
+        <div style="font-weight:600; margin-bottom:4px;">Extraction preview</div>
+        <div>Period: <strong>${escapeHtml(finExtractedData.period_label || '—')}</strong></div>
+        <div>Funds: ${escapeHtml(funds || '—')}</div>
+        <div>Asset categories: ${assetCats} · Liability/equity categories: ${liabCats + ((finExtractedData.equity || []).length)}</div>
+        ${totalAssets != null ? `<div>Total Assets: <strong>$${Number(totalAssets).toLocaleString('en-US', { minimumFractionDigits: 2 })}</strong></div>` : ''}
+      `;
+      preview.style.display = 'block';
+      document.getElementById('fin-generate-btn').disabled = false;
+      status.innerHTML = '<span style="color:#15803d;">Parsed. Review the period fields then click Generate.</span>';
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Parse failed') + '</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '🤖 Parse PDF';
+    }
+  }
+
+  async function finGenerate() {
+    if (!finSelectedFile || !finExtractedData) return;
+    const community = (document.getElementById('fin-community').value || '').trim();
+    if (!community) {
+      document.getElementById('fin-status').innerHTML = '<span style="color:#b91c1c;">Enter the community name (matches a community logo if available).</span>';
+      return;
+    }
+    const periodLabel = (document.getElementById('fin-period-label').value || '').trim();
+    const periodEnd = document.getElementById('fin-period-end').value || '';
+    const btn = document.getElementById('fin-generate-btn');
+    const status = document.getElementById('fin-status');
+    btn.disabled = true; btn.textContent = '⏳ Generating…';
+    status.textContent = '';
+    try {
+      const form = new FormData();
+      form.append('pdf', finSelectedFile);
+      form.append('community', community);
+      form.append('statement_type', 'balance_sheet');
+      form.append('period_label', periodLabel);
+      if (periodEnd) form.append('period_end_date', periodEnd);
+      form.append('data', JSON.stringify(finExtractedData));
+      const r = await fetch('/api/financials/generate', { method: 'POST', body: form });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || ('HTTP ' + r.status));
+      }
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'balance_sheet.pdf';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+      status.innerHTML = '<span style="color:#15803d;">Downloaded ' + filename + ' &nbsp;·&nbsp; saved to history</span>';
+      finLoadHistory();
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + (e.message || 'Generate failed') + '</span>';
+    } finally {
+      btn.disabled = false; btn.textContent = '📥 Generate & download branded PDF';
+    }
+  }
+
+  async function finLoadHistory() {
+    const wrap = document.getElementById('fin-history');
+    if (!wrap) return;
+    try {
+      const r = await fetch('/api/financials');
+      const j = await r.json();
+      const items = j.statements || [];
+      if (items.length === 0) {
+        wrap.innerHTML = '<div style="color:#999; font-size:13px; padding:14px;">No saved statements yet.</div>';
+        return;
+      }
+      wrap.innerHTML = items.map((s) => {
+        const dt = new Date(s.created_at).toLocaleDateString();
+        const typeLabel = s.statement_type === 'balance_sheet' ? 'Balance Sheet' : s.statement_type;
+        return `
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 12px; border-bottom:1px solid #f1f5f9; font-size:12px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-weight:600; color:#1E2761;">${escapeHtml(s.community_name)} · ${escapeHtml(typeLabel)}</div>
+              <div style="color:#94A3B8; margin-top:2px;">${escapeHtml(s.period_label || '')} · saved ${dt}</div>
+            </div>
+            <button class="secondary-btn" style="font-size:11px; padding:4px 10px;" onclick="finDownload('${s.id}')">📥 Download</button>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      wrap.innerHTML = '<div style="color:#b91c1c; font-size:13px; padding:14px;">Could not load history.</div>';
+    }
+  }
+
+  async function finDownload(id) {
+    try {
+      const r = await fetch(`/api/financials/${id}/branded`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'statement.pdf';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      alert('Download failed: ' + e.message);
+    }
+  }
+
+  // Drag-and-drop on the PDF picker
+  (function () {
+    const zone = document.getElementById('fin-drop');
+    if (!zone) return;
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.background = '#e0e7ff'; });
+    zone.addEventListener('dragleave', () => { zone.style.background = '#f8fafc'; });
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault(); zone.style.background = '#f8fafc';
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (!f || !/pdf/i.test(f.type)) return;
+      const input = document.getElementById('fin-pdf-input');
+      const dt = new DataTransfer();
+      dt.items.add(f);
+      input.files = dt.files;
+      finPdfPicked(input);
+    });
+  })();
+
+  // Auto-load history when Financial Review tab is opened
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'finrev') { try { finLoadHistory(); } catch (_) {} }
+      return r;
+    };
+  })();
 
   // =========================================================================
   // Tab groups — two-tier nav: parent tab opens a sub-toolbar of children.
