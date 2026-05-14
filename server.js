@@ -8,6 +8,45 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
 const pdfParse = require('pdf-parse');
 
+// Anthropic enforces a 5MB cap on each base64 image. Modern phone photos
+// routinely exceed this. Shrink anything oversized down to a safe size before
+// it hits the API — preserve aspect ratio, iterate quality/dimension until
+// the encoded payload fits under the limit.
+const ANTHROPIC_IMAGE_BASE64_MAX = 5 * 1024 * 1024;
+const SAFE_RAW_TARGET = Math.floor(ANTHROPIC_IMAGE_BASE64_MAX * 3 / 4) - 64 * 1024;
+let _canvasLib = null;
+function _canvas() {
+  if (!_canvasLib) _canvasLib = require('canvas');
+  return _canvasLib;
+}
+async function shrinkImageForAnthropic(buffer, mimetype) {
+  if (!buffer || buffer.length <= SAFE_RAW_TARGET) {
+    return { buffer, mimetype: mimetype || 'image/jpeg' };
+  }
+  try {
+    const { createCanvas, loadImage } = _canvas();
+    const img = await loadImage(buffer);
+    let maxDim = 1800;
+    let quality = 0.85;
+    let out = buffer;
+    for (let i = 0; i < 8; i++) {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.floor(img.width * scale));
+      const h = Math.max(1, Math.floor(img.height * scale));
+      const canvas = createCanvas(w, h);
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      out = canvas.toBuffer('image/jpeg', { quality });
+      if (out.length <= SAFE_RAW_TARGET) break;
+      maxDim = Math.floor(maxDim * 0.82);
+      quality = Math.max(0.55, quality - 0.07);
+    }
+    return { buffer: out, mimetype: 'image/jpeg' };
+  } catch (e) {
+    console.warn('[shrinkImageForAnthropic] failed, sending original:', e.message);
+    return { buffer, mimetype: mimetype || 'image/jpeg' };
+  }
+}
+
 // Unified playbook retrieval — semantic search across all entries.
 // Replaces per-endpoint category filters.
 
@@ -642,13 +681,14 @@ app.post('/acc-review', upload.any(), async (req, res) => {
         source: { type: 'base64', media_type: 'application/pdf', data: pdfFile.buffer.toString('base64') },
       });
     }
-    imageFiles.forEach((img, idx) => {
+    for (const img of imageFiles) {
       const mt = img.mimetype && img.mimetype.startsWith('image/') ? img.mimetype : 'image/jpeg';
+      const shrunk = await shrinkImageForAnthropic(img.buffer, mt);
       extractContent.push({
         type: 'image',
-        source: { type: 'base64', media_type: mt, data: img.buffer.toString('base64') },
+        source: { type: 'base64', media_type: shrunk.mimetype, data: shrunk.buffer.toString('base64') },
       });
-    });
+    }
 
     const extractText =
       `You are extracting facts from an HOA Architectural Control Committee (ACC) application package. The package may include a PDF application form and one or more photos (the property today, neighboring fences/structures for context, contractor renderings, or color/material samples).\n\n` +
@@ -868,7 +908,7 @@ The LETTER_BODY must NOT contain:
 Write LETTER_BODY in the warm, professional voice the homeowner will receive. The rest of your response (analysis, sections) is for the manager's reference and is shown separately in the admin UI.`,
       messages: [{
         role: 'user',
-        content: (() => {
+        content: await (async () => {
           const parts = [];
           if (pdfFile) {
             parts.push({
@@ -878,9 +918,10 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
           }
           for (const img of imageFiles) {
             const mt = img.mimetype && img.mimetype.startsWith('image/') ? img.mimetype : 'image/jpeg';
+            const shrunk = await shrinkImageForAnthropic(img.buffer, mt);
             parts.push({
               type: 'image',
-              source: { type: 'base64', media_type: mt, data: img.buffer.toString('base64') },
+              source: { type: 'base64', media_type: shrunk.mimetype, data: shrunk.buffer.toString('base64') },
             });
           }
           parts.push({
@@ -1491,11 +1532,11 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
     const incomingFiles = Array.isArray(req.files) ? req.files : (req.file ? [req.file] : []);
     for (const f of incomingFiles) {
       const mimeType = f.mimetype || '';
-      const base64Data = f.buffer.toString('base64');
       if (mimeType === 'application/pdf') {
-        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Data } });
+        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.buffer.toString('base64') } });
       } else if (mimeType.startsWith('image/')) {
-        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } });
+        const shrunk = await shrinkImageForAnthropic(f.buffer, mimeType);
+        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: shrunk.mimetype, data: shrunk.buffer.toString('base64') } });
       } else {
         send({ type: 'error', message: `Unsupported file type: ${f.originalname || mimeType}. PDFs and images only.` });
         return res.end();
@@ -1573,11 +1614,11 @@ app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
     const incomingFiles = Array.isArray(req.files) ? req.files : (req.file ? [req.file] : []);
     for (const f of incomingFiles) {
       const mimeType = f.mimetype || '';
-      const base64Data = f.buffer.toString('base64');
       if (mimeType === 'application/pdf') {
-        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: base64Data } });
+        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.buffer.toString('base64') } });
       } else if (mimeType.startsWith('image/')) {
-        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: mimeType, data: base64Data } });
+        const shrunk = await shrinkImageForAnthropic(f.buffer, mimeType);
+        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: shrunk.mimetype, data: shrunk.buffer.toString('base64') } });
       } else {
         return res.status(400).json({ guidance: `Unsupported file type: ${f.originalname || mimeType}. PDFs and images only.` });
       }
