@@ -377,7 +377,11 @@
       <textarea id="accConditions" placeholder="Any special notes for the AI to factor in..." style="min-height:60px;"></textarea>
       <div class="section-label" style="margin-top:8px;">Additional Context (optional)</div>
       <textarea id="accContext" placeholder="Add helpful context..." style="min-height:60px;"></textarea>
-      <button class="action-btn" id="reviewBtn" onclick="reviewACC()">🔍 Review Application</button>
+      <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
+        <button class="action-btn" id="reviewBtn" onclick="reviewACC()">🔍 Review Application</button>
+        <button class="secondary-btn" id="accSaveDraftBtn" onclick="accSaveDraft()" style="padding:10px 16px;">💾 Save draft</button>
+        <span id="accDraftStatus" style="font-size:12px; color:#6B7280;"></span>
+      </div>
     </div>
     <div class="panel">
       <h3>📋 ACC Review & Recommendation</h3>
@@ -424,6 +428,15 @@
         </div>
       </div>
     </div>
+  </div>
+
+  <!-- Saved drafts — work in progress that can be resumed -->
+  <div data-drafts-panel="acc_review" style="margin-top:18px; padding:14px 16px; background:#fff; border:1px solid #e3e8ef; border-radius:10px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+      <h3 style="margin:0; font-size:15px; color:#1a3a5c;">🗂️ Saved drafts <span style="font-weight:400; color:#94A3B8; font-size:12px;">(resume work in progress)</span></h3>
+      <button class="secondary-btn" onclick="Drafts.refreshPanel('acc_review')" style="font-size:12px; padding:6px 10px;">Refresh</button>
+    </div>
+    <div data-drafts-list="acc_review" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
   </div>
 
   <!-- Past decisions — saved automatically every time a letter is generated.
@@ -13276,6 +13289,230 @@ ${questionsPage}
       btn.disabled = false; btn.textContent = '📄 Generate letter PDF';
     }
   }
+
+  // =========================================================================
+  // Drafts — generic "save in progress" / "resume saved drafts" framework.
+  // Each screen registers a serializer (state JSON + file inputs to save) and a
+  // hydrator (how to populate the form from a loaded draft). The panel UI is
+  // driven entirely by data-attributes:
+  //   <div data-drafts-panel="acc_review"> wraps the panel
+  //   <div data-drafts-list="acc_review">  is where rows render
+  // =========================================================================
+  window.Drafts = (function () {
+    const adapters = {};   // type → { collect(): { state, files }, hydrate(draft), label?(state) }
+    const currentId = {};  // type → uuid (the currently-loaded draft for that screen)
+
+    function getCommunity() {
+      return (document.getElementById('communitySelect') || {}).value || null;
+    }
+
+    function register(type, adapter) {
+      adapters[type] = adapter;
+      // Auto-refresh the panel when the community changes
+      const sel = document.getElementById('communitySelect');
+      if (sel && !sel.__draftsHooked) {
+        sel.__draftsHooked = true;
+        sel.addEventListener('change', () => {
+          Object.keys(adapters).forEach((t) => Drafts.refreshPanel(t));
+        });
+      }
+      // Initial render
+      Drafts.refreshPanel(type);
+    }
+
+    async function save(type, opts = {}) {
+      const a = adapters[type];
+      if (!a) throw new Error(`No drafts adapter for type "${type}"`);
+      const collected = await a.collect();
+      const fd = new FormData();
+      fd.append('draft_type', type);
+      const community = getCommunity();
+      if (community) fd.append('community_name', community);
+      const label = opts.label || (a.label ? a.label(collected.state) : null);
+      if (label) fd.append('label', label);
+      fd.append('state', JSON.stringify(collected.state || {}));
+      if (currentId[type]) fd.append('id', currentId[type]);
+      if (opts.replaceFiles) fd.append('replace_files', '1');
+      (collected.files || []).forEach((f) => fd.append(`file_${f.field}`, f.file, f.name));
+      const r = await fetch('/api/drafts', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Save failed');
+      currentId[type] = j.draft.id;
+      Drafts.refreshPanel(type);
+      return j.draft;
+    }
+
+    async function load(type, id) {
+      const a = adapters[type];
+      if (!a) throw new Error(`No drafts adapter for type "${type}"`);
+      const r = await fetch(`/api/drafts/${id}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Load failed');
+      await a.hydrate(j.draft);
+      currentId[type] = id;
+      return j.draft;
+    }
+
+    async function remove(type, id) {
+      const r = await fetch(`/api/drafts/${id}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || 'Delete failed');
+      }
+      if (currentId[type] === id) currentId[type] = null;
+      Drafts.refreshPanel(type);
+    }
+
+    function newDraft(type) {
+      currentId[type] = null;
+    }
+
+    function fmtAgo(iso) {
+      try {
+        const dt = new Date(iso);
+        const mins = Math.round((Date.now() - dt.getTime()) / 60000);
+        if (mins < 1) return 'just now';
+        if (mins < 60) return `${mins} min ago`;
+        const hrs = Math.round(mins / 60);
+        if (hrs < 24) return `${hrs}h ago`;
+        const days = Math.round(hrs / 24);
+        if (days < 7) return `${days}d ago`;
+        return dt.toLocaleDateString();
+      } catch (_) { return ''; }
+    }
+
+    async function refreshPanel(type) {
+      const list = document.querySelector(`[data-drafts-list="${type}"]`);
+      if (!list) return;
+      const community = getCommunity();
+      const url = `/api/drafts?type=${encodeURIComponent(type)}${community ? `&community=${encodeURIComponent(community)}` : ''}`;
+      try {
+        const r = await fetch(url);
+        const j = await r.json();
+        const drafts = j.drafts || [];
+        if (drafts.length === 0) {
+          list.innerHTML = `<div style="padding:10px 4px; color:#94A3B8;">No saved drafts${community ? ` for ${escapeHtml(community)}` : ''} yet.</div>`;
+          return;
+        }
+        list.innerHTML = drafts.map((d) => {
+          const fc = Array.isArray(d.file_refs) ? d.file_refs.length : 0;
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${currentId[type] === d.id ? '#eef2ff' : '#fff'};">
+              <div style="flex:1; cursor:pointer;" onclick="Drafts.load('${type}', '${d.id}').then(()=>{}).catch(e=>alert(e.message))">
+                <div style="font-weight:600; color:#1E2761;">${escapeHtml(d.label || '(untitled draft)')}</div>
+                <div style="font-size:11px; color:#6B7280; margin-top:2px;">
+                  ${d.community_name ? escapeHtml(d.community_name) + ' · ' : ''}saved ${escapeHtml(fmtAgo(d.updated_at))}${fc > 0 ? ` · ${fc} file${fc===1?'':'s'}` : ''}
+                </div>
+              </div>
+              <button onclick="if(confirm('Delete this draft?')) Drafts.remove('${type}', '${d.id}').catch(e=>alert(e.message))"
+                      style="background:none; border:1px solid #d0d7de; color:#b91c1c; font-size:11px; padding:4px 8px; border-radius:6px; cursor:pointer;">Delete</button>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        list.innerHTML = `<div style="color:#b91c1c; font-size:12px;">${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    return { register, save, load, remove, refreshPanel, newDraft, currentId: () => Object.assign({}, currentId) };
+  })();
+
+  // =========================================================================
+  // ACC Review draft adapter
+  // =========================================================================
+  Drafts.register('acc_review', {
+    label(state) {
+      const detail = (state.details || '').slice(0, 80);
+      return detail || 'ACC review';
+    },
+    async collect() {
+      const state = {
+        details:           document.getElementById('accDetails').value,
+        decision:          document.getElementById('accDecision').value,
+        conditions:        document.getElementById('accConditions').value,
+        additionalContext: document.getElementById('accContext').value,
+      };
+      const files = [];
+      const pdfInput = document.getElementById('accPdf');
+      if (pdfInput.files && pdfInput.files[0]) {
+        files.push({ field: 'pdf', file: pdfInput.files[0], name: pdfInput.files[0].name });
+      }
+      (accSelectedFiles || []).forEach((f) => {
+        files.push({ field: 'photos', file: f, name: f.name });
+      });
+      return { state, files };
+    },
+    async hydrate(draft) {
+      const s = draft.state || {};
+      document.getElementById('accDetails').value           = s.details || '';
+      document.getElementById('accDecision').value          = s.decision || '';
+      document.getElementById('accConditions').value        = s.conditions || '';
+      document.getElementById('accContext').value           = s.additionalContext || '';
+
+      // Re-hydrate uploaded files as File objects so the standard review flow
+      // can re-send them. PDFs go back into the file input; photos into
+      // accSelectedFiles + previews.
+      accSelectedFiles = [];
+      const refs = Array.isArray(draft.file_refs) ? draft.file_refs : [];
+      for (const ref of refs) {
+        try {
+          const r = await fetch(ref.url);
+          const blob = await r.blob();
+          const file = new File([blob], ref.name || 'file', { type: ref.type || blob.type });
+          if (ref.field === 'pdf') {
+            // Can't programmatically set <input type=file>.files — keep a side reference instead.
+            window._accDraftPdf = file;
+            document.getElementById('pdfLabel').textContent = `✅ ${file.name} (from draft)`;
+            document.getElementById('pdfUploadArea').classList.add('has-file');
+          } else if (ref.field === 'photos') {
+            accSelectedFiles.push(file);
+          }
+        } catch (e) {
+          console.warn('[draft hydrate] failed to fetch file', ref, e);
+        }
+      }
+      renderAccImagePreviews();
+      // Make sure the ACC tab is shown
+      try { switchTab('acc'); } catch (_) {}
+      document.getElementById('accDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+    },
+  });
+
+  async function accSaveDraft() {
+    const btn = document.getElementById('accSaveDraftBtn');
+    const status = document.getElementById('accDraftStatus');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    try {
+      const draft = await Drafts.save('acc_review', { replaceFiles: true });
+      status.innerHTML = `<span style="color:#15803d;">✓ Saved</span> · resume from the panel below`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${e.message}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save draft';
+    }
+  }
+
+  // If the ACC PDF was loaded from a draft, surface it on the next review call
+  // so the user doesn't have to re-pick it.
+  (function () {
+    const orig = window.reviewACC;
+    if (typeof orig !== 'function') return;
+    window.reviewACC = async function () {
+      const input = document.getElementById('accPdf');
+      if (window._accDraftPdf && !(input.files && input.files[0])) {
+        // Patch the FormData build in reviewACC by temporarily putting the file
+        // somewhere we can grab. The simplest path is a one-off shim: stash on
+        // a dataset, and have reviewACC look there. But the cleanest fix is to
+        // use DataTransfer to populate input.files.
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(window._accDraftPdf);
+          input.files = dt.files;
+        } catch (_) { /* unsupported — fall through */ }
+      }
+      return orig.apply(this, arguments);
+    };
+  })();
 
   // Lazy-init on first activation of the nominations sub-tab
   (function () {

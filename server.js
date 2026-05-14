@@ -4844,6 +4844,173 @@ app.post('/api/nominations/public/:slug/submit', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Drafts — save-in-progress for any screen.
+//
+//   POST   /api/drafts (multipart: state + files)        → create or update
+//   GET    /api/drafts?type=acc_review&community=Foo     → list
+//   GET    /api/drafts/:id                               → load + signed URLs
+//   GET    /api/drafts/:id/files/:idx                    → stream a saved file
+//   DELETE /api/drafts/:id                               → delete row + files
+//
+// `state` is opaque to the server — each screen owns its shape. Files are
+// uploaded as multipart with fieldname like `file_<field>` (e.g. file_photos)
+// and tracked in file_refs so the load step can re-hydrate them on the client.
+// ============================================================================
+
+app.post('/api/drafts', upload.any(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.draft_type) return res.status(400).json({ error: 'draft_type is required' });
+    let state = {};
+    try { state = b.state ? JSON.parse(b.state) : {}; } catch (_) { state = {}; }
+
+    const isUpdate = !!b.id;
+    let draftId = b.id || null;
+
+    if (!draftId) {
+      // Create the row first so we have an id to namespace storage paths under.
+      const { data: row, error } = await supabase
+        .from('drafts')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          draft_type: b.draft_type,
+          community_name: b.community_name || null,
+          label: b.label || null,
+          state,
+          file_refs: [],
+        })
+        .select()
+        .single();
+      if (error) return res.status(500).json({ error: error.message });
+      draftId = row.id;
+    } else {
+      // Update — preserve existing file_refs unless we're replacing them.
+      const patch = { state, updated_at: new Date().toISOString() };
+      if ('label' in b) patch.label = b.label || null;
+      if ('community_name' in b) patch.community_name = b.community_name || null;
+      const { error } = await supabase.from('drafts').update(patch).eq('id', draftId);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+
+    // Carry forward old file_refs unless the client says to replace them.
+    let fileRefs = [];
+    if (isUpdate && b.replace_files !== '1') {
+      const { data } = await supabase.from('drafts').select('file_refs').eq('id', draftId).maybeSingle();
+      fileRefs = Array.isArray(data && data.file_refs) ? data.file_refs : [];
+    }
+
+    // Upload any new files supplied on this save.
+    const incoming = (req.files || []).filter((f) => f.fieldname.startsWith('file_'));
+    for (const f of incoming) {
+      const field = f.fieldname.replace(/^file_/, '');
+      const safe = (f.originalname || 'file').replace(/[^A-Za-z0-9._-]+/g, '_');
+      const path = `drafts/${draftId}/${Date.now()}_${safe}`;
+      const { error: upErr } = await supabase.storage.from('documents').upload(path, f.buffer, {
+        contentType: f.mimetype || 'application/octet-stream', upsert: true,
+      });
+      if (upErr) {
+        console.warn('[drafts] file upload failed:', upErr.message);
+        continue;
+      }
+      fileRefs.push({ field, path, name: f.originalname, type: f.mimetype, size: f.size });
+    }
+
+    if (incoming.length > 0 || b.replace_files === '1') {
+      await supabase.from('drafts').update({ file_refs: fileRefs, updated_at: new Date().toISOString() }).eq('id', draftId);
+    }
+
+    const { data: row } = await supabase.from('drafts').select('*').eq('id', draftId).maybeSingle();
+    res.json({ draft: row });
+  } catch (err) {
+    console.error('[drafts POST]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/drafts', async (req, res) => {
+  try {
+    let q = supabase.from('drafts')
+      .select('id, draft_type, community_name, label, state, file_refs, created_at, updated_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('updated_at', { ascending: false })
+      .limit(50);
+    if (req.query.type) q = q.eq('draft_type', req.query.type);
+    if (req.query.community) q = q.ilike('community_name', `%${req.query.community.split(' at ')[0]}%`);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ drafts: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/drafts/:id', async (req, res) => {
+  try {
+    const { data: row, error } = await supabase
+      .from('drafts')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!row) return res.status(404).json({ error: 'draft not found' });
+
+    // Annotate each file_ref with a thumbnail URL so the client can preview without re-fetching.
+    const refs = Array.isArray(row.file_refs) ? row.file_refs : [];
+    row.file_refs = refs.map((r, idx) => ({ ...r, url: `/api/drafts/${row.id}/files/${idx}` }));
+    res.json({ draft: row });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/drafts/:id/files/:idx', async (req, res) => {
+  try {
+    const { data: row } = await supabase
+      .from('drafts')
+      .select('file_refs')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!row) return res.status(404).send('Not found');
+    const refs = Array.isArray(row.file_refs) ? row.file_refs : [];
+    const ref = refs[Number(req.params.idx)];
+    if (!ref || !ref.path) return res.status(404).send('Not found');
+    const { data: blob, error } = await supabase.storage.from('documents').download(ref.path);
+    if (error || !blob) return res.status(404).send('Not found');
+    const buf = Buffer.from(await blob.arrayBuffer());
+    res.setHeader('Content-Type', ref.type || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${(ref.name || 'file').replace(/[^A-Za-z0-9._-]/g, '_')}"`);
+    res.send(buf);
+  } catch (err) {
+    res.status(500).send('Error: ' + err.message);
+  }
+});
+
+app.delete('/api/drafts/:id', async (req, res) => {
+  try {
+    // Best-effort: clean up storage objects too.
+    const { data: row } = await supabase
+      .from('drafts')
+      .select('file_refs')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (row && Array.isArray(row.file_refs) && row.file_refs.length > 0) {
+      const paths = row.file_refs.map((r) => r.path).filter(Boolean);
+      if (paths.length > 0) {
+        try { await supabase.storage.from('documents').remove(paths); } catch (_) {}
+      }
+    }
+    const { error } = await supabase.from('drafts').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });
