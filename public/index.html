@@ -425,6 +425,24 @@
       </div>
     </div>
   </div>
+
+  <!-- Past decisions — saved automatically every time a letter is generated.
+       Search by address or homeowner; each row gives one-tap re-download of
+       the letter and the full packet. -->
+  <div style="margin-top:18px; padding:16px; background:#fff; border:1px solid #e3e8ef; border-radius:10px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <h3 style="margin:0; font-size:15px; color:#1a3a5c;">📋 Past ACC decisions</h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <input id="accHistorySearch" placeholder="Search by address, name, or project…"
+               style="border:1px solid #d0d7de; border-radius:6px; padding:6px 10px; font-size:13px; min-width:240px;"
+               oninput="accLoadHistory()">
+        <button class="secondary-btn" onclick="accLoadHistory()" style="font-size:12px; padding:6px 10px;">Refresh</button>
+      </div>
+    </div>
+    <div id="accHistoryList" style="border:1px solid #e2e8f0; border-radius:8px; min-height:60px;">
+      <div style="color:#999; font-size:13px; padding:14px;">Loading…</div>
+    </div>
+  </div>
 </div>
 
 <!-- Ask Ed Tab -->
@@ -7542,6 +7560,106 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       btn.disabled = false; btn.textContent = '📥 Download letter';
     }
   }
+
+  let _accHistoryDebounce = null;
+  async function accLoadHistory() {
+    const list = document.getElementById('accHistoryList');
+    if (!list) return;
+    // Debounce so typing doesn't hammer the endpoint
+    if (_accHistoryDebounce) clearTimeout(_accHistoryDebounce);
+    _accHistoryDebounce = setTimeout(async () => {
+      const qRaw = (document.getElementById('accHistorySearch')?.value || '').trim();
+      const params = new URLSearchParams();
+      if (qRaw) params.set('q', qRaw);
+      try {
+        const r = await fetch('/acc-review/decisions?' + params.toString());
+        const j = await r.json();
+        const decisions = j.decisions || [];
+        if (decisions.length === 0) {
+          list.innerHTML = '<div style="color:#999; font-size:13px; padding:14px;">No decisions yet. Generate one above and it will appear here.</div>';
+          return;
+        }
+        list.innerHTML = decisions.map((d) => {
+          const dt = new Date(d.created_at);
+          const date = dt.toLocaleDateString();
+          const decLabel = ({
+            'approved': '✓ Approved',
+            'approved_no_conditions': '✓ Approved',
+            'approved_with_conditions': '✓ Approved w/ conditions',
+            'request_more_info': '? More info requested',
+            'incomplete': '? Incomplete',
+            'denied': '✗ Denied',
+          })[d.decision_type] || (d.decision_type || '—');
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; padding:10px 14px; border-bottom:1px solid #f1f5f9; gap:12px;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-weight:600; color:#1E2761; font-size:13px;">${escapeHtml(d.homeowner_address || '—')}</div>
+                <div style="font-size:12px; color:#475569; margin-top:2px;">
+                  ${escapeHtml(d.homeowner_name || '')}${d.homeowner_name && d.project_summary ? ' · ' : ''}${escapeHtml(d.project_summary || '')}
+                </div>
+                <div style="font-size:11px; color:#94A3B8; margin-top:3px;">
+                  ${escapeHtml(d.community_name || '')} · ${date} · ${escapeHtml(decLabel)}
+                </div>
+              </div>
+              <div style="display:flex; gap:4px; flex-shrink:0;">
+                <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadLetter('${d.id}')" title="Re-download letter">📥 Letter</button>
+                <button class="secondary-btn" style="font-size:11px; padding:4px 8px;" onclick="accHistoryDownloadPacket('${d.id}')" title="Download merged packet">📦 Packet</button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        list.innerHTML = '<div style="color:#b91c1c; font-size:13px; padding:14px;">Could not load: ' + (e.message || e) + '</div>';
+      }
+    }, 200);
+  }
+
+  async function accHistoryDownloadLetter(id) {
+    try {
+      const r = await fetch(`/acc-review/decisions/${id}/letter`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'acc_letter.pdf';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      alert('Letter download failed: ' + e.message);
+    }
+  }
+
+  async function accHistoryDownloadPacket(id) {
+    try {
+      const r = await fetch(`/acc-review/decisions/${id}/packet`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const blob = await r.blob();
+      const disp = r.headers.get('Content-Disposition') || '';
+      const m = disp.match(/filename="([^"]+)"/);
+      const filename = m ? m[1] : 'acc_packet.pdf';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      alert('Packet download failed: ' + e.message);
+    }
+  }
+
+  // Lazy-load history when the ACC tab is opened.
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'acc') {
+        try { accLoadHistory(); } catch (_) {}
+      }
+      return r;
+    };
+  })();
 
   async function accDownloadPacket() {
     if (!accLastReview.decision_id) {

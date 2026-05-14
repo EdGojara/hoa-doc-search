@@ -1109,6 +1109,52 @@ app.get('/acc-review/decisions', async (req, res) => {
   }
 });
 
+// /acc-review/decisions/:id/letter — re-download the saved decision letter
+app.get('/acc-review/decisions/:id/letter', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: dec, error: qErr } = await supabase
+      .from('acc_decisions')
+      .select('id, letter_pdf_storage_path, letter_body, homeowner_address, homeowner_name, community_name, project_summary, reference_number, decision_type, created_at')
+      .eq('id', id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (qErr || !dec) return res.status(404).json({ error: 'Decision not found' });
+
+    let pdfBuffer = null;
+    if (dec.letter_pdf_storage_path) {
+      const { data: blob, error: dErr } = await supabase.storage
+        .from('documents')
+        .download(dec.letter_pdf_storage_path);
+      if (!dErr && blob) pdfBuffer = Buffer.from(await blob.arrayBuffer());
+    }
+    // Fallback: regenerate from stored letter_body if the cached PDF is missing
+    if (!pdfBuffer && dec.letter_body) {
+      pdfBuffer = await renderLetterPdfBuffer({
+        community: dec.community_name,
+        homeowner_name: dec.homeowner_name,
+        homeowner_address: dec.homeowner_address,
+        project_summary: dec.project_summary,
+        reference_number: dec.reference_number,
+        decision_type: dec.decision_type,
+        body_text: dec.letter_body,
+      });
+    }
+    if (!pdfBuffer) return res.status(404).json({ error: 'Letter content unavailable' });
+
+    const stem = (dec.homeowner_address || dec.homeowner_name || dec.community_name || 'decision')
+      .toString().replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'decision';
+    const filename = `${stem}_ACC_decision_${(dec.created_at || new Date().toISOString()).slice(0, 10)}.pdf`;
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Cache-Control', 'no-store');
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[acc-review/decisions/:id/letter] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // /acc-review/decisions/:id/packet — merge letter + application + photos into a
 // single PDF for the file record. Photos are added as their own PDF pages.
 app.get('/acc-review/decisions/:id/packet', async (req, res) => {
