@@ -1,0 +1,348 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Call for Nominations — Bedrock</title>
+  <meta name="theme-color" content="#1E2761" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937;
+      min-height: 100dvh;
+    }
+    .page { max-width: 700px; margin: 0 auto; padding: 18px 18px 48px; }
+    .topbar {
+      display: flex; align-items: center; gap: 12px;
+      padding: 8px 4px 18px;
+      border-bottom: 1px solid #e2e8f0;
+      margin-bottom: 22px;
+    }
+    .brand-mark {
+      width: 38px; height: 38px; border-radius: 8px; background: #1E2761; color: #fff;
+      display:flex; align-items:center; justify-content:center; font-weight: 700; font-size: 16px;
+    }
+    .brand-title { font-weight: 700; font-size: 15px; color: #0f172a; }
+    .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+
+    h1 { font-size: 26px; font-weight: 700; margin: 0 0 6px; color: #0f172a; line-height: 1.2; }
+    .lede { font-size: 14px; color: #475569; line-height: 1.55; margin-bottom: 20px; }
+    .lede strong { color: #1E2761; }
+
+    .meeting-card {
+      background: #1E2761; color: #fff;
+      border-radius: 12px; padding: 16px 18px;
+      margin-bottom: 18px;
+    }
+    .meeting-card .lbl { font-size: 10.5px; letter-spacing: 1px; text-transform: uppercase; color: #CADCFC; font-weight: 700; }
+    .meeting-card .val { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    .meeting-card .row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 10px; }
+    .meeting-card .row .lbl { color: #CADCFC; opacity: 0.85; }
+    .meeting-card .row .val { font-size: 14px; }
+
+    .card {
+      background: #fff;
+      border: 1px solid #e2e8f0; border-radius: 12px;
+      padding: 18px; margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    }
+    .card h2 {
+      font-size: 13px; font-weight: 700; color: #1E2761;
+      text-transform: uppercase; letter-spacing: 0.5px; margin: 0 0 12px;
+    }
+    .card .hint { font-size: 12px; color: #64748b; margin: -6px 0 10px; }
+
+    .fld { display:flex; flex-direction:column; gap:5px; margin-bottom: 12px; }
+    .fld label { font-size: 12px; font-weight: 600; color: #334155; }
+    .fld .req { color: #dc2626; }
+    .fld input, .fld select, .fld textarea {
+      padding: 11px 12px; border: 1px solid #cbd5e1; border-radius: 8px;
+      font: inherit; font-size: 15px; background: #fff;
+    }
+    .fld textarea { min-height: 100px; resize: vertical; }
+    .fld input:focus, .fld textarea:focus {
+      outline: none; border-color: #1E2761;
+      box-shadow: 0 0 0 3px rgba(30, 39, 97, 0.12);
+    }
+    .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+    .seg {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 0;
+      border: 1px solid #cbd5e1; border-radius: 10px; overflow: hidden;
+      margin-bottom: 14px;
+    }
+    .seg button {
+      background: #fff; color: #1E2761; border: 0;
+      font: inherit; font-size: 14px; font-weight: 600;
+      padding: 12px 8px; cursor: pointer;
+    }
+    .seg button.active { background: #1E2761; color: #fff; }
+
+    .sig-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 6px; }
+    .sig-row input[type="checkbox"] { width: 18px; height: 18px; margin-top: 2px; }
+    .sig-row label { font-size: 12.5px; color: #334155; line-height: 1.45; }
+
+    .submit-btn {
+      display: block; width: 100%;
+      background: #1E2761; color: #fff;
+      padding: 15px; border: none; border-radius: 10px;
+      font: inherit; font-size: 16px; font-weight: 700;
+      cursor: pointer; margin-top: 8px;
+      box-shadow: 0 4px 12px rgba(30, 39, 97, 0.25);
+    }
+    .submit-btn:active { transform: scale(0.985); }
+    .submit-btn:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
+    .closed-banner {
+      background: #fef2f2; border: 1px solid #fca5a5;
+      padding: 14px 16px; border-radius: 10px;
+      font-size: 13.5px; color: #991b1b;
+    }
+
+    .ok-screen { display: none; text-align: center; padding: 32px 12px; }
+    .ok-screen.show { display: block; }
+    .ok-icon {
+      width: 80px; height: 80px; border-radius: 50%;
+      background: #dcfce7; color: #166534;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 40px; margin: 0 auto 14px;
+    }
+    .ok-screen h2 { font-size: 22px; font-weight: 700; margin: 0 0 6px; }
+    .ok-screen p { font-size: 14px; color: #475569; }
+
+    .err {
+      background: #fee2e2; color: #991b1b;
+      padding: 12px 14px; border-radius: 10px;
+      font-size: 13px; margin-bottom: 12px;
+      display: none;
+    }
+    .err.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="page" id="formScreen">
+    <div class="topbar">
+      <div class="brand-mark">B</div>
+      <div>
+        <div class="brand-title">Bedrock Association Management</div>
+        <div class="brand-sub" id="communityLine">Call for Nominations</div>
+      </div>
+    </div>
+
+    <h1 id="pageHeading">Nominate a candidate for the Board</h1>
+    <p class="lede" id="pageLede">Submit a nomination for a homeowner you'd like to see serve on your community's Board of Directors. You may nominate yourself or a neighbor.</p>
+
+    <div id="meetingCard" class="meeting-card" style="display:none;">
+      <div class="lbl">Annual Meeting</div>
+      <div class="val" id="mcDate"></div>
+      <div class="row">
+        <div>
+          <div class="lbl">Seats Open</div>
+          <div class="val" id="mcSeats"></div>
+        </div>
+        <div>
+          <div class="lbl">Nominations Close</div>
+          <div class="val" id="mcClose"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="closedBox" class="closed-banner" style="display:none;"></div>
+
+    <form id="nomForm" style="display:none;">
+      <div class="card">
+        <h2>Who's submitting?</h2>
+        <div class="seg" role="tablist">
+          <button type="button" id="segSelf" class="active" onclick="setMode(true)">I'm nominating myself</button>
+          <button type="button" id="segOther" onclick="setMode(false)">I'm nominating a neighbor</button>
+        </div>
+
+        <div id="nominatorFields" style="display:none;">
+          <p class="hint">Your contact info (so the Board can reach you with questions about the nomination).</p>
+          <div class="fld">
+            <label>Your name <span class="req">*</span></label>
+            <input type="text" id="nominatorName" autocomplete="name">
+          </div>
+          <div class="grid-2">
+            <div class="fld">
+              <label>Your email</label>
+              <input type="email" id="nominatorEmail" autocomplete="email">
+            </div>
+            <div class="fld">
+              <label>Your home address</label>
+              <input type="text" id="nominatorAddress" autocomplete="street-address">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Nominee</h2>
+        <p class="hint">The person being nominated for the Board.</p>
+        <div class="fld">
+          <label>Nominee full name <span class="req">*</span></label>
+          <input type="text" id="nomineeName" required autocomplete="name">
+        </div>
+        <div class="fld">
+          <label>Nominee home address (in this community) <span class="req">*</span></label>
+          <input type="text" id="nomineeAddress" required autocomplete="street-address">
+        </div>
+        <div class="grid-2">
+          <div class="fld">
+            <label>Nominee email</label>
+            <input type="email" id="nomineeEmail" autocomplete="email">
+          </div>
+          <div class="fld">
+            <label>Nominee phone</label>
+            <input type="tel" id="nomineePhone" autocomplete="tel">
+          </div>
+        </div>
+        <div class="fld">
+          <label>Bio statement / why they'd be a great Board member</label>
+          <textarea id="nomineeBio" placeholder="Background, qualifications, what they'd bring to the Board. This will be shared with homeowners ahead of the election."></textarea>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Electronic Signature</h2>
+        <p class="hint">By typing your name and checking the box below, you electronically sign this nomination. This has the same legal effect as a handwritten signature under the federal E-SIGN Act.</p>
+        <div class="fld">
+          <label>Type your full legal name <span class="req">*</span></label>
+          <input type="text" id="signatureName" required autocomplete="name">
+        </div>
+        <div class="sig-row">
+          <input type="checkbox" id="agreedToTerms">
+          <label for="agreedToTerms">
+            I certify that the information above is true to the best of my knowledge, that
+            the nominee (or I, if self-nominating) is a homeowner in good standing in this
+            community, and I consent to this electronic signature being binding under the
+            E-SIGN Act.
+          </label>
+        </div>
+      </div>
+
+      <div class="err" id="errBox"></div>
+      <button type="submit" id="submitBtn" class="submit-btn">Submit Nomination</button>
+    </form>
+  </div>
+
+  <div class="page ok-screen" id="okScreen">
+    <div class="ok-icon">✓</div>
+    <h2>Nomination received</h2>
+    <p>Thank you. The Board has been notified of your submission.</p>
+    <p style="margin-top:18px; font-size:12.5px; color:#64748b;">— Bedrock Association Management</p>
+  </div>
+
+  <script>
+    let cycleId = null;
+    let isOpen = false;
+    let isSelf = true;
+
+    function fmtDate(s) {
+      if (!s) return '';
+      const dt = new Date(String(s).length === 10 ? s + 'T12:00:00' : s);
+      if (isNaN(dt.getTime())) return s;
+      return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+
+    function setMode(self) {
+      isSelf = !!self;
+      document.getElementById('segSelf').classList.toggle('active', isSelf);
+      document.getElementById('segOther').classList.toggle('active', !isSelf);
+      document.getElementById('nominatorFields').style.display = isSelf ? 'none' : 'block';
+    }
+
+    async function load() {
+      const slug = window.location.pathname.split('/').filter(Boolean).pop();
+      try {
+        const r = await fetch('/api/nominations/public/' + encodeURIComponent(slug));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Could not load form');
+        const c = j.cycle;
+        cycleId = c.id;
+        isOpen = !!j.is_open;
+        document.getElementById('communityLine').textContent = c.community_name + ' · Call for Nominations';
+        document.getElementById('pageHeading').textContent = 'Nominate a candidate — ' + c.community_name;
+        document.getElementById('mcDate').textContent = fmtDate(c.annual_meeting_date) + (c.annual_meeting_time ? ' at ' + c.annual_meeting_time : '');
+        document.getElementById('mcSeats').textContent = c.seats_open + ' seat' + (c.seats_open === 1 ? '' : 's');
+        document.getElementById('mcClose').textContent = fmtDate(c.nominations_close_at);
+        document.getElementById('meetingCard').style.display = 'block';
+
+        if (!isOpen) {
+          const closed = document.getElementById('closedBox');
+          if (j.today < c.nominations_open_at) {
+            closed.textContent = `Nominations open ${fmtDate(c.nominations_open_at)}. Please check back then.`;
+          } else {
+            closed.textContent = `Nominations for this cycle closed on ${fmtDate(c.nominations_close_at)}. Contact Bedrock Association Management at (832) 588-2485 if you have questions.`;
+          }
+          closed.style.display = 'block';
+          return;
+        }
+
+        document.getElementById('nomForm').style.display = 'block';
+      } catch (e) {
+        document.getElementById('pageLede').innerHTML = '<span style="color:#991b1b;">' + (e.message || 'Unable to load this form.') + '</span>';
+      }
+    }
+
+    document.getElementById('nomForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const err = document.getElementById('errBox');
+      err.classList.remove('show');
+
+      const payload = {
+        is_self_nomination: isSelf,
+        nominator_name: isSelf ? null : document.getElementById('nominatorName').value.trim(),
+        nominator_email: isSelf ? null : document.getElementById('nominatorEmail').value.trim(),
+        nominator_address: isSelf ? null : document.getElementById('nominatorAddress').value.trim(),
+        nominee_name: document.getElementById('nomineeName').value.trim(),
+        nominee_address: document.getElementById('nomineeAddress').value.trim(),
+        nominee_email: document.getElementById('nomineeEmail').value.trim() || null,
+        nominee_phone: document.getElementById('nomineePhone').value.trim() || null,
+        nominee_bio: document.getElementById('nomineeBio').value.trim() || null,
+        signature_name: document.getElementById('signatureName').value.trim(),
+        agreed_to_terms: document.getElementById('agreedToTerms').checked,
+      };
+
+      if (!payload.nominee_name || !payload.nominee_address) {
+        err.textContent = "Please fill in the nominee's name and address.";
+        err.classList.add('show'); return;
+      }
+      if (!isSelf && !payload.nominator_name) {
+        err.textContent = 'Please enter your name as the person submitting the nomination.';
+        err.classList.add('show'); return;
+      }
+      if (!payload.signature_name || !payload.agreed_to_terms) {
+        err.textContent = 'Please type your full legal name and check the e-signature agreement.';
+        err.classList.add('show'); return;
+      }
+
+      const slug = window.location.pathname.split('/').filter(Boolean).pop();
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true; btn.textContent = 'Submitting…';
+      try {
+        const r = await fetch('/api/nominations/public/' + encodeURIComponent(slug) + '/submit', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Submission failed');
+        document.getElementById('formScreen').style.display = 'none';
+        document.getElementById('okScreen').classList.add('show');
+      } catch (e) {
+        err.textContent = e.message;
+        err.classList.add('show');
+        btn.disabled = false; btn.textContent = 'Submit Nomination';
+      }
+    });
+
+    load();
+  </script>
+</body>
+</html>

@@ -252,7 +252,7 @@
   <div class="tab" onclick="switchTab('review')">✏️ Review My Draft</div>
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
-  <div class="tab" onclick="switchTab('mailing')">📬 Annual Mailing</div>
+  <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
   <div class="tab" data-group="board" onclick="openTabGroup('board')">🏛️ Board</div>
   <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
@@ -784,6 +784,108 @@
       </div>
 
     </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     Call for Nominations — annual meeting nomination cycles.
+     Manager creates a cycle (meeting date, seats open, current board snapshot),
+     renders a branded "Call for Nominations" letter PDF that goes in the
+     mailing, and reviews nominations submitted via the public form.
+     ========================================================================= -->
+<div class="tab-content" id="tab-nominations" style="overflow-y:auto; padding:24px;">
+  <div style="margin-bottom:14px;">
+    <h2 style="margin:0 0 4px 0;">📋 Call for Nominations</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Run the annual nomination cycle: branded call-for-nominations letter (printed + mailed), a public form for homeowners to self-nominate or nominate a neighbor, and a managed slate going into the annual meeting.
+    </p>
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1.1fr 1fr; gap:20px; align-items:flex-start;">
+
+    <!-- LEFT: cycle form -->
+    <div style="border:1px solid #d0d7de; border-radius:10px; padding:18px; background:#fff;">
+      <h3 style="margin:0 0 12px 0; font-size:15px; color:#1E2761;">New nomination cycle</h3>
+      <p style="font-size:12px; color:#6B7280; margin:0 0 14px 0;">
+        Most fields are saved with the cycle and printed on the letter. Community is the one selected in the header.
+      </p>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+        <div>
+          <div class="section-label">Annual meeting date</div>
+          <input type="date" id="nomMeetingDate" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+        <div>
+          <div class="section-label">Meeting time (optional)</div>
+          <input type="text" id="nomMeetingTime" placeholder="6:30 PM" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div class="section-label">Meeting location (optional)</div>
+        <input type="text" id="nomMeetingLocation" placeholder="Clubhouse / Zoom link / TBD" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+      </div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:10px;">
+        <div>
+          <div class="section-label">Nominations open</div>
+          <input type="date" id="nomOpenAt" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+        <div>
+          <div class="section-label">Nominations close</div>
+          <input type="date" id="nomCloseAt" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+        <div>
+          <div class="section-label">Seats open</div>
+          <input type="number" id="nomSeatsOpen" value="1" min="1" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div class="section-label">Current board (one per line — Name, Position, Term Ends)</div>
+        <textarea id="nomCurrentBoard" rows="4" placeholder="Jane Smith, President, 2026
+John Doe, Vice President, 2027
+Mary Lee, Treasurer, 2026" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px; font-family:Menlo,Consolas,monospace;"></textarea>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div class="section-label">Letter context (optional)</div>
+        <textarea id="nomDescription" rows="3" placeholder="e.g., Two seats are open this cycle — one President seat (term ending 2026) and one At-Large seat." style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
+      </div>
+
+      <div style="margin-top:10px;">
+        <div class="section-label">Public form slug (optional)</div>
+        <input type="text" id="nomPublicSlug" placeholder="Leave blank to use community slug" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Homeowners will submit at <code id="nomSlugPreview">/nominate/&lt;slug&gt;</code></div>
+      </div>
+
+      <div style="display:flex; gap:8px; margin-top:14px;">
+        <button class="action-btn" id="nomCreateBtn" onclick="nomCreateCycle()">💾 Save cycle</button>
+        <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF</button>
+      </div>
+      <div id="nomCreateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
+    </div>
+
+    <!-- RIGHT: cycle list + nominations -->
+    <div>
+      <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0; font-size:15px; color:#1E2761;">Recent cycles</h3>
+          <button class="secondary-btn" onclick="nomLoadCycles()" style="font-size:12px; padding:4px 10px;">↻ Refresh</button>
+        </div>
+        <div id="nomCyclesList" style="font-size:13px; color:#6B7280;">No cycles yet.</div>
+      </div>
+
+      <div id="nomCyclePanel" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0; font-size:15px; color:#1E2761;" id="nomPanelTitle">Nominations</h3>
+          <div style="font-size:12px; color:#6B7280;" id="nomPanelMeta"></div>
+        </div>
+        <div id="nomPublicLinkBox" style="font-size:12px; color:#475569; margin-bottom:10px;"></div>
+        <div id="nomList" style="font-size:13px; color:#6B7280;">No nominations submitted yet.</div>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -12606,6 +12708,13 @@ ${questionsPage}
         { id: 'presentations',  label: '🎬 Presentations' },
       ],
     },
+    annualmeeting: {
+      label: '🗳️ Annual Meeting',
+      children: [
+        { id: 'nominations', label: '📋 Call for Nominations' },
+        { id: 'mailing',     label: '📬 Annual Mailing' },
+      ],
+    },
   };
 
   function tabParentGroup(tabId) {
@@ -12900,6 +13009,211 @@ ${questionsPage}
     window.switchTab = function (tab) {
       const result = orig.apply(this, arguments);
       if (tab === 'presentations') presInit();
+      return result;
+    };
+  })();
+
+  // =========================================================================
+  // Call for Nominations — admin side.
+  // Cycle create + list + nomination roster + branded letter PDF render.
+  // Public homeowner submissions land at /nominate/:slug.
+  // =========================================================================
+  let nomCycles = [];
+  let nomActiveCycleId = null;
+
+  function nomSelectedCommunity() {
+    return (document.getElementById('communitySelect') || {}).value || '';
+  }
+
+  function nomParseBoard(text) {
+    const out = [];
+    String(text || '').split(/\r?\n/).forEach((line) => {
+      const parts = line.split(',').map(s => s.trim()).filter(Boolean);
+      if (parts.length === 0) return;
+      out.push({
+        name: parts[0] || '',
+        position: parts[1] || '',
+        term_end: parts[2] || '',
+      });
+    });
+    return out;
+  }
+
+  async function nomCreateCycle() {
+    const community = nomSelectedCommunity();
+    if (!community) { alert('Pick a community first (top of page).'); return; }
+    const meeting = document.getElementById('nomMeetingDate').value;
+    const open    = document.getElementById('nomOpenAt').value;
+    const close   = document.getElementById('nomCloseAt').value;
+    if (!meeting || !open || !close) { alert('Annual meeting date and nominations open/close dates are required.'); return; }
+
+    const payload = {
+      community_name: community,
+      annual_meeting_date: meeting,
+      annual_meeting_time: document.getElementById('nomMeetingTime').value || null,
+      annual_meeting_location: document.getElementById('nomMeetingLocation').value || null,
+      nominations_open_at: open,
+      nominations_close_at: close,
+      seats_open: Number(document.getElementById('nomSeatsOpen').value || 1),
+      current_board: nomParseBoard(document.getElementById('nomCurrentBoard').value),
+      description: document.getElementById('nomDescription').value || null,
+      public_slug: (document.getElementById('nomPublicSlug').value || '').trim() || null,
+    };
+
+    const btn = document.getElementById('nomCreateBtn');
+    const status = document.getElementById('nomCreateStatus');
+    btn.disabled = true; btn.textContent = '⏳ Saving…';
+    status.textContent = '';
+    try {
+      const r = await fetch('/api/nominations/cycles', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = `<span style="color:#15803d;">✓ Cycle saved.</span> Public link: <code>/nominate/${j.cycle.public_slug || j.cycle.id}</code>`;
+      nomActiveCycleId = j.cycle.id;
+      document.getElementById('nomLetterBtn').disabled = false;
+      document.getElementById('nomLetterBtn').style.opacity = '1';
+      await nomLoadCycles();
+      await nomOpenCycle(j.cycle.id);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save cycle';
+    }
+  }
+
+  async function nomLoadCycles() {
+    const community = nomSelectedCommunity();
+    if (!community) {
+      document.getElementById('nomCyclesList').textContent = 'Pick a community first.';
+      return;
+    }
+    try {
+      const r = await fetch(`/api/nominations/cycles?community=${encodeURIComponent(community)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      nomCycles = j.cycles || [];
+      const list = document.getElementById('nomCyclesList');
+      if (nomCycles.length === 0) {
+        list.textContent = 'No cycles yet — fill out the form on the left to start one.';
+        return;
+      }
+      list.innerHTML = nomCycles.map((c) => `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; cursor:pointer; background:${c.id === nomActiveCycleId ? '#eef2ff' : '#fff'};"
+             onclick="nomOpenCycle('${c.id}')">
+          <div>
+            <div style="font-weight:600; color:#1E2761;">${escapeHtml(c.community_name)} — ${escapeHtml(c.annual_meeting_date)}</div>
+            <div style="font-size:11px; color:#6B7280;">${escapeHtml(c.status)} · ${c.nominations_count || 0} nominations · closes ${escapeHtml(c.nominations_close_at)}</div>
+          </div>
+          <div style="font-size:11px; color:#475569;">${c.seats_open} seat${c.seats_open === 1 ? '' : 's'}</div>
+        </div>
+      `).join('');
+    } catch (e) {
+      document.getElementById('nomCyclesList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function nomOpenCycle(id) {
+    nomActiveCycleId = id;
+    const cycle = nomCycles.find(c => c.id === id);
+    const panel = document.getElementById('nomCyclePanel');
+    panel.style.display = 'block';
+    document.getElementById('nomLetterBtn').disabled = false;
+    document.getElementById('nomLetterBtn').style.opacity = '1';
+    if (cycle) {
+      document.getElementById('nomPanelTitle').textContent = `${cycle.community_name} — ${cycle.annual_meeting_date}`;
+      document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'}`;
+      const url = `${window.location.origin}/nominate/${cycle.public_slug || cycle.id}`;
+      document.getElementById('nomPublicLinkBox').innerHTML = `
+        Public form: <a href="${url}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
+        &nbsp;·&nbsp; <button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="navigator.clipboard.writeText('${url}'); this.textContent='✓ Copied';">📋 Copy link</button>
+      `;
+    }
+    // refresh cycle list highlight
+    nomLoadCycles();
+    try {
+      const r = await fetch(`/api/nominations/cycles/${id}/nominations`);
+      const j = await r.json();
+      const noms = j.nominations || [];
+      const list = document.getElementById('nomList');
+      if (noms.length === 0) {
+        list.textContent = 'No nominations submitted yet. Homeowners can submit at the public link above.';
+        return;
+      }
+      list.innerHTML = noms.map((n) => `
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <div>
+              <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
+              <div style="font-size:12px; color:#6B7280;">${escapeHtml(n.nominee_address)}${n.nominee_email ? ' · ' + escapeHtml(n.nominee_email) : ''}${n.nominee_phone ? ' · ' + escapeHtml(n.nominee_phone) : ''}</div>
+              <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
+                ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(n.nominator_name || 'unknown')}
+                · submitted ${new Date(n.signed_at).toLocaleString()}
+              </div>
+              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761;">${escapeHtml(n.nominee_bio)}</div>` : ''}
+            </div>
+            <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px;">
+              ${['submitted','verified','on_slate','withdrawn','rejected'].map(s => `<option value="${s}" ${s===n.status?'selected':''}>${s}</option>`).join('')}
+            </select>
+          </div>
+        </div>
+      `).join('');
+    } catch (e) {
+      document.getElementById('nomList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function nomUpdateStatus(id, status) {
+    try {
+      const r = await fetch(`/api/nominations/${id}`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!r.ok) throw new Error('Update failed');
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function nomGenerateLetter() {
+    if (!nomActiveCycleId) { alert('Save the cycle first.'); return; }
+    const btn = document.getElementById('nomLetterBtn');
+    btn.disabled = true; btn.textContent = '⏳ Rendering…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/letter`, { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `call-for-nominations.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Letter render failed: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = '📄 Generate letter PDF';
+    }
+  }
+
+  // Lazy-init on first activation of the nominations sub-tab
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    let didInit = false;
+    window.switchTab = function (tab) {
+      const result = orig.apply(this, arguments);
+      if (tab === 'nominations' && !didInit) {
+        didInit = true;
+        try { nomLoadCycles(); } catch (_) {}
+      } else if (tab === 'nominations') {
+        try { nomLoadCycles(); } catch (_) {}
+      }
       return result;
     };
   })();

@@ -4447,6 +4447,305 @@ app.get('/api/financials/:id/branded', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Call for Nominations — annual meeting nomination cycles + public submissions.
+//   POST   /api/nominations/cycles
+//   GET    /api/nominations/cycles?community=Name
+//   GET    /api/nominations/cycles/:id
+//   POST   /api/nominations/cycles/:id/letter   → branded PDF
+//   GET    /api/nominations/cycles/:id/nominations
+//   PATCH  /api/nominations/:id                 → status / manager_notes
+//   GET    /nominate/:slug                      → public form HTML
+//   GET    /api/nominations/public/:slug        → cycle data for form
+//   POST   /api/nominations/public/:slug/submit → homeowner submission
+// ============================================================================
+const { renderCallForNominationsHTML } = require('./lib/nominations/letter');
+
+function nomSlugify(s) {
+  return String(s || '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 80);
+}
+
+async function nomResolveCommunityId(communityName) {
+  if (!communityName) return null;
+  try {
+    const stem = communityName.split(' at ')[0];
+    const { data } = await supabase
+      .from('communities')
+      .select('id, slug, name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .ilike('name', `%${stem}%`)
+      .limit(1)
+      .maybeSingle();
+    return data || null;
+  } catch (_) { return null; }
+}
+
+async function nomCountByCycle(cycleIds) {
+  if (!cycleIds || cycleIds.length === 0) return {};
+  try {
+    const { data } = await supabase
+      .from('nominations')
+      .select('cycle_id')
+      .in('cycle_id', cycleIds);
+    const counts = {};
+    (data || []).forEach((n) => { counts[n.cycle_id] = (counts[n.cycle_id] || 0) + 1; });
+    return counts;
+  } catch (_) { return {}; }
+}
+
+app.post('/api/nominations/cycles', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_name) return res.status(400).json({ error: 'community_name is required' });
+    if (!b.annual_meeting_date) return res.status(400).json({ error: 'annual_meeting_date is required' });
+    if (!b.nominations_open_at || !b.nominations_close_at) {
+      return res.status(400).json({ error: 'nominations_open_at and nominations_close_at are required' });
+    }
+    const comm = await nomResolveCommunityId(b.community_name);
+    const slug = (b.public_slug && nomSlugify(b.public_slug)) ||
+                 (comm && comm.slug) ||
+                 nomSlugify(b.community_name);
+
+    const { data: row, error } = await supabase
+      .from('nomination_cycles')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: comm ? comm.id : '00000000-0000-0000-0000-000000000000',
+        community_name: b.community_name,
+        annual_meeting_date: b.annual_meeting_date,
+        annual_meeting_time: b.annual_meeting_time || null,
+        annual_meeting_location: b.annual_meeting_location || null,
+        nominations_open_at: b.nominations_open_at,
+        nominations_close_at: b.nominations_close_at,
+        seats_open: Number(b.seats_open) || 1,
+        current_board: Array.isArray(b.current_board) ? b.current_board : [],
+        description: b.description || null,
+        public_slug: slug,
+        status: 'planned',
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ cycle: row });
+  } catch (err) {
+    console.error('[nominations/cycles POST]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/nominations/cycles', async (req, res) => {
+  try {
+    let q = supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('annual_meeting_date', { ascending: false })
+      .limit(50);
+    if (req.query.community) q = q.ilike('community_name', `%${req.query.community.split(' at ')[0]}%`);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    const counts = await nomCountByCycle((data || []).map((c) => c.id));
+    res.json({ cycles: (data || []).map((c) => ({ ...c, nominations_count: counts[c.id] || 0 })) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/nominations/cycles/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not found' });
+    res.json({ cycle: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/nominations/cycles/:id/letter', async (req, res) => {
+  try {
+    const { data: cycle, error } = await supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error || !cycle) return res.status(404).json({ error: 'cycle not found' });
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const html = await renderCallForNominationsHTML(cycle, { base_url: baseUrl });
+
+    const puppeteer = _puppeteer_lazy();
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+    });
+    let buf;
+    try {
+      const page = await browser.newPage();
+      try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch (_) {}
+      buf = await page.pdf({
+        format: 'Letter',
+        printBackground: true,
+        margin: { top: 0, right: 0, bottom: 0, left: 0 },
+        preferCSSPageSize: true,
+      });
+    } finally { try { await browser.close(); } catch (_) {} }
+
+    // Save to storage so the letter is preserved alongside the cycle
+    try {
+      const stem = (cycle.community_name || 'community').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const storagePath = `nominations/${cycle.id}/${stem}_call_for_nominations.pdf`;
+      const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, buf, {
+        contentType: 'application/pdf', upsert: true,
+      });
+      if (!upErr) {
+        await supabase.from('nomination_cycles')
+          .update({ letter_pdf_storage_path: storagePath, updated_at: new Date().toISOString() })
+          .eq('id', cycle.id);
+      }
+    } catch (e) { console.warn('[nominations/letter] storage save failed:', e.message); }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="call_for_nominations.pdf"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[nominations/letter]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('nominations')
+      .select('*')
+      .eq('cycle_id', req.params.id)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ nominations: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/nominations/:id', async (req, res) => {
+  try {
+    const allowed = ['status', 'manager_notes'];
+    const patch = {};
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('nominations')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ nomination: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Public homeowner-facing form — serves the HTML
+app.get('/nominate/:slug', async (req, res) => {
+  try {
+    const { data: cycle } = await supabase
+      .from('nomination_cycles')
+      .select('id, public_slug')
+      .or(`public_slug.eq.${req.params.slug},id.eq.${req.params.slug}`)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .limit(1)
+      .maybeSingle();
+    if (!cycle) return res.status(404).send('<h1>Nominations form not found</h1><p>This community does not have an active nomination cycle.</p>');
+    res.sendFile(path.join(__dirname, 'public', 'nominate.html'));
+  } catch (err) {
+    res.status(500).send('Error: ' + err.message);
+  }
+});
+
+app.get('/api/nominations/public/:slug', async (req, res) => {
+  try {
+    const { data: cycle, error } = await supabase
+      .from('nomination_cycles')
+      .select('id, community_name, annual_meeting_date, annual_meeting_time, annual_meeting_location, nominations_open_at, nominations_close_at, seats_open, current_board, description, status, public_slug')
+      .or(`public_slug.eq.${req.params.slug},id.eq.${req.params.slug}`)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .limit(1)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!cycle) return res.status(404).json({ error: 'cycle not found' });
+    // Window check — communicate but still serve the form so we can show a friendly message
+    const today = new Date().toISOString().slice(0, 10);
+    const isOpen = today >= cycle.nominations_open_at && today <= cycle.nominations_close_at && cycle.status !== 'closed' && cycle.status !== 'finalized';
+    res.json({ cycle, is_open: isOpen, today });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/nominations/public/:slug/submit', async (req, res) => {
+  try {
+    const { data: cycle } = await supabase
+      .from('nomination_cycles')
+      .select('id, nominations_open_at, nominations_close_at, status')
+      .or(`public_slug.eq.${req.params.slug},id.eq.${req.params.slug}`)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .limit(1)
+      .maybeSingle();
+    if (!cycle) return res.status(404).json({ error: 'cycle not found' });
+    const today = new Date().toISOString().slice(0, 10);
+    if (today < cycle.nominations_open_at) return res.status(403).json({ error: 'Nominations have not opened yet.' });
+    if (today > cycle.nominations_close_at || cycle.status === 'closed' || cycle.status === 'finalized') {
+      return res.status(403).json({ error: 'Nominations are closed for this cycle.' });
+    }
+
+    const b = req.body || {};
+    if (!b.nominee_name || !b.nominee_address) return res.status(400).json({ error: 'Nominee name and address are required.' });
+    if (!b.signature_name || !b.agreed_to_terms) return res.status(400).json({ error: 'Electronic signature and agreement are required.' });
+
+    const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim() || null;
+
+    const { data, error } = await supabase
+      .from('nominations')
+      .insert({
+        cycle_id: cycle.id,
+        nominee_name: b.nominee_name,
+        nominee_address: b.nominee_address,
+        nominee_email: b.nominee_email || null,
+        nominee_phone: b.nominee_phone || null,
+        nominee_bio: b.nominee_bio || null,
+        is_self_nomination: !!b.is_self_nomination,
+        nominator_name: b.is_self_nomination ? null : (b.nominator_name || null),
+        nominator_email: b.is_self_nomination ? null : (b.nominator_email || null),
+        nominator_address: b.is_self_nomination ? null : (b.nominator_address || null),
+        signature_name: b.signature_name,
+        agreed_to_terms: !!b.agreed_to_terms,
+        client_ip: ip,
+        user_agent: (req.headers['user-agent'] || '').slice(0, 500),
+        status: 'submitted',
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, nomination_id: data.id });
+  } catch (err) {
+    console.error('[nominations/public/submit]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });
