@@ -12197,6 +12197,39 @@ ${questionsPage}
     };
   })();
 
+  // Lazy-load hooks for tabs that moved into groups — their original
+  // DOMContentLoaded listeners watched for onclick="switchTab('billing')" etc.
+  // on .tab elements, which no longer exist now that those tabs are inside
+  // Bedrock Office / Vendor / Board sub-toolbars. We fire the init functions
+  // here on first activation so the screens load.
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    const initOnce = {
+      billing:  { done: false, run: () => { if (typeof billingLoadCommunities === 'function') billingLoadCommunities(); } },
+      vendors:  { done: false, run: () => { if (typeof vendorsLoadCommunities === 'function') vendorsLoadCommunities(); } },
+      packets:  { done: false, run: () => {
+        if (typeof packetsLoadCommunities === 'function') packetsLoadCommunities();
+        if (typeof packetsLoadTemplates  === 'function') packetsLoadTemplates();
+        if (typeof packetsLoadList       === 'function') packetsLoadList();
+      } },
+    };
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      const slot = initOnce[tab];
+      if (slot && !slot.done) {
+        slot.done = true;
+        try { slot.run(); } catch (e) { console.warn('[tab-init]', tab, e); }
+      }
+      // Vendor Workflow re-loads on community change — call its load every time;
+      // the function handles dedup internally.
+      if (tab === 'vendor') {
+        try { if (typeof vwLoadLibrary === 'function') setTimeout(() => vwLoadLibrary(), 100); } catch (_) {}
+      }
+      return r;
+    };
+  })();
+
   // =========================================================================
   // Presentations module — template picker, dynamic form, generate & download
   // =========================================================================
