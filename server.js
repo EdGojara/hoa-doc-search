@@ -4197,7 +4197,13 @@ app.delete('/api/presentations/instances/:id', async (req, res) => {
 // ============================================================================
 // pdfParse already required at the top of the file
 const { renderBalanceSheetHTML } = require('./lib/financial_statements/balance_sheet');
-const { parseBalanceSheetText, generateBalanceSheetFindings } = require('./lib/financial_statements/parser');
+const { renderInvestmentStatementHTML } = require('./lib/financial_statements/investment_statement');
+const {
+  parseBalanceSheetText,
+  generateBalanceSheetFindings,
+  parseInvestmentStatementText,
+  generateInvestmentStatementFindings,
+} = require('./lib/financial_statements/parser');
 
 async function renderFinancialPdfBuffer(html) {
   const puppeteer = _puppeteer_lazy();
@@ -4233,8 +4239,10 @@ app.post('/api/financials/parse', upload.single('pdf'), async (req, res) => {
     let data;
     if (statementType === 'balance_sheet') {
       data = await parseBalanceSheetText(text);
+    } else if (statementType === 'investment_statement') {
+      data = await parseInvestmentStatementText(text);
     } else {
-      return res.status(400).json({ error: `Unsupported statement type: ${statementType}. Only balance_sheet supported in v1.` });
+      return res.status(400).json({ error: `Unsupported statement type: ${statementType}.` });
     }
     res.json({ ok: true, data, source_filename: req.file.originalname });
   } catch (err) {
@@ -4258,11 +4266,18 @@ app.post('/api/financials/generate', upload.single('pdf'), async (req, res) => {
 
     // Generate findings (fire-and-forget if fails)
     let findings = [];
-    try { findings = await generateBalanceSheetFindings(data, community); }
-    catch (e) { console.warn('[financials/generate] findings failed:', e.message); }
+    try {
+      if (statementType === 'investment_statement') {
+        findings = await generateInvestmentStatementFindings(data, community);
+      } else {
+        findings = await generateBalanceSheetFindings(data, community);
+      }
+    } catch (e) { console.warn('[financials/generate] findings failed:', e.message); }
 
     // Render Bedrock PDF
-    const html = renderBalanceSheetHTML({ community, data, findings });
+    const html = statementType === 'investment_statement'
+      ? renderInvestmentStatementHTML({ community, data, findings })
+      : renderBalanceSheetHTML({ community, data, findings });
     const brandedPdf = await renderFinancialPdfBuffer(html);
 
     // Resolve community_id
@@ -4323,7 +4338,8 @@ app.post('/api/financials/generate', upload.single('pdf'), async (req, res) => {
 
     const stem = (community + '_' + (periodLabel || 'statement'))
       .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'financial';
-    const filename = `${stem}_balance_sheet.pdf`;
+    const typeSlug = statementType === 'investment_statement' ? 'reserve_performance' : 'balance_sheet';
+    const filename = `${stem}_${typeSlug}.pdf`;
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
     if (row) {
@@ -4364,7 +4380,7 @@ app.get('/api/financials/:id/branded', async (req, res) => {
     const { id } = req.params;
     const { data: row, error } = await supabase
       .from('financial_statements')
-      .select('community_name, period_label, statement_type, branded_pdf_storage_path, extracted_data, findings')
+      .select('community_name, period_label, statement_type, branded_pdf_storage_path, extracted_data, findings, statement_type')
       .eq('id', id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
@@ -4376,19 +4392,26 @@ app.get('/api/financials/:id/branded', async (req, res) => {
       if (blob) pdfBuffer = Buffer.from(await blob.arrayBuffer());
     }
     if (!pdfBuffer) {
-      // Regenerate from stored data
-      const html = renderBalanceSheetHTML({
-        community: row.community_name,
-        data: row.extracted_data || {},
-        findings: row.findings || [],
-      });
+      // Regenerate from stored data — pick the right template by type
+      const html = row.statement_type === 'investment_statement'
+        ? renderInvestmentStatementHTML({
+            community: row.community_name,
+            data: row.extracted_data || {},
+            findings: row.findings || [],
+          })
+        : renderBalanceSheetHTML({
+            community: row.community_name,
+            data: row.extracted_data || {},
+            findings: row.findings || [],
+          });
       pdfBuffer = await renderFinancialPdfBuffer(html);
     }
 
     const stem = (row.community_name + '_' + (row.period_label || 'statement'))
       .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || 'financial';
+    const typeSlug = row.statement_type === 'investment_statement' ? 'reserve_performance' : 'balance_sheet';
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${stem}_balance_sheet.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="${stem}_${typeSlug}.pdf"`);
     res.send(pdfBuffer);
   } catch (err) {
     console.error('[financials/:id/branded] failed:', err.message);
