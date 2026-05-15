@@ -1282,4 +1282,169 @@ router.post('/contracts/save', async (req, res) => {
   }
 });
 
+// ============================================================================
+// MANAGEMENT-AGREEMENT MODULE (migration 041)
+// ----------------------------------------------------------------------------
+// Customer-facing management-agreement PDF generation. Sits on top of the
+// existing contract/fee-schedule tables — adds per-lot math (internal only)
+// and a Bedrock-branded document renderer. The legal body of the agreement
+// lives once in `bedrock_contract_defaults.contract_body_template` with
+// merge tokens; new community contracts inherit the rate sheet from the
+// same row's default_* JSONB blobs (copy-on-create — edits to defaults do
+// NOT retroactively change existing executed agreements).
+// ============================================================================
+
+const { renderManagementAgreementHTML, computeMonthlyFee } =
+  require('../lib/contracts/management_agreement');
+
+// GET /api/billing/contract-defaults — read the singleton.
+router.get('/contract-defaults', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('bedrock_contract_defaults')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle();
+    if (error) throw error;
+    res.json({ defaults: data || null });
+  } catch (err) {
+    console.error('[billing] contract-defaults GET failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PUT /api/billing/contract-defaults — upsert the singleton.
+router.put('/contract-defaults', express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = {
+      id: 1,
+      default_per_lot_monthly_fee: b.default_per_lot_monthly_fee ?? null,
+      default_term_months:         b.default_term_months ?? null,
+      contract_body_template:      b.contract_body_template ?? null,
+      default_fixed_items:         Array.isArray(b.default_fixed_items)   ? b.default_fixed_items   : [],
+      default_reimbursables:       Array.isArray(b.default_reimbursables) ? b.default_reimbursables : [],
+      default_owner_charges:       Array.isArray(b.default_owner_charges) ? b.default_owner_charges : [],
+      updated_at: new Date().toISOString(),
+    };
+    const { data, error } = await supabase
+      .from('bedrock_contract_defaults')
+      .upsert(patch)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ defaults: data });
+  } catch (err) {
+    console.error('[billing] contract-defaults PUT failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// PATCH /api/billing/contracts/:id/pricing — update per-lot math + term on an
+// existing contract. Internal-only fields; never prints on the agreement.
+router.patch('/contracts/:id/pricing', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const patch = { updated_at: new Date().toISOString() };
+    if (b.lot_count            !== undefined) patch.lot_count            = b.lot_count            === null ? null : Number(b.lot_count);
+    if (b.per_lot_monthly_fee  !== undefined) patch.per_lot_monthly_fee  = b.per_lot_monthly_fee  === null ? null : Number(b.per_lot_monthly_fee);
+    if (b.monthly_fee_override !== undefined) patch.monthly_fee_override = b.monthly_fee_override === null ? null : Number(b.monthly_fee_override);
+    if (b.term_months          !== undefined) patch.term_months          = b.term_months          === null ? null : Number(b.term_months);
+
+    const { data, error } = await supabase
+      .from('contracts')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ contract: data });
+  } catch (err) {
+    console.error('[billing] contract pricing PATCH failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/billing/contracts/:id/management-agreement
+//   Generates the Bedrock-branded management-agreement PDF for this contract
+//   and stores it in the documents bucket. Returns a signed URL.
+router.post('/contracts/:id/management-agreement', async (req, res) => {
+  try {
+    const contractId = req.params.id;
+
+    const { data: contract, error: cErr } = await supabase
+      .from('contracts').select('*').eq('id', contractId).maybeSingle();
+    if (cErr || !contract) return res.status(404).json({ error: 'contract not found' });
+
+    const { data: community, error: commErr } = await supabase
+      .from('communities').select('*').eq('id', contract.community_id).maybeSingle();
+    if (commErr || !community) return res.status(404).json({ error: 'community not found' });
+
+    const { data: defaults } = await supabase
+      .from('bedrock_contract_defaults').select('*').eq('id', 1).maybeSingle();
+
+    const [{ data: fixedItems }, { data: reimbursables }, { data: ownerCharges }] = await Promise.all([
+      supabase.from('contract_fixed_items').select('*').eq('contract_id', contractId).order('sort_order'),
+      supabase.from('contract_reimbursables').select('*').eq('contract_id', contractId).order('sort_order'),
+      supabase.from('contract_owner_charges').select('*').eq('contract_id', contractId).order('sort_order'),
+    ]);
+
+    const html = await renderManagementAgreementHTML({
+      contract,
+      community,
+      defaults,
+      fixedItems: fixedItems || [],
+      reimbursables: reimbursables || [],
+      ownerCharges: ownerCharges || [],
+    });
+
+    const browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+    });
+    let pdfBuf;
+    try {
+      const page = await browser.newPage();
+      await page.setContent(html, { waitUntil: 'networkidle0' });
+      pdfBuf = await page.pdf({ format: 'Letter', printBackground: true });
+    } finally {
+      await browser.close();
+    }
+
+    const storagePath = `contracts/${contractId}/management_agreement_v${contract.version}_${Date.now()}.pdf`;
+    const { error: upErr } = await supabase.storage.from('documents').upload(storagePath, pdfBuf, {
+      contentType: 'application/pdf', upsert: true,
+    });
+    if (upErr) throw upErr;
+
+    const monthlyFee = computeMonthlyFee(contract, fixedItems || []);
+    const { data: doc, error: docErr } = await supabase
+      .from('management_agreement_documents')
+      .insert({
+        contract_id: contractId,
+        community_id: contract.community_id,
+        pdf_storage_path: storagePath,
+        snapshot: {
+          contract,
+          community: { id: community.id, name: community.name, address: community.address },
+          monthly_fee: monthlyFee,
+          fixed_items: fixedItems || [],
+          reimbursables: reimbursables || [],
+          owner_charges: ownerCharges || [],
+          rendered_at: new Date().toISOString(),
+        },
+        status: 'draft',
+      })
+      .select()
+      .single();
+    if (docErr) throw docErr;
+
+    const { data: signed } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
+    res.json({ document: doc, signed_url: signed && signed.signedUrl });
+  } catch (err) {
+    console.error('[billing] management-agreement generate failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };

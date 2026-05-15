@@ -29,7 +29,10 @@ module.exports = async (req, res) => {
     chunks = data || [];
   }
 
-  const context = chunks.map(row => `[From: ${row.metadata?.filename}]\n${row.content}`).join('\n\n---\n\n');
+  const context = chunks.map(row => {
+    const ocrTag = row.metadata?.ocr ? " — OCR'd scan, may have minor errors" : '';
+    return `[From: ${row.metadata?.filename}${ocrTag}]\n${row.content}`;
+  }).join('\n\n---\n\n');
 
   const response = await anthropic.messages.create({
     model: 'claude-sonnet-4-6',

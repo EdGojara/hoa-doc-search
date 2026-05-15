@@ -832,9 +832,11 @@ router.get('/asked-coverage', async (req, res) => {
 //   done                  true when offset+limit >= queue_total
 // ----------------------------------------------------------------------------
 
-// 60-second hard ceiling per doc — if pdf-parse hangs on a malformed PDF or an
-// OpenAI call hangs on a slow upstream, we abort this doc and keep moving.
-async function _indexWithTimeout(supabase, openai, doc, timeoutMs = 60000) {
+// 180-second hard ceiling per doc. Was 60s; bumped to accommodate the OCR
+// fallback path for scanned PDFs (multi-page splits + concurrent Claude
+// vision calls can take 60-120s on older 50+ page bylaws/CC&Rs). Text-only
+// PDFs still finish well under the old 60s budget.
+async function _indexWithTimeout(supabase, openai, doc, timeoutMs = 180000) {
   let timer;
   const timeout = new Promise((_, reject) => {
     timer = setTimeout(() => reject(new Error(`timeout_after_${Math.round(timeoutMs/1000)}s`)), timeoutMs);

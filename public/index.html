@@ -1159,7 +1159,7 @@
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
         <div>
           <div class="section-label">Annual meeting date</div>
-          <input type="date" id="nomMeetingDate" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+          <input type="date" id="nomMeetingDate" onchange="nomSuggestSlug(); nomRenderTimeline();" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
         </div>
         <div>
           <div class="section-label">Meeting time (optional)</div>
@@ -1189,6 +1189,36 @@
         </label>
       </div>
 
+      <!-- Floor-nominations notice: drives whether the letter discloses
+           that nominations from the floor are/aren't accepted at the meeting.
+           Default OFF — the box must be checked deliberately so we don't
+           accidentally print boilerplate for a community whose governing
+           docs we haven't reviewed yet. Per-governing-docs answer goes in
+           the radio; free-form note is for boards who elected to deviate
+           (the note becomes the paper trail). -->
+      <div style="margin-top:12px; padding:10px 14px; background:#fff; border:1px solid #d0d7de; border-radius:8px;">
+        <div style="font-size:12.5px; font-weight:700; color:#1E2761; margin-bottom:6px;">⚖️ Floor-nominations notice</div>
+        <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
+          <input type="checkbox" id="nomIncludeFloorNotice" onchange="nomToggleFloorNotice()">
+          <span>Include floor-nominations notice in the letter <span style="color:#94A3B8;">— leave unchecked if you haven't reviewed this community's dedicatory instruments yet</span></span>
+        </label>
+        <div id="nomFloorNoticeBody" style="display:none; margin-top:10px; padding-left:24px;">
+          <div style="font-size:11.5px; color:#475569; margin-bottom:4px;">Per the community's governing documents, nominations from the floor are:</div>
+          <div style="display:flex; gap:14px; margin-bottom:8px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+              <input type="radio" name="nomFloorPolicy" id="nomFloorPolicyNotAllowed" value="not_allowed" checked>
+              <span><strong>Not allowed</strong></span>
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+              <input type="radio" name="nomFloorPolicy" id="nomFloorPolicyAllowed" value="allowed">
+              <span><strong>Allowed</strong></span>
+            </label>
+          </div>
+          <div style="font-size:11.5px; color:#475569; margin-bottom:4px;">Custom wording <span style="color:#94A3B8;">(optional — overrides the canned notice; use this to document a board's acknowledged decision to deviate from governing documents)</span></div>
+          <textarea id="nomFloorNote" rows="2" placeholder="Example: The Board, at its 2026-04-12 meeting, acknowledged that Section 5.2 of the Bylaws prohibits floor nominations and elected to permit them for this cycle only." style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:12.5px;"></textarea>
+        </div>
+      </div>
+
       <!-- Annual meeting timeline — computed from the meeting date.
            Texas Property Code §209.0056 requires notice 10-60 days before
            the meeting. Bedrock's operational target: notice mailed 17 days
@@ -1206,14 +1236,22 @@
         </div>
       </div>
 
-      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
+      <div style="display:grid; grid-template-columns: 1.4fr 0.9fr 0.7fr 0.7fr; gap:10px; margin-top:10px;">
         <div>
-          <div class="section-label">Nominations close <span style="color:#94A3B8; font-weight:400;">(deadline on the letter — leave blank to auto-set T−24)</span></div>
+          <div class="section-label">Nominations close <span style="color:#94A3B8; font-weight:400;">(leave blank to auto-set T−24)</span></div>
           <input type="date" id="nomCloseAt" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+        <div>
+          <div class="section-label">Close time <span style="color:#94A3B8; font-weight:400;">(so no midnight drop-offs)</span></div>
+          <input type="text" id="nomCloseTime" value="5:00 PM" placeholder="5:00 PM" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
         </div>
         <div>
           <div class="section-label">Seats open</div>
           <input type="number" id="nomSeatsOpen" value="1" min="1" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        </div>
+        <div>
+          <div class="section-label">Term (yrs) <span style="color:#94A3B8; font-weight:400;">(usu. 3)</span></div>
+          <input type="number" id="nomTermYears" value="3" min="1" max="10" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
         </div>
       </div>
       <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Letter is dated the day you generate it — that's the "nominations open" date. Public form auto-opens then and closes on the date above.</div>
@@ -1235,7 +1273,7 @@
         <details style="margin-top:4px;">
           <summary style="font-size:11px; color:#475569; cursor:pointer;">👁️ Standard wording (used when blank)</summary>
           <div style="font-size:12px; color:#475569; padding:6px 10px; margin-top:4px; background:#f8fafc; border-left:2px solid #CADCFC; font-style:italic; line-height:1.4;">
-            "Any homeowner in good standing is eligible to serve."
+            "Any homeowner is welcome to run for the Board or nominate a candidate — your community's governing documents set the specific eligibility rules, and we'll confirm them before the ballot is finalized."
           </div>
         </details>
       </div>
@@ -1246,7 +1284,7 @@
         <details style="margin-top:4px;">
           <summary style="font-size:11px; color:#475569; cursor:pointer;">👁️ Standard wording (used when blank)</summary>
           <div style="font-size:12px; color:#475569; padding:6px 10px; margin-top:4px; background:#f8fafc; border-left:2px solid #CADCFC; font-style:italic; line-height:1.4;">
-            "Board members serve volunteer terms (typically two years), attend roughly six meetings a year, approve the annual budget, oversee the management agent, and represent the interests of all homeowners. No accounting background is required — Bedrock handles the books and brings the analysis. What matters most is fairness, follow-through, and a willingness to read before each meeting."
+            "Board members serve a three-year term. The role is volunteer. The board approves the annual budget, oversees the management agent, and represents the homeowners. Meeting cadence varies by community — some boards meet monthly, some quarterly, some only as needed. If you would like to serve, please submit your nomination."
           </div>
         </details>
         <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Appears as an italicized sidebar in the letter.</div>
@@ -1278,6 +1316,19 @@
         </ul>
       </details>
 
+      <!-- Electronic voting toggle — captured here on the cycle but NOT
+           displayed on the Call for Nominations letter. It drives the
+           voting-methods section of the separate Annual Meeting Notice
+           document later in the cycle. -->
+      <div style="margin-top:12px; padding:10px 14px; background:#fff; border:1px solid #d0d7de; border-radius:8px;">
+        <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
+          <input type="checkbox" id="nomElectronicVoting">
+          <span><strong>📱 This community will offer electronic voting</strong> for the upcoming election
+            <span style="color:#94A3B8; font-weight:400;">— captured here for planning; appears later on the Annual Meeting Notice / Ballot, not on this Call for Nominations letter.</span>
+          </span>
+        </label>
+      </div>
+
       <div style="margin-top:10px;">
         <div class="section-label">Reference: prior year letter (optional)</div>
         <input type="file" id="nomReferenceLetter" accept=".pdf" style="font-size:12px;">
@@ -1286,13 +1337,14 @@
 
       <div style="margin-top:10px;">
         <div class="section-label">Public form slug (optional)</div>
-        <input type="text" id="nomPublicSlug" placeholder="Leave blank to use community slug" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
-        <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Homeowners will submit at <code id="nomSlugPreview">/nominate/&lt;slug&gt;</code></div>
+        <input type="text" id="nomPublicSlug" placeholder="Leave blank to auto-fill (e.g., wve-2026)" oninput="nomUpdateSlugPreview()" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Homeowners will submit at <code id="nomSlugPreview">app.bedrocktxai.com/nominate/&lt;slug&gt;</code> &mdash; works on any device, can be hyperlinked from email.</div>
       </div>
 
       <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
         <button class="action-btn" id="nomCreateBtn" onclick="nomCreateCycle()">💾 Save cycle</button>
-        <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF</button>
+        <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF <span style="font-weight:400; color:#94A3B8; font-size:11px;">(includes tear-off form)</span></button>
+        <button class="secondary-btn" id="nomPaperFormBtn" onclick="nomGeneratePaperForm()" disabled style="opacity:0.5;">📝 Paper form only</button>
         <button class="secondary-btn" id="nomSaveDraftBtn" onclick="nomSaveDraft()">📝 Save as draft</button>
         <span id="nomDraftStatus" style="font-size:12px; color:#6B7280; flex-basis:100%; margin-top:4px;"></span>
       </div>
@@ -1315,13 +1367,145 @@
           <div style="font-size:12px; color:#6B7280;" id="nomPanelMeta"></div>
         </div>
         <div id="nomPublicLinkBox" style="font-size:12px; color:#475569; margin-bottom:10px;"></div>
+
+        <!-- Prior cycles for this community — surfaces the reference letters
+             from previous years so staff can see what voice/format/term/
+             expectations language was used last time before they write
+             anything new. Each row links to the stored reference PDF when
+             one was uploaded with that cycle. -->
+        <div id="nomPriorCyclesBox" style="display:none; margin-bottom:12px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+          <div style="font-size:12px; font-weight:700; color:#1E2761; margin-bottom:6px;">📚 Prior cycles for this community <span style="font-weight:400; color:#94A3B8;">(for reference — letterhead, voice, term length, prior winners)</span></div>
+          <div id="nomPriorCyclesList" style="font-size:12px;"></div>
+        </div>
+
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div style="font-size:12.5px; font-weight:700; color:#1E2761;">Nominations received</div>
+          <button class="secondary-btn" onclick="nomOpenManualEntry()" style="font-size:11.5px; padding:5px 10px;">+ Add a nomination received outside the form</button>
+        </div>
+
         <div id="nomList" style="font-size:13px; color:#6B7280;">No nominations submitted yet.</div>
+      </div>
+
+      <!-- Manual-entry modal — for nominations that arrived by mail / email /
+           drop-off / phone / in-person. Captures the same fields as the
+           public form plus a channel + received date + intake notes so the
+           audit trail shows how every nomination came in. -->
+      <div id="nomManualEntryBackdrop" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9000; align-items:flex-start; justify-content:center; padding:40px 12px; overflow-y:auto;">
+        <div style="background:#fff; width:100%; max-width:640px; border-radius:12px; padding:20px 22px; box-shadow:0 20px 60px rgba(0,0,0,0.25);">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <h3 style="margin:0; color:#1E2761; font-size:16px;">Add nomination received outside the form</h3>
+            <button onclick="nomCloseManualEntry()" style="background:transparent; border:0; font-size:20px; color:#94A3B8; cursor:pointer;">×</button>
+          </div>
+          <p style="font-size:12px; color:#6B7280; margin:0 0 14px;">For nominations that came in by mail, email, drop-off, phone, or in-person. Captures the same data as the public form plus a channel and received date so we have a full audit trail.</p>
+
+          <!-- OCR pre-fill — staff drops a scan of the paper form here,
+               hits Extract, and the fields below auto-populate. Saves the
+               transcription work for paper submissions. -->
+          <div style="margin-bottom:14px; padding:10px 12px; background:#f0f9ff; border:1px solid #c7d2fe; border-radius:8px;">
+            <div style="font-size:12.5px; font-weight:700; color:#1E2761; margin-bottom:6px;">🔍 Have a scan of the paper form? Auto-fill it.</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="file" id="meExtractFile" accept=".pdf,image/*" style="font-size:12px; flex:1; min-width:200px;">
+              <button type="button" class="action-btn" onclick="nomExtractFromScan()" style="font-size:12px; padding:6px 12px;">Extract &amp; pre-fill</button>
+            </div>
+            <div id="meExtractStatus" style="font-size:11.5px; color:#475569; margin-top:6px;"></div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+            <div>
+              <div class="section-label">Submission channel <span style="color:#dc2626;">*</span></div>
+              <select id="meChannel" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                <option value="email">Email</option>
+                <option value="mail">Mail (USPS)</option>
+                <option value="drop_off">Drop-off</option>
+                <option value="in_person">In person</option>
+                <option value="phone">Phone</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <div class="section-label">Date received <span style="color:#dc2626;">*</span></div>
+              <input type="date" id="meReceivedAt" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:6px;">
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+              <input type="checkbox" id="meSelfNom" checked onchange="nomToggleMeSelfNom()"> Self-nomination
+            </label>
+            <label style="display:flex; align-items:center; gap:6px; font-size:13px; cursor:pointer;">
+              <input type="checkbox" id="meIncumbent"> Mark as incumbent
+            </label>
+          </div>
+
+          <div class="section-label" style="margin-top:10px;">Nominee — full name <span style="color:#dc2626;">*</span></div>
+          <input type="text" id="meNomineeName" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          <div class="section-label" style="margin-top:8px;">Nominee — home address <span style="color:#dc2626;">*</span></div>
+          <input type="text" id="meNomineeAddress" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+            <div>
+              <div class="section-label">Nominee email</div>
+              <input type="email" id="meNomineeEmail" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+            <div>
+              <div class="section-label">Nominee phone</div>
+              <input type="tel" id="meNomineePhone" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:8px;">
+            <div>
+              <div class="section-label">Years in community</div>
+              <input type="text" id="meYearsInCommunity" placeholder="e.g., 10 years or 2014" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+            <div>
+              <div class="section-label">Signed as (name on the form)</div>
+              <input type="text" id="meSignatureName" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+
+          <div class="section-label" style="margin-top:8px;">Bio statement</div>
+          <textarea id="meBio" rows="4" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></textarea>
+
+          <div id="meNominatorWrap" style="display:none; margin-top:10px; padding:10px 12px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0;">
+            <div style="font-size:12.5px; font-weight:700; color:#1E2761; margin-bottom:6px;">Submitter contact <span style="font-weight:400; color:#94A3B8;">(the person who submitted this nomination)</span></div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <div class="section-label">Name</div>
+                <input type="text" id="meNominatorName" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+              <div>
+                <div class="section-label">Email</div>
+                <input type="email" id="meNominatorEmail" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+              <div>
+                <div class="section-label">Phone</div>
+                <input type="tel" id="meNominatorPhone" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+              <div>
+                <div class="section-label">Address</div>
+                <input type="text" id="meNominatorAddress" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+            </div>
+          </div>
+
+          <div class="section-label" style="margin-top:10px;">Intake notes <span style="color:#94A3B8; font-weight:400;">(optional — context for the audit trail)</span></div>
+          <textarea id="meIntakeNotes" rows="2" placeholder='e.g., "Received hand-written form at the gate on Tuesday; transcribed by EG."' style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12.5px;"></textarea>
+
+          <div class="section-label" style="margin-top:8px;">Entered by (staff name)</div>
+          <input type="text" id="meCreatedByStaff" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+
+          <div id="meStatus" style="margin-top:10px; font-size:12.5px;"></div>
+
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:14px;">
+            <button class="secondary-btn" onclick="nomCloseManualEntry()" style="font-size:13px; padding:7px 14px;">Cancel</button>
+            <button class="action-btn" onclick="nomSaveManualEntry()" style="font-size:13px; padding:7px 14px;">💾 Save nomination</button>
+          </div>
+        </div>
       </div>
 
       <div data-drafts-panel="nominations_cycle" style="margin-top:14px; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <h3 style="margin:0; font-size:14px; color:#1E2761;">🗂️ Saved cycle drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
-          <button class="secondary-btn" onclick="Drafts.refreshPanel('nominations_cycle')" style="font-size:11px; padding:4px 8px;">Refresh</button>
+          <h3 style="margin:0; font-size:14px; color:#1E2761;">🗂️ Saved cycle drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress — click <strong>📂 Open</strong> on any row to load it into the form)</span></h3>
+          <button class="secondary-btn" onclick="Drafts.refreshPanel('nominations_cycle')" style="font-size:11px; padding:4px 8px;" title="Re-query the list of drafts">↻ Refresh list</button>
         </div>
         <div data-drafts-list="nominations_cycle" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
       </div>
@@ -1431,6 +1615,56 @@
     </p>
   </div>
 
+  <!-- Bedrock-wide contract defaults: the standard rate sheet + legal body
+       template every new community contract inherits. Edits here do NOT
+       retroactively rewrite executed agreements. -->
+  <details class="panel" id="billing-defaults-panel" style="margin-bottom:16px;">
+    <summary style="cursor:pointer; font-weight:600; font-size:14px; list-style:none; padding:4px 0;">
+      ⚙️ Contract Defaults <span style="color:#888; font-weight:400; font-size:12px;">(Bedrock standard rate sheet + legal body — applied when a new community contract is created)</span>
+    </summary>
+    <div style="padding-top:12px;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:12px;">
+        <div>
+          <div class="section-label">Default per-lot monthly fee</div>
+          <input type="number" id="defPerLotFee" min="0" step="0.01" placeholder="e.g. 3.50" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+        </div>
+        <div>
+          <div class="section-label">Default term (months)</div>
+          <input type="number" id="defTermMonths" min="1" step="1" placeholder="12" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+        </div>
+      </div>
+      <div class="section-label">Contract body (legal boilerplate)</div>
+      <p style="font-size:11.5px; color:#666; margin:0 0 6px 0;">
+        Paste the management-agreement text here once. Use merge tokens for the variable bits:
+        <code>{{community_legal_entity}}</code>, <code>{{community_address}}</code>,
+        <code>{{effective_date}}</code>, <code>{{term_summary}}</code>,
+        <code>{{monthly_fee}}</code>, <code>{{annual_fee}}</code>,
+        <code>{{bedrock_legal_name}}</code>, <code>{{bedrock_address}}</code>.
+        Insert <code>{{rate_sheet}}</code> and <code>{{signature_block}}</code> where you want them — if omitted, both auto-append at the end.
+      </p>
+      <textarea id="defBodyTemplate" rows="10" placeholder="THIS MANAGEMENT AGREEMENT is entered into as of {{effective_date}} between {{community_legal_entity}} (the &quot;Association&quot;) and {{bedrock_legal_name}} (&quot;Bedrock&quot;) for a term of {{term_summary}}..." style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:8px; font-family:Consolas, monospace; font-size:12px; line-height:1.5;"></textarea>
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px; margin-top:12px;">
+        <div>
+          <div class="section-label">Default fixed items (JSON)</div>
+          <textarea id="defFixedItems" rows="6" placeholder='[{"description":"Website hosting","monthly_amount":150}]' style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px; font-family:Consolas, monospace; font-size:11px;"></textarea>
+        </div>
+        <div>
+          <div class="section-label">Default reimbursables (JSON)</div>
+          <textarea id="defReimbursables" rows="6" placeholder='[{"category":"postage","description":"Postage","billing_method":"per_unit","unit_price":0.78}]' style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px; font-family:Consolas, monospace; font-size:11px;"></textarea>
+        </div>
+        <div>
+          <div class="section-label">Default owner charges (JSON)</div>
+          <textarea id="defOwnerCharges" rows="6" placeholder='[{"category":"resale_certificate","description":"Resale certificate","fee_amount":275}]' style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px; font-family:Consolas, monospace; font-size:11px;"></textarea>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:12px;">
+        <button class="action-btn" onclick="defLoad()" style="font-size:12px; padding:6px 12px;">↻ Reload</button>
+        <button class="action-btn" onclick="defSave()" style="font-size:12px; padding:6px 12px;">💾 Save defaults</button>
+        <div id="defStatus" style="font-size:12px; color:#475569;"></div>
+      </div>
+    </div>
+  </details>
+
   <!-- Communities list view -->
   <div id="billing-communities-view">
     <div id="billing-communities-loading" style="padding:20px; text-align:center; color:#888;">
@@ -1484,6 +1718,45 @@
     <div class="panel" id="billing-active-contract-panel" style="margin-bottom:16px;">
       <h4 style="margin-top:0;">📜 Active Contract</h4>
       <div id="billing-contract-summary" style="font-size:14px;"></div>
+    </div>
+
+    <!-- Management-agreement pricing + generation. Per-lot math is internal
+         only — the agreement prints only the final monthly fee. -->
+    <div class="panel" id="billing-mgmt-agreement-panel" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center;">
+        <h4 style="margin:0;">📃 Management Agreement</h4>
+        <button class="action-btn" id="mgmtAgreementGenerateBtn" onclick="mgmtAgreementGenerate()" style="font-size:12px; padding:6px 12px;">📄 Generate Agreement PDF</button>
+      </div>
+      <p style="font-size:12px; color:#666; margin:8px 0 12px 0;">
+        Per-lot math is internal — only the resulting monthly fee prints on the agreement. Boilerplate legal text + rate sheet defaults live in <strong>Contract Defaults</strong> at the top of this tab.
+      </p>
+      <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px; margin-bottom:10px;">
+        <div>
+          <div class="section-label">Number of lots <span style="color:#94A3B8; font-weight:400;">(internal)</span></div>
+          <input type="number" id="mgmtLotCount" min="0" step="1" placeholder="e.g. 100" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;" oninput="mgmtRecalcFee()">
+        </div>
+        <div>
+          <div class="section-label">Per-lot monthly fee <span style="color:#94A3B8; font-weight:400;">(internal)</span></div>
+          <input type="number" id="mgmtPerLotFee" min="0" step="0.01" placeholder="e.g. 3.50" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;" oninput="mgmtRecalcFee()">
+        </div>
+        <div>
+          <div class="section-label">Flat override <span style="color:#94A3B8; font-weight:400;">(optional)</span></div>
+          <input type="number" id="mgmtFeeOverride" min="0" step="0.01" placeholder="leave blank for math" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;" oninput="mgmtRecalcFee()">
+        </div>
+        <div>
+          <div class="section-label">Term (months)</div>
+          <input type="number" id="mgmtTermMonths" min="1" step="1" placeholder="12" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+        </div>
+      </div>
+      <div style="display:flex; gap:14px; align-items:center; padding:10px 12px; background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px;">
+        <div style="font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.5px; font-weight:700;">Customer-facing monthly fee:</div>
+        <div id="mgmtMonthlyFeeDisplay" style="font-size:18px; font-weight:700; color:#1E2761;">—</div>
+        <div style="margin-left:auto;">
+          <button class="secondary-btn" onclick="mgmtSavePricing()" style="font-size:12px; padding:6px 12px;">💾 Save pricing</button>
+        </div>
+      </div>
+      <div id="mgmtAgreementStatus" style="font-size:13px; margin-top:10px;"></div>
+      <div id="mgmtAgreementRecent" style="font-size:12px; color:#475569; margin-top:8px;"></div>
     </div>
 
     <div class="panel" id="billing-community-inputs-panel" style="margin-bottom:16px; display:none;">
@@ -1636,41 +1909,67 @@
   // Global fetch retry-wrapper — absorbs Render cold-starts.
   // ----------------------------------------------------------------
   // Render's free/starter plan sleeps after 15 min idle. First request
-  // back takes 30-60s, during which the browser fetch() times out and
-  // throws "Failed to fetch". We catch that, wait, retry up to 2 more
-  // times with backoff. Most users never see the wake-up.
+  // back can take 30-60s. We catch the "Failed to fetch" network error,
+  // wait, retry up to 3 more times with exponential backoff. Total
+  // patience: ~51s — enough to cover a typical Render cold wake-up.
+  //
+  // While retrying, a small toast appears in the bottom-right so the user
+  // sees "server waking up" instead of nothing for up to a minute. The
+  // toast goes away the moment a request succeeds.
   // ============================================================
   (function () {
     if (window.__fetchWrapped) return;
     window.__fetchWrapped = true;
     const origFetch = window.fetch.bind(window);
+
+    function showWakingToast() {
+      if (document.getElementById('__wakingToast')) return;
+      const t = document.createElement('div');
+      t.id = '__wakingToast';
+      t.style.cssText = 'position:fixed; right:14px; bottom:14px; z-index:99999; background:#1E2761; color:#fff; padding:10px 14px; border-radius:8px; font-size:12.5px; box-shadow:0 6px 24px rgba(15,23,42,0.35); font-family:Inter, system-ui, sans-serif;';
+      t.innerHTML = '⏳ Server waking up — this can take up to a minute on first request after a quiet period.';
+      document.body && document.body.appendChild(t);
+    }
+    function hideWakingToast() {
+      const t = document.getElementById('__wakingToast');
+      if (t) t.remove();
+    }
+
     window.fetch = async function (input, init) {
       const url = typeof input === 'string' ? input : (input?.url || '');
       // Only retry our own API calls — don't mess with third-party URLs
-      const isOurApi = url.startsWith('/api/') || url.startsWith('/ask-ed');
-      const maxAttempts = isOurApi ? 3 : 1;
+      const isOurApi = url.startsWith('/api/') || url.startsWith('/ask-ed') || url.startsWith('/ask');
+      const maxAttempts = isOurApi ? 4 : 1;
       let lastErr = null;
       for (let i = 0; i < maxAttempts; i++) {
         try {
-          return await origFetch(input, init);
+          const resp = await origFetch(input, init);
+          if (i > 0) hideWakingToast();
+          return resp;
         } catch (err) {
           lastErr = err;
           // Only retry true network errors (TypeError "Failed to fetch"),
           // not real HTTP errors (those don't throw)
-          if (!/Failed to fetch|NetworkError|fetch failed/i.test(err.message || '')) throw err;
+          if (!/Failed to fetch|NetworkError|fetch failed/i.test(err.message || '')) {
+            hideWakingToast();
+            throw err;
+          }
           if (i < maxAttempts - 1) {
-            // 4s on first retry, 10s on second — covers a typical Render cold start
-            const wait = i === 0 ? 4000 : 10000;
-            await new Promise(r => setTimeout(r, wait));
+            // 6s, 15s, 30s — covers Render's typical 30-60s cold wake-up
+            const waits = [6000, 15000, 30000];
+            showWakingToast();
+            await new Promise(r => setTimeout(r, waits[i] || 30000));
           }
         }
       }
+      hideWakingToast();
       throw lastErr;
     };
   })();
 
   let billingCurrentCommunityId = null;
   let billingCommunitiesCache = [];
+  let mgmtActiveContractId = null;
 
   function billingMoney(n) {
     if (n === null || n === undefined || n === '') return '—';
@@ -1771,6 +2070,15 @@
         <div><b>Payment terms:</b> ${c.payment_terms || '—'}</div>
         ${c.notes ? `<div style="margin-top:8px; padding:8px; background:#fffbe6; border-left:3px solid #fc0; font-size:12px;">📝 ${c.notes}</div>` : ''}
       `;
+
+      // Management-agreement pricing inputs
+      mgmtActiveContractId = c.id;
+      document.getElementById('mgmtLotCount').value     = c.lot_count            != null ? c.lot_count            : '';
+      document.getElementById('mgmtPerLotFee').value    = c.per_lot_monthly_fee  != null ? c.per_lot_monthly_fee  : '';
+      document.getElementById('mgmtFeeOverride').value  = c.monthly_fee_override != null ? c.monthly_fee_override : '';
+      document.getElementById('mgmtTermMonths').value   = c.term_months          != null ? c.term_months          : '';
+      mgmtRecalcFee();
+      mgmtLoadRecent(c.id);
 
       document.getElementById('billing-fee-fixed').innerHTML = billingTable(data.fee_schedule.fixed, [
         { label: 'Item', render: r => r.description },
@@ -2925,11 +3233,155 @@
           if (!billingHasLoaded) {
             billingHasLoaded = true;
             billingLoadCommunities();
+            defLoad();
           }
         });
       }
     });
   });
+
+  // ===== Management-agreement handlers ======================================
+
+  function mgmtRecalcFee() {
+    const lots     = parseFloat(document.getElementById('mgmtLotCount').value)    || 0;
+    const perLot   = parseFloat(document.getElementById('mgmtPerLotFee').value)   || 0;
+    const override = parseFloat(document.getElementById('mgmtFeeOverride').value);
+    const display  = document.getElementById('mgmtMonthlyFeeDisplay');
+    let fee;
+    if (!isNaN(override) && override > 0) {
+      fee = override;
+    } else if (lots > 0 && perLot > 0) {
+      fee = lots * perLot;
+    } else {
+      display.textContent = '—';
+      return;
+    }
+    display.textContent = fee.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+  }
+
+  async function mgmtSavePricing() {
+    if (!mgmtActiveContractId) {
+      document.getElementById('mgmtAgreementStatus').innerHTML =
+        '<span style="color:#a00;">No active contract for this community yet — upload a contract first.</span>';
+      return;
+    }
+    const lotCount   = document.getElementById('mgmtLotCount').value;
+    const perLot     = document.getElementById('mgmtPerLotFee').value;
+    const override   = document.getElementById('mgmtFeeOverride').value;
+    const termMonths = document.getElementById('mgmtTermMonths').value;
+    const body = {
+      lot_count:            lotCount   === '' ? null : Number(lotCount),
+      per_lot_monthly_fee:  perLot     === '' ? null : Number(perLot),
+      monthly_fee_override: override   === '' ? null : Number(override),
+      term_months:          termMonths === '' ? null : Number(termMonths),
+    };
+    const status = document.getElementById('mgmtAgreementStatus');
+    status.innerHTML = '⏳ Saving pricing…';
+    try {
+      const r = await fetch(`/api/billing/contracts/${mgmtActiveContractId}/pricing`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = '<span style="color:#15803d;">✓ Pricing saved.</span>';
+    } catch (e) {
+      status.innerHTML = `<span style="color:#a00;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function mgmtAgreementGenerate() {
+    if (!mgmtActiveContractId) {
+      document.getElementById('mgmtAgreementStatus').innerHTML =
+        '<span style="color:#a00;">No active contract for this community yet — upload a contract first.</span>';
+      return;
+    }
+    const btn = document.getElementById('mgmtAgreementGenerateBtn');
+    const status = document.getElementById('mgmtAgreementStatus');
+    btn.disabled = true;
+    const originalLabel = btn.textContent;
+    btn.textContent = '⏳ Generating…';
+    status.innerHTML = '';
+    try {
+      // Save pricing first so the agreement reflects the current inputs.
+      await mgmtSavePricing();
+      const r = await fetch(`/api/billing/contracts/${mgmtActiveContractId}/management-agreement`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const url = j.signed_url || '';
+      status.innerHTML = url
+        ? `<span style="color:#15803d;">✓ Agreement generated.</span> <a href="${url}" target="_blank" rel="noopener">📄 Open PDF</a>`
+        : '<span style="color:#15803d;">✓ Agreement generated.</span>';
+      mgmtLoadRecent(mgmtActiveContractId);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#a00;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalLabel;
+    }
+  }
+
+  async function mgmtLoadRecent(contractId) {
+    const box = document.getElementById('mgmtAgreementRecent');
+    if (!contractId) { box.textContent = ''; return; }
+    // Lightweight: we don't have a list endpoint yet — leave a placeholder.
+    // Future: list management_agreement_documents for this contract.
+    box.textContent = '';
+  }
+
+  // ===== Bedrock-wide contract defaults =====================================
+
+  async function defLoad() {
+    const status = document.getElementById('defStatus');
+    status.textContent = 'Loading…';
+    try {
+      const r = await fetch('/api/billing/contract-defaults');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const d = j.defaults || {};
+      document.getElementById('defPerLotFee').value      = d.default_per_lot_monthly_fee != null ? d.default_per_lot_monthly_fee : '';
+      document.getElementById('defTermMonths').value     = d.default_term_months         != null ? d.default_term_months         : '';
+      document.getElementById('defBodyTemplate').value   = d.contract_body_template || '';
+      document.getElementById('defFixedItems').value     = JSON.stringify(d.default_fixed_items   || [], null, 2);
+      document.getElementById('defReimbursables').value  = JSON.stringify(d.default_reimbursables || [], null, 2);
+      document.getElementById('defOwnerCharges').value   = JSON.stringify(d.default_owner_charges || [], null, 2);
+      status.textContent = '';
+    } catch (e) {
+      status.innerHTML = `<span style="color:#a00;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function defSave() {
+    const status = document.getElementById('defStatus');
+    const parseJsonOrEmpty = (id) => {
+      const v = (document.getElementById(id).value || '').trim();
+      if (!v) return [];
+      try { return JSON.parse(v); }
+      catch (e) { throw new Error(`Invalid JSON in ${id}: ${e.message}`); }
+    };
+    try {
+      const body = {
+        default_per_lot_monthly_fee: parseFloat(document.getElementById('defPerLotFee').value)  || null,
+        default_term_months:         parseInt(document.getElementById('defTermMonths').value, 10) || null,
+        contract_body_template:      document.getElementById('defBodyTemplate').value || null,
+        default_fixed_items:         parseJsonOrEmpty('defFixedItems'),
+        default_reimbursables:       parseJsonOrEmpty('defReimbursables'),
+        default_owner_charges:       parseJsonOrEmpty('defOwnerCharges'),
+      };
+      status.textContent = '⏳ Saving…';
+      const r = await fetch('/api/billing/contract-defaults', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = '<span style="color:#15803d;">✓ Defaults saved.</span>';
+    } catch (e) {
+      status.innerHTML = `<span style="color:#a00;">${escapeHtml(e.message)}</span>`;
+    }
+  }
 </script>
 
 <!-- ===========================================================================
@@ -4276,7 +4728,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       inCurrentList = j.intakes || [];
       inRenderList();
     } catch (err) {
-      alert('Failed to load: ' + err.message);
+      // Inline error in the list area instead of an alert popup so a
+      // transient network blip on a background module doesn't interrupt
+      // whatever tab the user is actually working on.
+      console.warn('[email-intelligence] list load failed:', err);
+      const wrap = document.getElementById('in-list');
+      if (wrap) {
+        wrap.innerHTML = `<div style="padding:14px; color:#92400e; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:6px; font-size:13px;">Couldn't load the email-intake list right now (${inEsc(err.message)}). Try Refresh; if it keeps failing, the server may be waking up — give it 30 seconds.</div>`;
+      }
     }
   }
 
@@ -4358,7 +4817,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       if (j.error) throw new Error(j.error);
       inCurrent = j.intake;
       inRenderDetail();
-    } catch (err) { alert('Failed to load: ' + err.message); }
+    } catch (err) {
+      // Inline error in the detail container instead of an alert popup.
+      console.warn('[email-intelligence] detail load failed:', err);
+      const detail = document.getElementById('in-detail-view');
+      if (detail) {
+        detail.innerHTML = `<div style="padding:14px; color:#92400e; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:6px; font-size:13px;">Couldn't load that intake (${inEsc(err.message)}). Hit the back button and try again.</div>`;
+        detail.style.display = '';
+        document.getElementById('in-list-view').style.display = 'none';
+      }
+    }
   }
   function inBackToList() {
     document.getElementById('in-detail-view').style.display = 'none';
@@ -6321,7 +6789,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       evCurrentList = j.events || [];
       evRenderList();
     } catch (err) {
-      alert('Failed to load events: ' + err.message);
+      console.warn('[events] list load failed:', err);
+      const wrap = document.getElementById('ev-list');
+      if (wrap) wrap.innerHTML = `<div style="padding:14px; color:#92400e; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:6px; font-size:13px;">Couldn't load events right now (${evEsc(err.message)}). Hit Refresh; if it keeps failing, the server may be waking up.</div>`;
     }
   }
 
@@ -6918,7 +7388,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       profRenderFacts();
       profRenderComputed();
     } catch (err) {
-      alert('Failed to load profile: ' + err.message);
+      console.warn('[profile] load failed:', err);
+      const wrap = document.getElementById('profile-page') || document.body;
+      const banner = document.createElement('div');
+      banner.style.cssText = 'padding:14px; color:#92400e; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:6px; font-size:13px; margin:10px 0;';
+      banner.textContent = `Couldn't load profile right now (${err.message}). Reload the tab; if it keeps failing, the server may be waking up.`;
+      if (wrap.firstChild) wrap.insertBefore(banner, wrap.firstChild);
+      else wrap.appendChild(banner);
     }
   }
 
@@ -14742,6 +15218,51 @@ ${questionsPage}
     document.getElementById('nomOnsiteFields').style.display = on ? 'block' : 'none';
   }
 
+  // Slug helpers — auto-suggest a clean slug like "wve-2026" so the public
+  // URL reads naturally in emails (app.bedrocktxai.com/nominate/wve-2026)
+  // and works on any device, not just from a QR scan.
+  function nomSlugifyName(name) {
+    if (!name) return '';
+    // Use known abbreviations for our communities; fall back to slugifying.
+    const known = {
+      'Lakes of Pine Forest':        'lpf',
+      'Canyon Gate at Cinco Ranch':  'canyon-gate',
+      'Canyon Gate':                 'canyon-gate',
+      'Waterview Estates':           'wve',
+      'Waterview':                   'wve',
+      'Eaglewood':                   'eaglewood',
+      'Quail Ridge':                 'quail-ridge',
+    };
+    if (known[name]) return known[name];
+    return String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+  function nomSuggestSlug() {
+    const slugInput = document.getElementById('nomPublicSlug');
+    if (!slugInput) return;
+    // Don't overwrite if the user already typed something.
+    if (slugInput.value && slugInput.value.trim()) { nomUpdateSlugPreview(); return; }
+    const meeting = document.getElementById('nomMeetingDate').value;
+    if (!meeting) return;
+    const year = String(meeting).slice(0, 4);
+    const communityName = (typeof nomSelectedCommunity === 'function') ? nomSelectedCommunity() : '';
+    const base = nomSlugifyName(communityName);
+    if (!base) return;
+    slugInput.value = `${base}-${year}`;
+    nomUpdateSlugPreview();
+  }
+  function nomUpdateSlugPreview() {
+    const preview = document.getElementById('nomSlugPreview');
+    if (!preview) return;
+    const raw = (document.getElementById('nomPublicSlug').value || '').trim();
+    const slug = raw || '<slug>';
+    preview.textContent = `app.bedrocktxai.com/nominate/${slug}`;
+  }
+
+  function nomToggleFloorNotice() {
+    const on = document.getElementById('nomIncludeFloorNotice').checked;
+    document.getElementById('nomFloorNoticeBody').style.display = on ? 'block' : 'none';
+  }
+
   async function nomCreateCycle() {
     const community = nomSelectedCommunity();
     if (!community) { alert('Pick a community first (top of page).'); return; }
@@ -14771,7 +15292,10 @@ ${questionsPage}
     fd.append('annual_meeting_time', document.getElementById('nomMeetingTime').value || '');
     fd.append('annual_meeting_location', location);
     fd.append('nominations_close_at', close);
+    fd.append('nominations_close_time', (document.getElementById('nomCloseTime').value || '').trim());
     fd.append('seats_open', String(Number(document.getElementById('nomSeatsOpen').value || 1)));
+    fd.append('term_years', String(Number(document.getElementById('nomTermYears').value || 3)));
+    fd.append('electronic_voting_offered', document.getElementById('nomElectronicVoting').checked ? '1' : '0');
     // current_board snapshot is pulled fresh from the Roster tab — single
     // source of truth. Snapshot is frozen on the cycle row at save time so
     // future roster changes don't rewrite historical letters.
@@ -14787,6 +15311,13 @@ ${questionsPage}
     fd.append('onsite_drop_off', JSON.stringify(onsite));
     fd.append('accept_electronic',    document.getElementById('nomAcceptElectronic').checked ? '1' : '0');
     fd.append('accept_physical_mail', document.getElementById('nomAcceptPhysicalMail').checked ? '1' : '0');
+    const includeFloor = document.getElementById('nomIncludeFloorNotice').checked;
+    fd.append('include_floor_nominations_notice', includeFloor ? '1' : '0');
+    if (includeFloor) {
+      const policyEl = document.querySelector('input[name="nomFloorPolicy"]:checked');
+      fd.append('floor_nominations_policy', (policyEl && policyEl.value) || 'not_allowed');
+      fd.append('floor_nominations_note', (document.getElementById('nomFloorNote').value || '').trim());
+    }
     fd.append('public_slug', (document.getElementById('nomPublicSlug').value || '').trim());
     const refFile = document.getElementById('nomReferenceLetter').files[0];
     if (refFile) fd.append('reference_letter', refFile);
@@ -14803,6 +15334,8 @@ ${questionsPage}
       nomActiveCycleId = j.cycle.id;
       document.getElementById('nomLetterBtn').disabled = false;
       document.getElementById('nomLetterBtn').style.opacity = '1';
+      const pfBtn = document.getElementById('nomPaperFormBtn');
+      if (pfBtn) { pfBtn.disabled = false; pfBtn.style.opacity = '1'; }
       await nomLoadCycles();
       await nomOpenCycle(j.cycle.id);
     } catch (e) {
@@ -14853,14 +15386,90 @@ ${questionsPage}
     if (cycle) {
       document.getElementById('nomPanelTitle').textContent = `${cycle.community_name} — ${cycle.annual_meeting_date}`;
       document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'}`;
+      // Hydrate the electronic-voting toggle from the saved cycle so the
+      // form reflects what's stored when staff reopens an existing cycle.
+      try {
+        const elt = document.getElementById('nomElectronicVoting');
+        if (elt) elt.checked = !!(cycle.voting_methods && cycle.voting_methods.online && cycle.voting_methods.online.enabled);
+      } catch (_) {}
+      // Prior cycles for this community — show every other cycle for the
+      // same community so staff can open last year's reference letter, see
+      // what voice/term/expectations language was used, and stay consistent
+      // across years without re-keying. Sorted newest first.
+      const priorBox  = document.getElementById('nomPriorCyclesBox');
+      const priorList = document.getElementById('nomPriorCyclesList');
+      const priors = (nomCycles || [])
+        .filter((c) => c.community_name === cycle.community_name && c.id !== cycle.id)
+        .sort((a, b) => (b.annual_meeting_date || '').localeCompare(a.annual_meeting_date || ''));
+      if (priors.length === 0) {
+        priorBox.style.display = 'none';
+      } else {
+        priorBox.style.display = 'block';
+        priorList.innerHTML = priors.map((c) => {
+          const refLink = c.reference_letter_path
+            ? `<a href="/api/nominations/cycles/${c.id}/reference" target="_blank" rel="noopener" style="color:#1E2761; font-weight:600; text-decoration:none;">📎 Reference letter</a>`
+            : `<span style="color:#94A3B8;">no reference letter on file</span>`;
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-top:1px solid #e2e8f0;">
+              <div>
+                <a href="#" onclick="event.preventDefault(); nomOpenCycle('${c.id}'); return false;" style="color:#1E2761; font-weight:600; text-decoration:none;">${escapeHtml(c.annual_meeting_date || '')}</a>
+                <span style="color:#94A3B8; margin-left:8px;">${escapeHtml(c.status)} · ${c.nominations_count || 0} nominations · ${c.seats_open} seat${c.seats_open === 1 ? '' : 's'}</span>
+              </div>
+              <div>${refLink}</div>
+            </div>`;
+        }).join('');
+
+        // Consistency check vs. most recent prior cycle. Flags fields that
+        // changed year-over-year so staff can confirm the change was
+        // intentional before mailing. seats_open is excluded — it routinely
+        // shifts based on which board terms are expiring that year.
+        const prev = priors[0];
+        const diffs = [];
+        const cmp = (label, a, b, hint) => {
+          const va = a == null ? '' : String(a);
+          const vb = b == null ? '' : String(b);
+          if (va.trim() !== vb.trim()) {
+            diffs.push({ label, prev: vb || '(empty)', curr: va || '(empty)', hint });
+          }
+        };
+        // Call-for-Nominations consistency check — only flag fields that
+        // actually affect THIS document. Voting methods, TX §209.00592, etc.
+        // belong to the separate Annual Meeting Notice phase and are
+        // compared on that cycle screen, not here.
+        cmp('Term (years)',                  cycle.term_years,                prev.term_years,                'Most communities = 3 years.');
+        cmp('Floor-noms policy',             cycle.floor_nominations_policy,  prev.floor_nominations_policy,  'Changing this requires a basis in the governing documents.');
+        cmp('Nominations close',             cycle.nominations_close_at,      prev.nominations_close_at,      'Should track the meeting date — Bedrock target is T−24.');
+        cmp('Close time',                    cycle.nominations_close_time,    prev.nominations_close_time,    null);
+        cmp('Online nomination submission',  cycle.accept_electronic,         prev.accept_electronic,         null);
+        cmp('Physical-mail nomination',      cycle.accept_physical_mail,      prev.accept_physical_mail,      null);
+        cmp('Eligibility description',       cycle.description,               prev.description,               null);
+        cmp('Expectations blurb',            cycle.expectations_blurb,        prev.expectations_blurb,        null);
+        const diffsHtml = diffs.length === 0
+          ? `<div style="font-size:11.5px; color:#15803d; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:6px;">✓ This cycle matches the prior cycle on every tracked field (seats open intentionally excluded — it shifts year-over-year).</div>`
+          : `<div style="padding:8px 10px; margin-top:8px; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:0 6px 6px 0;">
+              <div style="font-size:11.5px; font-weight:700; color:#92400e; margin-bottom:4px;">⚠ ${diffs.length} change${diffs.length === 1 ? '' : 's'} vs. ${escapeHtml(prev.annual_meeting_date || 'last cycle')} &mdash; please confirm each is intentional:</div>
+              <ul style="margin:0 0 0 18px; padding:0; font-size:11px; color:#78350f;">
+                ${diffs.map((d) => `<li><strong>${escapeHtml(d.label)}:</strong> was <code>${escapeHtml(d.prev)}</code>, now <code>${escapeHtml(d.curr)}</code>${d.hint ? ` &mdash; <em>${escapeHtml(d.hint)}</em>` : ''}</li>`).join('')}
+              </ul>
+            </div>`;
+        priorList.insertAdjacentHTML('beforeend', diffsHtml);
+      }
       const url = `${window.location.origin}/nominate/${cycle.public_slug || cycle.id}`;
       const refLink = cycle.reference_letter_path
         ? ` &nbsp;·&nbsp; <a href="/api/nominations/cycles/${cycle.id}/reference" target="_blank" rel="noopener">📎 Prior year letter</a>`
         : '';
+      const emailBody = `${cycle.community_name} — Call for Nominations\n\nThe Board is accepting nominations for the upcoming Annual Meeting. You can submit online (laptop, tablet, or phone all work) at:\n\n${url}\n\nDeadline: ${cycle.nominations_close_at || '(see attached letter)'}\n\nQuestions? Reply to this email or call (832) 588-2485.\n\n— Bedrock Association Management`;
+      const mailto = `mailto:?subject=${encodeURIComponent(`${cycle.community_name} — Submit your Board nomination online`)}&body=${encodeURIComponent(emailBody)}`;
       document.getElementById('nomPublicLinkBox').innerHTML = `
-        Public form: <a href="${url}" target="_blank" rel="noopener">${escapeHtml(url)}</a>
-        &nbsp;·&nbsp; <button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="navigator.clipboard.writeText('${url}'); this.textContent='✓ Copied';">📋 Copy link</button>
-        ${refLink}
+        <div style="padding:12px 14px; background:#1E2761; color:#fff; border-radius:8px; display:flex; align-items:center; flex-wrap:wrap; gap:10px;">
+          <div style="flex:1; min-width:240px;">
+            <div style="font-size:10pt; letter-spacing:0.5px; text-transform:uppercase; color:#CADCFC; font-weight:700;">Public form — works on any device</div>
+            <a href="${url}" target="_blank" rel="noopener" style="color:#fff; font-family:Consolas, monospace; font-size:13px; word-break:break-all;">${escapeHtml(url)}</a>
+          </div>
+          <button class="action-btn" style="background:#fff; color:#1E2761; border:0; font-weight:700; font-size:12px; padding:7px 14px; border-radius:6px; cursor:pointer;" onclick="navigator.clipboard.writeText('${url}'); this.textContent='✓ Copied';">📋 Copy link</button>
+          <a href="${mailto}" style="background:#fff; color:#1E2761; font-weight:700; font-size:12px; padding:7px 14px; border-radius:6px; text-decoration:none;">✉ Email this link</a>
+          ${refLink}
+        </div>
       `;
     }
     // refresh cycle list highlight
@@ -14870,28 +15479,96 @@ ${questionsPage}
       const j = await r.json();
       const noms = j.nominations || [];
       const list = document.getElementById('nomList');
+      // Resolve community name from the cached cycle for use in row labels.
+      const communityName = (cycle && cycle.community_name) || nomSelectedCommunity() || 'community';
       if (noms.length === 0) {
         list.textContent = 'No nominations submitted yet. Homeowners can submit at the public link above.';
         return;
       }
-      list.innerHTML = noms.map((n) => `
+      const CHANNEL_LABELS = {
+        online_form: { icon: '🌐', label: 'Online form' },
+        email:       { icon: '✉',  label: 'Email' },
+        mail:        { icon: '📮', label: 'Mail (USPS)' },
+        drop_off:    { icon: '📥', label: 'Drop-off' },
+        in_person:   { icon: '👤', label: 'In person' },
+        phone:       { icon: '☎',  label: 'Phone' },
+        other:       { icon: '•',  label: 'Other' },
+      };
+      list.innerHTML = noms.map((n) => {
+        // Submitter contact — surfaced as click-to-call / click-to-email so
+        // staff can confirm receipt in one tap. On self-noms, the submitter
+        // info equals the nominee info (mirrored at submit time).
+        const submitterEmail = n.nominator_email || n.nominee_email || '';
+        const submitterPhone = n.nominator_phone || n.nominee_phone || '';
+        const submitterName  = n.nominator_name  || (n.is_self_nomination ? n.nominee_name : 'unknown');
+        const receivedAt     = n.received_at || n.signed_at;
+        const receivedStr    = receivedAt ? new Date(receivedAt).toLocaleString() : '—';
+        const channel        = CHANNEL_LABELS[n.submission_channel || 'online_form'] || CHANNEL_LABELS.other;
+        const isOnSlate      = n.status === 'on_slate';
+        const hasPhoto       = !!n.photo_storage_path;
+
+        const confirmBits = [];
+        if (submitterEmail) confirmBits.push(`<a href="mailto:${escapeHtml(submitterEmail)}?subject=${encodeURIComponent('Bedrock — nomination received')}" style="color:#1E2761; text-decoration:none;">✉ ${escapeHtml(submitterEmail)}</a>`);
+        if (submitterPhone) confirmBits.push(`<a href="tel:${escapeHtml(submitterPhone.replace(/[^+0-9]/g,''))}" style="color:#1E2761; text-decoration:none;">☎ ${escapeHtml(submitterPhone)}</a>`);
+        const confirmLine = confirmBits.length
+          ? `<div style="font-size:11.5px; margin-top:4px;">Confirm with submitter: ${confirmBits.join(' &nbsp;·&nbsp; ')}</div>`
+          : '<div style="font-size:11.5px; color:#b91c1c; margin-top:4px;">⚠ No submitter contact captured — older submission, may need manual outreach.</div>';
+
+        // Slate badge — green when on the ballot, gray otherwise
+        const slateBadge = isOnSlate
+          ? `<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;">✓ On ballot</span>`
+          : `<span style="background:#f1f5f9; color:#64748b; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;">${escapeHtml(n.status)}</span>`;
+        const photoBadge = hasPhoto
+          ? `<span style="background:#dcfce7; color:#166534; padding:2px 7px; border-radius:11px; font-size:10pt; font-weight:600;">📷 Photo</span>`
+          : `<span style="background:#fef3c7; color:#92400e; padding:2px 7px; border-radius:11px; font-size:10pt; font-weight:600;">No photo</span>`;
+        const scannedBadge = n.scanned_form_signed_url
+          ? `<a href="${n.scanned_form_signed_url}" target="_blank" rel="noopener" style="background:#eef2ff; color:#1E2761; padding:2px 7px; border-radius:11px; font-size:10pt; font-weight:600; text-decoration:none;" title="Open scanned/uploaded form">📄 Scanned form</a>`
+          : '';
+        const photoThumb = n.photo_signed_url
+          ? `<img src="${n.photo_signed_url}" alt="${escapeHtml(n.nominee_name)}" style="width:54px; height:54px; object-fit:cover; border-radius:8px; border:1px solid #d0d7de; margin-right:10px; flex-shrink:0;">`
+          : '';
+
+        return `
         <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-            <div style="flex:1;">
-              <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+            <div style="display:flex; flex:1; align-items:flex-start;">
+              ${photoThumb}
+              <div style="flex:1;">
+              <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+                <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
+                ${n.is_incumbent ? '<span style="background:#eef2ff; color:#1E2761; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700;">INCUMBENT</span>' : ''}
+                ${slateBadge}
+                ${photoBadge}
+                ${scannedBadge}
+              </div>
               <div style="font-size:12px; color:#6B7280;">${escapeHtml(n.nominee_address)}${n.nominee_email ? ' · ' + escapeHtml(n.nominee_email) : ''}${n.nominee_phone ? ' · ' + escapeHtml(n.nominee_phone) : ''}</div>
               <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
-                ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(n.nominator_name || 'unknown')}
-                · submitted ${new Date(n.signed_at).toLocaleString()}
+                <span title="How this nomination arrived">${channel.icon} ${escapeHtml(channel.label)}</span>
+                · ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(submitterName)}
+                · received ${escapeHtml(receivedStr)}
+                · signed as <em>${escapeHtml(n.signature_name || '—')}</em>
+                ${n.created_by_staff ? '· entered by ' + escapeHtml(n.created_by_staff) : ''}
               </div>
-              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761;">${escapeHtml(n.nominee_bio)}</div>` : ''}
+              ${confirmLine}
+              ${n.years_in_community ? `<div style="font-size:11px; color:#475569; margin-top:2px;"><strong>In ${escapeHtml(communityName || 'community')} since:</strong> ${escapeHtml(n.years_in_community)}</div>` : ''}
+              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761; white-space:pre-line;">${escapeHtml(n.nominee_bio)}</div>` : '<div style="font-size:11.5px; color:#94A3B8; margin-top:6px; font-style:italic;">No bio yet — needed before this nomination can go on the ballot.</div>'}
+              ${n.intake_notes ? `<div style="font-size:11px; color:#94A3B8; margin-top:4px; font-style:italic;">Intake note: ${escapeHtml(n.intake_notes)}</div>` : ''}
+              ${!n.is_self_nomination && n.nominator_address ? `<div style="font-size:11px; color:#94A3B8; margin-top:4px;">Submitter address: ${escapeHtml(n.nominator_address)}</div>` : ''}
+              <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center;">
+                <input type="file" accept="image/*" id="nomPhotoInput_${n.id}" style="display:none;" onchange="nomUploadPhoto('${n.id}', this)">
+                <button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="document.getElementById('nomPhotoInput_${n.id}').click()">${hasPhoto ? '📷 Replace photo' : '📷 Add photo'}</button>
+                ${isOnSlate
+                  ? `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'verified')">↺ Remove from ballot</button>`
+                  : `<button class="action-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'on_slate')">✓ Put on ballot</button>`}
+              </div>
+              </div>
             </div>
-            <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px; margin-left:8px;">
+            <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px;">
               ${['submitted','verified','on_slate','withdrawn','rejected'].map(s => `<option value="${s}" ${s===n.status?'selected':''}>${s}</option>`).join('')}
             </select>
           </div>
-        </div>
-      `).join('');
+        </div>`;
+      }).join('');
     } catch (e) {
       document.getElementById('nomList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     }
@@ -14904,14 +15581,151 @@ ${questionsPage}
         body: JSON.stringify({ status }),
       });
       if (!r.ok) throw new Error('Update failed');
+      // Refresh the list so the slate badge + button update immediately.
+      if (nomActiveCycleId) nomOpenCycle(nomActiveCycleId);
     } catch (e) {
       alert(e.message);
+    }
+  }
+
+  // ===== Photo upload =======================================================
+  async function nomUploadPhoto(nominationId, input) {
+    if (!input.files || !input.files[0]) return;
+    const file = input.files[0];
+    const fd = new FormData();
+    fd.append('photo', file);
+    try {
+      const r = await fetch(`/api/nominations/${nominationId}/photo`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Refresh the list so the photo badge flips to green.
+      if (nomActiveCycleId) nomOpenCycle(nomActiveCycleId);
+    } catch (e) {
+      alert('Photo upload failed: ' + e.message);
+    } finally {
+      input.value = '';
+    }
+  }
+
+  // ===== Manual-entry modal =================================================
+  function nomOpenManualEntry() {
+    if (!nomActiveCycleId) { alert('Open a cycle first.'); return; }
+    // Reset all fields to defaults
+    document.getElementById('meChannel').value = 'email';
+    document.getElementById('meReceivedAt').value = new Date().toISOString().slice(0, 10);
+    document.getElementById('meSelfNom').checked = true;
+    document.getElementById('meIncumbent').checked = false;
+    ['meNomineeName','meNomineeAddress','meNomineeEmail','meNomineePhone','meYearsInCommunity','meSignatureName','meBio','meIntakeNotes','meCreatedByStaff','meNominatorName','meNominatorEmail','meNominatorPhone','meNominatorAddress']
+      .forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
+    document.getElementById('meStatus').textContent = '';
+    nomToggleMeSelfNom();
+    document.getElementById('nomManualEntryBackdrop').style.display = 'flex';
+  }
+  function nomCloseManualEntry() {
+    document.getElementById('nomManualEntryBackdrop').style.display = 'none';
+  }
+  function nomToggleMeSelfNom() {
+    const isSelf = document.getElementById('meSelfNom').checked;
+    document.getElementById('meNominatorWrap').style.display = isSelf ? 'none' : 'block';
+  }
+  async function nomExtractFromScan() {
+    const input = document.getElementById('meExtractFile');
+    const status = document.getElementById('meExtractStatus');
+    if (!input.files || !input.files[0]) {
+      status.innerHTML = '<span style="color:#b91c1c;">Pick a scan file first (PDF or image).</span>';
+      return;
+    }
+    const fd = new FormData();
+    fd.append('scan', input.files[0]);
+    status.innerHTML = '⏳ Reading the form (10–20 seconds)…';
+    try {
+      const r = await fetch('/api/nominations/extract-from-scan', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok || !j.fields) throw new Error(j.error || `HTTP ${r.status}`);
+      const f = j.fields;
+      // Helper: only set a field if OCR returned a non-null value, so we
+      // don't blow away anything the user has already typed.
+      const setIf = (id, val) => {
+        if (val == null || val === '') return;
+        const el = document.getElementById(id);
+        if (el) el.value = String(val);
+      };
+      setIf('meNomineeName',    f.nominee_name);
+      setIf('meNomineeAddress', f.nominee_address);
+      setIf('meNomineeEmail',   f.nominee_email);
+      setIf('meNomineePhone',   f.nominee_phone);
+      setIf('meYearsInCommunity', f.years_in_community);
+      setIf('meBio',            f.nominee_bio);
+      setIf('meSignatureName',  f.signature_name);
+      setIf('meNominatorName',    f.nominator_name);
+      setIf('meNominatorEmail',   f.nominator_email);
+      setIf('meNominatorPhone',   f.nominator_phone);
+      setIf('meNominatorAddress', f.nominator_address);
+      // Self vs. other toggle — only flip if OCR was confident.
+      if (typeof f.is_self_nomination === 'boolean') {
+        document.getElementById('meSelfNom').checked = f.is_self_nomination;
+        nomToggleMeSelfNom();
+      }
+      const confidence = f.confidence || 'unknown';
+      const confColor = confidence === 'high' ? '#15803d' : confidence === 'medium' ? '#92400e' : '#b91c1c';
+      status.innerHTML = `<span style="color:${confColor};">✓ Extracted (confidence: ${escapeHtml(confidence)}).</span>${f.notes ? ` <em>${escapeHtml(f.notes)}</em>` : ''} <span style="color:#475569;">Please verify the fields below before saving.</span>`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function nomSaveManualEntry() {
+    const status = document.getElementById('meStatus');
+    status.innerHTML = '';
+    const isSelf = document.getElementById('meSelfNom').checked;
+    const nomineeName = document.getElementById('meNomineeName').value.trim();
+    const nomineeAddress = document.getElementById('meNomineeAddress').value.trim();
+    if (!nomineeName || !nomineeAddress) {
+      status.innerHTML = '<span style="color:#b91c1c;">Nominee name and address are required.</span>';
+      return;
+    }
+    const payload = {
+      submission_channel: document.getElementById('meChannel').value,
+      received_at: (document.getElementById('meReceivedAt').value || new Date().toISOString().slice(0, 10)) + 'T12:00:00',
+      is_self_nomination: isSelf,
+      is_incumbent: document.getElementById('meIncumbent').checked,
+      nominee_name: nomineeName,
+      nominee_address: nomineeAddress,
+      nominee_email: document.getElementById('meNomineeEmail').value.trim() || null,
+      nominee_phone: document.getElementById('meNomineePhone').value.trim() || null,
+      nominee_bio:   document.getElementById('meBio').value.trim() || null,
+      years_in_community: document.getElementById('meYearsInCommunity').value.trim() || null,
+      signature_name: document.getElementById('meSignatureName').value.trim() || (isSelf ? nomineeName : ''),
+      nominator_name:    isSelf ? null : (document.getElementById('meNominatorName').value.trim() || null),
+      nominator_email:   isSelf ? null : (document.getElementById('meNominatorEmail').value.trim() || null),
+      nominator_phone:   isSelf ? null : (document.getElementById('meNominatorPhone').value.trim() || null),
+      nominator_address: isSelf ? null : (document.getElementById('meNominatorAddress').value.trim() || null),
+      intake_notes: document.getElementById('meIntakeNotes').value.trim() || null,
+      created_by_staff: document.getElementById('meCreatedByStaff').value.trim() || null,
+    };
+    status.textContent = '⏳ Saving…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/nominations`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = '<span style="color:#15803d;">✓ Saved.</span>';
+      setTimeout(() => {
+        nomCloseManualEntry();
+        if (nomActiveCycleId) nomOpenCycle(nomActiveCycleId);
+      }, 600);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     }
   }
 
   async function nomGenerateLetter() {
     if (!nomActiveCycleId) { alert('Save the cycle first.'); return; }
     const btn = document.getElementById('nomLetterBtn');
+    const originalLabel = btn.innerHTML;
     btn.disabled = true; btn.textContent = '⏳ Rendering…';
     try {
       const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/letter`, { method: 'POST' });
@@ -14929,7 +15743,35 @@ ${questionsPage}
     } catch (e) {
       alert('Letter render failed: ' + e.message);
     } finally {
-      btn.disabled = false; btn.textContent = '📄 Generate letter PDF';
+      btn.disabled = false; btn.innerHTML = originalLabel;
+    }
+  }
+
+  // Standalone Paper Nomination Form download — the same tear-off form
+  // that auto-appends to the letter, but on its own (e.g., to email to a
+  // homeowner who asked for paper, or print stacks for the on-site office).
+  async function nomGeneratePaperForm() {
+    if (!nomActiveCycleId) { alert('Save the cycle first.'); return; }
+    const btn = document.getElementById('nomPaperFormBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '⏳ Rendering…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/paper-form`, { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `paper-nomination-form.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Paper form render failed: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.innerHTML = originalLabel;
     }
   }
 
@@ -15039,16 +15881,19 @@ ${questionsPage}
         }
         list.innerHTML = drafts.map((d) => {
           const fc = Array.isArray(d.file_refs) ? d.file_refs.length : 0;
+          const isActive = currentId[type] === d.id;
           return `
-            <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 12px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${currentId[type] === d.id ? '#eef2ff' : '#fff'};">
-              <div style="flex:1; cursor:pointer;" onclick="Drafts.load('${type}', '${d.id}').then(()=>{}).catch(e=>alert(e.message))">
-                <div style="font-weight:600; color:#1E2761;">${escapeHtml(d.label || '(untitled draft)')}</div>
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:10px 12px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${isActive ? '#eef2ff' : '#fff'};">
+              <div style="flex:1; cursor:pointer;" onclick="Drafts.load('${type}', '${d.id}').then(()=>{}).catch(e=>alert(e.message))" title="Click to open">
+                <div style="font-weight:600; color:#1E2761;">${escapeHtml(d.label || '(untitled draft)')}${isActive ? ' <span style="font-weight:400; color:#475569; font-size:11px;">(currently open)</span>' : ''}</div>
                 <div style="font-size:11px; color:#6B7280; margin-top:2px;">
                   ${d.community_name ? escapeHtml(d.community_name) + ' · ' : ''}saved ${escapeHtml(fmtAgo(d.updated_at))}${fc > 0 ? ` · ${fc} file${fc===1?'':'s'}` : ''}
                 </div>
               </div>
+              <button onclick="Drafts.load('${type}', '${d.id}').catch(e=>alert(e.message))"
+                      style="background:#1E2761; border:1px solid #1E2761; color:#fff; font-size:11.5px; padding:5px 12px; border-radius:6px; cursor:pointer; font-weight:600; white-space:nowrap;">📂 Open</button>
               <button onclick="if(confirm('Delete this draft?')) Drafts.remove('${type}', '${d.id}').catch(e=>alert(e.message))"
-                      style="background:none; border:1px solid #d0d7de; color:#b91c1c; font-size:11px; padding:4px 8px; border-radius:6px; cursor:pointer;">Delete</button>
+                      style="background:none; border:1px solid #d0d7de; color:#b91c1c; font-size:11px; padding:5px 10px; border-radius:6px; cursor:pointer;">Delete</button>
             </div>
           `;
         }).join('');
@@ -15137,7 +15982,10 @@ ${questionsPage}
         venue_street:             document.getElementById('nomVenueStreet').value,
         venue_city_zip:           document.getElementById('nomVenueCityZip').value,
         nominations_close_at:     document.getElementById('nomCloseAt').value,
+        nominations_close_time:   document.getElementById('nomCloseTime').value,
         seats_open:               document.getElementById('nomSeatsOpen').value,
+        term_years:               document.getElementById('nomTermYears').value,
+        electronic_voting_offered: document.getElementById('nomElectronicVoting').checked,
         description:              document.getElementById('nomDescription').value,
         expectations_blurb:       document.getElementById('nomExpectations').value,
         onsite_enabled:           document.getElementById('nomOnsiteEnabled').checked,
@@ -15145,6 +15993,9 @@ ${questionsPage}
         onsite_address:           document.getElementById('nomOnsiteAddress').value,
         accept_electronic:        document.getElementById('nomAcceptElectronic').checked,
         accept_physical_mail:     document.getElementById('nomAcceptPhysicalMail').checked,
+        include_floor_nominations_notice: document.getElementById('nomIncludeFloorNotice').checked,
+        floor_nominations_policy: (document.querySelector('input[name="nomFloorPolicy"]:checked') || {}).value || null,
+        floor_nominations_note:   document.getElementById('nomFloorNote').value,
         public_slug:              document.getElementById('nomPublicSlug').value,
       };
       const files = [];
@@ -15163,8 +16014,11 @@ ${questionsPage}
       set('nomVenueStreet',     s.venue_street);
       set('nomVenueCityZip',    s.venue_city_zip);
       set('nomCloseAt',         s.nominations_close_at);
+      set('nomCloseTime',       s.nominations_close_time || '5:00 PM');
       try { nomRenderTimeline(); } catch (_) {}
       set('nomSeatsOpen',       s.seats_open);
+      set('nomTermYears',       s.term_years || 3);
+      document.getElementById('nomElectronicVoting').checked = !!s.electronic_voting_offered;
       set('nomDescription',     s.description);
       set('nomExpectations',    s.expectations_blurb);
       set('nomOnsiteLocation',  s.onsite_location);
@@ -15173,7 +16027,13 @@ ${questionsPage}
       document.getElementById('nomOnsiteEnabled').checked = !!s.onsite_enabled;
       document.getElementById('nomAcceptElectronic').checked    = s.accept_electronic    !== false;
       document.getElementById('nomAcceptPhysicalMail').checked  = s.accept_physical_mail !== false;
+      document.getElementById('nomIncludeFloorNotice').checked  = !!s.include_floor_nominations_notice;
+      set('nomFloorNote', s.floor_nominations_note);
+      const fp = s.floor_nominations_policy || 'not_allowed';
+      const fpEl = document.getElementById(fp === 'allowed' ? 'nomFloorPolicyAllowed' : 'nomFloorPolicyNotAllowed');
+      if (fpEl) fpEl.checked = true;
       try { nomToggleOnsite(); } catch (_) {}
+      try { nomToggleFloorNotice(); } catch (_) {}
       try { switchTab('nominations'); } catch (_) {}
       try { nomLoadRoster(); } catch (_) {}
       document.getElementById('nomDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;

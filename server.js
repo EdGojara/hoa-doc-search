@@ -20,13 +20,21 @@ function _canvas() {
   return _canvasLib;
 }
 async function shrinkImageForAnthropic(buffer, mimetype) {
-  if (!buffer || buffer.length <= SAFE_RAW_TARGET) {
+  return shrinkImageToTarget(buffer, mimetype, SAFE_RAW_TARGET, 1800);
+}
+
+// General-purpose image shrinker. Used for both Anthropic vision calls and
+// for storage-bound uploads (nomination photos) where 8MB+ phone photos
+// would otherwise bloat storage and slow the admin UI. Iteratively reduces
+// max dimension + JPEG quality until the encoded payload is under target.
+async function shrinkImageToTarget(buffer, mimetype, targetBytes, startMaxDim) {
+  if (!buffer || buffer.length <= targetBytes) {
     return { buffer, mimetype: mimetype || 'image/jpeg' };
   }
   try {
     const { createCanvas, loadImage } = _canvas();
     const img = await loadImage(buffer);
-    let maxDim = 1800;
+    let maxDim = startMaxDim || 1800;
     let quality = 0.85;
     let out = buffer;
     for (let i = 0; i < 8; i++) {
@@ -36,16 +44,20 @@ async function shrinkImageForAnthropic(buffer, mimetype) {
       const canvas = createCanvas(w, h);
       canvas.getContext('2d').drawImage(img, 0, 0, w, h);
       out = canvas.toBuffer('image/jpeg', { quality });
-      if (out.length <= SAFE_RAW_TARGET) break;
+      if (out.length <= targetBytes) break;
       maxDim = Math.floor(maxDim * 0.82);
       quality = Math.max(0.55, quality - 0.07);
     }
     return { buffer: out, mimetype: 'image/jpeg' };
   } catch (e) {
-    console.warn('[shrinkImageForAnthropic] failed, sending original:', e.message);
+    console.warn('[shrinkImage] failed, returning original:', e.message);
     return { buffer, mimetype: mimetype || 'image/jpeg' };
   }
 }
+
+// Nomination photo target — smaller than Anthropic's 5MB cap because these
+// just need to render at ~110px on the ballot bio page. 1MB cap is plenty.
+const NOMINATION_PHOTO_TARGET = 1 * 1024 * 1024;
 
 // Unified playbook retrieval — semantic search across all entries.
 // Replaces per-endpoint category filters.
@@ -593,9 +605,10 @@ async function getRelevantChunks(text, community) {
     filter_communities: communities
   });
   if (error) throw new Error('Search error: ' + error.message);
-  return (chunks || []).map(row =>
-    `[From: ${row.metadata?.filename} - ${row.metadata?.community}]\n${row.content}`
-  ).join('\n\n---\n\n');
+  return (chunks || []).map(row => {
+    const ocrTag = row.metadata?.ocr ? " — OCR'd scan, may have minor errors" : '';
+    return `[From: ${row.metadata?.filename} - ${row.metadata?.community}${ocrTag}]\n${row.content}`;
+  }).join('\n\n---\n\n');
 }
 
 app.post('/ask', async (req, res) => {
@@ -1393,6 +1406,8 @@ ANSWER STYLE:
 - If a contact is marked expired or unverified > 1 year, mention that in one short phrase.
 - If no record exists, say so in one sentence and suggest adding it in Profile → Contacts.
 
+If a source is tagged "OCR'd scan, may have minor errors," mention in one short phrase that the answer comes from a scanned doc and the original should be confirmed.
+
 Do not mention you are an AI. Do not apologize. Do not editorialize. Just the facts.`;
 }
 
@@ -1477,6 +1492,8 @@ CELEBRATING WINS AND COMMUNITY BUILDING: When something goes well share it. Forw
 INTERNAL OPERATIONS AND TECHNOLOGY: When implementing changes explain why, give clear step by step instructions, set the new expectation explicitly, offer support for anyone who struggles. When clarifying a prior communication do it quickly and directly without ego.
 
 HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and what you don't, lead with the solution not just the problem, communicate deadlines clearly, stay professional with all parties including attorneys, document everything.
+
+SCANNED/OCR'D SOURCES: Some older governing docs (older bylaws, CC&Rs, historical minutes) were image-only scans and got transcribed by automated OCR. Any chunk tagged "OCR'd scan, may have minor errors" in its source line came from that path. When citing one, name the document as usual AND add a short caveat — for example "(this comes from a scanned copy of the Bylaws, so I'd recommend confirming the exact wording against the original PDF in the document library)." Don't refuse to answer; OCR is usually accurate enough for substantive questions. Just flag the source so the reader can verify if the wording matters.
 
 When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`;
 }
@@ -4508,6 +4525,44 @@ app.get('/api/financials/:id/branded', async (req, res) => {
 //   POST   /api/nominations/public/:slug/submit → homeowner submission
 // ============================================================================
 const { renderCallForNominationsHTML } = require('./lib/nominations/letter');
+const { renderPaperFormHTML } = require('./lib/nominations/paper_form');
+
+// Render an HTML string to a PDF Buffer via puppeteer. Shared helper used by
+// the Call for Nominations letter + the standalone Paper Nomination Form so
+// both endpoints share the same browser config + margin behavior.
+async function _renderHtmlToPdf(html) {
+  const puppeteer = _puppeteer_lazy();
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+  });
+  try {
+    const page = await browser.newPage();
+    try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch (_) {}
+    return await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: true,
+    });
+  } finally { try { await browser.close(); } catch (_) {} }
+}
+
+// Merge two PDFs (Buffers) into one using pdf-lib. Used to auto-append the
+// Paper Nomination Form to the Call for Nominations letter so the mailed
+// packet is letter + tear-off form in a single PDF — one download for staff
+// to send to print, one envelope per homeowner.
+async function _mergePdfBuffers(buffers) {
+  const { PDFDocument } = _pdflib_lazy();
+  const merged = await PDFDocument.create();
+  for (const buf of buffers) {
+    if (!buf) continue;
+    const src = await PDFDocument.load(buf, { ignoreEncryption: true });
+    const copied = await merged.copyPages(src, src.getPageIndices());
+    copied.forEach((p) => merged.addPage(p));
+  }
+  return Buffer.from(await merged.save());
+}
 
 function nomSlugify(s) {
   return String(s || '')
@@ -4582,6 +4637,14 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
     const acceptElectronic   = !(b.accept_electronic === '0' || b.accept_electronic === 'false' || b.accept_electronic === false);
     const acceptPhysicalMail = !(b.accept_physical_mail === '0' || b.accept_physical_mail === 'false' || b.accept_physical_mail === false);
 
+    // Floor-nominations policy — default omitted until governing docs are reviewed.
+    const includeFloorNotice = b.include_floor_nominations_notice === '1' ||
+                               b.include_floor_nominations_notice === 'true' ||
+                               b.include_floor_nominations_notice === true;
+    const floorPolicy = (b.floor_nominations_policy === 'allowed' || b.floor_nominations_policy === 'not_allowed')
+      ? b.floor_nominations_policy : null;
+    const floorNote = (b.floor_nominations_note || '').trim() || null;
+
     const { data: row, error } = await supabase
       .from('nomination_cycles')
       .insert({
@@ -4593,7 +4656,17 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
         annual_meeting_location: b.annual_meeting_location || null,
         nominations_open_at: openAt,
         nominations_close_at: closeAt,
+        nominations_close_time: (b.nominations_close_time || '').trim() || null,
         seats_open: Number(b.seats_open) || 1,
+        term_years: Number(b.term_years) || 3,
+        // Planning-only flag — does NOT appear on the Call for Nominations
+        // letter; drives the voting-methods section of the later Annual
+        // Meeting Notice. Stored on voting_methods.online.enabled so the
+        // notice renderer picks it up directly.
+        voting_methods: (() => {
+          const offered = b.electronic_voting_offered === '1' || b.electronic_voting_offered === 'true' || b.electronic_voting_offered === true;
+          return { online: { enabled: offered } };
+        })(),
         current_board: currentBoard,
         description: b.description || null,
         expectations_blurb: b.expectations_blurb || null,
@@ -4602,6 +4675,9 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
         onsite_drop_off: onsite,
         accept_electronic: acceptElectronic,
         accept_physical_mail: acceptPhysicalMail,
+        floor_nominations_policy: floorPolicy,
+        include_floor_nominations_notice: includeFloorNotice,
+        floor_nominations_note: floorNote,
         public_slug: slug,
         status: 'planned',
       })
@@ -4700,26 +4776,28 @@ app.post('/api/nominations/cycles/:id/letter', async (req, res) => {
     if (error || !cycle) return res.status(404).json({ error: 'cycle not found' });
 
     const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
-    const html = await renderCallForNominationsHTML(cycle, { base_url: baseUrl });
+    const letterHtml = await renderCallForNominationsHTML(cycle, { base_url: baseUrl });
+    const letterPdf  = await _renderHtmlToPdf(letterHtml);
 
-    const puppeteer = _puppeteer_lazy();
-    const browser = await puppeteer.launch({
-      headless: 'new',
-      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
-    });
-    let buf;
-    try {
-      const page = await browser.newPage();
-      try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch (_) {}
-      buf = await page.pdf({
-        format: 'Letter',
-        printBackground: true,
-        margin: { top: 0, right: 0, bottom: 0, left: 0 },
-        preferCSSPageSize: true,
-      });
-    } finally { try { await browser.close(); } catch (_) {} }
+    // Auto-append the Paper Nomination Form as the tear-off page after the
+    // letter. The mailed packet is then a single PDF — homeowners receive
+    // the letter + the form they can fill out, sign, and return.
+    // Skippable via ?no_form=1 if a community ever wants letter-only.
+    const skipForm = String(req.query.no_form || '').toLowerCase() === '1' ||
+                     String(req.query.no_form || '').toLowerCase() === 'true';
+    let buf = letterPdf;
+    if (!skipForm) {
+      try {
+        const formHtml = await renderPaperFormHTML(cycle);
+        const formPdf  = await _renderHtmlToPdf(formHtml);
+        buf = await _mergePdfBuffers([letterPdf, formPdf]);
+      } catch (e) {
+        console.warn('[nominations/letter] paper-form append failed, sending letter alone:', e.message);
+        buf = letterPdf;
+      }
+    }
 
-    // Save to storage so the letter is preserved alongside the cycle
+    // Save the combined PDF alongside the cycle for the public form QR + recall.
     try {
       const stem = (cycle.community_name || 'community').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
       const storagePath = `nominations/${cycle.id}/${stem}_call_for_nominations.pdf`;
@@ -4742,6 +4820,30 @@ app.post('/api/nominations/cycles/:id/letter', async (req, res) => {
   }
 });
 
+// Standalone Paper Nomination Form download — for staff who need just the
+// tear-off form (e.g., to email a homeowner who asked for a paper version,
+// or to print copies for the on-site office).
+app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
+  try {
+    const { data: cycle, error } = await supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error || !cycle) return res.status(404).json({ error: 'cycle not found' });
+    const html = await renderPaperFormHTML(cycle);
+    const buf  = await _renderHtmlToPdf(html);
+    const stem = (cycle.community_name || 'community').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${stem}_paper_nomination_form.pdf"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[nominations/paper-form]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
   try {
     const { data, error } = await supabase
@@ -4750,7 +4852,22 @@ app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
       .eq('cycle_id', req.params.id)
       .order('created_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ nominations: data || [] });
+    // Resolve signed URLs for photo + scanned form so the admin UI can
+    // render previews and download links without each row having to fetch
+    // separately. Signed URLs are good for 1 hour; admin reloads regularly.
+    const out = await Promise.all((data || []).map(async (n) => {
+      const enriched = { ...n };
+      if (n.photo_storage_path) {
+        const { data: s } = await supabase.storage.from('documents').createSignedUrl(n.photo_storage_path, 3600);
+        if (s && s.signedUrl) enriched.photo_signed_url = s.signedUrl;
+      }
+      if (n.scanned_form_path) {
+        const { data: s } = await supabase.storage.from('documents').createSignedUrl(n.scanned_form_path, 3600);
+        if (s && s.signedUrl) enriched.scanned_form_signed_url = s.signedUrl;
+      }
+      return enriched;
+    }));
+    res.json({ nominations: out });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -4813,7 +4930,14 @@ app.get('/api/nominations/public/:slug', async (req, res) => {
   }
 });
 
-app.post('/api/nominations/public/:slug/submit', async (req, res) => {
+// Public-form submission. Accepts multipart so the optional photo +
+// optional scanned-form files travel with the JSON-ish text fields. Plain
+// JSON requests (no files) still work because multer leaves req.body
+// populated from form-data text fields.
+app.post('/api/nominations/public/:slug/submit', upload.fields([
+  { name: 'nominee_photo', maxCount: 1 },
+  { name: 'scanned_form',  maxCount: 1 },
+]), async (req, res) => {
   try {
     const { data: cycle } = await supabase
       .from('nomination_cycles')
@@ -4830,11 +4954,25 @@ app.post('/api/nominations/public/:slug/submit', async (req, res) => {
     }
 
     const b = req.body || {};
+    // Form-data sends booleans as strings — normalize before validation.
+    const truthy = (v) => v === true || v === 'true' || v === '1' || v === 'on';
+    b.is_self_nomination = truthy(b.is_self_nomination);
+    b.agreed_to_terms    = truthy(b.agreed_to_terms);
+
     if (!b.nominee_name || !b.nominee_address) return res.status(400).json({ error: 'Nominee name and address are required.' });
+    if (!b.nominator_name || !b.nominator_email || !b.nominator_phone) {
+      return res.status(400).json({ error: 'Submitter name, email, and phone are required so Bedrock can confirm receipt of the nomination.' });
+    }
     if (!b.signature_name || !b.agreed_to_terms) return res.status(400).json({ error: 'Electronic signature and agreement are required.' });
 
     const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').toString().split(',')[0].trim() || null;
 
+    // Submitter contact (nominator_*) is captured on EVERY submission so
+    // Bedrock always has a callback path. The client mirrors submitter→nominee
+    // on self-nominations; the server stores both columns either way so a
+    // self-nom row has nominator_* == nominee_* (consistent data model that
+    // makes future queries — "who submitted this?" — trivial).
+    const now = new Date().toISOString();
     const { data, error } = await supabase
       .from('nominations')
       .insert({
@@ -4848,22 +4986,200 @@ app.post('/api/nominations/public/:slug/submit', async (req, res) => {
         education: b.education || null,
         outside_activities: b.outside_activities || null,
         asset_reason: b.asset_reason || null,
+        years_in_community: b.years_in_community || null,
         is_self_nomination: !!b.is_self_nomination,
-        nominator_name: b.is_self_nomination ? null : (b.nominator_name || null),
-        nominator_email: b.is_self_nomination ? null : (b.nominator_email || null),
-        nominator_address: b.is_self_nomination ? null : (b.nominator_address || null),
+        nominator_name:    b.nominator_name    || null,
+        nominator_email:   b.nominator_email   || null,
+        nominator_phone:   b.nominator_phone   || null,
+        nominator_address: b.nominator_address || null,
         signature_name: b.signature_name,
         agreed_to_terms: !!b.agreed_to_terms,
         client_ip: ip,
         user_agent: (req.headers['user-agent'] || '').slice(0, 500),
         status: 'submitted',
+        submission_channel: 'online_form',
+        received_at: now,
       })
       .select()
       .single();
     if (error) return res.status(500).json({ error: error.message });
-    res.json({ ok: true, nomination_id: data.id });
+
+    // Optional file attachments — upload to storage and link the paths back
+    // onto the row. Failures here are non-fatal; the nomination is already
+    // saved. We log and tell the client which uploads succeeded so it can
+    // surface a partial-success message if needed.
+    const attached = { photo: false, scanned_form: false };
+    const photoFile = req.files && req.files.nominee_photo && req.files.nominee_photo[0];
+    if (photoFile && photoFile.buffer) {
+      try {
+        // Resize down to ~1MB max so 8MB phone photos don't bloat storage
+        // or slow the admin UI. Quality stays high enough for ballot use.
+        const shrunk = await shrinkImageToTarget(photoFile.buffer, photoFile.mimetype, NOMINATION_PHOTO_TARGET, 1200);
+        const safeName = (photoFile.originalname || 'photo.jpg').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/\.(jpe?g|png|gif|webp|heic)$/i, '') + '.jpg';
+        const photoPath = `nominations/${data.id}/photo_${Date.now()}_${safeName}`;
+        const { error: pErr } = await supabase.storage.from('documents').upload(photoPath, shrunk.buffer, {
+          contentType: shrunk.mimetype || 'image/jpeg', upsert: true,
+        });
+        if (!pErr) {
+          await supabase.from('nominations').update({ photo_storage_path: photoPath }).eq('id', data.id);
+          attached.photo = true;
+        } else console.warn('[nominations/photo upload]', pErr.message);
+      } catch (e) { console.warn('[nominations/photo upload exception]', e.message); }
+    }
+    const scannedFile = req.files && req.files.scanned_form && req.files.scanned_form[0];
+    if (scannedFile && scannedFile.buffer) {
+      try {
+        const safeName = (scannedFile.originalname || 'form.pdf').replace(/[^A-Za-z0-9._-]+/g, '_');
+        const formPath = `nominations/${data.id}/scanned_${Date.now()}_${safeName}`;
+        const { error: sErr } = await supabase.storage.from('documents').upload(formPath, scannedFile.buffer, {
+          contentType: scannedFile.mimetype || 'application/pdf', upsert: true,
+        });
+        if (!sErr) {
+          await supabase.from('nominations').update({
+            scanned_form_path: formPath,
+            scanned_form_mime: scannedFile.mimetype || 'application/pdf',
+          }).eq('id', data.id);
+          attached.scanned_form = true;
+        } else console.warn('[nominations/scanned upload]', sErr.message);
+      } catch (e) { console.warn('[nominations/scanned upload exception]', e.message); }
+    }
+
+    res.json({ ok: true, nomination_id: data.id, attached });
   } catch (err) {
     console.error('[nominations/public/submit]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Staff manual-entry route — used when a nomination arrives by mail / email /
+// drop-off / phone / in-person and staff need to enter it into the system so
+// it flows through the same on_slate → ballot pipeline as online ones.
+//
+// Same payload as the public submit, plus:
+//   submission_channel  'email' | 'mail' | 'drop_off' | 'in_person' | 'phone' | 'other'
+//   received_at         when the offline submission was actually received
+//   created_by_staff    staff name (text — auth lands later)
+//   intake_notes        optional context ("transcribed from paper form")
+// ----------------------------------------------------------------------------
+app.post('/api/nominations/cycles/:id/nominations', async (req, res) => {
+  try {
+    const cycleId = req.params.id;
+    const { data: cycle } = await supabase
+      .from('nomination_cycles')
+      .select('id')
+      .eq('id', cycleId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!cycle) return res.status(404).json({ error: 'cycle not found' });
+
+    const b = req.body || {};
+    if (!b.nominee_name || !b.nominee_address) {
+      return res.status(400).json({ error: 'Nominee name and address are required.' });
+    }
+    const allowedChannels = new Set(['email','mail','drop_off','in_person','phone','other']);
+    const channel = allowedChannels.has(b.submission_channel) ? b.submission_channel : 'other';
+    const receivedAt = b.received_at || new Date().toISOString();
+    const now = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('nominations')
+      .insert({
+        cycle_id: cycleId,
+        nominee_name: b.nominee_name,
+        nominee_address: b.nominee_address,
+        nominee_email: b.nominee_email || null,
+        nominee_phone: b.nominee_phone || null,
+        nominee_bio: b.nominee_bio || null,
+        is_self_nomination: !!b.is_self_nomination,
+        nominator_name:    b.nominator_name    || null,
+        nominator_email:   b.nominator_email   || null,
+        nominator_phone:   b.nominator_phone   || null,
+        nominator_address: b.nominator_address || null,
+        signature_name: b.signature_name || (b.is_self_nomination ? b.nominee_name : (b.nominator_name || 'Unknown')),
+        agreed_to_terms: true,
+        signed_at: receivedAt,
+        status: 'submitted',
+        submission_channel: channel,
+        received_at: receivedAt,
+        created_by_staff: b.created_by_staff || null,
+        intake_notes: b.intake_notes || null,
+        years_in_community: b.years_in_community || null,
+        is_incumbent: !!b.is_incumbent,
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ nomination: data });
+  } catch (err) {
+    console.error('[nominations/staff-entry]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Extract structured nomination fields from a scanned paper form. Staff
+// drops the scan into the manual-entry modal, hits "Extract", and the
+// modal pre-fills so they just verify instead of transcribing. Uses
+// Claude Sonnet 4.6 vision; returns the structured JSON the modal expects.
+// ----------------------------------------------------------------------------
+app.post('/api/nominations/extract-from-scan', upload.single('scan'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No scan file uploaded.' });
+    const { extractNominationFieldsFromScan } = require('./lib/nominations/extract_from_scan');
+    const out = await extractNominationFieldsFromScan({
+      buffer: req.file.buffer,
+      mimetype: req.file.mimetype,
+    });
+    if (out.error) return res.status(500).json(out);
+    res.json(out);
+  } catch (err) {
+    console.error('[nominations/extract-from-scan]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Photo upload for a nomination. Staff-side — most homeowners won't have a
+// photo ready while submitting via the form. Stores in the `documents` bucket
+// under nominations/<id>/photo_<filename> and updates photo_storage_path.
+// ----------------------------------------------------------------------------
+app.post('/api/nominations/:id/photo', upload.single('photo'), async (req, res) => {
+  try {
+    const nomId = req.params.id;
+    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No photo file uploaded.' });
+    const { data: nom } = await supabase
+      .from('nominations')
+      .select('id, cycle_id')
+      .eq('id', nomId)
+      .maybeSingle();
+    if (!nom) return res.status(404).json({ error: 'nomination not found' });
+
+    // Resize down to ~1MB max — staff uploads from phone gallery are
+    // routinely 5-10MB, which would bloat storage and slow the admin UI.
+    const shrunk = await shrinkImageToTarget(req.file.buffer, req.file.mimetype, NOMINATION_PHOTO_TARGET, 1200);
+    const safeName = (req.file.originalname || 'photo.jpg').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/\.(jpe?g|png|gif|webp|heic)$/i, '') + '.jpg';
+    const storagePath = `nominations/${nomId}/photo_${Date.now()}_${safeName}`;
+    const { error: upErr } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, shrunk.buffer, {
+        contentType: shrunk.mimetype || 'image/jpeg',
+        upsert: true,
+      });
+    if (upErr) return res.status(500).json({ error: upErr.message });
+
+    const { data: updated, error: updErr } = await supabase
+      .from('nominations')
+      .update({ photo_storage_path: storagePath, updated_at: new Date().toISOString() })
+      .eq('id', nomId)
+      .select()
+      .single();
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    const { data: signed } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
+    res.json({ nomination: updated, signed_url: signed && signed.signedUrl });
+  } catch (err) {
+    console.error('[nominations/photo]', err);
     res.status(500).json({ error: err.message });
   }
 });

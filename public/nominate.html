@@ -122,6 +122,24 @@
       display: none;
     }
     .err.show { display: block; }
+
+    /* Drop-zone for file uploads — drag-and-drop friendly, falls back to
+       click-to-browse. Same component reused for photo + scanned form. */
+    .drop-zone {
+      border: 2px dashed #cbd5e1;
+      border-radius: 10px;
+      padding: 20px 16px;
+      text-align: center;
+      cursor: pointer;
+      background: #f8fafc;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+    .drop-zone:hover { border-color: #1E2761; background: #eef2ff; }
+    .drop-zone.dragover { border-color: #1E2761; background: #dbeafe; }
+    .drop-zone .dz-icon { font-size: 26px; color: #94A3B8; }
+    .drop-zone .dz-primary { font-weight: 600; color: #1E2761; font-size: 13.5px; margin-top: 4px; }
+    .drop-zone .dz-secondary { font-size: 11.5px; color: #64748b; margin-top: 2px; }
+    .drop-zone .dz-filename { color: #15803d; font-weight: 600; font-size: 12.5px; margin-top: 6px; }
   </style>
 </head>
 <body>
@@ -159,38 +177,49 @@
         <h2>Who's submitting?</h2>
         <div class="seg" role="tablist">
           <button type="button" id="segSelf" class="active" onclick="setMode(true)">I'm nominating myself</button>
-          <button type="button" id="segOther" onclick="setMode(false)">I'm nominating a neighbor</button>
+          <button type="button" id="segOther" onclick="setMode(false)">I'm nominating someone else</button>
         </div>
+      </div>
 
-        <div id="nominatorFields" style="display:none;">
-          <p class="hint">Your contact info (so the Board can reach you with questions about the nomination).</p>
+      <!-- Submitter contact — ALWAYS captured, regardless of self vs. other.
+           This is the person filling out the form. Bedrock uses email + phone
+           to confirm receipt of every nomination. When self-nominating, this
+           info is also the nominee's info (mirrored server-side). -->
+      <div class="card">
+        <h2 id="submitterHeading">Your contact info</h2>
+        <p class="hint" id="submitterHint">So Bedrock can confirm we received your nomination — we'll email and call to acknowledge it.</p>
+        <div class="fld">
+          <label>Your full name <span class="req">*</span></label>
+          <input type="text" id="submitterName" required autocomplete="name">
+        </div>
+        <div class="fld">
+          <label>Your home address <span class="req">*</span></label>
+          <input type="text" id="submitterAddress" required autocomplete="street-address">
+        </div>
+        <div class="grid-2">
           <div class="fld">
-            <label>Your name <span class="req">*</span></label>
-            <input type="text" id="nominatorName" autocomplete="name">
+            <label>Your email <span class="req">*</span></label>
+            <input type="email" id="submitterEmail" required autocomplete="email">
           </div>
-          <div class="grid-2">
-            <div class="fld">
-              <label>Your email</label>
-              <input type="email" id="nominatorEmail" autocomplete="email">
-            </div>
-            <div class="fld">
-              <label>Your home address</label>
-              <input type="text" id="nominatorAddress" autocomplete="street-address">
-            </div>
+          <div class="fld">
+            <label>Your phone <span class="req">*</span></label>
+            <input type="tel" id="submitterPhone" required autocomplete="tel">
           </div>
         </div>
       </div>
 
-      <div class="card">
-        <h2>Nominee</h2>
-        <p class="hint">The person being nominated for the Board.</p>
+      <!-- Nominee section — ONLY shown when submitter is nominating someone
+           else. When self-nominating, the submitter info above IS the nominee. -->
+      <div class="card" id="nomineeCard" style="display:none;">
+        <h2>Nominee info</h2>
+        <p class="hint">The person being nominated for the Board (different from you).</p>
         <div class="fld">
           <label>Nominee full name <span class="req">*</span></label>
-          <input type="text" id="nomineeName" required autocomplete="name">
+          <input type="text" id="nomineeName" autocomplete="name">
         </div>
         <div class="fld">
           <label>Nominee home address (in this community) <span class="req">*</span></label>
-          <input type="text" id="nomineeAddress" required autocomplete="street-address">
+          <input type="text" id="nomineeAddress" autocomplete="street-address">
         </div>
         <div class="grid-2">
           <div class="fld">
@@ -202,10 +231,56 @@
             <input type="tel" id="nomineePhone" autocomplete="tel">
           </div>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Bio statement</h2>
+        <p class="hint" id="bioHint">A short paragraph that will be shared with homeowners ahead of the election. Background, qualifications, and what you'd bring to the Board.</p>
+        <div class="fld">
+          <textarea id="nomineeBio" placeholder="Background, qualifications, and what they'd bring to the Board."></textarea>
+        </div>
+        <div class="fld" style="margin-top:8px;">
+          <label>Years in community <span style="color:#94A3B8; font-weight:400; font-size:11px;">(optional — shown on the ballot if provided)</span></label>
+          <input type="text" id="yearsInCommunity" placeholder="e.g., since 2014, or 10 years">
+        </div>
+      </div>
+
+      <!-- Photo + scanned-form upload. Either path lands in the same
+           nomination row; the file type just determines how staff
+           processes it on the back end. -->
+      <div class="card">
+        <h2>Attachments (optional)</h2>
+        <p class="hint">A photo helps your neighbors recognize you on the ballot. If you'd rather hand-write the form and upload it, you can do that too.</p>
 
         <div class="fld">
-          <label>Bio statement / why they'd be a great Board member</label>
-          <textarea id="nomineeBio" placeholder="Background, qualifications, and what they'd bring to the Board. This will be shared with homeowners ahead of the election."></textarea>
+          <label>Photo of the nominee</label>
+          <input type="file" id="nomineePhotoFile" accept="image/*" style="display:none;">
+          <div class="drop-zone" id="nomineePhotoDropZone" onclick="document.getElementById('nomineePhotoFile').click()">
+            <div class="dz-icon">📷</div>
+            <div class="dz-primary">Drop a photo here, or click to browse</div>
+            <div class="dz-secondary">JPG or PNG · head-and-shoulders works best</div>
+            <div class="dz-filename" id="nomineePhotoFilename"></div>
+          </div>
+          <div id="nomineePhotoPreview" style="margin-top:8px; display:none; text-align:center;">
+            <img id="nomineePhotoPreviewImg" style="max-width:120px; max-height:120px; border-radius:8px; object-fit:cover; border:1px solid #d0d7de;">
+          </div>
+        </div>
+
+        <div class="fld" style="margin-top:14px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:13px; cursor:pointer;">
+            <input type="checkbox" id="haveScannedForm" onchange="toggleScannedForm()">
+            <span>I have a hand-written or scanned nomination form to upload instead</span>
+          </label>
+          <div id="scannedFormBlock" style="display:none; margin-top:10px;">
+            <p class="hint" style="margin-top:0;">Upload a scan or photo of the completed paper form. The fields above still help us match the submission to the right address, but the upload is the source of truth.</p>
+            <input type="file" id="scannedFormFile" accept=".pdf,image/*" style="display:none;">
+            <div class="drop-zone" id="scannedFormDropZone" onclick="document.getElementById('scannedFormFile').click()">
+              <div class="dz-icon">📄</div>
+              <div class="dz-primary">Drop your scanned form here, or click to browse</div>
+              <div class="dz-secondary">PDF, JPG, or PNG</div>
+              <div class="dz-filename" id="scannedFormFilename"></div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -219,10 +294,10 @@
         <div class="sig-row">
           <input type="checkbox" id="agreedToTerms">
           <label for="agreedToTerms">
-            I certify that the information above is true to the best of my knowledge, that
-            the nominee (or I, if self-nominating) is a homeowner in good standing in this
-            community, and I consent to this electronic signature being binding under the
-            E-SIGN Act.
+            I certify that the information above is true to the best of my knowledge, and
+            I consent to this electronic signature being binding under the federal E-SIGN
+            Act. I understand that nominee eligibility will be confirmed against the
+            community's governing documents before the ballot is finalized.
           </label>
         </div>
       </div>
@@ -251,11 +326,101 @@
       return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
     }
 
+    // Toggle scanned-form upload block visibility.
+    function toggleScannedForm() {
+      const on = document.getElementById('haveScannedForm').checked;
+      document.getElementById('scannedFormBlock').style.display = on ? 'block' : 'none';
+    }
+
+    // Wire drag-and-drop on a zone so dropping a file assigns it to the
+    // hidden file input AND triggers the input's change event so the rest
+    // of the page reacts as if the user had clicked browse.
+    function setupDropZone(zoneId, inputId, onFile) {
+      const zone = document.getElementById(zoneId);
+      const input = document.getElementById(inputId);
+      if (!zone || !input) return;
+      ['dragenter', 'dragover'].forEach((e) => zone.addEventListener(e, (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); zone.classList.add('dragover');
+      }));
+      ['dragleave', 'drop'].forEach((e) => zone.addEventListener(e, (ev) => {
+        ev.preventDefault(); ev.stopPropagation(); zone.classList.remove('dragover');
+      }));
+      zone.addEventListener('drop', (ev) => {
+        const file = ev.dataTransfer && ev.dataTransfer.files && ev.dataTransfer.files[0];
+        if (!file) return;
+        // Assign the dropped file to the hidden input via DataTransfer so the
+        // submit handler can read it from input.files like a normal pick.
+        try {
+          const dt = new DataTransfer();
+          dt.items.add(file);
+          input.files = dt.files;
+        } catch (_) { /* Safari < 14 fallback — onFile still fires */ }
+        if (onFile) onFile(file);
+        input.dispatchEvent(new Event('change'));
+      });
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      const photoInput = document.getElementById('nomineePhotoFile');
+      const photoName  = document.getElementById('nomineePhotoFilename');
+      const scannedInput = document.getElementById('scannedFormFile');
+      const scannedName  = document.getElementById('scannedFormFilename');
+
+      // Live photo preview + filename display, works for both click-pick and drop.
+      if (photoInput) photoInput.addEventListener('change', () => {
+        const f = photoInput.files && photoInput.files[0];
+        const wrap = document.getElementById('nomineePhotoPreview');
+        const img  = document.getElementById('nomineePhotoPreviewImg');
+        if (f && img && wrap) {
+          img.src = URL.createObjectURL(f);
+          wrap.style.display = '';
+          if (photoName) photoName.textContent = '✓ ' + f.name;
+        } else if (wrap) {
+          wrap.style.display = 'none';
+          if (photoName) photoName.textContent = '';
+        }
+      });
+
+      // Scanned-form filename display.
+      if (scannedInput) scannedInput.addEventListener('change', () => {
+        const f = scannedInput.files && scannedInput.files[0];
+        if (scannedName) scannedName.textContent = f ? '✓ ' + f.name : '';
+      });
+
+      setupDropZone('nomineePhotoDropZone',  'nomineePhotoFile',  null);
+      setupDropZone('scannedFormDropZone',   'scannedFormFile',   null);
+    });
+
     function setMode(self) {
       isSelf = !!self;
       document.getElementById('segSelf').classList.toggle('active', isSelf);
       document.getElementById('segOther').classList.toggle('active', !isSelf);
-      document.getElementById('nominatorFields').style.display = isSelf ? 'none' : 'block';
+      // Show the separate nominee card only when nominating someone else.
+      document.getElementById('nomineeCard').style.display = isSelf ? 'none' : 'block';
+
+      // Relabel the submitter section to match context: when self, the
+      // submitter IS the nominee, so the heading reads as the candidate's
+      // info; when other, it's clearly the submitter's contact.
+      const heading = document.getElementById('submitterHeading');
+      const hint    = document.getElementById('submitterHint');
+      const bioHint = document.getElementById('bioHint');
+      if (isSelf) {
+        heading.textContent = 'Your contact info (you are the nominee)';
+        hint.textContent    = "Your info goes on the ballot, and Bedrock will use your email and phone to confirm we received your nomination.";
+        bioHint.textContent = "A short paragraph that will be shared with homeowners ahead of the election — your background, qualifications, and what you'd bring to the Board.";
+      } else {
+        heading.textContent = 'Your contact info (the person submitting)';
+        hint.textContent    = "So Bedrock can confirm receipt of this nomination with you — we'll email and call to acknowledge it.";
+        bioHint.textContent = "A short paragraph that will be shared with homeowners ahead of the election — the nominee's background, qualifications, and what they'd bring to the Board.";
+      }
+
+      // Toggle the nominee fields' required attribute so the browser only
+      // enforces them when actually shown.
+      const reqIds = ['nomineeName', 'nomineeAddress'];
+      reqIds.forEach((id) => {
+        const el = document.getElementById(id);
+        if (el) { if (isSelf) el.removeAttribute('required'); else el.setAttribute('required', ''); }
+      });
     }
 
     async function load() {
@@ -296,26 +461,43 @@
       const err = document.getElementById('errBox');
       err.classList.remove('show');
 
+      // Submitter info is always captured. When self-nominating, the
+      // submitter IS the nominee — we mirror these values into the nominee_*
+      // fields client-side so the server gets a consistent payload either way.
+      const submitterName    = document.getElementById('submitterName').value.trim();
+      const submitterAddress = document.getElementById('submitterAddress').value.trim();
+      const submitterEmail   = document.getElementById('submitterEmail').value.trim();
+      const submitterPhone   = document.getElementById('submitterPhone').value.trim();
+
+      const nomineeName    = isSelf ? submitterName    : document.getElementById('nomineeName').value.trim();
+      const nomineeAddress = isSelf ? submitterAddress : document.getElementById('nomineeAddress').value.trim();
+      const nomineeEmail   = isSelf ? submitterEmail   : (document.getElementById('nomineeEmail').value.trim() || null);
+      const nomineePhone   = isSelf ? submitterPhone   : (document.getElementById('nomineePhone').value.trim() || null);
+
       const payload = {
         is_self_nomination: isSelf,
-        nominator_name: isSelf ? null : document.getElementById('nominatorName').value.trim(),
-        nominator_email: isSelf ? null : document.getElementById('nominatorEmail').value.trim(),
-        nominator_address: isSelf ? null : document.getElementById('nominatorAddress').value.trim(),
-        nominee_name: document.getElementById('nomineeName').value.trim(),
-        nominee_address: document.getElementById('nomineeAddress').value.trim(),
-        nominee_email: document.getElementById('nomineeEmail').value.trim() || null,
-        nominee_phone: document.getElementById('nomineePhone').value.trim() || null,
-        nominee_bio: document.getElementById('nomineeBio').value.trim() || null,
-        signature_name: document.getElementById('signatureName').value.trim(),
+        // Submitter contact — always sent so the server always has a way to
+        // confirm receipt with the person who submitted.
+        nominator_name:    submitterName,
+        nominator_email:   submitterEmail,
+        nominator_phone:   submitterPhone,
+        nominator_address: submitterAddress,
+        // Nominee fields — equal to submitter when self, separate when other.
+        nominee_name:    nomineeName,
+        nominee_address: nomineeAddress,
+        nominee_email:   nomineeEmail,
+        nominee_phone:   nomineePhone,
+        nominee_bio:     document.getElementById('nomineeBio').value.trim() || null,
+        signature_name:  document.getElementById('signatureName').value.trim(),
         agreed_to_terms: document.getElementById('agreedToTerms').checked,
       };
 
-      if (!payload.nominee_name || !payload.nominee_address) {
-        err.textContent = "Please fill in the nominee's name and address.";
+      if (!submitterName || !submitterAddress || !submitterEmail || !submitterPhone) {
+        err.textContent = 'Please fill in your full contact info — name, address, email, and phone are all required so we can confirm your nomination.';
         err.classList.add('show'); return;
       }
-      if (!isSelf && !payload.nominator_name) {
-        err.textContent = 'Please enter your name as the person submitting the nomination.';
+      if (!isSelf && (!nomineeName || !nomineeAddress)) {
+        err.textContent = "Please fill in the nominee's name and home address.";
         err.classList.add('show'); return;
       }
       if (!payload.signature_name || !payload.agreed_to_terms) {
@@ -323,14 +505,27 @@
         err.classList.add('show'); return;
       }
 
+      // Add the new optional fields to the payload.
+      payload.years_in_community = (document.getElementById('yearsInCommunity').value || '').trim() || null;
+
+      // Build multipart form data so the optional photo + scanned-form files
+      // can travel with the rest. Falls back gracefully when no files are
+      // attached — server accepts the same fields either way.
+      const fd = new FormData();
+      Object.entries(payload).forEach(([k, v]) => fd.append(k, v == null ? '' : (typeof v === 'object' ? JSON.stringify(v) : String(v))));
+      const photoFile = document.getElementById('nomineePhotoFile').files[0];
+      if (photoFile) fd.append('nominee_photo', photoFile);
+      const scannedOn = document.getElementById('haveScannedForm').checked;
+      const scannedFile = scannedOn ? document.getElementById('scannedFormFile').files[0] : null;
+      if (scannedFile) fd.append('scanned_form', scannedFile);
+
       const slug = window.location.pathname.split('/').filter(Boolean).pop();
       const btn = document.getElementById('submitBtn');
       btn.disabled = true; btn.textContent = 'Submitting…';
       try {
         const r = await fetch('/api/nominations/public/' + encodeURIComponent(slug) + '/submit', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload),
+          body: fd,
         });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || 'Submission failed');
