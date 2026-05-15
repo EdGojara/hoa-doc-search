@@ -15362,17 +15362,43 @@ ${questionsPage}
         return;
       }
       list.innerHTML = nomCycles.map((c) => `
-        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; cursor:pointer; background:${c.id === nomActiveCycleId ? '#eef2ff' : '#fff'};"
-             onclick="nomOpenCycle('${c.id}')">
-          <div>
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${c.id === nomActiveCycleId ? '#eef2ff' : '#fff'};">
+          <div style="flex:1; cursor:pointer;" onclick="nomOpenCycle('${c.id}')">
             <div style="font-weight:600; color:#1E2761;">${escapeHtml(c.community_name)} — ${escapeHtml(c.annual_meeting_date)}</div>
             <div style="font-size:11px; color:#6B7280;">${escapeHtml(c.status)} · ${c.nominations_count || 0} nominations · closes ${escapeHtml(c.nominations_close_at)}</div>
           </div>
-          <div style="font-size:11px; color:#475569;">${c.seats_open} seat${c.seats_open === 1 ? '' : 's'}</div>
+          <div style="font-size:11px; color:#475569; white-space:nowrap;">${c.seats_open} seat${c.seats_open === 1 ? '' : 's'}</div>
+          <button onclick="nomDeleteCycle('${c.id}', '${escapeHtml(c.community_name)} — ${escapeHtml(c.annual_meeting_date)}', ${c.nominations_count || 0})"
+                  style="background:none; border:1px solid #d0d7de; color:#b91c1c; font-size:11px; padding:4px 9px; border-radius:6px; cursor:pointer; white-space:nowrap;"
+                  title="Delete this cycle">Delete</button>
         </div>
       `).join('');
     } catch (e) {
       document.getElementById('nomCyclesList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  // Delete a saved cycle (and any nominations on it via FK cascade). Used
+  // to clean up duplicates and test cycles. Confirms first; warns harder
+  // when there are nominations attached.
+  async function nomDeleteCycle(id, label, nominationsCount) {
+    const warn = nominationsCount > 0
+      ? `Delete "${label}"?\n\nThis cycle has ${nominationsCount} nomination${nominationsCount === 1 ? '' : 's'} that will be permanently deleted with it. This cannot be undone.`
+      : `Delete "${label}"?\n\nThis cannot be undone.`;
+    if (!confirm(warn)) return;
+    try {
+      const r = await fetch(`/api/nominations/cycles/${id}`, { method: 'DELETE' });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // If the deleted cycle was the active one, clear the right panel.
+      if (nomActiveCycleId === id) {
+        nomActiveCycleId = null;
+        const panel = document.getElementById('nomCyclePanel');
+        if (panel) panel.style.display = 'none';
+      }
+      await nomLoadCycles();
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
     }
   }
 
@@ -15401,6 +15427,12 @@ ${questionsPage}
       const priors = (nomCycles || [])
         .filter((c) => c.community_name === cycle.community_name && c.id !== cycle.id)
         .sort((a, b) => (b.annual_meeting_date || '').localeCompare(a.annual_meeting_date || ''));
+      // A "prior" cycle with the SAME meeting date isn't really prior —
+      // it's a duplicate from earlier saves. Exclude duplicates from the
+      // consistency-check comparison so we don't flag bogus diffs; they'll
+      // still appear in the list below (with a duplicate badge) so staff
+      // can spot and clean them up via the Delete buttons.
+      const priorMeaningful = priors.find((c) => (c.annual_meeting_date || '') !== (cycle.annual_meeting_date || ''));
       if (priors.length === 0) {
         priorBox.style.display = 'none';
       } else {
@@ -15409,49 +15441,61 @@ ${questionsPage}
           const refLink = c.reference_letter_path
             ? `<a href="/api/nominations/cycles/${c.id}/reference" target="_blank" rel="noopener" style="color:#1E2761; font-weight:600; text-decoration:none;">📎 Reference letter</a>`
             : `<span style="color:#94A3B8;">no reference letter on file</span>`;
+          const isDup = (c.annual_meeting_date || '') === (cycle.annual_meeting_date || '');
+          const dupBadge = isDup
+            ? `<span style="background:#fef3c7; color:#92400e; padding:1px 7px; border-radius:10px; font-size:10px; font-weight:700; margin-left:6px;">DUPLICATE — same meeting date</span>`
+            : '';
           return `
             <div style="display:flex; justify-content:space-between; align-items:center; padding:5px 0; border-top:1px solid #e2e8f0;">
               <div>
-                <a href="#" onclick="event.preventDefault(); nomOpenCycle('${c.id}'); return false;" style="color:#1E2761; font-weight:600; text-decoration:none;">${escapeHtml(c.annual_meeting_date || '')}</a>
+                <a href="#" onclick="event.preventDefault(); nomOpenCycle('${c.id}'); window.scrollTo({top:0, behavior:'smooth'}); return false;" style="color:#1E2761; font-weight:600; text-decoration:none;">${escapeHtml(c.annual_meeting_date || '')}</a>
+                ${dupBadge}
                 <span style="color:#94A3B8; margin-left:8px;">${escapeHtml(c.status)} · ${c.nominations_count || 0} nominations · ${c.seats_open} seat${c.seats_open === 1 ? '' : 's'}</span>
               </div>
               <div>${refLink}</div>
             </div>`;
         }).join('');
 
-        // Consistency check vs. most recent prior cycle. Flags fields that
-        // changed year-over-year so staff can confirm the change was
-        // intentional before mailing. seats_open is excluded — it routinely
-        // shifts based on which board terms are expiring that year.
-        const prev = priors[0];
-        const diffs = [];
-        const cmp = (label, a, b, hint) => {
-          const va = a == null ? '' : String(a);
-          const vb = b == null ? '' : String(b);
-          if (va.trim() !== vb.trim()) {
-            diffs.push({ label, prev: vb || '(empty)', curr: va || '(empty)', hint });
-          }
-        };
-        // Call-for-Nominations consistency check — only flag fields that
-        // actually affect THIS document. Voting methods, TX §209.00592, etc.
-        // belong to the separate Annual Meeting Notice phase and are
-        // compared on that cycle screen, not here.
-        cmp('Term (years)',                  cycle.term_years,                prev.term_years,                'Most communities = 3 years.');
-        cmp('Floor-noms policy',             cycle.floor_nominations_policy,  prev.floor_nominations_policy,  'Changing this requires a basis in the governing documents.');
-        cmp('Nominations close',             cycle.nominations_close_at,      prev.nominations_close_at,      'Should track the meeting date — Bedrock target is T−24.');
-        cmp('Close time',                    cycle.nominations_close_time,    prev.nominations_close_time,    null);
-        cmp('Online nomination submission',  cycle.accept_electronic,         prev.accept_electronic,         null);
-        cmp('Physical-mail nomination',      cycle.accept_physical_mail,      prev.accept_physical_mail,      null);
-        cmp('Eligibility description',       cycle.description,               prev.description,               null);
-        cmp('Expectations blurb',            cycle.expectations_blurb,        prev.expectations_blurb,        null);
-        const diffsHtml = diffs.length === 0
-          ? `<div style="font-size:11.5px; color:#15803d; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:6px;">✓ This cycle matches the prior cycle on every tracked field (seats open intentionally excluded — it shifts year-over-year).</div>`
-          : `<div style="padding:8px 10px; margin-top:8px; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:0 6px 6px 0;">
-              <div style="font-size:11.5px; font-weight:700; color:#92400e; margin-bottom:4px;">⚠ ${diffs.length} change${diffs.length === 1 ? '' : 's'} vs. ${escapeHtml(prev.annual_meeting_date || 'last cycle')} &mdash; please confirm each is intentional:</div>
-              <ul style="margin:0 0 0 18px; padding:0; font-size:11px; color:#78350f;">
-                ${diffs.map((d) => `<li><strong>${escapeHtml(d.label)}:</strong> was <code>${escapeHtml(d.prev)}</code>, now <code>${escapeHtml(d.curr)}</code>${d.hint ? ` &mdash; <em>${escapeHtml(d.hint)}</em>` : ''}</li>`).join('')}
-              </ul>
-            </div>`;
+        // Consistency check vs. the most recent prior cycle that ISN'T a
+        // same-date duplicate. Flags fields that changed year-over-year so
+        // staff can confirm the change was intentional before mailing.
+        // seats_open is excluded — it routinely shifts based on which board
+        // terms are expiring that year. If there's no meaningful prior
+        // (only duplicates), we skip the diff entirely.
+        const prev = priorMeaningful;
+        let diffsHtml = '';
+        if (!prev) {
+          diffsHtml = `<div style="font-size:11.5px; color:#94A3B8; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:6px; font-style:italic;">No prior cycle from a different year to compare against. (Duplicates with the same meeting date don't count — use Delete on the Recent Cycles list to clean them up.)</div>`;
+        } else {
+          const diffs = [];
+          const cmp = (label, a, b, hint) => {
+            const va = a == null ? '' : String(a);
+            const vb = b == null ? '' : String(b);
+            if (va.trim() !== vb.trim()) {
+              diffs.push({ label, prev: vb || '(empty)', curr: va || '(empty)', hint });
+            }
+          };
+          // Call-for-Nominations consistency check — only flag fields that
+          // actually affect THIS document. Voting methods, TX §209.00592, etc.
+          // belong to the separate Annual Meeting Notice phase and are
+          // compared on that cycle screen, not here.
+          cmp('Term (years)',                  cycle.term_years,                prev.term_years,                'Most communities = 3 years.');
+          cmp('Floor-noms policy',             cycle.floor_nominations_policy,  prev.floor_nominations_policy,  'Changing this requires a basis in the governing documents.');
+          cmp('Nominations close',             cycle.nominations_close_at,      prev.nominations_close_at,      'Should track the meeting date — Bedrock target is T−24.');
+          cmp('Close time',                    cycle.nominations_close_time,    prev.nominations_close_time,    null);
+          cmp('Online nomination submission',  cycle.accept_electronic,         prev.accept_electronic,         null);
+          cmp('Physical-mail nomination',      cycle.accept_physical_mail,      prev.accept_physical_mail,      null);
+          cmp('Eligibility description',       cycle.description,               prev.description,               null);
+          cmp('Expectations blurb',            cycle.expectations_blurb,        prev.expectations_blurb,        null);
+          diffsHtml = diffs.length === 0
+            ? `<div style="font-size:11.5px; color:#15803d; padding-top:8px; border-top:1px dashed #cbd5e1; margin-top:6px;">✓ This cycle matches ${escapeHtml(prev.annual_meeting_date || 'the prior cycle')} on every tracked field (seats open intentionally excluded — it shifts year-over-year).</div>`
+            : `<div style="padding:8px 10px; margin-top:8px; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:0 6px 6px 0;">
+                <div style="font-size:11.5px; font-weight:700; color:#92400e; margin-bottom:4px;">⚠ ${diffs.length} change${diffs.length === 1 ? '' : 's'} vs. ${escapeHtml(prev.annual_meeting_date || 'last cycle')} &mdash; please confirm each is intentional:</div>
+                <ul style="margin:0 0 0 18px; padding:0; font-size:11px; color:#78350f;">
+                  ${diffs.map((d) => `<li><strong>${escapeHtml(d.label)}:</strong> was <code>${escapeHtml(d.prev)}</code>, now <code>${escapeHtml(d.curr)}</code>${d.hint ? ` &mdash; <em>${escapeHtml(d.hint)}</em>` : ''}</li>`).join('')}
+                </ul>
+              </div>`;
+        }
         priorList.insertAdjacentHTML('beforeend', diffsHtml);
       }
       const url = `${window.location.origin}/nominate/${cycle.public_slug || cycle.id}`;

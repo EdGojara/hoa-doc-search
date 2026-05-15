@@ -4765,6 +4765,24 @@ app.get('/api/nominations/cycles/:id', async (req, res) => {
   }
 });
 
+// Delete a nomination cycle. Used to clean up duplicates / test cycles.
+// Nominations on this cycle cascade-delete via the FK ON DELETE CASCADE on
+// the nominations.cycle_id column (defined in migration 034).
+app.delete('/api/nominations/cycles/:id', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('nomination_cycles')
+      .delete()
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[nominations/cycle delete]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/nominations/cycles/:id/letter', async (req, res) => {
   try {
     const { data: cycle, error } = await supabase
