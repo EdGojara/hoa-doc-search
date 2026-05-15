@@ -5012,6 +5012,110 @@ app.delete('/api/drafts/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Board roster — single source of truth for who's on each community's board.
+//   GET    /api/board-members?community=Name
+//   POST   /api/board-members
+//   PATCH  /api/board-members/:id
+//   DELETE /api/board-members/:id   (soft = set is_active=false)
+// ============================================================================
+
+app.get('/api/board-members', async (req, res) => {
+  try {
+    let q = supabase
+      .from('board_members')
+      .select('*')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('position', { ascending: true })
+      .order('name', { ascending: true });
+    if (req.query.community) {
+      q = q.ilike('community_name', `%${req.query.community.split(' at ')[0]}%`);
+    }
+    if (req.query.active_only !== '0') q = q.eq('is_active', true);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ members: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/board-members', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_name) return res.status(400).json({ error: 'community_name is required' });
+    if (!b.name) return res.status(400).json({ error: 'name is required' });
+    const comm = await nomResolveCommunityId(b.community_name);
+    const { data, error } = await supabase
+      .from('board_members')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: comm ? comm.id : null,
+        community_name: b.community_name,
+        name: b.name,
+        position: b.position || null,
+        term_start: b.term_start || null,
+        term_end: b.term_end || null,
+        email: b.email || null,
+        phone: b.phone || null,
+        notes: b.notes || null,
+        is_active: b.is_active !== false,
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ member: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/api/board-members/:id', async (req, res) => {
+  try {
+    const allowed = ['name', 'position', 'term_start', 'term_end', 'email', 'phone', 'notes', 'is_active'];
+    const patch = {};
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k] === '' ? null : req.body[k]; });
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
+    patch.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('board_members')
+      .update(patch)
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ member: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/api/board-members/:id', async (req, res) => {
+  try {
+    // Soft delete by default — preserves historical board snapshots in cycles.
+    const hard = req.query.hard === '1';
+    if (hard) {
+      const { error } = await supabase
+        .from('board_members')
+        .delete()
+        .eq('id', req.params.id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+      if (error) return res.status(500).json({ error: error.message });
+    } else {
+      const { error } = await supabase
+        .from('board_members')
+        .update({ is_active: false, updated_at: new Date().toISOString() })
+        .eq('id', req.params.id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+      if (error) return res.status(500).json({ error: error.message });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });
