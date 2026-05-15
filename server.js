@@ -4543,9 +4543,13 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
     const b = req.body || {};
     if (!b.community_name) return res.status(400).json({ error: 'community_name is required' });
     if (!b.annual_meeting_date) return res.status(400).json({ error: 'annual_meeting_date is required' });
-    if (!b.nominations_open_at || !b.nominations_close_at) {
-      return res.status(400).json({ error: 'nominations_open_at and nominations_close_at are required' });
+    if (!b.nominations_close_at) {
+      return res.status(400).json({ error: 'nominations_close_at is required' });
     }
+    // The "open" date is the day the letter goes out — i.e., today. Open it
+    // automatically on cycle creation so the manager doesn't have to think
+    // about it as a separate field.
+    const openAt = b.nominations_open_at || new Date().toISOString().slice(0, 10);
     const comm = await nomResolveCommunityId(b.community_name);
     const slug = (b.public_slug && nomSlugify(b.public_slug)) ||
                  (comm && comm.slug) ||
@@ -4557,9 +4561,6 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
     let onsite = { enabled: false };
     try { onsite = b.onsite_drop_off ? (typeof b.onsite_drop_off === 'object' ? b.onsite_drop_off : JSON.parse(b.onsite_drop_off)) : { enabled: false }; } catch (_) { onsite = { enabled: false }; }
 
-    const bioStyle = (b.bio_prompt_style === 'structured') ? 'structured' : 'simple';
-    const proxyTeaser = !(b.proxy_teaser === '0' || b.proxy_teaser === 'false' || b.proxy_teaser === false);
-
     const { data: row, error } = await supabase
       .from('nomination_cycles')
       .insert({
@@ -4569,14 +4570,14 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
         annual_meeting_date: b.annual_meeting_date,
         annual_meeting_time: b.annual_meeting_time || null,
         annual_meeting_location: b.annual_meeting_location || null,
-        nominations_open_at: b.nominations_open_at,
+        nominations_open_at: openAt,
         nominations_close_at: b.nominations_close_at,
         seats_open: Number(b.seats_open) || 1,
         current_board: currentBoard,
         description: b.description || null,
         expectations_blurb: b.expectations_blurb || null,
-        bio_prompt_style: bioStyle,
-        proxy_teaser: proxyTeaser,
+        bio_prompt_style: 'simple',
+        proxy_teaser: true,
         onsite_drop_off: onsite,
         public_slug: slug,
         status: 'planned',

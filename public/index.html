@@ -852,13 +852,9 @@
         <input type="text" id="nomMeetingLocation" placeholder="Clubhouse / Zoom link / TBD" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
       </div>
 
-      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-top:10px;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
         <div>
-          <div class="section-label">Nominations open</div>
-          <input type="date" id="nomOpenAt" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
-        </div>
-        <div>
-          <div class="section-label">Nominations close</div>
+          <div class="section-label">Nominations close <span style="color:#94A3B8; font-weight:400;">(deadline on the letter)</span></div>
           <input type="date" id="nomCloseAt" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
         </div>
         <div>
@@ -866,6 +862,7 @@
           <input type="number" id="nomSeatsOpen" value="1" min="1" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
         </div>
       </div>
+      <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Letter is dated the day you generate it — that's the "nominations open" date. Public form auto-opens then and closes on the date above.</div>
 
       <div style="margin-top:10px;">
         <div class="section-label">Current board (one per line — Name, Position, Term Ends)</div>
@@ -875,46 +872,53 @@ Mary Lee, Treasurer, 2026" style="width:100%; border:1px solid #d0d7de; border-r
       </div>
 
       <div style="margin-top:10px;">
-        <div class="section-label">Letter context (optional — appears in the body)</div>
-        <textarea id="nomDescription" rows="3" placeholder="e.g., Two seats are open this cycle — one President seat (term ending 2026) and one At-Large seat." style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
+        <div class="section-label">Letter context (optional — extra paragraph in the body)</div>
+        <textarea id="nomDescription" rows="3" placeholder="Leave blank to use the standard wording shown below." style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
+        <details style="margin-top:4px;">
+          <summary style="font-size:11px; color:#475569; cursor:pointer;">👁️ Standard wording (used when blank)</summary>
+          <div style="font-size:12px; color:#475569; padding:6px 10px; margin-top:4px; background:#f8fafc; border-left:2px solid #CADCFC; font-style:italic; line-height:1.4;">
+            "Any homeowner in good standing is eligible to serve."
+          </div>
+        </details>
       </div>
 
       <div style="margin-top:10px;">
         <div class="section-label">What's expected of a Board member (optional override)</div>
-        <textarea id="nomExpectations" rows="3" placeholder="Leave blank for default: 'Volunteer term, ~6 meetings/year, approve budget, oversee management agent…'" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
-        <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Appears as an italicized sidebar in the letter — sets honest expectations so we get serious nominees.</div>
+        <textarea id="nomExpectations" rows="3" placeholder="Leave blank to use the standard wording shown below." style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:13px;"></textarea>
+        <details style="margin-top:4px;">
+          <summary style="font-size:11px; color:#475569; cursor:pointer;">👁️ Standard wording (used when blank)</summary>
+          <div style="font-size:12px; color:#475569; padding:6px 10px; margin-top:4px; background:#f8fafc; border-left:2px solid #CADCFC; font-style:italic; line-height:1.4;">
+            "Board members serve volunteer terms (typically two years), attend roughly six meetings a year, approve the annual budget, oversee the management agent, and represent the interests of all homeowners. No accounting background is required — Bedrock handles the books and brings the analysis. What matters most is fairness, follow-through, and a willingness to read before each meeting."
+          </div>
+        </details>
+        <div style="font-size:11px; color:#94A3B8; margin-top:2px;">Appears as an italicized sidebar in the letter.</div>
       </div>
 
       <div style="margin-top:10px; padding:10px; border:1px solid #e2e8f0; border-radius:8px; background:#f8fafc;">
-        <div class="section-label" style="margin-bottom:6px;">Bespoke options</div>
-
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
-          <label style="font-size:13px; font-weight:600; color:#334155; min-width:140px;">Bio prompt style</label>
-          <select id="nomBioStyle" style="border:1px solid #d0d7de; border-radius:6px; padding:5px 8px; font-size:13px; background:#fff;">
-            <option value="simple">Simple — one bio textarea</option>
-            <option value="structured">Structured — occupation / education / experience / why</option>
-          </select>
-        </div>
-
-        <div style="display:flex; align-items:center; gap:10px; margin-bottom:6px;">
-          <label style="font-size:13px; font-weight:600; color:#334155; min-width:140px;">Proxy teaser</label>
-          <label style="font-size:13px; color:#475569; display:flex; align-items:center; gap:6px;">
-            <input type="checkbox" id="nomProxyTeaser" checked>
-            Mention "proxy + absentee ballot to follow"
-          </label>
-        </div>
-
-        <div style="margin-top:8px; padding-top:8px; border-top:1px dashed #cbd5e1;">
-          <label style="font-size:13px; font-weight:600; color:#334155; display:flex; align-items:center; gap:6px;">
-            <input type="checkbox" id="nomOnsiteEnabled" onchange="nomToggleOnsite()">
-            On-site drop-off available
-          </label>
-          <div id="nomOnsiteFields" style="display:none; margin-top:6px; padding-left:22px;">
-            <input type="text" id="nomOnsiteLocation" placeholder="Location name (e.g., Waterview Clubhouse)" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:13px; margin-bottom:5px;">
-            <input type="text" id="nomOnsiteAddress" placeholder="Drop-off address (street, city, ZIP)" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:13px;">
-          </div>
+        <div class="section-label" style="margin-bottom:6px;">On-site drop-off (optional)</div>
+        <label style="font-size:13px; font-weight:600; color:#334155; display:flex; align-items:center; gap:6px;">
+          <input type="checkbox" id="nomOnsiteEnabled" onchange="nomToggleOnsite()">
+          This community has an on-site office or clubhouse for drop-offs
+        </label>
+        <div id="nomOnsiteFields" style="display:none; margin-top:6px; padding-left:22px;">
+          <input type="text" id="nomOnsiteLocation" placeholder="Location name (e.g., Waterview Clubhouse)" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:13px; margin-bottom:5px;">
+          <input type="text" id="nomOnsiteAddress" placeholder="Drop-off address (street, city, ZIP)" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:13px;">
         </div>
       </div>
+
+      <details style="margin-top:10px;">
+        <summary style="font-size:12px; color:#1E2761; cursor:pointer; font-weight:600;">👁️ What's always included in every letter</summary>
+        <ul style="font-size:12px; color:#475569; line-height:1.5; padding-left:18px; margin:6px 0 0;">
+          <li>Community logo + Bedrock return address (Sugar Land)</li>
+          <li>Meeting date, time, location + seats open + close date in a hero block</li>
+          <li>Oversized QR code linking to the public nomination form</li>
+          <li>Three submission paths: online (QR), email <code>info@bedrocktx.com</code>, mail to Sugar Land office</li>
+          <li>Standard "proxy and absentee ballot will follow" line</li>
+          <li>Italicized "what's expected of a Board member" sidebar (using your override or the default)</li>
+          <li>Current Board of Directors table (if you entered the board above)</li>
+          <li>Closing signed by Bedrock on behalf of the community's Board</li>
+        </ul>
+      </details>
 
       <div style="margin-top:10px;">
         <div class="section-label">Reference: prior year letter (optional)</div>
@@ -13149,9 +13153,8 @@ ${questionsPage}
     const community = nomSelectedCommunity();
     if (!community) { alert('Pick a community first (top of page).'); return; }
     const meeting = document.getElementById('nomMeetingDate').value;
-    const open    = document.getElementById('nomOpenAt').value;
     const close   = document.getElementById('nomCloseAt').value;
-    if (!meeting || !open || !close) { alert('Annual meeting date and nominations open/close dates are required.'); return; }
+    if (!meeting || !close) { alert('Annual meeting date and nominations close date are required.'); return; }
 
     const onsiteEnabled = document.getElementById('nomOnsiteEnabled').checked;
     const onsite = onsiteEnabled ? {
@@ -13165,14 +13168,11 @@ ${questionsPage}
     fd.append('annual_meeting_date', meeting);
     fd.append('annual_meeting_time', document.getElementById('nomMeetingTime').value || '');
     fd.append('annual_meeting_location', document.getElementById('nomMeetingLocation').value || '');
-    fd.append('nominations_open_at', open);
     fd.append('nominations_close_at', close);
     fd.append('seats_open', String(Number(document.getElementById('nomSeatsOpen').value || 1)));
     fd.append('current_board', JSON.stringify(nomParseBoard(document.getElementById('nomCurrentBoard').value)));
     fd.append('description', document.getElementById('nomDescription').value || '');
     fd.append('expectations_blurb', document.getElementById('nomExpectations').value || '');
-    fd.append('bio_prompt_style', document.getElementById('nomBioStyle').value || 'simple');
-    fd.append('proxy_teaser', document.getElementById('nomProxyTeaser').checked ? '1' : '0');
     fd.append('onsite_drop_off', JSON.stringify(onsite));
     fd.append('public_slug', (document.getElementById('nomPublicSlug').value || '').trim());
     const refFile = document.getElementById('nomReferenceLetter').files[0];
@@ -13239,7 +13239,7 @@ ${questionsPage}
     document.getElementById('nomLetterBtn').style.opacity = '1';
     if (cycle) {
       document.getElementById('nomPanelTitle').textContent = `${cycle.community_name} — ${cycle.annual_meeting_date}`;
-      document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'} · ${cycle.bio_prompt_style || 'simple'} bio`;
+      document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'}`;
       const url = `${window.location.origin}/nominate/${cycle.public_slug || cycle.id}`;
       const refLink = cycle.reference_letter_path
         ? ` &nbsp;·&nbsp; <a href="/api/nominations/cycles/${cycle.id}/reference" target="_blank" rel="noopener">📎 Prior year letter</a>`
@@ -13261,39 +13261,24 @@ ${questionsPage}
         list.textContent = 'No nominations submitted yet. Homeowners can submit at the public link above.';
         return;
       }
-      list.innerHTML = noms.map((n) => {
-        const structured = (n.occupation || n.education || n.outside_activities || n.asset_reason);
-        const structuredHtml = structured ? `
-          <div style="margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761; font-size:12px; color:#334155; line-height:1.5;">
-            ${n.occupation         ? `<div><b>Occupation:</b> ${escapeHtml(n.occupation)}</div>` : ''}
-            ${n.education          ? `<div><b>Education:</b> ${escapeHtml(n.education)}</div>` : ''}
-            ${n.outside_activities ? `<div><b>Outside activities / prior board:</b> ${escapeHtml(n.outside_activities)}</div>` : ''}
-            ${n.asset_reason       ? `<div><b>Why they'd be an asset:</b> ${escapeHtml(n.asset_reason)}</div>` : ''}
-          </div>
-        ` : '';
-        const bioHtml = (!structured && n.nominee_bio)
-          ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761;">${escapeHtml(n.nominee_bio)}</div>`
-          : '';
-        return `
-          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
-            <div style="display:flex; justify-content:space-between; align-items:flex-start;">
-              <div style="flex:1;">
-                <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
-                <div style="font-size:12px; color:#6B7280;">${escapeHtml(n.nominee_address)}${n.nominee_email ? ' · ' + escapeHtml(n.nominee_email) : ''}${n.nominee_phone ? ' · ' + escapeHtml(n.nominee_phone) : ''}</div>
-                <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
-                  ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(n.nominator_name || 'unknown')}
-                  · submitted ${new Date(n.signed_at).toLocaleString()}
-                </div>
-                ${bioHtml}
-                ${structuredHtml}
+      list.innerHTML = noms.map((n) => `
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px; background:#fff;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+            <div style="flex:1;">
+              <div style="font-weight:700; color:#1E2761;">${escapeHtml(n.nominee_name)}</div>
+              <div style="font-size:12px; color:#6B7280;">${escapeHtml(n.nominee_address)}${n.nominee_email ? ' · ' + escapeHtml(n.nominee_email) : ''}${n.nominee_phone ? ' · ' + escapeHtml(n.nominee_phone) : ''}</div>
+              <div style="font-size:11px; color:#94A3B8; margin-top:2px;">
+                ${n.is_self_nomination ? 'Self-nomination' : 'Nominated by ' + escapeHtml(n.nominator_name || 'unknown')}
+                · submitted ${new Date(n.signed_at).toLocaleString()}
               </div>
-              <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px; margin-left:8px;">
-                ${['submitted','verified','on_slate','withdrawn','rejected'].map(s => `<option value="${s}" ${s===n.status?'selected':''}>${s}</option>`).join('')}
-              </select>
+              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761;">${escapeHtml(n.nominee_bio)}</div>` : ''}
             </div>
+            <select onchange="nomUpdateStatus('${n.id}', this.value)" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:6px; margin-left:8px;">
+              ${['submitted','verified','on_slate','withdrawn','rejected'].map(s => `<option value="${s}" ${s===n.status?'selected':''}>${s}</option>`).join('')}
+            </select>
           </div>
-        `;
-      }).join('');
+        </div>
+      `).join('');
     } catch (e) {
       document.getElementById('nomList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     }
@@ -13536,14 +13521,11 @@ ${questionsPage}
         annual_meeting_date:      document.getElementById('nomMeetingDate').value,
         annual_meeting_time:      document.getElementById('nomMeetingTime').value,
         annual_meeting_location:  document.getElementById('nomMeetingLocation').value,
-        nominations_open_at:      document.getElementById('nomOpenAt').value,
         nominations_close_at:     document.getElementById('nomCloseAt').value,
         seats_open:               document.getElementById('nomSeatsOpen').value,
         current_board:            document.getElementById('nomCurrentBoard').value,
         description:              document.getElementById('nomDescription').value,
         expectations_blurb:       document.getElementById('nomExpectations').value,
-        bio_prompt_style:         document.getElementById('nomBioStyle').value,
-        proxy_teaser:             document.getElementById('nomProxyTeaser').checked,
         onsite_enabled:           document.getElementById('nomOnsiteEnabled').checked,
         onsite_location:          document.getElementById('nomOnsiteLocation').value,
         onsite_address:           document.getElementById('nomOnsiteAddress').value,
@@ -13562,17 +13544,14 @@ ${questionsPage}
       set('nomMeetingDate',     s.annual_meeting_date);
       set('nomMeetingTime',     s.annual_meeting_time);
       set('nomMeetingLocation', s.annual_meeting_location);
-      set('nomOpenAt',          s.nominations_open_at);
       set('nomCloseAt',         s.nominations_close_at);
       set('nomSeatsOpen',       s.seats_open);
       set('nomCurrentBoard',    s.current_board);
       set('nomDescription',     s.description);
       set('nomExpectations',    s.expectations_blurb);
-      set('nomBioStyle',        s.bio_prompt_style || 'simple');
       set('nomOnsiteLocation',  s.onsite_location);
       set('nomOnsiteAddress',   s.onsite_address);
       set('nomPublicSlug',      s.public_slug);
-      document.getElementById('nomProxyTeaser').checked  = !!s.proxy_teaser;
       document.getElementById('nomOnsiteEnabled').checked = !!s.onsite_enabled;
       try { nomToggleOnsite(); } catch (_) {}
       try { switchTab('nominations'); } catch (_) {}
