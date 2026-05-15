@@ -4561,6 +4561,10 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
     let onsite = { enabled: false };
     try { onsite = b.onsite_drop_off ? (typeof b.onsite_drop_off === 'object' ? b.onsite_drop_off : JSON.parse(b.onsite_drop_off)) : { enabled: false }; } catch (_) { onsite = { enabled: false }; }
 
+    // Submission methods — default both true if missing (legacy / unset).
+    const acceptElectronic   = !(b.accept_electronic === '0' || b.accept_electronic === 'false' || b.accept_electronic === false);
+    const acceptPhysicalMail = !(b.accept_physical_mail === '0' || b.accept_physical_mail === 'false' || b.accept_physical_mail === false);
+
     const { data: row, error } = await supabase
       .from('nomination_cycles')
       .insert({
@@ -4579,6 +4583,8 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
         bio_prompt_style: 'simple',
         proxy_teaser: true,
         onsite_drop_off: onsite,
+        accept_electronic: acceptElectronic,
+        accept_physical_mail: acceptPhysicalMail,
         public_slug: slug,
         status: 'planned',
       })

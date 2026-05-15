@@ -854,11 +854,27 @@
         <input type="text" id="nomVenueCityZip" placeholder="City, State ZIP" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
       </div>
 
+      <!-- Submission methods we'll accept from homeowners on this cycle.
+           Drives the work-backwards "send-by" date in the timeline AND the
+           submission options printed on the letter. -->
+      <div style="margin-top:12px; padding:10px 14px; background:#fff; border:1px solid #d0d7de; border-radius:8px;">
+        <div style="font-size:12.5px; font-weight:700; color:#1E2761; margin-bottom:6px;">📥 How homeowners can submit nominations</div>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; margin-bottom:4px; cursor:pointer;">
+          <input type="checkbox" id="nomAcceptElectronic" checked onchange="nomRenderTimeline()">
+          <span><strong>Online</strong> (QR code on letter + email to info@bedrocktx.com)<span style="color:#94A3B8;"> — send by close − 14 days</span></span>
+        </label>
+        <label style="display:flex; align-items:center; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
+          <input type="checkbox" id="nomAcceptPhysicalMail" checked onchange="nomRenderTimeline()">
+          <span><strong>Physical mail</strong> (homeowner returns the nomination by USPS)<span style="color:#94A3B8;"> — send by close − 21 days (mail round-trip)</span></span>
+        </label>
+      </div>
+
       <!-- Annual meeting timeline — computed from the meeting date.
            Texas Property Code §209.0056 requires notice 10-60 days before
            the meeting. Bedrock's operational target: notice mailed 17 days
            before (7-day buffer against print/USPS delays); nominations
-           close 24 days before (7 days to package the mailing). -->
+           close 24 days before (7 days to package the mailing). Send-by
+           date works back from close based on accepted submission methods. -->
       <div id="nomTimelinePanel" style="display:none; margin-top:12px; padding:12px 14px; background:#f8fafc; border:1px solid #c0d0e0; border-radius:8px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <div style="font-weight:700; color:#1E2761; font-size:13px;">📅 Annual meeting timeline</div>
@@ -866,7 +882,7 @@
         </div>
         <div id="nomTimelineBody" style="font-size:12.5px; color:#334155; line-height:1.7;"></div>
         <div style="margin-top:6px; padding-top:6px; border-top:1px dashed #cbd5e1; font-size:10.5px; color:#94A3B8; font-style:italic;">
-          Texas Property Code §209.0056 — notice must be sent 10-60 days before the meeting. Bedrock targets T−17 to mail and T−24 to close nominations (7-day buffers).
+          Texas Property Code §209.0056 — notice must be sent 10-60 days before the meeting. Bedrock targets T−17 to mail and T−24 to close nominations (7-day buffers). Send-by works back from close: 14 days for electronic, 21 days for mail-back.
         </div>
       </div>
 
@@ -13494,6 +13510,11 @@ ${questionsPage}
   const NOM_BUFFER_CLOSE_DAYS = 24;
   const NOM_STATUTORY_MIN_DAYS = 10;
   const NOM_STATUTORY_MAX_DAYS = 60;
+  // Work-backwards window from nominations close → "send by" the call letter.
+  // 14 days for electronic-only (homeowner submits same day they read the letter).
+  // 21 days when mail-back is accepted (extra 7 days for USPS round-trip).
+  const NOM_SEND_BY_ELECTRONIC_DAYS = 14;
+  const NOM_SEND_BY_PHYSICAL_DAYS   = 21;
 
   function nomAddDays(dateStr, deltaDays) {
     if (!dateStr) return null;
@@ -13529,12 +13550,36 @@ ${questionsPage}
     const statutoryEarliest = nomAddDays(meeting, -NOM_STATUTORY_MAX_DAYS);
     const userClose = document.getElementById('nomCloseAt').value;
 
+    // Work-backwards: send-by date depends on which submission methods we accept.
+    // Binding constraint = the longer of the accepted windows.
+    const acceptElectronic = document.getElementById('nomAcceptElectronic').checked;
+    const acceptPhysical   = document.getElementById('nomAcceptPhysicalMail').checked;
+    const effectiveClose   = userClose || closeRecommended;
+    const sendByElectronic = effectiveClose ? nomAddDays(effectiveClose, -NOM_SEND_BY_ELECTRONIC_DAYS) : null;
+    const sendByPhysical   = effectiveClose ? nomAddDays(effectiveClose, -NOM_SEND_BY_PHYSICAL_DAYS)   : null;
+    let bindingSendBy = null;
+    let bindingLabel = '';
+    if (acceptPhysical && sendByPhysical) {
+      bindingSendBy = sendByPhysical;
+      bindingLabel = `T−${NOM_SEND_BY_PHYSICAL_DAYS} (mail-back)`;
+    } else if (acceptElectronic && sendByElectronic) {
+      bindingSendBy = sendByElectronic;
+      bindingLabel = `T−${NOM_SEND_BY_ELECTRONIC_DAYS} (electronic)`;
+    }
+
     // Warnings
     let warnings = [];
+    if (!acceptElectronic && !acceptPhysical) {
+      warnings.push(`🛑 No submission methods are accepted — at least one must be checked above.`);
+    }
     if (closeRecommended < today) {
       warnings.push(`⚠️ The recommended close date is already in the past — meeting is too soon for a clean cycle (need at least ${NOM_BUFFER_CLOSE_DAYS} days). Consider rescheduling.`);
     } else if (closeRecommended === today || nomAddDays(today, 14) > closeRecommended) {
       warnings.push(`⚠️ Tight window — homeowners get fewer than 14 days to nominate. Consider pushing the meeting out, or accept the shorter window.`);
+    }
+    if (bindingSendBy && bindingSendBy < today) {
+      const slip = Math.round((new Date(today) - new Date(bindingSendBy)) / (1000 * 60 * 60 * 24));
+      warnings.push(`🛑 The Call for Nominations was due ${slip} day${slip === 1 ? '' : 's'} ago (${nomFmtFullDate(bindingSendBy)}) for the ${bindingLabel} window. Either push the close date out, drop mail-back, or reduce the response window.`);
     }
     if (userClose && userClose > statutoryLatest) {
       warnings.push(`🛑 The close date you set (${nomFmtFullDate(userClose)}) leaves less than ${NOM_STATUTORY_MIN_DAYS} days to mail notice — would violate §209.0056. Close must be on or before ${nomFmtFullDate(statutoryLatest)}.`);
@@ -13543,13 +13588,32 @@ ${questionsPage}
       warnings.push(`⚠️ Your close date is ${slipDays} day${slipDays === 1 ? '' : 's'} after Bedrock's target — you'll have less buffer to package the mailing.`);
     }
 
-    body.innerHTML = `
-      <div style="display:grid; grid-template-columns: 100px 1fr; gap:4px 12px;">
-        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">Today</div>
-        <div>Send the Call for Nominations now</div>
+    // Build the send-by rows (one or two depending on what's accepted).
+    let sendByRows = '';
+    if (acceptPhysical && sendByPhysical) {
+      const isBinding = bindingSendBy === sendByPhysical;
+      sendByRows += `
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−${NOM_SEND_BY_PHYSICAL_DAYS}${isBinding ? ' ★' : ''}</div>
+        <div>${isBinding ? '<strong>' : ''}${nomFmtFullDate(sendByPhysical)} — Send Call for Nominations by here (mail-back homeowners)${isBinding ? '</strong> ← binding constraint' : ''}</div>
+      `;
+    }
+    if (acceptElectronic && sendByElectronic) {
+      const isBinding = bindingSendBy === sendByElectronic && !acceptPhysical;
+      sendByRows += `
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−${NOM_SEND_BY_ELECTRONIC_DAYS}${isBinding ? ' ★' : ''}</div>
+        <div>${isBinding ? '<strong>' : ''}${nomFmtFullDate(sendByElectronic)} — Send by here for electronic submission only${isBinding ? '</strong> ← binding constraint' : ''}</div>
+      `;
+    }
 
-        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−24 ★</div>
-        <div><strong>${nomFmtFullDate(closeRecommended)}</strong> — Bedrock-recommended nominations close</div>
+    body.innerHTML = `
+      <div style="display:grid; grid-template-columns: 110px 1fr; gap:4px 12px;">
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">Today</div>
+        <div>${nomFmtFullDate(today)}</div>
+
+        ${sendByRows}
+
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−24${userClose ? '' : ' ★'}</div>
+        <div>${userClose ? '' : '<strong>'}${nomFmtFullDate(closeRecommended)} — Bedrock-recommended nominations close${userClose ? '' : '</strong>'}</div>
 
         <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−17</div>
         <div>${nomFmtFullDate(mailTarget)} — annual meeting package mails (proxy / ballot / bios)</div>
@@ -13654,6 +13718,8 @@ ${questionsPage}
     fd.append('description', document.getElementById('nomDescription').value || '');
     fd.append('expectations_blurb', document.getElementById('nomExpectations').value || '');
     fd.append('onsite_drop_off', JSON.stringify(onsite));
+    fd.append('accept_electronic',    document.getElementById('nomAcceptElectronic').checked ? '1' : '0');
+    fd.append('accept_physical_mail', document.getElementById('nomAcceptPhysicalMail').checked ? '1' : '0');
     fd.append('public_slug', (document.getElementById('nomPublicSlug').value || '').trim());
     const refFile = document.getElementById('nomReferenceLetter').files[0];
     if (refFile) fd.append('reference_letter', refFile);
@@ -14010,6 +14076,8 @@ ${questionsPage}
         onsite_enabled:           document.getElementById('nomOnsiteEnabled').checked,
         onsite_location:          document.getElementById('nomOnsiteLocation').value,
         onsite_address:           document.getElementById('nomOnsiteAddress').value,
+        accept_electronic:        document.getElementById('nomAcceptElectronic').checked,
+        accept_physical_mail:     document.getElementById('nomAcceptPhysicalMail').checked,
         public_slug:              document.getElementById('nomPublicSlug').value,
       };
       const files = [];
@@ -14036,6 +14104,8 @@ ${questionsPage}
       set('nomOnsiteAddress',   s.onsite_address);
       set('nomPublicSlug',      s.public_slug);
       document.getElementById('nomOnsiteEnabled').checked = !!s.onsite_enabled;
+      document.getElementById('nomAcceptElectronic').checked    = s.accept_electronic    !== false;
+      document.getElementById('nomAcceptPhysicalMail').checked  = s.accept_physical_mail !== false;
       try { nomToggleOnsite(); } catch (_) {}
       try { switchTab('nominations'); } catch (_) {}
       try { nomLoadRoster(); } catch (_) {}
