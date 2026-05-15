@@ -5476,6 +5476,49 @@ app.get('/api/performance/acc', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Auth — client-side bootstrap config.
+// Exposes the Supabase public URL + anon key so the browser can initialize
+// Supabase Auth. Both values are designed for public exposure (the anon key
+// is the "anon" key on purpose; service-role stays server-only).
+// ============================================================================
+app.get('/api/auth/config', (req, res) => {
+  res.json({
+    supabase_url: process.env.SUPABASE_URL || '',
+    supabase_anon_key: process.env.SUPABASE_ANON_KEY || '',
+    enabled: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
+  });
+});
+
+// ============================================================================
+// /api/me — current user profile (role + identity) for the signed-in user.
+// Accepts the Supabase JWT in Authorization: Bearer <token>; if missing or
+// invalid, returns 401. Read-only — UI uses this for the "Signed in as X"
+// pill and to gate admin-only controls client-side.
+// ============================================================================
+app.get('/api/me', async (req, res) => {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!token) return res.status(401).json({ error: 'not_authenticated' });
+
+    // Validate by asking Supabase who this token belongs to.
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return res.status(401).json({ error: 'invalid_token' });
+
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('id, email, full_name, role, is_active, last_sign_in_at, created_at')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (!profile) return res.json({ user: { id: user.id, email: user.email, full_name: null, role: 'staff', is_active: true, last_sign_in_at: null } });
+    res.json({ user: profile });
+  } catch (err) {
+    console.error('[/api/me]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });

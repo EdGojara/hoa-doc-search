@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Sign in — trustEd by Bedrock</title>
+  <meta name="theme-color" content="#1E2761" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body {
+      margin: 0; padding: 0;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      background: linear-gradient(135deg, #1E2761 0%, #2F3C7E 100%);
+      color: #1f2937;
+      min-height: 100dvh;
+    }
+    .center {
+      min-height: 100dvh;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px 18px;
+    }
+    .card {
+      background: #fff;
+      border-radius: 14px;
+      box-shadow: 0 20px 50px rgba(15, 23, 42, 0.25);
+      max-width: 420px;
+      width: 100%;
+      padding: 34px 30px 28px;
+      text-align: center;
+    }
+    .brand { display: flex; align-items: center; justify-content: center; gap: 10px; margin-bottom: 18px; }
+    .brand-mark {
+      width: 44px; height: 44px; border-radius: 9px; background: #1E2761; color: #fff;
+      display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 18px;
+    }
+    .brand-name { font-weight: 700; font-size: 18px; color: #0f172a; }
+    .brand-sub  { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.4px; text-transform: uppercase; }
+
+    h1 { font-size: 22px; font-weight: 700; margin: 0 0 6px; color: #0f172a; }
+    .lede { font-size: 14px; color: #475569; margin: 0 0 24px; line-height: 1.5; }
+
+    .ms-btn {
+      display: inline-flex; align-items: center; justify-content: center; gap: 10px;
+      background: #fff; border: 1px solid #cbd5e1; border-radius: 8px;
+      padding: 12px 16px; width: 100%;
+      font: inherit; font-size: 15px; font-weight: 600; color: #1a1a1a;
+      cursor: pointer; transition: background 0.15s, border-color 0.15s;
+    }
+    .ms-btn:hover:not(:disabled) { background: #f8fafc; border-color: #94a3b8; }
+    .ms-btn:disabled { opacity: 0.55; cursor: wait; }
+    .ms-logo { width: 18px; height: 18px; }
+
+    .meta { font-size: 11.5px; color: #64748b; margin-top: 18px; line-height: 1.5; }
+    .meta a { color: #1E2761; text-decoration: none; font-weight: 600; }
+    .meta a:hover { text-decoration: underline; }
+
+    .err {
+      margin-top: 14px; padding: 10px 12px;
+      background: #fee2e2; color: #991b1b; border-radius: 8px;
+      font-size: 13px; text-align: left;
+      display: none;
+    }
+    .err.show { display: block; }
+
+    .pending {
+      margin-top: 16px; padding: 12px 14px;
+      background: #f8fafc; border-left: 3px solid #1E2761;
+      border-radius: 0 6px 6px 0;
+      font-size: 12.5px; color: #475569; text-align: left; line-height: 1.6;
+      display: none;
+    }
+    .pending.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="center">
+    <div class="card">
+      <div class="brand">
+        <div class="brand-mark">B</div>
+        <div style="text-align:left;">
+          <div class="brand-name">trustEd</div>
+          <div class="brand-sub">A Bedrock intelligence platform</div>
+        </div>
+      </div>
+
+      <h1>Sign in to continue</h1>
+      <p class="lede">trustEd is for Bedrock team members. Sign in with your Microsoft 365 account.</p>
+
+      <button class="ms-btn" id="msSignInBtn" onclick="signInWithMicrosoft()">
+        <svg class="ms-logo" viewBox="0 0 23 23" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+          <rect width="10" height="10" x="1"  y="1"  fill="#F25022"/>
+          <rect width="10" height="10" x="12" y="1"  fill="#7FBA00"/>
+          <rect width="10" height="10" x="1"  y="12" fill="#00A4EF"/>
+          <rect width="10" height="10" x="12" y="12" fill="#FFB900"/>
+        </svg>
+        Sign in with Microsoft
+      </button>
+
+      <div class="err" id="loginErr"></div>
+
+      <div class="pending" id="loginPending">
+        ⏳ Redirecting you to Microsoft to sign in…
+      </div>
+
+      <p class="meta">
+        Homeowner? You don't need to sign in. Use the link your community sent you (ARC form, nominations form, status lookup, etc.).<br><br>
+        Trouble signing in? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a>.
+      </p>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    let supa = null;
+
+    async function initAuth() {
+      // Pull the Supabase URL + anon key from the server so we don't hard-code env values.
+      const r = await fetch('/api/auth/config');
+      const cfg = await r.json();
+      if (!cfg.enabled) {
+        showErr('Authentication is not configured on this server yet. Ask Ed to set SUPABASE_URL and SUPABASE_ANON_KEY on Render and enable the Microsoft (Azure) provider in Supabase Auth.');
+        document.getElementById('msSignInBtn').disabled = true;
+        return;
+      }
+      supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+
+      // If we just came back from OAuth, the URL has the session in the hash.
+      // The SDK picks it up automatically; we just need to check the session
+      // and redirect into the app.
+      const { data: { session } } = await supa.auth.getSession();
+      if (session) {
+        window.location.replace('/');
+      }
+    }
+
+    async function signInWithMicrosoft() {
+      const btn = document.getElementById('msSignInBtn');
+      const pending = document.getElementById('loginPending');
+      const err = document.getElementById('loginErr');
+      err.classList.remove('show');
+      pending.classList.add('show');
+      btn.disabled = true;
+      try {
+        const { error } = await supa.auth.signInWithOAuth({
+          provider: 'azure',
+          options: {
+            redirectTo: window.location.origin + '/',
+            scopes: 'email openid profile'
+          }
+        });
+        if (error) throw error;
+        // Supabase navigates to Microsoft; this code typically doesn't return.
+      } catch (e) {
+        pending.classList.remove('show');
+        btn.disabled = false;
+        showErr(e.message || 'Could not start sign-in. Try again, or contact info@bedrocktx.com.');
+      }
+    }
+
+    function showErr(msg) {
+      const err = document.getElementById('loginErr');
+      err.textContent = msg;
+      err.classList.add('show');
+    }
+
+    initAuth();
+  </script>
+</body>
+</html>

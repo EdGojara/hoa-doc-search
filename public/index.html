@@ -200,7 +200,76 @@
     .vw-actions-row { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
   </style>
 </head>
-<body>
+<body style="visibility:hidden;">
+
+<!-- =============================================================================
+     Auth bootstrap. Before the app is shown, we check for a Supabase session.
+     If there's no session, redirect to /login.html. Public homeowner pages
+     (apply.html, nominate.html, fob, status) bypass this — they don't include
+     this script.
+     ============================================================================= -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  // Global, set during init so the rest of the app can call window.supa
+  window.supa = null;
+  window.currentUser = null;
+
+  (async function bootAuth() {
+    try {
+      const cfgRes = await fetch('/api/auth/config');
+      const cfg = await cfgRes.json();
+      if (!cfg.enabled) {
+        // Auth not configured yet — let the app load so Ed can finish setup.
+        // (Once SUPABASE_ANON_KEY is set on Render, this branch goes away.)
+        console.warn('[auth] Supabase not configured; running in legacy mode');
+        document.body.style.visibility = 'visible';
+        return;
+      }
+      window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (!session) {
+        window.location.replace('/login.html');
+        return;
+      }
+      // Fetch the user_profile row (role, full_name) from our server, which
+      // validates the JWT and joins to user_profiles.
+      const meRes = await fetch('/api/me', { headers: { Authorization: `Bearer ${session.access_token}` } });
+      if (!meRes.ok) {
+        // Token rejected — likely expired. Kick to login.
+        await window.supa.auth.signOut();
+        window.location.replace('/login.html');
+        return;
+      }
+      const me = (await meRes.json()).user;
+      window.currentUser = me;
+      // Populate the header pill
+      const pill = document.getElementById('authPill');
+      if (pill) {
+        pill.style.display = 'inline-flex';
+        document.getElementById('authPillName').textContent = me.full_name || me.email;
+        document.getElementById('authPillRole').textContent = me.role;
+        const initials = (me.full_name || me.email || 'U')
+          .split(/\s+/).map(p => p[0]).join('').slice(0, 2).toUpperCase();
+        document.getElementById('authPillAvatar').textContent = initials;
+        // Hide admin-only UI (set data-admin-only on any element to mark it admin-only)
+        if (me.role !== 'admin') {
+          document.querySelectorAll('[data-admin-only]').forEach((el) => { el.style.display = 'none'; });
+        }
+      }
+      document.body.style.visibility = 'visible';
+    } catch (e) {
+      console.error('[auth] bootstrap failed', e);
+      // Don't trap the user — let the app load. They can sign out manually
+      // from the dev console if needed.
+      document.body.style.visibility = 'visible';
+    }
+  })();
+
+  async function authSignOut() {
+    try { if (window.supa) await window.supa.auth.signOut(); } catch (_) {}
+    window.location.replace('/login.html');
+  }
+</script>
 
 <div class="header">
   <div class="header-icon">🏠</div>
@@ -209,6 +278,14 @@
     <p>A bEdrock intelligence platform</p>
   </div>
   <div class="header-spacer"></div>
+  <div id="authPill" style="display:none; align-items:center; gap:8px; padding:6px 10px; background:rgba(255,255,255,0.12); border:1px solid rgba(255,255,255,0.25); border-radius:8px; color:#fff; font-size:12px; margin-right:8px;">
+    <span id="authPillAvatar" style="width:24px; height:24px; border-radius:50%; background:#CADCFC; color:#1E2761; display:flex; align-items:center; justify-content:center; font-weight:700; font-size:11px;">B</span>
+    <div style="line-height:1.2;">
+      <div id="authPillName" style="font-weight:600;">—</div>
+      <div id="authPillRole" style="font-size:10px; opacity:0.85; text-transform:uppercase; letter-spacing:0.5px;">staff</div>
+    </div>
+    <button onclick="authSignOut()" title="Sign out" style="background:none; border:0; color:#fff; cursor:pointer; padding:2px 6px; border-radius:4px; font-size:11px; opacity:0.85;">↪ Sign out</button>
+  </div>
   <a class="header-voice-link" href="/voice.html" title="Open voice askEd — install to your phone's home screen for one-tap field access">
     🎙️ Voice askEd
   </a>
