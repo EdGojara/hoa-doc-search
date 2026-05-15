@@ -749,25 +749,47 @@ router.get('/legacy/list', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/asked-coverage', async (req, res) => {
   try {
-    const [{ data: libs }, { data: chunks }] = await Promise.all([
-      supabase
-        .from('library_documents')
-        .select('id, community_id, category, status, communities:community_id(name)')
-        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-        .neq('status', 'missing')
-        .not('file_path', 'is', null),
-      supabase
-        .from('documents')
-        .select('metadata'),
-    ]);
+    // Pull library docs once (small set).
+    const { data: libs, error: libsErr } = await supabase
+      .from('library_documents')
+      .select('id, community_id, category, status, communities:community_id(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .neq('status', 'missing')
+      .not('file_path', 'is', null);
+    if (libsErr) return res.status(500).json({ error: libsErr.message });
+
+    // Paginate chunks. Supabase / PostgREST caps a single .select() at 1000
+    // rows by default; LPF alone has 840+ legacy chunks, which used to
+    // saturate that cap and leave the rest invisible. Page through everything.
     const indexedIds = new Set();
     const communityChunkCount = {};
-    for (const c of chunks || []) {
-      const meta = c.metadata || {};
-      if (meta.library_document_id) indexedIds.add(meta.library_document_id);
-      const name = meta.community;
-      if (name) communityChunkCount[name] = (communityChunkCount[name] || 0) + 1;
+    const PAGE = 1000;
+    let from = 0;
+    while (true) {
+      const { data: page, error: pErr } = await supabase
+        .from('documents')
+        .select('metadata')
+        .range(from, from + PAGE - 1);
+      if (pErr) {
+        console.warn('[asked-coverage] page error at offset', from, pErr.message);
+        break;
+      }
+      if (!page || page.length === 0) break;
+      for (const c of page) {
+        const meta = c.metadata || {};
+        if (meta.library_document_id) indexedIds.add(meta.library_document_id);
+        const name = meta.community;
+        if (name) communityChunkCount[name] = (communityChunkCount[name] || 0) + 1;
+      }
+      if (page.length < PAGE) break; // last page
+      from += PAGE;
+      // Safety stop — if chunks ever balloon, abort to avoid pulling forever.
+      if (from > 100000) {
+        console.warn('[asked-coverage] hit safety stop at 100k chunks');
+        break;
+      }
     }
+
     const byCommunity = {};
     for (const d of libs || []) {
       const name = (d.communities && d.communities.name) || 'Unknown';
@@ -779,7 +801,11 @@ router.get('/asked-coverage', async (req, res) => {
     for (const name of Object.keys(byCommunity)) {
       byCommunity[name].chunks_total = communityChunkCount[name] || 0;
     }
-    res.json({ by_community: Object.values(byCommunity).sort((a, b) => a.name.localeCompare(b.name)) });
+    res.json({
+      by_community: Object.values(byCommunity).sort((a, b) => a.name.localeCompare(b.name)),
+      total_chunks_scanned: from + (indexedIds.size > 0 ? indexedIds.size : 0),
+      total_library_indexed_ids: indexedIds.size,
+    });
   } catch (err) {
     console.error('[documents/asked-coverage]', err);
     res.status(500).json({ error: err.message });
