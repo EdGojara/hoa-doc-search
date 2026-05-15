@@ -572,14 +572,28 @@ PROHIBITED LANGUAGE IN ALL COMMUNICATIONS:
 - Never use cold corporate language with homeowners — warm and professional always
 `;
 
+// Community-name variations so a question filed under "Canyon Gate at Cinco
+// Ranch" still pulls chunks tagged "Canyon Gate" (an earlier ingest may have
+// used a shorter name). Generates the full name, leading segment before " at ",
+// and the same with trailing entity types stripped.
+function _communityNameVariations(name) {
+  const out = new Set();
+  if (!name) return [];
+  out.add(name);
+  const head = name.split(/\s+at\s+|\s+—\s+/i)[0].trim();
+  if (head) out.add(head);
+  const stripped = head.replace(/\s+(?:HOA|Inc\.?|LLC|Homeowners?\s+Association)$/i, '').trim();
+  if (stripped) out.add(stripped);
+  return [...out];
+}
+
 async function getRelevantChunks(text, community) {
   const embeddingResponse = await openai.embeddings.create({
     model: 'text-embedding-ada-002',
     input: text.replace(/\n/g, ' ').slice(0, 8000)
   });
   const queryEmbedding = embeddingResponse.data[0].embedding;
-  const communities = ['Law', 'General'];
-  if (community) communities.push(community);
+  const communities = ['Law', 'General', ..._communityNameVariations(community)];
   const { data: chunks, error } = await supabase.rpc('match_documents', {
     query_embedding: queryEmbedding,
     match_count: 15,
@@ -589,6 +603,141 @@ async function getRelevantChunks(text, community) {
   return (chunks || []).map(row =>
     `[From: ${row.metadata?.filename} - ${row.metadata?.community}]\n${row.content}`
   ).join('\n\n---\n\n');
+}
+
+// ============================================================================
+// LIBRARY → CHUNKS bridge.
+// library_documents (Documents Tracker) stores the canonical PDF + metadata.
+// documents (legacy vector index) stores chunks askEd actually searches.
+// Without this bridge, anything uploaded via the UI was invisible to askEd
+// even though the matrix showed a green checkmark — caught when askEd told
+// Ed "the By-Laws aren't in the current document set" for Canyon Gate.
+// ============================================================================
+const _lazyMammoth = () => require('mammoth');
+
+async function extractFullTextFromFile(buffer, filename) {
+  const ext = (filename || '').toLowerCase().match(/\.(\w+)$/)?.[1] || 'pdf';
+  if (ext === 'pdf') {
+    try {
+      const data = await pdfParse(buffer);
+      return data.text || '';
+    } catch (e) {
+      console.warn('[reindex] pdf-parse failed for', filename, e.message);
+      return '';
+    }
+  }
+  if (ext === 'docx' || ext === 'doc') {
+    try {
+      const mammoth = _lazyMammoth();
+      const result = await mammoth.extractRawText({ buffer });
+      return result.value || '';
+    } catch (e) {
+      console.warn('[reindex] mammoth failed for', filename, e.message);
+      return '';
+    }
+  }
+  if (ext === 'txt') {
+    try { return buffer.toString('utf8'); } catch (_) { return ''; }
+  }
+  return '';
+}
+
+function chunkText(text, chunkSize = 1000, overlap = 200) {
+  const out = [];
+  if (!text) return out;
+  let start = 0;
+  while (start < text.length) {
+    out.push(text.slice(start, start + chunkSize));
+    start += chunkSize - overlap;
+  }
+  return out;
+}
+
+async function getEmbedding(text) {
+  const r = await openai.embeddings.create({
+    model: 'text-embedding-ada-002',
+    input: text.replace(/\n/g, ' ').slice(0, 8000),
+  });
+  return r.data[0].embedding;
+}
+
+// indexLibraryDoc — download + extract + chunk + embed + insert into documents
+// (the chunks table askEd reads from). Idempotent: deletes any prior chunks
+// for this library_documents.id before inserting so re-runs don't duplicate.
+async function indexLibraryDoc(libraryDoc) {
+  if (!libraryDoc || !libraryDoc.file_path) {
+    return { ok: false, reason: 'no_file_path', chunks_inserted: 0 };
+  }
+  // 1. Download
+  const { data: blob, error: dlErr } = await supabase.storage
+    .from('documents')
+    .download(libraryDoc.file_path);
+  if (dlErr || !blob) {
+    return { ok: false, reason: 'download_failed', error: dlErr?.message, chunks_inserted: 0 };
+  }
+  const buffer = Buffer.from(await blob.arrayBuffer());
+
+  // 2. Extract text
+  const filename = libraryDoc.file_name_normalized || libraryDoc.file_name_original || `${libraryDoc.id}.pdf`;
+  const text = await extractFullTextFromFile(buffer, filename);
+  if (!text || text.replace(/\s+/g, '').length < 50) {
+    return { ok: false, reason: 'no_text_extracted', chunks_inserted: 0 };
+  }
+
+  // 3. Resolve community name (chunks table stores name, not id)
+  let communityName = libraryDoc.community_name || null;
+  if (!communityName && libraryDoc.community_id) {
+    const { data: c } = await supabase
+      .from('communities')
+      .select('name')
+      .eq('id', libraryDoc.community_id)
+      .maybeSingle();
+    communityName = (c && c.name) || 'Unknown';
+  }
+  if (!communityName) communityName = 'General';
+
+  // 4. Wipe prior chunks for THIS library doc so re-indexes don't duplicate.
+  // Uses metadata->>library_document_id; legacy chunks without this key stay.
+  try {
+    await supabase
+      .from('documents')
+      .delete()
+      .filter('metadata->>library_document_id', 'eq', libraryDoc.id);
+  } catch (e) { console.warn('[reindex] delete prior chunks failed:', e.message); }
+
+  // 5. Chunk + embed + insert (concurrency: 3 to respect OpenAI rate limits)
+  const chunks = chunkText(text);
+  let inserted = 0;
+  const concurrency = 3;
+  for (let i = 0; i < chunks.length; i += concurrency) {
+    const batch = chunks.slice(i, i + concurrency).filter((c) => c.trim().length > 20);
+    const rows = await Promise.all(batch.map(async (chunk) => {
+      try {
+        const embedding = await getEmbedding(chunk);
+        return {
+          content: chunk,
+          metadata: {
+            filename,
+            community: communityName,
+            library_document_id: libraryDoc.id,
+            category: libraryDoc.category || null,
+            period: libraryDoc.period_label || null,
+          },
+          embedding,
+        };
+      } catch (e) {
+        console.warn('[reindex] embed failed:', e.message);
+        return null;
+      }
+    }));
+    const goodRows = rows.filter(Boolean);
+    if (goodRows.length === 0) continue;
+    const { error: insErr } = await supabase.from('documents').insert(goodRows);
+    if (insErr) { console.warn('[reindex] insert failed:', insErr.message); continue; }
+    inserted += goodRows.length;
+  }
+
+  return { ok: inserted > 0, reason: inserted > 0 ? null : 'no_chunks_inserted', chunks_inserted: inserted, community: communityName };
 }
 
 app.post('/ask', async (req, res) => {
@@ -5522,6 +5671,132 @@ app.get('/api/me', async (req, res) => {
     res.json({ user: profile });
   } catch (err) {
     console.error('[/api/me]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Reindex routes — bridge from library_documents to the askEd chunks table.
+// ============================================================================
+
+// Single doc — used by /api/documents/upload to auto-index newly uploaded
+// PDFs, and exposed as a manual reindex endpoint.
+app.post('/api/documents/:id/reindex', async (req, res) => {
+  try {
+    const { data: doc, error } = await supabase
+      .from('library_documents')
+      .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!doc) return res.status(404).json({ error: 'library_document not found' });
+    const libDoc = { ...doc, community_name: (doc.communities && doc.communities.name) || null };
+    const result = await indexLibraryDoc(libDoc);
+    res.json(result);
+  } catch (err) {
+    console.error('[documents/:id/reindex]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Batch — reindex every library doc that's not yet in the chunks table.
+// Filter by community to narrow the scope; omit to do everything.
+app.post('/api/documents/reindex-all', async (req, res) => {
+  try {
+    const communityFilter = (req.query.community || req.body?.community || '').trim();
+    const onlyMissing = (req.query.only_missing || req.body?.only_missing) !== '0';
+
+    let q = supabase
+      .from('library_documents')
+      .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .neq('status', 'missing')
+      .not('file_path', 'is', null);
+    const { data: docs, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    let workQueue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
+    if (communityFilter) {
+      const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
+      workQueue = workQueue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
+    }
+
+    // Skip docs that already have at least one chunk in the chunks table (only_missing=1)
+    if (onlyMissing && workQueue.length > 0) {
+      const ids = workQueue.map((d) => d.id);
+      const { data: hits } = await supabase
+        .from('documents')
+        .select('metadata')
+        .filter('metadata->>library_document_id', 'in', `(${ids.map((id) => `"${id}"`).join(',')})`);
+      const haveIds = new Set((hits || []).map((h) => h.metadata && h.metadata.library_document_id).filter(Boolean));
+      workQueue = workQueue.filter((d) => !haveIds.has(d.id));
+    }
+
+    const results = { total_candidates: docs ? docs.length : 0, attempted: workQueue.length, indexed: 0, skipped: 0, failed: 0, details: [] };
+    for (const doc of workQueue) {
+      try {
+        const r = await indexLibraryDoc(doc);
+        if (r.ok) {
+          results.indexed += 1;
+          results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, chunks: r.chunks_inserted, status: 'indexed' });
+        } else {
+          results.skipped += 1;
+          results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'skipped', reason: r.reason });
+        }
+      } catch (e) {
+        results.failed += 1;
+        results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'failed', error: e.message });
+      }
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error('[documents/reindex-all]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Coverage diagnostic — for each community, how many library docs we have vs.
+// how many are actually indexed in the chunks table. Surfaces the unification
+// gap visually in the Documents tab.
+app.get('/api/documents/asked-coverage', async (req, res) => {
+  try {
+    const [{ data: libs }, { data: chunks }] = await Promise.all([
+      supabase
+        .from('library_documents')
+        .select('id, community_id, category, status, communities:community_id(name)')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .neq('status', 'missing')
+        .not('file_path', 'is', null),
+      supabase
+        .from('documents')
+        .select('metadata'),
+    ]);
+
+    const indexedIds = new Set();
+    const communityChunkCount = {};
+    for (const c of chunks || []) {
+      const meta = c.metadata || {};
+      if (meta.library_document_id) indexedIds.add(meta.library_document_id);
+      const name = meta.community;
+      if (name) communityChunkCount[name] = (communityChunkCount[name] || 0) + 1;
+    }
+
+    const byCommunity = {};
+    for (const d of libs || []) {
+      const name = (d.communities && d.communities.name) || 'Unknown';
+      if (!byCommunity[name]) byCommunity[name] = { name, total: 0, indexed: 0, not_indexed: 0, chunks_total: 0 };
+      byCommunity[name].total += 1;
+      if (indexedIds.has(d.id)) byCommunity[name].indexed += 1;
+      else byCommunity[name].not_indexed += 1;
+    }
+    for (const name of Object.keys(byCommunity)) {
+      byCommunity[name].chunks_total = communityChunkCount[name] || 0;
+    }
+    res.json({ by_community: Object.values(byCommunity).sort((a, b) => a.name.localeCompare(b.name)) });
+  } catch (err) {
+    console.error('[documents/asked-coverage]', err);
     res.status(500).json({ error: err.message });
   }
 });

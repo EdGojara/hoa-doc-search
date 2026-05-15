@@ -3301,6 +3301,23 @@
       <span style="color:#315A87; font-weight:500;">Single source of truth for community documents.</span>
     </p>
 
+    <!-- askEd coverage panel — surfaces the unification gap.
+         "Indexed for askEd" = the doc's text has been chunked + embedded into
+         the vector index askEd searches. If a doc shows green in the matrix
+         but isn't indexed here, askEd can't see it. -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">🧠 askEd coverage</h3>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <button class="secondary-btn" onclick="docsLoadCoverage()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+          <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
+        </div>
+      </div>
+      <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">A doc is "indexed" when its text has been chunked and embedded into the vector store askEd searches. If a community shows docs that aren't indexed, askEd can't see them — even though the matrix shows green checkmarks.</p>
+      <div id="docs-coverage-list" style="font-size:13px; color:#6B7280;">Loading coverage…</div>
+      <div id="docs-reindex-status" style="margin-top:10px; font-size:12.5px;"></div>
+    </div>
+
     <!-- Natural language search -->
     <div class="panel" style="margin-bottom: 16px;">
       <h3 style="margin-top:0;">🔍 Find a document</h3>
@@ -10708,6 +10725,90 @@ ${questionsPage}
     // Refresh the matrix + orphans after batch completes
     setTimeout(() => { docsLoadMatrix(); docsLoadDups(); docsLoadOrphans(); }, 400);
   }
+
+  // =========================================================================
+  // askEd coverage — surface which docs are indexed for askEd vs. not.
+  // A doc is "indexed" when its text is in the chunks/embeddings table that
+  // askEd searches (separate from library_documents which is just the index).
+  // =========================================================================
+  async function docsLoadCoverage() {
+    const el = document.getElementById('docs-coverage-list');
+    if (!el) return;
+    el.innerHTML = '<em style="color:#94A3B8;">Loading…</em>';
+    try {
+      const r = await fetch('/api/documents/asked-coverage');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      const rows = j.by_community || [];
+      if (rows.length === 0) {
+        el.innerHTML = '<em style="color:#94A3B8;">No library documents yet.</em>';
+        return;
+      }
+      el.innerHTML = `
+        <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap:10px; padding:6px 12px; font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">
+          <div>Community</div>
+          <div>Library docs</div>
+          <div>Indexed for askEd</div>
+          <div>NOT indexed</div>
+          <div>Total chunks</div>
+        </div>
+        ${rows.map((r) => {
+          const pct = r.total > 0 ? Math.round(100 * r.indexed / r.total) : 0;
+          const badRow = r.not_indexed > 0;
+          const allClear = r.total > 0 && r.not_indexed === 0;
+          return `
+            <div style="display:grid; grid-template-columns: 2fr 1fr 1fr 1fr 1fr; gap:10px; padding:8px 12px; border:1px solid #e3e8ef; border-radius:6px; margin-bottom:4px; background:${allClear ? '#f0fdf4' : badRow ? '#fef3c7' : '#fff'};">
+              <div style="font-weight:600; color:#1E2761;">${escapeHtml(r.name)}</div>
+              <div style="color:#475569;">${r.total}</div>
+              <div style="font-weight:600; color:${allClear ? '#15803d' : '#1E2761'};">${r.indexed} <span style="font-size:11px; color:#94A3B8;">(${pct}%)</span></div>
+              <div style="font-weight:${r.not_indexed > 0 ? '700' : '500'}; color:${r.not_indexed > 0 ? '#b91c1c' : '#94A3B8'};">${r.not_indexed}</div>
+              <div style="color:#475569;">${r.chunks_total.toLocaleString()}</div>
+            </div>
+          `;
+        }).join('')}
+      `;
+    } catch (e) {
+      el.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function docsReindexAll() {
+    const btn = document.getElementById('docsReindexBtn');
+    const status = document.getElementById('docs-reindex-status');
+    if (!confirm('Reindex all library documents that askEd can\'t currently see? This extracts text, generates embeddings, and inserts into the vector store. May take a few minutes for large batches.')) return;
+    btn.disabled = true; btn.textContent = '⏳ Reindexing…';
+    status.innerHTML = '<em style="color:#475569;">Working… do not close the tab. This can take several minutes.</em>';
+    try {
+      const r = await fetch('/api/documents/reindex-all', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'reindex failed');
+      const failedHtml = (j.details || []).filter(d => d.status === 'failed' || d.status === 'skipped').slice(0, 10).map(d =>
+        `<li><strong>${escapeHtml(d.name || d.id)}</strong> (${escapeHtml(d.community || '—')}): ${escapeHtml(d.status)}${d.reason ? ' — ' + escapeHtml(d.reason) : ''}${d.error ? ' — ' + escapeHtml(d.error) : ''}</li>`
+      ).join('');
+      status.innerHTML = `
+        <div style="padding:10px 12px; background:${j.indexed > 0 ? '#dcfce7' : '#fef3c7'}; border-left:3px solid ${j.indexed > 0 ? '#15803d' : '#f59e0b'}; border-radius:0 6px 6px 0; line-height:1.6;">
+          <strong>${j.indexed} indexed</strong> · ${j.skipped} skipped · ${j.failed} failed · (of ${j.attempted} attempted, ${j.total_candidates} total candidates)
+          ${failedHtml ? `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px;">First 10 skipped / failed</summary><ul style="font-size:11.5px; margin:6px 0 0; padding-left:18px;">${failedHtml}</ul></details>` : ''}
+        </div>
+      `;
+      await docsLoadCoverage();
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '🔁 Reindex everything askEd can\'t see';
+    }
+  }
+
+  // Auto-load coverage when the Documents tab opens
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'docs') { try { docsLoadCoverage(); } catch (_) {} }
+      return r;
+    };
+  })();
 
   async function docsQuery() {
     const q = document.getElementById('docs-query').value.trim();
