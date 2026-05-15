@@ -5306,6 +5306,128 @@ app.get('/api/calendar/events', async (req, res) => {
   }
 });
 
+// ============================================================================
+// 📊 Performance — SLA metrics across customer-facing touchpoints.
+//   GET /api/performance/acc?days=30  → ACC application response-time metrics
+//
+// Reads from community_applications. Computes: open queue, median / avg / p90
+// response time, oldest pending, throughput, by-community breakdown.
+// Tracking timing data only — submitted_at + final_decided_at — never
+// exhaustive behavioral profiles (per the customer-obsession memory).
+// ============================================================================
+function _percentile(sortedAsc, p) {
+  if (!sortedAsc || sortedAsc.length === 0) return null;
+  if (sortedAsc.length === 1) return sortedAsc[0];
+  const idx = (p / 100) * (sortedAsc.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sortedAsc[lo];
+  return sortedAsc[lo] + (sortedAsc[hi] - sortedAsc[lo]) * (idx - lo);
+}
+
+app.get('/api/performance/acc', async (req, res) => {
+  try {
+    const windowDays = Math.max(1, Math.min(365, parseInt(req.query.days || '30', 10)));
+    const since = new Date(Date.now() - windowDays * 86400000).toISOString();
+
+    // Pull all ARC apps in the window + currently open ones, regardless of date.
+    const { data: apps, error } = await supabase
+      .from('community_applications')
+      .select('id, community_id, reference_number, service_type, final_status, submitted_at, final_decided_at, property_address, submitter_name, communities:community_id(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('service_type', 'arc')
+      .order('submitted_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    const today = Date.now();
+    const dayMs = 86400000;
+    const isClosed = (s) => ['approved','denied','withdrawn','closed'].includes(s);
+
+    const all = apps || [];
+    // Response times (days) for apps decided in window
+    const responseTimes = [];
+    let throughputCount = 0;
+    for (const a of all) {
+      if (!a.submitted_at || !a.final_decided_at) continue;
+      if (a.final_decided_at < since) continue;
+      if (!isClosed(a.final_status)) continue;
+      const t = (new Date(a.final_decided_at) - new Date(a.submitted_at)) / dayMs;
+      if (t >= 0) {
+        responseTimes.push(t);
+        throughputCount += 1;
+      }
+    }
+    responseTimes.sort((a, b) => a - b);
+    const median = _percentile(responseTimes, 50);
+    const p90    = _percentile(responseTimes, 90);
+    const avg    = responseTimes.length ? responseTimes.reduce((s, v) => s + v, 0) / responseTimes.length : null;
+
+    // Pending queue
+    const openApps = all.filter((a) => !isClosed(a.final_status) && a.submitted_at);
+    openApps.sort((a, b) => new Date(a.submitted_at) - new Date(b.submitted_at));
+    const oldestPending = openApps[0] || null;
+    const oldestPendingDays = oldestPending ? Math.round((today - new Date(oldestPending.submitted_at)) / dayMs) : null;
+
+    // By-community breakdown
+    const byCommName = {};
+    for (const a of all) {
+      const name = (a.communities && a.communities.name) || 'Unknown';
+      if (!byCommName[name]) byCommName[name] = { name, open: 0, closed_in_window: 0, response_times: [] };
+      const bucket = byCommName[name];
+      if (!isClosed(a.final_status) && a.submitted_at) bucket.open += 1;
+      if (a.submitted_at && a.final_decided_at && a.final_decided_at >= since && isClosed(a.final_status)) {
+        const t = (new Date(a.final_decided_at) - new Date(a.submitted_at)) / dayMs;
+        if (t >= 0) {
+          bucket.response_times.push(t);
+          bucket.closed_in_window += 1;
+        }
+      }
+    }
+    const byCommunity = Object.values(byCommName).map((b) => {
+      const sorted = b.response_times.slice().sort((a, c) => a - c);
+      return {
+        name: b.name,
+        open: b.open,
+        throughput: b.closed_in_window,
+        median: _percentile(sorted, 50),
+        avg: sorted.length ? sorted.reduce((s, v) => s + v, 0) / sorted.length : null,
+      };
+    }).sort((a, b) => (b.open - a.open) || a.name.localeCompare(b.name));
+
+    res.json({
+      window_days: windowDays,
+      open_count: openApps.length,
+      throughput: throughputCount,
+      median_response_days: median,
+      avg_response_days: avg,
+      p90_response_days: p90,
+      oldest_pending: oldestPending ? {
+        id: oldestPending.id,
+        community: (oldestPending.communities && oldestPending.communities.name) || null,
+        reference_number: oldestPending.reference_number,
+        property_address: oldestPending.property_address,
+        submitter_name: oldestPending.submitter_name,
+        submitted_at: oldestPending.submitted_at,
+        days_pending: oldestPendingDays,
+      } : null,
+      pending: openApps.slice(0, 25).map((a) => ({
+        id: a.id,
+        community: (a.communities && a.communities.name) || null,
+        reference_number: a.reference_number,
+        property_address: a.property_address,
+        submitter_name: a.submitter_name,
+        submitted_at: a.submitted_at,
+        days_pending: Math.round((today - new Date(a.submitted_at)) / dayMs),
+        final_status: a.final_status,
+      })),
+      by_community: byCommunity,
+    });
+  } catch (err) {
+    console.error('[performance/acc]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });

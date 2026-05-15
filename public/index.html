@@ -247,6 +247,7 @@
 <div class="tabs">
   <div class="tab active" onclick="switchTab('asked')">🧠 askEd</div>
   <div class="tab" onclick="switchTab('calendar')">🗓️ Calendar</div>
+  <div class="tab" onclick="switchTab('perf')">📊 Performance</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
   <div class="tab" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
@@ -360,6 +361,106 @@
 
     <div style="margin-top:18px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:11.5px; color:#475569; line-height:1.6;">
       <strong>What's on the calendar today:</strong> Annual-meeting cycle events. Coming soon: ARC review deadlines, vendor contract renewals, audit / tax / insurance due dates, reserve-study refreshes, scheduled board meetings.
+    </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     📊 Performance — SLA metrics across customer-facing touchpoints.
+     First module: ARC application response times. Future modules add cards
+     for vendor turnaround, board recap delivery, email intake first-response,
+     financial-statement delivery, annual-meeting send-by adherence.
+     ========================================================================= -->
+<div class="tab-content" id="tab-perf" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1180px; margin:0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:14px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1E2761; margin-bottom:4px;">📊 Performance</h2>
+        <p style="font-size:13px; color:#666; margin:0;">Customer + efficiency metrics across the portfolio. Every touchpoint gets a clock. Nothing falls through the cracks.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px; font-size:12.5px; color:#475569;">
+        Window:
+        <select id="perfWindow" onchange="perfLoad()" style="padding:5px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12.5px; background:#fff;">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="365">Last 365 days</option>
+        </select>
+        <button class="secondary-btn" onclick="perfLoad()" style="font-size:11px; padding:5px 10px;">↻ Refresh</button>
+      </div>
+    </div>
+
+    <style>
+      .perf-card { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 16px; }
+      .perf-stat-label { font-size:11px; color:#475569; letter-spacing:0.4px; text-transform:uppercase; font-weight:700; }
+      .perf-stat-value { font-size:24px; font-weight:700; color:#1E2761; margin-top:4px; line-height:1.1; }
+      .perf-stat-sub   { font-size:11px; color:#94A3B8; margin-top:3px; font-style:italic; }
+      .perf-stat-value.good { color:#15803d; }
+      .perf-stat-value.warn { color:#92400e; }
+      .perf-stat-value.bad  { color:#b91c1c; }
+      .perf-row { display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr 0.6fr auto; gap:12px; padding:10px 14px; border:1px solid #e3e8ef; border-radius:8px; align-items:center; background:#fff; margin-bottom:5px; font-size:13px; }
+      .perf-row .age { font-weight:700; }
+      .perf-row .age.warn { color:#92400e; }
+      .perf-row .age.bad  { color:#b91c1c; }
+      .perf-section-title { font-size:14px; color:#1E2761; font-weight:700; margin:18px 0 8px; }
+    </style>
+
+    <!-- ARC card -->
+    <div class="perf-card" style="margin-bottom:16px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+        <h3 style="margin:0; font-size:15px; color:#1E2761;">🏗️ ACC Applications</h3>
+        <span id="perfArcWindowLabel" style="font-size:11px; color:#94A3B8;"></span>
+      </div>
+
+      <div style="display:grid; grid-template-columns: repeat(6, 1fr); gap:10px; margin-bottom:14px;" id="perfArcStats">
+        <div class="perf-card" style="padding:10px 12px;"><div class="perf-stat-label">Open queue</div><div class="perf-stat-value" id="perfArcOpen">—</div><div class="perf-stat-sub">applications</div></div>
+        <div class="perf-card" style="padding:10px 12px;"><div class="perf-stat-label">Oldest pending</div><div class="perf-stat-value" id="perfArcOldest">—</div><div class="perf-stat-sub" id="perfArcOldestSub">—</div></div>
+        <div class="perf-card" style="padding:10px 12px;"><div class="perf-stat-label">Median response</div><div class="perf-stat-value" id="perfArcMedian">—</div><div class="perf-stat-sub">in window</div></div>
+        <div class="perf-card" style="padding:10px 12px;"><div class="perf-stat-label">Average response</div><div class="perf-stat-value" id="perfArcAvg">—</div><div class="perf-stat-sub">in window</div></div>
+        <div class="perf-card" style="padding:10px 12px;"><div class="perf-stat-label">P90 response</div><div class="perf-stat-value" id="perfArcP90">—</div><div class="perf-stat-sub">in window</div></div>
+        <div class="perf-card" style="padding:10px 12px;"><div class="perf-stat-label">Throughput</div><div class="perf-stat-value" id="perfArcThroughput">—</div><div class="perf-stat-sub">decisions issued</div></div>
+      </div>
+
+      <div class="perf-section-title">Pending queue — oldest first</div>
+      <div style="display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr 0.6fr auto; gap:12px; padding:6px 14px; font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">
+        <div>Community</div>
+        <div>Reference</div>
+        <div>Submitter</div>
+        <div>Submitted</div>
+        <div>Age</div>
+        <div></div>
+      </div>
+      <div id="perfArcPending" style="font-size:13px; color:#6B7280;">Loading…</div>
+
+      <div class="perf-section-title">By community</div>
+      <div style="display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr; gap:12px; padding:6px 14px; font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">
+        <div>Community</div>
+        <div>Open</div>
+        <div>Throughput</div>
+        <div>Median response</div>
+        <div>Avg response</div>
+      </div>
+      <div id="perfArcByCommunity" style="font-size:13px; color:#6B7280;"></div>
+    </div>
+
+    <!-- Coming-soon placeholder cards so the design intent is visible -->
+    <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:12px; margin-bottom:12px;">
+      <div class="perf-card" style="opacity:0.55;">
+        <h3 style="margin:0 0 4px; font-size:14px; color:#1E2761;">🤝 Vendor RFP turnaround</h3>
+        <p style="margin:0; font-size:12px; color:#6B7280;">Sent → proposal received. Coming next.</p>
+      </div>
+      <div class="perf-card" style="opacity:0.55;">
+        <h3 style="margin:0 0 4px; font-size:14px; color:#1E2761;">📰 Board recap turnaround</h3>
+        <p style="margin:0; font-size:12px; color:#6B7280;">Meeting → recap delivered. Coming next.</p>
+      </div>
+      <div class="perf-card" style="opacity:0.55;">
+        <h3 style="margin:0 0 4px; font-size:14px; color:#1E2761;">📧 Email intake first response</h3>
+        <p style="margin:0; font-size:12px; color:#6B7280;">Email received → first reply. Coming next.</p>
+      </div>
+    </div>
+
+    <div style="margin-top:14px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:11.5px; color:#475569; line-height:1.6;">
+      <strong>How metrics are tracked:</strong> Each customer-facing transaction records start (submitted) + end (decided) timestamps. We surface the timing data only — no behavioral surveillance. Median / avg / P90 give you the typical, mean, and tail-risk view. Oldest pending flags work that's slipping. By-community breakdown surfaces which book of business needs attention.
     </div>
   </div>
 </div>
@@ -13392,6 +13493,118 @@ ${questionsPage}
       const result = orig.apply(this, arguments);
       if (tab === 'presentations') presInit();
       return result;
+    };
+  })();
+
+  // =========================================================================
+  // 📊 Performance — SLA metrics across customer-facing touchpoints.
+  // First module: ARC application response times. Future cards: vendor
+  // turnaround, board recap delivery, email first-response, financial-statement
+  // delivery, annual-meeting send-by adherence.
+  // =========================================================================
+  function perfFmtDays(d) {
+    if (d == null) return '—';
+    if (d < 1)      return `${(d * 24).toFixed(1)}h`;
+    if (d < 10)     return `${d.toFixed(1)}d`;
+    return `${Math.round(d)}d`;
+  }
+  function perfAgeClass(days) {
+    if (days == null) return '';
+    if (days >= 14) return 'bad';
+    if (days >= 7)  return 'warn';
+    return '';
+  }
+  function perfStatClass(days, goodMax, warnMax) {
+    if (days == null) return '';
+    if (days <= goodMax) return 'good';
+    if (days <= warnMax) return 'warn';
+    return 'bad';
+  }
+  function perfFmtDate(iso) {
+    if (!iso) return '—';
+    try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return iso; }
+  }
+
+  async function perfLoad() {
+    const days = (document.getElementById('perfWindow') || {}).value || '30';
+    document.getElementById('perfArcWindowLabel').textContent = `Last ${days} days`;
+    try {
+      const r = await fetch(`/api/performance/acc?days=${encodeURIComponent(days)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'Load failed');
+
+      document.getElementById('perfArcOpen').textContent       = j.open_count != null ? j.open_count : '—';
+      document.getElementById('perfArcOpen').className         = 'perf-stat-value ' + (j.open_count >= 10 ? 'warn' : '');
+      document.getElementById('perfArcThroughput').textContent = j.throughput != null ? j.throughput : '—';
+      document.getElementById('perfArcMedian').textContent     = perfFmtDays(j.median_response_days);
+      document.getElementById('perfArcMedian').className       = 'perf-stat-value ' + perfStatClass(j.median_response_days, 3, 7);
+      document.getElementById('perfArcAvg').textContent        = perfFmtDays(j.avg_response_days);
+      document.getElementById('perfArcAvg').className          = 'perf-stat-value ' + perfStatClass(j.avg_response_days, 4, 10);
+      document.getElementById('perfArcP90').textContent        = perfFmtDays(j.p90_response_days);
+      document.getElementById('perfArcP90').className          = 'perf-stat-value ' + perfStatClass(j.p90_response_days, 7, 14);
+
+      const oldest = j.oldest_pending;
+      if (oldest) {
+        document.getElementById('perfArcOldest').textContent    = `${oldest.days_pending}d`;
+        document.getElementById('perfArcOldest').className      = 'perf-stat-value ' + perfStatClass(oldest.days_pending, 5, 14);
+        document.getElementById('perfArcOldestSub').textContent = `${oldest.community || ''} · ${oldest.reference_number || ''}`.replace(/^\s*·\s*|\s*·\s*$/, '');
+      } else {
+        document.getElementById('perfArcOldest').textContent    = '0';
+        document.getElementById('perfArcOldest').className      = 'perf-stat-value good';
+        document.getElementById('perfArcOldestSub').textContent = 'nothing pending';
+      }
+
+      const pendingEl = document.getElementById('perfArcPending');
+      const pending = j.pending || [];
+      if (pending.length === 0) {
+        pendingEl.innerHTML = `<div style="padding:14px; color:#15803d; font-weight:600;">✓ Queue is clear — no pending ARC applications.</div>`;
+      } else {
+        pendingEl.innerHTML = pending.map((p) => `
+          <div class="perf-row">
+            <div style="font-weight:600; color:#1E2761;">${escapeHtml(p.community || '—')}</div>
+            <div style="color:#475569; font-family:Consolas,monospace; font-size:12px;">${escapeHtml(p.reference_number || '—')}</div>
+            <div style="color:#475569;">${escapeHtml(p.submitter_name || '—')}</div>
+            <div style="color:#475569;">${escapeHtml(perfFmtDate(p.submitted_at))}</div>
+            <div class="age ${perfAgeClass(p.days_pending)}">${p.days_pending}d</div>
+            <div><button onclick="perfOpenApp('${p.id}')" style="background:#fff; border:1px solid #1E2761; color:#1E2761; padding:5px 10px; border-radius:6px; font-size:11.5px; cursor:pointer;">Open →</button></div>
+          </div>
+        `).join('');
+      }
+
+      const byEl = document.getElementById('perfArcByCommunity');
+      const byCommunity = j.by_community || [];
+      if (byCommunity.length === 0) {
+        byEl.innerHTML = `<div style="padding:14px; color:#94A3B8;">No ARC activity in window.</div>`;
+      } else {
+        byEl.innerHTML = byCommunity.map((c) => `
+          <div style="display:grid; grid-template-columns: 1.4fr 1fr 1fr 1fr 1fr; gap:12px; padding:8px 14px; border:1px solid #e3e8ef; border-radius:8px; background:#fff; margin-bottom:4px;">
+            <div style="font-weight:600; color:#1E2761;">${escapeHtml(c.name)}</div>
+            <div style="color:#475569;">${c.open}</div>
+            <div style="color:#475569;">${c.throughput}</div>
+            <div style="color:${perfStatClass(c.median, 3, 7) === 'bad' ? '#b91c1c' : perfStatClass(c.median, 3, 7) === 'warn' ? '#92400e' : '#15803d'}; font-weight:600;">${perfFmtDays(c.median)}</div>
+            <div style="color:${perfStatClass(c.avg, 4, 10) === 'bad' ? '#b91c1c' : perfStatClass(c.avg, 4, 10) === 'warn' ? '#92400e' : '#15803d'}; font-weight:600;">${perfFmtDays(c.avg)}</div>
+          </div>
+        `).join('');
+      }
+    } catch (e) {
+      document.getElementById('perfArcPending').innerHTML = `<div style="padding:14px; color:#b91c1c;">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function perfOpenApp(_id) {
+    // For now, deep-link into the ACC Review screen. Future: dedicated detail view
+    // that reads the full community_applications row + assessment history.
+    try { switchTab('acc'); } catch (_) {}
+  }
+
+  // Auto-load on tab open
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'perf') { try { perfLoad(); } catch (_) {} }
+      return r;
     };
   })();
 
