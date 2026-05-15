@@ -4916,6 +4916,130 @@ app.post('/api/nominations/preview-letter', upload.any(), async (req, res) => {
   }
 });
 
+// Smart voting-methods defaults — produces a reasonable Annual Meeting
+// Notice on day one without requiring staff to configure a separate
+// voting-methods editor (still on the queue). Layered logic:
+//   - online voting: enabled only if the cycle's electronic_voting toggle
+//     is on (voting_methods.online.enabled persisted at finalize time)
+//   - mail: enabled by default — Bedrock standard return address, receive
+//     by close − 5 days (T−5 from meeting)
+//   - drop_off: enabled if the cycle has an onsite drop-off configured
+//   - in_person: always enabled (it's the annual meeting)
+function buildVotingMethodsFromCycle(cycle) {
+  const closeDate = cycle.nominations_close_at || null;
+  const closeTime = cycle.nominations_close_time || '5:00 PM';
+  const userMethods = cycle.voting_methods || {};
+  const onlineCfg = (userMethods.online && userMethods.online.enabled)
+    ? { enabled: true, close_date: closeDate, close_time: closeTime }
+    : { enabled: false };
+  const onsite = cycle.onsite_drop_off || {};
+  return {
+    online: onlineCfg,
+    mail: {
+      enabled: true,
+      receive_by_date: closeDate,
+      receive_by_time: closeTime,
+      return_address: '12808 West Airport Blvd, Ste 253, Sugar Land, TX 77478',
+    },
+    email: {
+      enabled: true,
+      receive_by_date: closeDate,
+      receive_by_time: closeTime,
+      address: 'info@bedrocktx.com',
+    },
+    drop_off: onsite.enabled
+      ? {
+          enabled: true,
+          receive_by_date: closeDate,
+          receive_by_time: closeTime,
+          location_name: onsite.location_name || 'On-site office',
+          location_address: onsite.address || null,
+        }
+      : { enabled: false },
+    in_person: { enabled: true },
+  };
+}
+
+// Convert a Supabase storage path into a base64 data URI so puppeteer can
+// embed the image directly during PDF render (no network required, no
+// signed-URL expiry races). Returns null if download fails.
+async function _storagePathToDataUri(storagePath, fallbackMime = 'image/jpeg') {
+  if (!storagePath) return null;
+  try {
+    const { data: blob, error } = await supabase.storage.from('documents').download(storagePath);
+    if (error || !blob) return null;
+    const buf = Buffer.from(await blob.arrayBuffer());
+    return `data:${fallbackMime};base64,${buf.toString('base64')}`;
+  } catch (e) {
+    console.warn('[storagePathToDataUri] failed:', e.message);
+    return null;
+  }
+}
+
+// POST /api/nominations/cycles/:id/annual-meeting-notice
+// Generates the 4-page Annual Meeting Notice + Voting Instructions + Proxy/
+// Absentee Ballot + Candidate Statements PDF. Pulls every nomination with
+// status='on_slate' for the candidates section, embeds their photos as
+// data URIs, and applies smart voting-method defaults if the cycle hasn't
+// been configured beyond the electronic-voting toggle.
+const { renderAnnualMeetingNoticeHTML } = require('./lib/nominations/annual_meeting_notice');
+app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) => {
+  try {
+    const { data: cycle, error: cErr } = await supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (cErr || !cycle) return res.status(404).json({ error: 'cycle not found' });
+
+    const { data: candidatesRaw } = await supabase
+      .from('nominations')
+      .select('*')
+      .eq('cycle_id', cycle.id)
+      .eq('status', 'on_slate')
+      .order('nominee_name');
+
+    const candidates = await Promise.all((candidatesRaw || []).map(async (n) => ({
+      ...n,
+      photo_data_uri: await _storagePathToDataUri(n.photo_storage_path),
+    })));
+
+    const html = await renderAnnualMeetingNoticeHTML({
+      cycle,
+      candidates,
+      voting_methods: buildVotingMethodsFromCycle(cycle),
+      options: {
+        term_years: cycle.term_years || 3,
+        floor_nominations: cycle.floor_nominations_policy || null,
+        registration_time: cycle.registration_time || null,
+        tx_209_disclosure: cycle.tx_209_disclosure_style || 'callout',
+        voting_year: cycle.annual_meeting_date
+          ? new Date(cycle.annual_meeting_date).getFullYear()
+          : new Date().getFullYear(),
+      },
+    });
+    const buf = await _renderHtmlToPdf(html);
+
+    // Save the rendered PDF to storage so it's recoverable later and
+    // tied to the cycle for posterity.
+    try {
+      const stem = (cycle.community_name || 'community').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+      const storagePath = `nominations/${cycle.id}/${stem}_annual_meeting_notice.pdf`;
+      await supabase.storage.from('documents').upload(storagePath, buf, {
+        contentType: 'application/pdf', upsert: true,
+      });
+    } catch (e) { console.warn('[annual-meeting-notice] storage save failed:', e.message); }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="annual_meeting_notice.pdf"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[nominations/annual-meeting-notice]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Standalone Paper Nomination Form download — for staff who need just the
 // tear-off form (e.g., to email a homeowner who asked for a paper version,
 // or to print copies for the on-site office).
@@ -4976,6 +5100,14 @@ app.patch('/api/nominations/:id', async (req, res) => {
     allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
     patch.updated_at = new Date().toISOString();
+
+    // Read prior status so the audit log can record old → new.
+    const { data: prior } = await supabase
+      .from('nominations')
+      .select('id, cycle_id, nominee_name, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+
     const { data, error } = await supabase
       .from('nominations')
       .update(patch)
@@ -4983,6 +5115,33 @@ app.patch('/api/nominations/:id', async (req, res) => {
       .select()
       .single();
     if (error) return res.status(500).json({ error: error.message });
+
+    // Audit: log status changes (the common case). Use the specialized
+    // on_slate_added / on_slate_removed event_types when the change is
+    // crossing the ballot threshold — makes it trivial later to query
+    // "everyone who was ever on a ballot."
+    if (prior && 'status' in patch && prior.status !== patch.status) {
+      let evt = 'status_changed';
+      if (patch.status === 'on_slate') evt = 'on_slate_added';
+      else if (prior.status === 'on_slate') evt = 'on_slate_removed';
+      nomLogEvent({
+        nomination_id: data.id,
+        cycle_id: data.cycle_id,
+        nominee_name: data.nominee_name,
+        event_type: evt,
+        actor: req.body.actor || 'staff',
+        payload: { old: prior.status, new: patch.status, manager_notes_changed: 'manager_notes' in patch },
+      });
+    } else if (prior && 'manager_notes' in patch) {
+      nomLogEvent({
+        nomination_id: data.id,
+        cycle_id: data.cycle_id,
+        nominee_name: data.nominee_name,
+        event_type: 'edited',
+        actor: req.body.actor || 'staff',
+        payload: { fields_changed: ['manager_notes'] },
+      });
+    }
     res.json({ nomination: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -4997,6 +5156,28 @@ app.patch('/api/nominations/:id', async (req, res) => {
 // 404. We only include id.eq when X looks like a UUID.
 const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 function _isUuidish(s) { return _UUID_RE.test(String(s || '')); }
+
+// Append-only audit log helper. Writes a row to nomination_events for
+// every meaningful action — submission, status change, photo upload,
+// staff manual entry, edits. Never throws; logging failures are warned
+// but never block the main operation. nomination_events has no FK to
+// nominations, so the audit trail survives even if a cycle (and its
+// nominations) are deleted.
+async function nomLogEvent({ nomination_id, cycle_id, nominee_name, event_type, payload, actor }) {
+  try {
+    if (!nomination_id || !event_type) return;
+    await supabase.from('nomination_events').insert({
+      nomination_id,
+      cycle_id: cycle_id || null,
+      nominee_name: nominee_name || null,
+      event_type,
+      payload: payload || null,
+      actor: actor || null,
+    });
+  } catch (e) {
+    console.warn('[nomLogEvent] failed:', e.message);
+  }
+}
 
 app.get('/nominate/:slug', async (req, res) => {
   try {
@@ -5114,6 +5295,26 @@ app.post('/api/nominations/public/:slug/submit', upload.fields([
       .single();
     if (error) return res.status(500).json({ error: error.message });
 
+    // Audit log: record the submission with a snapshot so the event row
+    // is meaningful even if the nomination/cycle are later deleted.
+    nomLogEvent({
+      nomination_id: data.id,
+      cycle_id: cycle.id,
+      nominee_name: data.nominee_name,
+      event_type: 'submitted',
+      actor: data.nominator_name || data.nominee_name || 'public_form',
+      payload: {
+        is_self_nomination: data.is_self_nomination,
+        nominator_email: data.nominator_email,
+        nominator_phone: data.nominator_phone,
+        nominee_address: data.nominee_address,
+        years_in_community: data.years_in_community,
+        bio_length: (data.nominee_bio || '').length,
+        client_ip: data.client_ip,
+        submission_channel: data.submission_channel,
+      },
+    });
+
     // Optional file attachments — upload to storage and link the paths back
     // onto the row. Failures here are non-fatal; the nomination is already
     // saved. We log and tell the client which uploads succeeded so it can
@@ -5133,6 +5334,14 @@ app.post('/api/nominations/public/:slug/submit', upload.fields([
         if (!pErr) {
           await supabase.from('nominations').update({ photo_storage_path: photoPath }).eq('id', data.id);
           attached.photo = true;
+          nomLogEvent({
+            nomination_id: data.id,
+            cycle_id: cycle.id,
+            nominee_name: data.nominee_name,
+            event_type: 'photo_uploaded',
+            actor: 'public_form',
+            payload: { path: photoPath, original_size: photoFile.size },
+          });
         } else console.warn('[nominations/photo upload]', pErr.message);
       } catch (e) { console.warn('[nominations/photo upload exception]', e.message); }
     }
@@ -5150,6 +5359,14 @@ app.post('/api/nominations/public/:slug/submit', upload.fields([
             scanned_form_mime: scannedFile.mimetype || 'application/pdf',
           }).eq('id', data.id);
           attached.scanned_form = true;
+          nomLogEvent({
+            nomination_id: data.id,
+            cycle_id: cycle.id,
+            nominee_name: data.nominee_name,
+            event_type: 'scanned_form_uploaded',
+            actor: 'public_form',
+            payload: { path: formPath, mime: scannedFile.mimetype, original_size: scannedFile.size },
+          });
         } else console.warn('[nominations/scanned upload]', sErr.message);
       } catch (e) { console.warn('[nominations/scanned upload exception]', e.message); }
     }
@@ -5220,6 +5437,20 @@ app.post('/api/nominations/cycles/:id/nominations', async (req, res) => {
       .select()
       .single();
     if (error) return res.status(500).json({ error: error.message });
+    nomLogEvent({
+      nomination_id: data.id,
+      cycle_id: data.cycle_id,
+      nominee_name: data.nominee_name,
+      event_type: 'manually_entered',
+      actor: data.created_by_staff || 'staff',
+      payload: {
+        submission_channel: channel,
+        received_at: receivedAt,
+        intake_notes: data.intake_notes,
+        is_self_nomination: data.is_self_nomination,
+        nominator_name: data.nominator_name,
+      },
+    });
     res.json({ nomination: data });
   } catch (err) {
     console.error('[nominations/staff-entry]', err);
@@ -5260,10 +5491,11 @@ app.post('/api/nominations/:id/photo', upload.single('photo'), async (req, res) 
     if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No photo file uploaded.' });
     const { data: nom } = await supabase
       .from('nominations')
-      .select('id, cycle_id')
+      .select('id, cycle_id, nominee_name, photo_storage_path')
       .eq('id', nomId)
       .maybeSingle();
     if (!nom) return res.status(404).json({ error: 'nomination not found' });
+    const replacingExistingPhoto = !!nom.photo_storage_path;
 
     // Resize down to ~1MB max — staff uploads from phone gallery are
     // routinely 5-10MB, which would bloat storage and slow the admin UI.
@@ -5285,6 +5517,15 @@ app.post('/api/nominations/:id/photo', upload.single('photo'), async (req, res) 
       .select()
       .single();
     if (updErr) return res.status(500).json({ error: updErr.message });
+
+    nomLogEvent({
+      nomination_id: nomId,
+      cycle_id: nom.cycle_id,
+      nominee_name: nom.nominee_name,
+      event_type: 'photo_uploaded',
+      actor: 'staff',
+      payload: { path: storagePath, replaced: replacingExistingPhoto, original_size: req.file.size },
+    });
 
     const { data: signed } = await supabase.storage.from('documents').createSignedUrl(storagePath, 3600);
     res.json({ nomination: updated, signed_url: signed && signed.signedUrl });

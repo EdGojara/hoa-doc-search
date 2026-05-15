@@ -1356,6 +1356,7 @@
         <button id="nomCreateBtn" onclick="nomCreateCycle()" style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;">✓ Finalize cycle</button>
         <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF <span style="font-weight:400; color:#94A3B8; font-size:11px;">(includes tear-off form)</span></button>
         <button class="secondary-btn" id="nomPaperFormBtn" onclick="nomGeneratePaperForm()" disabled style="opacity:0.5;">📝 Paper form only</button>
+        <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5;" title="Pulls every nomination on the slate and generates the 4-page Annual Meeting Notice + ballot + bios">🗳️ Annual Meeting Notice <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate is set)</span></button>
         <span id="nomDraftStatus" style="font-size:12px; color:#6B7280; flex-basis:100%; margin-top:4px;"></span>
       </div>
       <div id="nomCreateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
@@ -15448,10 +15449,25 @@ ${questionsPage}
   // to clean up duplicates and test cycles. Confirms first; warns harder
   // when there are nominations attached.
   async function nomDeleteCycle(id, label, nominationsCount) {
-    const warn = nominationsCount > 0
-      ? `Delete "${label}"?\n\nThis cycle has ${nominationsCount} nomination${nominationsCount === 1 ? '' : 's'} that will be permanently deleted with it. This cannot be undone.`
-      : `Delete "${label}"?\n\nThis cannot be undone.`;
-    if (!confirm(warn)) return;
+    // Two-tier confirmation. Empty cycles get a single soft confirm;
+    // cycles WITH nominations get a typed-string confirmation so a misclick
+    // can't erase real homeowner submissions. The nomination_events audit
+    // log still retains a record of every submission/status change even
+    // after the cycle + nominations are gone — but the source rows are
+    // hard-deleted via FK cascade, so we treat this as serious.
+    if (nominationsCount > 0) {
+      const typed = prompt(
+        `⚠ DESTRUCTIVE — "${label}" has ${nominationsCount} nomination${nominationsCount === 1 ? '' : 's'} on it.\n\n` +
+        `Deleting the cycle PERMANENTLY removes the cycle AND all ${nominationsCount} nomination${nominationsCount === 1 ? '' : 's'} (including any photos and scanned forms). The audit log keeps a record of what was submitted, but the live rows are gone.\n\n` +
+        `Type DELETE to confirm.`
+      );
+      if (typed !== 'DELETE') {
+        if (typed !== null) alert('Cycle not deleted — confirmation text did not match.');
+        return;
+      }
+    } else if (!confirm(`Delete "${label}"?\n\nThis cycle has no nominations and can be safely removed. This cannot be undone.`)) {
+      return;
+    }
     try {
       const r = await fetch(`/api/nominations/cycles/${id}`, { method: 'DELETE' });
       const j = await r.json().catch(() => ({}));
@@ -15594,6 +15610,22 @@ ${questionsPage}
       const list = document.getElementById('nomList');
       // Resolve community name from the cached cycle for use in row labels.
       const communityName = (cycle && cycle.community_name) || nomSelectedCommunity() || 'community';
+      // Annual Meeting Notice button is only useful once the slate exists.
+      // Enable it as soon as there's at least one on_slate nomination;
+      // disable + show hint otherwise so staff aren't generating empty ballots.
+      const slateCount = noms.filter((n) => n.status === 'on_slate').length;
+      const annBtn = document.getElementById('nomAnnualNoticeBtn');
+      if (annBtn) {
+        if (slateCount > 0) {
+          annBtn.disabled = false;
+          annBtn.style.opacity = '1';
+          annBtn.title = `Generates the Annual Meeting Notice for ${slateCount} candidate${slateCount === 1 ? '' : 's'} on the slate.`;
+        } else {
+          annBtn.disabled = true;
+          annBtn.style.opacity = '0.5';
+          annBtn.title = 'No candidates on the slate yet. Click "✓ Put on ballot" on at least one nomination first.';
+        }
+      }
       if (noms.length === 0) {
         list.textContent = 'No nominations submitted yet. Homeowners can submit at the public link above.';
         return;
@@ -15883,6 +15915,35 @@ ${questionsPage}
       URL.revokeObjectURL(url);
     } catch (e) {
       alert('Paper form render failed: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.innerHTML = originalLabel;
+    }
+  }
+
+  // Generate the 4-page Annual Meeting Notice + Ballot + Bios PDF. Pulls
+  // every on_slate nomination, embeds their photos, applies smart voting-
+  // methods defaults. Disabled in the UI until at least 1 nomination is
+  // on the slate — see slateCount check in nomOpenCycle.
+  async function nomGenerateAnnualNotice() {
+    if (!nomActiveCycleId) { alert('Save the cycle first.'); return; }
+    const btn = document.getElementById('nomAnnualNoticeBtn');
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '⏳ Rendering (15–20s)…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/annual-meeting-notice`, { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `annual-meeting-notice.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      alert('Annual Meeting Notice render failed: ' + e.message);
     } finally {
       btn.disabled = false; btn.innerHTML = originalLabel;
     }
