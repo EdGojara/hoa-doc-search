@@ -848,8 +848,26 @@
       </div>
 
       <div style="margin-top:10px;">
-        <div class="section-label">Meeting location (optional)</div>
-        <input type="text" id="nomMeetingLocation" placeholder="Clubhouse / Zoom link / TBD" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+        <div class="section-label">Meeting location</div>
+        <input type="text" id="nomVenueName" placeholder="Venue (e.g., Waterview Clubhouse / Cinco Ranch Rec Center / Zoom)" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px; margin-bottom:5px;">
+        <input type="text" id="nomVenueStreet" placeholder="Street address" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px; margin-bottom:5px;">
+        <input type="text" id="nomVenueCityZip" placeholder="City, State ZIP" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
+      </div>
+
+      <!-- Annual meeting timeline — computed from the meeting date.
+           Texas Property Code §209.0056 requires notice 10-60 days before
+           the meeting. Bedrock's operational target: notice mailed 17 days
+           before (7-day buffer against print/USPS delays); nominations
+           close 24 days before (7 days to package the mailing). -->
+      <div id="nomTimelinePanel" style="display:none; margin-top:12px; padding:12px 14px; background:#f8fafc; border:1px solid #c0d0e0; border-radius:8px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <div style="font-weight:700; color:#1E2761; font-size:13px;">📅 Annual meeting timeline</div>
+          <button type="button" onclick="nomUseRecommendedClose()" style="font-size:11px; padding:4px 10px; border:1px solid #1E2761; background:#fff; color:#1E2761; border-radius:6px; cursor:pointer;">Use recommended close →</button>
+        </div>
+        <div id="nomTimelineBody" style="font-size:12.5px; color:#334155; line-height:1.7;"></div>
+        <div style="margin-top:6px; padding-top:6px; border-top:1px dashed #cbd5e1; font-size:10.5px; color:#94A3B8; font-style:italic;">
+          Texas Property Code §209.0056 — notice must be sent 10-60 days before the meeting. Bedrock targets T−17 to mail and T−24 to close nominations (7-day buffers).
+        </div>
       </div>
 
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
@@ -13469,6 +13487,99 @@ ${questionsPage}
     }
   }
 
+  // Annual meeting date math — operationalizes TX Property Code §209.0056.
+  // BUFFER_MAIL = days before meeting we aim to mail the package (statutory min is 10).
+  // BUFFER_CLOSE = days before meeting we aim to close nominations (= mail + 7 to package).
+  const NOM_BUFFER_MAIL_DAYS  = 17;
+  const NOM_BUFFER_CLOSE_DAYS = 24;
+  const NOM_STATUTORY_MIN_DAYS = 10;
+  const NOM_STATUTORY_MAX_DAYS = 60;
+
+  function nomAddDays(dateStr, deltaDays) {
+    if (!dateStr) return null;
+    const dt = new Date(dateStr + 'T12:00:00');
+    if (isNaN(dt.getTime())) return null;
+    dt.setDate(dt.getDate() + deltaDays);
+    return dt.toISOString().slice(0, 10);
+  }
+  function nomFmtFullDate(dateStr) {
+    if (!dateStr) return '';
+    try {
+      const dt = new Date(dateStr + 'T12:00:00');
+      return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (_) { return dateStr; }
+  }
+  function nomRecommendedCloseDate() {
+    const meeting = document.getElementById('nomMeetingDate').value;
+    if (!meeting) return null;
+    return nomAddDays(meeting, -NOM_BUFFER_CLOSE_DAYS);
+  }
+
+  function nomRenderTimeline() {
+    const panel = document.getElementById('nomTimelinePanel');
+    const body  = document.getElementById('nomTimelineBody');
+    if (!panel || !body) return;
+    const meeting = document.getElementById('nomMeetingDate').value;
+    if (!meeting) { panel.style.display = 'none'; return; }
+
+    const today = new Date().toISOString().slice(0, 10);
+    const closeRecommended = nomAddDays(meeting, -NOM_BUFFER_CLOSE_DAYS);
+    const mailTarget       = nomAddDays(meeting, -NOM_BUFFER_MAIL_DAYS);
+    const statutoryLatest  = nomAddDays(meeting, -NOM_STATUTORY_MIN_DAYS);
+    const statutoryEarliest = nomAddDays(meeting, -NOM_STATUTORY_MAX_DAYS);
+    const userClose = document.getElementById('nomCloseAt').value;
+
+    // Warnings
+    let warnings = [];
+    if (closeRecommended < today) {
+      warnings.push(`⚠️ The recommended close date is already in the past — meeting is too soon for a clean cycle (need at least ${NOM_BUFFER_CLOSE_DAYS} days). Consider rescheduling.`);
+    } else if (closeRecommended === today || nomAddDays(today, 14) > closeRecommended) {
+      warnings.push(`⚠️ Tight window — homeowners get fewer than 14 days to nominate. Consider pushing the meeting out, or accept the shorter window.`);
+    }
+    if (userClose && userClose > statutoryLatest) {
+      warnings.push(`🛑 The close date you set (${nomFmtFullDate(userClose)}) leaves less than ${NOM_STATUTORY_MIN_DAYS} days to mail notice — would violate §209.0056. Close must be on or before ${nomFmtFullDate(statutoryLatest)}.`);
+    } else if (userClose && userClose > closeRecommended) {
+      const slipDays = Math.round((new Date(userClose) - new Date(closeRecommended)) / (1000 * 60 * 60 * 24));
+      warnings.push(`⚠️ Your close date is ${slipDays} day${slipDays === 1 ? '' : 's'} after Bedrock's target — you'll have less buffer to package the mailing.`);
+    }
+
+    body.innerHTML = `
+      <div style="display:grid; grid-template-columns: 100px 1fr; gap:4px 12px;">
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">Today</div>
+        <div>Send the Call for Nominations now</div>
+
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−24 ★</div>
+        <div><strong>${nomFmtFullDate(closeRecommended)}</strong> — Bedrock-recommended nominations close</div>
+
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−17</div>
+        <div>${nomFmtFullDate(mailTarget)} — annual meeting package mails (proxy / ballot / bios)</div>
+
+        <div style="color:#94A3B8; font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T−10</div>
+        <div>${nomFmtFullDate(statutoryLatest)} — <span style="color:#b91c1c;">latest legal mail date</span> (§209.0056)</div>
+
+        <div style="color:#1E2761; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.4px;">T</div>
+        <div style="font-weight:700; color:#1E2761;">${nomFmtFullDate(meeting)} — Annual Meeting</div>
+      </div>
+      ${warnings.length ? `<div style="margin-top:8px; padding:8px 10px; background:#fef3c7; border-left:3px solid #f59e0b; border-radius:0 4px 4px 0; font-size:12px; color:#78350f;">${warnings.join('<br>')}</div>` : ''}
+    `;
+    panel.style.display = 'block';
+  }
+
+  function nomUseRecommendedClose() {
+    const close = nomRecommendedCloseDate();
+    if (!close) { alert('Set the annual meeting date first.'); return; }
+    document.getElementById('nomCloseAt').value = close;
+    nomRenderTimeline();
+    nomComputeReelectionSuggestion();
+  }
+
+  // Re-render the timeline whenever meeting date or close date changes
+  document.addEventListener('input', (e) => {
+    if (e.target && (e.target.id === 'nomMeetingDate' || e.target.id === 'nomCloseAt')) {
+      nomRenderTimeline();
+    }
+  });
+
   function nomComputeReelectionSuggestion() {
     const suggestion = document.getElementById('nomReelectionSuggestion');
     const meetingDate = document.getElementById('nomMeetingDate').value;
@@ -13517,11 +13628,17 @@ ${questionsPage}
       address: document.getElementById('nomOnsiteAddress').value.trim() || null,
     } : { enabled: false };
 
+    // Stitch the 3 location inputs into a single string for the cycle row.
+    const venue  = document.getElementById('nomVenueName').value.trim();
+    const street = document.getElementById('nomVenueStreet').value.trim();
+    const cityZip = document.getElementById('nomVenueCityZip').value.trim();
+    const location = [venue, street, cityZip].filter(Boolean).join(', ');
+
     const fd = new FormData();
     fd.append('community_name', community);
     fd.append('annual_meeting_date', meeting);
     fd.append('annual_meeting_time', document.getElementById('nomMeetingTime').value || '');
-    fd.append('annual_meeting_location', document.getElementById('nomMeetingLocation').value || '');
+    fd.append('annual_meeting_location', location);
     fd.append('nominations_close_at', close);
     fd.append('seats_open', String(Number(document.getElementById('nomSeatsOpen').value || 1)));
     // current_board snapshot is pulled fresh from the Roster tab — single
@@ -13883,7 +14000,9 @@ ${questionsPage}
         community_name:           (document.getElementById('communitySelect') || {}).value || null,
         annual_meeting_date:      document.getElementById('nomMeetingDate').value,
         annual_meeting_time:      document.getElementById('nomMeetingTime').value,
-        annual_meeting_location:  document.getElementById('nomMeetingLocation').value,
+        venue_name:               document.getElementById('nomVenueName').value,
+        venue_street:             document.getElementById('nomVenueStreet').value,
+        venue_city_zip:           document.getElementById('nomVenueCityZip').value,
         nominations_close_at:     document.getElementById('nomCloseAt').value,
         seats_open:               document.getElementById('nomSeatsOpen').value,
         description:              document.getElementById('nomDescription').value,
@@ -13905,8 +14024,11 @@ ${questionsPage}
       const set = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
       set('nomMeetingDate',     s.annual_meeting_date);
       set('nomMeetingTime',     s.annual_meeting_time);
-      set('nomMeetingLocation', s.annual_meeting_location);
+      set('nomVenueName',       s.venue_name);
+      set('nomVenueStreet',     s.venue_street);
+      set('nomVenueCityZip',    s.venue_city_zip);
       set('nomCloseAt',         s.nominations_close_at);
+      try { nomRenderTimeline(); } catch (_) {}
       set('nomSeatsOpen',       s.seats_open);
       set('nomDescription',     s.description);
       set('nomExpectations',    s.expectations_blurb);
