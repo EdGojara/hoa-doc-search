@@ -5162,9 +5162,11 @@ app.get('/api/annual-meetings/calendar', async (req, res) => {
     // saved on a cycle (or vice versa).
     function commKey(name) { return String(name || '').split(' at ')[0].trim().toLowerCase(); }
     const latestByCommunity = {};
+    const allByCommunity = {};
     for (const c of cycles || []) {
       const k = commKey(c.community_name);
       if (!latestByCommunity[k]) latestByCommunity[k] = c;
+      (allByCommunity[k] ||= []).push(c);
     }
 
     // For each community, if the latest cycle's meeting date is in the past,
@@ -5182,7 +5184,12 @@ app.get('/api/annual-meetings/calendar', async (req, res) => {
     }
 
     const rows = (communities || []).map((comm) => {
-      const cycle = latestByCommunity[commKey(comm.name)] || null;
+      const k = commKey(comm.name);
+      const cycle = latestByCommunity[k] || null;
+      const all = allByCommunity[k] || [];
+      // Most recent meeting that has already happened (used as both the
+      // "from last year" reference and the projection seed).
+      const priorPastCycle = all.find((c) => c.annual_meeting_date && c.annual_meeting_date < todayStr) || null;
       let projected = null;
       if (cycle && cycle.annual_meeting_date && cycle.annual_meeting_date < todayStr) {
         const projectedMeeting = addYear(cycle.annual_meeting_date);
@@ -5202,6 +5209,7 @@ app.get('/api/annual-meetings/calendar', async (req, res) => {
         community_slug: comm.slug,
         latest_cycle: cycle,
         projected_cycle: projected,
+        prior_year_meeting: priorPastCycle ? priorPastCycle.annual_meeting_date : null,
       };
     });
 

@@ -322,13 +322,19 @@
       </div>
     </div>
 
-    <!-- Legend -->
+    <!-- Legend + community filter -->
     <div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:12px; font-size:12px; color:#475569; align-items:center;">
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-plan">🚀</span>Start to plan</span>
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-send">📤</span>Send call by</span>
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-close">📋</span>Nominations close</span>
-      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-meeting">🏛️</span>Annual meeting</span>
-      <span style="color:#94A3B8; font-style:italic; margin-left:auto;">Dashed border = tentative (📝 draft or last-year-based)</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-plan">🚀</span>Plan</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-send">📤</span>Send</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-close">📋</span>Close</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-meeting">🏛️</span>Meeting</span>
+      <span style="color:#94A3B8; font-style:italic;">Dashed = tentative (📝 draft or last-year-based)</span>
+      <span style="margin-left:auto; display:flex; align-items:center; gap:6px;">
+        <span style="font-weight:600;">Filter:</span>
+        <select id="calCommFilter" onchange="calRender()" style="padding:4px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12px; background:#fff; max-width:240px;">
+          <option value="">All communities</option>
+        </select>
+      </span>
     </div>
 
     <style>
@@ -347,6 +353,9 @@
       .cal-chip-close   { background:#fee2e2; color:#991b1b; }
       .cal-chip-meeting { background:#dbeafe; color:#1e3a8a; }
       .cal-chip:hover { filter:brightness(0.92); }
+      .cal-more { display:inline-block; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:700; color:#1E2761; background:#e2e8f0; cursor:pointer; }
+      .cal-more:hover { background:#cbd5e1; }
+      .cal-day.expanded { min-height:auto; }
     </style>
 
     <div id="calGrid" class="cal-grid">
@@ -1008,7 +1017,7 @@
     <style>
       .ams-sort-btn { background:#fff; border:1px solid #d0d7de; color:#1E2761; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-family:inherit; }
       .ams-sort-btn.active { background:#1E2761; color:#fff; border-color:#1E2761; }
-      .ams-row { display:grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr auto; gap:14px; padding:12px 16px; border:1px solid #e3e8ef; border-radius:10px; align-items:center; background:#fff; margin-bottom:6px; }
+      .ams-row { display:grid; grid-template-columns: 1.5fr 0.9fr 1fr 1fr 1fr 1fr auto; gap:14px; padding:12px 16px; border:1px solid #e3e8ef; border-radius:10px; align-items:center; background:#fff; margin-bottom:6px; }
       .ams-row.urgent { border-left:3px solid #b91c1c; }
       .ams-row.warn   { border-left:3px solid #f59e0b; }
       .ams-row.ok     { border-left:3px solid #15803d; }
@@ -1024,8 +1033,9 @@
       .ams-pill.idle   { background:#f1f5f9; color:#475569; }
     </style>
 
-    <div id="amsHeader" style="display:grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr auto; gap:14px; padding:6px 16px; margin-bottom:4px; font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">
+    <div id="amsHeader" style="display:grid; grid-template-columns: 1.5fr 0.9fr 1fr 1fr 1fr 1fr auto; gap:14px; padding:6px 16px; margin-bottom:4px; font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">
       <div>Community</div>
+      <div>Last year</div>
       <div>Start to plan</div>
       <div>Send Call by</div>
       <div>Nominations close</div>
@@ -13614,10 +13624,10 @@ ${questionsPage}
   // chips deep-link into the relevant module + community.
   // =========================================================================
   const CAL_EVENT_TYPES = {
-    start_to_plan:     { icon: '🚀', cls: 'cal-chip-plan',    label: 'Start to plan' },
-    send_by:           { icon: '📤', cls: 'cal-chip-send',    label: 'Send Call' },
-    nominations_close: { icon: '📋', cls: 'cal-chip-close',   label: 'Close' },
-    annual_meeting:    { icon: '🏛️', cls: 'cal-chip-meeting', label: 'Meeting' },
+    start_to_plan:     { icon: '🚀', cls: 'cal-chip-plan',    label: 'Start to plan',          short: 'Plan' },
+    send_by:           { icon: '📤', cls: 'cal-chip-send',    label: 'Send Call',              short: 'Send' },
+    nominations_close: { icon: '📋', cls: 'cal-chip-close',   label: 'Nominations close',      short: 'Close' },
+    annual_meeting:    { icon: '🏛️', cls: 'cal-chip-meeting', label: 'Annual meeting',         short: 'Meeting' },
   };
   let calCursor = new Date();
   calCursor.setDate(1);
@@ -13660,10 +13670,14 @@ ${questionsPage}
   }
 
   function calEventChipHtml(ev, opts = {}) {
-    const t = CAL_EVENT_TYPES[ev.type] || { icon: '•', cls: '', label: ev.type };
+    const t = CAL_EVENT_TYPES[ev.type] || { icon: '•', cls: '', label: ev.type, short: ev.type };
     const tentative = (ev.is_projected || ev.is_draft) ? ' tentative' : '';
     const draftMark = ev.is_draft ? '📝 ' : '';
-    const text = opts.compact ? `${draftMark}${t.icon} ${ev.community}` : `${draftMark}${t.icon} ${ev.community} — ${t.label}`;
+    // Compact (calendar grid): icon + short event word + community name so the
+    // four work-back dates for a single cycle are distinguishable at a glance.
+    const text = opts.compact
+      ? `${draftMark}${t.icon} ${t.short} · ${ev.community}`
+      : `${draftMark}${t.icon} ${ev.community} — ${t.label}`;
     let titleSuffix = '';
     if (ev.is_draft)     titleSuffix = ' (DRAFT — click to resume editing)';
     else if (ev.is_projected) titleSuffix = ' (tentative — from prior year)';
@@ -13672,13 +13686,26 @@ ${questionsPage}
     return `<span class="cal-chip ${t.cls}${tentative}" title="${escapeHtml(titleSafe)}" onclick="calOpenEvent('${ev.type}', '${ev.community.replace(/'/g, "\\'")}', ${draftId})">${escapeHtml(text)}</span>`;
   }
 
+  function calRefreshCommunityOptions(events) {
+    const select = document.getElementById('calCommFilter');
+    if (!select) return;
+    const current = select.value;
+    const names = Array.from(new Set((events || []).map((e) => e.community).filter(Boolean))).sort((a, b) => a.localeCompare(b));
+    select.innerHTML = `<option value="">All communities (${names.length})</option>` +
+      names.map((n) => `<option value="${escapeHtml(n)}">${escapeHtml(n)}</option>`).join('');
+    if (current && names.includes(current)) select.value = current;
+  }
+
   async function calRender() {
     const label = document.getElementById('calMonthLabel');
     const grid  = document.getElementById('calGrid');
     if (!label || !grid) return;
     label.textContent = calFmtMonth(calCursor);
 
-    const events = await calFetchEvents();
+    const allEvents = await calFetchEvents();
+    calRefreshCommunityOptions(allEvents);
+    const filterValue = (document.getElementById('calCommFilter') || {}).value || '';
+    const events = filterValue ? allEvents.filter((e) => e.community === filterValue) : allEvents;
     const byDate = {};
     for (const ev of events) {
       if (!ev.date) continue;
@@ -13704,9 +13731,14 @@ ${questionsPage}
       if (!inMonth) classes.push('cal-other-month');
       if (isToday) classes.push('cal-today');
       const eventsForDay = byDate[ymd] || [];
-      const chipsHtml = eventsForDay.slice(0, 3).map((e) => calEventChipHtml(e, { compact: true })).join('');
-      const moreHtml = eventsForDay.length > 3
-        ? `<span style="font-size:10px; color:#6B7280; padding-left:2px;">+${eventsForDay.length - 3} more</span>`
+      // Show up to 5 chips per cell; rest collapse into a "+N more" pill.
+      // At 100-community scale a heavy day can have many events; clicking
+      // "+N more" opens a popover (handled in calToggleDay).
+      const PER_DAY_LIMIT = 5;
+      const chipsHtml = eventsForDay.slice(0, PER_DAY_LIMIT).map((e) => calEventChipHtml(e, { compact: true })).join('');
+      const overflowCount = Math.max(0, eventsForDay.length - PER_DAY_LIMIT);
+      const moreHtml = overflowCount > 0
+        ? `<span class="cal-more" onclick="calToggleDay('${ymd}', this)" title="Click to expand">+${overflowCount} more</span>`
         : '';
       cellsHtml += `
         <div class="${classes.join(' ')}">
@@ -13742,6 +13774,24 @@ ${questionsPage}
         `).join('');
       }
     }
+  }
+
+  // Expand a day cell to show every event when "+N more" is clicked.
+  function calToggleDay(ymd, moreEl) {
+    const events = (calEventsCache || []).filter((e) => e.date === ymd);
+    if (events.length === 0) return;
+    const cell = moreEl.closest('.cal-day');
+    if (!cell) return;
+    if (cell.classList.contains('expanded')) {
+      // Collapse — re-render
+      calRender();
+      return;
+    }
+    cell.classList.add('expanded');
+    // Keep the date header + replace the chips with the full list
+    const dateText = cell.querySelector('.cal-date')?.outerHTML || '';
+    cell.innerHTML = dateText + events.map((e) => calEventChipHtml(e, { compact: true })).join('') +
+      `<span class="cal-more" onclick="calRender()" title="Collapse">− collapse</span>`;
   }
 
   function calPrev() {
@@ -13821,6 +13871,9 @@ ${questionsPage}
   }
 
   function amsComputeRow(row) {
+    // prior_year_meeting is set by the server when any past cycle exists for
+    // this community (used for the "Last year" reference column and as the
+    // basis for the projected next-year row when no current cycle exists).
     // Use the actual cycle if its meeting date is still in the future;
     // otherwise fall back to the server-projected next-year cycle so the
     // manager sees planning dates without having to create a cycle first.
@@ -13903,6 +13956,10 @@ ${questionsPage}
   }
 
   function amsRowHtml(row) {
+    const priorYear = row.prior_year_meeting
+      ? `<div class="ams-date muted" style="font-style:italic;">${amsFmt(row.prior_year_meeting)}</div>`
+      : `<div class="ams-date muted">—</div>`;
+
     if (row.state === 'no_cycle') {
       return `
         <div class="ams-row idle">
@@ -13910,6 +13967,7 @@ ${questionsPage}
             <div style="font-weight:700; color:#1E2761;">${escapeHtml(row.community)}</div>
             <div style="font-size:11px; color:#94A3B8;">No cycle planned</div>
           </div>
+          ${priorYear}
           <div class="ams-date muted">—</div>
           <div class="ams-date muted">—</div>
           <div class="ams-date muted">—</div>
@@ -13942,6 +14000,7 @@ ${questionsPage}
             ${sourceHint}
           </div>
         </div>
+        ${priorYear}
         <div class="${dateClass(row.startPlan)}">${amsFmt(row.startPlan)}</div>
         <div class="${dateClass(row.sendBy)}">${amsFmt(row.sendBy)}</div>
         <div class="${dateClass(row.close)}">${amsFmt(row.close)}</div>
