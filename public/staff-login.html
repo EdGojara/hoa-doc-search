@@ -1,0 +1,148 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Bedrock — Staff Sign-In</title>
+  <meta name="theme-color" content="#1E2761" />
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0; padding: 0; min-height: 100dvh;
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
+      color: #1f2937;
+      display: flex; align-items: center; justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      width: 100%; max-width: 420px;
+      background: #fff;
+      border: 1px solid #e2e8f0; border-radius: 14px;
+      padding: 32px 28px;
+      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.06);
+    }
+    .brand {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 20px;
+    }
+    .brand-mark {
+      width: 44px; height: 44px; border-radius: 10px;
+      background: #1E2761; color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      font-weight: 800; font-size: 18px; letter-spacing: 0.5px;
+    }
+    .brand-text { font-weight: 700; color: #0f172a; font-size: 16px; }
+    .brand-sub { color: #64748b; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600; }
+
+    h1 {
+      font-size: 22px; font-weight: 700; margin: 0 0 6px;
+      color: #0f172a;
+    }
+    .lede {
+      color: #475569; font-size: 14px; line-height: 1.55;
+      margin: 0 0 22px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px; font-weight: 600; color: #334155;
+      margin-bottom: 5px;
+    }
+    input[type="password"] {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid #cbd5e1; border-radius: 10px;
+      font: inherit; font-size: 15px;
+      background: #fff;
+    }
+    input[type="password"]:focus {
+      outline: none; border-color: #1E2761;
+      box-shadow: 0 0 0 3px rgba(30, 39, 97, 0.12);
+    }
+
+    button[type="submit"] {
+      display: block; width: 100%;
+      background: #1E2761; color: #fff;
+      padding: 13px; border: none; border-radius: 10px;
+      font: inherit; font-size: 15px; font-weight: 700;
+      cursor: pointer; margin-top: 16px;
+      box-shadow: 0 4px 12px rgba(30, 39, 97, 0.22);
+    }
+    button[type="submit"]:active { transform: scale(0.99); }
+    button[type="submit"]:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+
+    .err {
+      background: #fee2e2; color: #991b1b;
+      padding: 10px 12px; border-radius: 8px;
+      font-size: 13px; margin-top: 12px;
+      display: none;
+    }
+    .err.show { display: block; }
+
+    .footer-note {
+      font-size: 12px; color: #94A3B8;
+      text-align: center;
+      margin-top: 22px;
+      line-height: 1.55;
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="brand-mark">B</div>
+      <div>
+        <div class="brand-text">Bedrock Association Management</div>
+        <div class="brand-sub">trustEd · staff sign-in</div>
+      </div>
+    </div>
+
+    <h1>Sign in</h1>
+    <p class="lede">This is a private staff workspace. Enter the shared password to continue. Homeowner-facing forms (nomination submissions, ARC applications, status lookups) are not affected by this gate.</p>
+
+    <form id="loginForm" autocomplete="off">
+      <label for="password">Password</label>
+      <input type="password" id="password" name="password" required autocomplete="current-password" autofocus>
+      <button type="submit" id="submitBtn">Sign in</button>
+      <div class="err" id="errBox"></div>
+    </form>
+
+    <div class="footer-note">Bedrock Association Management, LLC · Sugar Land, TX</div>
+  </div>
+
+  <script>
+    // Pull ?next= so we redirect back where the user was trying to go.
+    const params = new URLSearchParams(window.location.search);
+    const nextUrl = params.get('next') || '/';
+
+    document.getElementById('loginForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      const err = document.getElementById('errBox');
+      const pw = document.getElementById('password').value;
+      err.classList.remove('show');
+      btn.disabled = true; btn.textContent = '⏳ Signing in…';
+      try {
+        const r = await fetch('/api/staff-login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ password: pw, next: nextUrl }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Sign-in failed');
+        window.location.replace(j.next || '/');
+      } catch (e) {
+        err.textContent = e.message;
+        err.classList.add('show');
+        btn.disabled = false; btn.textContent = 'Sign in';
+        document.getElementById('password').focus();
+        document.getElementById('password').select();
+      }
+    });
+  </script>
+</body>
+</html>

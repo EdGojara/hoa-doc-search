@@ -347,6 +347,128 @@ ${scopeContent}`
 
 const app = express();
 app.use(express.json());
+
+// ============================================================================
+// Staff password gate — interim protection before the Microsoft 365 / Supabase
+// Auth flow ships properly. Two env vars control it (both must stay unset in
+// dev/legacy mode):
+//   STAFF_PASSWORD       — the shared password staff types at /staff-login.html
+//   STAFF_GATE_SECRET    — HMAC secret used to sign the session cookie. If
+//                          unset, falls back to STAFF_PASSWORD itself, which
+//                          is fine for an interim system — just means rotating
+//                          the password also rotates the secret and invalidates
+//                          existing sessions.
+//
+// When STAFF_PASSWORD is set, every request to a path NOT in the public
+// allowlist requires a valid HMAC-signed cookie. Unset STAFF_PASSWORD to
+// disable the gate entirely — kill switch for emergencies.
+//
+// Public paths (always bypass the gate) include the homeowner-facing forms
+// and their public APIs, the login page itself, robots.txt, and static
+// assets like logos. Everything else — the admin index.html, all the /api/*
+// admin endpoints — requires authentication.
+// ============================================================================
+const _crypto = require('crypto');
+const STAFF_GATE_COOKIE = 'bedrock_gate';
+const STAFF_GATE_TTL_DAYS = 30;
+const _STAFF_GATE_PUBLIC = [
+  /^\/robots\.txt$/,
+  /^\/favicon\.ico$/,
+  /^\/staff-login\.html$/,
+  /^\/api\/staff-login$/,
+  /^\/nominate\b/,
+  /^\/api\/nominations\/public\b/,
+  /^\/apply\.html$/,
+  /^\/apply-status\.html$/,
+  /^\/api\/applications\/public\b/,
+  /^\/community-landing\b/,
+  /^\/api\/community-landing\b/,
+  /^\/fob_request\.html$/,
+  /^\/status\.html$/,
+  /^\/api\/auth\/config$/,
+  /^\/f\//,
+  /^\/logos\//,
+  /^\/assets\//,
+];
+
+function _gateIsPublicPath(p) { return _STAFF_GATE_PUBLIC.some((re) => re.test(p)); }
+function _gateSign(secret) {
+  const ts = String(Date.now());
+  const sig = _crypto.createHmac('sha256', secret).update(ts).digest('hex');
+  return `${ts}.${sig}`;
+}
+function _gateVerify(secret, token) {
+  if (!token || !secret) return false;
+  const parts = String(token).split('.');
+  if (parts.length !== 2) return false;
+  const [ts, sig] = parts;
+  if (!/^\d+$/.test(ts)) return false;
+  const age = Date.now() - Number(ts);
+  if (age > STAFF_GATE_TTL_DAYS * 86400 * 1000) return false;
+  const expected = _crypto.createHmac('sha256', secret).update(ts).digest('hex');
+  if (sig.length !== expected.length) return false;
+  try {
+    return _crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'));
+  } catch (_) { return false; }
+}
+function _gateExtractCookie(req) {
+  const raw = req.headers.cookie || '';
+  const m = raw.match(new RegExp(`(?:^|; )${STAFF_GATE_COOKIE}=([^;]+)`));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+
+app.use((req, res, next) => {
+  const password = process.env.STAFF_PASSWORD;
+  if (!password) return next(); // kill switch — gate disabled
+  if (_gateIsPublicPath(req.path)) return next();
+  const secret = process.env.STAFF_GATE_SECRET || password;
+  if (_gateVerify(secret, _gateExtractCookie(req))) return next();
+  // Browser HTML GET → friendly redirect; API or non-GET → 401 JSON.
+  const accepts = String(req.headers.accept || '');
+  if (req.method === 'GET' && (accepts.includes('text/html') || req.path === '/')) {
+    return res.redirect('/staff-login.html?next=' + encodeURIComponent(req.originalUrl));
+  }
+  return res.status(401).json({ error: 'authentication required' });
+});
+
+// Tell crawlers to stay away from the admin app. Public homeowner pages
+// (/nominate/*, /apply.html, etc.) still work — they're behind paths
+// homeowners reach via QR / email link, not search.
+app.get('/robots.txt', (req, res) => {
+  res.type('text/plain').send('User-agent: *\nDisallow: /\n');
+});
+
+// Validate the password, set the signed session cookie.
+app.post('/api/staff-login', (req, res) => {
+  const password = process.env.STAFF_PASSWORD;
+  if (!password) return res.status(503).json({ error: 'staff gate not configured' });
+  const submitted = String((req.body && req.body.password) || '');
+  let ok = false;
+  try {
+    const a = Buffer.from(submitted, 'utf8');
+    const b = Buffer.from(password, 'utf8');
+    ok = a.length === b.length && _crypto.timingSafeEqual(a, b);
+  } catch (_) { ok = false; }
+  if (!ok) return res.status(401).json({ error: 'incorrect password' });
+  const secret = process.env.STAFF_GATE_SECRET || password;
+  const token = _gateSign(secret);
+  const secure = req.secure || (req.headers['x-forwarded-proto'] === 'https');
+  res.setHeader('Set-Cookie',
+    `${STAFF_GATE_COOKIE}=${encodeURIComponent(token)}; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=${STAFF_GATE_TTL_DAYS * 86400}`
+  );
+  const next = (req.body && req.body.next) || '/';
+  res.json({ ok: true, next: typeof next === 'string' ? next : '/' });
+});
+
+// Sign-out — clears the gate cookie.
+app.get('/staff-logout', (req, res) => {
+  const secure = req.secure || (req.headers['x-forwarded-proto'] === 'https');
+  res.setHeader('Set-Cookie',
+    `${STAFF_GATE_COOKIE}=; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=0`
+  );
+  res.redirect('/staff-login.html');
+});
+
 app.use(express.static('public'));
 
 // ----------------------------------------------------------------------------
