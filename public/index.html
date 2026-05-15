@@ -1546,12 +1546,79 @@
   </div>
 </div>
 
+<!-- ===========================================================================
+     ANNUAL MEETING NOTICE TAB
+     Phase 2 of the nominations cycle: the Call for Nominations window has
+     closed, the slate is set, and we generate the 4-page Annual Meeting
+     Notice (Notice + Voting Instructions + Proxy/Absentee Ballot + Bios)
+     that gets mailed to every homeowner ahead of the meeting.
+     =========================================================================== -->
+<div class="tab-content" id="tab-ameetingnotice" style="overflow-y:auto; padding:24px;">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">🗳️ Annual Meeting Notice</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Phase 2 of the cycle. Pick a cycle whose nominations have closed, confirm the slate, configure voting methods, and generate the 4-page Notice + Ballot + Candidate Statements PDF that goes to every homeowner.
+    </p>
+  </div>
+
+  <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+    <!-- LEFT: cycle picker + meeting overview + voting methods + generate -->
+    <div style="border:1px solid #d0d7de; border-radius:10px; padding:18px; background:#fff;">
+      <h3 style="margin:0 0 8px 0; font-size:15px; color:#1E2761;">Pick a cycle</h3>
+      <select id="amnCycleSelect" onchange="amnLoadCycle()" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px; margin-bottom:14px;">
+        <option value="">— Select a cycle from any community —</option>
+      </select>
+
+      <div id="amnCycleDetails" style="display:none;">
+        <div style="margin-bottom:12px; padding:10px 12px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0;">
+          <div style="font-weight:600; color:#1E2761;" id="amnCommunityName">—</div>
+          <div style="font-size:12.5px; color:#475569; margin-top:2px;" id="amnMeetingMeta">—</div>
+        </div>
+
+        <h4 style="margin:14px 0 6px 0; font-size:13px; color:#1E2761;">Voting methods on the Notice</h4>
+        <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">Smart defaults applied automatically. You can override the editor later — for now, the Notice generates with mail + email + in-person enabled, plus online if the electronic-voting toggle is on, plus drop-off if you configured one on the cycle.</p>
+        <div id="amnVotingMethodsList" style="font-size:12.5px; color:#334155; padding-left:6px;"></div>
+
+        <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Slate <span id="amnSlateCount" style="color:#94A3B8; font-weight:400; font-size:11px;"></span></h4>
+        <div id="amnSlateList" style="font-size:13px; color:#334155;">—</div>
+        <p style="font-size:11.5px; color:#94A3B8; margin:6px 0 0 0;">To add or remove candidates from the slate, go to <strong>Call for Nominations</strong> → open the cycle → click <strong>✓ Put on ballot</strong> on the nomination row.</p>
+
+        <div style="display:flex; gap:8px; margin-top:18px; flex-wrap:wrap;">
+          <button id="amnGenerateBtn" onclick="amnGenerate()" disabled style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; opacity:0.5;">🗳️ Generate Annual Meeting Notice</button>
+        </div>
+        <div id="amnGenerateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
+      </div>
+    </div>
+
+    <!-- RIGHT: recent notices + helpful context -->
+    <div>
+      <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <h3 style="margin:0; font-size:14px; color:#1E2761;">Recently generated notices</h3>
+          <button class="secondary-btn" onclick="amnLoadRecent()" style="font-size:11px; padding:4px 8px;">↻ Refresh</button>
+        </div>
+        <div id="amnRecentList" style="margin-top:10px; font-size:13px; color:#6B7280;">Pick a cycle to see recently generated notices.</div>
+      </div>
+
+      <div style="margin-top:12px; padding:10px 14px; background:#f0f9ff; border:1px solid #c7d2fe; border-radius:8px; font-size:12px; color:#475569;">
+        <strong style="color:#1E2761;">What the Notice contains:</strong>
+        <ul style="margin:6px 0 0 18px; padding:0;">
+          <li>Page 1 — Meeting notice + agenda</li>
+          <li>Page 2 — Voting instructions (each accepted method + TX §209.00592 disclosure)</li>
+          <li>Page 3 — Proxy / Absentee Ballot (3 options, candidate checkboxes, write-in line, owner info, signature)</li>
+          <li>Page 4 — Candidate Statements (bios + photos, alphabetical)</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- Annual Mailing Tab -->
 <div class="tab-content" id="tab-mailing">
   <div class="two-panel">
     <div class="panel">
-      <h3>📬 Annual Mailing Generator</h3>
-      <p style="font-size:13px; color:#666;">Upload your Vantaca homeowner mailing address PDF.</p>
+      <h3>📬 Mail Cover Sheets</h3>
+      <p style="font-size:13px; color:#666;">Reformat a Vantaca homeowner address export into Bedrock-friendly mail cover sheets. Works for <strong>any physical mailing</strong> — Call for Nominations, Annual Meeting Notice, special assessments, board comms — not just annual meetings. Upload the Vantaca address PDF, click Generate, get cover sheets ready for the printer.</p>
       <div class="section-label" style="margin-top:8px;">Mailing Address PDF</div>
       <div class="upload-area" id="mailingUploadArea"
            onclick="document.getElementById('mailingPdf').click()"
@@ -13972,7 +14039,8 @@ ${questionsPage}
       children: [
         { id: 'amschedule',  label: '📅 Schedule' },
         { id: 'nominations', label: '📋 Call for Nominations' },
-        { id: 'mailing',     label: '📬 Annual Mailing' },
+        { id: 'ameetingnotice', label: '🗳️ Annual Meeting Notice' },
+        { id: 'mailing',     label: '📬 Mail Cover Sheets' },
       ],
     },
   };
@@ -15948,6 +16016,164 @@ ${questionsPage}
       btn.disabled = false; btn.innerHTML = originalLabel;
     }
   }
+
+  // =========================================================================
+  // Annual Meeting Notice — Phase 2 sub-tab. Picks a cycle, shows the slate
+  // + voting methods that will print on the Notice, generates the 4-page PDF.
+  // Slate management still happens on Call for Nominations cycle detail
+  // (the "✓ Put on ballot" button); this tab is the downstream view + action.
+  // =========================================================================
+  let amnAllCycles = [];
+  let amnCurrentCycleId = null;
+
+  async function amnLoadCycles() {
+    const sel = document.getElementById('amnCycleSelect');
+    if (!sel) return;
+    try {
+      const r = await fetch('/api/nominations/cycles');
+      const j = await r.json();
+      amnAllCycles = (j.cycles || []).sort((a, b) =>
+        (b.annual_meeting_date || '').localeCompare(a.annual_meeting_date || '')
+      );
+      const prevValue = sel.value;
+      sel.innerHTML = '<option value="">— Select a cycle —</option>' +
+        amnAllCycles.map((c) => {
+          const lbl = `${escapeHtml(c.community_name)} — ${escapeHtml(c.annual_meeting_date || 'no date')} (${escapeHtml(c.status)}, ${c.nominations_count || 0} nom${(c.nominations_count || 0) === 1 ? '' : 's'})`;
+          return `<option value="${escapeHtml(c.id)}">${lbl}</option>`;
+        }).join('');
+      if (prevValue && amnAllCycles.find((c) => c.id === prevValue)) sel.value = prevValue;
+    } catch (e) {
+      console.warn('[amnLoadCycles] failed:', e);
+    }
+  }
+
+  async function amnLoadCycle() {
+    const sel = document.getElementById('amnCycleSelect');
+    const cycleId = sel.value;
+    const detailsBox = document.getElementById('amnCycleDetails');
+    if (!cycleId) {
+      detailsBox.style.display = 'none';
+      amnCurrentCycleId = null;
+      return;
+    }
+    amnCurrentCycleId = cycleId;
+    const cycle = amnAllCycles.find((c) => c.id === cycleId);
+    if (!cycle) return;
+
+    detailsBox.style.display = 'block';
+    document.getElementById('amnCommunityName').textContent = `${cycle.community_name} — ${cycle.annual_meeting_date || '(no meeting date)'}`;
+    const meta = [];
+    if (cycle.annual_meeting_time) meta.push(cycle.annual_meeting_time);
+    if (cycle.annual_meeting_location) meta.push(cycle.annual_meeting_location);
+    meta.push(`${cycle.seats_open || 1} seat${(cycle.seats_open || 1) === 1 ? '' : 's'}`);
+    if (cycle.term_years) meta.push(`${cycle.term_years}-year term`);
+    document.getElementById('amnMeetingMeta').textContent = meta.join(' · ');
+
+    // Render the voting methods that will print on the Notice — these mirror
+    // the smart-defaults builder on the server (buildVotingMethodsFromCycle).
+    const vmList = document.getElementById('amnVotingMethodsList');
+    const vm = cycle.voting_methods || {};
+    const closeDate = cycle.nominations_close_at || '(no close date)';
+    const closeTime = cycle.nominations_close_time || '5:00 PM';
+    const methods = [];
+    if (vm.online && vm.online.enabled) {
+      methods.push(`✓ <strong>Online voting</strong> — close ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)}`);
+    } else {
+      methods.push(`<span style="color:#94A3B8;">○ Online voting — disabled (toggle in Call for Nominations cycle form)</span>`);
+    }
+    methods.push(`✓ <strong>Mail-in</strong> — receive by ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)} · Bedrock address`);
+    methods.push(`✓ <strong>Email</strong> — receive by ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)} · info@bedrocktx.com`);
+    if (cycle.onsite_drop_off && cycle.onsite_drop_off.enabled) {
+      const loc = cycle.onsite_drop_off.location_name || 'on-site office';
+      methods.push(`✓ <strong>Drop-off</strong> at ${escapeHtml(loc)} — receive by ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)}`);
+    } else {
+      methods.push(`<span style="color:#94A3B8;">○ Drop-off — disabled (toggle in Call for Nominations cycle form)</span>`);
+    }
+    methods.push(`✓ <strong>In person</strong> — at the meeting`);
+    vmList.innerHTML = methods.map((m) => `<div style="padding:3px 0;">${m}</div>`).join('');
+
+    // Fetch nominations for this cycle to show the slate.
+    try {
+      const r = await fetch(`/api/nominations/cycles/${cycleId}/nominations`);
+      const j = await r.json();
+      const all = j.nominations || [];
+      const slate = all.filter((n) => n.status === 'on_slate');
+      const slateBox = document.getElementById('amnSlateList');
+      const countEl = document.getElementById('amnSlateCount');
+      countEl.textContent = `(${slate.length} on ballot of ${all.length} submitted)`;
+      if (slate.length === 0) {
+        slateBox.innerHTML = `<div style="padding:8px 10px; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:0 6px 6px 0; font-size:12px; color:#78350f;">No candidates on the slate yet. Go to <strong>Call for Nominations</strong>, open this cycle, and click <strong>✓ Put on ballot</strong> on each candidate first.</div>`;
+      } else {
+        slateBox.innerHTML = slate.sort((a, b) => (a.nominee_name || '').localeCompare(b.nominee_name || '')).map((n) => {
+          const photo = n.photo_signed_url
+            ? `<img src="${n.photo_signed_url}" style="width:32px; height:32px; border-radius:6px; object-fit:cover; vertical-align:middle; margin-right:8px;">`
+            : `<span style="display:inline-block; width:32px; height:32px; border-radius:6px; background:#f1f5f9; vertical-align:middle; margin-right:8px;"></span>`;
+          return `<div style="padding:4px 0; border-bottom:1px solid #e2e8f0;">${photo}<strong>${escapeHtml(n.nominee_name)}</strong>${n.is_incumbent ? ' <span style="background:#eef2ff; color:#1E2761; padding:1px 6px; border-radius:8px; font-size:10px; font-weight:700;">INCUMBENT</span>' : ''}${n.years_in_community ? ` <span style="color:#94A3B8; font-size:11px;">· ${escapeHtml(n.years_in_community)}</span>` : ''}</div>`;
+        }).join('');
+      }
+      // Enable Generate only when there's at least 1 candidate on slate.
+      const gen = document.getElementById('amnGenerateBtn');
+      if (slate.length > 0) {
+        gen.disabled = false; gen.style.opacity = '1';
+        gen.title = `Generate Annual Meeting Notice for ${slate.length} candidate${slate.length === 1 ? '' : 's'}`;
+      } else {
+        gen.disabled = true; gen.style.opacity = '0.5';
+        gen.title = 'Add at least 1 candidate to the slate first';
+      }
+    } catch (e) {
+      document.getElementById('amnSlateList').innerHTML = `<span style="color:#b91c1c;">Couldn't load slate: ${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function amnGenerate() {
+    if (!amnCurrentCycleId) { alert('Pick a cycle first.'); return; }
+    const btn = document.getElementById('amnGenerateBtn');
+    const status = document.getElementById('amnGenerateStatus');
+    const origLabel = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '⏳ Rendering (15–20s)…';
+    status.innerHTML = '';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${amnCurrentCycleId}/annual-meeting-notice`, { method: 'POST' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `annual-meeting-notice.pdf`;
+      a.click();
+      URL.revokeObjectURL(url);
+      status.innerHTML = `<span style="color:#15803d;">✓ Annual Meeting Notice generated and downloaded.</span> The PDF is also saved alongside this cycle in storage.`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">Generate failed: ${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.innerHTML = origLabel;
+    }
+  }
+
+  async function amnLoadRecent() {
+    // Light-touch v1: just show a refresh hint. A proper "list previously
+    // generated notices" requires a new endpoint that queries storage or
+    // a dedicated documents table. For now staff can re-generate at any
+    // time — the PDF is regenerated from current cycle data.
+    const list = document.getElementById('amnRecentList');
+    if (!amnCurrentCycleId) {
+      list.textContent = 'Pick a cycle to see recently generated notices.';
+      return;
+    }
+    list.innerHTML = '<span style="color:#94A3B8; font-style:italic;">Re-generate at any time using the green button — the latest version is always the current cycle data.</span>';
+  }
+
+  // Auto-load cycles when the Annual Meeting Notice tab is activated.
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab-subbtn').forEach((b) => {
+      if (b.getAttribute('onclick') && b.getAttribute('onclick').includes("'ameetingnotice'")) {
+        b.addEventListener('click', () => { amnLoadCycles(); amnLoadRecent(); });
+      }
+    });
+  });
 
   // =========================================================================
   // Drafts — generic "save in progress" / "resume saved drafts" framework.
