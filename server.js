@@ -5122,6 +5122,58 @@ app.delete('/api/board-members/:id', async (req, res) => {
   }
 });
 
+// ============================================================================
+// Annual Meeting Schedule — portfolio view across every community.
+//   GET /api/annual-meetings/calendar
+//
+// Returns one row per community with its latest nomination_cycle (if any),
+// so the client can compute start-to-plan / send-by / close / meeting dates
+// and the status badge. Independent of the cycle CRUD endpoints — this is a
+// dashboard read.
+// ============================================================================
+app.get('/api/annual-meetings/calendar', async (req, res) => {
+  try {
+    const [{ data: communities }, { data: cycles }] = await Promise.all([
+      supabase
+        .from('communities')
+        .select('id, name, slug')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .order('name', { ascending: true }),
+      supabase
+        .from('nomination_cycles')
+        .select('id, community_name, annual_meeting_date, annual_meeting_time, annual_meeting_location, nominations_open_at, nominations_close_at, accept_electronic, accept_physical_mail, status, public_slug, seats_open')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .order('annual_meeting_date', { ascending: false }),
+    ]);
+
+    // Group cycles by community_name — first match is the latest (rows are
+    // already date-desc). Loose-match by leading community name segment so
+    // "Canyon Gate" in the community row matches "Canyon Gate at Cinco Ranch"
+    // saved on a cycle (or vice versa).
+    function commKey(name) { return String(name || '').split(' at ')[0].trim().toLowerCase(); }
+    const latestByCommunity = {};
+    for (const c of cycles || []) {
+      const k = commKey(c.community_name);
+      if (!latestByCommunity[k]) latestByCommunity[k] = c;
+    }
+
+    const rows = (communities || []).map((comm) => {
+      const cycle = latestByCommunity[commKey(comm.name)] || null;
+      return {
+        community: comm.name,
+        community_id: comm.id,
+        community_slug: comm.slug,
+        latest_cycle: cycle,
+      };
+    });
+
+    res.json({ rows });
+  } catch (err) {
+    console.error('[annual-meetings/calendar]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
 });

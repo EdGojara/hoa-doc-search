@@ -814,6 +814,73 @@
 </div>
 
 <!-- ===========================================================================
+     Annual Meeting Schedule — portfolio dashboard across every community.
+     One row per community with: today, start-to-plan, send-by, meeting day +
+     status badge. Sortable. Click a community to jump into its cycle.
+     ========================================================================= -->
+<div class="tab-content" id="tab-amschedule" style="overflow-y:auto; padding:24px;">
+  <div style="max-width: 1200px; margin: 0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 14px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1E2761; margin-bottom:4px;">📅 Annual Meeting Schedule</h2>
+        <p style="font-size:13px; color:#666; margin:0;">Portfolio view of every community's annual meeting lifecycle. Sort by what's coming up next, jump into any cycle in one click.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:8px; font-size:13px; color:#475569;">
+        <strong>Today:</strong> <span id="amsTodayLabel" style="color:#1E2761;"></span>
+        <button class="secondary-btn" onclick="amsLoad()" style="font-size:11px; padding:5px 10px; margin-left:6px;">↻ Refresh</button>
+      </div>
+    </div>
+
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px; align-items:center; font-size:12.5px;">
+      <span style="color:#475569; font-weight:600;">Sort:</span>
+      <button class="ams-sort-btn" data-sort="urgency" onclick="amsSetSort('urgency')">📌 By urgency (default)</button>
+      <button class="ams-sort-btn" data-sort="name" onclick="amsSetSort('name')">A → Z</button>
+      <button class="ams-sort-btn" data-sort="plan" onclick="amsSetSort('plan')">By start-to-plan date</button>
+      <button class="ams-sort-btn" data-sort="meeting" onclick="amsSetSort('meeting')">By annual meeting date</button>
+    </div>
+
+    <style>
+      .ams-sort-btn { background:#fff; border:1px solid #d0d7de; color:#1E2761; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer; font-family:inherit; }
+      .ams-sort-btn.active { background:#1E2761; color:#fff; border-color:#1E2761; }
+      .ams-row { display:grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr auto; gap:14px; padding:12px 16px; border:1px solid #e3e8ef; border-radius:10px; align-items:center; background:#fff; margin-bottom:6px; }
+      .ams-row.urgent { border-left:3px solid #b91c1c; }
+      .ams-row.warn   { border-left:3px solid #f59e0b; }
+      .ams-row.ok     { border-left:3px solid #15803d; }
+      .ams-row.idle   { border-left:3px solid #cbd5e1; }
+      .ams-col-h { font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
+      .ams-date { font-size:13px; color:#1a1a1a; font-weight:600; }
+      .ams-date.past { color:#b91c1c; }
+      .ams-date.muted { color:#94A3B8; font-weight:500; }
+      .ams-pill { display:inline-block; padding:3px 8px; border-radius:99px; font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; }
+      .ams-pill.urgent { background:#fee2e2; color:#991b1b; }
+      .ams-pill.warn   { background:#fef3c7; color:#92400e; }
+      .ams-pill.ok     { background:#dcfce7; color:#166534; }
+      .ams-pill.idle   { background:#f1f5f9; color:#475569; }
+    </style>
+
+    <div id="amsHeader" style="display:grid; grid-template-columns: 1.5fr 1fr 1fr 1fr 1fr auto; gap:14px; padding:6px 16px; margin-bottom:4px; font-size:10.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">
+      <div>Community</div>
+      <div>Start to plan</div>
+      <div>Send Call by</div>
+      <div>Nominations close</div>
+      <div>Annual meeting</div>
+      <div></div>
+    </div>
+
+    <div id="amsList" style="font-size:13px; color:#6B7280;">
+      <div style="padding:30px; text-align:center; color:#94A3B8;">Loading…</div>
+    </div>
+
+    <div style="margin-top:18px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:11.5px; color:#475569; line-height:1.6;">
+      <strong>How dates are computed</strong><br>
+      Working back from the annual meeting date:
+      <code>Nominations close = T−24</code> · <code>Send by = close − 21</code> (or close − 14 if electronic-only) · <code>Start to plan = send-by − 14</code>.
+      Texas Property Code §209.0056 requires notice 10-60 days before the meeting.
+    </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
      Call for Nominations — annual meeting nomination cycles.
      Manager creates a cycle (meeting date, seats open, current board snapshot),
      renders a branded "Call for Nominations" letter PDF that goes in the
@@ -12960,6 +13027,7 @@ ${questionsPage}
     annualmeeting: {
       label: '🗳️ Annual Meeting',
       children: [
+        { id: 'amschedule',  label: '📅 Schedule' },
         { id: 'nominations', label: '📋 Call for Nominations' },
         { id: 'mailing',     label: '📬 Annual Mailing' },
       ],
@@ -13259,6 +13327,192 @@ ${questionsPage}
       const result = orig.apply(this, arguments);
       if (tab === 'presentations') presInit();
       return result;
+    };
+  })();
+
+  // =========================================================================
+  // Annual Meeting Schedule — portfolio dashboard.
+  // One row per community with its lifecycle dates + urgency badge.
+  // Reuses the §209.0056 + 17/24/14/21 constants for date math.
+  // =========================================================================
+  const AMS_START_TO_PLAN_DAYS = 14;  // days before send-by to start planning
+  let amsRows = [];
+  let amsSort = 'urgency';
+
+  function amsAddDays(dateStr, delta) {
+    if (!dateStr) return null;
+    const dt = new Date(dateStr + 'T12:00:00');
+    if (isNaN(dt.getTime())) return null;
+    dt.setDate(dt.getDate() + delta);
+    return dt.toISOString().slice(0, 10);
+  }
+  function amsFmt(dateStr) {
+    if (!dateStr) return '—';
+    try {
+      const dt = new Date(dateStr + 'T12:00:00');
+      return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    } catch (_) { return dateStr; }
+  }
+  function amsDaysFromToday(dateStr) {
+    if (!dateStr) return null;
+    const today = new Date(); today.setHours(0,0,0,0);
+    const dt = new Date(dateStr + 'T00:00:00');
+    return Math.round((dt - today) / 86400000);
+  }
+
+  function amsComputeRow(row) {
+    const cycle = row.latest_cycle;
+    if (!cycle || !cycle.annual_meeting_date) {
+      return { ...row, state: 'no_cycle' };
+    }
+    const meeting = cycle.annual_meeting_date;
+    const close   = cycle.nominations_close_at || amsAddDays(meeting, -24);
+    const acceptPhysical = cycle.accept_physical_mail !== false;
+    const sendByDays = acceptPhysical ? 21 : 14;
+    const sendBy    = amsAddDays(close, -sendByDays);
+    const startPlan = amsAddDays(sendBy, -AMS_START_TO_PLAN_DAYS);
+
+    const today = new Date().toISOString().slice(0,10);
+    const daysToMeeting = amsDaysFromToday(meeting);
+    const daysToSend    = amsDaysFromToday(sendBy);
+    const daysToPlan    = amsDaysFromToday(startPlan);
+
+    // Status classification
+    let state, pill, sortKey;
+    if (daysToMeeting < 0) {
+      state = 'idle'; pill = { label: 'Past meeting', cls: 'idle' };
+      sortKey = 10_000_000 + Math.abs(daysToMeeting);
+    } else if (daysToSend < 0) {
+      state = 'urgent'; pill = { label: `Past send-by`, cls: 'urgent' };
+      sortKey = -1_000_000 + daysToMeeting;
+    } else if (daysToPlan < 0) {
+      state = 'warn'; pill = { label: 'Plan now', cls: 'warn' };
+      sortKey = daysToSend;
+    } else if (daysToPlan <= 14) {
+      state = 'warn'; pill = { label: `Plan in ${daysToPlan}d`, cls: 'warn' };
+      sortKey = daysToPlan;
+    } else {
+      state = 'ok'; pill = { label: 'On track', cls: 'ok' };
+      sortKey = daysToPlan;
+    }
+    return { ...row, state, pill, sortKey, meeting, close, sendBy, startPlan, daysToMeeting, daysToSend, daysToPlan, acceptPhysical };
+  }
+
+  function amsSortRows(rows) {
+    const copy = rows.slice();
+    if (amsSort === 'name') copy.sort((a, b) => a.community.localeCompare(b.community));
+    else if (amsSort === 'meeting') copy.sort((a, b) => (a.meeting || '9999-12-31').localeCompare(b.meeting || '9999-12-31'));
+    else if (amsSort === 'plan')    copy.sort((a, b) => (a.startPlan || '9999-12-31').localeCompare(b.startPlan || '9999-12-31'));
+    else copy.sort((a, b) => {
+      // urgency: no_cycle last, otherwise sortKey ascending
+      if (a.state === 'no_cycle' && b.state !== 'no_cycle') return 1;
+      if (b.state === 'no_cycle' && a.state !== 'no_cycle') return -1;
+      return (a.sortKey ?? 0) - (b.sortKey ?? 0);
+    });
+    return copy;
+  }
+
+  function amsSetSort(sort) {
+    amsSort = sort;
+    document.querySelectorAll('.ams-sort-btn').forEach((b) => {
+      b.classList.toggle('active', b.dataset.sort === sort);
+    });
+    amsRender();
+  }
+
+  function amsRowHtml(row) {
+    if (row.state === 'no_cycle') {
+      return `
+        <div class="ams-row idle">
+          <div>
+            <div style="font-weight:700; color:#1E2761;">${escapeHtml(row.community)}</div>
+            <div style="font-size:11px; color:#94A3B8;">No cycle planned</div>
+          </div>
+          <div class="ams-date muted">—</div>
+          <div class="ams-date muted">—</div>
+          <div class="ams-date muted">—</div>
+          <div class="ams-date muted">—</div>
+          <div>
+            <button onclick="amsPlanFor('${row.community.replace(/'/g, "\\'")}')" style="background:#1E2761; color:#fff; border:0; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">+ Plan</button>
+          </div>
+        </div>
+      `;
+    }
+    const past = (d) => d && d < new Date().toISOString().slice(0,10) ? 'past' : '';
+    return `
+      <div class="ams-row ${row.state}">
+        <div>
+          <div style="font-weight:700; color:#1E2761;">${escapeHtml(row.community)}</div>
+          <div style="font-size:11px; color:#475569; margin-top:2px;">
+            <span class="ams-pill ${row.pill.cls}">${escapeHtml(row.pill.label)}</span>
+            <span style="margin-left:6px; color:#94A3B8;">${row.acceptPhysical ? 'mail + online' : 'online only'}</span>
+          </div>
+        </div>
+        <div class="ams-date ${past(row.startPlan)}">${amsFmt(row.startPlan)}</div>
+        <div class="ams-date ${past(row.sendBy)}">${amsFmt(row.sendBy)}</div>
+        <div class="ams-date ${past(row.close)}">${amsFmt(row.close)}</div>
+        <div class="ams-date">${amsFmt(row.meeting)}</div>
+        <div>
+          <button onclick="amsOpenCycle('${row.community.replace(/'/g, "\\'")}')" style="background:#fff; border:1px solid #1E2761; color:#1E2761; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">Open →</button>
+        </div>
+      </div>
+    `;
+  }
+
+  function amsRender() {
+    const list = document.getElementById('amsList');
+    const today = new Date();
+    document.getElementById('amsTodayLabel').textContent = today.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
+    if (!amsRows.length) {
+      list.innerHTML = `<div style="padding:30px; text-align:center; color:#94A3B8;">No communities found.</div>`;
+      return;
+    }
+    const computed = amsRows.map(amsComputeRow);
+    const sorted = amsSortRows(computed);
+    list.innerHTML = sorted.map(amsRowHtml).join('');
+  }
+
+  async function amsLoad() {
+    const list = document.getElementById('amsList');
+    list.innerHTML = `<div style="padding:30px; text-align:center; color:#94A3B8;">Loading…</div>`;
+    try {
+      const r = await fetch('/api/annual-meetings/calendar');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      amsRows = j.rows || [];
+      amsRender();
+    } catch (e) {
+      list.innerHTML = `<div style="padding:20px; color:#b91c1c;">${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // Click "Open →" on an existing cycle row — jump to the community + open the
+  // Call for Nominations sub-tab. The cycle list there will surface the cycle.
+  function amsOpenCycle(communityName) {
+    const sel = document.getElementById('communitySelect');
+    if (sel) {
+      // Try to set the dropdown to this community (best-effort match)
+      const opts = Array.from(sel.options);
+      const match = opts.find((o) => o.value === communityName) || opts.find((o) => o.text && o.text.toLowerCase().includes(communityName.toLowerCase()));
+      if (match) {
+        sel.value = match.value;
+        sel.dispatchEvent(new Event('change'));
+      }
+    }
+    try { switchTab('nominations'); } catch (_) {}
+  }
+
+  // "+ Plan" on a community with no cycle — same destination, manager fills it out.
+  function amsPlanFor(communityName) { amsOpenCycle(communityName); }
+
+  // Auto-load on tab open
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'amschedule') { try { amsLoad(); amsSetSort(amsSort); } catch (_) {} }
+      return r;
     };
   })();
 
