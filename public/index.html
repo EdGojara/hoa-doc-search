@@ -10772,28 +10772,86 @@ ${questionsPage}
     }
   }
 
+  // Batched reindex loop. Each HTTP request handles ~10 docs (well under
+  // Render's 100s timeout); we keep calling with rising offset until done.
+  // Status line ticks up live so Ed can see real progress instead of staring
+  // at "Working..." for 10 minutes.
   async function docsReindexAll() {
     const btn = document.getElementById('docsReindexBtn');
     const status = document.getElementById('docs-reindex-status');
-    if (!confirm('Reindex all library documents that askEd can\'t currently see? This extracts text, generates embeddings, and inserts into the vector store. May take a few minutes for large batches.')) return;
+    if (!confirm('Reindex all library documents that askEd can\'t currently see? Pre-existing docs (uploaded before auto-indexing) need this one-time backfill. Processes in batches of 10 so you\'ll see live progress.')) return;
     btn.disabled = true; btn.textContent = '⏳ Reindexing…';
-    status.innerHTML = '<em style="color:#475569;">Working… do not close the tab. This can take several minutes.</em>';
-    try {
-      const r = await fetch('/api/documents/reindex-all', { method: 'POST' });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'reindex failed');
-      const failedHtml = (j.details || []).filter(d => d.status === 'failed' || d.status === 'skipped').slice(0, 10).map(d =>
-        `<li><strong>${escapeHtml(d.name || d.id)}</strong> (${escapeHtml(d.community || '—')}): ${escapeHtml(d.status)}${d.reason ? ' — ' + escapeHtml(d.reason) : ''}${d.error ? ' — ' + escapeHtml(d.error) : ''}</li>`
-      ).join('');
+
+    const totals = { indexed: 0, skipped: 0, failed: 0, processed: 0, queueTotal: 0 };
+    const allDetails = [];
+    let offset = 0;
+    const limit = 10;
+    let consecutiveErrors = 0;
+
+    function renderStatus(stage) {
+      const pct = totals.queueTotal > 0 ? Math.round(100 * totals.processed / totals.queueTotal) : 0;
       status.innerHTML = `
-        <div style="padding:10px 12px; background:${j.indexed > 0 ? '#dcfce7' : '#fef3c7'}; border-left:3px solid ${j.indexed > 0 ? '#15803d' : '#f59e0b'}; border-radius:0 6px 6px 0; line-height:1.6;">
-          <strong>${j.indexed} indexed</strong> · ${j.skipped} skipped · ${j.failed} failed · (of ${j.attempted} attempted, ${j.total_candidates} total candidates)
-          ${failedHtml ? `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px;">First 10 skipped / failed</summary><ul style="font-size:11.5px; margin:6px 0 0; padding-left:18px;">${failedHtml}</ul></details>` : ''}
+        <div style="padding:10px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; line-height:1.6;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div><strong>${stage}</strong> · ${totals.processed} / ${totals.queueTotal} docs (${pct}%)</div>
+            <div style="font-size:11px; color:#475569;">${totals.indexed} indexed · ${totals.skipped} skipped · ${totals.failed} failed</div>
+          </div>
+          <div style="margin-top:6px; height:6px; background:#cbd5e1; border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${pct}%; background:#1E2761; transition:width 0.4s;"></div>
+          </div>
         </div>
       `;
-      await docsLoadCoverage();
+    }
+
+    renderStatus('Starting…');
+
+    try {
+      while (true) {
+        let res;
+        try {
+          res = await fetch(`/api/documents/reindex-all?offset=${offset}&limit=${limit}`, { method: 'POST' });
+        } catch (netErr) {
+          // Network/timeout. Retry up to 3 times before giving up — Render
+          // occasionally drops mid-request even on short batches.
+          consecutiveErrors += 1;
+          if (consecutiveErrors >= 3) throw new Error('Network error: ' + netErr.message);
+          await new Promise(r => setTimeout(r, 2000));
+          continue;
+        }
+        const j = await res.json();
+        if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+        consecutiveErrors = 0;
+
+        totals.indexed   += j.indexed   || 0;
+        totals.skipped   += j.skipped   || 0;
+        totals.failed    += j.failed    || 0;
+        totals.processed  = j.processed_total;
+        totals.queueTotal = j.queue_total;
+        (j.details || []).forEach(d => allDetails.push(d));
+
+        renderStatus(j.done ? 'Finalizing…' : 'Working…');
+        await docsLoadCoverage();
+
+        if (j.done) break;
+        offset += limit;
+        // Brief breather between batches so the UI can repaint and OpenAI's
+        // rate limiter doesn't get hammered.
+        await new Promise(r => setTimeout(r, 400));
+      }
+
+      const failedHtml = allDetails.filter(d => d.status === 'failed' || d.status === 'skipped').slice(0, 25).map(d =>
+        `<li><strong>${escapeHtml(d.name || d.id)}</strong> (${escapeHtml(d.community || '—')}): ${escapeHtml(d.status)}${d.reason ? ' — ' + escapeHtml(d.reason) : ''}${d.error ? ' — ' + escapeHtml(d.error) : ''}</li>`
+      ).join('');
+      const pillBg = totals.failed > 0 ? '#fef3c7' : '#dcfce7';
+      const pillBd = totals.failed > 0 ? '#f59e0b' : '#15803d';
+      status.innerHTML = `
+        <div style="padding:10px 12px; background:${pillBg}; border-left:3px solid ${pillBd}; border-radius:0 6px 6px 0; line-height:1.6;">
+          <strong>Done.</strong> ${totals.indexed} indexed · ${totals.skipped} skipped · ${totals.failed} failed · (${totals.processed} processed of ${totals.queueTotal} total)
+          ${failedHtml ? `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px;">${(totals.skipped + totals.failed)} skipped / failed — first 25</summary><ul style="font-size:11.5px; margin:6px 0 0; padding-left:18px;">${failedHtml}</ul></details>` : ''}
+        </div>
+      `;
     } catch (e) {
-      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; line-height:1.5;"><strong>Reindex stopped at ${totals.processed}/${totals.queueTotal}:</strong> ${escapeHtml(e.message)}<br><span style="font-size:11.5px; color:#6B7280;">Click the button again to resume — only un-indexed docs will be retried.</span></div>`;
     } finally {
       btn.disabled = false; btn.textContent = '🔁 Reindex everything askEd can\'t see';
     }

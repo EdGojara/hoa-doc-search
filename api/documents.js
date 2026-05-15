@@ -787,21 +787,56 @@ router.get('/asked-coverage', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /api/documents/reindex-all  — batch reindex every library doc not yet
-// in the chunks table. One-time-use button on the Documents tab for cleaning
-// up pre-existing docs that pre-date auto-indexing-on-upload.
+// POST /api/documents/reindex-all  — batched reindex. The client calls this
+// repeatedly with rising `offset` until `done: true`. Each call handles
+// `limit` docs (default 10) so a single HTTP request stays well under
+// Render's 100s timeout even on slow PDFs.
+//
+// Query params:
+//   ?community=Name       narrow to docs whose community contains "Name"
+//   ?only_missing=0       set to "0" to reindex everything (default: only docs not yet in chunks)
+//   ?offset=0&limit=10    pagination over the work queue
+//
+// Response includes:
+//   queue_total           total docs that need indexing
+//   processed_this_batch  how many this call handled
+//   processed_total       cumulative (so far, this offset + limit)
+//   indexed/skipped/failed per-batch counts
+//   details[]             per-doc result for this batch
+//   done                  true when offset+limit >= queue_total
 // ----------------------------------------------------------------------------
+
+// 60-second hard ceiling per doc — if pdf-parse hangs on a malformed PDF or an
+// OpenAI call hangs on a slow upstream, we abort this doc and keep moving.
+async function _indexWithTimeout(supabase, openai, doc, timeoutMs = 60000) {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`timeout_after_${Math.round(timeoutMs/1000)}s`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      indexLibraryDoc(supabase, openai, doc),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 router.post('/reindex-all', async (req, res) => {
   try {
     const communityFilter = (req.query.community || req.body?.community || '').trim();
     const onlyMissing = (req.query.only_missing || req.body?.only_missing) !== '0';
+    const offset = Math.max(0, parseInt(req.query.offset || req.body?.offset || '0', 10));
+    const limit  = Math.max(1, Math.min(50, parseInt(req.query.limit || req.body?.limit || '10', 10)));
 
     const { data: docs, error } = await supabase
       .from('library_documents')
       .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .neq('status', 'missing')
-      .not('file_path', 'is', null);
+      .not('file_path', 'is', null)
+      .order('uploaded_at', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
 
     let workQueue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
@@ -809,7 +844,6 @@ router.post('/reindex-all', async (req, res) => {
       const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
       workQueue = workQueue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
     }
-
     if (onlyMissing && workQueue.length > 0) {
       const ids = workQueue.map((d) => d.id);
       const { data: hits } = await supabase
@@ -820,10 +854,26 @@ router.post('/reindex-all', async (req, res) => {
       workQueue = workQueue.filter((d) => !haveIds.has(d.id));
     }
 
-    const results = { total_candidates: docs ? docs.length : 0, attempted: workQueue.length, indexed: 0, skipped: 0, failed: 0, details: [] };
-    for (const doc of workQueue) {
+    const queueTotal = workQueue.length;
+    const slice = workQueue.slice(offset, offset + limit);
+
+    const results = {
+      queue_total: queueTotal,
+      offset,
+      limit,
+      processed_this_batch: 0,
+      processed_total: Math.min(offset + slice.length, queueTotal),
+      indexed: 0,
+      skipped: 0,
+      failed: 0,
+      details: [],
+      done: offset + slice.length >= queueTotal,
+    };
+
+    for (const doc of slice) {
       try {
-        const r = await indexLibraryDoc(supabase, openai, doc);
+        const r = await _indexWithTimeout(supabase, openai, doc);
+        results.processed_this_batch += 1;
         if (r.ok) {
           results.indexed += 1;
           results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, chunks: r.chunks_inserted, status: 'indexed' });
@@ -832,6 +882,7 @@ router.post('/reindex-all', async (req, res) => {
           results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'skipped', reason: r.reason });
         }
       } catch (e) {
+        results.processed_this_batch += 1;
         results.failed += 1;
         results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'failed', error: e.message });
       }
