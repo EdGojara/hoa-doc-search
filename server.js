@@ -4543,9 +4543,19 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
     const b = req.body || {};
     if (!b.community_name) return res.status(400).json({ error: 'community_name is required' });
     if (!b.annual_meeting_date) return res.status(400).json({ error: 'annual_meeting_date is required' });
-    if (!b.nominations_close_at) {
-      return res.status(400).json({ error: 'nominations_close_at is required' });
+
+    // Relaxed save: only community + meeting date are required. Everything
+    // else can be filled in later — the manager can save with partial info
+    // so the cycle shows up on the Schedule + Calendar immediately, then come
+    // back to refine. Close defaults to meeting − 24 days (Bedrock target).
+    function _addDaysIso(dateStr, delta) {
+      const dt = new Date(dateStr + 'T12:00:00');
+      if (isNaN(dt.getTime())) return null;
+      dt.setDate(dt.getDate() + delta);
+      return dt.toISOString().slice(0, 10);
     }
+    const closeAt = b.nominations_close_at || _addDaysIso(b.annual_meeting_date, -24);
+
     // The "open" date is the day the letter goes out — i.e., today. Open it
     // automatically on cycle creation so the manager doesn't have to think
     // about it as a separate field.
@@ -4575,7 +4585,7 @@ app.post('/api/nominations/cycles', upload.any(), async (req, res) => {
         annual_meeting_time: b.annual_meeting_time || null,
         annual_meeting_location: b.annual_meeting_location || null,
         nominations_open_at: openAt,
-        nominations_close_at: b.nominations_close_at,
+        nominations_close_at: closeAt,
         seats_open: Number(b.seats_open) || 1,
         current_board: currentBoard,
         description: b.description || null,

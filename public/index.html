@@ -1121,7 +1121,7 @@
 
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-top:10px;">
         <div>
-          <div class="section-label">Nominations close <span style="color:#94A3B8; font-weight:400;">(deadline on the letter)</span></div>
+          <div class="section-label">Nominations close <span style="color:#94A3B8; font-weight:400;">(deadline on the letter — leave blank to auto-set T−24)</span></div>
           <input type="date" id="nomCloseAt" style="width:100%; border:1px solid #d0d7de; border-radius:8px; padding:8px 10px; font-size:14px;">
         </div>
         <div>
@@ -14415,7 +14415,10 @@ ${questionsPage}
     if (!community) { alert('Pick a community first (top of page).'); return; }
     const meeting = document.getElementById('nomMeetingDate').value;
     const close   = document.getElementById('nomCloseAt').value;
-    if (!meeting || !close) { alert('Annual meeting date and nominations close date are required.'); return; }
+    // Relaxed: only the meeting date is required. Everything else (close,
+    // location, board, expectations, etc.) can be left blank and revised later.
+    // Server defaults close to meeting − 24 days when missing.
+    if (!meeting) { alert('Annual meeting date is required so the cycle can appear on the calendar. Everything else can be filled in later.'); return; }
 
     const onsiteEnabled = document.getElementById('nomOnsiteEnabled').checked;
     const onsite = onsiteEnabled ? {
