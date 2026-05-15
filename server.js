@@ -371,24 +371,37 @@ app.use(express.json());
 const _crypto = require('crypto');
 const STAFF_GATE_COOKIE = 'bedrock_gate';
 const STAFF_GATE_TTL_DAYS = 30;
+// Public allowlist — paths a homeowner can hit without authenticating.
+// Each entry's been verified against the actual express route in server.js
+// (matched the dynamic /apply/:slug etc., not just the static apply.html
+// which is only ever served INTERNALLY by those dynamic handlers).
 const _STAFF_GATE_PUBLIC = [
+  // Static infrastructure
   /^\/robots\.txt$/,
   /^\/favicon\.ico$/,
-  /^\/staff-login\.html$/,
-  /^\/api\/staff-login$/,
-  /^\/nominate\b/,
-  /^\/api\/nominations\/public\b/,
-  /^\/apply\.html$/,
-  /^\/apply-status\.html$/,
-  /^\/api\/applications\/public\b/,
-  /^\/community-landing\b/,
-  /^\/api\/community-landing\b/,
-  /^\/fob_request\.html$/,
-  /^\/status\.html$/,
-  /^\/api\/auth\/config$/,
-  /^\/f\//,
   /^\/logos\//,
   /^\/assets\//,
+  // The login flow itself
+  /^\/staff-login\.html$/,
+  /^\/api\/staff-login$/,
+  /^\/api\/auth\/config$/,
+  // Short-URL redirects to public forms
+  /^\/f\//,
+  // Homeowner-facing dynamic pages — match the actual app.get routes
+  /^\/nominate\b/,                          // nominations form
+  /^\/apply\/[^/]+$/,                       // /apply/:slug — ARC application form
+  /^\/apply\/status\/[^/]+$/,               // /apply/status/:reference — ARC status lookup
+  /^\/c\/[^/]+$/,                           // /c/:slug — community landing page
+  /^\/fob\/[^/]+$/,                         // /fob/:slug — pool/key-fob request
+  /^\/event\/[^/]+$/,                       // /event/:slug — public event page
+  /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
+  // Public API endpoints these pages call. Each verified against the
+  // actual fetch() calls in the homeowner-facing HTML files.
+  /^\/api\/nominations\/public\b/,
+  /^\/api\/applications\/public\b/,            // ARC + fob: apply.html / fob_request.html
+  /^\/api\/applications\/community-landing\b/, // community_landing.html
+  /^\/api\/events\/public\b/,                  // event.html: details, sign, walkup, checkin auth/feed
+  /^\/api\/events\/communities\/[^/]+\/roster-match$/, // event_checkin.html (page-gated by 6-digit code)
 ];
 
 function _gateIsPublicPath(p) { return _STAFF_GATE_PUBLIC.some((re) => re.test(p)); }
