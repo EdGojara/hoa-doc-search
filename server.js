@@ -5010,7 +5010,7 @@ app.get('/nominate/:slug', async (req, res) => {
       : q.eq('public_slug', slug);
     const { data: cycle } = await q.limit(1).maybeSingle();
     if (!cycle) return res.status(404).send('<h1>Nominations form not found</h1><p>This community does not have an active nomination cycle.</p>');
-    res.sendFile(path.join(__dirname, 'public', 'nominate.html'));
+    res.sendFile(require('path').join(__dirname, 'public', 'nominate.html'));
   } catch (err) {
     res.status(500).send('Error: ' + err.message);
   }
