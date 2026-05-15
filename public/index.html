@@ -328,7 +328,7 @@
       <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-send">📤</span>Send call by</span>
       <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-close">📋</span>Nominations close</span>
       <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-meeting">🏛️</span>Annual meeting</span>
-      <span style="color:#94A3B8; font-style:italic; margin-left:auto;">Dashed border = tentative (last-year-based)</span>
+      <span style="color:#94A3B8; font-style:italic; margin-left:auto;">Dashed border = tentative (📝 draft or last-year-based)</span>
     </div>
 
     <style>
@@ -13661,10 +13661,15 @@ ${questionsPage}
 
   function calEventChipHtml(ev, opts = {}) {
     const t = CAL_EVENT_TYPES[ev.type] || { icon: '•', cls: '', label: ev.type };
-    const tentative = ev.is_projected ? ' tentative' : '';
-    const text = opts.compact ? `${t.icon} ${ev.community}` : `${t.icon} ${ev.community} — ${t.label}`;
-    const titleSafe = `${ev.community}: ${t.label}${ev.is_projected ? ' (tentative — from prior year)' : ''}`;
-    return `<span class="cal-chip ${t.cls}${tentative}" title="${escapeHtml(titleSafe)}" onclick="calOpenEvent('${ev.type}', '${ev.community.replace(/'/g, "\\'")}')">${escapeHtml(text)}</span>`;
+    const tentative = (ev.is_projected || ev.is_draft) ? ' tentative' : '';
+    const draftMark = ev.is_draft ? '📝 ' : '';
+    const text = opts.compact ? `${draftMark}${t.icon} ${ev.community}` : `${draftMark}${t.icon} ${ev.community} — ${t.label}`;
+    let titleSuffix = '';
+    if (ev.is_draft)     titleSuffix = ' (DRAFT — click to resume editing)';
+    else if (ev.is_projected) titleSuffix = ' (tentative — from prior year)';
+    const titleSafe = `${ev.community}: ${t.label}${titleSuffix}`;
+    const draftId = ev.draft_id ? `'${ev.draft_id}'` : 'null';
+    return `<span class="cal-chip ${t.cls}${tentative}" title="${escapeHtml(titleSafe)}" onclick="calOpenEvent('${ev.type}', '${ev.community.replace(/'/g, "\\'")}', ${draftId})">${escapeHtml(text)}</span>`;
   }
 
   async function calRender() {
@@ -13754,12 +13759,21 @@ ${questionsPage}
   }
 
   // Deep-link from a calendar event chip into the relevant module + community.
-  function calOpenEvent(type, communityName) {
+  // If the event was emitted from a draft, load the draft so the form fields
+  // get re-populated; otherwise just switch to the cycle screen so the
+  // manager can find the saved cycle in the list.
+  function calOpenEvent(type, communityName, draftId) {
     const sel = document.getElementById('communitySelect');
     if (sel) {
       const opts = Array.from(sel.options);
       const match = opts.find((o) => o.value === communityName) || opts.find((o) => o.text && o.text.toLowerCase().includes(communityName.toLowerCase()));
       if (match) { sel.value = match.value; sel.dispatchEvent(new Event('change')); }
+    }
+    if (draftId) {
+      try {
+        Drafts.load('nominations_cycle', draftId).catch((e) => alert(e.message));
+      } catch (_) {}
+      return; // hydrate already switches to the nominations tab
     }
     // All four annual-meeting events land in Call for Nominations for now.
     try { switchTab('nominations'); } catch (_) {}

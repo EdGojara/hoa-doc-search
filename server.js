@@ -5252,6 +5252,7 @@ app.get('/api/calendar/events', async (req, res) => {
 
     function emitCycleEvents(cycle, opts = {}) {
       const isProjected = !!opts.projected;
+      const isDraft     = !!opts.draft;
       const meeting = cycle.annual_meeting_date;
       const close   = cycle.nominations_close_at || addDays(meeting, -24);
       const acceptPhysical = cycle.accept_physical_mail !== false;
@@ -5264,6 +5265,8 @@ app.get('/api/calendar/events', async (req, res) => {
         cycle_id: cycle.id || null,
         public_slug: cycle.public_slug || null,
         is_projected: isProjected,
+        is_draft: isDraft,
+        draft_id: opts.draft_id || null,
       };
       const list = [
         { date: startPlan, type: 'start_to_plan',    label: 'Start to plan' },
@@ -5307,6 +5310,33 @@ app.get('/api/calendar/events', async (req, res) => {
       if (latestByCommunity[commKey(c.community_name)] === c) continue;
       if (!c.annual_meeting_date || c.annual_meeting_date < from || c.annual_meeting_date > to) continue;
       emitCycleEvents(c);
+    }
+
+    // Also emit events for any in-progress drafts that have a meeting date
+    // saved in their state. This lets a manager "Save as draft" with partial
+    // info and immediately see it on the calendar; clicking the chip will
+    // reload the draft into the cycle form so they can finish.
+    try {
+      const { data: draftRows } = await supabase
+        .from('drafts')
+        .select('id, community_name, state')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('draft_type', 'nominations_cycle');
+      for (const d of draftRows || []) {
+        const s = d.state || {};
+        if (!s.annual_meeting_date) continue;
+        if (s.annual_meeting_date < from || s.annual_meeting_date > to) continue;
+        emitCycleEvents({
+          id: null,
+          community_name: d.community_name || s.community_name || '(draft)',
+          annual_meeting_date: s.annual_meeting_date,
+          nominations_close_at: s.nominations_close_at || null,
+          accept_electronic: s.accept_electronic !== false,
+          accept_physical_mail: s.accept_physical_mail !== false,
+        }, { draft: true, draft_id: d.id });
+      }
+    } catch (e) {
+      console.warn('[calendar/events] drafts query failed:', e.message);
     }
 
     res.json({ events });
