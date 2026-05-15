@@ -46,6 +46,10 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const STORAGE_BUCKET = 'documents';
 
+// Library → askEd-chunks bridge. Auto-runs after every upload + exposed
+// here as manual reindex/coverage routes for one-time backfill.
+const { indexLibraryDoc } = require('../lib/library_reindex');
+
 const router = express.Router();
 
 // ----------------------------------------------------------------------------
@@ -569,6 +573,23 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       duration_ms: Date.now() - t0
     });
 
+    // Bridge: auto-index the new doc into the askEd chunks table so it's
+    // immediately searchable. Without this, uploads silently disappeared from
+    // askEd even though they got a green check in the matrix. Runs synchronously
+    // so the response carries the indexing result — caller can show the user.
+    let indexed = { ok: false, reason: 'not_attempted' };
+    if (uploadedFile && doc) {
+      try {
+        const libDoc = { ...doc, community_name: community?.name || null };
+        indexed = await indexLibraryDoc(supabase, openai, libDoc);
+      } catch (idxErr) {
+        console.warn('[documents] auto-index failed:', idxErr.message);
+        indexed = { ok: false, reason: 'exception', error: idxErr.message };
+      }
+    } else if (!uploadedFile) {
+      indexed = { ok: false, reason: 'no_file_in_storage' };
+    }
+
     res.json({
       ok: true,
       document: doc,
@@ -580,6 +601,8 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       // Forms-only: auto-superseded a prior version. UI shows what got replaced
       // so user can undo if it was the wrong target.
       superseded_prior: supersedeTargetSnapshot,
+      // askEd visibility: was this doc chunked + embedded into the vector store?
+      asked_indexed: indexed,
       duration_ms: Date.now() - t0
     });
   } catch (err) {
@@ -715,6 +738,131 @@ router.get('/legacy/list', async (req, res) => {
     res.json({ documents: data || [] });
   } catch (err) {
     console.error('[documents] legacy list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// askEd coverage diagnostic — per-community count of library docs vs. how
+// many are actually indexed in the chunks table the askEd retrieval reads.
+// MUST be defined before /:id (otherwise the catch-all UUID route shadows it).
+// ----------------------------------------------------------------------------
+router.get('/asked-coverage', async (req, res) => {
+  try {
+    const [{ data: libs }, { data: chunks }] = await Promise.all([
+      supabase
+        .from('library_documents')
+        .select('id, community_id, category, status, communities:community_id(name)')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .neq('status', 'missing')
+        .not('file_path', 'is', null),
+      supabase
+        .from('documents')
+        .select('metadata'),
+    ]);
+    const indexedIds = new Set();
+    const communityChunkCount = {};
+    for (const c of chunks || []) {
+      const meta = c.metadata || {};
+      if (meta.library_document_id) indexedIds.add(meta.library_document_id);
+      const name = meta.community;
+      if (name) communityChunkCount[name] = (communityChunkCount[name] || 0) + 1;
+    }
+    const byCommunity = {};
+    for (const d of libs || []) {
+      const name = (d.communities && d.communities.name) || 'Unknown';
+      if (!byCommunity[name]) byCommunity[name] = { name, total: 0, indexed: 0, not_indexed: 0, chunks_total: 0 };
+      byCommunity[name].total += 1;
+      if (indexedIds.has(d.id)) byCommunity[name].indexed += 1;
+      else byCommunity[name].not_indexed += 1;
+    }
+    for (const name of Object.keys(byCommunity)) {
+      byCommunity[name].chunks_total = communityChunkCount[name] || 0;
+    }
+    res.json({ by_community: Object.values(byCommunity).sort((a, b) => a.name.localeCompare(b.name)) });
+  } catch (err) {
+    console.error('[documents/asked-coverage]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/documents/reindex-all  — batch reindex every library doc not yet
+// in the chunks table. One-time-use button on the Documents tab for cleaning
+// up pre-existing docs that pre-date auto-indexing-on-upload.
+// ----------------------------------------------------------------------------
+router.post('/reindex-all', async (req, res) => {
+  try {
+    const communityFilter = (req.query.community || req.body?.community || '').trim();
+    const onlyMissing = (req.query.only_missing || req.body?.only_missing) !== '0';
+
+    const { data: docs, error } = await supabase
+      .from('library_documents')
+      .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .neq('status', 'missing')
+      .not('file_path', 'is', null);
+    if (error) return res.status(500).json({ error: error.message });
+
+    let workQueue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
+    if (communityFilter) {
+      const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
+      workQueue = workQueue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
+    }
+
+    if (onlyMissing && workQueue.length > 0) {
+      const ids = workQueue.map((d) => d.id);
+      const { data: hits } = await supabase
+        .from('documents')
+        .select('metadata')
+        .filter('metadata->>library_document_id', 'in', `(${ids.map((id) => `"${id}"`).join(',')})`);
+      const haveIds = new Set((hits || []).map((h) => h.metadata && h.metadata.library_document_id).filter(Boolean));
+      workQueue = workQueue.filter((d) => !haveIds.has(d.id));
+    }
+
+    const results = { total_candidates: docs ? docs.length : 0, attempted: workQueue.length, indexed: 0, skipped: 0, failed: 0, details: [] };
+    for (const doc of workQueue) {
+      try {
+        const r = await indexLibraryDoc(supabase, openai, doc);
+        if (r.ok) {
+          results.indexed += 1;
+          results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, chunks: r.chunks_inserted, status: 'indexed' });
+        } else {
+          results.skipped += 1;
+          results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'skipped', reason: r.reason });
+        }
+      } catch (e) {
+        results.failed += 1;
+        results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'failed', error: e.message });
+      }
+    }
+
+    res.json(results);
+  } catch (err) {
+    console.error('[documents/reindex-all]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/documents/:id/reindex  — reindex a single doc. Manual override
+// if a doc previously failed to index (e.g., was a scan, OCR added later).
+// ----------------------------------------------------------------------------
+router.post('/:id/reindex', async (req, res) => {
+  try {
+    const { data: doc, error } = await supabase
+      .from('library_documents')
+      .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!doc) return res.status(404).json({ error: 'library_document not found' });
+    const libDoc = { ...doc, community_name: (doc.communities && doc.communities.name) || null };
+    const result = await indexLibraryDoc(supabase, openai, libDoc);
+    res.json(result);
+  } catch (err) {
+    console.error('[documents/:id/reindex]', err);
     res.status(500).json({ error: err.message });
   }
 });
