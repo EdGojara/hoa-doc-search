@@ -1352,6 +1352,7 @@
 
       <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
         <button id="nomSaveDraftBtn" onclick="nomSaveDraft()" class="action-btn">💾 Save</button>
+        <button id="nomPreviewBtn" onclick="nomPreviewLetter()" style="background:#7c3aed; color:#fff; border:1px solid #7c3aed; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;">👁️ Preview</button>
         <button id="nomCreateBtn" onclick="nomCreateCycle()" style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;">✓ Finalize cycle</button>
         <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF <span style="font-weight:400; color:#94A3B8; font-size:11px;">(includes tear-off form)</span></button>
         <button class="secondary-btn" id="nomPaperFormBtn" onclick="nomGeneratePaperForm()" disabled style="opacity:0.5;">📝 Paper form only</button>
@@ -16160,6 +16161,90 @@ ${questionsPage}
     if (banner) banner.style.display = 'none';
     const status = document.getElementById('nomDraftStatus');
     if (status) status.textContent = '';
+  }
+
+  // Build the same multipart payload that Finalize cycle would send. Used by
+  // both Preview (sends to /preview-letter, nothing saved) and could be
+  // factored into Finalize later. Returns FormData ready to POST.
+  function nomBuildCycleFormData() {
+    const community = nomSelectedCommunity();
+    const meeting = document.getElementById('nomMeetingDate').value;
+    const close   = document.getElementById('nomCloseAt').value;
+    const onsiteEnabled = document.getElementById('nomOnsiteEnabled').checked;
+    const onsite = onsiteEnabled ? {
+      enabled: true,
+      location_name: document.getElementById('nomOnsiteLocation').value.trim() || null,
+      address: document.getElementById('nomOnsiteAddress').value.trim() || null,
+    } : { enabled: false };
+    const venue   = document.getElementById('nomVenueName').value.trim();
+    const street  = document.getElementById('nomVenueStreet').value.trim();
+    const cityZip = document.getElementById('nomVenueCityZip').value.trim();
+    const location = [venue, street, cityZip].filter(Boolean).join(', ');
+
+    const fd = new FormData();
+    fd.append('community_name', community || '');
+    fd.append('annual_meeting_date', meeting || '');
+    fd.append('annual_meeting_time', document.getElementById('nomMeetingTime').value || '');
+    fd.append('annual_meeting_location', location);
+    fd.append('nominations_close_at', close || '');
+    fd.append('nominations_close_time', (document.getElementById('nomCloseTime').value || '').trim());
+    fd.append('seats_open', String(Number(document.getElementById('nomSeatsOpen').value || 1)));
+    fd.append('term_years', String(Number(document.getElementById('nomTermYears').value || 3)));
+    fd.append('electronic_voting_offered', document.getElementById('nomElectronicVoting').checked ? '1' : '0');
+    fd.append('current_board', JSON.stringify(
+      (nomRosterCache || []).map((m) => ({
+        name: m.name,
+        position: m.position || '',
+        term_end: m.term_end ? nomFmtTerm(m.term_end) : '',
+      }))
+    ));
+    fd.append('description', document.getElementById('nomDescription').value || '');
+    fd.append('expectations_blurb', document.getElementById('nomExpectations').value || '');
+    fd.append('onsite_drop_off', JSON.stringify(onsite));
+    fd.append('accept_electronic',    document.getElementById('nomAcceptElectronic').checked ? '1' : '0');
+    fd.append('accept_physical_mail', document.getElementById('nomAcceptPhysicalMail').checked ? '1' : '0');
+    const includeFloor = document.getElementById('nomIncludeFloorNotice').checked;
+    fd.append('include_floor_nominations_notice', includeFloor ? '1' : '0');
+    if (includeFloor) {
+      const policyEl = document.querySelector('input[name="nomFloorPolicy"]:checked');
+      fd.append('floor_nominations_policy', (policyEl && policyEl.value) || 'not_allowed');
+      fd.append('floor_nominations_note', (document.getElementById('nomFloorNote').value || '').trim());
+    }
+    fd.append('public_slug', (document.getElementById('nomPublicSlug').value || '').trim());
+    return fd;
+  }
+
+  // Preview the Call for Nominations letter (with paper form attached) from
+  // the current form values WITHOUT saving anything. Opens the resulting
+  // PDF in a new tab so staff can review before clicking Finalize.
+  async function nomPreviewLetter() {
+    const community = nomSelectedCommunity();
+    if (!community) { alert('Pick a community first (top of page).'); return; }
+    const meeting = document.getElementById('nomMeetingDate').value;
+    if (!meeting) { alert('Set the annual meeting date first — the letter renders from it.'); return; }
+
+    const btn = document.getElementById('nomPreviewBtn');
+    const status = document.getElementById('nomCreateStatus');
+    btn.disabled = true; btn.textContent = '⏳ Rendering…';
+    if (status) status.innerHTML = '';
+    try {
+      const fd = nomBuildCycleFormData();
+      const r = await fetch('/api/nominations/preview-letter', { method: 'POST', body: fd });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Don't revoke immediately — give the new tab a chance to load it.
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      if (status) status.innerHTML = `<span style="color:#7c3aed;">👁️ Preview opened in a new tab.</span> Nothing has been saved — hit Finalize when the preview looks right.`;
+    } catch (e) {
+      if (status) status.innerHTML = `<span style="color:#b91c1c;">Preview failed: ${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '👁️ Preview';
+    }
   }
 
   async function nomSaveDraft() {

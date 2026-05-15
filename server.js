@@ -4838,6 +4838,84 @@ app.post('/api/nominations/cycles/:id/letter', async (req, res) => {
   }
 });
 
+// Preview the Call for Nominations letter (with auto-appended paper form)
+// WITHOUT saving a cycle to the database. Used by the "👁️ Preview" button so
+// staff can review the rendered output before clicking Finalize. Takes the
+// same multipart form data the create-cycle endpoint takes, builds an
+// in-memory cycle object, renders, returns PDF inline (opens in a new tab).
+app.post('/api/nominations/preview-letter', upload.any(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_name) return res.status(400).json({ error: 'Pick a community first.' });
+    if (!b.annual_meeting_date) return res.status(400).json({ error: 'Annual meeting date is required to render the letter.' });
+
+    let onsite = { enabled: false };
+    try {
+      onsite = b.onsite_drop_off
+        ? (typeof b.onsite_drop_off === 'object' ? b.onsite_drop_off : JSON.parse(b.onsite_drop_off))
+        : { enabled: false };
+    } catch (_) { onsite = { enabled: false }; }
+    let currentBoard = [];
+    try {
+      currentBoard = b.current_board
+        ? (Array.isArray(b.current_board) ? b.current_board : JSON.parse(b.current_board))
+        : [];
+    } catch (_) { currentBoard = []; }
+
+    const truthy = (v) => v === true || v === 'true' || v === '1' || v === 'on';
+
+    // Build an in-memory cycle row that mirrors what /cycles POST would
+    // persist. ID is a placeholder so the QR/URL preview reads sensibly.
+    const cycle = {
+      id: 'preview',
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_name: b.community_name,
+      annual_meeting_date: b.annual_meeting_date,
+      annual_meeting_time: b.annual_meeting_time || null,
+      annual_meeting_location: b.annual_meeting_location || null,
+      nominations_open_at: new Date().toISOString().slice(0, 10),
+      nominations_close_at: b.nominations_close_at || null,
+      nominations_close_time: (b.nominations_close_time || '').trim() || null,
+      seats_open: Number(b.seats_open) || 1,
+      term_years: Number(b.term_years) || 3,
+      current_board: currentBoard,
+      description: b.description || null,
+      expectations_blurb: b.expectations_blurb || null,
+      onsite_drop_off: onsite,
+      accept_electronic:    !(b.accept_electronic    === '0' || b.accept_electronic    === 'false'),
+      accept_physical_mail: !(b.accept_physical_mail === '0' || b.accept_physical_mail === 'false'),
+      floor_nominations_policy: (b.floor_nominations_policy === 'allowed' || b.floor_nominations_policy === 'not_allowed') ? b.floor_nominations_policy : null,
+      include_floor_nominations_notice: truthy(b.include_floor_nominations_notice),
+      floor_nominations_note: (b.floor_nominations_note || '').trim() || null,
+      public_slug: (b.public_slug || '').trim() || 'preview',
+      bio_prompt_style: 'simple',
+      proxy_teaser: true,
+    };
+
+    const baseUrl = process.env.PUBLIC_BASE_URL || `${req.protocol}://${req.get('host')}`;
+    const letterHtml = await renderCallForNominationsHTML(cycle, { base_url: baseUrl });
+    const letterPdf  = await _renderHtmlToPdf(letterHtml);
+
+    // Append the paper form (same default as the live letter route) so the
+    // preview shows the full mailed packet exactly as homeowners will receive it.
+    let buf = letterPdf;
+    try {
+      const formHtml = await renderPaperFormHTML(cycle);
+      const formPdf  = await _renderHtmlToPdf(formHtml);
+      buf = await _mergePdfBuffers([letterPdf, formPdf]);
+    } catch (e) {
+      console.warn('[nominations/preview-letter] paper-form append failed, returning letter alone:', e.message);
+    }
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="preview-call-for-nominations.pdf"');
+    res.send(buf);
+  } catch (err) {
+    console.error('[nominations/preview-letter]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Standalone Paper Nomination Form download — for staff who need just the
 // tear-off form (e.g., to email a homeowner who asked for a paper version,
 // or to print copies for the on-site office).
