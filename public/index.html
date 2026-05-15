@@ -1396,6 +1396,27 @@
         <div id="nomList" style="font-size:13px; color:#6B7280;">No nominations submitted yet.</div>
       </div>
 
+      <!-- Letter preview modal — opens an iframe with the rendered PDF
+           in-page so we sidestep popup blockers that kill window.open()
+           after an async fetch. Header has "Open in new tab" + "Download"
+           secondary actions for staff who want to print/zoom. -->
+      <div id="nomPreviewBackdrop" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.7); z-index:9100; align-items:center; justify-content:center; padding:24px;">
+        <div style="background:#fff; width:100%; max-width:900px; height:90vh; border-radius:12px; overflow:hidden; display:flex; flex-direction:column; box-shadow:0 24px 60px rgba(0,0,0,0.35);">
+          <div style="display:flex; justify-content:space-between; align-items:center; padding:12px 18px; border-bottom:1px solid #e2e8f0;">
+            <div>
+              <h3 style="margin:0; color:#1E2761; font-size:15px;">👁️ Letter preview</h3>
+              <div style="font-size:11.5px; color:#94A3B8; margin-top:2px;">Nothing saved yet &mdash; review, close, then hit Finalize when it looks right.</div>
+            </div>
+            <div style="display:flex; gap:8px; align-items:center;">
+              <a id="nomPreviewOpenTab" href="#" target="_blank" rel="noopener" class="secondary-btn" style="font-size:12px; padding:6px 10px; text-decoration:none;">↗ Open in tab</a>
+              <a id="nomPreviewDownload" href="#" download="preview-call-for-nominations.pdf" class="secondary-btn" style="font-size:12px; padding:6px 10px; text-decoration:none;">⬇ Download</a>
+              <button onclick="nomClosePreview()" style="background:transparent; border:0; font-size:22px; color:#94A3B8; cursor:pointer; padding:0 4px;">×</button>
+            </div>
+          </div>
+          <iframe id="nomPreviewFrame" src="about:blank" style="flex:1; width:100%; border:0; background:#f8fafc;"></iframe>
+        </div>
+      </div>
+
       <!-- Manual-entry modal — for nominations that arrived by mail / email /
            drop-off / phone / in-person. Captures the same fields as the
            public form plus a channel + received date + intake notes so the
@@ -16214,9 +16235,29 @@ ${questionsPage}
     return fd;
   }
 
+  // Close the in-page Letter Preview modal and free the blob URL so it
+  // doesn't pile up on every preview.
+  function nomClosePreview() {
+    const backdrop = document.getElementById('nomPreviewBackdrop');
+    if (backdrop) backdrop.style.display = 'none';
+    const frame = document.getElementById('nomPreviewFrame');
+    if (frame) frame.src = 'about:blank';
+    if (window.__nomPreviewBlobUrl) {
+      try { URL.revokeObjectURL(window.__nomPreviewBlobUrl); } catch (_) {}
+      window.__nomPreviewBlobUrl = null;
+    }
+  }
+  // ESC closes the preview modal.
+  document.addEventListener('keydown', (ev) => {
+    if (ev.key === 'Escape') {
+      const bd = document.getElementById('nomPreviewBackdrop');
+      if (bd && bd.style.display === 'flex') nomClosePreview();
+    }
+  });
+
   // Preview the Call for Nominations letter (with paper form attached) from
-  // the current form values WITHOUT saving anything. Opens the resulting
-  // PDF in a new tab so staff can review before clicking Finalize.
+  // the current form values WITHOUT saving anything. Renders the PDF into
+  // an in-page modal (popup blockers kill window.open after an async fetch).
   async function nomPreviewLetter() {
     const community = nomSelectedCommunity();
     if (!community) { alert('Pick a community first (top of page).'); return; }
@@ -16236,10 +16277,18 @@ ${questionsPage}
       }
       const blob = await r.blob();
       const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      // Don't revoke immediately — give the new tab a chance to load it.
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-      if (status) status.innerHTML = `<span style="color:#7c3aed;">👁️ Preview opened in a new tab.</span> Nothing has been saved — hit Finalize when the preview looks right.`;
+      // In-page modal instead of window.open — browsers block popups that
+      // open after an async fetch because the click-trust has expired.
+      // Revoke the old blob URL if one is hanging around.
+      if (window.__nomPreviewBlobUrl) {
+        try { URL.revokeObjectURL(window.__nomPreviewBlobUrl); } catch (_) {}
+      }
+      window.__nomPreviewBlobUrl = url;
+      document.getElementById('nomPreviewFrame').src = url;
+      document.getElementById('nomPreviewOpenTab').href = url;
+      document.getElementById('nomPreviewDownload').href = url;
+      document.getElementById('nomPreviewBackdrop').style.display = 'flex';
+      if (status) status.innerHTML = `<span style="color:#7c3aed;">👁️ Preview opened.</span> Nothing has been saved — close the preview and hit Finalize when it looks right.`;
     } catch (e) {
       if (status) status.innerHTML = `<span style="color:#b91c1c;">Preview failed: ${escapeHtml(e.message)}</span>`;
     } finally {
