@@ -1161,7 +1161,7 @@
            into a permanent cycle (and clear the draft). Hidden by default. -->
       <div id="nomDraftBanner" style="display:none; margin-bottom:12px; padding:8px 12px; background:#eef2ff; border:1px solid #c7d2fe; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:12.5px; color:#1E2761;">
         <strong>📂 Working from saved draft</strong> <span id="nomDraftBannerWhen" style="color:#475569; font-weight:400;"></span>.
-        Clicking <strong>💾 Save cycle</strong> below will create the permanent cycle and clear this draft.
+        <strong>💾 Save</strong> checkpoints your work; <strong style="color:#15803d;">✓ Finalize cycle</strong> publishes it and clears this draft.
         <button type="button" onclick="nomDiscardDraft()" style="margin-left:8px; background:none; border:1px solid #c7d2fe; color:#1E2761; font-size:11px; padding:2px 8px; border-radius:5px; cursor:pointer;">Start from blank instead</button>
       </div>
 
@@ -1351,10 +1351,10 @@
       </div>
 
       <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
-        <button class="action-btn" id="nomCreateBtn" onclick="nomCreateCycle()">💾 Save cycle</button>
+        <button id="nomSaveDraftBtn" onclick="nomSaveDraft()" class="action-btn">💾 Save</button>
+        <button id="nomCreateBtn" onclick="nomCreateCycle()" style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;">✓ Finalize cycle</button>
         <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF <span style="font-weight:400; color:#94A3B8; font-size:11px;">(includes tear-off form)</span></button>
         <button class="secondary-btn" id="nomPaperFormBtn" onclick="nomGeneratePaperForm()" disabled style="opacity:0.5;">📝 Paper form only</button>
-        <button class="secondary-btn" id="nomSaveDraftBtn" onclick="nomSaveDraft()">📝 Save as draft</button>
         <span id="nomDraftStatus" style="font-size:12px; color:#6B7280; flex-basis:100%; margin-top:4px;"></span>
       </div>
       <div id="nomCreateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
@@ -15291,8 +15291,8 @@ ${questionsPage}
     );
     if (existing) {
       const ok = confirm(
-        `There is already a cycle saved for ${community} on ${meeting}.\n\n` +
-        `Saving will create a SECOND cycle for the same date (not update the existing one).\n\n` +
+        `There is already a finalized cycle for ${community} on ${meeting}.\n\n` +
+        `Finalizing will create a SECOND cycle for the same date (it does NOT update the existing one).\n\n` +
         `Cancel to abandon, or OK to create a duplicate anyway (you'll see both in Recent Cycles).`
       );
       if (!ok) return;
@@ -15372,7 +15372,7 @@ ${questionsPage}
       const banner = document.getElementById('nomDraftBanner');
       if (banner) banner.style.display = 'none';
 
-      status.innerHTML = `<span style="color:#15803d;">✓ Cycle saved.</span> Public link: <code>/nominate/${j.cycle.public_slug || j.cycle.id}</code>${draftCleared ? ' &nbsp;·&nbsp; <span style="color:#475569;">draft cleared.</span>' : ''}`;
+      status.innerHTML = `<span style="color:#15803d;">✓ Cycle finalized — public form is now live.</span> Link: <code>/nominate/${j.cycle.public_slug || j.cycle.id}</code>${draftCleared ? ' &nbsp;·&nbsp; <span style="color:#475569;">draft cleared.</span>' : ''}`;
       nomActiveCycleId = j.cycle.id;
       document.getElementById('nomLetterBtn').disabled = false;
       document.getElementById('nomLetterBtn').style.opacity = '1';
@@ -15383,7 +15383,7 @@ ${questionsPage}
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     } finally {
-      btn.disabled = false; btn.textContent = '💾 Save cycle';
+      btn.disabled = false; btn.textContent = '✓ Finalize cycle';
     }
   }
 
@@ -16168,11 +16168,11 @@ ${questionsPage}
     btn.disabled = true; btn.textContent = '⏳ Saving…';
     try {
       await Drafts.save('nominations_cycle', { replaceFiles: true });
-      status.innerHTML = `<span style="color:#15803d;">✓ Draft saved</span> · resume from the panel below`;
+      status.innerHTML = `<span style="color:#15803d;">✓ Saved</span> · work in progress — hit Finalize when ready to publish`;
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">${e.message}</span>`;
     } finally {
-      btn.disabled = false; btn.textContent = '📝 Save as draft';
+      btn.disabled = false; btn.textContent = '💾 Save';
     }
   }
 
