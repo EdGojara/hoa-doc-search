@@ -4990,15 +4990,25 @@ app.patch('/api/nominations/:id', async (req, res) => {
 });
 
 // Public homeowner-facing form — serves the HTML
+// Slug-vs-UUID test. public_slug is a free-form string column; id is UUID.
+// If we try .or('public_slug.eq.X,id.eq.X') and X isn't a UUID, Postgres
+// rejects the id.eq side with "invalid input syntax for type uuid" and the
+// entire query fails — turning a perfectly valid public_slug lookup into a
+// 404. We only include id.eq when X looks like a UUID.
+const _UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+function _isUuidish(s) { return _UUID_RE.test(String(s || '')); }
+
 app.get('/nominate/:slug', async (req, res) => {
   try {
-    const { data: cycle } = await supabase
+    const slug = req.params.slug;
+    let q = supabase
       .from('nomination_cycles')
       .select('id, public_slug')
-      .or(`public_slug.eq.${req.params.slug},id.eq.${req.params.slug}`)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .limit(1)
-      .maybeSingle();
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    q = _isUuidish(slug)
+      ? q.or(`public_slug.eq.${slug},id.eq.${slug}`)
+      : q.eq('public_slug', slug);
+    const { data: cycle } = await q.limit(1).maybeSingle();
     if (!cycle) return res.status(404).send('<h1>Nominations form not found</h1><p>This community does not have an active nomination cycle.</p>');
     res.sendFile(path.join(__dirname, 'public', 'nominate.html'));
   } catch (err) {
@@ -5008,13 +5018,15 @@ app.get('/nominate/:slug', async (req, res) => {
 
 app.get('/api/nominations/public/:slug', async (req, res) => {
   try {
-    const { data: cycle, error } = await supabase
+    const slug = req.params.slug;
+    let q = supabase
       .from('nomination_cycles')
       .select('id, community_name, annual_meeting_date, annual_meeting_time, annual_meeting_location, nominations_open_at, nominations_close_at, seats_open, current_board, description, status, public_slug')
-      .or(`public_slug.eq.${req.params.slug},id.eq.${req.params.slug}`)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .limit(1)
-      .maybeSingle();
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    q = _isUuidish(slug)
+      ? q.or(`public_slug.eq.${slug},id.eq.${slug}`)
+      : q.eq('public_slug', slug);
+    const { data: cycle, error } = await q.limit(1).maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
     if (!cycle) return res.status(404).json({ error: 'cycle not found' });
     // Window check — communicate but still serve the form so we can show a friendly message
@@ -5035,13 +5047,15 @@ app.post('/api/nominations/public/:slug/submit', upload.fields([
   { name: 'scanned_form',  maxCount: 1 },
 ]), async (req, res) => {
   try {
-    const { data: cycle } = await supabase
+    const slug = req.params.slug;
+    let q = supabase
       .from('nomination_cycles')
       .select('id, nominations_open_at, nominations_close_at, status')
-      .or(`public_slug.eq.${req.params.slug},id.eq.${req.params.slug}`)
-      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .limit(1)
-      .maybeSingle();
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+    q = _isUuidish(slug)
+      ? q.or(`public_slug.eq.${slug},id.eq.${slug}`)
+      : q.eq('public_slug', slug);
+    const { data: cycle } = await q.limit(1).maybeSingle();
     if (!cycle) return res.status(404).json({ error: 'cycle not found' });
     const today = new Date().toISOString().slice(0, 10);
     if (today < cycle.nominations_open_at) return res.status(403).json({ error: 'Nominations have not opened yet.' });
