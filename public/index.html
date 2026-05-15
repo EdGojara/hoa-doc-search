@@ -1156,6 +1156,15 @@
         Most fields are saved with the cycle and printed on the letter. Community is the one selected in the header.
       </p>
 
+      <!-- Shown when a saved draft has been loaded into the form via the 📂 Open
+           button. Makes it obvious that "💾 Save cycle" will promote this draft
+           into a permanent cycle (and clear the draft). Hidden by default. -->
+      <div id="nomDraftBanner" style="display:none; margin-bottom:12px; padding:8px 12px; background:#eef2ff; border:1px solid #c7d2fe; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:12.5px; color:#1E2761;">
+        <strong>📂 Working from saved draft</strong> <span id="nomDraftBannerWhen" style="color:#475569; font-weight:400;"></span>.
+        Clicking <strong>💾 Save cycle</strong> below will create the permanent cycle and clear this draft.
+        <button type="button" onclick="nomDiscardDraft()" style="margin-left:8px; background:none; border:1px solid #c7d2fe; color:#1E2761; font-size:11px; padding:2px 8px; border-radius:5px; cursor:pointer;">Start from blank instead</button>
+      </div>
+
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
         <div>
           <div class="section-label">Annual meeting date</div>
@@ -15273,6 +15282,22 @@ ${questionsPage}
     // Server defaults close to meeting − 24 days when missing.
     if (!meeting) { alert('Annual meeting date is required so the cycle can appear on the calendar. Everything else can be filled in later.'); return; }
 
+    // Duplicate-cycle guard — every "Save cycle" creates a NEW cycle (not
+    // an update of an existing one). If there's already a cycle for this
+    // community on this meeting date, warn before creating another. This is
+    // the bug that caused 3 duplicate Waterview cycles to pile up.
+    const existing = (nomCycles || []).find((c) =>
+      c.community_name === community && c.annual_meeting_date === meeting
+    );
+    if (existing) {
+      const ok = confirm(
+        `There is already a cycle saved for ${community} on ${meeting}.\n\n` +
+        `Saving will create a SECOND cycle for the same date (not update the existing one).\n\n` +
+        `Cancel to abandon, or OK to create a duplicate anyway (you'll see both in Recent Cycles).`
+      );
+      if (!ok) return;
+    }
+
     const onsiteEnabled = document.getElementById('nomOnsiteEnabled').checked;
     const onsite = onsiteEnabled ? {
       enabled: true,
@@ -15330,7 +15355,24 @@ ${questionsPage}
       const r = await fetch('/api/nominations/cycles', { method: 'POST', body: fd });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      status.innerHTML = `<span style="color:#15803d;">✓ Cycle saved.</span> Public link: <code>/nominate/${j.cycle.public_slug || j.cycle.id}</code>`;
+
+      // Draft → cycle is a one-way promotion. If the user opened a draft,
+      // edited it, and hit Save cycle, the draft has done its job — delete
+      // it so it doesn't sit as a stale "14 hours ago" row confusing things.
+      let draftCleared = false;
+      try {
+        const loadedDraftId = Drafts && Drafts.currentId && Drafts.currentId()['nominations_cycle'];
+        if (loadedDraftId) {
+          await Drafts.remove('nominations_cycle', loadedDraftId);
+          draftCleared = true;
+        }
+      } catch (_) { /* non-fatal */ }
+
+      // Clear the "working from draft" banner since the draft is now gone.
+      const banner = document.getElementById('nomDraftBanner');
+      if (banner) banner.style.display = 'none';
+
+      status.innerHTML = `<span style="color:#15803d;">✓ Cycle saved.</span> Public link: <code>/nominate/${j.cycle.public_slug || j.cycle.id}</code>${draftCleared ? ' &nbsp;·&nbsp; <span style="color:#475569;">draft cleared.</span>' : ''}`;
       nomActiveCycleId = j.cycle.id;
       document.getElementById('nomLetterBtn').disabled = false;
       document.getElementById('nomLetterBtn').style.opacity = '1';
@@ -16081,8 +16123,44 @@ ${questionsPage}
       try { switchTab('nominations'); } catch (_) {}
       try { nomLoadRoster(); } catch (_) {}
       document.getElementById('nomDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
+      // Show the prominent banner so the user knows "💾 Save cycle" will
+      // promote this draft into a permanent cycle (not update the draft).
+      const banner = document.getElementById('nomDraftBanner');
+      const when   = document.getElementById('nomDraftBannerWhen');
+      if (banner) banner.style.display = '';
+      if (when)   when.textContent = `(saved ${new Date(draft.updated_at).toLocaleString()})`;
     },
   });
+
+  // Discard the loaded draft without saving — used when the user wants to
+  // start fresh after accidentally opening a draft. Clears form + hides the
+  // banner + un-tracks the draft from the Drafts module's currentId map so
+  // a subsequent Save cycle won't auto-delete a draft the user wanted to keep.
+  function nomDiscardDraft() {
+    if (!confirm('Stop working from this draft and start with a blank form?\n\nThe draft itself is NOT deleted — it stays in Saved cycle drafts.')) return;
+    // Clear the currentId so Save cycle won't try to delete this draft on success.
+    if (window.Drafts && Drafts.newDraft) {
+      try { Drafts.newDraft('nominations_cycle'); } catch (_) {}
+    }
+    // Reset form fields to defaults.
+    ['nomMeetingDate','nomMeetingTime','nomVenueName','nomVenueStreet','nomVenueCityZip',
+     'nomCloseAt','nomDescription','nomExpectations','nomOnsiteLocation','nomOnsiteAddress',
+     'nomPublicSlug','nomFloorNote']
+      .forEach((id) => { const el = document.getElementById(id); if (el) el.value = ''; });
+    const seats = document.getElementById('nomSeatsOpen'); if (seats) seats.value = '1';
+    const term  = document.getElementById('nomTermYears'); if (term)  term.value  = '3';
+    const ct    = document.getElementById('nomCloseTime'); if (ct)    ct.value    = '5:00 PM';
+    ['nomOnsiteEnabled','nomIncludeFloorNotice','nomElectronicVoting']
+      .forEach((id) => { const el = document.getElementById(id); if (el) el.checked = false; });
+    ['nomAcceptElectronic','nomAcceptPhysicalMail']
+      .forEach((id) => { const el = document.getElementById(id); if (el) el.checked = true; });
+    try { nomToggleOnsite(); } catch (_) {}
+    try { nomToggleFloorNotice(); } catch (_) {}
+    const banner = document.getElementById('nomDraftBanner');
+    if (banner) banner.style.display = 'none';
+    const status = document.getElementById('nomDraftStatus');
+    if (status) status.textContent = '';
+  }
 
   async function nomSaveDraft() {
     const btn = document.getElementById('nomSaveDraftBtn');
