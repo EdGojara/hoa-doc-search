@@ -5483,10 +5483,17 @@ app.get('/api/performance/acc', async (req, res) => {
 // is the "anon" key on purpose; service-role stays server-only).
 // ============================================================================
 app.get('/api/auth/config', (req, res) => {
+  // Two-key safety: auth is only "live" when BOTH SUPABASE_ANON_KEY is set
+  // AND AUTH_REQUIRED is truthy. This means setting the anon key alone (e.g.,
+  // mid-weekend setup) doesn't lock the team out — auth stays dormant until
+  // Ed explicitly flips AUTH_REQUIRED=1 on Render. Unset AUTH_REQUIRED in an
+  // emergency and the app reverts to legacy/unauthenticated.
+  const hasKeys = !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY);
+  const required = String(process.env.AUTH_REQUIRED || '').match(/^(1|true|yes)$/i);
   res.json({
     supabase_url: process.env.SUPABASE_URL || '',
     supabase_anon_key: process.env.SUPABASE_ANON_KEY || '',
-    enabled: !!(process.env.SUPABASE_URL && process.env.SUPABASE_ANON_KEY),
+    enabled: !!(hasKeys && required),
   });
 });
 

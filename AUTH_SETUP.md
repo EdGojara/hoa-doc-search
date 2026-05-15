@@ -50,21 +50,33 @@ In Supabase SQL Editor, paste and run `migrations/039_user_profiles.sql`. This c
 
 ---
 
-## Step 4 · Set environment variable on Render
+## Step 4 · Set environment variables on Render
 
-The browser needs the Supabase anon key to talk to Auth. Render needs one new env var:
+The browser needs the Supabase anon key to talk to Auth, plus a separate
+"go live" flag. Two env vars must BOTH be set before auth turns on — that
+two-key safety means setting the anon key alone won't accidentally lock
+the team out mid-setup.
 
 1. Open Render → your `hoa-doc-search` service → **Environment**.
-2. Add a new variable:
-   - **Key:** `SUPABASE_ANON_KEY`
-   - **Value:** Get this from Supabase → **Settings → API → `anon` public key** (NOT the `service_role` key)
-3. Save. Render will redeploy.
+2. Add **`SUPABASE_ANON_KEY`** = Supabase → **Settings → API → `anon` public key**
+   (NOT the `service_role` key)
+3. Add **`AUTH_REQUIRED`** = `1` — but **leave this UNSET** until everything else
+   is configured (Steps 1-3 done, you've verified Microsoft sign-in works for
+   you, the migration has been run).
+4. Save. Render will redeploy.
 
 > The `anon` key is safe to expose to the browser by design. Keep `service_role` server-only.
+>
+> **Emergency kill switch:** unset `AUTH_REQUIRED` (or set it to `0`) on Render →
+> Save → next deploy serves the app without auth. Useful if a misconfiguration
+> locks the team out during onboarding.
 
 ---
 
 ## Step 5 · First sign-in (Ed)
+
+> Set `AUTH_REQUIRED=1` on Render now (Step 4.3). Once that env var is live,
+> visiting the app requires sign-in.
 
 1. Open `https://app.bedrocktxai.com` — you'll be redirected to `/login.html`.
 2. Click **Sign in with Microsoft** → sign in with your `@bedrocktx.com` account.
