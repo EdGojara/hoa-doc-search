@@ -5157,19 +5157,151 @@ app.get('/api/annual-meetings/calendar', async (req, res) => {
       if (!latestByCommunity[k]) latestByCommunity[k] = c;
     }
 
+    // For each community, if the latest cycle's meeting date is in the past,
+    // project a tentative cycle one year forward so the manager sees planning
+    // dates even before they've created next year's cycle. The projected
+    // cycle preserves the historical meeting date (gray "from last year"
+    // label) and time-of-day so dates stay realistic.
+    const todayStr = new Date().toISOString().slice(0, 10);
+    function addYear(dateStr) {
+      if (!dateStr) return null;
+      const dt = new Date(dateStr + 'T12:00:00');
+      if (isNaN(dt.getTime())) return null;
+      dt.setFullYear(dt.getFullYear() + 1);
+      return dt.toISOString().slice(0, 10);
+    }
+
     const rows = (communities || []).map((comm) => {
       const cycle = latestByCommunity[commKey(comm.name)] || null;
+      let projected = null;
+      if (cycle && cycle.annual_meeting_date && cycle.annual_meeting_date < todayStr) {
+        const projectedMeeting = addYear(cycle.annual_meeting_date);
+        projected = {
+          annual_meeting_date: projectedMeeting,
+          annual_meeting_time: cycle.annual_meeting_time || null,
+          annual_meeting_location: cycle.annual_meeting_location || null,
+          accept_electronic: cycle.accept_electronic,
+          accept_physical_mail: cycle.accept_physical_mail,
+          source_meeting_date: cycle.annual_meeting_date,
+          is_projected: true,
+        };
+      }
       return {
         community: comm.name,
         community_id: comm.id,
         community_slug: comm.slug,
         latest_cycle: cycle,
+        projected_cycle: projected,
       };
     });
 
     res.json({ rows });
   } catch (err) {
     console.error('[annual-meetings/calendar]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Calendar — cross-module event feed for the top-level 🗓️ Calendar tab.
+//   GET /api/calendar/events?from=YYYY-MM-DD&to=YYYY-MM-DD
+//
+// Returns one row per event. Today's sources:
+//   • Annual meeting cycles — start_to_plan, send_by, close, meeting
+//     (real cycles + projected next-year for communities whose latest
+//     cycle is in the past)
+// Future sources: ARC backlog, vendor renewals, audit/tax/insurance.
+// ============================================================================
+app.get('/api/calendar/events', async (req, res) => {
+  try {
+    const from = req.query.from || new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const to   = req.query.to   || new Date(Date.now() + 400 * 86400000).toISOString().slice(0, 10);
+
+    const { data: cycles } = await supabase
+      .from('nomination_cycles')
+      .select('id, community_name, annual_meeting_date, annual_meeting_time, annual_meeting_location, nominations_close_at, accept_electronic, accept_physical_mail, status, public_slug')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID);
+
+    function addDays(dateStr, delta) {
+      if (!dateStr) return null;
+      const dt = new Date(dateStr + 'T12:00:00');
+      if (isNaN(dt.getTime())) return null;
+      dt.setDate(dt.getDate() + delta);
+      return dt.toISOString().slice(0, 10);
+    }
+    function addYear(dateStr) {
+      if (!dateStr) return null;
+      const dt = new Date(dateStr + 'T12:00:00');
+      if (isNaN(dt.getTime())) return null;
+      dt.setFullYear(dt.getFullYear() + 1);
+      return dt.toISOString().slice(0, 10);
+    }
+
+    const todayStr = new Date().toISOString().slice(0, 10);
+    const events = [];
+
+    function emitCycleEvents(cycle, opts = {}) {
+      const isProjected = !!opts.projected;
+      const meeting = cycle.annual_meeting_date;
+      const close   = cycle.nominations_close_at || addDays(meeting, -24);
+      const acceptPhysical = cycle.accept_physical_mail !== false;
+      const sendByDays = acceptPhysical ? 21 : 14;
+      const sendBy    = addDays(close, -sendByDays);
+      const startPlan = addDays(sendBy, -14);
+
+      const baseMeta = {
+        community: cycle.community_name,
+        cycle_id: cycle.id || null,
+        public_slug: cycle.public_slug || null,
+        is_projected: isProjected,
+      };
+      const list = [
+        { date: startPlan, type: 'start_to_plan',    label: 'Start to plan' },
+        { date: sendBy,    type: 'send_by',          label: 'Send Call for Nominations' },
+        { date: close,     type: 'nominations_close',label: 'Nominations close' },
+        { date: meeting,   type: 'annual_meeting',   label: 'Annual meeting' },
+      ];
+      for (const ev of list) {
+        if (!ev.date) continue;
+        if (ev.date < from || ev.date > to) continue;
+        events.push({ ...ev, ...baseMeta });
+      }
+    }
+
+    // Group cycles by community + take the latest. Real if upcoming;
+    // otherwise project next year.
+    function commKey(name) { return String(name || '').split(' at ')[0].trim().toLowerCase(); }
+    const latestByCommunity = {};
+    for (const c of (cycles || []).sort((a, b) => (b.annual_meeting_date || '').localeCompare(a.annual_meeting_date || ''))) {
+      const k = commKey(c.community_name);
+      if (!latestByCommunity[k]) latestByCommunity[k] = c;
+    }
+
+    for (const cycle of Object.values(latestByCommunity)) {
+      if (cycle.annual_meeting_date && cycle.annual_meeting_date >= todayStr) {
+        emitCycleEvents(cycle);
+      } else if (cycle.annual_meeting_date) {
+        const projected = {
+          ...cycle,
+          annual_meeting_date: addYear(cycle.annual_meeting_date),
+          nominations_close_at: null,
+          cycle_id: null,
+        };
+        emitCycleEvents(projected, { projected: true });
+      }
+    }
+
+    // Also emit events for any older cycle within range so historical
+    // meetings still show up if the manager scrolls into the past.
+    for (const c of cycles || []) {
+      if (latestByCommunity[commKey(c.community_name)] === c) continue;
+      if (!c.annual_meeting_date || c.annual_meeting_date < from || c.annual_meeting_date > to) continue;
+      emitCycleEvents(c);
+    }
+
+    res.json({ events });
+  } catch (err) {
+    console.error('[calendar/events]', err);
     res.status(500).json({ error: err.message });
   }
 });

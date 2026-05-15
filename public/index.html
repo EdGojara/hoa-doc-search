@@ -246,6 +246,7 @@
 
 <div class="tabs">
   <div class="tab active" onclick="switchTab('asked')">🧠 askEd</div>
+  <div class="tab" onclick="switchTab('calendar')">🗓️ Calendar</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
   <div class="tab" onclick="switchTab('chat')">💬 Ask a Question</div>
   <div class="tab" onclick="switchTab('email')">✉️ Draft Email</div>
@@ -296,6 +297,70 @@
     </div>
     <div id="quickResponse" style="margin-top:18px; padding:16px 20px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; line-height:1.6; font-size:15px; color:#1a3a5c; display:none; white-space:pre-wrap;"></div>
     <audio id="quickAudio" preload="auto" style="display:none;"></audio>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     🗓️ Calendar — top-level home base. Cross-module date view of every
+     community in the portfolio. Click any event to deep-link into the
+     relevant module + community. Today is annual-meeting events; future
+     iterations: ARC deadlines, vendor renewals, audit/tax/insurance, etc.
+     ========================================================================= -->
+<div class="tab-content" id="tab-calendar" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1200px; margin:0 auto;">
+    <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:14px;">
+      <div>
+        <h2 style="font-size:22px; font-weight:700; color:#1E2761; margin-bottom:4px;">🗓️ Calendar</h2>
+        <p style="font-size:13px; color:#666; margin:0;">Every planning date across the portfolio. Click any event to jump into the work.</p>
+      </div>
+      <div style="display:flex; align-items:center; gap:6px;">
+        <button class="secondary-btn" onclick="calPrev()" style="font-size:13px; padding:6px 12px;">←</button>
+        <div id="calMonthLabel" style="min-width:170px; text-align:center; font-weight:700; color:#1E2761; font-size:15px;"></div>
+        <button class="secondary-btn" onclick="calNext()" style="font-size:13px; padding:6px 12px;">→</button>
+        <button class="secondary-btn" onclick="calToday()" style="font-size:12px; padding:6px 10px; margin-left:6px;">Today</button>
+      </div>
+    </div>
+
+    <!-- Legend -->
+    <div style="display:flex; flex-wrap:wrap; gap:14px; margin-bottom:12px; font-size:12px; color:#475569; align-items:center;">
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-plan">🚀</span>Start to plan</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-send">📤</span>Send call by</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-close">📋</span>Nominations close</span>
+      <span style="display:inline-flex; align-items:center; gap:5px;"><span class="cal-chip cal-chip-meeting">🏛️</span>Annual meeting</span>
+      <span style="color:#94A3B8; font-style:italic; margin-left:auto;">Dashed border = tentative (last-year-based)</span>
+    </div>
+
+    <style>
+      .cal-grid { display:grid; grid-template-columns: repeat(7, 1fr); gap:4px; background:#e2e8f0; border:1px solid #e2e8f0; border-radius:8px; overflow:hidden; }
+      .cal-dow { background:#1E2761; color:#fff; text-align:center; font-size:11px; font-weight:700; padding:6px 4px; letter-spacing:0.4px; text-transform:uppercase; }
+      .cal-day { background:#fff; min-height:96px; padding:5px 6px; display:flex; flex-direction:column; gap:3px; font-size:11px; }
+      .cal-day.cal-today { background:#fef3c7; }
+      .cal-day.cal-other-month { background:#f8fafc; color:#cbd5e1; }
+      .cal-day .cal-date { font-weight:700; color:#1a1a1a; font-size:11px; }
+      .cal-day.cal-today .cal-date { color:#92400e; }
+      .cal-day.cal-other-month .cal-date { color:#cbd5e1; }
+      .cal-chip { display:inline-flex; align-items:center; gap:4px; padding:2px 6px; border-radius:4px; font-size:10px; font-weight:600; line-height:1.3; cursor:pointer; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; max-width:100%; }
+      .cal-chip.tentative { border:1px dashed currentColor; background:transparent !important; opacity:0.85; }
+      .cal-chip-plan    { background:#ede9fe; color:#5b21b6; }
+      .cal-chip-send    { background:#fff7ed; color:#c2410c; }
+      .cal-chip-close   { background:#fee2e2; color:#991b1b; }
+      .cal-chip-meeting { background:#dbeafe; color:#1e3a8a; }
+      .cal-chip:hover { filter:brightness(0.92); }
+    </style>
+
+    <div id="calGrid" class="cal-grid">
+      <div class="cal-dow">Sun</div><div class="cal-dow">Mon</div><div class="cal-dow">Tue</div><div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div>
+    </div>
+
+    <!-- List view of the next 30 days -->
+    <div style="margin-top:20px;">
+      <h3 style="font-size:14px; color:#1E2761; margin:0 0 8px; font-weight:700;">📋 Next 30 days</h3>
+      <div id="calNext30" style="font-size:13px; color:#6B7280;">Loading…</div>
+    </div>
+
+    <div style="margin-top:18px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:11.5px; color:#475569; line-height:1.6;">
+      <strong>What's on the calendar today:</strong> Annual-meeting cycle events. Coming soon: ARC review deadlines, vendor contract renewals, audit / tax / insurance due dates, reserve-study refreshes, scheduled board meetings.
+    </div>
   </div>
 </div>
 
@@ -13331,6 +13396,174 @@ ${questionsPage}
   })();
 
   // =========================================================================
+  // 🗓️ Calendar — top-level cross-module date view.
+  // Month grid + next-30 list view. Events come from /api/calendar/events;
+  // chips deep-link into the relevant module + community.
+  // =========================================================================
+  const CAL_EVENT_TYPES = {
+    start_to_plan:     { icon: '🚀', cls: 'cal-chip-plan',    label: 'Start to plan' },
+    send_by:           { icon: '📤', cls: 'cal-chip-send',    label: 'Send Call' },
+    nominations_close: { icon: '📋', cls: 'cal-chip-close',   label: 'Close' },
+    annual_meeting:    { icon: '🏛️', cls: 'cal-chip-meeting', label: 'Meeting' },
+  };
+  let calCursor = new Date();
+  calCursor.setDate(1);
+  let calEventsCache = [];
+  let calEventsRange = { from: null, to: null };
+
+  function calYmd(dt) {
+    const y = dt.getFullYear();
+    const m = String(dt.getMonth() + 1).padStart(2, '0');
+    const d = String(dt.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  function calFmtMonth(dt) {
+    return dt.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  }
+  function calFmtDay(dateStr) {
+    try {
+      const dt = new Date(dateStr + 'T12:00:00');
+      return dt.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' });
+    } catch (_) { return dateStr; }
+  }
+
+  async function calFetchEvents() {
+    const rangeStart = new Date(calCursor); rangeStart.setMonth(rangeStart.getMonth() - 1); rangeStart.setDate(1);
+    const rangeEnd   = new Date(calCursor); rangeEnd.setMonth(rangeEnd.getMonth() + 2); rangeEnd.setDate(0);
+    const from = calYmd(rangeStart), to = calYmd(rangeEnd);
+    // Reuse cache if range is covered
+    if (calEventsRange.from && calEventsRange.from <= from && calEventsRange.to >= to) return calEventsCache;
+    try {
+      const r = await fetch(`/api/calendar/events?from=${from}&to=${to}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      calEventsCache = j.events || [];
+      calEventsRange = { from, to };
+      return calEventsCache;
+    } catch (e) {
+      console.warn('[calendar] fetch failed', e);
+      return [];
+    }
+  }
+
+  function calEventChipHtml(ev, opts = {}) {
+    const t = CAL_EVENT_TYPES[ev.type] || { icon: '•', cls: '', label: ev.type };
+    const tentative = ev.is_projected ? ' tentative' : '';
+    const text = opts.compact ? `${t.icon} ${ev.community}` : `${t.icon} ${ev.community} — ${t.label}`;
+    const titleSafe = `${ev.community}: ${t.label}${ev.is_projected ? ' (tentative — from prior year)' : ''}`;
+    return `<span class="cal-chip ${t.cls}${tentative}" title="${escapeHtml(titleSafe)}" onclick="calOpenEvent('${ev.type}', '${ev.community.replace(/'/g, "\\'")}')">${escapeHtml(text)}</span>`;
+  }
+
+  async function calRender() {
+    const label = document.getElementById('calMonthLabel');
+    const grid  = document.getElementById('calGrid');
+    if (!label || !grid) return;
+    label.textContent = calFmtMonth(calCursor);
+
+    const events = await calFetchEvents();
+    const byDate = {};
+    for (const ev of events) {
+      if (!ev.date) continue;
+      (byDate[ev.date] ||= []).push(ev);
+    }
+
+    // Build day cells — leading days from previous month, current month, trailing
+    const year  = calCursor.getFullYear();
+    const month = calCursor.getMonth();
+    const firstOfMonth = new Date(year, month, 1);
+    const startWeekday = firstOfMonth.getDay();
+    const startCell = new Date(year, month, 1 - startWeekday);
+    const todayYmd = calYmd(new Date());
+
+    let cellsHtml = '';
+    for (let i = 0; i < 42; i++) {
+      const cell = new Date(startCell);
+      cell.setDate(startCell.getDate() + i);
+      const ymd = calYmd(cell);
+      const inMonth = cell.getMonth() === month;
+      const isToday = ymd === todayYmd;
+      const classes = ['cal-day'];
+      if (!inMonth) classes.push('cal-other-month');
+      if (isToday) classes.push('cal-today');
+      const eventsForDay = byDate[ymd] || [];
+      const chipsHtml = eventsForDay.slice(0, 3).map((e) => calEventChipHtml(e, { compact: true })).join('');
+      const moreHtml = eventsForDay.length > 3
+        ? `<span style="font-size:10px; color:#6B7280; padding-left:2px;">+${eventsForDay.length - 3} more</span>`
+        : '';
+      cellsHtml += `
+        <div class="${classes.join(' ')}">
+          <div class="cal-date">${cell.getDate()}</div>
+          ${chipsHtml}
+          ${moreHtml}
+        </div>
+      `;
+    }
+    // Re-insert the 7 day-of-week headers + the cells
+    grid.innerHTML = `
+      <div class="cal-dow">Sun</div><div class="cal-dow">Mon</div><div class="cal-dow">Tue</div><div class="cal-dow">Wed</div><div class="cal-dow">Thu</div><div class="cal-dow">Fri</div><div class="cal-dow">Sat</div>
+      ${cellsHtml}
+    `;
+
+    // Next-30 list view
+    const next30 = document.getElementById('calNext30');
+    if (next30) {
+      const today = new Date(); today.setHours(0,0,0,0);
+      const thirtyOut = calYmd(new Date(today.getTime() + 30 * 86400000));
+      const upcoming = events
+        .filter((e) => e.date && e.date >= todayYmd && e.date <= thirtyOut)
+        .sort((a, b) => a.date.localeCompare(b.date));
+      if (upcoming.length === 0) {
+        next30.innerHTML = `<div style="padding:10px; color:#94A3B8;">No events in the next 30 days.</div>`;
+      } else {
+        next30.innerHTML = upcoming.map((ev) => `
+          <div style="display:grid; grid-template-columns: 130px 1fr auto; gap:12px; align-items:center; padding:8px 10px; border:1px solid #e2e8f0; border-radius:6px; background:#fff; margin-bottom:4px;">
+            <div style="font-size:12px; color:#475569; font-weight:600;">${escapeHtml(calFmtDay(ev.date))}</div>
+            <div>${calEventChipHtml(ev)}</div>
+            <div></div>
+          </div>
+        `).join('');
+      }
+    }
+  }
+
+  function calPrev() {
+    calCursor.setMonth(calCursor.getMonth() - 1);
+    calRender();
+  }
+  function calNext() {
+    calCursor.setMonth(calCursor.getMonth() + 1);
+    calRender();
+  }
+  function calToday() {
+    calCursor = new Date();
+    calCursor.setDate(1);
+    calRender();
+  }
+
+  // Deep-link from a calendar event chip into the relevant module + community.
+  function calOpenEvent(type, communityName) {
+    const sel = document.getElementById('communitySelect');
+    if (sel) {
+      const opts = Array.from(sel.options);
+      const match = opts.find((o) => o.value === communityName) || opts.find((o) => o.text && o.text.toLowerCase().includes(communityName.toLowerCase()));
+      if (match) { sel.value = match.value; sel.dispatchEvent(new Event('change')); }
+    }
+    // All four annual-meeting events land in Call for Nominations for now.
+    try { switchTab('nominations'); } catch (_) {}
+  }
+
+  // Auto-load on tab open
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'calendar') { try { calRender(); } catch (_) {} }
+      return r;
+    };
+  })();
+
+  // =========================================================================
   // Annual Meeting Schedule — portfolio dashboard.
   // One row per community with its lifecycle dates + urgency badge.
   // Reuses the §209.0056 + 17/24/14/21 constants for date math.
@@ -13361,10 +13594,23 @@ ${questionsPage}
   }
 
   function amsComputeRow(row) {
-    const cycle = row.latest_cycle;
-    if (!cycle || !cycle.annual_meeting_date) {
+    // Use the actual cycle if its meeting date is still in the future;
+    // otherwise fall back to the server-projected next-year cycle so the
+    // manager sees planning dates without having to create a cycle first.
+    const actualCycle = row.latest_cycle;
+    const projected   = row.projected_cycle;
+    const todayStr    = new Date().toISOString().slice(0,10);
+
+    let cycle, isProjected = false;
+    if (actualCycle && actualCycle.annual_meeting_date && actualCycle.annual_meeting_date >= todayStr) {
+      cycle = actualCycle;
+    } else if (projected && projected.annual_meeting_date) {
+      cycle = projected;
+      isProjected = true;
+    } else {
       return { ...row, state: 'no_cycle' };
     }
+
     const meeting = cycle.annual_meeting_date;
     const close   = cycle.nominations_close_at || amsAddDays(meeting, -24);
     const acceptPhysical = cycle.accept_physical_mail !== false;
@@ -13372,14 +13618,18 @@ ${questionsPage}
     const sendBy    = amsAddDays(close, -sendByDays);
     const startPlan = amsAddDays(sendBy, -AMS_START_TO_PLAN_DAYS);
 
-    const today = new Date().toISOString().slice(0,10);
     const daysToMeeting = amsDaysFromToday(meeting);
     const daysToSend    = amsDaysFromToday(sendBy);
     const daysToPlan    = amsDaysFromToday(startPlan);
 
-    // Status classification
+    // Status classification — projected rows get a distinct "Tentative" pill
+    // and sort softer (after urgent/warn) so they don't crowd the top.
     let state, pill, sortKey;
-    if (daysToMeeting < 0) {
+    if (isProjected) {
+      state = 'idle';
+      pill = { label: 'Tentative', cls: 'idle' };
+      sortKey = 5_000_000 + daysToMeeting;
+    } else if (daysToMeeting < 0) {
       state = 'idle'; pill = { label: 'Past meeting', cls: 'idle' };
       sortKey = 10_000_000 + Math.abs(daysToMeeting);
     } else if (daysToSend < 0) {
@@ -13395,7 +13645,12 @@ ${questionsPage}
       state = 'ok'; pill = { label: 'On track', cls: 'ok' };
       sortKey = daysToPlan;
     }
-    return { ...row, state, pill, sortKey, meeting, close, sendBy, startPlan, daysToMeeting, daysToSend, daysToPlan, acceptPhysical };
+    return {
+      ...row, state, pill, sortKey,
+      meeting, close, sendBy, startPlan,
+      daysToMeeting, daysToSend, daysToPlan, acceptPhysical,
+      isProjected, sourceLastYearDate: isProjected ? projected.source_meeting_date : null,
+    };
   }
 
   function amsSortRows(rows) {
@@ -13438,23 +13693,33 @@ ${questionsPage}
         </div>
       `;
     }
-    const past = (d) => d && d < new Date().toISOString().slice(0,10) ? 'past' : '';
+    const todayStr = new Date().toISOString().slice(0,10);
+    const past = (d) => d && d < todayStr ? 'past' : '';
+    const isProjected = row.isProjected;
+    // Projected rows render with gray dates so the manager can tell at a glance
+    // that these are last-year-based suggestions, not confirmed plans.
+    const dateClass = (d) => isProjected ? 'ams-date muted' : `ams-date ${past(d)}`;
+    const sourceHint = isProjected && row.sourceLastYearDate
+      ? `<span style="margin-left:6px; font-size:10.5px; color:#94A3B8; font-style:italic;">from ${escapeHtml(amsFmt(row.sourceLastYearDate))}</span>`
+      : '';
+    const actionBtn = isProjected
+      ? `<button onclick="amsPlanFor('${row.community.replace(/'/g, "\\'")}')" style="background:#1E2761; color:#fff; border:0; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">+ Confirm</button>`
+      : `<button onclick="amsOpenCycle('${row.community.replace(/'/g, "\\'")}')" style="background:#fff; border:1px solid #1E2761; color:#1E2761; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">Open →</button>`;
     return `
-      <div class="ams-row ${row.state}">
+      <div class="ams-row ${row.state}" ${isProjected ? 'style="background:#fafbfc;"' : ''}>
         <div>
-          <div style="font-weight:700; color:#1E2761;">${escapeHtml(row.community)}</div>
+          <div style="font-weight:700; color:${isProjected ? '#475569' : '#1E2761'};">${escapeHtml(row.community)}</div>
           <div style="font-size:11px; color:#475569; margin-top:2px;">
             <span class="ams-pill ${row.pill.cls}">${escapeHtml(row.pill.label)}</span>
             <span style="margin-left:6px; color:#94A3B8;">${row.acceptPhysical ? 'mail + online' : 'online only'}</span>
+            ${sourceHint}
           </div>
         </div>
-        <div class="ams-date ${past(row.startPlan)}">${amsFmt(row.startPlan)}</div>
-        <div class="ams-date ${past(row.sendBy)}">${amsFmt(row.sendBy)}</div>
-        <div class="ams-date ${past(row.close)}">${amsFmt(row.close)}</div>
-        <div class="ams-date">${amsFmt(row.meeting)}</div>
-        <div>
-          <button onclick="amsOpenCycle('${row.community.replace(/'/g, "\\'")}')" style="background:#fff; border:1px solid #1E2761; color:#1E2761; padding:6px 12px; border-radius:6px; font-size:12px; cursor:pointer;">Open →</button>
-        </div>
+        <div class="${dateClass(row.startPlan)}">${amsFmt(row.startPlan)}</div>
+        <div class="${dateClass(row.sendBy)}">${amsFmt(row.sendBy)}</div>
+        <div class="${dateClass(row.close)}">${amsFmt(row.close)}</div>
+        <div class="${dateClass(row.meeting)}">${amsFmt(row.meeting)}</div>
+        <div>${actionBtn}</div>
       </div>
     `;
   }
