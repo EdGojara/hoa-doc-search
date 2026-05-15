@@ -10782,14 +10782,17 @@ ${questionsPage}
     if (!confirm('Reindex all library documents that askEd can\'t currently see? Pre-existing docs (uploaded before auto-indexing) need this one-time backfill. Processes in batches of 10 so you\'ll see live progress.')) return;
     btn.disabled = true; btn.textContent = '⏳ Reindexing…';
 
-    const totals = { indexed: 0, skipped: 0, failed: 0, processed: 0, queueTotal: 0 };
+    const totals = { indexed: 0, skipped: 0, failed: 0, processed: 0, queueTotal: 0, lastError: null, retries: 0 };
     const allDetails = [];
     let offset = 0;
-    const limit = 10;
+    const limit = 5;
     let consecutiveErrors = 0;
 
     function renderStatus(stage) {
       const pct = totals.queueTotal > 0 ? Math.round(100 * totals.processed / totals.queueTotal) : 0;
+      const retryLine = totals.retries > 0
+        ? `<div style="font-size:11px; color:#92400e; margin-top:4px;">⚠️ ${totals.retries} batch ${totals.retries === 1 ? 'retry' : 'retries'} so far${totals.lastError ? ` · last error: ${escapeHtml(totals.lastError)}` : ''}</div>`
+        : '';
       status.innerHTML = `
         <div style="padding:10px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; line-height:1.6;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
@@ -10799,6 +10802,7 @@ ${questionsPage}
           <div style="margin-top:6px; height:6px; background:#cbd5e1; border-radius:3px; overflow:hidden;">
             <div style="height:100%; width:${pct}%; background:#1E2761; transition:width 0.4s;"></div>
           </div>
+          ${retryLine}
         </div>
       `;
     }
@@ -10811,14 +10815,27 @@ ${questionsPage}
         try {
           res = await fetch(`/api/documents/reindex-all?offset=${offset}&limit=${limit}`, { method: 'POST' });
         } catch (netErr) {
-          // Network/timeout. Retry up to 3 times before giving up — Render
-          // occasionally drops mid-request even on short batches.
+          // Network/timeout. Retry up to 5 times with exponential backoff before giving up.
           consecutiveErrors += 1;
-          if (consecutiveErrors >= 3) throw new Error('Network error: ' + netErr.message);
-          await new Promise(r => setTimeout(r, 2000));
+          totals.retries += 1;
+          totals.lastError = netErr.message || 'Failed to fetch';
+          renderStatus('Retrying after network error…');
+          if (consecutiveErrors >= 5) throw new Error('Network error after 5 retries: ' + netErr.message);
+          await new Promise(r => setTimeout(r, 2000 * consecutiveErrors));
           continue;
         }
-        const j = await res.json();
+        let j;
+        try { j = await res.json(); }
+        catch (parseErr) {
+          // Server returned non-JSON (likely a Render gateway HTML error page).
+          consecutiveErrors += 1;
+          totals.retries += 1;
+          totals.lastError = `Server returned ${res.status} (no JSON)`;
+          renderStatus('Retrying after bad server response…');
+          if (consecutiveErrors >= 5) throw new Error('Server returned ' + res.status + ' repeatedly');
+          await new Promise(r => setTimeout(r, 2000 * consecutiveErrors));
+          continue;
+        }
         if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
         consecutiveErrors = 0;
 
@@ -10833,9 +10850,15 @@ ${questionsPage}
         await docsLoadCoverage();
 
         if (j.done) break;
-        offset += limit;
-        // Brief breather between batches so the UI can repaint and OpenAI's
-        // rate limiter doesn't get hammered.
+        // Always advance offset by what the SERVER actually processed (not by
+        // limit), so a time-budgeted partial batch doesn't skip docs.
+        if (j.next_offset > offset) {
+          offset = j.next_offset;
+        } else {
+          // Server returned no progress — bail rather than loop forever.
+          throw new Error('Server returned no progress (next_offset did not advance). Reload and try again.');
+        }
+        // Brief breather between batches so the UI can repaint.
         await new Promise(r => setTimeout(r, 400));
       }
 

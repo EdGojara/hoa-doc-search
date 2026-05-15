@@ -828,7 +828,14 @@ router.post('/reindex-all', async (req, res) => {
     const communityFilter = (req.query.community || req.body?.community || '').trim();
     const onlyMissing = (req.query.only_missing || req.body?.only_missing) !== '0';
     const offset = Math.max(0, parseInt(req.query.offset || req.body?.offset || '0', 10));
-    const limit  = Math.max(1, Math.min(50, parseInt(req.query.limit || req.body?.limit || '10', 10)));
+    // Hard cap at 5 docs/batch. Combined with the time budget below this keeps
+    // every HTTP request under Render's proxy timeout regardless of which
+    // docs are next.
+    const limit  = Math.max(1, Math.min(5, parseInt(req.query.limit || req.body?.limit || '5', 10)));
+    // Time-budget the batch: stop pulling new docs after this many ms so the
+    // response always returns well before Render's 100s gateway timeout.
+    const BATCH_BUDGET_MS = 75000;
+    const startedAt = Date.now();
 
     const { data: docs, error } = await supabase
       .from('library_documents')
@@ -862,18 +869,29 @@ router.post('/reindex-all', async (req, res) => {
       offset,
       limit,
       processed_this_batch: 0,
-      processed_total: Math.min(offset + slice.length, queueTotal),
+      processed_total: offset,    // we'll bump this as docs complete
+      next_offset: offset,        // also bumped as we complete
       indexed: 0,
       skipped: 0,
       failed: 0,
       details: [],
-      done: offset + slice.length >= queueTotal,
+      done: false,
+      time_budget_hit: false,
+      duration_ms: 0,
     };
 
-    for (const doc of slice) {
+    for (let i = 0; i < slice.length; i++) {
+      // Bail out before starting another doc if the budget is gone.
+      if (Date.now() - startedAt > BATCH_BUDGET_MS) {
+        results.time_budget_hit = true;
+        break;
+      }
+      const doc = slice[i];
       try {
         const r = await _indexWithTimeout(supabase, openai, doc);
         results.processed_this_batch += 1;
+        results.processed_total += 1;
+        results.next_offset += 1;
         if (r.ok) {
           results.indexed += 1;
           results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, chunks: r.chunks_inserted, status: 'indexed' });
@@ -883,10 +901,15 @@ router.post('/reindex-all', async (req, res) => {
         }
       } catch (e) {
         results.processed_this_batch += 1;
+        results.processed_total += 1;
+        results.next_offset += 1;
         results.failed += 1;
         results.details.push({ id: doc.id, name: doc.file_name_original, community: doc.community_name, status: 'failed', error: e.message });
       }
     }
+
+    results.duration_ms = Date.now() - startedAt;
+    results.done = results.next_offset >= queueTotal;
 
     res.json(results);
   } catch (err) {
