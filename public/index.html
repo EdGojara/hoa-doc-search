@@ -356,14 +356,17 @@
   <div class="tab" onclick="setAccMode('review')" data-acc-tab="1">🏗️ ACC</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
-  <div class="tab" onclick="switchTab('homes')">🏠 Homes &amp; Owners</div>
+  <!-- Community-wide reference data — Profile, Homes & Owners, Board Roster.
+       Distinct from the Board group below (workflow outputs only). -->
+  <div class="tab" data-group="community" onclick="openTabGroup('community')">🏘️ Community Profile</div>
   <div class="tab" data-group="board" onclick="openTabGroup('board')">🏛️ Board</div>
   <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
   <div class="tab" onclick="switchTab('help')">📚 Help</div>
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
-  <div class="tab" onclick="switchTab('profile')">🏘️ Profile</div>
+  <!-- Removed standalone 'profile' tab — now a child of the 🏘️ Community
+       Profile group (Profile · Homes & Owners · Board Roster). -->
   <div class="tab" onclick="switchTab('events')">🎉 Events</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
   <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
@@ -14410,10 +14413,23 @@ ${questionsPage}
         { id: 'vendors', label: '🏢 Vendor Directory' },
       ],
     },
+    community: {
+      // Community-wide reference data: who lives here, what the community
+      // looks like, who's on the board. Distinct from the Board group below,
+      // which is for board workflow outputs (packets, recaps, agendas).
+      label: '🏘️ Community Profile',
+      children: [
+        { id: 'profile', label: '🏘️ Profile' },
+        { id: 'homes',   label: '🏠 Homes & Owners' },
+        { id: 'roster',  label: '👥 Board Roster' },
+      ],
+    },
     board: {
+      // Narrowed: Roster moved to the Community Profile group (it's static
+      // community data, not a board workflow output). What's left here is
+      // the work product the board produces or consumes during meetings.
       label: '🏛️ Board',
       children: [
-        { id: 'roster',  label: '👥 Roster' },
         { id: 'packets', label: '📋 Board Packets' },
         { id: 'recaps',  label: '📰 Recaps' },
         { id: 'agenda',  label: '📋 Agenda Generator' },
