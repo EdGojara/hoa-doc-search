@@ -332,6 +332,7 @@
   <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
+  <div class="tab" onclick="switchTab('homes')">🏠 Homes &amp; Owners</div>
   <div class="tab" data-group="board" onclick="openTabGroup('board')">🏛️ Board</div>
   <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
@@ -1609,6 +1610,85 @@
           <li>Page 4 — Candidate Statements (bios + photos, alphabetical)</li>
         </ul>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- ===========================================================================
+     HOMES & OWNERS TAB
+     The data spine. Properties per community, current owner + resident,
+     full history, Vantaca upload + diff review + apply. Schema in migration 049.
+     =========================================================================== -->
+<div class="tab-content" id="tab-homes" style="overflow-y:auto; padding:24px;">
+  <div style="margin-bottom:16px;">
+    <h2 style="margin:0 0 4px 0;">🏠 Homes &amp; Owners</h2>
+    <p style="color:#888; font-size:14px; margin:0;">
+      Permanent record of every home in every Bedrock community — current owner, current resident, ownership and residency history, owner-occupancy rollups. Upload a Vantaca export to sync changes; review every diff before anything writes to the spine.
+    </p>
+  </div>
+
+  <!-- Top row: occupancy summary cards + upload action -->
+  <div style="display:grid; grid-template-columns: 2fr 1fr; gap:14px; margin-bottom:16px;">
+    <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0; font-size:14px; color:#1E2761;">Owner-occupancy rollup</h3>
+        <button class="secondary-btn" onclick="homesLoadSummary()" style="font-size:11px; padding:4px 8px;">↻ Refresh</button>
+      </div>
+      <div id="homesOccupancyList" style="font-size:13px; color:#6B7280;">Loading…</div>
+    </div>
+
+    <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+      <h3 style="margin:0 0 8px 0; font-size:14px; color:#1E2761;">📤 Upload Vantaca export</h3>
+      <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">CSV or Excel. Auto-detects columns. Preview every change before anything saves.</p>
+      <div class="section-label">Community</div>
+      <select id="homesUploadCommunity" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-bottom:8px;">
+        <option value="">— Pick community —</option>
+      </select>
+      <input type="file" id="homesUploadFile" accept=".csv,.xlsx,.xls" style="font-size:12px; margin-bottom:8px;">
+      <button class="action-btn" id="homesUploadBtn" onclick="homesUploadVantaca()" style="width:100%; font-size:13px; padding:8px;">🔍 Preview diff</button>
+      <div id="homesUploadStatus" style="font-size:12px; margin-top:6px;"></div>
+    </div>
+  </div>
+
+  <!-- Middle row: diff preview (only visible after an upload) -->
+  <div id="homesDiffPanel" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+      <h3 style="margin:0; font-size:14px; color:#1E2761;">📋 Diff preview <span id="homesDiffFilename" style="font-weight:400; color:#94A3B8; font-size:11.5px;"></span></h3>
+      <div>
+        <button class="secondary-btn" onclick="homesDiscardDiff()" style="font-size:11px; padding:5px 10px;">Discard</button>
+        <button class="action-btn" id="homesApplyAllBtn" onclick="homesApplyDiff(true)" style="font-size:11px; padding:5px 10px; background:#15803d; border-color:#15803d;">✓ Apply all</button>
+      </div>
+    </div>
+    <div id="homesDiffSummary" style="font-size:13px; color:#334155;"></div>
+    <div id="homesDiffDetail" style="font-size:12.5px; color:#475569; margin-top:10px;"></div>
+  </div>
+
+  <!-- Bottom row: property list (filterable by community) -->
+  <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <h3 style="margin:0; font-size:14px; color:#1E2761;">Properties</h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <select id="homesListCommunity" onchange="homesLoadProperties()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px;">
+          <option value="">All communities</option>
+        </select>
+        <input type="search" id="homesListSearch" placeholder="Filter by address or owner…" oninput="homesRenderProperties()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px; width:240px;">
+        <span id="homesListCount" style="font-size:11.5px; color:#94A3B8;"></span>
+      </div>
+    </div>
+    <div id="homesPropertyList" style="font-size:13px; color:#6B7280; max-height:520px; overflow-y:auto;">Loading…</div>
+  </div>
+
+  <!-- Property detail modal -->
+  <div id="homesPropertyModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9050; align-items:flex-start; justify-content:center; padding:40px 12px; overflow-y:auto;">
+    <div style="background:#fff; width:100%; max-width:780px; border-radius:12px; padding:20px 22px; box-shadow:0 20px 60px rgba(0,0,0,0.25);">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+        <div>
+          <h3 style="margin:0; color:#1E2761; font-size:17px;" id="homesPropTitle">—</h3>
+          <div style="font-size:12px; color:#6B7280;" id="homesPropMeta">—</div>
+        </div>
+        <button onclick="homesClosePropertyModal()" style="background:transparent; border:0; font-size:22px; color:#94A3B8; cursor:pointer;">×</button>
+      </div>
+      <div id="homesPropBody" style="margin-top:14px; font-size:13px;">Loading…</div>
     </div>
   </div>
 </div>
@@ -3334,6 +3414,296 @@
             billingLoadCommunities();
             defLoad();
           }
+        });
+      }
+    });
+  });
+
+  // ===== Homes & Owners — properties / contacts / Vantaca sync ============
+  let homesCommunitiesCache = [];
+  let homesPropertiesCache = [];
+  let homesActiveDiff = null;     // { sync_log_id, diff, summary, file_name }
+  let homesLoaded = false;
+
+  async function homesEnsureCommunities() {
+    if (homesCommunitiesCache.length > 0) return homesCommunitiesCache;
+    try {
+      const r = await fetch('/api/communities');
+      const j = await r.json();
+      homesCommunitiesCache = (j.communities || j || []).map((c) => ({
+        id: c.id, name: c.name,
+      }));
+      const sel1 = document.getElementById('homesUploadCommunity');
+      const sel2 = document.getElementById('homesListCommunity');
+      const opts = '<option value="">— Pick community —</option>' +
+        homesCommunitiesCache.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+      if (sel1) sel1.innerHTML = opts;
+      if (sel2) sel2.innerHTML = '<option value="">All communities</option>' +
+        homesCommunitiesCache.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    } catch (e) {
+      console.warn('[homes] community load failed', e);
+    }
+    return homesCommunitiesCache;
+  }
+
+  async function homesLoadSummary() {
+    const box = document.getElementById('homesOccupancyList');
+    box.textContent = 'Loading…';
+    try {
+      const r = await fetch('/api/contacts/occupancy-summary');
+      const j = await r.json();
+      const rows = j.summary || [];
+      if (rows.length === 0) {
+        box.innerHTML = '<div style="color:#94A3B8; font-style:italic;">No properties on file yet. Upload a Vantaca export to populate the spine.</div>';
+        return;
+      }
+      box.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead>
+            <tr style="border-bottom:1.5px solid #1E2761; color:#475569;">
+              <th style="text-align:left; padding:4px 6px;">Community</th>
+              <th style="text-align:right; padding:4px 6px;">Properties</th>
+              <th style="text-align:right; padding:4px 6px;">Owner-Occ</th>
+              <th style="text-align:right; padding:4px 6px;">Renter</th>
+              <th style="text-align:right; padding:4px 6px;">Vacant</th>
+              <th style="text-align:right; padding:4px 6px;">Unknown</th>
+              <th style="text-align:right; padding:4px 6px;">OO %</th>
+              <th style="text-align:right; padding:4px 6px;">Rental %</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((r) => `
+              <tr style="border-bottom:1px solid #e2e8f0;">
+                <td style="padding:4px 6px; font-weight:600; color:#1E2761;">${escapeHtml(r.community_name)}</td>
+                <td style="padding:4px 6px; text-align:right;">${r.total_properties}</td>
+                <td style="padding:4px 6px; text-align:right; color:#15803d;">${r.owner_occupied_count}</td>
+                <td style="padding:4px 6px; text-align:right; color:#92400e;">${r.renter_count}</td>
+                <td style="padding:4px 6px; text-align:right; color:#64748b;">${r.vacant_count}</td>
+                <td style="padding:4px 6px; text-align:right; color:#94A3B8;">${r.unknown_count}</td>
+                <td style="padding:4px 6px; text-align:right; font-weight:600;">${r.owner_occupied_pct == null ? '—' : r.owner_occupied_pct + '%'}</td>
+                <td style="padding:4px 6px; text-align:right; font-weight:600;">${r.renter_pct == null ? '—' : r.renter_pct + '%'}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>`;
+    } catch (e) {
+      box.innerHTML = `<div style="color:#b91c1c;">Couldn't load occupancy summary: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function homesUploadVantaca() {
+    const communityId = document.getElementById('homesUploadCommunity').value;
+    const file = document.getElementById('homesUploadFile').files[0];
+    const status = document.getElementById('homesUploadStatus');
+    if (!communityId) { status.innerHTML = '<span style="color:#b91c1c;">Pick a community first.</span>'; return; }
+    if (!file)        { status.innerHTML = '<span style="color:#b91c1c;">Pick a file first.</span>'; return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    fd.append('community_id', communityId);
+    const btn = document.getElementById('homesUploadBtn');
+    btn.disabled = true; btn.textContent = '⏳ Parsing + computing diff…';
+    status.textContent = '';
+    try {
+      const r = await fetch('/api/contacts/vantaca/upload', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesActiveDiff = j;
+      homesRenderDiff();
+      status.innerHTML = `<span style="color:#15803d;">✓ Parsed ${j.total_rows} rows.</span>`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '🔍 Preview diff';
+    }
+  }
+
+  function homesRenderDiff() {
+    const panel = document.getElementById('homesDiffPanel');
+    const sumBox = document.getElementById('homesDiffSummary');
+    const detBox = document.getElementById('homesDiffDetail');
+    const fnameBox = document.getElementById('homesDiffFilename');
+    if (!homesActiveDiff) { panel.style.display = 'none'; return; }
+    const { summary, diff, file_name } = homesActiveDiff;
+    fnameBox.textContent = `· ${file_name || '(upload)'}`;
+    const noChanges = Object.values(summary).every((v) => v === 0);
+    if (noChanges) {
+      sumBox.innerHTML = `<div style="padding:10px; color:#15803d; background:#dcfce7; border-radius:6px;">✓ No changes detected — spine is in sync with this export.</div>`;
+      detBox.innerHTML = '';
+    } else {
+      const pill = (label, n, color) => `<span style="background:${color}; padding:3px 9px; border-radius:11px; font-size:11.5px; font-weight:700; margin-right:6px;">${label}: ${n}</span>`;
+      sumBox.innerHTML =
+        (summary.new_properties        ? pill('New properties',         summary.new_properties,        '#dcfce7') : '') +
+        (summary.property_field_changes? pill('Property field changes', summary.property_field_changes,'#fef3c7') : '') +
+        (summary.new_ownerships        ? pill('New ownerships',         summary.new_ownerships,        '#dcfce7') : '') +
+        (summary.ownership_changes     ? pill('Ownership changes',      summary.ownership_changes,     '#fef3c7') : '') +
+        (summary.new_residencies       ? pill('New residencies',        summary.new_residencies,       '#eef2ff') : '') +
+        (summary.email_additions       ? pill('Email updates',          summary.email_additions,       '#eef2ff') : '') +
+        (summary.phone_additions       ? pill('Phone updates',          summary.phone_additions,       '#eef2ff') : '');
+      // Detail listing — small samples by category.
+      const sec = (label, items, render) => items && items.length
+        ? `<details open style="margin-top:10px;"><summary style="font-weight:700; color:#1E2761; cursor:pointer;">${label} (${items.length})</summary><div style="padding:8px 0 0 12px;">${items.slice(0, 30).map(render).join('')}${items.length > 30 ? `<div style="color:#94A3B8; font-style:italic;">…and ${items.length - 30} more</div>` : ''}</div></details>` : '';
+      detBox.innerHTML =
+        sec('New properties', diff.new_properties, (i) => `<div>• <strong>${escapeHtml(i.property.street_address)}${i.property.unit ? ' #' + escapeHtml(i.property.unit) : ''}</strong>${i.proposed_owner ? ` → owner: ${escapeHtml(i.proposed_owner.full_name)}${i.proposed_owner.primary_email ? ` (${escapeHtml(i.proposed_owner.primary_email)})` : ''}` : ''}</div>`) +
+        sec('Property field changes', diff.property_field_changes, (i) => `<div>• ${escapeHtml(i.address)} — ${Object.entries(i.changes).map(([f, c]) => `${escapeHtml(f)}: <code>${escapeHtml(c.from || '—')}</code> → <code>${escapeHtml(c.to || '—')}</code>`).join(', ')}</div>`) +
+        sec('Ownership changes', diff.ownership_changes, (i) => `<div>• ${escapeHtml(i.address)}: <strong>${escapeHtml(i.prior_owner || '—')}</strong> → <strong>${escapeHtml(i.new_owner)}</strong></div>`) +
+        sec('New ownerships (no prior owner on file)', diff.new_ownerships, (i) => `<div>• ${escapeHtml(i.address)} → ${escapeHtml(i.contact_name)}${i.contact_email ? ` (${escapeHtml(i.contact_email)})` : ''}</div>`) +
+        sec('New residencies (renter flagged)', diff.new_residencies, (i) => `<div>• ${escapeHtml(i.address)} → ${escapeHtml(i.resident_name || '—')} <span style="color:#94A3B8;">[${escapeHtml(i.residency_type)}]</span></div>`) +
+        sec('Email updates', diff.email_additions, (i) => `<div>• ${escapeHtml(i.name)}: <code>${escapeHtml(i.old_email || '—')}</code> → <code>${escapeHtml(i.new_email)}</code></div>`) +
+        sec('Phone updates', diff.phone_additions, (i) => `<div>• ${escapeHtml(i.name)}: <code>${escapeHtml(i.old_phone || '—')}</code> → <code>${escapeHtml(i.new_phone)}</code></div>`);
+    }
+    panel.style.display = 'block';
+    panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  function homesDiscardDiff() {
+    homesActiveDiff = null;
+    document.getElementById('homesDiffPanel').style.display = 'none';
+    document.getElementById('homesUploadStatus').textContent = '';
+  }
+
+  async function homesApplyDiff(applyAll) {
+    if (!homesActiveDiff) return;
+    if (!confirm(`Apply all changes to the live spine? This will:\n\n• Create ${homesActiveDiff.summary.new_properties || 0} new properties\n• Update ${homesActiveDiff.summary.property_field_changes || 0} property fields\n• Create ${homesActiveDiff.summary.new_ownerships || 0} new ownerships\n• Close + reopen ${homesActiveDiff.summary.ownership_changes || 0} ownerships\n• Create ${homesActiveDiff.summary.new_residencies || 0} residencies\n• Update ${homesActiveDiff.summary.email_additions || 0} emails and ${homesActiveDiff.summary.phone_additions || 0} phones\n\nAudit log keeps a record either way. Proceed?`)) return;
+    const btn = document.getElementById('homesApplyAllBtn');
+    btn.disabled = true; btn.textContent = '⏳ Applying…';
+    try {
+      const r = await fetch(`/api/contacts/vantaca/apply/${homesActiveDiff.sync_log_id}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ apply: {
+          new_properties: 'all',
+          property_field_changes: 'all',
+          new_ownerships: 'all',
+          ownership_changes: 'all',
+          new_residencies: 'all',
+          email_additions: 'all',
+          phone_additions: 'all',
+        }}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`Applied:\n• ${j.applied.properties_created} new properties\n• ${j.applied.properties_updated} property fields updated\n• ${j.applied.contacts_created} new contacts\n• ${j.applied.ownerships_created} new ownerships (${j.applied.ownerships_ended} prior closed)\n• ${j.applied.residencies_created} residencies\n• ${j.applied.emails_updated} emails, ${j.applied.phones_updated} phones`);
+      homesActiveDiff = null;
+      document.getElementById('homesDiffPanel').style.display = 'none';
+      homesLoadSummary();
+      homesLoadProperties();
+    } catch (e) {
+      alert('Apply failed: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = '✓ Apply all';
+    }
+  }
+
+  async function homesLoadProperties() {
+    const communityId = document.getElementById('homesListCommunity').value;
+    const list = document.getElementById('homesPropertyList');
+    list.textContent = 'Loading…';
+    try {
+      const url = '/api/properties' + (communityId ? '?community_id=' + encodeURIComponent(communityId) : '');
+      const r = await fetch(url);
+      const j = await r.json();
+      homesPropertiesCache = j.properties || [];
+      homesRenderProperties();
+    } catch (e) {
+      list.innerHTML = `<div style="color:#b91c1c;">Couldn't load properties: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function homesRenderProperties() {
+    const list = document.getElementById('homesPropertyList');
+    const countEl = document.getElementById('homesListCount');
+    const q = (document.getElementById('homesListSearch').value || '').toLowerCase().trim();
+    const filtered = !q ? homesPropertiesCache : homesPropertiesCache.filter((p) => {
+      return (p.street_address || '').toLowerCase().includes(q)
+          || (p.owner_name || '').toLowerCase().includes(q)
+          || (p.owner_email || '').toLowerCase().includes(q);
+    });
+    countEl.textContent = `${filtered.length} of ${homesPropertiesCache.length}`;
+    if (filtered.length === 0) {
+      list.innerHTML = '<div style="padding:10px; color:#94A3B8; font-style:italic;">No properties match. Upload a Vantaca export to populate, or add manually.</div>';
+      return;
+    }
+    list.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead>
+        <tr style="border-bottom:1.5px solid #1E2761; color:#475569; position:sticky; top:0; background:#fff;">
+          <th style="text-align:left; padding:5px 6px;">Address</th>
+          <th style="text-align:left; padding:5px 6px;">Owner</th>
+          <th style="text-align:left; padding:5px 6px;">Email</th>
+          <th style="text-align:left; padding:5px 6px;">Phone</th>
+          <th style="text-align:left; padding:5px 6px;">Owned since</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${filtered.map((p) => `
+          <tr style="border-bottom:1px solid #e2e8f0; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">
+            <td style="padding:5px 6px; font-weight:600; color:#1E2761;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
+            <td style="padding:5px 6px;">${escapeHtml(p.owner_name || '—')}</td>
+            <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_email || '')}</td>
+            <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_phone || '')}</td>
+            <td style="padding:5px 6px; color:#94A3B8;">${escapeHtml(p.owned_since || '')}</td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+  }
+
+  async function homesOpenProperty(id) {
+    const modal = document.getElementById('homesPropertyModal');
+    const body = document.getElementById('homesPropBody');
+    document.getElementById('homesPropTitle').textContent = 'Loading…';
+    document.getElementById('homesPropMeta').textContent = '';
+    body.innerHTML = '';
+    modal.style.display = 'flex';
+    try {
+      const r = await fetch(`/api/properties/${id}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const p = j.property;
+      const cm = (p.communities && p.communities.name) || '';
+      document.getElementById('homesPropTitle').textContent = `${p.street_address}${p.unit ? ' #' + p.unit : ''}`;
+      document.getElementById('homesPropMeta').textContent = `${cm}${p.city ? ' · ' + p.city : ''}${p.zip ? ' · ' + p.zip : ''}${p.lot_number ? ' · Lot ' + p.lot_number : ''}`;
+      const rendRel = (rels, label, isResidency) => {
+        if (!rels || rels.length === 0) return `<div style="color:#94A3B8; font-style:italic;">No ${label.toLowerCase()} on file.</div>`;
+        return `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead><tr style="border-bottom:1.5px solid #1E2761; color:#475569;">
+            <th style="text-align:left; padding:4px 6px;">${label}</th>
+            <th style="text-align:left; padding:4px 6px;">Email</th>
+            <th style="text-align:left; padding:4px 6px;">Start</th>
+            <th style="text-align:left; padding:4px 6px;">End</th>
+            ${isResidency ? '<th style="text-align:left; padding:4px 6px;">Type</th><th style="text-align:left; padding:4px 6px;">Lease end</th>' : '<th style="text-align:left; padding:4px 6px;">Vesting</th>'}
+          </tr></thead><tbody>
+            ${rels.map((rel) => `<tr style="border-bottom:1px solid #e2e8f0; ${!rel.end_date ? 'background:#eef2ff;' : ''}">
+              <td style="padding:4px 6px;">${escapeHtml((rel.contacts && rel.contacts.full_name) || '—')}${!rel.end_date ? ' <span style="background:#dcfce7; color:#15803d; font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px;">CURRENT</span>' : ''}</td>
+              <td style="padding:4px 6px; color:#475569;">${escapeHtml((rel.contacts && rel.contacts.primary_email) || '')}</td>
+              <td style="padding:4px 6px;">${escapeHtml(rel.start_date || '')}</td>
+              <td style="padding:4px 6px;">${escapeHtml(rel.end_date || '—')}</td>
+              ${isResidency ? `<td style="padding:4px 6px;">${escapeHtml(rel.residency_type || '')}</td><td style="padding:4px 6px;">${escapeHtml(rel.lease_end_date || '')}</td>` : `<td style="padding:4px 6px;">${escapeHtml(rel.vesting || '')}</td>`}
+            </tr>`).join('')}
+          </tbody></table>`;
+      };
+      body.innerHTML = `
+        <h4 style="margin:0 0 6px 0; font-size:13px; color:#1E2761;">Ownership history</h4>
+        ${rendRel(j.ownerships, 'Owner', false)}
+        <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Residency history</h4>
+        ${rendRel(j.residencies, 'Resident', true)}`;
+    } catch (e) {
+      body.innerHTML = `<div style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function homesClosePropertyModal() {
+    document.getElementById('homesPropertyModal').style.display = 'none';
+  }
+
+  // Auto-load when the Homes tab is first opened.
+  document.addEventListener('DOMContentLoaded', () => {
+    document.querySelectorAll('.tab').forEach((t) => {
+      const onclick = t.getAttribute('onclick') || '';
+      if (onclick === "switchTab('homes')") {
+        t.addEventListener('click', async () => {
+          if (homesLoaded) return;
+          homesLoaded = true;
+          await homesEnsureCommunities();
+          homesLoadSummary();
+          homesLoadProperties();
         });
       }
     });

@@ -565,6 +565,11 @@ app.get('/f/:slug', async (req, res) => {
 const { router: billingRouter } = require('./api/billing');
 app.use('/api/billing', billingRouter);
 
+// Homes & Owners — properties, contacts, ownerships, residencies, Vantaca
+// upload/diff/apply workflow. Schema in migration 049.
+const { router: contactsRouter } = require('./api/contacts');
+app.use('/api', contactsRouter);
+
 // Bedrock Office > HOA Financial Review module
 // Endpoints under /api/financial-review/*. See api/financial_review.js and
 // migrations/008_financial_review.sql for the schema.

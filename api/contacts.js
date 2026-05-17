@@ -1,0 +1,525 @@
+// ============================================================================
+// Contacts / Properties API
+// ----------------------------------------------------------------------------
+// Endpoints under /api/contacts/* and /api/properties/* for the Homes &
+// Owners module. Backs the data spine (migration 049) — properties,
+// contacts, ownerships, residencies, and the Vantaca-upload diff workflow.
+//
+// Endpoints (v1):
+//   POST   /api/contacts/vantaca/upload     — parse upload, return diff preview, persist sync_log row
+//   POST   /api/contacts/vantaca/apply/:id  — apply approved selections from a previewed sync_log
+//   GET    /api/contacts/vantaca/recent     — recent sync_log entries
+//   GET    /api/properties                  — list (by community, owner, etc.)
+//   GET    /api/properties/:id              — full detail (owner + resident + history)
+//   POST   /api/properties                  — manual create
+//   PATCH  /api/properties/:id              — manual edit
+//   GET    /api/contacts                    — list (by search, etc.)
+//   POST   /api/contacts                    — manual create
+//   PATCH  /api/contacts/:id                — manual edit
+//   GET    /api/contacts/occupancy-summary  — per-community owner-occupancy rollup
+//
+// Apply flow is intentionally explicit: nothing in the parsed upload writes
+// to the live spine until staff POSTs to /apply with the list of selections
+// they approve. Diff sits in sync_log until then.
+// ============================================================================
+
+const express = require('express');
+const multer = require('multer');
+const { createClient } = require('@supabase/supabase-js');
+const { parseVantacaExport, computeDiff } = require('../lib/contacts/vantaca_import');
+
+const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// VANTACA UPLOAD — parse + diff + preview (no writes to spine yet)
+// ---------------------------------------------------------------------------
+router.post('/contacts/vantaca/upload', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'No file uploaded.' });
+    const communityId = req.body.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id is required.' });
+
+    const { rows, mapping, errors } = parseVantacaExport(req.file.buffer, req.file.originalname);
+    if (errors && errors.length > 0 && rows.length === 0) {
+      return res.status(400).json({ error: errors.join(' ') });
+    }
+
+    const diff = await computeDiff(supabase, communityId, rows);
+    const summary = {
+      new_properties:          diff.new_properties.length,
+      property_field_changes:  diff.property_field_changes.length,
+      new_ownerships:          diff.new_ownerships.length,
+      ownership_changes:       diff.ownership_changes.length,
+      new_residencies:         diff.new_residencies.length,
+      email_additions:         diff.email_additions.length,
+      phone_additions:         diff.phone_additions.length,
+    };
+
+    const { data: logRow, error: logErr } = await supabase
+      .from('vantaca_sync_log')
+      .insert({
+        community_id: communityId,
+        uploaded_by: req.body.uploaded_by || null,
+        file_name: req.file.originalname || null,
+        total_rows: rows.length,
+        column_mapping: mapping,
+        parsed_data: rows,
+        diff_summary: { ...summary, detail: diff },
+        status: 'previewed',
+      })
+      .select()
+      .single();
+    if (logErr) return res.status(500).json({ error: logErr.message });
+
+    res.json({
+      sync_log_id: logRow.id,
+      file_name: req.file.originalname,
+      total_rows: rows.length,
+      column_mapping: mapping,
+      diff,
+      summary,
+      parser_warnings: errors || [],
+    });
+  } catch (err) {
+    console.error('[contacts/vantaca/upload]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// VANTACA APPLY — commit selected diff items from a previewed sync_log row.
+// Body shape:
+//   {
+//     apply: {
+//       new_properties: [row_index, row_index, ...],     // selections by source_row
+//       property_field_changes: [property_id, ...],
+//       new_ownerships: [property_id, ...],
+//       ownership_changes: [property_id, ...],
+//       new_residencies: [property_id, ...],
+//       email_additions: [contact_id, ...],
+//       phone_additions: [contact_id, ...],
+//     }
+//   }
+// "all" can be passed instead of arrays to apply everything in that category.
+// ---------------------------------------------------------------------------
+router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), async (req, res) => {
+  try {
+    const { data: log, error } = await supabase
+      .from('vantaca_sync_log')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error || !log) return res.status(404).json({ error: 'sync_log not found' });
+    if (log.status === 'applied') return res.status(409).json({ error: 'Already applied.' });
+
+    const diff = (log.diff_summary && log.diff_summary.detail) || {};
+    const apply = (req.body && req.body.apply) || {};
+    const applied = {
+      properties_created:    0,
+      properties_updated:    0,
+      contacts_created:      0,
+      ownerships_created:    0,
+      ownerships_ended:      0,
+      residencies_created:   0,
+      emails_updated:        0,
+      phones_updated:        0,
+    };
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Helper: find or create a contact by name + email. Match is fuzzy on name
+    // and exact on email (when both provided).
+    async function findOrCreateContact({ full_name, primary_email, primary_phone, mailing_address }) {
+      if (!full_name) return null;
+      const nameNorm = full_name.toLowerCase().trim();
+      let { data: matches } = await supabase
+        .from('contacts')
+        .select('*')
+        .ilike('full_name', `%${nameNorm}%`)
+        .limit(5);
+      let match = null;
+      if (matches && matches.length > 0) {
+        // Prefer exact-name + same email; else exact-name; else first.
+        match = matches.find((m) => m.full_name.toLowerCase().trim() === nameNorm && (primary_email ? (m.primary_email || '').toLowerCase() === primary_email.toLowerCase() : true))
+             || matches.find((m) => m.full_name.toLowerCase().trim() === nameNorm)
+             || matches[0];
+      }
+      if (match) return match;
+      const { data: created, error: cErr } = await supabase
+        .from('contacts')
+        .insert({
+          full_name,
+          primary_email: primary_email || null,
+          primary_phone: primary_phone || null,
+          mailing_address: mailing_address || null,
+        })
+        .select()
+        .single();
+      if (cErr) throw cErr;
+      applied.contacts_created += 1;
+      return created;
+    }
+
+    // --- NEW PROPERTIES ----------------------------------------------------
+    const wantNewProps = apply.new_properties === 'all' || Array.isArray(apply.new_properties);
+    if (wantNewProps && diff.new_properties) {
+      const select = apply.new_properties === 'all' ? null : new Set(apply.new_properties);
+      for (const item of diff.new_properties) {
+        if (select && !select.has(item.row)) continue;
+        const { data: newProp, error: pErr } = await supabase
+          .from('properties')
+          .insert({
+            community_id: log.community_id,
+            street_address: item.property.street_address,
+            unit: item.property.unit,
+            city: item.property.city,
+            state: item.property.state,
+            zip: item.property.zip,
+            lot_number: item.property.lot_number,
+            vantaca_account_id: item.property.vantaca_account_id,
+          })
+          .select()
+          .single();
+        if (pErr) { console.warn('[apply/new_property]', pErr.message); continue; }
+        applied.properties_created += 1;
+        if (item.proposed_owner) {
+          const contact = await findOrCreateContact(item.proposed_owner);
+          if (contact) {
+            await supabase.from('property_ownerships').insert({
+              property_id: newProp.id,
+              contact_id: contact.id,
+              start_date: today,
+              vesting: item.proposed_owner.vesting,
+              is_primary: true,
+              source: 'vantaca_import',
+            });
+            applied.ownerships_created += 1;
+          }
+        }
+      }
+    }
+
+    // --- PROPERTY FIELD CHANGES --------------------------------------------
+    const wantFieldChanges = apply.property_field_changes === 'all' || Array.isArray(apply.property_field_changes);
+    if (wantFieldChanges && diff.property_field_changes) {
+      const select = apply.property_field_changes === 'all' ? null : new Set(apply.property_field_changes);
+      for (const item of diff.property_field_changes) {
+        if (select && !select.has(item.property_id)) continue;
+        const patch = { updated_at: new Date().toISOString() };
+        for (const [field, change] of Object.entries(item.changes)) patch[field] = change.to;
+        const { error: uErr } = await supabase.from('properties').update(patch).eq('id', item.property_id);
+        if (!uErr) applied.properties_updated += 1;
+      }
+    }
+
+    // --- OWNERSHIP CHANGES (close old, open new) ---------------------------
+    const wantOwnerChanges = apply.ownership_changes === 'all' || Array.isArray(apply.ownership_changes);
+    if (wantOwnerChanges && diff.ownership_changes) {
+      const select = apply.ownership_changes === 'all' ? null : new Set(apply.ownership_changes);
+      for (const item of diff.ownership_changes) {
+        if (select && !select.has(item.property_id)) continue;
+        // End all current ownerships on this property.
+        const { data: ended } = await supabase
+          .from('property_ownerships')
+          .update({ end_date: today, updated_at: new Date().toISOString() })
+          .eq('property_id', item.property_id)
+          .is('end_date', null)
+          .select();
+        if (ended) applied.ownerships_ended += ended.length;
+        // Open new ownership.
+        const contact = await findOrCreateContact({
+          full_name: item.new_owner,
+          primary_email: item.new_email,
+          primary_phone: item.new_phone,
+        });
+        if (contact) {
+          await supabase.from('property_ownerships').insert({
+            property_id: item.property_id,
+            contact_id: contact.id,
+            start_date: today,
+            is_primary: true,
+            source: 'vantaca_import',
+          });
+          applied.ownerships_created += 1;
+        }
+      }
+    }
+
+    // --- NEW OWNERSHIPS (property has no current owner on file) -----------
+    const wantNewOwn = apply.new_ownerships === 'all' || Array.isArray(apply.new_ownerships);
+    if (wantNewOwn && diff.new_ownerships) {
+      const select = apply.new_ownerships === 'all' ? null : new Set(apply.new_ownerships);
+      for (const item of diff.new_ownerships) {
+        if (select && !select.has(item.property_id)) continue;
+        const contact = await findOrCreateContact({
+          full_name: item.contact_name,
+          primary_email: item.contact_email,
+          primary_phone: item.contact_phone,
+        });
+        if (contact) {
+          await supabase.from('property_ownerships').insert({
+            property_id: item.property_id,
+            contact_id: contact.id,
+            start_date: today,
+            vesting: item.vesting,
+            is_primary: true,
+            source: 'vantaca_import',
+          });
+          applied.ownerships_created += 1;
+        }
+      }
+    }
+
+    // --- NEW RESIDENCIES (renter detection) -------------------------------
+    const wantNewRes = apply.new_residencies === 'all' || Array.isArray(apply.new_residencies);
+    if (wantNewRes && diff.new_residencies) {
+      const select = apply.new_residencies === 'all' ? null : new Set(apply.new_residencies);
+      for (const item of diff.new_residencies) {
+        if (select && !select.has(item.property_id)) continue;
+        // End any open residency on this property first.
+        await supabase
+          .from('property_residencies')
+          .update({ end_date: today, updated_at: new Date().toISOString() })
+          .eq('property_id', item.property_id)
+          .is('end_date', null);
+        const contact = await findOrCreateContact({
+          full_name: item.resident_name,
+          primary_email: item.resident_email,
+          primary_phone: item.resident_phone,
+        });
+        await supabase.from('property_residencies').insert({
+          property_id: item.property_id,
+          contact_id: contact ? contact.id : null,
+          start_date: today,
+          residency_type: item.residency_type || 'renter',
+          source: 'vantaca_import',
+        });
+        applied.residencies_created += 1;
+      }
+    }
+
+    // --- EMAIL ADDITIONS (existing contact gets a new/updated email) ------
+    const wantEmails = apply.email_additions === 'all' || Array.isArray(apply.email_additions);
+    if (wantEmails && diff.email_additions) {
+      const select = apply.email_additions === 'all' ? null : new Set(apply.email_additions);
+      for (const item of diff.email_additions) {
+        if (select && !select.has(item.contact_id)) continue;
+        const { error: eErr } = await supabase
+          .from('contacts')
+          .update({ primary_email: item.new_email, updated_at: new Date().toISOString() })
+          .eq('id', item.contact_id);
+        if (!eErr) applied.emails_updated += 1;
+      }
+    }
+
+    // --- PHONE ADDITIONS ---------------------------------------------------
+    const wantPhones = apply.phone_additions === 'all' || Array.isArray(apply.phone_additions);
+    if (wantPhones && diff.phone_additions) {
+      const select = apply.phone_additions === 'all' ? null : new Set(apply.phone_additions);
+      for (const item of diff.phone_additions) {
+        if (select && !select.has(item.contact_id)) continue;
+        const { error: pErr } = await supabase
+          .from('contacts')
+          .update({ primary_phone: item.new_phone, updated_at: new Date().toISOString() })
+          .eq('id', item.contact_id);
+        if (!pErr) applied.phones_updated += 1;
+      }
+    }
+
+    await supabase
+      .from('vantaca_sync_log')
+      .update({
+        status: 'applied',
+        applied_at: new Date().toISOString(),
+        applied_by: (req.body && req.body.applied_by) || null,
+        applied_summary: applied,
+      })
+      .eq('id', log.id);
+
+    res.json({ ok: true, applied });
+  } catch (err) {
+    console.error('[contacts/vantaca/apply]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Recent sync log entries (for the "Recent uploads" panel).
+// ---------------------------------------------------------------------------
+router.get('/contacts/vantaca/recent', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vantaca_sync_log')
+      .select('id, community_id, uploaded_by, uploaded_at, file_name, total_rows, diff_summary, status, applied_at, applied_summary')
+      .order('uploaded_at', { ascending: false })
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    // Strip the heavy detail blob from the list response.
+    const slim = (data || []).map((r) => ({
+      ...r,
+      diff_summary: r.diff_summary
+        ? { ...r.diff_summary, detail: undefined }
+        : null,
+    }));
+    res.json({ uploads: slim });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PROPERTIES
+// ---------------------------------------------------------------------------
+router.get('/properties', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    let q = supabase.from('v_current_property_owners').select('*');
+    if (communityId) q = q.eq('community_id', communityId);
+    q = q.order('street_address').limit(2000);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ properties: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/properties/:id', async (req, res) => {
+  try {
+    const { data: prop, error } = await supabase
+      .from('properties')
+      .select('*, communities(id, name)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error || !prop) return res.status(404).json({ error: 'not found' });
+
+    const [{ data: ownerships }, { data: residencies }] = await Promise.all([
+      supabase.from('property_ownerships')
+        .select('*, contacts(id, full_name, primary_email, primary_phone)')
+        .eq('property_id', req.params.id)
+        .order('start_date', { ascending: false }),
+      supabase.from('property_residencies')
+        .select('*, contacts(id, full_name, primary_email, primary_phone)')
+        .eq('property_id', req.params.id)
+        .order('start_date', { ascending: false }),
+    ]);
+
+    res.json({ property: prop, ownerships: ownerships || [], residencies: residencies || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/properties', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_id || !b.street_address) {
+      return res.status(400).json({ error: 'community_id and street_address are required.' });
+    }
+    const { data, error } = await supabase
+      .from('properties')
+      .insert({
+        community_id: b.community_id,
+        street_address: b.street_address,
+        unit: b.unit || null,
+        city: b.city || null,
+        state: b.state || 'TX',
+        zip: b.zip || null,
+        property_type: b.property_type || null,
+        lot_number: b.lot_number || null,
+        notes: b.notes || null,
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ property: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/properties/:id', express.json(), async (req, res) => {
+  try {
+    const allowed = ['street_address','unit','city','state','zip','property_type','lot_number','notes','vantaca_account_id'];
+    const patch = { updated_at: new Date().toISOString() };
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    const { data, error } = await supabase
+      .from('properties').update(patch).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ property: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CONTACTS
+// ---------------------------------------------------------------------------
+router.get('/contacts', async (req, res) => {
+  try {
+    const q = (req.query.q || '').trim();
+    let query = supabase.from('contacts').select('*').order('full_name').limit(500);
+    if (q) query = query.or(`full_name.ilike.%${q}%,primary_email.ilike.%${q}%`);
+    const { data, error } = await query;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ contacts: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/contacts', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.full_name) return res.status(400).json({ error: 'full_name is required.' });
+    const { data, error } = await supabase
+      .from('contacts')
+      .insert({
+        full_name: b.full_name,
+        preferred_name: b.preferred_name || null,
+        primary_email: b.primary_email || null,
+        primary_phone: b.primary_phone || null,
+        mailing_address: b.mailing_address || null,
+        notes: b.notes || null,
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ contact: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/contacts/:id', express.json(), async (req, res) => {
+  try {
+    const allowed = ['full_name','preferred_name','primary_email','primary_phone','secondary_email','secondary_phone','mailing_address','notes'];
+    const patch = { updated_at: new Date().toISOString() };
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    const { data, error } = await supabase
+      .from('contacts').update(patch).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ contact: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Owner-occupancy summary per community — drives the dashboard rollup.
+// ---------------------------------------------------------------------------
+router.get('/contacts/occupancy-summary', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('v_owner_occupancy_summary')
+      .select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ summary: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = { router };
