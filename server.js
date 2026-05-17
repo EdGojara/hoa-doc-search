@@ -752,6 +752,12 @@ async function getRelevantChunks(text, community) {
   }).join('\n\n---\n\n');
 }
 
+// DEPRECATED 2026-05-17 — the "Ask a Question" tab in trustEd was folded into
+// askEd's Advisor mode. The askEd Advisor (POST /ask-ed) supersedes this:
+// same RAG, plus playbook + community profile + attachments + tool access.
+// This endpoint is kept as a backward-compat stub in case any external caller
+// (bookmark, voice helper, etc.) still hits it. Remove once verified unused
+// for a full cycle.
 app.post('/ask', async (req, res) => {
   try {
     const { question, community, history = [] } = req.body;
@@ -776,6 +782,11 @@ app.post('/ask', async (req, res) => {
   }
 });
 
+// DEPRECATED 2026-05-17 — the "Draft Email" tab was folded into askEd's Draft
+// mode (POST /ask-ed with the user input wrapped as a "draft a reply to this
+// homeowner email" prompt). The askEd Draft mode supersedes this: it uses the
+// full askEd persona + community profile, producing better results.
+// Backward-compat stub. Remove once verified unused for a full cycle.
 app.post('/draft', async (req, res) => {
   try {
     const { email, community, additionalContext } = req.body;
@@ -1552,6 +1563,43 @@ If a source is tagged "OCR'd scan, may have minor errors," mention in one short 
 Do not mention you are an AI. Do not apologize. Do not editorialize. Just the facts.`;
 }
 
+// Draft-coach system prompt — used by /ask-ed?mode=coach_review. Used when
+// staff paste a draft they wrote and want feedback + an improved version. Same
+// underlying askEd context (community profile, etc.) but the output is
+// structured coaching, not freeform advice. Replaces the legacy /review-draft
+// endpoint with the same depth/playbook everything else gets.
+function askEdCoachSystem() {
+  return `${GLOBAL_RULES}
+
+You are a supportive communication coach for ${BRAND.service.name} staff, speaking in Ed Gojara's voice (Ed is the owner — 15+ years HOA management, CPA, audit-firm + HFT operations background). Your job is to review drafts and help staff improve them — not criticize them. Think of yourself as a helpful mentor who wants the writer to succeed. Be encouraging, specific, and constructive. Never use harsh language or make the writer feel bad.
+
+Ed's standards you are coaching toward:
+- Lead with empathy when the situation involves a homeowner concern or complaint
+- Be factually accurate — know what the HOA enforces vs what the city enforces
+- Never be cold or dismissive — even a denial should feel professional and warm
+- Protect homeowner privacy — never reference enforcement actions against other homeowners
+- Use non-accusatory language in violation notices — give the homeowner an out
+- Board communications should lead with financial impact and include a clear recommendation with reasoning
+- Always sign off as "${BRAND.service.name}" — never use a personal name
+- Correct jurisdiction issues — redirect to city or law enforcement when appropriate
+- Leave doors open — denials should mention the option to resubmit a revised application
+- Match the tone to the audience — boards get professional and data driven, homeowners get warm and clear
+
+Common areas to watch for and coach gently:
+- Responses that feel cold or dismissive — suggest warmer alternatives
+- Missing empathy when a homeowner has a legitimate concern — show how to add it naturally
+- Incorrect statements about what is or is not enforceable — gently correct with the right information
+- Board emails that list options without a recommendation — show how to add one
+- Personal name in signature instead of ${BRAND.service.name} — flag this kindly
+- Vague next steps — show how to make them specific
+
+Format your response with these exact section headings (plain text, no markdown):
+1. GOOD START — what the draft got right, even if small
+2. A FEW THINGS TO STRENGTHEN — specific suggestions framed as improvements not failures
+3. IMPROVED VERSION — a clean rewrite that shows what great looks like (this is what staff will actually copy and send)
+4. QUICK SUMMARY — two or three sentences on the main changes made`;
+}
+
 function askEdSystem() {
   return `${GLOBAL_RULES}
 
@@ -1690,7 +1738,12 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
 
   try {
     const { situation, community, mode } = req.body;
-    const quickMode = (mode || '').toString().toLowerCase().trim() === 'quick';
+    const modeNorm = (mode || '').toString().toLowerCase().trim();
+    const quickMode = modeNorm === 'quick';
+    const coachMode = modeNorm === 'coach_review';
+    // Coach mode skips RAG (the draft being reviewed is the source material).
+    // Quick mode skips RAG for latency. Both still pull community profile.
+    const skipRag = quickMode || coachMode;
 
     const attachmentContents = [];
     let attachmentNote = '';
@@ -1717,32 +1770,38 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
     }
 
     // Quick mode skips playbook + doc retrieval — lookups don't need it and
-    // every second of latency matters on a field-staff voice query.
-    const [playbookEntries, docContext, communityContext] = quickMode
+    // every second of latency matters on a field-staff voice query. Coach
+    // mode also skips RAG — the draft itself is the source material.
+    const [playbookEntries, docContext, communityContext] = skipRag
       ? [[], '', await buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })]
       : await Promise.all([
           getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
           getRelevantChunks(situation || 'general guidance', community),
           buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; }),
         ]);
-    const playbookContext = quickMode
+    const playbookContext = skipRag
       ? ''
       : (formatPlaybookContext(playbookEntries, {
           heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
         }) || 'No relevant playbook examples for this question.');
 
-    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: quickMode ? 'quick' : 'full' });
+    const reportedMode = quickMode ? 'quick' : (coachMode ? 'coach' : 'full');
+    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: reportedMode });
 
     const userContent = buildAskEdUserMessage({
       situation, community, communityContext, playbookContext, docContext, attachmentContents, attachmentNote
     });
 
+    const systemPrompt = quickMode
+      ? askEdQuickSystem()
+      : (coachMode ? askEdCoachSystem() : askEdSystem());
+
     // Raw SSE iterator (stream:true on create). Avoids the listener-timing
     // race of the higher-level .stream() + .on('text') API.
     const streamResp = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: quickMode ? 400 : 1500,
-      system: quickMode ? askEdQuickSystem() : askEdSystem(),
+      max_tokens: quickMode ? 400 : (coachMode ? 2000 : 1500),
+      system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
       stream: true
     });
@@ -1771,7 +1830,10 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
 app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
   try {
     const { situation, community, mode } = req.body;
-    const quickMode = (mode || '').toString().toLowerCase().trim() === 'quick';
+    const modeNorm = (mode || '').toString().toLowerCase().trim();
+    const quickMode = modeNorm === 'quick';
+    const coachMode = modeNorm === 'coach_review';
+    const skipRag = quickMode || coachMode;
 
     // Build attachment content blocks — supports multiple files
     const attachmentContents = [];
@@ -1798,15 +1860,20 @@ app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
     }
 
     // Semantic playbook retrieval + community docs + community profile,
-    // all in parallel.
-    const [playbookEntries, docContext, communityContext] = await Promise.all([
-      getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
-      getRelevantChunks(situation || 'general guidance', community),
-      buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })
-    ]);
-    const playbookContext = formatPlaybookContext(playbookEntries, {
-      heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
-    }) || 'No relevant playbook examples for this question.';
+    // all in parallel. Quick + coach modes skip RAG — quick because latency
+    // matters, coach because the draft itself is the source material.
+    const [playbookEntries, docContext, communityContext] = skipRag
+      ? [[], '', await buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })]
+      : await Promise.all([
+          getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
+          getRelevantChunks(situation || 'general guidance', community),
+          buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })
+        ]);
+    const playbookContext = skipRag
+      ? ''
+      : (formatPlaybookContext(playbookEntries, {
+          heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
+        }) || 'No relevant playbook examples for this question.');
 
     const askEdSystemPrompt = `${GLOBAL_RULES}
 
@@ -1912,6 +1979,10 @@ TOOL USE: For any phone, email, or vendor contact question, ALWAYS call lookup_c
 
 Do not mention you are an AI. Do not apologize. Do not editorialize. Just the facts.`;
 
+    const systemForCall = quickMode
+      ? askEdQuickPrompt
+      : (coachMode ? askEdCoachSystem() : askEdSystemPrompt);
+
     const { text: guidance } = await askEdTools.runAskEdWithTools({
       anthropic,
       messages: [{
@@ -1920,8 +1991,8 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
           situation, community, communityContext, playbookContext, docContext, attachmentContents, attachmentNote
         })
       }],
-      system: quickMode ? askEdQuickPrompt : askEdSystemPrompt,
-      max_tokens: quickMode ? 400 : 1500,
+      system: systemForCall,
+      max_tokens: quickMode ? 400 : (coachMode ? 2000 : 1500),
     });
 
     res.json({ guidance });
@@ -1931,6 +2002,10 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
   }
 });
 
+// DEPRECATED 2026-05-17 — the "Review My Draft" tab was folded into askEd's
+// Review mode (POST /ask-ed?mode=coach_review). Same coaching prompt, but
+// integrated with the askEd context pipeline (community profile, etc.).
+// Backward-compat stub. Remove once verified unused for a full cycle.
 app.post('/review-draft', async (req, res) => {
   try {
     const { draft, draftType, community } = req.body;
