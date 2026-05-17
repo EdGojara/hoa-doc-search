@@ -3,10 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-  <title>Community Portal — Bedrock</title>
-  <meta name="theme-color" content="#1a3a5c" />
+  <title>Community Portal — Bedrock Association Management</title>
+  <meta name="theme-color" content="#1A3050" />
   <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/brand.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body {
@@ -49,10 +52,10 @@
       text-transform: uppercase;
       font-weight: 500;
     }
-    .powered-by strong { color: #1a3a5c; }
+    .powered-by strong { color: var(--navy); }
     .text-only-mark {
       width: 64px; height: 64px; border-radius: 14px;
-      background: #1a3a5c; color: #fff;
+      background: var(--navy); color: #fff;
       display: inline-flex; align-items: center; justify-content: center;
       font-size: 28px; font-weight: 700;
       margin: 0 auto 12px;
@@ -87,7 +90,7 @@
       box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
     }
     .card:hover {
-      border-color: #1a3a5c;
+      border-color: var(--navy);
       transform: translateY(-2px);
       box-shadow: 0 4px 14px rgba(15, 23, 42, 0.08);
     }
@@ -135,7 +138,7 @@
       font-family: ui-monospace, SFMono-Regular, monospace;
     }
     .status-check button {
-      background: #1a3a5c; color: #fff;
+      background: var(--navy); color: #fff;
       border: none; border-radius: 8px;
       padding: 10px 22px;
       font: inherit; font-size: 14px; font-weight: 600;
@@ -151,7 +154,7 @@
       text-decoration: none; color: #0f172a;
       transition: border-color 0.15s;
     }
-    .event-row:hover { border-color: #1a3a5c; }
+    .event-row:hover { border-color: var(--navy); }
     .event-row .date {
       width: 60px;
       text-align: center;
@@ -161,7 +164,7 @@
       font-size: 10px; text-transform: uppercase; color: #64748b; letter-spacing: 0.5px; font-weight: 700;
     }
     .event-row .date .day {
-      font-size: 22px; font-weight: 700; color: #1a3a5c;
+      font-size: 22px; font-weight: 700; color: var(--navy);
       line-height: 1;
     }
     .event-row .info { flex: 1; }
@@ -179,13 +182,13 @@
       line-height: 1.7;
       color: #334155;
     }
-    .contact strong { color: #1a3a5c; }
+    .contact strong { color: var(--navy); }
     .contact .row { display: flex; gap: 8px; align-items: baseline; }
     .contact .row .k { font-size: 11px; color: #64748b; min-width: 100px; text-transform: uppercase; font-weight: 600; letter-spacing: 0.3px; }
 
     /* ===== AskEd voice CTA ===== */
     .asked-cta {
-      background: linear-gradient(135deg, #1a3a5c 0%, #2a4a72 100%);
+      background: linear-gradient(135deg, var(--navy) 0%, #2a4a72 100%);
       color: #fff;
       border-radius: 14px;
       padding: 18px 22px;
@@ -426,8 +429,8 @@
       }
       if (profile.office_hours) rows.push(`<div class="row"><div class="k">Office hours</div><div>${escapeHtml(profile.office_hours)}</div></div>`);
       if (profile.primary_contact_name) rows.push(`<div class="row"><div class="k">Contact</div><div>${escapeHtml(profile.primary_contact_name)}</div></div>`);
-      if (profile.primary_phone) rows.push(`<div class="row"><div class="k">Phone</div><div><a href="tel:${encodeURIComponent(profile.primary_phone)}" style="color:#1a3a5c;">${escapeHtml(profile.primary_phone)}</a></div></div>`);
-      if (profile.primary_email) rows.push(`<div class="row"><div class="k">Email</div><div><a href="mailto:${encodeURIComponent(profile.primary_email)}" style="color:#1a3a5c;">${escapeHtml(profile.primary_email)}</a></div></div>`);
+      if (profile.primary_phone) rows.push(`<div class="row"><div class="k">Phone</div><div><a href="tel:${encodeURIComponent(profile.primary_phone)}" style="color:var(--navy);">${escapeHtml(profile.primary_phone)}</a></div></div>`);
+      if (profile.primary_email) rows.push(`<div class="row"><div class="k">Email</div><div><a href="mailto:${encodeURIComponent(profile.primary_email)}" style="color:var(--navy);">${escapeHtml(profile.primary_email)}</a></div></div>`);
       $('contact').innerHTML = rows.length > 0 ? rows.join('') : '<em style="color:#94a3b8;">No contact info on file yet. Reach Bedrock at hello@bedrocktxai.com.</em>';
     }
 

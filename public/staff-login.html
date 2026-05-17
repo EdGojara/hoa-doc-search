@@ -3,103 +3,180 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Bedrock — Staff Sign-In</title>
-  <meta name="theme-color" content="#1E2761" />
+  <title>Bedrock Intelligence — Staff Sign-In</title>
+  <meta name="theme-color" content="#0B1424" />
   <meta name="robots" content="noindex, nofollow" />
   <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; }
+    :root {
+      --navy: #1A3050;
+      --navy-deep: #0B1424;
+      --navy-soft: #142847;
+      --ink: #e8ecf3;
+      --ink-soft: #a8b2c4;
+      --ink-faint: #5a6680;
+      --gold: #D4AF37;
+      --gold-bright: #e8c96e;
+      --rule: rgba(232, 236, 243, 0.08);
+      --rule-strong: rgba(232, 236, 243, 0.16);
+    }
     html, body {
       margin: 0; padding: 0; min-height: 100dvh;
       font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      background: linear-gradient(180deg, #f7f9fc 0%, #eef2f7 100%);
-      color: #1f2937;
+      background: var(--navy-deep);
+      color: var(--ink);
       display: flex; align-items: center; justify-content: center;
       padding: 24px;
+      -webkit-font-smoothing: antialiased;
     }
+    body::before {
+      content: ''; position: fixed; inset: 0; z-index: -2;
+      background:
+        radial-gradient(ellipse 80% 60% at 20% 10%, rgba(20, 40, 71, 0.6) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 90% 90%, rgba(212, 175, 55, 0.04) 0%, transparent 50%),
+        var(--navy-deep);
+    }
+    body::after {
+      content: ''; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background-image:
+        linear-gradient(rgba(232, 236, 243, 0.015) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(232, 236, 243, 0.015) 1px, transparent 1px);
+      background-size: 80px 80px;
+    }
+
     .card {
-      width: 100%; max-width: 420px;
-      background: #fff;
-      border: 1px solid #e2e8f0; border-radius: 14px;
-      padding: 32px 28px;
-      box-shadow: 0 12px 36px rgba(15, 23, 42, 0.06);
-    }
-    .brand {
-      display: flex; align-items: center; gap: 12px;
-      margin-bottom: 20px;
+      width: 100%; max-width: 440px;
+      background: var(--navy-soft);
+      border: 1px solid var(--rule-strong);
+      border-top: 1px solid var(--gold);
+      border-radius: 14px;
+      padding: 40px 34px 30px;
+      box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45);
+      text-align: center;
     }
     .brand-mark {
-      width: 44px; height: 44px; border-radius: 10px;
-      background: #1E2761; color: #fff;
+      width: 56px; height: 70px; margin: 0 auto 18px;
       display: flex; align-items: center; justify-content: center;
-      font-weight: 800; font-size: 18px; letter-spacing: 0.5px;
     }
-    .brand-text { font-weight: 700; color: #0f172a; font-size: 16px; }
-    .brand-sub { color: #64748b; font-size: 11px; letter-spacing: 0.5px; text-transform: uppercase; font-weight: 600; }
+    .brand-mark svg { width: 100%; height: 100%; display: block; }
+
+    .brand-wordmark {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 500;
+      font-size: 22px;
+      letter-spacing: -0.01em;
+      color: var(--ink);
+      line-height: 1.1;
+      margin-bottom: 6px;
+    }
+    .brand-wordmark em {
+      font-style: italic;
+      color: var(--gold);
+      font-weight: 500;
+    }
+    .brand-sub {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--ink-faint);
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      margin-bottom: 32px;
+    }
 
     h1 {
-      font-size: 22px; font-weight: 700; margin: 0 0 6px;
-      color: #0f172a;
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 24px; font-weight: 500;
+      letter-spacing: -0.015em;
+      color: var(--ink);
+      margin: 0 0 10px;
     }
     .lede {
-      color: #475569; font-size: 14px; line-height: 1.55;
-      margin: 0 0 22px;
+      font-size: 13.5px;
+      color: var(--ink-soft);
+      line-height: 1.6;
+      margin: 0 0 24px;
+      font-weight: 300;
+      text-align: left;
     }
 
+    form { text-align: left; }
     label {
       display: block;
-      font-size: 12px; font-weight: 600; color: #334155;
-      margin-bottom: 5px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      font-weight: 500;
+      color: var(--ink-faint);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      margin-bottom: 8px;
     }
     input[type="password"] {
       width: 100%;
-      padding: 12px 14px;
-      border: 1px solid #cbd5e1; border-radius: 10px;
+      padding: 13px 14px;
+      background: var(--navy-deep);
+      border: 1px solid var(--rule-strong);
+      border-radius: 10px;
       font: inherit; font-size: 15px;
-      background: #fff;
+      color: var(--ink);
+      transition: border-color 0.15s, box-shadow 0.15s;
     }
     input[type="password"]:focus {
-      outline: none; border-color: #1E2761;
-      box-shadow: 0 0 0 3px rgba(30, 39, 97, 0.12);
+      outline: none;
+      border-color: var(--gold);
+      box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.18);
     }
 
     button[type="submit"] {
       display: block; width: 100%;
-      background: #1E2761; color: #fff;
+      background: var(--gold);
+      color: var(--navy-deep);
       padding: 13px; border: none; border-radius: 10px;
       font: inherit; font-size: 15px; font-weight: 700;
-      cursor: pointer; margin-top: 16px;
-      box-shadow: 0 4px 12px rgba(30, 39, 97, 0.22);
+      letter-spacing: 0.02em;
+      cursor: pointer; margin-top: 18px;
+      transition: background 0.18s, transform 0.06s;
     }
-    button[type="submit"]:active { transform: scale(0.99); }
-    button[type="submit"]:disabled { background: #94a3b8; cursor: not-allowed; box-shadow: none; }
+    button[type="submit"]:hover:not(:disabled) { background: var(--gold-bright); }
+    button[type="submit"]:active:not(:disabled) { transform: scale(0.99); }
+    button[type="submit"]:disabled { background: var(--ink-faint); color: var(--navy-deep); cursor: not-allowed; }
 
     .err {
-      background: #fee2e2; color: #991b1b;
-      padding: 10px 12px; border-radius: 8px;
-      font-size: 13px; margin-top: 12px;
+      background: rgba(192, 57, 43, 0.12);
+      border: 1px solid rgba(192, 57, 43, 0.35);
+      color: #f4a8a0;
+      padding: 11px 14px; border-radius: 8px;
+      font-size: 13px; margin-top: 14px;
       display: none;
     }
     .err.show { display: block; }
 
     .footer-note {
-      font-size: 12px; color: #94A3B8;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      color: var(--ink-faint);
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
       text-align: center;
-      margin-top: 22px;
-      line-height: 1.55;
+      margin-top: 26px;
+      line-height: 1.6;
     }
   </style>
 </head>
 <body>
   <div class="card">
-    <div class="brand">
-      <div class="brand-mark">B</div>
-      <div>
-        <div class="brand-text">Bedrock Association Management</div>
-        <div class="brand-sub">trustEd · staff sign-in</div>
-      </div>
+    <div class="brand-mark" aria-label="Bedrock cornerstone mark">
+      <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+        <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+        <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+        <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+      </svg>
     </div>
+    <div class="brand-wordmark">Bedrock <em>Intelligence</em></div>
+    <div class="brand-sub">trustEd · staff sign-in</div>
 
     <h1>Sign in</h1>
     <p class="lede">This is a private staff workspace. Enter the shared password to continue. Homeowner-facing forms (nomination submissions, ARC applications, status lookups) are not affected by this gate.</p>
@@ -115,7 +192,6 @@
   </div>
 
   <script>
-    // Pull ?next= so we redirect back where the user was trying to go.
     const params = new URLSearchParams(window.location.search);
     const nextUrl = params.get('next') || '/';
 
@@ -125,7 +201,7 @@
       const err = document.getElementById('errBox');
       const pw = document.getElementById('password').value;
       err.classList.remove('show');
-      btn.disabled = true; btn.textContent = '⏳ Signing in…';
+      btn.disabled = true; btn.textContent = 'Signing in…';
       try {
         const r = await fetch('/api/staff-login', {
           method: 'POST',

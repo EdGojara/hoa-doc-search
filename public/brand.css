@@ -1,0 +1,190 @@
+/* =============================================================================
+   brand.css — Bedrock brand single source of truth (frontend)
+   =============================================================================
+
+   Drop this <link> into any HTML page that needs brand colors, fonts, or
+   the reusable wordmark / cornerstone components:
+
+     <link rel="stylesheet" href="/brand.css">
+
+   Server-side equivalent: lib/brand.js (names, taglines, phone, email,
+   addresses, color hex codes, cornerstone SVG generator). When you change
+   colors here, update them in lib/brand.js too.
+
+   Two brands live under this roof:
+     Bedrock Association Management (BAM) — the management firm (.bam-* classes)
+     Bedrock Intelligence (BI)            — the technology arm, ships trustEd
+                                            (.bi-* classes)
+   ============================================================================= */
+
+
+/* -----------------------------------------------------------------------------
+   Tokens — colors, fonts, rules. Override at the page level with another
+   :root or scoped block if a single page needs a tweak (don't override here).
+   ----------------------------------------------------------------------------- */
+:root {
+  /* Canonical brand colors — match lib/brand.js and SVGs in
+     C:\Users\edget\bedrock-brand\ */
+  --navy:         #1A3050;    /* primary navy (BAM wordmark, body text on light) */
+  --navy-deep:    #0B1424;    /* deep navy (BI dark backgrounds, dark-mode body) */
+  --navy-soft:    #142847;    /* card backgrounds on dark navy */
+  --gold:         #D4AF37;    /* primary gold (cornerstone, accents, "Intelligence") */
+  --gold-bright:  #e8c96e;    /* hover/highlight gold */
+  --ink:          #e8ecf3;    /* primary text on dark bg */
+  --ink-soft:     #a8b2c4;    /* secondary text on dark bg */
+  --ink-faint:    #5a6680;    /* tertiary / labels / muted on dark bg */
+  --cream:        #F2F2F2;    /* BAM background, light-mode body */
+  --grey:         #8B8F97;    /* tagline grey (works on light or dark) */
+
+  --rule:         rgba(232, 236, 243, 0.08);
+  --rule-strong:  rgba(232, 236, 243, 0.16);
+
+  /* Font stacks */
+  --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+  --font-sans:  'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-mono:  'JetBrains Mono', ui-monospace, monospace;
+}
+
+
+/* -----------------------------------------------------------------------------
+   Cornerstone mark — utility wrapper. The SVG itself is inlined per-instance
+   (see lib/brand.js cornerstoneSvg() or copy/paste the snippet) so it can
+   pick up CSS color via fill="var(--gold)".
+   ----------------------------------------------------------------------------- */
+.bi-cornerstone,
+.bam-cornerstone {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.bi-cornerstone svg,
+.bam-cornerstone svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+
+/* -----------------------------------------------------------------------------
+   Wordmarks — the "Bedrock <italic>Intelligence</italic>" treatment, in
+   both bright (dark bg) and dark (light bg) variants. Inherit font size from
+   parent so the same class can power 18px headers and 36px hero treatments.
+   ----------------------------------------------------------------------------- */
+.bi-wordmark {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--ink);
+}
+.bi-wordmark em {
+  font-style: italic;
+  color: var(--gold);
+  font-weight: 500;
+}
+
+.bam-wordmark {
+  font-family: var(--font-serif);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.1;
+  color: var(--navy);
+}
+.bam-wordmark em {
+  font-style: italic;
+  color: var(--gold);
+  font-weight: 500;
+}
+
+
+/* -----------------------------------------------------------------------------
+   Taglines — small caps, monospace, muted. Drop under any wordmark.
+   ----------------------------------------------------------------------------- */
+.bi-tagline,
+.bam-tagline {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.bam-tagline { color: var(--grey); }
+
+
+/* -----------------------------------------------------------------------------
+   Horizontal lockup — cornerstone left, wordmark right. The standard
+   header/nav treatment.
+   ----------------------------------------------------------------------------- */
+.bi-lockup-horizontal,
+.bam-lockup-horizontal {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.bi-lockup-horizontal .bi-cornerstone,
+.bam-lockup-horizontal .bam-cornerstone {
+  width: 28px;
+  height: 36px;
+}
+
+
+/* -----------------------------------------------------------------------------
+   Vertical lockup — cornerstone above wordmark above tagline. Login screens,
+   deck title slides, app loading screens.
+   ----------------------------------------------------------------------------- */
+.bi-lockup-vertical {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.bi-lockup-vertical .bi-cornerstone {
+  width: 56px;
+  height: 70px;
+  margin-bottom: 14px;
+}
+
+
+/* -----------------------------------------------------------------------------
+   Atmospheric backgrounds — drop on <body> for the deep-navy treatment used
+   on BI login screens and the marketing site hero.
+   ----------------------------------------------------------------------------- */
+.bi-dark-bg {
+  background: var(--navy-deep);
+  color: var(--ink);
+}
+.bi-dark-bg::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background:
+    radial-gradient(ellipse 80% 60% at 20% 10%, rgba(20, 40, 71, 0.6) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 50% at 90% 90%, rgba(212, 175, 55, 0.04) 0%, transparent 50%),
+    var(--navy-deep);
+}
+.bi-dark-bg::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image:
+    linear-gradient(rgba(232, 236, 243, 0.015) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(232, 236, 243, 0.015) 1px, transparent 1px);
+  background-size: 80px 80px;
+}
+
+
+/* -----------------------------------------------------------------------------
+   Card on dark navy — login/loading screen pattern.
+   ----------------------------------------------------------------------------- */
+.bi-card {
+  background: var(--navy-soft);
+  border: 1px solid var(--rule-strong);
+  border-top: 1px solid var(--gold);
+  border-radius: 14px;
+  padding: 40px 34px 30px;
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.45);
+  color: var(--ink);
+}
