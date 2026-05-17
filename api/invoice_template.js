@@ -11,6 +11,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const BRAND = require('../lib/brand');
 
 // Load logo once at module init.
 const logoPath = path.join(__dirname, '..', 'public', 'logos', 'bedrock_logo.png');
@@ -126,11 +127,11 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
   // Bedrock company info — pulled from management_companies row when present,
   // with a hard-coded fallback so we never produce an invoice with empty
   // identification.
-  const mgmtName = mgmt.name || 'Bedrock Association Management';
-  const mgmtLegal = mgmt.legal_name || 'Bedrock Association Management, LLC';
-  const mgmtAddress = mgmt.address || '12808 W Airport Blvd, Ste 253, Sugar Land, TX 77478';
-  const mgmtPhone = mgmt.contact_phone || '(832) 588-2485';
-  const mgmtEmail = mgmt.contact_email || 'info@bedrocktx.com';
+  const mgmtName = mgmt.name || BRAND.service.name;
+  const mgmtLegal = mgmt.legal_name || BRAND.service.legal;
+  const mgmtAddress = mgmt.address || BRAND.service.addressInline;
+  const mgmtPhone = mgmt.contact_phone || BRAND.service.phone;
+  const mgmtEmail = mgmt.contact_email || BRAND.service.email;
 
   // Address rendering: if address has commas, split on ", " and render
   // street on first line, city/state/zip on second.
@@ -496,11 +497,11 @@ function renderInvoiceHTML({ invoice, lineItems, community, managementCo }) {
     <footer>
       <div class="footer-tag">
         ${escapeHtml(mgmtLegal)}
-        <span class="tagline">Community. Simplified.</span>
+        <span class="tagline">${BRAND.service.tagline}</span>
       </div>
       <div class="footer-meta">
         ${escapeHtml(mgmtAddress)}<br>
-        bedrocktx.com
+        ${BRAND.service.website}
       </div>
     </footer>
 

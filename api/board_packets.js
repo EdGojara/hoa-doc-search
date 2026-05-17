@@ -38,6 +38,7 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
+const BRAND = require('../lib/brand');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -139,7 +140,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   // Common page footer template
   const footer = (pageNum) => `
     <div class="page-foot">
-      <span class="foot-brand">Bedrock Association Management <span class="foot-tag">· Community. Simplified.</span></span>
+      <span class="foot-brand">${BRAND.service.name} <span class="foot-tag">· ${BRAND.service.tagline}</span></span>
       <span class="foot-context">${esc(community.name || '')} · ${esc(packet.period_label || '')} · pg ${pageNum} / ${totalPages}</span>
     </div>`;
 
@@ -148,7 +149,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     <div class="page-header">
       <div class="page-header-brand">
         <img src="${assets.logo || '/logos/bedrock_logo.png'}" alt="${esc(community.name)}">
-        ${assets.logo && assets.logo !== '/logos/bedrock_logo.png' ? `<img src="/logos/bedrock_logo.png" alt="Bedrock" style="height:42px; margin-left:10px;">` : ''}
+        ${assets.logo && assets.logo !== '/logos/bedrock_logo.png' ? `<img src="/logos/bedrock_logo.png" alt="${BRAND.service.short}" style="height:42px; margin-left:10px;">` : ''}
       </div>
       <div class="page-header-context">
         <strong>${esc(community.name || '')}</strong>
@@ -319,7 +320,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 <div class="page cover">
   <div class="cover-hero">
     <div class="cover-brand">
-      <img src="/logos/bedrock_logo.png" alt="Bedrock Association Management">
+      <img src="/logos/bedrock_logo.png" alt="${BRAND.service.name}">
     </div>
     <div class="cover-period">${esc(packet.period_label || '')} ${volume ? `· Volume ${volume}` : ''}</div>
     <div class="cover-title">
@@ -339,9 +340,9 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     <div class="cover-meta-block">
       <div class="label">Prepared by</div>
       <div class="body">
-        <strong>Bedrock Association Management, LLC</strong><br>
-        12808 W Airport Blvd, Ste 253<br>
-        Sugar Land, TX 77478
+        <strong>${BRAND.service.legal}</strong><br>
+        ${BRAND.service.address}<br>
+        ${BRAND.service.addressCityStateZip}
       </div>
     </div>
     <div class="cover-meta-block">
@@ -852,7 +853,7 @@ router.post('/:id/sections/:section_key/ai-generate', async (req, res) => {
     if (sectionKey === 'exec_summary') {
       prompt = `You are writing the Executive Summary for the ${packet.community?.name} board meeting on ${packet.meeting_date || packet.period_label}.
 
-Use Bedrock voice: confident, plain English, CFE-grade clarity. NOT corporate jargon. The audience is volunteer board members who may not be financial experts. Write what they NEED to know, not what you CAN say.
+Use Bedrock voice: confident, plain English, treasurer-grade clarity. NOT corporate jargon. The audience is volunteer board members who may not be financial experts. Write what they NEED to know, not what you CAN say.
 
 Length: 3-4 short paragraphs.
 
