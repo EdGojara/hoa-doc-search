@@ -4,21 +4,25 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Bedrock Invoice — Preview</title>
+  <link rel="stylesheet" href="/brand.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     /* ====================================================================
-       Bedrock Invoice — design language v0
-       Navy: #315A87
+       Bedrock Invoice — design language (canonical brand via /brand.css)
+       Navy: var(--navy) (#1A3050) · Gold: var(--gold) (#D4AF37)
        Type: Inter (300/400/500/600/700)
        Restraint: single accent color, generous whitespace, tabular nums
        ==================================================================== */
 
     :root {
-      --bedrock-navy: #315A87;
-      --bedrock-navy-deep: #1F3A5F;
+      --bedrock-navy: var(--navy);
+      --bedrock-navy-deep: var(--navy-deep);
       --bedrock-navy-tint: #EAF0F7;
+      /* On this invoice page the visual context is dark text on a white
+         "paper" — so we override brand.css's --ink (light text for dark bg)
+         with a dark value here. Same name, scoped override. */
       --ink: #1a1a1a;
       --ink-soft: #4a4a4a;
       --ink-muted: #888;

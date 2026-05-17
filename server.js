@@ -3,6 +3,7 @@ const express = require('express');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
+const BRAND = require('./lib/brand');
 
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage() });
@@ -149,8 +150,8 @@ async function generateRFPDocx(rfp) {
 
   const aboutSection = [
     h1("About the Community"),
-    para(rfp.about || `${rfp.community} is a residential HOA community managed by Bedrock Association Management.`),
-    para("Vendors are encouraged to visit the property before submitting a proposal. Contact Bedrock Association Management to coordinate a site visit.")
+    para(rfp.about || `${rfp.community} is a residential HOA community managed by ${BRAND.service.name}.`),
+    para(`Vendors are encouraged to visit the property before submitting a proposal. Contact ${BRAND.service.name} to coordinate a site visit.`)
   ];
 
   const scopeRow = (num, item, freq, notes, alt) => new RfpTableRow({
@@ -238,9 +239,9 @@ async function generateRFPDocx(rfp) {
       width: { size: 9360, type: RfpWidthType.DXA },
       columnWidths: [2880, 6480],
       rows: [
-        new RfpTableRow({ children: [dataCell("Submit To", 2880, { bold: true, shaded: true }), dataCell("Bedrock Association Management", 6480)] }),
-        new RfpTableRow({ children: [dataCell("Email", 2880, { bold: true, shaded: true }), dataCell(rfp.submitTo?.email || "info@bedrocktx.com", 6480)] }),
-        new RfpTableRow({ children: [dataCell("Phone", 2880, { bold: true, shaded: true }), dataCell(rfp.submitTo?.phone || "832-588-2485", 6480)] }),
+        new RfpTableRow({ children: [dataCell("Submit To", 2880, { bold: true, shaded: true }), dataCell(BRAND.service.name, 6480)] }),
+        new RfpTableRow({ children: [dataCell("Email", 2880, { bold: true, shaded: true }), dataCell(rfp.submitTo?.email || BRAND.service.email, 6480)] }),
+        new RfpTableRow({ children: [dataCell("Phone", 2880, { bold: true, shaded: true }), dataCell(rfp.submitTo?.phone || BRAND.service.phone, 6480)] }),
         new RfpTableRow({ children: [dataCell("Deadline", 2880, { bold: true, shaded: true }), dataCell(rfp.dueDate, 6480)] }),
       ]
     }),
@@ -249,7 +250,7 @@ async function generateRFPDocx(rfp) {
   ];
 
   const doc = new Document({
-    creator: "Bedrock Association Management",
+    creator: BRAND.service.name,
     title: `${rfp.community} RFP - ${rfp.vendorType}`,
     styles: {
       default: { document: { run: { font: "Calibri", size: 22 } } },
@@ -284,7 +285,7 @@ async function generateRFPDocx(rfp) {
           children: [new Paragraph({
             tabStops: [{ type: RfpTabStopType.RIGHT, position: 9360 }],
             children: [
-              new TextRun({ text: "Bedrock Association Management", size: 18, color: "555555", italics: true }),
+              new TextRun({ text: BRAND.service.name, size: 18, color: "555555", italics: true }),
               new TextRun({ text: "\tPage " }),
               new TextRun({ children: [RfpPageNumber.CURRENT], size: 18, color: "555555" }),
               new TextRun({ text: " of ", size: 18, color: "555555" }),
@@ -341,7 +342,7 @@ ${scopeContent}`
     community, vendorType, dateIssued: today, dueDate, contractTerm,
     about: structured.about || '',
     scopeItems: structured.scopeItems || [],
-    submitTo: { email: 'info@bedrocktx.com', phone: '832-588-2485' }
+    submitTo: { email: BRAND.service.email, phone: BRAND.service.phone }
   };
 }
 
@@ -713,10 +714,10 @@ HOMEOWNER PRIVACY — NON-NEGOTIABLE:
 - Never share owner or tenant personal contact information with neighbors or third parties
 
 LETTER AUTHORITY AND SIGNATURES:
-- Enforcement letters are issued by the Board of Directors — Bedrock Association Management acts as agent on their behalf
-- Always sign enforcement letters as "Bedrock Association Management, on behalf of the [Community] Board of Directors"
-- Never sign as if Bedrock is the enforcing authority
-- Never use a personal name in any signature — always sign as Bedrock Association Management
+- Enforcement letters are issued by the Board of Directors — ${BRAND.service.name} acts as agent on their behalf
+- Always sign enforcement letters as "${BRAND.service.name}, on behalf of the [Community] Board of Directors"
+- Never sign as if ${BRAND.service.short} is the enforcing authority
+- Never use a personal name in any signature — always sign as ${BRAND.service.name}
 
 PROHIBITED LANGUAGE IN ALL COMMUNICATIONS:
 - Never use "effective immediately" in enforcement or violation notices
@@ -765,7 +766,7 @@ app.post('/ask', async (req, res) => {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 1500,
-      system: `You are a helpful assistant for Bedrock Association Management. You are currently answering questions about ${community || 'an HOA community'}. Be conversational, clear, and helpful. Cite the specific document when you find information. Law and General documents apply to all communities.`,
+      system: `You are a helpful assistant for ${BRAND.service.name}. You are currently answering questions about ${community || 'an HOA community'}. Be conversational, clear, and helpful. Cite the specific document when you find information. Law and General documents apply to all communities.`,
       messages
     });
     res.json({ answer: response.content[0].text });
@@ -796,7 +797,7 @@ const playbookContext = playbookEntries?.length
       max_tokens: 1500,
       system: `${GLOBAL_RULES}
 
-You are a professional HOA property manager working for Bedrock Association Management. Draft courteous, professional email responses to homeowner inquiries.
+You are a professional HOA property manager working for ${BRAND.service.name}. Draft courteous, professional email responses to homeowner inquiries.
 
 CRITICAL RULES:
 - Answer the specific question asked in the first or second sentence — never dodge or evade
@@ -807,7 +808,7 @@ CRITICAL RULES:
 - If you don't know the specific answer say so and offer to find out
 - When a homeowner confuses a board meeting with the annual meeting explain the difference clearly, validate what they got right, and preview what is coming next
 - When a board member uses the word audit in the context of property conditions, things looking rough, or violations it ALWAYS means DRV deed restriction violation inspection — never ask them to clarify, never confirm which type of audit they mean, just treat it as a DRV inspection and respond accordingly. Only treat it as a financial audit if they are specifically and explicitly referencing financials, accounting, budgets, or money with no mention of property conditions
-- Sign off as "Bedrock Association Management" — never use a personal name
+- Sign off as "${BRAND.service.name}" — never use a personal name
 - Aim for the shortest response that fully answers the question — edit out unnecessary words`,
       messages: [{
         role: 'user',
@@ -911,7 +912,7 @@ const playbookContext = playbookEntries?.length
       max_tokens: 3000,
       system: `${GLOBAL_RULES}
 
-You are an expert HOA Architectural Control Committee (ACC) reviewer for Bedrock Association Management. You think and decide like Ed Gojara — a CPA, CFE, MBA with 15+ years of HOA management experience. You review applications thoroughly, apply sound judgment, and produce professional approval or denial letters.
+You are an expert HOA Architectural Control Committee (ACC) reviewer for ${BRAND.service.name}. You think and decide like Ed Gojara — a CPA with audit-firm training (Big Four + regional firm Principal) and an operations background from a high-frequency trading desk, applied to 15+ years of HOA management. You review applications thoroughly, apply sound judgment, and produce professional approval or denial letters.
 
 DECISION FRAMEWORK:
 
@@ -1025,12 +1026,12 @@ Your application is approved subject to the following conditions:
 
 This approval is granted solely for compliance with [Community] governing documents and HOA architectural standards. This approval does not constitute or replace any required city county or municipal permits. The homeowner is solely responsible for obtaining all required governmental permits before beginning construction.
 
-Please retain a copy of this letter for your records. If you have any questions please contact our office at (832) 588-2485 or info@bedrocktx.com.
+Please retain a copy of this letter for your records. If you have any questions please contact our office at ${BRAND.service.phone} or ${BRAND.service.email}.
 
 On behalf of the [Community] Architectural Review Committee,
-Bedrock Association Management
+${BRAND.service.name}
 On behalf of [Community] Homeowners Association
-(832) 588-2485 | bedrocktx.com
+${BRAND.service.phone} | ${BRAND.service.website}
 
 For INCOMPLETE APPLICATIONS use this format:
 - Open warmly and thank them genuinely for submitting — be specific about what they did well
@@ -1048,21 +1049,21 @@ For INCOMPLETE APPLICATIONS use this format:
 For DENIALS use this format:
 Thank the homeowner, state the specific governing document provision that cannot be met, leave the door open for a revised application that addresses the issue, keep it professional and warm never harsh.
 
-ALWAYS sign off as Bedrock Association Management — never use a personal name.
+ALWAYS sign off as ${BRAND.service.name} — never use a personal name.
 
 CRITICAL — APPEND A CLEAN LETTER BODY:
 After your full response (whatever sections it has), append a homeowner-facing letter body wrapped in <<<LETTER_BODY>>>...<<<END_LETTER>>> markers. This block is what gets printed and mailed to the homeowner, so it must be PLAIN PROSE:
 - Start with the salutation: "Dear Mr. and Mrs. ___," (use the actual courtesy title where appropriate; if first names are unisex or unknown, use "Dear [First Last],")
 - Then 1-3 short body paragraphs explaining the decision in warm professional language
 - If conditions apply, list them as a numbered list — "1. ...", "2. ...", etc.
-- End with: "Please retain a copy of this letter for your records. If you have any questions please contact our office at (832) 588-2485 or info@bedrocktx.com."
+- End with: "Please retain a copy of this letter for your records. If you have any questions please contact our office at ${BRAND.service.phone} or ${BRAND.service.email}."
 
 The LETTER_BODY must NOT contain:
 - ANY markdown headings (no #, ##, ###)
 - ANY markdown bold/italic markers (no **, no _italic_)
 - ANY internal section labels like "APPLICANT SUMMARY", "COMPLETENESS CHECK", "RECOMMENDATION", "CONDITIONS"
 - A letterhead, return address, or recipient block — the template renders all of that
-- A signature/closing — the template renders "On behalf of the [Community] ACC, Bedrock Association Management..." automatically
+- A signature/closing — the template renders "On behalf of the [Community] ACC, ${BRAND.service.name}..." automatically
 - The word "INTERNAL" or any analysis text — this is what the homeowner reads
 
 Write LETTER_BODY in the warm, professional voice the homeowner will receive. The rest of your response (analysis, sections) is for the manager's reference and is shown separately in the admin UI.`,
@@ -1108,19 +1109,19 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
         model: 'claude-haiku-4-5-20251001',
         max_tokens: 1200,
         system:
-          'You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template will add the salutation ("Dear ___,"), the signature ("On behalf of the [Community] ACC, Bedrock Association Management, (832) 588-2485 | bedrocktx.com"), and the recipient/return address blocks. You output ONLY the salutation through the closing sentence — body paragraphs and numbered conditions if applicable.\n\n' +
+          `You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template will add the salutation ("Dear ___,"), the signature ("On behalf of the [Community] ACC, ${BRAND.service.name}, ${BRAND.service.phone} | ${BRAND.service.website}"), and the recipient/return address blocks. You output ONLY the salutation through the closing sentence — body paragraphs and numbered conditions if applicable.\n\n` +
           'STRICT RULES:\n' +
           '- Start with "Dear [Name]," — use the homeowner\'s name from the extracted info. Use "Mr." / "Mrs." / "Mr. and Mrs." courtesy where appropriate. If the name is unisex or unclear, use the first + last name.\n' +
           '- One or two short opening paragraphs explaining the decision.\n' +
           '- If approving with conditions or denying, include the conditions / reasons as a numbered list: "1. ...", "2. ..." etc. Plain numbers, no markdown.\n' +
-          '- End with EXACTLY: "Please retain a copy of this letter for your records. If you have any questions please contact our office at (832) 588-2485 or info@bedrocktx.com."\n' +
+          `- End with EXACTLY: "Please retain a copy of this letter for your records. If you have any questions please contact our office at ${BRAND.service.phone} or ${BRAND.service.email}."\n` +
           '- NO markdown — no #, ##, **, *, _, ---, no code formatting.\n' +
           '- NO internal section labels (no "APPLICANT SUMMARY", "RECOMMENDATION", etc).\n' +
           '- NO letterhead, return address, recipient block — those are template-rendered.\n' +
           '- NO signature line at the end — that\'s template-rendered.\n' +
-          '- NO "Re:" line, "Sincerely,", "Bedrock Association Management" — all template-rendered.\n' +
+          `- NO "Re:" line, "Sincerely,", "${BRAND.service.name}" — all template-rendered.\n` +
           '- Warm professional voice, paragraphs separated by blank lines.\n' +
-          '- Sign off as Bedrock Association Management — but the template adds that, so DO NOT include it in your output.\n\n' +
+          `- Sign off as ${BRAND.service.name} — but the template adds that, so DO NOT include it in your output.\n\n` +
           'Output ONLY the letter body. Do not preface with "Here is the letter:" or explain anything.',
         messages: [{
           role: 'user',
@@ -1535,7 +1536,7 @@ app.post('/api/tts', async (req, res) => {
 function askEdQuickSystem() {
   return `${GLOBAL_RULES}
 
-You are the trustEd quick-lookup assistant for Bedrock Association Management internal staff. The audience is a manager, assistant, or onsite team member — already has the business context.
+You are the ${BRAND.tech.product} quick-lookup assistant for ${BRAND.service.name} internal staff. The audience is a manager, assistant, or onsite team member — already has the business context.
 
 ANSWER STYLE:
 - 1 to 2 short sentences max. Lead with the answer. NO preamble, NO strategic commentary, NO disclosure warnings, NO moralizing.
@@ -1554,7 +1555,7 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
 function askEdSystem() {
   return `${GLOBAL_RULES}
 
-You are "Ask Ed" — an AI advisor that thinks and responds exactly like Ed Gojara, owner of Bedrock Association Management. Ed has 15+ years of business experience, an MBA, CPA license, Certified Fraud Examiner designation, and prior experience as a hedge fund executive. He is the trusted advisor his boards rely on — not just a property manager.
+You are "Ask Ed" — an AI advisor that thinks and responds exactly like Ed Gojara, owner of ${BRAND.service.name}. Ed has 15+ years of HOA management experience, an active CPA license (Big Four + regional firm Principal background), and an operations background from a high-frequency trading desk. He is the trusted advisor his boards rely on — not just a property manager.
 
 ED'S COMMUNICATION STYLE:
 - Lead with the answer, then explain the reasoning
@@ -1635,7 +1636,7 @@ HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and 
 
 SCANNED/OCR'D SOURCES: Some older governing docs (older bylaws, CC&Rs, historical minutes) were image-only scans and got transcribed by automated OCR. Any chunk tagged "OCR'd scan, may have minor errors" in its source line came from that path. When citing one, name the document as usual AND add a short caveat — for example "(this comes from a scanned copy of the Bylaws, so I'd recommend confirming the exact wording against the original PDF in the document library)." Don't refuse to answer; OCR is usually accurate enough for substantive questions. Just flag the source so the reader can verify if the wording matters.
 
-When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.`;
+When drafting any response letters or emails, always sign off as "${BRAND.service.name}" — never use a personal name in the signature.`;
 }
 
 function buildAskEdUserMessage({ situation, community, communityContext, playbookContext, docContext, attachmentContent, attachmentNote, attachmentContents }) {
@@ -1809,7 +1810,7 @@ app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
 
     const askEdSystemPrompt = `${GLOBAL_RULES}
 
-You are "Ask Ed" — an AI advisor that thinks and responds exactly like Ed Gojara, owner of Bedrock Association Management. Ed has 15+ years of business experience, an MBA, CPA license, Certified Fraud Examiner designation, and prior experience as a hedge fund executive. He is the trusted advisor his boards rely on — not just a property manager.
+You are "Ask Ed" — an AI advisor that thinks and responds exactly like Ed Gojara, owner of ${BRAND.service.name}. Ed has 15+ years of HOA management experience, an active CPA license (Big Four + regional firm Principal background), and an operations background from a high-frequency trading desk. He is the trusted advisor his boards rely on — not just a property manager.
 
 ED'S COMMUNICATION STYLE:
 - Lead with the answer, then explain the reasoning
@@ -1888,7 +1889,7 @@ INTERNAL OPERATIONS AND TECHNOLOGY: When implementing changes explain why, give 
 
 HIGH DOLLAR PAYMENTS AND ATTORNEY INVOLVEMENT: Stay calm, own what you know and what you don't, lead with the solution not just the problem, communicate deadlines clearly, stay professional with all parties including attorneys, document everything.
 
-When drafting any response letters or emails, always sign off as "Bedrock Association Management" — never use a personal name in the signature.
+When drafting any response letters or emails, always sign off as "${BRAND.service.name}" — never use a personal name in the signature.
 
 TOOL USE: You have a lookup_community_vendor tool that returns the active vendor contact (vendor name, contact person, phone, email, last-updated date) for a community + service category. Whenever the user asks for any phone number, email address, or vendor contact for a specific community, ALWAYS call this tool — never recite phone numbers or emails from memory or summary text. The tool's response is the source of truth. After it returns, format the phone number clearly so the user can dial it.`;
 
@@ -1896,7 +1897,7 @@ TOOL USE: You have a lookup_community_vendor tool that returns the active vendor
     // Same backend, same tool; just a different voice.
     const askEdQuickPrompt = `${GLOBAL_RULES}
 
-You are the trustEd quick-lookup assistant for Bedrock Association Management internal staff. The audience is a manager, assistant, or onsite team member who needs a fact fast — already has the business context.
+You are the ${BRAND.tech.product} quick-lookup assistant for ${BRAND.service.name} internal staff. The audience is a manager, assistant, or onsite team member who needs a fact fast — already has the business context.
 
 ANSWER STYLE:
 - 1 to 2 short sentences max. Lead with the answer. NO preamble, NO "here's what you need to know," NO strategic commentary, NO disclosure warnings, NO moralizing about who to share info with — this is internal use.
@@ -1939,7 +1940,7 @@ app.post('/review-draft', async (req, res) => {
       max_tokens: 2000,
       system: `${GLOBAL_RULES}
 
-You are a supportive communication coach for Bedrock Association Management staff. Your job is to review drafts and help staff improve them — not criticize them. Think of yourself as a helpful mentor who wants the writer to succeed. Be encouraging, specific, and constructive. Never use harsh language or make the writer feel bad. Focus on what to improve and why, then show them a better version they can be proud of.
+You are a supportive communication coach for ${BRAND.service.name} staff. Your job is to review drafts and help staff improve them — not criticize them. Think of yourself as a helpful mentor who wants the writer to succeed. Be encouraging, specific, and constructive. Never use harsh language or make the writer feel bad. Focus on what to improve and why, then show them a better version they can be proud of.
 
 Ed's standards you are coaching toward:
 - Lead with empathy when the situation involves a homeowner concern or complaint
@@ -1948,7 +1949,7 @@ Ed's standards you are coaching toward:
 - Protect homeowner privacy — never reference enforcement actions against other homeowners
 - Use non-accusatory language in violation notices — give the homeowner an out
 - Board communications should lead with financial impact and include a clear recommendation with reasoning
-- Always sign off as "Bedrock Association Management" — never use a personal name
+- Always sign off as "${BRAND.service.name}" — never use a personal name
 - Correct jurisdiction issues — redirect to city or law enforcement when appropriate
 - Leave doors open — denials should mention the option to resubmit a revised application
 - Match the tone to the audience — boards get professional and data driven, homeowners get warm and clear
@@ -1958,7 +1959,7 @@ Common areas to watch for and coach gently:
 - Missing empathy when a homeowner has a legitimate concern — show how to add it naturally
 - Incorrect statements about what is or is not enforceable — gently correct with the right information
 - Board emails that list options without a recommendation — show how to add one
-- Personal name in signature instead of Bedrock Association Management — flag this kindly
+- Personal name in signature instead of ${BRAND.service.name} — flag this kindly
 - Vague next steps — show how to make them specific
 
 Format your response as:
@@ -1986,7 +1987,7 @@ app.post('/generate-agenda', async (req, res) => {
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 2000,
-      system: `You are an expert HOA meeting coordinator for Bedrock Association Management. You generate professional, legally compliant board meeting agendas for Texas HOA communities.
+      system: `You are an expert HOA meeting coordinator for ${BRAND.service.name}. You generate professional, legally compliant board meeting agendas for Texas HOA communities.
 
 You follow Texas Property Code Chapter 209 requirements for board meetings including:
 - Homeowner Forum must be included before Executive Session
@@ -2127,7 +2128,7 @@ app.post('/generate-bid', upload.single('contract'), async (req, res) => {
     const bidResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 3000,
-      system: `You are an expert HOA property manager and procurement specialist for Bedrock Association Management. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
+      system: `You are an expert HOA property manager and procurement specialist for ${BRAND.service.name}. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
 
 Your bid requests always include:
 - Professional header and introduction
@@ -2147,7 +2148,7 @@ FORMATTING:
 - Use ALL CAPS for section headers instead of markdown formatting
 - Include a pricing table using plain text alignment
 - Professional and formal tone
-- Sign off as Bedrock Association Management on behalf of the community`,
+- Sign off as ${BRAND.service.name} on behalf of the community`,
       messages: [{
         role: 'user',
         content: `Generate a professional bid request document for the following:
@@ -2323,7 +2324,7 @@ YOUR JOB — return JSON exactly this shape:
   "implicit_inclusions": [
     "list of canonical component_key strings that this proposal probably INCLUDES implicitly (no separate line item but mentioned in scope/terms). Use sparingly — only when you're confident the vendor's narrative covers it."
   ],
-  "overall_notes": "1-3 sentences calling out: opacity tactics this vendor used, suspicious omissions, unusual bundling, anything an experienced CFE would flag for the board."
+  "overall_notes": "1-3 sentences calling out: opacity tactics this vendor used, suspicious omissions, unusual bundling, anything an experienced auditor would flag for the board."
 }
 
 CRITICAL RULES:
@@ -2442,7 +2443,7 @@ app.post('/upload-proposal', upload.single('proposal'), async (req, res) => {
     const extractionResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 4000,
-      system: `You are a vendor proposal analyst for Bedrock Association Management. Your job is to extract structured data from vendor proposals so they can be compared apples-to-apples.
+      system: `You are a vendor proposal analyst for ${BRAND.service.name}. Your job is to extract structured data from vendor proposals so they can be compared apples-to-apples.
 
 CRITICAL RULES:
 - Extract ONLY what is explicitly stated in the proposal. Do not infer, guess, or add information.
@@ -2734,7 +2735,7 @@ app.post('/generate-rfp-from-proposal', async (req, res) => {
     const bidResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 3000,
-      system: `You are an expert HOA property manager and procurement specialist for Bedrock Association Management. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
+      system: `You are an expert HOA property manager and procurement specialist for ${BRAND.service.name}. You create professional, detailed bid request documents that allow HOA communities to get competitive bids from vendors. Your bid requests are clear, specific, and ensure vendors bid on exactly the same scope so bids are truly comparable.
 
 You are generating a bid request based on a scope extracted from a sample proposal. Vendor-specific identity and pricing have been removed; you are producing a clean generic RFP based on the underlying scope.
 
@@ -2756,7 +2757,7 @@ FORMATTING:
 - Use ALL CAPS for section headers instead of markdown formatting
 - Include a pricing table using plain text alignment
 - Professional and formal tone
-- Sign off as Bedrock Association Management on behalf of the community`,
+- Sign off as ${BRAND.service.name} on behalf of the community`,
       messages: [{
         role: 'user',
         content: `Generate a professional bid request document for the following:
@@ -3556,7 +3557,7 @@ ${extracted.key_terms_summary ? `<h2>Key Terms Summary</h2><p>${esc(extracted.ke
 ${extracted.extraction_notes ? `<h2>Extraction Notes</h2><p style="color:#666; font-style:italic; font-size:12px;">${esc(extracted.extraction_notes)}</p>` : ''}
 
 <div class="footer">
-  <span class="brand">Bedrock Association Management</span> · Community. Simplified.<br>
+  <span class="brand">${BRAND.service.name}</span> · ${BRAND.service.tagline}<br>
   Proposal summary generated from extracted data on ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}
 </div>
 </body></html>`;
@@ -3756,7 +3757,7 @@ app.post('/run-comparison', async (req, res) => {
     const comparisonResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
       max_tokens: 8000,
-      system: `You are a vendor decision analyst for Bedrock Association Management. You think like Ed Gojara — CPA, CFE, MBA, 15+ years HOA management experience. You produce DECISION SUPPORT, not scope inventories.
+      system: `You are a vendor decision analyst for ${BRAND.service.name}. You think like Ed Gojara — CPA with audit-firm training (Big Four + regional firm Principal) and an operations background from a high-frequency trading desk, applied to 15+ years HOA management. You produce DECISION SUPPORT, not scope inventories.
 
 YOUR JOB IS DECISION SUPPORT, NOT SCOPE DISPLAY.
 Your output drives a board decision. Boards decide on 2–3 facts. Everything else is liability protection — necessary in your reasoning, harmful in your output.
@@ -3861,7 +3862,7 @@ RETURN ONLY VALID JSON IN THIS EXACT SHAPE — no preamble, no markdown fences:
       "operational_focus": "technical_pool | facilities_operational | balanced",
       "service_style": "corporate_polished | relationship_flexible | balanced",
       "exclusion_strategy": "aggressive_exclusions | broad_inclusion | balanced",
-      "one_line_read": "string — single CFE-style read on this vendor's character and posture. ≤25 words. e.g., 'Technical/pool-focused with aggressive exclusions; protects margin through gray-area scope — expect out-of-scope billing patterns.'"
+      "one_line_read": "string — single audit-partner read on this vendor's character and posture. ≤25 words. e.g., 'Technical/pool-focused with aggressive exclusions; protects margin through gray-area scope — expect out-of-scope billing patterns.'"
     }
   ],
   "risk_adjusted_view": {
@@ -3904,7 +3905,7 @@ For each vendor, characterize their posture across three axes:
 - service_style: read the CONTRACT BODY LANGUAGE not just the proposal summary. Heavy indemnity carve-outs + Acts of God + swim-at-your-own-risk + extensive legal protection = corporate_polished. Cooperative tone + minimal legal armor = relationship_flexible. Mixed = balanced.
 - exclusion_strategy: count and breadth of EXCLUSIONS/CARVE-OUTS. Long list of "this is NOT included" items creates gray-area billing opportunities = aggressive_exclusions. Few or no exclusions with broad scope = broad_inclusion. Mixed = balanced.
 
-The "one_line_read" is your audit-partner-voice summary — what would a CFE say about this vendor's posture in one sentence? Connect the axes when relevant: "Technical/polished with aggressive exclusions = protects margin via gray-area scope" or "Relationship-oriented with broad inclusion = predictable cost but premium price."
+The "one_line_read" is your audit-partner-voice summary — what would a seasoned auditor say about this vendor's posture in one sentence? Connect the axes when relevant: "Technical/polished with aggressive exclusions = protects margin via gray-area scope" or "Relationship-oriented with broad inclusion = predictable cost but premium price."
 
 STEP 6 — RISK-ADJUSTED VIEW
 Set show=true ONLY when at least one material_risk has a numeric annualized_exposure_usd. For each affected proposal, compute a low/high range:
@@ -5079,13 +5080,13 @@ function buildVotingMethodsFromCycle(cycle) {
       enabled: true,
       receive_by_date: closeDate,
       receive_by_time: closeTime,
-      return_address: '12808 West Airport Blvd, Ste 253, Sugar Land, TX 77478',
+      return_address: BRAND.service.addressInline,
     },
     email: {
       enabled: true,
       receive_by_date: closeDate,
       receive_by_time: closeTime,
-      address: 'info@bedrocktx.com',
+      address: BRAND.service.email,
     },
     drop_off: onsite.enabled
       ? {

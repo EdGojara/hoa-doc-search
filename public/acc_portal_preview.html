@@ -4,23 +4,26 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ACC Application Portal — Design Preview</title>
+  <link rel="stylesheet" href="/brand.css">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <style>
     /* ============================================================
-       Bedrock ACC Application Portal — design preview v0
-       Same design language as the board packet preview.
+       Bedrock ACC Application Portal — design preview
+       Canonical brand via /brand.css (navy, gold, fonts).
        6 pages stacked vertically for review.
        Real owner-facing pages will be responsive — desktop here
        for review, mobile preview at the end.
        ============================================================ */
 
     :root {
-      --bedrock-navy: #315A87;
-      --bedrock-navy-deep: #1F3A5F;
+      --bedrock-navy: var(--navy);
+      --bedrock-navy-deep: var(--navy-deep);
       --bedrock-navy-tint: #EAF0F7;
       --bedrock-navy-mute: #6E89AB;
+      /* Scoped override: on this white-paper preview, --ink is dark text
+         (vs brand.css default --ink which is light text for dark bg) */
       --ink: #1a1a1a;
       --ink-soft: #4a4a4a;
       --ink-muted: #888;

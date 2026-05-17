@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <title>askEd — Bedrock</title>
+  <title>askEd — Bedrock Intelligence</title>
 
   <!-- PWA -->
   <link rel="manifest" href="/manifest.json" />
-  <meta name="theme-color" content="#315A87" />
+  <meta name="theme-color" content="#1A3050" />
 
   <!-- iOS: Add to Home Screen behavior -->
   <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -18,7 +18,10 @@
   <!-- Hint Android/Chrome -->
   <meta name="mobile-web-app-capable" content="yes" />
 
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/brand.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
 
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
@@ -47,13 +50,28 @@
     }
     .brand { display: flex; align-items: center; gap: 10px; }
     .brand-mark {
-      width: 32px; height: 32px; border-radius: 8px;
-      background: #315A87;
+      width: 26px; height: 32px;
       display: flex; align-items: center; justify-content: center;
-      color: #fff; font-weight: 700; font-size: 15px; letter-spacing: 0.5px;
+      flex-shrink: 0;
     }
-    .brand-title { font-weight: 700; font-size: 16px; color: #0f172a; }
-    .brand-sub { font-size: 11px; color: #64748b; font-weight: 500; letter-spacing: 0.3px; text-transform: uppercase; }
+    .brand-mark svg { width: 100%; height: 100%; display: block; }
+    .brand-title {
+      font-family: var(--font-serif);
+      font-weight: 500;
+      font-size: 16px;
+      letter-spacing: -0.01em;
+      color: var(--navy);
+      line-height: 1.1;
+    }
+    .brand-title em { font-style: italic; color: var(--gold); font-weight: 500; }
+    .brand-sub {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--grey);
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      margin-top: 3px;
+    }
 
     .topbar-pills {
       display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end;
@@ -105,7 +123,7 @@
     }
     .bubble.user {
       align-self: flex-end;
-      background: #315A87;
+      background: var(--navy);
       color: #fff;
       border-bottom-right-radius: 4px;
     }
@@ -121,7 +139,7 @@
       color: #64748b; font-style: italic;
     }
     .bubble.assistant h2 {
-      font-size: 14px; margin: 10px 0 6px; color: #315A87; font-weight: 700;
+      font-size: 14px; margin: 10px 0 6px; color: var(--navy); font-weight: 700;
     }
     .bubble.assistant h2:first-child { margin-top: 0; }
     .bubble.assistant p { margin: 0 0 8px; }
@@ -143,7 +161,7 @@
       cursor: pointer;
     }
     .bubble-action:hover { background: #e2e8f0; }
-    .bubble-action.playing { background: #315A87; color: #fff; border-color: #315A87; }
+    .bubble-action.playing { background: var(--navy); color: #fff; border-color: var(--navy); }
 
     .empty-state {
       text-align: center;
@@ -176,7 +194,7 @@
       transition: border-color 0.15s, transform 0.05s;
     }
     .suggestion-chip:active { transform: scale(0.98); }
-    .suggestion-chip:hover { border-color: #315A87; }
+    .suggestion-chip:hover { border-color: var(--navy); }
 
     /* ---------- Footer / Mic bar ---------- */
     .footer {
@@ -199,13 +217,13 @@
       background: #f8fafc;
       outline: none;
     }
-    .text-input:focus { border-color: #315A87; background: #fff; }
+    .text-input:focus { border-color: var(--navy); background: #fff; }
 
     .mic-btn {
       flex-shrink: 0;
       width: 56px; height: 56px;
       border-radius: 50%;
-      background: #315A87;
+      background: var(--navy);
       color: #fff;
       border: none;
       display: flex; align-items: center; justify-content: center;
@@ -330,10 +348,16 @@
 
   <div class="topbar">
     <div class="brand">
-      <div class="brand-mark">B</div>
+      <div class="brand-mark" aria-label="Bedrock cornerstone mark">
+        <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <polygon points="0,0 88,0 84,28 4,28" fill="var(--gold)"/>
+          <polygon points="5,34 83,34 78,68 10,68" fill="var(--gold)"/>
+          <polygon points="11,74 77,74 73,110 15,110" fill="var(--gold)"/>
+        </svg>
+      </div>
       <div>
         <div class="brand-title">askEd</div>
-        <div class="brand-sub">Bedrock Intelligence</div>
+        <div class="brand-sub">Bedrock <em style="font-style:italic; color:var(--gold);">Intelligence</em></div>
       </div>
     </div>
     <div class="topbar-pills">

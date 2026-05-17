@@ -3,11 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, user-scalable=no" />
-  <title>Event Check-In — Bedrock</title>
-  <meta name="theme-color" content="#1a3a5c" />
+  <title>Event Check-In — Bedrock Association Management</title>
+  <meta name="theme-color" content="#1A3050" />
   <link rel="apple-touch-icon" href="/logos/bedrock_logo.png" />
-
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/brand.css" />
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   <style>
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body {
@@ -18,17 +20,17 @@
       min-height: 100dvh;
     }
     .topbar {
-      background: #1a3a5c; padding: 14px 18px;
+      background: var(--navy); padding: 14px 18px;
       display: flex; align-items: center; gap: 12px;
       position: sticky; top: 0; z-index: 50;
       box-shadow: 0 2px 8px rgba(0,0,0,0.2);
     }
     .brand-mark {
-      width: 32px; height: 32px; border-radius: 8px;
-      background: #fff; color: #1a3a5c;
-      display:flex; align-items:center; justify-content:center;
-      font-weight: 700; font-size: 14px;
+      width: 24px; height: 30px;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0;
     }
+    .brand-mark svg { width: 100%; height: 100%; display: block; }
     .event-title { font-size: 14px; font-weight: 700; line-height: 1.25; }
     .event-sub { font-size: 11px; color: #94a3b8; margin-top: 2px; }
     .menu-btn {
@@ -225,7 +227,13 @@
 
   <!-- Auth screen -->
   <div id="auth-screen" class="auth-screen">
-    <div class="brand-mark" style="margin: 0 auto;">B</div>
+    <div class="brand-mark" style="margin: 0 auto; width: 40px; height: 50px;" aria-label="Bedrock cornerstone mark">
+      <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+        <polygon points="0,0 88,0 84,28 4,28" fill="var(--gold)"/>
+        <polygon points="5,34 83,34 78,68 10,68" fill="var(--gold)"/>
+        <polygon points="11,74 77,74 73,110 15,110" fill="var(--gold)"/>
+      </svg>
+    </div>
     <h1>Staff Check-In</h1>
     <p>Enter the 6-digit check-in code your manager generated for this event.</p>
     <input id="auth-code" class="code-input" maxlength="6" inputmode="numeric" placeholder="••••••" autocomplete="off" />
@@ -236,7 +244,13 @@
   <!-- Main app -->
   <div id="app" style="display:none;">
     <div class="topbar">
-      <div class="brand-mark">B</div>
+      <div class="brand-mark" aria-label="Bedrock cornerstone mark">
+        <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
+          <polygon points="0,0 88,0 84,28 4,28" fill="var(--gold)"/>
+          <polygon points="5,34 83,34 78,68 10,68" fill="var(--gold)"/>
+          <polygon points="11,74 77,74 73,110 15,110" fill="var(--gold)"/>
+        </svg>
+      </div>
       <div style="flex: 1;">
         <div class="event-title" id="t-event-name">Event</div>
         <div class="event-sub" id="t-event-sub"></div>
