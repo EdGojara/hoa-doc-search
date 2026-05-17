@@ -347,12 +347,10 @@
   <div class="tab" onclick="switchTab('calendar')">🗓️ Calendar</div>
   <div class="tab" onclick="switchTab('perf')">📊 Performance</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
-  <!-- Removed: 'chat' (Ask a Question), 'email' (Draft Email), 'review' (Review My Draft).
-       All three are now modes inside the askEd tab — one AI surface, multiple presets.
-       Why: same engine + same context everywhere; less "which screen do I click" friction. -->
-  <!-- Consolidated ACC tab — entry point for all three ACC sub-views (Review,
-       Requests, History). Mode picker inside the active view switches between
-       them. One door, no "which screen do I click" friction. -->
+  <!-- Ask-a-Question, Draft Email, and Review My Draft are now modes inside the
+       askEd tab — one tab, multiple task presets. -->
+  <!-- Consolidated ACC tab — Review / Requests / History as sub-views, switched
+       via the mode picker inside the active view. -->
   <div class="tab" onclick="setAccMode('review')" data-acc-tab="1">🏗️ ACC</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
@@ -372,10 +370,7 @@
   <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
        tabs. Both are now modes inside the consolidated 🏗️ ACC tab above.
        Order: Review → Requests → History (act, see queue, reference). -->
-  <!-- Training — operator competency curriculum + practice + gap-finding.
-       Internal-staff facing. v0: one module (askEd Foundations). Modules
-       added as patterns emerge from daily operations. See project_bedrock_os
-       memory + the "Bedrock AI Foundations" thread for the longer arc. -->
+  <!-- Training — how-to modules for using trustEd. -->
   <div class="tab" onclick="switchTab('training')">🎓 Training</div>
 </div>
 <div class="tab-subbar" id="tabSubbar"
@@ -725,9 +720,7 @@
       <h3>🧠 askEd</h3>
       <p id="edModeDescription" style="font-size:13px; color:#666;">One place to ask anything. Pick a mode below.</p>
 
-      <!-- Mode picker — single AI surface, four task-shaped presets.
-           Same engine, same context (community profile + governing docs +
-           playbook), different framing per task. -->
+      <!-- Mode picker — four task presets share the same input/output area. -->
       <div class="ed-mode-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; margin-bottom:4px;">
         <button type="button" class="ed-mode-btn active" data-mode="advisor" onclick="setEdMode('advisor')">🧠 Advisor</button>
         <button type="button" class="ed-mode-btn" data-mode="draft" onclick="setEdMode('draft')">✉️ Draft a Response</button>
@@ -7253,11 +7246,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 </div>
 
 <!-- =============================================================================
-     🎓 Training tab — operator competency curriculum.
-     v0 ships one module (askEd Foundations). More added as patterns emerge from
-     daily operations and from gaps logged by operators themselves. The platform
-     itself becomes the training system: every variance + every coaching moment
-     in real work compounds into the curriculum.
+     🎓 Training tab — how-to modules for using trustEd.
+     v0 ships one module (askEd Foundations). More to come as needed.
      ============================================================================= -->
 <div class="tab-content" id="tab-training" style="overflow-y: auto; padding: 0; background: #f4f5f7;">
 
@@ -7284,20 +7274,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </nav>
 
       <div style="margin-top: 28px; padding-top: 18px; border-top: 1px solid #e2e8f0;">
-        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;">Found a gap?</div>
-        <p style="font-size: 12px; color: #475569; line-height: 1.5; margin: 0;">If askEd gave wrong guidance or output you had to heavily rewrite, log it: email Ed with a screenshot, the situation, and what you wished it had said. We tune the playbook from these.</p>
+        <div style="font-size: 11px; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 8px;">Something off?</div>
+        <p style="font-size: 12px; color: #475569; line-height: 1.5; margin: 0;">If askEd gives wrong information or a response you have to heavily rewrite, mention it to Ed. He'd rather hear about it than not.</p>
       </div>
     </aside>
 
     <!-- Module reading pane -->
     <main id="trainingContent" style="flex: 1; padding: 32px 44px; max-width: 820px; background: #fff; font-family: var(--font-sans, 'Inter', sans-serif); color: #1a1a1a; line-height: 1.65;">
 
-      <!-- =================================================================
-           MODULE 1 · askEd Foundations
-           Audience: Anyone using trustEd. Required for new operators.
-           Written for Laurie (Operations Support Coordinator) starting
-           2026-05-20 — first hire whose primary work surface IS the AI.
-           ================================================================= -->
+      <!-- Module 1 — askEd Foundations. -->
       <article id="module-asked-foundations" class="training-module">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 1 · Foundations</div>
         <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
@@ -7306,11 +7291,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <p style="font-size: 13px; color: #64748b; margin: 0 0 28px;">15-20 min read · finish with the practice exercise</p>
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this matters</h2>
-        <p>askEd is the AI engine inside trustEd that drafts, reviews, and advises on every kind of communication and decision a property manager faces. It's not a chat tool — it's an operator that does the work, with you as the supervisor. The quality of what we ship to homeowners and boards depends on how well you supervise it.</p>
-        <p>The HFT-trading-desk model applies here: <strong>the AI does the work; humans are watchdogs.</strong> Your value isn't typing speed or even subject knowledge (the AI has the documents). Your value is judgment — knowing when the AI got it right, when it got it subtly wrong, and when something needs to escalate before it goes out the door.</p>
+        <p>askEd helps you handle homeowner and board communications, look up community-specific facts, and review drafts before they go out. Used well, it lets you respond faster and more consistently — and catches small things you might miss when you're rushed.</p>
+        <p>What matters most is the quality of what we send. Everything askEd produces still passes through you before it reaches a homeowner or a board. This module covers how to use each mode and what to verify before sending.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Four modes, one engine</h2>
-        <p>askEd has four modes, picked by the pills at the top of the askEd tab. Same underlying engine, same context (community profile + governing docs + playbook + your attachments). The mode just changes the framing for what you need.</p>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Four modes</h2>
+        <p>askEd has four modes, picked by the pills at the top of the askEd tab. The mode changes the framing for what you need — pick the one that matches the task in front of you.</p>
 
         <table style="width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14px;">
           <thead>
@@ -7337,7 +7322,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 8px;"><strong>Empathy is present when needed.</strong> If the homeowner expressed frustration, the response acknowledges it before answering. Cold replies — even technically correct ones — create the next escalation.</li>
         </ol>
         <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #1A3050); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
-          <strong>Rule of thumb:</strong> if you're rewriting more than half of what the AI produced, that's a signal worth logging (see Gap-Finding at the bottom). Either the AI missed something we should add to the playbook, or the question was framed in a way the AI couldn't handle — both useful data.
+          <strong>Rule of thumb:</strong> if you're rewriting more than half of what the response said, mention it to Ed — it's the kind of thing he wants to know about.
         </p>
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">When to escalate — never send</h2>
@@ -7374,26 +7359,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ol>
         <p>Time-box this to ~20 minutes. The point isn't to master every mode in one sitting; it's to feel the difference between them and know which one to reach for in real work.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Gap-finding — this is part of your job</h2>
-        <p>Every time askEd gives wrong guidance, misses something important, or produces output you have to heavily rewrite — <strong>log it</strong>. We tune the playbook based on these patterns. The platform compounds when operators flag gaps.</p>
-        <p>Right now the process is informal: email Ed with a screenshot, the situation, and what you wished it had said. Future versions of this tab will have a built-in feedback form. Don't wait for that — log gaps starting day one.</p>
-        <p style="background: #fff8e8; border-left: 3px solid #b45309; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
-          <strong>Why this matters strategically:</strong> the operators who flag gaps are the ones who become senior operators. You're not just a user of the platform — you're a contributor to it. Bedrock's competitive advantage IS this feedback loop. Take it seriously.
-        </p>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">If something looks off</h2>
+        <p>If askEd gives wrong information, misses something important, or gives you output you have to heavily rewrite — mention it to Ed. A quick email with a screenshot and what you wished the response had said is plenty. He'd rather hear about it than not.</p>
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Mastery signals</h2>
-        <p>You're operating askEd well when:</p>
+        <p>You're using askEd well when:</p>
         <ul style="padding-left: 22px;">
-          <li style="margin-bottom: 6px;">You're using all four modes routinely (not just Draft)</li>
-          <li style="margin-bottom: 6px;">Your edit volume on AI drafts is dropping over weeks — both because the AI is learning your patterns AND because you're learning to ask in ways it answers well</li>
+          <li style="margin-bottom: 6px;">You're using all four modes routinely — not just Draft</li>
+          <li style="margin-bottom: 6px;">You're applying the 5-point check on every response before it goes out</li>
           <li style="margin-bottom: 6px;">You're catching things in Review mode before sending that would have been embarrassments</li>
-          <li style="margin-bottom: 6px;">You're flagging legal/Fair Housing situations <em>before</em> drafting, not after</li>
-          <li style="margin-bottom: 6px;">You're surfacing 1-2 gaps per week to Ed for playbook tuning</li>
-          <li style="margin-bottom: 6px;">You're noticing patterns — "homeowners always ask X around this time of year" — and proposing automations</li>
+          <li style="margin-bottom: 6px;">You're flagging legal/Fair Housing situations to Ed <em>before</em> drafting, not after</li>
+          <li style="margin-bottom: 6px;">You feel comfortable using it on most homeowner emails without needing to ask</li>
         </ul>
 
         <p style="margin-top: 36px; padding-top: 18px; border-top: 1px solid #e2e8f0; font-size: 13px; color: #64748b; font-style: italic;">
-          Module 1 of an evolving curriculum. New modules added as the operating model matures and as gaps surface from daily work. Questions or suggested edits — email Ed.
+          Questions or anything unclear — email Ed.
         </p>
       </article>
 
