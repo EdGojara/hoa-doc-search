@@ -350,7 +350,10 @@
   <!-- Removed: 'chat' (Ask a Question), 'email' (Draft Email), 'review' (Review My Draft).
        All three are now modes inside the askEd tab — one AI surface, multiple presets.
        Why: same engine + same context everywhere; less "which screen do I click" friction. -->
-  <div class="tab" onclick="switchTab('acc')">🏗️ ACC Review</div>
+  <!-- Consolidated ACC tab — entry point for all three ACC sub-views (Review,
+       Requests, History). Mode picker inside the active view switches between
+       them. One door, no "which screen do I click" friction. -->
+  <div class="tab" onclick="setAccMode('review')" data-acc-tab="1">🏗️ ACC</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
   <div class="tab" onclick="switchTab('homes')">🏠 Homes &amp; Owners</div>
@@ -363,8 +366,9 @@
   <div class="tab" onclick="switchTab('profile')">🏘️ Profile</div>
   <div class="tab" onclick="switchTab('events')">🎉 Events</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
-  <div class="tab" onclick="switchTab('archistory')">🏗️ ACC History</div>
-  <div class="tab" onclick="switchTab('accqueue')">📋 Requests</div>
+  <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
+       tabs. Both are now modes inside the consolidated 🏗️ ACC tab above.
+       Order: Review → Requests → History (act, see queue, reference). -->
 </div>
 <div class="tab-subbar" id="tabSubbar"
      style="display:none; gap:6px; padding:8px 12px; background:#f1f5fb; border-bottom:1px solid #d9dfea; flex-wrap:wrap;"></div>
@@ -577,8 +581,16 @@
 <!-- Removed legacy 'chat' and 'email' tab-content blocks. Functionality
      migrated into askEd modes (Advisor + Draft a Response). -->
 
-<!-- ACC Tab -->
+<!-- ACC Tab — Review mode (default). The other two ACC sub-views are
+     tab-accqueue (Requests) and tab-archistory (History). All three share
+     the mode picker rendered at the top of each block below; setAccMode()
+     swaps which sub-view is active. -->
 <div class="tab-content" id="tab-acc">
+  <div class="acc-mode-picker" style="display:flex; flex-wrap:wrap; gap:6px; padding:14px 24px 0 24px;">
+    <button type="button" class="ed-mode-btn active" data-acc-mode="review" onclick="setAccMode('review')">📝 Review</button>
+    <button type="button" class="ed-mode-btn" data-acc-mode="requests" onclick="setAccMode('requests')">📋 Requests</button>
+    <button type="button" class="ed-mode-btn" data-acc-mode="history" onclick="setAccMode('history')">🗂️ History</button>
+  </div>
   <div class="two-panel">
     <div class="panel">
       <h3>🏗️ ACC Application Details</h3>
@@ -5511,8 +5523,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
 <!-- ============================================================
      🏗️ ACC History tab — bulk upload past ARC decisions
+     Sub-view of the consolidated 🏗️ ACC tab (History mode).
      ============================================================ -->
 <div class="tab-content" id="tab-archistory" style="overflow-y: auto; padding: 24px;">
+  <div class="acc-mode-picker" style="display:flex; flex-wrap:wrap; gap:6px; max-width:1180px; margin:0 auto 16px auto;">
+    <button type="button" class="ed-mode-btn" data-acc-mode="review" onclick="setAccMode('review')">📝 Review</button>
+    <button type="button" class="ed-mode-btn" data-acc-mode="requests" onclick="setAccMode('requests')">📋 Requests</button>
+    <button type="button" class="ed-mode-btn active" data-acc-mode="history" onclick="setAccMode('history')">🗂️ History</button>
+  </div>
   <div style="max-width: 1180px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
@@ -6269,18 +6287,27 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
   window.ahRunAutoDedupe = ahRunAutoDedupe;
 
-  // Wire up
+  // Wire up — bind ahInit to any mode-picker pill that opens History view.
+  // The old standalone 'archistory' nav tab was removed; History is now a
+  // mode of the consolidated 🏗️ ACC tab.
   (function() {
-    const t = document.querySelector('.tab[onclick*="\'archistory\'"]');
-    if (t) t.addEventListener('click', () => ahInit());
+    document.querySelectorAll('[data-acc-mode="history"]').forEach((btn) => {
+      btn.addEventListener('click', () => { try { ahInit(); } catch (e) { console.warn('ahInit', e); } });
+    });
   })();
   try { ahInit(); } catch (e) { console.warn('eager ahInit', e); }
 </script>
 
 <!-- ============================================================
      📋 ACC Queue tab — manager to-do list + AI recommendation + finalize
+     Sub-view of the consolidated 🏗️ ACC tab (Requests mode).
      ============================================================ -->
 <div class="tab-content" id="tab-accqueue" style="overflow-y: auto; padding: 24px;">
+  <div class="acc-mode-picker" style="display:flex; flex-wrap:wrap; gap:6px; max-width:1280px; margin:0 auto 16px auto;">
+    <button type="button" class="ed-mode-btn" data-acc-mode="review" onclick="setAccMode('review')">📝 Review</button>
+    <button type="button" class="ed-mode-btn active" data-acc-mode="requests" onclick="setAccMode('requests')">📋 Requests</button>
+    <button type="button" class="ed-mode-btn" data-acc-mode="history" onclick="setAccMode('history')">🗂️ History</button>
+  </div>
   <div style="max-width: 1280px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
@@ -6774,10 +6801,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     return (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
-  // Wire tab activation
+  // Wire tab activation — bind accInit to any mode-picker pill that opens
+  // the Requests view. The old standalone 'accqueue' nav tab was removed;
+  // Requests is now a mode of the consolidated 🏗️ ACC tab.
   (function() {
-    const t = document.querySelector('.tab[onclick*="\'accqueue\'"]');
-    if (t) t.addEventListener('click', () => accInit());
+    document.querySelectorAll('[data-acc-mode="requests"]').forEach((btn) => {
+      btn.addEventListener('click', () => { try { accInit(); } catch (e) { console.warn('accInit', e); } });
+    });
   })();
   try { accInit(); } catch (e) { console.warn('eager accInit', e); }
 </script>
@@ -8894,6 +8924,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // parent highlight is handled separately by the TAB_GROUPS patch below.
     document.querySelector(`.tab[onclick="switchTab('${tab}')"]`)?.classList.add('active');
     document.getElementById(`tab-${tab}`)?.classList.add('active');
+  }
+
+  // Consolidated ACC tab — one entry point in the nav, three sub-views
+  // (Review / Requests / History). Each sub-view is its own tab-content
+  // block (tab-acc, tab-accqueue, tab-archistory); setAccMode swaps which is
+  // active and keeps the mode picker pills in sync across all three blocks.
+  // The parent .tab nav-button always highlights when any ACC sub-view is on.
+  const ACC_VIEWS = {
+    review:   { tabId: 'acc' },
+    requests: { tabId: 'accqueue' },
+    history:  { tabId: 'archistory' },
+  };
+  function setAccMode(mode) {
+    const view = ACC_VIEWS[mode] || ACC_VIEWS.review;
+    switchTab(view.tabId);
+    // The consolidated nav button is the only one in the nav for ACC — keep
+    // it highlighted regardless of which sub-view is active.
+    document.querySelectorAll('.tab[data-acc-tab]').forEach((t) => t.classList.add('active'));
+    // Sync the mode-picker pills in all three sub-views so the active pill
+    // is correct no matter which view the user is currently looking at.
+    document.querySelectorAll('.acc-mode-picker [data-acc-mode]').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-acc-mode') === mode);
+    });
   }
 
   // Updates the canonical currentCommunity used by the rest of the app.
@@ -14778,7 +14831,7 @@ ${questionsPage}
   function perfOpenApp(_id) {
     // For now, deep-link into the ACC Review screen. Future: dedicated detail view
     // that reads the full community_applications row + assessment history.
-    try { switchTab('acc'); } catch (_) {}
+    try { setAccMode('review'); } catch (_) { try { switchTab('acc'); } catch (_) {} }
   }
 
   // Auto-load on tab open
@@ -16699,8 +16752,8 @@ ${questionsPage}
         }
       }
       renderAccImagePreviews();
-      // Make sure the ACC tab is shown
-      try { switchTab('acc'); } catch (_) {}
+      // Make sure the ACC Review sub-view is shown (consolidated 🏗️ ACC tab)
+      try { setAccMode('review'); } catch (_) { try { switchTab('acc'); } catch (_) {} }
       document.getElementById('accDraftStatus').textContent = `Loaded draft from ${new Date(draft.updated_at).toLocaleString()}`;
     },
   });
