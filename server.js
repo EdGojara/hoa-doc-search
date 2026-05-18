@@ -578,6 +578,12 @@ app.use('/api', contactsRouter);
 const { router: inspectionsRouter } = require('./api/inspections');
 app.use('/api', inspectionsRouter);
 
+// Enforcement engine — Phase 4 (escalation decisions + observation→violation
+// promotion). Backs the DRV workflow; consumed by the property detail panel
+// (preview decision) and the violation-open action (writes the violation row).
+const { router: enforcementRouter } = require('./api/enforcement');
+app.use('/api/enforcement', enforcementRouter);
+
 // Bedrock Office > HOA Financial Review module
 // Endpoints under /api/financial-review/*. See api/financial_review.js and
 // migrations/008_financial_review.sql for the schema.
