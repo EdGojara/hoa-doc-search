@@ -3707,20 +3707,35 @@
   }
 
   // Auto-load when the Homes tab is first opened.
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.tab').forEach((t) => {
-      const onclick = t.getAttribute('onclick') || '';
-      if (onclick === "switchTab('homes')") {
-        t.addEventListener('click', async () => {
-          if (homesLoaded) return;
-          homesLoaded = true;
-          await homesEnsureCommunities();
-          homesLoadSummary();
-          homesLoadProperties();
-        });
+  // Wrapped in DOMContentLoaded + retry because switchTab is defined later in the file.
+  // Patches switchTab() globally so it fires regardless of how 'homes' is reached
+  // (standalone nav button OR via openTabGroup('community') subtab — both call switchTab).
+  function _homesWireSwitchTabPatch() {
+    if (typeof window.switchTab !== 'function') {
+      return setTimeout(_homesWireSwitchTabPatch, 50);
+    }
+    if (window._homesSwitchTabPatched) return;
+    const orig = window.switchTab;
+    window.switchTab = function (tab) {
+      const result = orig.apply(this, arguments);
+      if (tab === 'homes') {
+        (async () => {
+          try {
+            if (homesLoaded) return;
+            homesLoaded = true;
+            await homesEnsureCommunities();
+            homesLoadSummary();
+            homesLoadProperties();
+          } catch (e) {
+            console.warn('[homes] auto-load failed:', e);
+          }
+        })();
       }
-    });
-  });
+      return result;
+    };
+    window._homesSwitchTabPatched = true;
+  }
+  document.addEventListener('DOMContentLoaded', _homesWireSwitchTabPatch);
 
   // ===== Management-agreement handlers ======================================
 
@@ -4779,34 +4794,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         </div>
       </div>
 
-      <!-- ===== Homeowner Roster ===== -->
-      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px;">
-        <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; margin-bottom:14px;">
-          <div>
-            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🏠 Homeowner roster</h3>
-            <p style="font-size:12px; color:#888; margin-top:2px;">Upload a Vantaca export (CSV or XLSX). Used to verify homeowners at events, send blasts, and feed AskEd. Re-upload upserts by Vantaca ID.</p>
-          </div>
-          <div>
-            <span id="prof-roster-count" style="font-size:13px; color:#1a3a5c; font-weight:600;"></span>
-            <button class="secondary-btn" onclick="profShowUpload()" style="margin-left:8px; font-size:13px;">⬆ Upload CSV/XLSX</button>
-          </div>
-        </div>
-
-        <div id="prof-roster-upload" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:14px;">
-          <input type="file" id="prof-roster-file" accept=".csv,.xlsx,.xls,text/csv" />
-          <div style="margin-top:10px; display:flex; gap:8px;">
-            <button class="secondary-btn" onclick="profUploadPreview()" style="font-size:13px;">🔍 Preview</button>
-            <button class="primary-btn" onclick="profUploadCommit()" style="font-size:13px;">✓ Commit import</button>
-            <span id="prof-roster-status" style="margin-left:6px; font-size:12px; align-self:center;"></span>
-          </div>
-          <div id="prof-roster-preview" style="margin-top:12px;"></div>
-        </div>
-
-        <div style="display:flex; gap:8px; margin-bottom:10px;">
-          <input id="prof-roster-search" type="search" placeholder="Search by name, address, email…" oninput="profSearchRoster()" style="flex:1; padding:8px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
-        </div>
-        <div id="prof-roster-list" style="font-size:13px;"></div>
-      </div>
+      <!-- Legacy Homeowner Roster panel removed 2026-05-18.
+           Source of truth for homes + owners is now the Homes & Owners subtab (properties spine).
+           Underlying API endpoints + functions (profUploadPreview, profUploadCommit, profSearchRoster,
+           prof-roster-* DOM ids) are preserved for askEd verification + event check-in features. -->
 
     </div>
   </div>
@@ -9339,15 +9330,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ============================================================
   async function profLoadRoster() {
     if (!profCurrent) return;
+    // Legacy roster panel removed from Profile UI 2026-05-18; if DOM is absent, skip silently.
+    // The /api/events/communities/:id/roster endpoint + underlying data are preserved for
+    // askEd verification + event check-in, so this function may still be wired up but is
+    // a no-op on Profile load.
+    const searchEl = document.getElementById('prof-roster-search');
+    if (!searchEl) return;
     try {
-      const q = document.getElementById('prof-roster-search').value.trim();
+      const q = searchEl.value.trim();
       const params = new URLSearchParams();
       if (q) params.set('q', q);
       const r = await fetch(`/api/events/communities/${profCurrent.id}/roster?` + params.toString());
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       const total = j.total_count || 0;
-      document.getElementById('prof-roster-count').textContent = `${total} homeowner${total === 1 ? '' : 's'} on file`;
+      const countEl = document.getElementById('prof-roster-count');
+      if (countEl) countEl.textContent = `${total} homeowner${total === 1 ? '' : 's'} on file`;
       profRenderRosterList(j.rows || []);
     } catch (err) {
       console.warn('roster load', err);
