@@ -8,9 +8,10 @@
 -- latitude/longitude, which errored silently and made the inspect map see "0
 -- properties" — geocoder button never appeared.
 --
--- Updates the view to surface lat/lng and the parcel boundary so the map view
--- + future polygon-matching features can read everything they need from one
--- query.
+-- Postgres CREATE OR REPLACE VIEW can only ADD columns to the END of the
+-- column list (can't reorder existing ones), so latitude/longitude/boundary
+-- are appended. Column position doesn't matter for the API — only column
+-- names matter to the .select() call.
 -- ============================================================================
 
 CREATE OR REPLACE VIEW v_current_property_owners AS
@@ -24,9 +25,6 @@ SELECT DISTINCT ON (p.id)
   p.zip,
   p.property_type,
   p.lot_number,
-  p.latitude,
-  p.longitude,
-  p.boundary,
   c.id              AS owner_contact_id,
   c.full_name       AS owner_name,
   c.primary_email   AS owner_email,
@@ -34,7 +32,10 @@ SELECT DISTINCT ON (p.id)
   c.mailing_address AS owner_mailing_address,
   o.start_date      AS owned_since,
   o.vesting,
-  o.is_primary
+  o.is_primary,
+  p.latitude,
+  p.longitude,
+  p.boundary
 FROM properties p
 LEFT JOIN property_ownerships o ON o.property_id = p.id AND o.end_date IS NULL
 LEFT JOIN contacts c           ON c.id = o.contact_id
