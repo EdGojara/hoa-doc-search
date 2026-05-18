@@ -7469,12 +7469,36 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </div>
 
-      <!-- Map panel (hidden by default; activated by Map toggle).
+      <!-- Map panel (activated by Map toggle).
            Loads Mapbox GL JS on first activation. If MAPBOX_TOKEN isn't set
            in Render env, shows a friendly placeholder instead of failing. -->
       <div id="inspMapPanel" style="display: none; margin-bottom: 14px;">
         <div id="inspMapStatus" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; padding: 8px 12px; font-size: 11px; color: #64748b; border-bottom: none;">Loading map…</div>
         <div id="inspMapEl" style="width: 100%; height: 55vh; min-height: 320px; border-radius: 0 0 12px 12px; background: #f1f5f9; border: 1px solid #e2e8f0;"></div>
+      </div>
+
+      <!-- List panel — default view when an inspection starts. Shows every
+           property in the community with last-inspected + violation counts.
+           Tap a row to open the property detail panel (history-on-click) or
+           pre-select it for capture. -->
+      <div id="inspListPanel" style="display: block; margin-bottom: 14px;">
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; overflow:hidden;">
+          <div style="padding:10px 12px; border-bottom:1px solid #e2e8f0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input id="inspListSearch" type="search" placeholder="Search address or owner…" oninput="inspListRender()"
+                   style="flex:1; min-width:180px; padding:7px 10px; border:1px solid #d0d7de; border-radius:6px; font:inherit; font-size:13px;">
+            <select id="inspListSort" onchange="inspListRender()" style="padding:7px 10px; border:1px solid #d0d7de; border-radius:6px; font:inherit; font-size:12px;">
+              <option value="address">Sort: Address</option>
+              <option value="owner">Sort: Owner</option>
+              <option value="last_inspected">Sort: Last inspected</option>
+              <option value="violations_open" selected>Sort: Open violations</option>
+              <option value="violations_lifetime">Sort: Lifetime violations</option>
+            </select>
+            <span id="inspListCount" style="font-size:11.5px; color:#64748b;">—</span>
+          </div>
+          <div id="inspListBody" style="max-height: 55vh; overflow-y: auto;">
+            <div style="padding:24px; text-align:center; color:#94a3b8; font-size:13px;">Loading properties…</div>
+          </div>
+        </div>
       </div>
 
       <!-- Big capture button (mobile-friendly tap target) -->
@@ -7509,6 +7533,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+  </div>
+
+  <!-- Property detail modal — opens from list-row tap or map-marker tap.
+       Shows full enforcement + ownership context for one property. -->
+  <div id="inspPropertyDetailModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center;">
+    <div style="background:#fff; border-radius:14px; max-width:780px; width:100%; max-height:90vh; overflow:hidden; display:flex; flex-direction:column;">
+      <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <div>
+          <div id="inspPDAddress" style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">—</div>
+          <div id="inspPDMeta" style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">—</div>
+        </div>
+        <div style="display:flex; gap:6px;">
+          <button onclick="inspPDPreselect()" class="ed-mode-btn active" style="font-size:12px;">📍 Pre-select for capture</button>
+          <button onclick="inspClosePropertyDetail()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:13px; cursor:pointer;">✕ Close</button>
+        </div>
+      </div>
+      <div id="inspPDBody" style="padding:18px; overflow-y:auto; flex:1;">
+        <div style="color:#94a3b8; text-align:center; padding:30px;">Loading…</div>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -7562,9 +7606,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const listBtn = document.getElementById('inspViewListBtn');
     const mapBtn = document.getElementById('inspViewMapBtn');
     const mapPanel = document.getElementById('inspMapPanel');
+    const listPanel = document.getElementById('inspListPanel');
     if (listBtn) listBtn.classList.toggle('active', view === 'list');
     if (mapBtn)  mapBtn.classList.toggle('active',  view === 'map');
-    if (mapPanel) mapPanel.style.display = view === 'map' ? 'block' : 'none';
+    if (mapPanel) mapPanel.style.display  = view === 'map'  ? 'block' : 'none';
+    if (listPanel) listPanel.style.display = view === 'list' ? 'block' : 'none';
     if (view === 'map') {
       if (!inspState.mapLoaded) {
         inspMapInit().catch((e) => {
@@ -7575,8 +7621,355 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         // Mapbox needs a resize hint when the container becomes visible
         setTimeout(() => inspState.mapInstance.resize(), 50);
       }
+    } else if (view === 'list') {
+      // Load (and cache) the list with history aggregates the first time it's shown.
+      if (!inspState.listLoaded) inspListLoad();
     }
   }
+
+  // ============================================================
+  // LIST VIEW — every property in the community with last-inspected
+  // + violation counts (open / YTD / lifetime). Tap a row to open
+  // the property detail panel; same panel as map-marker tap.
+  // ============================================================
+  async function inspListLoad() {
+    if (!inspState.communityId) return;
+    const body = document.getElementById('inspListBody');
+    const countEl = document.getElementById('inspListCount');
+    if (body) body.innerHTML = '<div style="padding:24px; text-align:center; color:#94a3b8; font-size:13px;">Loading properties…</div>';
+    try {
+      // include_history=1 attaches violation counts + last_inspected per property
+      // include_no_geo=1 because the list shouldn't hide properties just because
+      // they haven't been geocoded yet
+      const url = `/api/inspections/properties?community_id=${encodeURIComponent(inspState.communityId)}&include_history=1&include_no_geo=1`;
+      const r = await fetch(url);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspState.listData = j.properties || [];
+      inspState.listLoaded = true;
+      if (countEl) countEl.textContent = `${inspState.listData.length} ${inspState.listData.length === 1 ? 'property' : 'properties'}`;
+      inspListRender();
+    } catch (e) {
+      if (body) body.innerHTML = `<div style="padding:24px; text-align:center; color:#b91c1c; font-size:13px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspListRender() {
+    const body = document.getElementById('inspListBody');
+    if (!body || !inspState.listData) return;
+    const search = (document.getElementById('inspListSearch').value || '').trim().toLowerCase();
+    const sort   = document.getElementById('inspListSort').value || 'address';
+
+    let rows = inspState.listData.slice();
+    if (search) {
+      rows = rows.filter((p) => {
+        const blob = ((p.street_address || '') + ' ' + (p.owner_name || '') + ' ' + (p.unit || '')).toLowerCase();
+        return blob.includes(search);
+      });
+    }
+    rows.sort((a, b) => {
+      switch (sort) {
+        case 'owner':
+          return (a.owner_name || '').localeCompare(b.owner_name || '');
+        case 'last_inspected':
+          // Newest first; never-inspected last
+          if (!a.last_inspected_at && !b.last_inspected_at) return (a.street_address || '').localeCompare(b.street_address || '');
+          if (!a.last_inspected_at) return 1;
+          if (!b.last_inspected_at) return -1;
+          return new Date(b.last_inspected_at) - new Date(a.last_inspected_at);
+        case 'violations_open':
+          return (b.violation_count_open || 0) - (a.violation_count_open || 0)
+              || (a.street_address || '').localeCompare(b.street_address || '');
+        case 'violations_lifetime':
+          return (b.violation_count_lifetime || 0) - (a.violation_count_lifetime || 0)
+              || (a.street_address || '').localeCompare(b.street_address || '');
+        case 'address':
+        default:
+          return (a.street_address || '').localeCompare(b.street_address || '', undefined, { numeric: true, sensitivity: 'base' });
+      }
+    });
+
+    if (rows.length === 0) {
+      body.innerHTML = '<div style="padding:24px; text-align:center; color:#94a3b8; font-size:13px;">No properties match that search.</div>';
+      return;
+    }
+
+    const fmtLastInsp = (iso) => {
+      if (!iso) return '<span style="color:#cbd5e1;">never</span>';
+      const d = new Date(iso);
+      const days = Math.floor((Date.now() - d.getTime()) / (1000 * 60 * 60 * 24));
+      if (days <= 0) return 'today';
+      if (days === 1) return 'yesterday';
+      if (days < 30) return days + 'd ago';
+      if (days < 365) return Math.floor(days / 30) + 'mo ago';
+      return Math.floor(days / 365) + 'y ago';
+    };
+    const vBadge = (n, tone) => {
+      if (!n) return '<span style="color:#cbd5e1;">0</span>';
+      const color = tone === 'open' ? '#b91c1c' : tone === 'ytd' ? '#b45309' : '#475569';
+      return `<span style="color:${color}; font-weight:700;">${n}</span>`;
+    };
+
+    body.innerHTML = `
+      <div style="display:grid; grid-template-columns: minmax(170px, 1.5fr) minmax(140px, 1.4fr) 70px 50px 50px 60px; gap:8px; padding:8px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.04em; text-transform:uppercase;">
+        <div>Address</div>
+        <div>Owner</div>
+        <div>Last insp.</div>
+        <div title="Open violations" style="text-align:center;">Open</div>
+        <div title="Violations this year" style="text-align:center;">YTD</div>
+        <div title="Lifetime violations" style="text-align:center;">All-time</div>
+      </div>
+      ${rows.map((p) => `
+        <div onclick="inspOpenPropertyDetail('${p.property_id}')"
+             style="display:grid; grid-template-columns: minmax(170px, 1.5fr) minmax(140px, 1.4fr) 70px 50px 50px 60px; gap:8px; padding:9px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; cursor:pointer; align-items:center;"
+             onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='#fff'">
+          <div style="font-weight:600; color:#1A3050;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</div>
+          <div style="color:#475569; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(p.owner_name || '')}">${escapeHtml(p.owner_name || '—')}</div>
+          <div style="font-size:11.5px; color:#64748b;">${fmtLastInsp(p.last_inspected_at)}</div>
+          <div style="text-align:center;">${vBadge(p.violation_count_open, 'open')}</div>
+          <div style="text-align:center;">${vBadge(p.violation_count_ytd, 'ytd')}</div>
+          <div style="text-align:center;">${vBadge(p.violation_count_lifetime, 'lifetime')}</div>
+        </div>
+      `).join('')}
+    `;
+  }
+
+  // ============================================================
+  // PROPERTY DETAIL MODAL — opens from list row OR map marker tap.
+  // Shows owner / residency / violations / interactions / inspections.
+  // ============================================================
+  let inspPDCurrentPropertyId = null;
+  let inspPDCurrentLabel = null;
+  async function inspOpenPropertyDetail(propertyId) {
+    inspPDCurrentPropertyId = propertyId;
+    const modal = document.getElementById('inspPropertyDetailModal');
+    if (modal) modal.style.display = 'flex';
+    document.getElementById('inspPDAddress').textContent = 'Loading…';
+    document.getElementById('inspPDMeta').textContent = '';
+    document.getElementById('inspPDBody').innerHTML = '<div style="color:#94a3b8; text-align:center; padding:30px;">Loading…</div>';
+    try {
+      const r = await fetch(`/api/inspections/property-detail/${encodeURIComponent(propertyId)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspPDRender(j);
+    } catch (e) {
+      document.getElementById('inspPDBody').innerHTML = `<div style="color:#b91c1c; padding:20px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspPDRender(d) {
+    const p = d.property || {};
+    const owner = d.owner;
+    const residency = d.residency;
+    const counts = d.counts || {};
+    const label = (p.street_address || '') + (p.unit ? ' #' + p.unit : '');
+    inspPDCurrentLabel = label;
+
+    document.getElementById('inspPDAddress').textContent = label;
+    const metaParts = [];
+    if (p.city) metaParts.push(p.city);
+    if (p.zip) metaParts.push(p.zip);
+    if (p.lot_number) metaParts.push('Lot ' + p.lot_number);
+    document.getElementById('inspPDMeta').textContent = metaParts.join(' · ');
+
+    // Residency badge tone
+    const resType = residency && residency.residency_type;
+    const resBadge = resType
+      ? `<span style="background:${resType === 'renter' ? '#fef3c7' : resType === 'owner_occupied' ? '#dcfce7' : '#e2e8f0'}; color:${resType === 'renter' ? '#92400e' : resType === 'owner_occupied' ? '#166534' : '#475569'}; padding:2px 9px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;">${escapeHtml(resType.replace('_', ' '))}</span>`
+      : '<span style="color:#cbd5e1;">unknown</span>';
+
+    // Counts strip
+    const stat = (label, value, tone) => `
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; text-align:center; flex:1; min-width:90px;">
+        <div style="font-size:20px; font-weight:700; color:${tone || '#1A3050'}; line-height:1;">${value}</div>
+        <div style="font-size:10.5px; color:#64748b; letter-spacing:0.04em; text-transform:uppercase; margin-top:3px;">${label}</div>
+      </div>`;
+
+    // Escalation hint based on history — if any violation in last 12mo, recommend
+    // certified mail for the NEXT one. (Phase 4 will wire this into letter gen.)
+    const oneYearAgo = new Date(); oneYearAgo.setMonth(oneYearAgo.getMonth() - 12);
+    const recentViolations = (d.violations || []).filter((v) => v.opened_at && new Date(v.opened_at) >= oneYearAgo);
+    const recentSameCategory = {};
+    recentViolations.forEach((v) => {
+      if (v.category_code) recentSameCategory[v.category_code] = (recentSameCategory[v.category_code] || 0) + 1;
+    });
+    const repeatCats = Object.entries(recentSameCategory).filter(([_, c]) => c > 0).map(([k]) => k);
+    const escalationHint = recentViolations.length === 0
+      ? '<span style="color:#15803d;">Clean record · next violation opens at Courtesy 1 (regular mail).</span>'
+      : `<span style="color:#b45309;">⚠️ ${recentViolations.length} violation${recentViolations.length===1?'':'s'} in last 12mo${repeatCats.length ? ` · repeats in: ${repeatCats.join(', ')}` : ''}. Next violation may require <strong>certified mail</strong> under TX §209 escalation.</span>`;
+
+    // Violations table
+    const viosHtml = (d.violations || []).length === 0
+      ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No violations on record.</div>'
+      : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+           <thead><tr style="background:#f8fafc; color:#64748b;">
+             <th style="text-align:left; padding:6px 8px;">Opened</th>
+             <th style="text-align:left; padding:6px 8px;">Category</th>
+             <th style="text-align:left; padding:6px 8px;">Stage</th>
+             <th style="text-align:left; padding:6px 8px;">Resolved</th>
+           </tr></thead>
+           <tbody>
+             ${d.violations.map((v) => {
+               const stage = v.current_stage || '';
+               const stageColor = stage === 'cured' || stage === 'closed' ? '#15803d'
+                                : stage === 'certified_209' ? '#b45309'
+                                : stage === 'fine_assessed' ? '#b91c1c'
+                                : stage === 'voided' ? '#94a3b8' : '#1A3050';
+               return `
+                 <tr style="border-bottom:1px solid #f1f5f9;">
+                   <td style="padding:6px 8px;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : '—'}</td>
+                   <td style="padding:6px 8px;">${escapeHtml(v.category_label || v.category_code || '—')}</td>
+                   <td style="padding:6px 8px; color:${stageColor}; font-weight:600;">${escapeHtml(stage.replace(/_/g, ' '))}</td>
+                   <td style="padding:6px 8px; color:#64748b;">${v.resolved_via ? escapeHtml(v.resolved_via) : (v.resolved_at ? new Date(v.resolved_at).toLocaleDateString() : '—')}</td>
+                 </tr>`;
+             }).join('')}
+           </tbody>
+         </table>`;
+
+    // Recent observations
+    const obsHtml = (d.observations_recent || []).length === 0
+      ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No observations on record.</div>'
+      : `<div style="display:grid; grid-template-columns:repeat(auto-fill, minmax(110px, 1fr)); gap:8px;">
+           ${d.observations_recent.slice(0, 8).map((o) => `
+             <div style="border:1px solid #e2e8f0; border-radius:8px; overflow:hidden; background:#fff;">
+               ${o.photo_url ? `<div style="width:100%; height:80px; background-image:url('${escapeHtml(o.photo_url)}'); background-size:cover; background-position:center;"></div>` : `<div style="width:100%; height:80px; background:#f1f5f9; display:flex; align-items:center; justify-content:center; color:#cbd5e1; font-size:11px;">no photo</div>`}
+               <div style="padding:5px 7px; font-size:10.5px; color:#64748b;">
+                 ${o.severity ? `<span style="display:inline-block; padding:1px 6px; border-radius:99px; background:${o.severity === 'severe' ? '#fee2e2' : o.severity === 'moderate' ? '#fef3c7' : o.severity === 'minor' ? '#dbeafe' : '#dcfce7'}; color:#1f2937; font-weight:700; text-transform:uppercase; font-size:9.5px; letter-spacing:0.04em;">${escapeHtml(o.severity)}</span>` : ''}
+                 <div style="margin-top:3px; color:#475569;">${escapeHtml(o.ai_description || '').slice(0, 70)}</div>
+               </div>
+             </div>`).join('')}
+         </div>`;
+
+    // Interactions
+    const interactionsHtml = (d.interactions || []).length === 0
+      ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No interactions on record.</div>'
+      : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+           <thead><tr style="background:#f8fafc; color:#64748b;">
+             <th style="text-align:left; padding:6px 8px;">When</th>
+             <th style="text-align:left; padding:6px 8px;">Type</th>
+             <th style="text-align:left; padding:6px 8px;">Subject</th>
+             <th style="text-align:left; padding:6px 8px;">Method</th>
+           </tr></thead>
+           <tbody>
+             ${d.interactions.slice(0, 12).map((i) => `
+               <tr style="border-bottom:1px solid #f1f5f9;">
+                 <td style="padding:6px 8px;">${i.occurred_at ? new Date(i.occurred_at).toLocaleDateString() : '—'}</td>
+                 <td style="padding:6px 8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}</td>
+                 <td style="padding:6px 8px; color:#475569;">${escapeHtml(i.subject || '—')}</td>
+                 <td style="padding:6px 8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
+               </tr>`).join('')}
+           </tbody>
+         </table>`;
+
+    document.getElementById('inspPDBody').innerHTML = `
+      <!-- Owner + residency block -->
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:14px;">
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10.5px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px;">Owner</div>
+          ${owner ? `
+            <div style="font-size:14px; font-weight:600; color:#1A3050;">${escapeHtml(owner.full_name || '—')}</div>
+            ${owner.email ? `<div style="font-size:12px; color:#475569;">${escapeHtml(owner.email)}</div>` : ''}
+            ${owner.phone ? `<div style="font-size:12px; color:#475569;">${escapeHtml(owner.phone)}</div>` : ''}
+            ${owner.mailing_address ? `<div style="font-size:11.5px; color:#94a3b8; margin-top:3px;">Mail: ${escapeHtml(owner.mailing_address)}</div>` : ''}
+            ${owner.owned_since ? `<div style="font-size:11.5px; color:#94a3b8; margin-top:3px;">Since ${new Date(owner.owned_since).toLocaleDateString()}</div>` : ''}
+          ` : '<div style="color:#94a3b8; font-size:13px;">No owner on file</div>'}
+        </div>
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px;">
+          <div style="font-size:10.5px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px;">Residency</div>
+          <div style="margin-bottom:3px;">${resBadge}</div>
+          ${residency && residency.resident_name ? `<div style="font-size:13px; font-weight:600; color:#1A3050; margin-top:5px;">${escapeHtml(residency.resident_name)}</div>` : ''}
+          ${residency && residency.lease_end_date ? `<div style="font-size:11.5px; color:#94a3b8; margin-top:3px;">Lease ends ${new Date(residency.lease_end_date).toLocaleDateString()}</div>` : ''}
+          ${resType === 'renter' && (!residency || !residency.resident_name) ? '<div style="font-size:11.5px; color:#b45309; margin-top:5px;">Tenant identity not on file</div>' : ''}
+        </div>
+      </div>
+
+      <!-- Counts strip -->
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
+        ${stat('Open', counts.violations_open || 0, counts.violations_open ? '#b91c1c' : '#1A3050')}
+        ${stat('YTD', counts.violations_ytd || 0, '#b45309')}
+        ${stat('Lifetime', counts.violations_lifetime || 0)}
+        ${stat('Certified prior', counts.violations_certified_lifetime || 0, '#b45309')}
+        ${stat('Inspections', counts.inspections_lifetime || 0)}
+        ${stat('Interactions', counts.interactions_lifetime || 0)}
+      </div>
+
+      <!-- Escalation hint -->
+      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:9px 12px; font-size:12.5px; margin-bottom:14px;">
+        ${escalationHint}
+      </div>
+
+      <!-- Violations -->
+      <details open style="margin-bottom:10px;">
+        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Violation history (${(d.violations || []).length})</summary>
+        <div style="margin-top:6px;">${viosHtml}</div>
+      </details>
+
+      <!-- Observations -->
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Recent observations (${(d.observations_recent || []).length})</summary>
+        <div style="margin-top:6px;">${obsHtml}</div>
+      </details>
+
+      <!-- Interactions -->
+      <details style="margin-bottom:10px;">
+        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Interactions (${(d.interactions || []).length})</summary>
+        <div style="margin-top:6px;">${interactionsHtml}</div>
+      </details>
+
+      <!-- Inspections -->
+      <details>
+        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Inspection history (${(d.inspections || []).length})</summary>
+        <div style="margin-top:6px;">
+          ${(d.inspections || []).length === 0
+            ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">Never inspected.</div>'
+            : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+                 <thead><tr style="background:#f8fafc; color:#64748b;">
+                   <th style="text-align:left; padding:6px 8px;">Date</th>
+                   <th style="text-align:left; padding:6px 8px;">Mode</th>
+                   <th style="text-align:left; padding:6px 8px;">Status</th>
+                   <th style="text-align:center; padding:6px 8px;">Observations</th>
+                 </tr></thead>
+                 <tbody>
+                   ${d.inspections.slice(0, 10).map((i) => `
+                     <tr style="border-bottom:1px solid #f1f5f9;">
+                       <td style="padding:6px 8px;">${i.started_at ? new Date(i.started_at).toLocaleDateString() : '—'}</td>
+                       <td style="padding:6px 8px;">${escapeHtml((i.mode || '').replace(/_/g, ' '))}</td>
+                       <td style="padding:6px 8px;">${escapeHtml(i.status || '—')}</td>
+                       <td style="padding:6px 8px; text-align:center;">${i.observation_count || 0}</td>
+                     </tr>`).join('')}
+                 </tbody>
+               </table>`
+          }
+        </div>
+      </details>
+    `;
+  }
+
+  function inspClosePropertyDetail() {
+    const modal = document.getElementById('inspPropertyDetailModal');
+    if (modal) modal.style.display = 'none';
+    inspPDCurrentPropertyId = null;
+    inspPDCurrentLabel = null;
+  }
+
+  function inspPDPreselect() {
+    if (!inspPDCurrentPropertyId) return;
+    // Suppress detail re-open since we're already in the detail panel
+    inspState._suppressDetailOpen = true;
+    inspMapHandleMarkerClick(inspPDCurrentPropertyId, inspPDCurrentLabel || 'Selected property');
+    inspState._suppressDetailOpen = false;
+    inspClosePropertyDetail();
+  }
+
+  // Close modal on outside click
+  document.addEventListener('DOMContentLoaded', () => {
+    const modal = document.getElementById('inspPropertyDetailModal');
+    if (modal) {
+      modal.addEventListener('click', (e) => {
+        if (e.target === modal) inspClosePropertyDetail();
+      });
+    }
+  });
 
   async function inspMapInit() {
     const statusEl = document.getElementById('inspMapStatus');
@@ -7740,6 +8133,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // Map marker click: pre-select for capture AND open the property detail
+  // modal so staff can see who lives there + prior history before deciding
+  // to photograph. Close modal to dismiss without losing the pre-selection.
   function inspMapHandleMarkerClick(propertyId, label) {
     inspState.selectedPropertyId = propertyId;
     inspState.selectedPropertyLabel = label;
@@ -7763,6 +8159,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
       }
     }
+    // Open detail panel (skip if this click is FROM the detail panel's preselect button)
+    if (!inspState._suppressDetailOpen) inspOpenPropertyDetail(propertyId);
   }
 
   function inspClearSelectedProperty() {
@@ -7841,6 +8239,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.communityName = sel.options[sel.selectedIndex].textContent;
       inspState.photoCount = 0;
       inspState.photos = [];
+      // Reset list cache so we re-fetch for the new community.
+      inspState.listLoaded = false;
+      inspState.listData = null;
       document.getElementById('inspStartCard').style.display = 'none';
       document.getElementById('inspActivePanel').style.display = 'block';
       document.getElementById('inspSessionCommunity').textContent = inspState.communityName;
@@ -7848,6 +8249,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       document.getElementById('inspSessionMeta').textContent = `${modeLabel}${routeLabel ? ' · ' + routeLabel : ''}`;
       inspRenderPhotos();
       inspStartLocationWatch();
+      // Show list view by default + load the data
+      inspSetView('list');
     } catch (e) {
       err.textContent = e.message;
       err.style.display = 'block';

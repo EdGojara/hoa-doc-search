@@ -372,10 +372,14 @@ router.get('/inspections/properties', async (req, res) => {
   try {
     const communityId = req.query.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id is required' });
+    // include_history=1 attaches per-property aggregates (violations open/ytd/lifetime
+    // + last_inspected_at) — slightly heavier query, used by the List view.
+    // Map view skips it for speed.
+    const includeHistory = req.query.include_history === '1';
 
     let q = supabase
       .from('v_current_property_owners')
-      .select('property_id, street_address, unit, latitude, longitude, owner_name, owner_contact_id')
+      .select('property_id, street_address, unit, city, latitude, longitude, owner_name, owner_contact_id')
       .eq('community_id', communityId)
       .order('street_address', { ascending: true });
     if (req.query.include_no_geo !== '1') {
@@ -383,6 +387,55 @@ router.get('/inspections/properties', async (req, res) => {
     }
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
+
+    let properties = data || [];
+
+    // Per-property history aggregates: violations (open/ytd/lifetime) + last inspected.
+    // One query per aggregate, grouped by property_id in JS — cheaper than N+1.
+    if (includeHistory && properties.length > 0) {
+      const propIds = properties.map((p) => p.property_id);
+      const yearStart = `${new Date().getFullYear()}-01-01T00:00:00Z`;
+
+      const [vAllRes, vOpenRes, vYtdRes, insRes] = await Promise.all([
+        supabase.from('violations').select('property_id').in('property_id', propIds),
+        supabase.from('violations').select('property_id').in('property_id', propIds)
+          .not('current_stage', 'in', '("cured","closed","voided")'),
+        supabase.from('violations').select('property_id').in('property_id', propIds)
+          .gte('opened_at', yearStart),
+        // Last-inspected = max(inspection.ended_at) across observations that touched the property.
+        supabase.from('property_observations').select('property_id, inspections!inner(ended_at)')
+          .in('property_id', propIds)
+          .not('inspections.ended_at', 'is', null),
+      ]);
+      const vAll = vAllRes.data || [];
+      const vOpen = vOpenRes.data || [];
+      const vYtd = vYtdRes.data || [];
+      const obs = insRes.data || [];
+
+      const tally = (rows) => {
+        const m = new Map();
+        rows.forEach((r) => m.set(r.property_id, (m.get(r.property_id) || 0) + 1));
+        return m;
+      };
+      const allMap  = tally(vAll);
+      const openMap = tally(vOpen);
+      const ytdMap  = tally(vYtd);
+      const lastInsp = new Map();
+      obs.forEach((o) => {
+        const t = o.inspections && o.inspections.ended_at;
+        if (!t) return;
+        const cur = lastInsp.get(o.property_id);
+        if (!cur || new Date(t) > new Date(cur)) lastInsp.set(o.property_id, t);
+      });
+
+      properties = properties.map((p) => ({
+        ...p,
+        violation_count_open:     openMap.get(p.property_id) || 0,
+        violation_count_ytd:      ytdMap.get(p.property_id) || 0,
+        violation_count_lifetime: allMap.get(p.property_id) || 0,
+        last_inspected_at:        lastInsp.get(p.property_id) || null,
+      }));
+    }
 
     // Also surface how many properties in this community are missing geo
     // data, so the UI can show "X properties have no map position yet"
@@ -399,7 +452,7 @@ router.get('/inspections/properties', async (req, res) => {
       .not('longitude', 'is', null);
 
     res.json({
-      properties: data || [],
+      properties,
       total_count: totalCount || 0,
       geo_count: geoCount || 0,
       missing_geo_count: Math.max(0, (totalCount || 0) - (geoCount || 0)),
@@ -407,6 +460,184 @@ router.get('/inspections/properties', async (req, res) => {
   } catch (err) {
     console.error('[inspections.properties]', err);
     res.status(500).json({ error: err.message || 'failed to list properties' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/property-detail/:property_id
+// ---------------------------------------------------------------------------
+// Full enforcement + ownership context for a single property — backs the
+// property detail panel that opens when staff taps a row in the List view or
+// a marker on the Map view. Everything we know "about this house" in one call.
+//
+// Returns:
+//   {
+//     property: { id, street_address, unit, city, zip, lat, lng, lot_number, type }
+//     owner:    { contact_id, full_name, email, phone, mailing_address }
+//     residency:{ residency_type, contact_name, lease_end_date }
+//     violations: [{ id, opened_at, category_name, current_stage, ... }]  -- newest first
+//     interactions: [{ id, type, subject, occurred_at, delivery_method, direction }] -- newest first
+//     inspections: [{ id, started_at, ended_at, mode, observation_count }]
+//     observations_recent: [{ id, severity, ai_description, reviewer_status, captured_at, photo_url }]
+//     counts: { violations_open, violations_ytd, violations_lifetime, inspections_lifetime, photos_lifetime }
+//   }
+// ---------------------------------------------------------------------------
+router.get('/inspections/property-detail/:property_id', async (req, res) => {
+  try {
+    const propertyId = req.params.property_id;
+    if (!propertyId) return res.status(400).json({ error: 'property_id is required' });
+    const yearStart = `${new Date().getFullYear()}-01-01T00:00:00Z`;
+
+    // Property + current owner via the view
+    const { data: pRow, error: pErr } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, community_id, street_address, unit, city, state, zip, lot_number, property_type, latitude, longitude, owner_contact_id, owner_name, owner_email, owner_phone, owner_mailing_address, owned_since')
+      .eq('property_id', propertyId)
+      .maybeSingle();
+    if (pErr) return res.status(500).json({ error: pErr.message });
+    if (!pRow) return res.status(404).json({ error: 'property not found' });
+
+    // Current residency
+    const { data: residencyRow } = await supabase
+      .from('v_current_residents')
+      .select('residency_type, resident_name, resident_email, resident_phone, lease_end_date, resident_since')
+      .eq('property_id', propertyId)
+      .maybeSingle();
+
+    // Run all the history queries in parallel
+    const [violationsRes, interactionsRes, inspectionsRes, observationsRes] = await Promise.all([
+      // Violations with category name joined
+      supabase.from('violations')
+        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, enforcement_categories(id, code, label)')
+        .eq('property_id', propertyId)
+        .order('opened_at', { ascending: false }),
+      // Interactions
+      supabase.from('interactions')
+        .select('id, type, direction, subject, occurred_at, delivery_method, violation_id, content')
+        .eq('property_id', propertyId)
+        .order('occurred_at', { ascending: false })
+        .limit(50),
+      // Inspections that touched this property (via observations)
+      supabase.from('property_observations')
+        .select('inspection_id, inspections(id, started_at, ended_at, mode, route_label, total_photos, status)')
+        .eq('property_id', propertyId)
+        .limit(200),
+      // Recent observations (last 20)
+      supabase.from('property_observations')
+        .select('id, severity, ai_description, ai_recommended_action, reviewer_status, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path)')
+        .eq('property_id', propertyId)
+        .order('created_at', { ascending: false })
+        .limit(20),
+    ]);
+
+    const violations = violationsRes.data || [];
+    const interactions = interactionsRes.data || [];
+    const obsRows = observationsRes.data || [];
+
+    // De-dupe inspections (multiple observations per inspection)
+    const inspectionMap = new Map();
+    (inspectionsRes.data || []).forEach((row) => {
+      const ins = row.inspections;
+      if (!ins) return;
+      const cur = inspectionMap.get(ins.id);
+      if (!cur) inspectionMap.set(ins.id, { ...ins, observation_count: 1 });
+      else cur.observation_count++;
+    });
+    const inspections = [...inspectionMap.values()].sort((a, b) =>
+      new Date(b.started_at || 0) - new Date(a.started_at || 0)
+    );
+
+    // Counts (computed cheaply from the data we already have)
+    const counts = {
+      violations_lifetime:  violations.length,
+      violations_open:      violations.filter((v) => !['cured','closed','voided'].includes(v.current_stage)).length,
+      violations_ytd:       violations.filter((v) => v.opened_at && v.opened_at >= yearStart).length,
+      violations_certified_lifetime: violations.filter((v) => v.current_stage === 'certified_209' || (v.resolved_via === 'fine')).length,
+      inspections_lifetime: inspections.length,
+      interactions_lifetime: interactions.length,
+    };
+
+    // Build observations_recent with signed URLs for thumbnails (best effort)
+    const observationsRecent = await Promise.all(obsRows.map(async (o) => {
+      const photo = o.inspection_photos;
+      let signedUrl = null;
+      if (photo && photo.storage_path) {
+        try {
+          const { data } = await supabase.storage
+            .from('inspection-photos')
+            .createSignedUrl(photo.storage_path, 60 * 60);
+          signedUrl = data && data.signedUrl;
+        } catch {}
+      }
+      return {
+        id: o.id,
+        severity: o.severity,
+        ai_description: o.ai_description,
+        ai_recommended_action: o.ai_recommended_action,
+        reviewer_status: o.reviewer_status,
+        captured_at: (photo && photo.captured_at) || o.created_at,
+        photo_url: signedUrl,
+      };
+    }));
+
+    res.json({
+      property: {
+        id:              pRow.property_id,
+        community_id:    pRow.community_id,
+        street_address:  pRow.street_address,
+        unit:            pRow.unit,
+        city:            pRow.city,
+        state:           pRow.state,
+        zip:             pRow.zip,
+        lot_number:      pRow.lot_number,
+        property_type:   pRow.property_type,
+        latitude:        pRow.latitude,
+        longitude:       pRow.longitude,
+      },
+      owner: pRow.owner_contact_id ? {
+        contact_id:      pRow.owner_contact_id,
+        full_name:       pRow.owner_name,
+        email:           pRow.owner_email,
+        phone:           pRow.owner_phone,
+        mailing_address: pRow.owner_mailing_address,
+        owned_since:     pRow.owned_since,
+      } : null,
+      residency: residencyRow ? {
+        residency_type: residencyRow.residency_type,
+        resident_name:  residencyRow.resident_name,
+        resident_email: residencyRow.resident_email,
+        resident_phone: residencyRow.resident_phone,
+        lease_end_date: residencyRow.lease_end_date,
+        resident_since: residencyRow.resident_since,
+      } : null,
+      violations: violations.map((v) => ({
+        id:                v.id,
+        opened_at:         v.opened_at,
+        resolved_at:       v.resolved_at,
+        resolved_via:      v.resolved_via,
+        current_stage:     v.current_stage,
+        cure_period_ends_at: v.cure_period_ends_at,
+        board_priority_at_open: v.board_priority_at_open,
+        category_code:     v.enforcement_categories && v.enforcement_categories.code,
+        category_label:    v.enforcement_categories && v.enforcement_categories.label,
+      })),
+      interactions: interactions.map((i) => ({
+        id:              i.id,
+        type:            i.type,
+        direction:       i.direction,
+        subject:         i.subject,
+        occurred_at:     i.occurred_at,
+        delivery_method: i.delivery_method,
+        violation_id:    i.violation_id,
+        preview:         i.content ? String(i.content).slice(0, 240) : null,
+      })),
+      inspections,
+      observations_recent: observationsRecent,
+      counts,
+    });
+  } catch (err) {
+    console.error('[inspections.property-detail]', err);
+    res.status(500).json({ error: err.message || 'failed to load property detail' });
   }
 });
 
