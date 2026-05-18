@@ -7310,6 +7310,27 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </div>
 
+      <!-- List/Map view toggle. Map mode shows community properties as
+           markers so the operator can TAP a property to pre-select it for
+           the next Capture — links photos to that property authoritatively
+           at capture time (no AI guessing needed). -->
+      <div style="display: flex; gap: 6px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;">
+        <button type="button" id="inspViewListBtn" class="ed-mode-btn active" onclick="inspSetView('list')">📋 List</button>
+        <button type="button" id="inspViewMapBtn"  class="ed-mode-btn"        onclick="inspSetView('map')">🗺️ Map</button>
+        <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: auto;">
+          📍 <span id="inspSelectedPropLabel">—</span>
+          <span onclick="inspClearSelectedProperty()" style="margin-left: 6px; cursor: pointer; opacity: 0.7;">✕</span>
+        </div>
+      </div>
+
+      <!-- Map panel (hidden by default; activated by Map toggle).
+           Loads Mapbox GL JS on first activation. If MAPBOX_TOKEN isn't set
+           in Render env, shows a friendly placeholder instead of failing. -->
+      <div id="inspMapPanel" style="display: none; margin-bottom: 14px;">
+        <div id="inspMapStatus" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; padding: 8px 12px; font-size: 11px; color: #64748b; border-bottom: none;">Loading map…</div>
+        <div id="inspMapEl" style="width: 100%; height: 55vh; min-height: 320px; border-radius: 0 0 12px 12px; background: #f1f5f9; border: 1px solid #e2e8f0;"></div>
+      </div>
+
       <!-- Big capture button (mobile-friendly tap target) -->
       <div style="margin-bottom: 14px;">
         <!-- Hidden file input — uses device camera via capture="environment" -->
@@ -7360,7 +7381,212 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     lastHeading: null,   // degrees
     headingWatcher: null,
     gpsWatcher: null,
+    // Map view state — lazy-init on first switch to map view
+    currentView: 'list',           // 'list' | 'map'
+    mapInstance: null,             // Mapbox map object once initialized
+    mapLoaded: false,
+    userMarker: null,              // moving GPS dot
+    propertyMarkers: [],           // [{marker, propertyId, label}]
+    selectedPropertyId: null,      // pre-selected property for next capture
+    selectedPropertyLabel: null,
   };
+
+  // Lazy-load Mapbox GL JS from CDN. Cached promise so subsequent map opens
+  // are instant. Only fires when the user actually switches to map view —
+  // other tabs don't pay the ~250KB JS + 20KB CSS cost.
+  function inspMapEnsureMapbox() {
+    if (window.mapboxgl) return Promise.resolve(window.mapboxgl);
+    if (window._mapboxLoadPromise) return window._mapboxLoadPromise;
+    window._mapboxLoadPromise = new Promise((resolve, reject) => {
+      const css = document.createElement('link');
+      css.rel = 'stylesheet';
+      css.href = 'https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.css';
+      document.head.appendChild(css);
+      const js = document.createElement('script');
+      js.src = 'https://api.mapbox.com/mapbox-gl-js/v3.6.0/mapbox-gl.js';
+      js.onload = () => resolve(window.mapboxgl);
+      js.onerror = () => reject(new Error('Failed to load Mapbox GL JS'));
+      document.head.appendChild(js);
+    });
+    return window._mapboxLoadPromise;
+  }
+
+  function inspSetView(view) {
+    inspState.currentView = view;
+    const listBtn = document.getElementById('inspViewListBtn');
+    const mapBtn = document.getElementById('inspViewMapBtn');
+    const mapPanel = document.getElementById('inspMapPanel');
+    if (listBtn) listBtn.classList.toggle('active', view === 'list');
+    if (mapBtn)  mapBtn.classList.toggle('active',  view === 'map');
+    if (mapPanel) mapPanel.style.display = view === 'map' ? 'block' : 'none';
+    if (view === 'map') {
+      if (!inspState.mapLoaded) {
+        inspMapInit().catch((e) => {
+          const status = document.getElementById('inspMapStatus');
+          if (status) status.textContent = 'Map error: ' + e.message;
+        });
+      } else if (inspState.mapInstance) {
+        // Mapbox needs a resize hint when the container becomes visible
+        setTimeout(() => inspState.mapInstance.resize(), 50);
+      }
+    }
+  }
+
+  async function inspMapInit() {
+    const statusEl = document.getElementById('inspMapStatus');
+    const setStatus = (html) => { if (statusEl) statusEl.innerHTML = html; };
+
+    // 1. Load token + defaults from server
+    let cfg = null;
+    try {
+      const r = await fetch('/api/maps/config');
+      cfg = await r.json();
+    } catch (_) {
+      setStatus('Could not load map config from server.');
+      return;
+    }
+    if (!cfg || !cfg.enabled || !cfg.mapbox_token) {
+      setStatus('⚠️ Map not configured. Set <code>MAPBOX_TOKEN</code> in Render environment to enable.');
+      return;
+    }
+
+    // 2. Lazy-load Mapbox GL JS
+    setStatus('Loading map library…');
+    try {
+      await inspMapEnsureMapbox();
+    } catch (e) {
+      setStatus('Could not load Mapbox: ' + e.message);
+      return;
+    }
+
+    // 3. Fetch properties for the current community (for markers + centering)
+    let propsResp = { properties: [], total_count: 0, geo_count: 0, missing_geo_count: 0 };
+    if (inspState.communityId) {
+      try {
+        const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(inspState.communityId)}`);
+        if (r.ok) propsResp = await r.json();
+      } catch (_) { /* tolerate */ }
+    }
+
+    // 4. Compute center — properties centroid if available, else Sugar Land default
+    let center = [cfg.default_center_lng, cfg.default_center_lat];
+    let zoom = cfg.default_zoom;
+    if (propsResp.properties.length > 0) {
+      const lngs = propsResp.properties.map((p) => Number(p.longitude));
+      const lats = propsResp.properties.map((p) => Number(p.latitude));
+      center = [
+        lngs.reduce((s, v) => s + v, 0) / lngs.length,
+        lats.reduce((s, v) => s + v, 0) / lats.length,
+      ];
+      zoom = 15;
+    }
+
+    // 5. Create the map
+    window.mapboxgl.accessToken = cfg.mapbox_token;
+    inspState.mapInstance = new window.mapboxgl.Map({
+      container: 'inspMapEl',
+      style: 'mapbox://styles/mapbox/streets-v12',
+      center,
+      zoom,
+    });
+    inspState.mapInstance.addControl(new window.mapboxgl.NavigationControl(), 'top-right');
+    // GeolocateControl gives the operator a "center on me" button + a built-in
+    // accuracy halo around the current position
+    inspState.mapInstance.addControl(new window.mapboxgl.GeolocateControl({
+      positionOptions: { enableHighAccuracy: true },
+      trackUserLocation: true,
+      showUserHeading: true,
+    }), 'top-right');
+
+    // 6. Add property markers
+    for (const p of propsResp.properties) {
+      const el = document.createElement('div');
+      el.className = 'insp-prop-marker';
+      el.style.cssText = 'width: 18px; height: 18px; background: #1A3050; border: 2px solid #fff; border-radius: 50%; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.3); transition: all 0.15s;';
+      el.title = p.street_address + (p.unit ? ' #' + p.unit : '');
+      const label = (p.street_address || '') + (p.unit ? ' #' + p.unit : '');
+      el.addEventListener('click', (ev) => {
+        ev.stopPropagation();
+        inspMapHandleMarkerClick(p.property_id, label);
+      });
+      const m = new window.mapboxgl.Marker(el)
+        .setLngLat([Number(p.longitude), Number(p.latitude)])
+        .addTo(inspState.mapInstance);
+      m._propertyId = p.property_id;
+      m._propertyLabel = label;
+      m._el = el;
+      inspState.propertyMarkers.push(m);
+    }
+
+    // 7. Status line — tells operator how complete the map data is
+    if (propsResp.properties.length === 0 && propsResp.missing_geo_count > 0) {
+      setStatus(`⚠️ ${propsResp.missing_geo_count} properties in this community need lat/lng coordinates before they appear on the map. Capture still works in List mode.`);
+    } else if (propsResp.missing_geo_count > 0) {
+      setStatus(`${propsResp.geo_count} of ${propsResp.total_count} properties on map · tap a property to pre-select it for capture · ${propsResp.missing_geo_count} still need geo data`);
+    } else if (propsResp.geo_count > 0) {
+      setStatus(`${propsResp.geo_count} properties on map · tap a property to pre-select it for capture`);
+    } else {
+      setStatus('Map ready · drive the community');
+    }
+
+    inspState.mapLoaded = true;
+
+    // If GPS already locked, drop the user marker now
+    if (inspState.lastGps) inspMapUpdateUserPosition();
+  }
+
+  function inspMapHandleMarkerClick(propertyId, label) {
+    inspState.selectedPropertyId = propertyId;
+    inspState.selectedPropertyLabel = label;
+    const chip = document.getElementById('inspSelectedPropChip');
+    const labelEl = document.getElementById('inspSelectedPropLabel');
+    if (chip) chip.style.display = 'inline-flex';
+    if (labelEl) labelEl.textContent = label;
+    // Visually highlight: selected marker gold + larger, others reset
+    for (const m of inspState.propertyMarkers) {
+      const el = m._el;
+      if (!el) continue;
+      if (m._propertyId === propertyId) {
+        el.style.background = 'var(--gold, #D4AF37)';
+        el.style.width = '24px';
+        el.style.height = '24px';
+        el.style.boxShadow = '0 2px 8px rgba(212,175,55,0.5)';
+      } else {
+        el.style.background = '#1A3050';
+        el.style.width = '18px';
+        el.style.height = '18px';
+        el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
+      }
+    }
+  }
+
+  function inspClearSelectedProperty() {
+    inspState.selectedPropertyId = null;
+    inspState.selectedPropertyLabel = null;
+    const chip = document.getElementById('inspSelectedPropChip');
+    if (chip) chip.style.display = 'none';
+    for (const m of inspState.propertyMarkers) {
+      const el = m._el;
+      if (!el) continue;
+      el.style.background = '#1A3050';
+      el.style.width = '18px';
+      el.style.height = '18px';
+      el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
+    }
+  }
+
+  function inspMapUpdateUserPosition() {
+    if (!inspState.mapInstance || !inspState.lastGps || !window.mapboxgl) return;
+    const lng = inspState.lastGps.lng;
+    const lat = inspState.lastGps.lat;
+    if (!inspState.userMarker) {
+      const el = document.createElement('div');
+      el.style.cssText = 'width: 16px; height: 16px; background: #D4AF37; border: 3px solid #fff; border-radius: 50%; box-shadow: 0 0 0 5px rgba(212,175,55,0.25), 0 2px 6px rgba(0,0,0,0.3); pointer-events: none;';
+      inspState.userMarker = new window.mapboxgl.Marker(el).setLngLat([lng, lat]).addTo(inspState.mapInstance);
+    } else {
+      inspState.userMarker.setLngLat([lng, lat]);
+    }
+  }
 
   function inspSetMode(mode) {
     inspState.mode = mode;
@@ -7472,6 +7698,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       el.textContent = `GPS locked ${acc}${heading}`;
       el.style.color = '#16a34a';
     }
+    // Keep the map's user-position marker in sync if the map is loaded
+    if (inspState.mapLoaded) {
+      try { inspMapUpdateUserPosition(); } catch (_) { /* tolerate */ }
+    }
   }
 
   function inspTriggerCapture() {
@@ -7503,6 +7733,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (inspState.lastHeading != null) {
       fd.append('compass_heading_deg', inspState.lastHeading);
     }
+    // If a property was pre-selected via the map tap-to-select flow, send
+    // it as authoritative — bypasses the polygon-match guessing on the
+    // server. Map-tap is treated as reviewer confirmation at capture time.
+    if (inspState.selectedPropertyId) {
+      fd.append('property_id', inspState.selectedPropertyId);
+    }
 
     // Show a pending tile immediately for UX feedback
     const pendingId = 'pending-' + Date.now();
@@ -7522,6 +7758,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const idx = inspState.photos.findIndex((p) => p.id === pendingId);
       if (idx >= 0) inspState.photos[idx] = j.photo;
       inspRenderPhotos();
+      // If this capture was attributed to a map-selected property, clear the
+      // selection so the next capture doesn't accidentally re-attribute to
+      // the same house. Operator taps a new property for the next photo.
+      if (inspState.selectedPropertyId) inspClearSelectedProperty();
     } catch (e) {
       // Mark the tile as failed
       const idx = inspState.photos.findIndex((p) => p.id === pendingId);

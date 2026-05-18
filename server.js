@@ -6395,6 +6395,28 @@ app.get('/api/auth/config', (req, res) => {
 });
 
 // ============================================================================
+// /api/maps/config — Mapbox public token for the inspection map view.
+// Reads MAPBOX_TOKEN from env (a public pk.* token). Server-side surface
+// means the token lives in env, not in committed code; rotating the token
+// is an env-var change with no redeploy needed. If MAPBOX_TOKEN isn't set
+// the map view shows a friendly "map not configured" state instead of
+// failing silently.
+// ============================================================================
+app.get('/api/maps/config', (req, res) => {
+  const token = process.env.MAPBOX_TOKEN || '';
+  res.json({
+    enabled: !!token,
+    mapbox_token: token,
+    // Default map center for Bedrock's service area — Sugar Land, TX. Used
+    // when no community is selected yet so the map opens to something
+    // useful instead of staring at the Atlantic.
+    default_center_lng: -95.6347,
+    default_center_lat: 29.5994,
+    default_zoom: 11,
+  });
+});
+
+// ============================================================================
 // /api/me — current user profile (role + identity) for the signed-in user.
 // Accepts the Supabase JWT in Authorization: Bearer <token>; if missing or
 // invalid, returns 401. Read-only — UI uses this for the "Signed in as X"

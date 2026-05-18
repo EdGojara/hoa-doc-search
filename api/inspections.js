@@ -157,30 +157,37 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
     const headingDeg = req.body.compass_heading_deg != null && req.body.compass_heading_deg !== ''
       ? Number(req.body.compass_heading_deg) : null;
 
-    // Try polygon match if both GPS coords are present and the community has
-    // properties with boundary polygons. Uses PostGIS ST_Contains via the
-    // capture_geo POINT. If no polygon match, polygon_match_property_id stays
-    // NULL — gets resolved in reviewer queue.
+    // User-selected property from the map tap-to-select flow. If present,
+    // treat it as authoritative — operator confirmed the property by tapping
+    // it on the map before capture. Skip the polygon-match guessing and
+    // pre-fill reviewer_confirmed_property_id at capture time.
+    const userSelectedPropertyId = req.body.property_id && String(req.body.property_id).trim() ? String(req.body.property_id).trim() : null;
+
+    // Try polygon match if (a) no map-tap selection, AND (b) both GPS coords
+    // are present, AND (c) the community has properties with boundary
+    // polygons. Uses PostGIS ST_Contains via the capture_geo POINT. If no
+    // polygon match, polygon_match_property_id stays NULL — gets resolved in
+    // reviewer queue.
     let polygonMatchPropertyId = null;
     let captureGeoSql = null;
     if (gpsLat != null && gpsLng != null) {
       captureGeoSql = `SRID=4326;POINT(${gpsLng} ${gpsLat})`;
-      try {
-        // ST_Contains takes (polygon, point) — finds the parcel polygon that
-        // contains this GPS point, scoped to the inspection's community.
-        const { data: matches, error: matchErr } = await supabase.rpc('match_property_by_point', {
-          p_community_id: insp.community_id,
-          p_lng: gpsLng,
-          p_lat: gpsLat,
-        });
-        // The RPC doesn't exist yet — falls through silently. Once we add the
-        // RPC (or run a direct query), this lights up. For now polygon match
-        // just stays NULL until reviewer-queue confirmation.
-        if (!matchErr && matches && matches.length > 0) {
-          polygonMatchPropertyId = matches[0].property_id;
+      if (!userSelectedPropertyId) {
+        try {
+          const { data: matches, error: matchErr } = await supabase.rpc('match_property_by_point', {
+            p_community_id: insp.community_id,
+            p_lng: gpsLng,
+            p_lat: gpsLat,
+          });
+          // The RPC doesn't exist yet — falls through silently. Once we add
+          // the RPC (or run a direct query), this lights up. For now polygon
+          // match just stays NULL until reviewer-queue confirmation.
+          if (!matchErr && matches && matches.length > 0) {
+            polygonMatchPropertyId = matches[0].property_id;
+          }
+        } catch (_) {
+          // RPC missing or boundary data not loaded — fine, leave NULL.
         }
-      } catch (_) {
-        // RPC missing or boundary data not loaded — fine, leave NULL.
       }
     }
 
@@ -193,7 +200,10 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
       gps_lng: gpsLng,
       gps_accuracy_m: gpsAccuracy,
       compass_heading_deg: headingDeg,
-      polygon_match_property_id: polygonMatchPropertyId,
+      polygon_match_property_id: userSelectedPropertyId || polygonMatchPropertyId,
+      reviewer_confirmed_property_id: userSelectedPropertyId,
+      // If user-selected, also mark the photo as reviewer-confirmed now
+      reviewed_at: userSelectedPropertyId ? new Date().toISOString() : null,
       notes: req.body.notes || null,
     };
 
@@ -236,6 +246,62 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 // ---------------------------------------------------------------------------
 // GET /api/inspections/recent — list recent inspections (optional ?community_id=&limit=)
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// GET /api/inspections/properties — list properties for a community with the
+// fields the map view needs (lat/lng, address, current owner). Used to draw
+// property markers + power the tap-to-select-property capture flow.
+//
+// Query params:
+//   community_id (required)
+//   include_no_geo=1     include properties without lat/lng (default: exclude)
+//
+// Properties without lat/lng are excluded by default because they can't be
+// rendered on the map. The Inspect tab UI surfaces a count of un-geo'd
+// properties separately so we know how much backfill work remains per
+// community.
+// ---------------------------------------------------------------------------
+router.get('/inspections/properties', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id is required' });
+
+    let q = supabase
+      .from('v_current_property_owners')
+      .select('property_id, street_address, unit, latitude, longitude, owner_name, owner_contact_id')
+      .eq('community_id', communityId)
+      .order('street_address', { ascending: true });
+    if (req.query.include_no_geo !== '1') {
+      q = q.not('latitude', 'is', null).not('longitude', 'is', null);
+    }
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Also surface how many properties in this community are missing geo
+    // data, so the UI can show "X properties have no map position yet"
+    // without a second query.
+    const { count: totalCount } = await supabase
+      .from('properties')
+      .select('id', { count: 'exact', head: true })
+      .eq('community_id', communityId);
+    const { count: geoCount } = await supabase
+      .from('properties')
+      .select('id', { count: 'exact', head: true })
+      .eq('community_id', communityId)
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null);
+
+    res.json({
+      properties: data || [],
+      total_count: totalCount || 0,
+      geo_count: geoCount || 0,
+      missing_geo_count: Math.max(0, (totalCount || 0) - (geoCount || 0)),
+    });
+  } catch (err) {
+    console.error('[inspections.properties]', err);
+    res.status(500).json({ error: err.message || 'failed to list properties' });
+  }
+});
+
 router.get('/inspections/recent', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
