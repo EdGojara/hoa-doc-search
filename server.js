@@ -571,6 +571,13 @@ app.use('/api/billing', billingRouter);
 const { router: contactsRouter } = require('./api/contacts');
 app.use('/api', contactsRouter);
 
+// Inspections — drive/walk-through capture flow. Backs the DRV + memory-
+// layer foundation (migration 050). v1 endpoints handle session create,
+// photo upload with GPS/heading metadata, recent + detail. AI analysis and
+// reviewer queue ship in follow-on builds.
+const { router: inspectionsRouter } = require('./api/inspections');
+app.use('/api', inspectionsRouter);
+
 // Bedrock Office > HOA Financial Review module
 // Endpoints under /api/financial-review/*. See api/financial_review.js and
 // migrations/008_financial_review.sql for the schema.

@@ -370,6 +370,8 @@
   <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
        tabs. Both are now modes inside the consolidated 🏗️ ACC tab above.
        Order: Review → Requests → History (act, see queue, reference). -->
+  <!-- Inspect — mobile-first capture flow for community walkthroughs. -->
+  <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
   <!-- Training — how-to modules for using trustEd. -->
   <div class="tab" onclick="switchTab('training')">🎓 Training</div>
 </div>
@@ -7244,6 +7246,377 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     .qr-url { font-family: 'SF Mono', Consolas, monospace; font-size:11px; color:#1a3a5c; margin-top:8px; word-break: break-all; }
   </style>
 </div>
+
+<!-- =============================================================================
+     🚗 Inspect tab — mobile-first capture flow for community walkthroughs.
+     V1: start a session, capture photos with GPS + heading, end session.
+     Reviewer queue + AI analysis + letter generation ship in later builds.
+     ============================================================================= -->
+<div class="tab-content" id="tab-inspect" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+  <div style="max-width: 720px; margin: 0 auto;">
+
+    <!-- Header -->
+    <div style="margin-bottom: 18px;">
+      <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 4px; letter-spacing: -0.01em;">
+        Community <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Inspection</em>
+      </h2>
+      <p style="font-size: 13px; color: #64748b; margin: 0;">Walk or drive a community, photograph properties and common areas. GPS + compass heading capture automatically.</p>
+    </div>
+
+    <!-- Start-session card (visible when no active session) -->
+    <div id="inspectStartCard" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
+      <h3 style="font-size: 15px; color: var(--navy, #1A3050); margin: 0 0 12px;">Start a new inspection</h3>
+
+      <div style="margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Community</label>
+        <select id="inspCommunity" style="width: 100%; padding: 10px 12px; border: 1px solid #d0d7de; border-radius: 8px; font-size: 14px; background: #fff;">
+          <option value="">— pick a community —</option>
+        </select>
+      </div>
+
+      <div style="margin-bottom: 10px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Mode</label>
+        <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+          <button type="button" class="ed-mode-btn active" data-mode="foot"  onclick="inspSetMode('foot')">🚶 On foot</button>
+          <button type="button" class="ed-mode-btn"        data-mode="drive_by" onclick="inspSetMode('drive_by')">🚗 Drive-by</button>
+          <button type="button" class="ed-mode-btn"        data-mode="spot_check" onclick="inspSetMode('spot_check')">📍 Spot check</button>
+        </div>
+      </div>
+
+      <div style="margin-bottom: 14px;">
+        <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Route label (optional)</label>
+        <input type="text" id="inspRouteLabel" placeholder="e.g. 'Full community', 'Phase 2 streets', 'Complaint follow-up'"
+               style="width: 100%; padding: 10px 12px; border: 1px solid #d0d7de; border-radius: 8px; font-size: 14px;">
+      </div>
+
+      <button class="action-btn" id="inspStartBtn" onclick="inspStart()" style="width: 100%;">Start inspection</button>
+      <div id="inspStartError" style="display:none; color:#b91c1c; font-size: 13px; margin-top: 8px;"></div>
+    </div>
+
+    <!-- Active-session panel (visible when session is in progress) -->
+    <div id="inspActivePanel" style="display: none;">
+
+      <!-- Session header with stats -->
+      <div style="background: var(--navy, #1A3050); color: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+          <div>
+            <div id="inspSessionCommunity" style="font-family: var(--font-serif, Georgia); font-size: 17px; font-weight: 500;">—</div>
+            <div id="inspSessionMeta" style="font-size: 12px; color: var(--gold, #D4AF37); margin-top: 3px; font-family: var(--font-mono, monospace); letter-spacing: 0.08em; text-transform: uppercase;">—</div>
+          </div>
+          <div style="text-align: right;">
+            <div id="inspPhotoCount" style="font-size: 28px; font-weight: 700; line-height: 1;">0</div>
+            <div style="font-size: 10px; color: rgba(255,255,255,0.7); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px;">photos</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Big capture button (mobile-friendly tap target) -->
+      <div style="margin-bottom: 14px;">
+        <!-- Hidden file input — uses device camera via capture="environment" -->
+        <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="display: none;" onchange="inspOnPhotoSelected(this)">
+        <button id="inspCaptureBtn" onclick="inspTriggerCapture()"
+                style="width: 100%; padding: 22px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px;">
+          <span style="font-size: 26px;">📸</span>
+          <span>Capture photo</span>
+        </button>
+        <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; margin-top: 6px; text-align: center;">Tap once to enable GPS + compass for accurate tagging</div>
+      </div>
+
+      <!-- Recently captured photos in this session -->
+      <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+          <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">Captured this session</h3>
+          <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #1a3a5c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
+        </div>
+        <div id="inspPhotoList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px;">
+          <div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No photos yet — tap Capture above to start.</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recent sessions (visible always, below the active workflow) -->
+    <div style="margin-top: 20px;">
+      <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0 0 10px;">Recent inspections</h3>
+      <div id="inspRecentList" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px;">
+        <div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px 0;">Loading…</div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+  // ============================================================
+  // Inspect tab — capture session state + GPS/heading + uploads
+  // ============================================================
+  let inspState = {
+    sessionId: null,
+    mode: 'foot',
+    communityId: null,
+    communityName: null,
+    photoCount: 0,
+    photos: [],          // {id, signed_url, captured_at, gps_lat, gps_lng}
+    lastGps: null,       // {lat, lng, accuracy}
+    lastHeading: null,   // degrees
+    headingWatcher: null,
+    gpsWatcher: null,
+  };
+
+  function inspSetMode(mode) {
+    inspState.mode = mode;
+    document.querySelectorAll('#tab-inspect .ed-mode-btn').forEach((btn) => {
+      btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
+    });
+  }
+
+  // Populate the community dropdown when the Inspect tab opens
+  async function inspLoadCommunities() {
+    const sel = document.getElementById('inspCommunity');
+    if (sel && sel.options.length > 1) return; // already loaded
+    try {
+      const r = await fetch('/api/communities');
+      if (!r.ok) return;
+      const j = await r.json();
+      const list = (j.communities || j || []).filter(Boolean);
+      for (const c of list) {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+      }
+    } catch (_) { /* leave default */ }
+  }
+
+  async function inspStart() {
+    const sel = document.getElementById('inspCommunity');
+    const err = document.getElementById('inspStartError');
+    err.style.display = 'none';
+    if (!sel.value) { err.textContent = 'Pick a community first.'; err.style.display = 'block'; return; }
+    const routeLabel = document.getElementById('inspRouteLabel').value.trim();
+    try {
+      const r = await fetch('/api/inspections', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          community_id: sel.value,
+          mode: inspState.mode,
+          route_label: routeLabel || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'failed to start');
+      inspState.sessionId = j.inspection.id;
+      inspState.communityId = sel.value;
+      inspState.communityName = sel.options[sel.selectedIndex].textContent;
+      inspState.photoCount = 0;
+      inspState.photos = [];
+      document.getElementById('inspStartCard').style.display = 'none';
+      document.getElementById('inspActivePanel').style.display = 'block';
+      document.getElementById('inspSessionCommunity').textContent = inspState.communityName;
+      const modeLabel = { foot: 'On foot', drive_by: 'Drive-by', spot_check: 'Spot check' }[inspState.mode] || inspState.mode;
+      document.getElementById('inspSessionMeta').textContent = `${modeLabel}${routeLabel ? ' · ' + routeLabel : ''}`;
+      inspRenderPhotos();
+      inspStartLocationWatch();
+    } catch (e) {
+      err.textContent = e.message;
+      err.style.display = 'block';
+    }
+  }
+
+  function inspStartLocationWatch() {
+    // GPS — continuous watch so each capture has fresh coords
+    if (navigator.geolocation && !inspState.gpsWatcher) {
+      inspState.gpsWatcher = navigator.geolocation.watchPosition(
+        (pos) => {
+          inspState.lastGps = {
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+            accuracy: pos.coords.accuracy,
+          };
+          inspUpdateGpsStatus();
+        },
+        (err) => {
+          document.getElementById('inspGpsStatus').textContent = 'GPS unavailable — photos will be captured without coordinates';
+        },
+        { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
+      );
+    }
+
+    // Compass heading — iOS requires explicit permission (DeviceOrientationEvent.requestPermission)
+    function attachOrientationListener() {
+      window.addEventListener('deviceorientationabsolute', (e) => {
+        if (e.alpha != null) inspState.lastHeading = e.alpha;
+      });
+      window.addEventListener('deviceorientation', (e) => {
+        // webkitCompassHeading on iOS Safari; e.alpha on other browsers (degrees from north)
+        const h = (e.webkitCompassHeading != null) ? e.webkitCompassHeading : e.alpha;
+        if (h != null) inspState.lastHeading = h;
+      });
+    }
+    if (typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      // iOS 13+ — needs a user gesture; defer the request to the next tap
+      inspState._needsOrientationPermission = true;
+    } else {
+      attachOrientationListener();
+    }
+    inspState._attachOrientationListener = attachOrientationListener;
+  }
+
+  function inspUpdateGpsStatus() {
+    const el = document.getElementById('inspGpsStatus');
+    if (!el) return;
+    if (inspState.lastGps) {
+      const acc = inspState.lastGps.accuracy ? `±${Math.round(inspState.lastGps.accuracy)}m` : '';
+      const heading = inspState.lastHeading != null ? ` · heading ${Math.round(inspState.lastHeading)}°` : '';
+      el.textContent = `GPS locked ${acc}${heading}`;
+      el.style.color = '#16a34a';
+    }
+  }
+
+  function inspTriggerCapture() {
+    // First tap on iOS also triggers the orientation permission request
+    if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then((perm) => {
+        if (perm === 'granted' && inspState._attachOrientationListener) inspState._attachOrientationListener();
+        inspState._needsOrientationPermission = false;
+      }).catch(() => { inspState._needsOrientationPermission = false; });
+    }
+    document.getElementById('inspPhotoInput').click();
+  }
+
+  async function inspOnPhotoSelected(input) {
+    if (!input.files || !input.files[0] || !inspState.sessionId) return;
+    const file = input.files[0];
+    input.value = ''; // allow re-selecting same file
+
+    // Capture metadata at the moment of upload, not at file pick
+    const fd = new FormData();
+    fd.append('photo', file);
+    fd.append('captured_at', new Date().toISOString());
+    if (inspState.lastGps) {
+      fd.append('gps_lat', inspState.lastGps.lat);
+      fd.append('gps_lng', inspState.lastGps.lng);
+      if (inspState.lastGps.accuracy != null) fd.append('gps_accuracy_m', inspState.lastGps.accuracy);
+    }
+    if (inspState.lastHeading != null) {
+      fd.append('compass_heading_deg', inspState.lastHeading);
+    }
+
+    // Show a pending tile immediately for UX feedback
+    const pendingId = 'pending-' + Date.now();
+    inspState.photos.unshift({ id: pendingId, pending: true, captured_at: new Date().toISOString() });
+    inspState.photoCount += 1;
+    document.getElementById('inspPhotoCount').textContent = inspState.photoCount;
+    inspRenderPhotos();
+
+    try {
+      const r = await fetch(`/api/inspections/${inspState.sessionId}/photos`, {
+        method: 'POST',
+        body: fd,
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'upload failed');
+      // Replace the pending tile with the real photo
+      const idx = inspState.photos.findIndex((p) => p.id === pendingId);
+      if (idx >= 0) inspState.photos[idx] = j.photo;
+      inspRenderPhotos();
+    } catch (e) {
+      // Mark the tile as failed
+      const idx = inspState.photos.findIndex((p) => p.id === pendingId);
+      if (idx >= 0) inspState.photos[idx] = { ...inspState.photos[idx], pending: false, failed: true, error: e.message };
+      inspState.photoCount -= 1;
+      document.getElementById('inspPhotoCount').textContent = inspState.photoCount;
+      inspRenderPhotos();
+    }
+  }
+
+  function inspRenderPhotos() {
+    const list = document.getElementById('inspPhotoList');
+    if (inspState.photos.length === 0) {
+      list.innerHTML = '<div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No photos yet — tap Capture above to start.</div>';
+      return;
+    }
+    list.innerHTML = inspState.photos.map((p) => {
+      if (p.pending) {
+        return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 11px;">Uploading…</div>`;
+      }
+      if (p.failed) {
+        return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #fee2e2; display: flex; align-items: center; justify-content: center; color: #991b1b; font-size: 11px; padding: 6px; text-align: center;">Failed</div>`;
+      }
+      const time = p.captured_at ? new Date(p.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
+      // Server returns the row but no signed URL on upload — fine, we'll just show a tile
+      return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #1a3a5c; display: flex; align-items: end; justify-content: center; color: #fff; font-size: 11px; padding: 6px;">${time || '✓'}</div>`;
+    }).join('');
+  }
+
+  async function inspEndSession() {
+    if (!inspState.sessionId) return;
+    if (!confirm('End this inspection? You can review captured photos later in Recent inspections.')) return;
+    try {
+      await fetch(`/api/inspections/${inspState.sessionId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'captured', ended_at: new Date().toISOString() }),
+      });
+    } catch (_) { /* still reset locally */ }
+    if (inspState.gpsWatcher) {
+      try { navigator.geolocation.clearWatch(inspState.gpsWatcher); } catch (_) {}
+      inspState.gpsWatcher = null;
+    }
+    inspState.sessionId = null;
+    inspState.photoCount = 0;
+    inspState.photos = [];
+    document.getElementById('inspActivePanel').style.display = 'none';
+    document.getElementById('inspStartCard').style.display = 'block';
+    document.getElementById('inspPhotoCount').textContent = '0';
+    inspLoadRecent();
+  }
+
+  async function inspLoadRecent() {
+    const wrap = document.getElementById('inspRecentList');
+    try {
+      const r = await fetch('/api/inspections/recent?limit=10');
+      const j = await r.json();
+      if (!j.inspections || j.inspections.length === 0) {
+        wrap.innerHTML = '<div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px 0;">No inspections yet.</div>';
+        return;
+      }
+      wrap.innerHTML = j.inspections.map((i) => {
+        const date = i.started_at ? new Date(i.started_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+        const community = i.communities?.name || '—';
+        const modeLabel = { foot: '🚶', drive_by: '🚗', mounted_camera: '📷', spot_check: '📍' }[i.mode] || '?';
+        return `
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 6px; border-bottom: 1px solid #f1f5f9;">
+            <div>
+              <div style="font-size: 13px; color: #1a3a5c; font-weight: 600;">${modeLabel} ${escapeHtml(community)}</div>
+              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${date} · ${i.total_photos || 0} photo${i.total_photos === 1 ? '' : 's'} · ${i.status}</div>
+            </div>
+          </div>
+        `;
+      }).join('');
+    } catch (e) {
+      wrap.innerHTML = `<div style="color: #b91c1c; font-size: 12px; padding: 12px;">Couldn't load recent inspections.</div>`;
+    }
+  }
+
+  // Auto-load when the Inspect tab is opened
+  (function () {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return;
+    const patched = function (tab) {
+      const result = orig.apply(this, arguments);
+      if (tab === 'inspect') {
+        inspLoadCommunities();
+        inspLoadRecent();
+      }
+      return result;
+    };
+    window.switchTab = patched;
+  })();
+</script>
+
 
 <!-- =============================================================================
      🎓 Training tab — how-to modules for using trustEd.
