@@ -1800,7 +1800,7 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
     // race of the higher-level .stream() + .on('text') API.
     const streamResp = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: quickMode ? 400 : (coachMode ? 2000 : 1500),
+      max_tokens: quickMode ? 400 : (coachMode ? 3000 : 4000),
       system: systemPrompt,
       messages: [{ role: 'user', content: userContent }],
       stream: true
@@ -1992,7 +1992,7 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
         })
       }],
       system: systemForCall,
-      max_tokens: quickMode ? 400 : (coachMode ? 2000 : 1500),
+      max_tokens: quickMode ? 400 : (coachMode ? 3000 : 4000),
     });
 
     res.json({ guidance });
