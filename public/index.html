@@ -7587,17 +7587,97 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const date = i.started_at ? new Date(i.started_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
         const community = i.communities?.name || '—';
         const modeLabel = { foot: '🚶', drive_by: '🚗', mounted_camera: '📷', spot_check: '📍' }[i.mode] || '?';
+        const photoStr = `${i.total_photos || 0} photo${i.total_photos === 1 ? '' : 's'}`;
+        const statusLabel = ({
+          in_progress: 'In progress',
+          captured: 'Captured',
+          ai_analyzed: 'Analyzed',
+          reviewed: 'Reviewed',
+          closed: '🔒 Finalized',
+        })[i.status] || i.status;
+        // Show actions only when the inspection isn't already in a terminal
+        // state (closed or voided). Closed inspections are permanent record;
+        // voided ones are hidden by the API filter anyway.
+        const isTerminal = (i.status === 'closed' || i.status === 'voided');
+        const actions = isTerminal ? '' : `
+          <div style="display: flex; gap: 6px; flex-shrink: 0;">
+            <button type="button" onclick="inspFinalize('${i.id}')"
+                    style="background: var(--navy, #1A3050); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                    title="Mark this inspection as the permanent record (status: closed). It will stay visible here as 🔒 Finalized and cannot be edited.">
+              🔒 Finalize
+            </button>
+            <button type="button" onclick="inspDiscard('${i.id}')"
+                    style="background: #fff; color: #991b1b; border: 1px solid #fecaca; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                    title="Discard this inspection (status: voided). The row will disappear from this list. The underlying record stays in the database for audit purposes.">
+              🗑️ Discard
+            </button>
+          </div>
+        `;
         return `
-          <div style="display: flex; align-items: center; justify-content: space-between; padding: 8px 6px; border-bottom: 1px solid #f1f5f9;">
-            <div>
+          <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid #f1f5f9; gap: 12px; flex-wrap: wrap;">
+            <div style="flex: 1; min-width: 180px;">
               <div style="font-size: 13px; color: #1a3a5c; font-weight: 600;">${modeLabel} ${escapeHtml(community)}</div>
-              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${date} · ${i.total_photos || 0} photo${i.total_photos === 1 ? '' : 's'} · ${i.status}</div>
+              <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${date} · ${photoStr} · ${statusLabel}</div>
             </div>
+            ${actions}
           </div>
         `;
       }).join('');
     } catch (e) {
       wrap.innerHTML = `<div style="color: #b91c1c; font-size: 12px; padding: 12px;">Couldn't load recent inspections.</div>`;
+    }
+  }
+
+  // Discard an inspection — patches status to 'voided' so it disappears from
+  // the recent list. Record stays in DB for audit. Hard confirmation because
+  // the test inspections from today are mixed with real ones we may want.
+  async function inspDiscard(id) {
+    if (!confirm(
+      'Discard this inspection?\n\n' +
+      'The row will disappear from the Recent inspections list. The underlying ' +
+      'database record stays for audit purposes — nothing is permanently deleted, ' +
+      'just hidden from this view.\n\n' +
+      'Click OK to discard, Cancel to keep it.'
+    )) return;
+    try {
+      const r = await fetch(`/api/inspections/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'voided' }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `discard failed (${r.status})`);
+      }
+      inspLoadRecent();
+    } catch (e) {
+      alert('Could not discard: ' + e.message);
+    }
+  }
+
+  // Finalize an inspection — patches status to 'closed' meaning it's the
+  // permanent record for this community walkthrough. Stays visible in the
+  // recent list but marked 🔒 Finalized and no longer offers Discard/Finalize.
+  async function inspFinalize(id) {
+    if (!confirm(
+      'Finalize this inspection?\n\n' +
+      'It will be marked as the permanent record for this community walkthrough. ' +
+      'After finalizing, it cannot be edited — only viewed.\n\n' +
+      'Click OK to finalize, Cancel to keep it open.'
+    )) return;
+    try {
+      const r = await fetch(`/api/inspections/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'closed', ended_at: new Date().toISOString() }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `finalize failed (${r.status})`);
+      }
+      inspLoadRecent();
+    } catch (e) {
+      alert('Could not finalize: ' + e.message);
     }
   }
 

@@ -245,6 +245,9 @@ router.get('/inspections/recent', async (req, res) => {
       .order('started_at', { ascending: false })
       .limit(limit);
     if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    // Hide voided rows by default — they're audit records, not user-facing
+    // entries. Pass ?include_voided=1 to see them.
+    if (req.query.include_voided !== '1') q = q.neq('status', 'voided');
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
     res.json({ inspections: data || [] });
