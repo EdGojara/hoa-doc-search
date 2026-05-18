@@ -42,9 +42,9 @@ router.post('/contacts/vantaca/upload', upload.single('file'), async (req, res) 
     const communityId = req.body.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id is required.' });
 
-    const { rows, mapping, errors } = parseVantacaExport(req.file.buffer, req.file.originalname);
+    const { rows, mapping, headers, errors } = parseVantacaExport(req.file.buffer, req.file.originalname);
     if (errors && errors.length > 0 && rows.length === 0) {
-      return res.status(400).json({ error: errors.join(' ') });
+      return res.status(400).json({ error: errors.join(' '), headers });
     }
 
     const diff = await computeDiff(supabase, communityId, rows);
@@ -56,7 +56,32 @@ router.post('/contacts/vantaca/upload', upload.single('file'), async (req, res) 
       new_residencies:         diff.new_residencies.length,
       email_additions:         diff.email_additions.length,
       phone_additions:         diff.phone_additions.length,
+      duplicate_rows:          (diff.duplicate_rows || []).length,
     };
+
+    // Existing-property count for sanity-check banner ("upload has 134 rows,
+    // community has 101 properties on file — is the export complete or are
+    // there duplicates?").
+    const { count: existingPropCount } = await supabase
+      .from('properties')
+      .select('id', { count: 'exact', head: true })
+      .eq('community_id', communityId);
+
+    // Sample rows for the diagnostic preview — staff verifies that the columns
+    // we auto-detected actually contain what we think they do (e.g., catches
+    // "owner_name" mapped to a numeric account-ID column).
+    const sampleRows = (rows || []).slice(0, 3).map((row) => ({
+      source_row:     row._source_row,
+      account_id:     row.account_id,
+      street_address: row.street_address,
+      unit:           row.unit,
+      city:           row.city,
+      zip:            row.zip,
+      owner_name:     row.owner_name,
+      owner_email:    row.owner_email,
+      resident_name:  row.resident_name,
+      residency_type: row.residency_type,
+    }));
 
     const { data: logRow, error: logErr } = await supabase
       .from('vantaca_sync_log')
@@ -78,7 +103,10 @@ router.post('/contacts/vantaca/upload', upload.single('file'), async (req, res) 
       sync_log_id: logRow.id,
       file_name: req.file.originalname,
       total_rows: rows.length,
+      existing_property_count: existingPropCount || 0,
+      file_headers: headers || [],
       column_mapping: mapping,
+      sample_rows: sampleRows,
       diff,
       summary,
       parser_warnings: errors || [],

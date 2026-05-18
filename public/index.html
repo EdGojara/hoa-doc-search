@@ -1657,7 +1657,16 @@
       <select id="homesUploadCommunity" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-bottom:8px;">
         <option value="">— Pick community —</option>
       </select>
-      <input type="file" id="homesUploadFile" accept=".csv,.xlsx,.xls" style="font-size:12px; margin-bottom:8px;">
+      <div id="homesUploadDropZone"
+           style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; background:#f7f9fc; margin-bottom:8px; cursor:pointer; transition:all 0.15s;"
+           onclick="document.getElementById('homesUploadFile').click()">
+        <div style="font-size:20px; color:#5a7390;">📥</div>
+        <div id="homesUploadDropLabel" style="font-size:12px; font-weight:600; color:#1a3a5c; margin-top:4px;">
+          Drag &amp; drop CSV / Excel here
+        </div>
+        <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file</div>
+      </div>
+      <input type="file" id="homesUploadFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="homesUpdateDropLabel()">
       <button class="action-btn" id="homesUploadBtn" onclick="homesUploadVantaca()" style="width:100%; font-size:13px; padding:8px;">🔍 Preview diff</button>
       <div id="homesUploadStatus" style="font-size:12px; margin-top:6px;"></div>
     </div>
@@ -3503,6 +3512,44 @@
     }
   }
 
+  // Reflect chosen file in the drop zone label
+  function homesUpdateDropLabel() {
+    const fileInput = document.getElementById('homesUploadFile');
+    const label = document.getElementById('homesUploadDropLabel');
+    if (!fileInput || !label) return;
+    const f = fileInput.files && fileInput.files[0];
+    label.innerHTML = f
+      ? `✓ <span style="color:#15803d;">${escapeHtml(f.name)}</span> <span style="color:#94A3B8;">(${(f.size/1024).toFixed(0)} KB)</span>`
+      : 'Drag &amp; drop CSV / Excel here';
+  }
+
+  // Wire up drag-and-drop on the upload card
+  document.addEventListener('DOMContentLoaded', () => {
+    const dz = document.getElementById('homesUploadDropZone');
+    if (!dz) return;
+    ['dragenter','dragover'].forEach((ev) => {
+      dz.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dz.style.background = '#eef6fb';
+        dz.style.borderColor = '#1a3a5c';
+      });
+    });
+    ['dragleave','drop'].forEach((ev) => {
+      dz.addEventListener(ev, (e) => {
+        e.preventDefault(); e.stopPropagation();
+        dz.style.background = '#f7f9fc';
+        dz.style.borderColor = '#c0d0e0';
+      });
+    });
+    dz.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || files.length === 0) return;
+      const fileInput = document.getElementById('homesUploadFile');
+      fileInput.files = files;
+      homesUpdateDropLabel();
+    });
+  });
+
   async function homesUploadVantaca() {
     const communityId = document.getElementById('homesUploadCommunity').value;
     const file = document.getElementById('homesUploadFile').files[0];
@@ -3535,26 +3582,101 @@
     const detBox = document.getElementById('homesDiffDetail');
     const fnameBox = document.getElementById('homesDiffFilename');
     if (!homesActiveDiff) { panel.style.display = 'none'; return; }
-    const { summary, diff, file_name } = homesActiveDiff;
+    const {
+      summary, diff, file_name, total_rows,
+      existing_property_count, column_mapping, sample_rows, file_headers,
+    } = homesActiveDiff;
     fnameBox.textContent = `· ${file_name || '(upload)'}`;
+
+    // ===== Diagnostic banner — what did we detect? =====
+    // Surfaces (a) row count vs existing properties, (b) column auto-mapping,
+    // (c) sample rows so staff can spot wrong-column mappings BEFORE applying.
+    const mappingEntries = Object.entries(column_mapping || {});
+    const mappingHtml = mappingEntries.length === 0
+      ? '<span style="color:#94A3B8;">No columns auto-detected.</span>'
+      : mappingEntries.map(([field, m]) => `
+          <div style="display:flex; gap:8px; padding:2px 0; font-size:12px;">
+            <span style="font-weight:600; color:#1E2761; min-width:130px;">${escapeHtml(field)}</span>
+            <span style="color:#94A3B8;">←</span>
+            <span style="color:#334155;">${escapeHtml(m.header || '')}</span>
+          </div>`).join('');
+    const samplesHtml = (sample_rows && sample_rows.length)
+      ? `<table style="width:100%; border-collapse:collapse; font-size:11.5px; margin-top:8px;">
+           <thead><tr style="background:#f1f5f9; color:#475569;">
+             <th style="text-align:left; padding:4px 6px;">Row</th>
+             <th style="text-align:left; padding:4px 6px;">Account</th>
+             <th style="text-align:left; padding:4px 6px;">Street</th>
+             <th style="text-align:left; padding:4px 6px;">Owner name</th>
+             <th style="text-align:left; padding:4px 6px;">Owner email</th>
+             <th style="text-align:left; padding:4px 6px;">Resident</th>
+             <th style="text-align:left; padding:4px 6px;">Type</th>
+           </tr></thead>
+           <tbody>
+             ${sample_rows.map((r) => `
+               <tr style="border-bottom:1px solid #e2e8f0;">
+                 <td style="padding:3px 6px; color:#94A3B8;">${r.source_row}</td>
+                 <td style="padding:3px 6px;">${escapeHtml(r.account_id || '—')}</td>
+                 <td style="padding:3px 6px;">${escapeHtml(r.street_address || '—')}${r.unit ? ' #' + escapeHtml(r.unit) : ''}</td>
+                 <td style="padding:3px 6px;">${escapeHtml(r.owner_name || '—')}</td>
+                 <td style="padding:3px 6px; color:#475569;">${escapeHtml(r.owner_email || '—')}</td>
+                 <td style="padding:3px 6px;">${escapeHtml(r.resident_name || '—')}</td>
+                 <td style="padding:3px 6px; color:#475569;">${escapeHtml(r.residency_type || '—')}</td>
+               </tr>`).join('')}
+           </tbody>
+         </table>`
+      : '';
+    // Sanity-check banner: row count vs existing community count.
+    let countBanner = '';
+    if (total_rows != null && existing_property_count != null) {
+      const isFirstLoad = existing_property_count === 0;
+      const dupCount = (diff && diff.duplicate_rows && diff.duplicate_rows.length) || 0;
+      const dedupedRows = total_rows - dupCount;
+      if (isFirstLoad) {
+        countBanner = `<div style="background:#eff6ff; border:1px solid #bfdbfe; padding:8px 10px; border-radius:6px; font-size:12px; color:#1e3a8a; margin-bottom:8px;">
+          Upload contains <strong>${total_rows} rows</strong> → after collapsing duplicates: <strong>${dedupedRows} unique properties</strong>${dupCount > 0 ? ` (${dupCount} duplicate row${dupCount===1?'':'s'} merged)` : ''}. No properties currently on file — this will be the first load.
+        </div>`;
+      } else {
+        const delta = dedupedRows - existing_property_count;
+        const tone = Math.abs(delta) > Math.max(5, existing_property_count * 0.1) ? '#fef3c7' : '#dcfce7';
+        const border = Math.abs(delta) > Math.max(5, existing_property_count * 0.1) ? '#fde68a' : '#bbf7d0';
+        countBanner = `<div style="background:${tone}; border:1px solid ${border}; padding:8px 10px; border-radius:6px; font-size:12px; color:#1E2761; margin-bottom:8px;">
+          Upload: <strong>${total_rows} rows</strong> → <strong>${dedupedRows} unique</strong>${dupCount > 0 ? ` (${dupCount} dup merged)` : ''}. On file: <strong>${existing_property_count}</strong>. Net change: ${delta > 0 ? '+' : ''}${delta}.
+        </div>`;
+      }
+    }
+    const diagnosticHtml = `
+      <details ${mappingEntries.length > 0 ? '' : 'open'} style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; margin-bottom:10px;">
+        <summary style="cursor:pointer; font-weight:600; color:#1E2761; font-size:12.5px;">
+          🔍 Diagnostics — column mapping &amp; sample rows
+          <span style="color:#94A3B8; font-weight:400; font-size:11px;">(verify these look right before applying)</span>
+        </summary>
+        <div style="padding:8px 0 0 0;">
+          <div style="font-size:11.5px; color:#475569; margin-bottom:4px;"><strong>Auto-detected column mapping</strong> (left = our field, right = your file's header):</div>
+          ${mappingHtml}
+          ${samplesHtml ? `<div style="font-size:11.5px; color:#475569; margin:10px 0 4px 0;"><strong>First ${sample_rows.length} parsed row${sample_rows.length===1?'':'s'}</strong> — confirm each cell shows what you'd expect:</div>${samplesHtml}` : ''}
+        </div>
+      </details>`;
+
     const noChanges = Object.values(summary).every((v) => v === 0);
     if (noChanges) {
-      sumBox.innerHTML = `<div style="padding:10px; color:#15803d; background:#dcfce7; border-radius:6px;">✓ No changes detected — spine is in sync with this export.</div>`;
+      sumBox.innerHTML = countBanner + diagnosticHtml + `<div style="padding:10px; color:#15803d; background:#dcfce7; border-radius:6px;">✓ No changes detected — spine is in sync with this export.</div>`;
       detBox.innerHTML = '';
     } else {
       const pill = (label, n, color) => `<span style="background:${color}; padding:3px 9px; border-radius:11px; font-size:11.5px; font-weight:700; margin-right:6px;">${label}: ${n}</span>`;
-      sumBox.innerHTML =
+      sumBox.innerHTML = countBanner + diagnosticHtml +
         (summary.new_properties        ? pill('New properties',         summary.new_properties,        '#dcfce7') : '') +
         (summary.property_field_changes? pill('Property field changes', summary.property_field_changes,'#fef3c7') : '') +
         (summary.new_ownerships        ? pill('New ownerships',         summary.new_ownerships,        '#dcfce7') : '') +
         (summary.ownership_changes     ? pill('Ownership changes',      summary.ownership_changes,     '#fef3c7') : '') +
         (summary.new_residencies       ? pill('New residencies',        summary.new_residencies,       '#eef2ff') : '') +
         (summary.email_additions       ? pill('Email updates',          summary.email_additions,       '#eef2ff') : '') +
-        (summary.phone_additions       ? pill('Phone updates',          summary.phone_additions,       '#eef2ff') : '');
+        (summary.phone_additions       ? pill('Phone updates',          summary.phone_additions,       '#eef2ff') : '') +
+        (summary.duplicate_rows        ? pill('Duplicate rows merged',  summary.duplicate_rows,        '#fef3c7') : '');
       // Detail listing — small samples by category.
       const sec = (label, items, render) => items && items.length
         ? `<details open style="margin-top:10px;"><summary style="font-weight:700; color:#1E2761; cursor:pointer;">${label} (${items.length})</summary><div style="padding:8px 0 0 12px;">${items.slice(0, 30).map(render).join('')}${items.length > 30 ? `<div style="color:#94A3B8; font-style:italic;">…and ${items.length - 30} more</div>` : ''}</div></details>` : '';
       detBox.innerHTML =
+        sec('Duplicate rows merged (same address appeared multiple times in upload)', diff.duplicate_rows || [], (i) => `<div>• <strong>${escapeHtml(i.address)}</strong> — row ${i.duplicate_row} folded into row ${i.first_row}${i.duplicate_owner ? ` · owner field: ${escapeHtml(i.duplicate_owner)}` : ''}${i.duplicate_resident ? ` · resident field: ${escapeHtml(i.duplicate_resident)}` : ''}</div>`) +
         sec('New properties', diff.new_properties, (i) => `<div>• <strong>${escapeHtml(i.property.street_address)}${i.property.unit ? ' #' + escapeHtml(i.property.unit) : ''}</strong>${i.proposed_owner ? ` → owner: ${escapeHtml(i.proposed_owner.full_name)}${i.proposed_owner.primary_email ? ` (${escapeHtml(i.proposed_owner.primary_email)})` : ''}` : ''}</div>`) +
         sec('Property field changes', diff.property_field_changes, (i) => `<div>• ${escapeHtml(i.address)} — ${Object.entries(i.changes).map(([f, c]) => `${escapeHtml(f)}: <code>${escapeHtml(c.from || '—')}</code> → <code>${escapeHtml(c.to || '—')}</code>`).join(', ')}</div>`) +
         sec('Ownership changes', diff.ownership_changes, (i) => `<div>• ${escapeHtml(i.address)}: <strong>${escapeHtml(i.prior_owner || '—')}</strong> → <strong>${escapeHtml(i.new_owner)}</strong></div>`) +
