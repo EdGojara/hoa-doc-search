@@ -1645,9 +1645,13 @@
     <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h3 style="margin:0; font-size:14px; color:#1E2761;">Owner-occupancy rollup</h3>
-        <button class="secondary-btn" onclick="homesLoadSummary()" style="font-size:11px; padding:4px 8px;">↻ Refresh</button>
+        <div>
+          <button class="secondary-btn" onclick="homesInferResidency()" id="homesInferBtn" title="Infer renter / owner-occupied from each owner's mailing address" style="font-size:11px; padding:4px 8px; margin-right:4px;">🔍 Infer residency</button>
+          <button class="secondary-btn" onclick="homesLoadSummary()" style="font-size:11px; padding:4px 8px;">↻ Refresh</button>
+        </div>
       </div>
       <div id="homesOccupancyList" style="font-size:13px; color:#6B7280;">Loading…</div>
+      <div id="homesInferStatus" style="font-size:11.5px; margin-top:6px;"></div>
     </div>
 
     <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
@@ -3466,6 +3470,35 @@
       console.warn('[homes] community load failed', e);
     }
     return homesCommunitiesCache;
+  }
+
+  async function homesInferResidency() {
+    const communityId = document.getElementById('homesUploadCommunity').value
+                     || document.getElementById('homesListCommunity').value;
+    const status = document.getElementById('homesInferStatus');
+    const btn = document.getElementById('homesInferBtn');
+    if (!communityId) {
+      status.innerHTML = '<span style="color:#b91c1c;">Pick a community above (in the upload card or the property list filter) so we know which community to scan.</span>';
+      return;
+    }
+    if (!confirm("Infer residency for every property in this community?\n\nWe'll look at each owner's mailing address and mark properties as 'owner_occupied' or 'renter'. Properties that already have a residency record are left alone. Run again later if you re-upload data.")) return;
+    btn.disabled = true; btn.textContent = '⏳ Inferring…';
+    status.innerHTML = '';
+    try {
+      const r = await fetch('/api/contacts/infer-residency', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: communityId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = `<span style="color:#15803d;">✓ Processed ${j.processed} properties — created ${j.created_owner_occupied} owner-occupied, ${j.created_renter} renter${j.skipped_existing ? `, skipped ${j.skipped_existing} with existing residency` : ''}.</span>`;
+      homesLoadSummary();
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '🔍 Infer residency';
+    }
   }
 
   async function homesLoadSummary() {

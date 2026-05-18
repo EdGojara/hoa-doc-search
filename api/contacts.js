@@ -374,6 +374,140 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
 });
 
 // ---------------------------------------------------------------------------
+// INFER RESIDENCY — scan existing properties in a community and populate
+// property_residencies based on the contact-mailing-vs-property-address
+// signal we already captured during the Vantaca upload.
+//
+// Rule:
+//   - Primary owner's contact has a mailing_address that does NOT contain
+//     the property's street_address (case-insensitive substring) → renter
+//     (residency_type='renter', contact_id=null, since actual resident is unknown)
+//   - Otherwise (no mailing_address, or mailing matches property)
+//     → owner_occupied with contact_id = the owner's contact
+//
+// Idempotent: properties that already have an active residency record are
+// left alone. Caller passes ?force=1 to override (closes existing + replaces).
+//
+// Returns:
+//   { processed, created_renter, created_owner_occupied, skipped_existing, errors }
+// ---------------------------------------------------------------------------
+router.post('/contacts/infer-residency', express.json(), async (req, res) => {
+  try {
+    const communityId = (req.body && req.body.community_id) || req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id is required.' });
+    const force = req.body && req.body.force;
+    const today = new Date().toISOString().slice(0, 10);
+
+    // Pull all properties for the community.
+    const { data: properties, error: pErr } = await supabase
+      .from('properties')
+      .select('id, street_address, unit, city, state, zip')
+      .eq('community_id', communityId);
+    if (pErr) return res.status(500).json({ error: pErr.message });
+
+    if (!properties || properties.length === 0) {
+      return res.json({ processed: 0, created_renter: 0, created_owner_occupied: 0, skipped_existing: 0, errors: [] });
+    }
+    const propIds = properties.map((p) => p.id);
+
+    // Active primary ownerships with the owner contact (mailing_address included).
+    const { data: ownerships, error: oErr } = await supabase
+      .from('property_ownerships')
+      .select('property_id, contact_id, is_primary, end_date, contacts(id, full_name, mailing_address)')
+      .in('property_id', propIds)
+      .is('end_date', null);
+    if (oErr) return res.status(500).json({ error: oErr.message });
+    // Index by property_id; prefer is_primary=true.
+    const ownersByProp = new Map();
+    (ownerships || []).forEach((o) => {
+      const existing = ownersByProp.get(o.property_id);
+      if (!existing || (o.is_primary && !existing.is_primary)) {
+        ownersByProp.set(o.property_id, o);
+      }
+    });
+
+    // Existing active residencies — skip these unless force.
+    const { data: existingRes, error: rErr } = await supabase
+      .from('property_residencies')
+      .select('property_id')
+      .in('property_id', propIds)
+      .is('end_date', null);
+    if (rErr) return res.status(500).json({ error: rErr.message });
+    const propsWithActiveResidency = new Set((existingRes || []).map((r) => r.property_id));
+
+    let createdRenter = 0;
+    let createdOwner  = 0;
+    let skipped       = 0;
+    const errors      = [];
+
+    for (const prop of properties) {
+      if (!force && propsWithActiveResidency.has(prop.id)) { skipped += 1; continue; }
+      const ownership = ownersByProp.get(prop.id);
+      const contact   = ownership && ownership.contacts;
+      const mailing   = contact && contact.mailing_address;
+
+      // Inference: if a separate mailing_address exists AND it doesn't contain the property
+      // street_address, the owner doesn't live there → mark as renter.
+      let residencyType = 'owner_occupied';
+      let residencyContactId = ownership ? ownership.contact_id : null;
+      if (mailing && prop.street_address) {
+        const mailNorm = mailing.toLowerCase().replace(/\s+/g, ' ').trim();
+        const propNorm = prop.street_address.toLowerCase().replace(/\s+/g, ' ').trim();
+        const propHouseNumMatch = propNorm.match(/^\d+/);
+        const houseNum = propHouseNumMatch ? propHouseNumMatch[0] : '';
+        // Property street appears in mailing → owner-occupied; otherwise → renter.
+        const propIsInMailing = houseNum && mailNorm.includes(houseNum) && mailNorm.includes(propNorm.replace(/^\d+\s*/, ''));
+        if (!propIsInMailing) {
+          residencyType = 'renter';
+          residencyContactId = null;  // Renter identity unknown from Vantaca export
+        }
+      }
+      // No owner contact on file at all → mark unknown so the rollup is honest.
+      if (!ownership) {
+        residencyType = 'unknown';
+        residencyContactId = null;
+      }
+
+      // If force: close any existing residency before inserting fresh.
+      if (force && propsWithActiveResidency.has(prop.id)) {
+        await supabase
+          .from('property_residencies')
+          .update({ end_date: today, updated_at: new Date().toISOString() })
+          .eq('property_id', prop.id)
+          .is('end_date', null);
+      }
+
+      const { error: insErr } = await supabase
+        .from('property_residencies')
+        .insert({
+          property_id:    prop.id,
+          contact_id:     residencyContactId,
+          start_date:     today,
+          residency_type: residencyType,
+          source:         'inferred_from_mailing_address',
+        });
+      if (insErr) {
+        errors.push({ property_id: prop.id, error: insErr.message });
+        continue;
+      }
+      if (residencyType === 'renter') createdRenter += 1;
+      else if (residencyType === 'owner_occupied') createdOwner += 1;
+    }
+
+    res.json({
+      processed: properties.length,
+      created_renter: createdRenter,
+      created_owner_occupied: createdOwner,
+      skipped_existing: skipped,
+      errors,
+    });
+  } catch (err) {
+    console.error('[contacts/infer-residency]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Recent sync log entries (for the "Recent uploads" panel).
 // ---------------------------------------------------------------------------
 router.get('/contacts/vantaca/recent', async (req, res) => {
