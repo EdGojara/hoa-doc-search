@@ -7601,20 +7601,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
-  // Auto-load when the Inspect tab is opened
-  (function () {
+  // Auto-load when the Inspect tab is opened.
+  // The switchTab function is defined LATER in this file (in the main app
+  // script block). If we ran the patch at parse time, switchTab would be
+  // undefined and our patch would no-op. Defer to DOMContentLoaded so the
+  // entire document is parsed and switchTab is real.
+  function _inspWireSwitchTabPatch() {
+    if (typeof window.switchTab !== 'function') {
+      // Try again on the next tick — main app script may run after DOM ready
+      return setTimeout(_inspWireSwitchTabPatch, 50);
+    }
+    if (window._inspSwitchTabPatched) return;  // idempotent
     const orig = window.switchTab;
-    if (typeof orig !== 'function') return;
-    const patched = function (tab) {
+    window.switchTab = function (tab) {
       const result = orig.apply(this, arguments);
       if (tab === 'inspect') {
-        inspLoadCommunities();
-        inspLoadRecent();
+        try { inspLoadCommunities(); } catch (e) { console.warn('[inspect] load communities', e); }
+        try { inspLoadRecent(); } catch (e) { console.warn('[inspect] load recent', e); }
       }
       return result;
     };
-    window.switchTab = patched;
-  })();
+    window._inspSwitchTabPatched = true;
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _inspWireSwitchTabPatch);
+  } else {
+    _inspWireSwitchTabPatch();
+  }
 </script>
 
 
