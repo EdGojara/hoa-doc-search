@@ -464,6 +464,62 @@ router.get('/inspections/properties', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/communities/:id/boundary — fetch saved polygon as GeoJSON
+// POST /api/communities/:id/boundary — save polygon (body: { coords: [[lng,lat],...], notes? })
+//
+// Polygon stored as PostGIS GEOGRAPHY(POLYGON, 4326). The client sends a
+// simple array of [lng, lat] coordinate pairs (first and last should be the
+// same point to close the ring; we close it if needed).
+// ---------------------------------------------------------------------------
+router.get('/communities/:id/boundary', async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    // ST_AsGeoJSON returns the geometry in GeoJSON text form. Done via rpc-style
+    // function call since supabase-js doesn't expose ST_* directly.
+    const { data, error } = await supabase.rpc('community_boundary_geojson', { p_community_id: communityId });
+    if (error) {
+      // RPC not yet defined → fall back to a raw select of the GEOGRAPHY (Supabase
+      // will encode it as WKB hex which the client can't easily parse). Return null
+      // and we'll surface a hint in the UI.
+      return res.json({ boundary: null, drawn_at: null, note: 'RPC community_boundary_geojson missing (migration 053 may not be applied)' });
+    }
+    res.json({ boundary: data || null });
+  } catch (err) {
+    console.error('[communities.boundary.get]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/communities/:id/boundary', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    let coords = (req.body && req.body.coords) || [];
+    const notes = (req.body && req.body.notes) || null;
+    if (!Array.isArray(coords) || coords.length < 3) {
+      return res.status(400).json({ error: 'coords must be an array of at least 3 [lng,lat] points' });
+    }
+    // Close the ring if open
+    const first = coords[0];
+    const last  = coords[coords.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      coords = [...coords, first];
+    }
+    // Build WKT: POLYGON((lng lat, lng lat, ...))
+    const wkt = `POLYGON((${coords.map((c) => `${c[0]} ${c[1]}`).join(', ')}))`;
+    const { error } = await supabase.rpc('community_boundary_set', {
+      p_community_id: communityId,
+      p_wkt: wkt,
+      p_notes: notes,
+    });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, point_count: coords.length });
+  } catch (err) {
+    console.error('[communities.boundary.set]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/inspections/:id/route-trace
 // Batch-insert GPS pings for an active inspection. Body shape:
 //   { pings: [{ captured_at, latitude, longitude, accuracy_m?, heading_deg?, speed_mps? }, ...] }

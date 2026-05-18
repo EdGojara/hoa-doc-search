@@ -7477,6 +7477,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div id="inspMapEl" style="width: 100%; height: 55vh; min-height: 320px; background: #f1f5f9; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;"></div>
         <div style="background:#fff; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 12px 12px; padding:8px 12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <button type="button" id="inspCoverageBtn" onclick="inspToggleCoverage()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">🗺️ Show coverage</button>
+          <button type="button" id="inspBoundaryBtn" onclick="inspBoundaryToggle()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Draw or redraw the community perimeter">✏️ Draw boundary</button>
+          <div id="inspBoundaryHint" style="display:none; flex:1; min-width:240px; font-size:11.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:5px 10px;"></div>
           <div id="inspCoverageBanner" style="display:none; flex:1; min-width:200px; font-size:12px; color:#475569; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:5px 10px;"></div>
         </div>
       </div>
@@ -7589,6 +7591,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     routeFlushTimer: null,         // interval ID for periodic POST
     routeRenderTimer: null,        // throttle map polyline updates
     coverageMode: false,           // when true, amber-tint uncovered properties
+    // Boundary draw state
+    boundaryDrawMode: false,       // when true, map clicks add vertices
+    boundaryDrawCoords: [],        // [[lng, lat], ...] in-progress polygon
+    boundaryClickHandler: null,    // Mapbox click listener (so we can remove)
   };
 
   // Lazy-load Mapbox GL JS from CDN. Cached promise so subsequent map opens
@@ -8032,6 +8038,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     //    call it again after backfilling lat/lng)
     await inspMapLoadProperties();
 
+    // 5. Render saved boundary polygon (if any) as a tinted overlay
+    inspState.mapInstance.once('load', () => {
+      inspBoundaryLoadAndRender();
+    });
+    // If style was already loaded by now, fire immediately as well
+    if (inspState.mapInstance.isStyleLoaded()) inspBoundaryLoadAndRender();
+
     // If GPS already locked, drop the user marker now
     if (inspState.lastGps) inspMapUpdateUserPosition();
   }
@@ -8455,6 +8468,176 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (btn) btn.textContent = '🗺️ Show coverage';
     } finally {
       if (btn) btn.disabled = false;
+    }
+  }
+
+  // ============================================================
+  // COMMUNITY BOUNDARY — manual polygon draw + persistent overlay
+  // ============================================================
+
+  // Load saved boundary (if any) and draw as a tinted overlay.
+  async function inspBoundaryLoadAndRender() {
+    if (!inspState.communityId || !inspState.mapInstance) return;
+    try {
+      const r = await fetch(`/api/communities/${encodeURIComponent(inspState.communityId)}/boundary`);
+      const j = await r.json();
+      const geojson = j && j.boundary && j.boundary.boundary;  // RPC returns { boundary, drawn_at, ... } as JSON
+      if (!geojson) return;  // none saved yet
+      inspBoundaryRender(geojson);
+    } catch (_) { /* tolerate */ }
+  }
+
+  function inspBoundaryRender(geojson) {
+    const map = inspState.mapInstance;
+    if (!map) return;
+    const feature = { type: 'Feature', properties: {}, geometry: geojson };
+    if (map.getSource('insp-boundary')) {
+      map.getSource('insp-boundary').setData(feature);
+    } else {
+      map.addSource('insp-boundary', { type: 'geojson', data: feature });
+      map.addLayer({
+        id: 'insp-boundary-fill',
+        type: 'fill',
+        source: 'insp-boundary',
+        paint: { 'fill-color': '#1A3050', 'fill-opacity': 0.06 },
+      });
+      map.addLayer({
+        id: 'insp-boundary-outline',
+        type: 'line',
+        source: 'insp-boundary',
+        paint: { 'line-color': '#1A3050', 'line-width': 2, 'line-opacity': 0.55, 'line-dasharray': [3, 2] },
+      });
+    }
+  }
+
+  // Toggle draw mode. On enter: enable map clicks to add vertices, show hint banner
+  // with Save / Cancel buttons. On exit: cleanup listener + state.
+  function inspBoundaryToggle() {
+    if (!inspState.mapInstance) {
+      alert('Switch to Map view first.');
+      return;
+    }
+    if (inspState.boundaryDrawMode) {
+      inspBoundaryExitDrawMode();
+    } else {
+      inspBoundaryEnterDrawMode();
+    }
+  }
+
+  function inspBoundaryEnterDrawMode() {
+    inspState.boundaryDrawMode = true;
+    inspState.boundaryDrawCoords = [];
+    const map = inspState.mapInstance;
+    map.getCanvas().style.cursor = 'crosshair';
+    const handler = (e) => {
+      const c = [e.lngLat.lng, e.lngLat.lat];
+      inspState.boundaryDrawCoords.push(c);
+      inspBoundaryRenderInProgress();
+      inspBoundaryUpdateHint();
+    };
+    map.on('click', handler);
+    inspState.boundaryClickHandler = handler;
+    inspBoundaryUpdateHint();
+    document.getElementById('inspBoundaryBtn').textContent = '✕ Cancel draw';
+  }
+
+  function inspBoundaryExitDrawMode() {
+    inspState.boundaryDrawMode = false;
+    const map = inspState.mapInstance;
+    map.getCanvas().style.cursor = '';
+    if (inspState.boundaryClickHandler) {
+      map.off('click', inspState.boundaryClickHandler);
+      inspState.boundaryClickHandler = null;
+    }
+    // Remove in-progress overlay
+    try {
+      if (map.getLayer('insp-boundary-draft-line')) map.removeLayer('insp-boundary-draft-line');
+      if (map.getLayer('insp-boundary-draft-fill')) map.removeLayer('insp-boundary-draft-fill');
+      if (map.getSource('insp-boundary-draft')) map.removeSource('insp-boundary-draft');
+    } catch (_) {}
+    inspState.boundaryDrawCoords = [];
+    const hint = document.getElementById('inspBoundaryHint');
+    if (hint) hint.style.display = 'none';
+    document.getElementById('inspBoundaryBtn').textContent = '✏️ Draw boundary';
+  }
+
+  function inspBoundaryRenderInProgress() {
+    const map = inspState.mapInstance;
+    const coords = inspState.boundaryDrawCoords;
+    if (coords.length < 2) return;
+    const closed = coords.length >= 3 ? [...coords, coords[0]] : coords;
+    const lineFeature = { type: 'Feature', geometry: { type: 'LineString', coordinates: closed } };
+    const fillFeature = coords.length >= 3
+      ? { type: 'Feature', geometry: { type: 'Polygon', coordinates: [closed] } }
+      : null;
+    const collection = { type: 'FeatureCollection', features: fillFeature ? [fillFeature, lineFeature] : [lineFeature] };
+    if (map.getSource('insp-boundary-draft')) {
+      map.getSource('insp-boundary-draft').setData(collection);
+    } else {
+      map.addSource('insp-boundary-draft', { type: 'geojson', data: collection });
+      map.addLayer({
+        id: 'insp-boundary-draft-fill', type: 'fill', source: 'insp-boundary-draft',
+        filter: ['==', ['geometry-type'], 'Polygon'],
+        paint: { 'fill-color': '#D4AF37', 'fill-opacity': 0.12 },
+      });
+      map.addLayer({
+        id: 'insp-boundary-draft-line', type: 'line', source: 'insp-boundary-draft',
+        paint: { 'line-color': '#D4AF37', 'line-width': 3, 'line-opacity': 0.85 },
+      });
+    }
+  }
+
+  function inspBoundaryUpdateHint() {
+    const hint = document.getElementById('inspBoundaryHint');
+    if (!hint) return;
+    const n = inspState.boundaryDrawCoords.length;
+    if (n === 0) {
+      hint.innerHTML = '<strong>Draw mode:</strong> click points around the community perimeter. Need 3+ points.';
+    } else if (n < 3) {
+      hint.innerHTML = `<strong>${n} point${n===1?'':'s'} placed.</strong> Click ${3 - n} more, then Save.`;
+    } else {
+      hint.innerHTML = `<strong>${n} points placed.</strong> Polygon ready. <button onclick="inspBoundaryUndoLast()" style="background:#fff; border:1px solid #d0d7de; padding:2px 8px; border-radius:4px; font-size:11px; cursor:pointer; margin-left:6px;">↶ Undo</button> <button onclick="inspBoundarySave()" style="background:#16a34a; color:#fff; border:none; padding:2px 9px; border-radius:4px; font-size:11px; font-weight:700; cursor:pointer; margin-left:4px;">✓ Save boundary</button>`;
+    }
+    hint.style.display = 'block';
+  }
+
+  function inspBoundaryUndoLast() {
+    if (inspState.boundaryDrawCoords.length === 0) return;
+    inspState.boundaryDrawCoords.pop();
+    inspBoundaryRenderInProgress();
+    inspBoundaryUpdateHint();
+    // If we dropped below 3, also need to clear the polygon fill layer
+    if (inspState.boundaryDrawCoords.length < 3) {
+      const map = inspState.mapInstance;
+      try {
+        if (map.getSource('insp-boundary-draft')) {
+          const coords = inspState.boundaryDrawCoords;
+          const data = coords.length >= 2
+            ? { type: 'Feature', geometry: { type: 'LineString', coordinates: coords } }
+            : { type: 'FeatureCollection', features: [] };
+          map.getSource('insp-boundary-draft').setData(data);
+        }
+      } catch (_) {}
+    }
+  }
+
+  async function inspBoundarySave() {
+    if (inspState.boundaryDrawCoords.length < 3) return;
+    if (!confirm(`Save this boundary (${inspState.boundaryDrawCoords.length} points) for ${inspState.communityName}?`)) return;
+    try {
+      const r = await fetch(`/api/communities/${encodeURIComponent(inspState.communityId)}/boundary`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coords: inspState.boundaryDrawCoords }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Render the saved polygon as the permanent overlay; cleanup draft
+      inspBoundaryExitDrawMode();
+      await inspBoundaryLoadAndRender();
+      alert('Boundary saved.');
+    } catch (e) {
+      alert('Save failed: ' + e.message);
     }
   }
 
