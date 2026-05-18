@@ -260,6 +260,114 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 // properties separately so we know how much backfill work remains per
 // community.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// POST /api/inspections/geocode-community — backfill latitude + longitude on
+// every property in a community using Mapbox's Geocoding API. Idempotent by
+// default (skips properties that already have lat/lng); pass force=true to
+// re-geocode everything.
+//
+// Body: { community_id, force?: boolean, limit?: number }
+//
+// Returns: {
+//   community_id, total, succeeded, failed, skipped_already_geocoded,
+//   errors: [{ property_id, address, error }], duration_ms
+// }
+//
+// Rate-limited at ~6 req/sec to stay well under Mapbox's 600/min free-tier
+// ceiling. A 500-property community takes ~80-90 seconds. Communities larger
+// than ~600 properties should pass ?limit= and run in batches to avoid
+// Render's ~100s HTTP timeout.
+//
+// Mapbox Geocoding API free tier: 100k requests/month — Bedrock's full
+// 3500-property book is one-time ~3500 requests + occasional re-geocodes,
+// well within free tier.
+// ---------------------------------------------------------------------------
+router.post('/inspections/geocode-community', express.json({ limit: '1mb' }), async (req, res) => {
+  const token = process.env.MAPBOX_TOKEN;
+  if (!token) return res.status(400).json({ error: 'MAPBOX_TOKEN not set in Render environment' });
+
+  const { community_id, force, limit } = req.body || {};
+  if (!community_id) return res.status(400).json({ error: 'community_id is required' });
+
+  // Fetch the community (for the city/state fallback if a property's own city is missing)
+  const { data: community, error: commErr } = await supabase
+    .from('communities')
+    .select('id, name, state')
+    .eq('id', community_id)
+    .single();
+  if (commErr || !community) return res.status(404).json({ error: 'community not found' });
+
+  // Fetch properties — exclude already-geocoded unless force=true
+  let q = supabase
+    .from('properties')
+    .select('id, street_address, unit, city, state, zip, latitude, longitude')
+    .eq('community_id', community_id);
+  if (!force) q = q.or('latitude.is.null,longitude.is.null');
+  if (limit && Number(limit) > 0) q = q.limit(Math.min(Number(limit), 1000));
+  const { data: properties, error: propErr } = await q;
+  if (propErr) return res.status(500).json({ error: propErr.message });
+
+  const results = {
+    community_id,
+    community_name: community.name,
+    total: properties.length,
+    succeeded: 0,
+    failed: 0,
+    skipped_no_address: 0,
+    errors: [],
+  };
+  const startMs = Date.now();
+
+  // Throttle helper — 150ms between Mapbox calls = ~6.6 req/sec
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  for (const p of properties) {
+    // Build a single address line. Mapbox handles partial addresses well; the
+    // street+state combo is usually enough for Texas residential.
+    if (!p.street_address) {
+      results.skipped_no_address++;
+      continue;
+    }
+    const addrParts = [
+      p.street_address + (p.unit ? ' #' + p.unit : ''),
+      p.city || '',
+      p.state || community.state || 'TX',
+      p.zip || '',
+    ].filter((s) => s && s.trim()).join(', ');
+
+    try {
+      const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(addrParts)}.json?access_token=${encodeURIComponent(token)}&country=US&limit=1&types=address`;
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`mapbox http ${r.status}`);
+      const j = await r.json();
+      if (!j.features || j.features.length === 0) {
+        results.failed++;
+        results.errors.push({ property_id: p.id, address: addrParts, error: 'no geocode results' });
+      } else {
+        const [lng, lat] = j.features[0].center;
+        const { error: updateErr } = await supabase
+          .from('properties')
+          .update({ latitude: lat, longitude: lng, updated_at: new Date().toISOString() })
+          .eq('id', p.id);
+        if (updateErr) {
+          results.failed++;
+          results.errors.push({ property_id: p.id, address: addrParts, error: `update: ${updateErr.message}` });
+        } else {
+          results.succeeded++;
+        }
+      }
+    } catch (e) {
+      results.failed++;
+      results.errors.push({ property_id: p.id, address: addrParts, error: e.message || 'unknown' });
+    }
+
+    await sleep(150);
+  }
+
+  results.duration_ms = Date.now() - startMs;
+  res.json(results);
+});
+
 router.get('/inspections/properties', async (req, res) => {
   try {
     const communityId = req.query.community_id;

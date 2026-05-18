@@ -7459,35 +7459,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       return;
     }
 
-    // 3. Fetch properties for the current community (for markers + centering)
-    let propsResp = { properties: [], total_count: 0, geo_count: 0, missing_geo_count: 0 };
-    if (inspState.communityId) {
-      try {
-        const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(inspState.communityId)}`);
-        if (r.ok) propsResp = await r.json();
-      } catch (_) { /* tolerate */ }
-    }
-
-    // 4. Compute center — properties centroid if available, else Sugar Land default
-    let center = [cfg.default_center_lng, cfg.default_center_lat];
-    let zoom = cfg.default_zoom;
-    if (propsResp.properties.length > 0) {
-      const lngs = propsResp.properties.map((p) => Number(p.longitude));
-      const lats = propsResp.properties.map((p) => Number(p.latitude));
-      center = [
-        lngs.reduce((s, v) => s + v, 0) / lngs.length,
-        lats.reduce((s, v) => s + v, 0) / lats.length,
-      ];
-      zoom = 15;
-    }
-
-    // 5. Create the map
+    // 3. Create the map (centered on Sugar Land by default; we re-center
+    //    after property fetch if we have data)
     window.mapboxgl.accessToken = cfg.mapbox_token;
     inspState.mapInstance = new window.mapboxgl.Map({
       container: 'inspMapEl',
       style: 'mapbox://styles/mapbox/streets-v12',
-      center,
-      zoom,
+      center: [cfg.default_center_lng, cfg.default_center_lat],
+      zoom: cfg.default_zoom,
     });
     inspState.mapInstance.addControl(new window.mapboxgl.NavigationControl(), 'top-right');
     // GeolocateControl gives the operator a "center on me" button + a built-in
@@ -7498,13 +7477,55 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       showUserHeading: true,
     }), 'top-right');
 
-    // 6. Add property markers
+    inspState.mapLoaded = true;
+
+    // 4. Load property markers (extracted into helper so the geocoder can
+    //    call it again after backfilling lat/lng)
+    await inspMapLoadProperties();
+
+    // If GPS already locked, drop the user marker now
+    if (inspState.lastGps) inspMapUpdateUserPosition();
+  }
+
+  // Fetches properties for the active community, clears existing markers,
+  // re-renders. Called from inspMapInit and from inspRunGeocoder after
+  // backfill so the map updates without rebuilding the Mapbox instance.
+  async function inspMapLoadProperties() {
+    if (!inspState.mapInstance || !inspState.communityId) return;
+    const statusEl = document.getElementById('inspMapStatus');
+    const setStatus = (html) => { if (statusEl) statusEl.innerHTML = html; };
+
+    // Clear existing markers
+    for (const m of inspState.propertyMarkers) {
+      try { m.remove(); } catch (_) {}
+    }
+    inspState.propertyMarkers = [];
+
+    // Fetch fresh data
+    let propsResp = { properties: [], total_count: 0, geo_count: 0, missing_geo_count: 0 };
+    try {
+      const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(inspState.communityId)}`);
+      if (r.ok) propsResp = await r.json();
+    } catch (_) { /* tolerate */ }
+
+    // Re-center if we have data (community-specific view)
+    if (propsResp.properties.length > 0) {
+      const lngs = propsResp.properties.map((p) => Number(p.longitude));
+      const lats = propsResp.properties.map((p) => Number(p.latitude));
+      const center = [
+        lngs.reduce((s, v) => s + v, 0) / lngs.length,
+        lats.reduce((s, v) => s + v, 0) / lats.length,
+      ];
+      inspState.mapInstance.flyTo({ center, zoom: 15, duration: 1000 });
+    }
+
+    // Add markers
     for (const p of propsResp.properties) {
       const el = document.createElement('div');
       el.className = 'insp-prop-marker';
       el.style.cssText = 'width: 18px; height: 18px; background: #1A3050; border: 2px solid #fff; border-radius: 50%; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.3); transition: all 0.15s;';
-      el.title = p.street_address + (p.unit ? ' #' + p.unit : '');
       const label = (p.street_address || '') + (p.unit ? ' #' + p.unit : '');
+      el.title = label;
       el.addEventListener('click', (ev) => {
         ev.stopPropagation();
         inspMapHandleMarkerClick(p.property_id, label);
@@ -7518,21 +7539,59 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.propertyMarkers.push(m);
     }
 
-    // 7. Status line — tells operator how complete the map data is
+    // Status line with a Run Geocoder button when geo data is missing.
+    // The button is inline in the status line itself so the call-to-action
+    // is right where the problem is visible.
+    const geocodeBtn = (label) => `<button type="button" onclick="inspRunGeocoder()" id="inspRunGeocoderBtn" style="margin-left:8px; padding:4px 10px; background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;">${label}</button>`;
+
     if (propsResp.properties.length === 0 && propsResp.missing_geo_count > 0) {
-      setStatus(`⚠️ ${propsResp.missing_geo_count} properties in this community need lat/lng coordinates before they appear on the map. Capture still works in List mode.`);
+      setStatus(`⚠️ ${propsResp.missing_geo_count} properties need lat/lng coordinates. ${geocodeBtn('🌐 Run geocoder')}`);
     } else if (propsResp.missing_geo_count > 0) {
-      setStatus(`${propsResp.geo_count} of ${propsResp.total_count} properties on map · tap a property to pre-select it for capture · ${propsResp.missing_geo_count} still need geo data`);
+      setStatus(`${propsResp.geo_count} of ${propsResp.total_count} properties on map · tap to select · ${propsResp.missing_geo_count} still missing geo ${geocodeBtn('🌐 Geocode missing')}`);
     } else if (propsResp.geo_count > 0) {
       setStatus(`${propsResp.geo_count} properties on map · tap a property to pre-select it for capture`);
     } else {
       setStatus('Map ready · drive the community');
     }
+  }
 
-    inspState.mapLoaded = true;
+  // Triggers the server-side geocoder to backfill lat/lng for every property
+  // in the active community that doesn't have coordinates yet. Mapbox-API-rate-
+  // limited at ~6 req/sec; expect ~10-15 seconds per 100 properties.
+  async function inspRunGeocoder() {
+    if (!inspState.communityId) return;
+    if (!confirm(
+      'Run geocoder for this community?\n\n' +
+      'This will look up the GPS coordinates for every property that doesn\'t have them yet, using Mapbox\'s geocoding service. It takes about 10-15 seconds per 100 properties.\n\n' +
+      'You can keep using List mode while this runs. The map will refresh when finished.'
+    )) return;
 
-    // If GPS already locked, drop the user marker now
-    if (inspState.lastGps) inspMapUpdateUserPosition();
+    const btn = document.getElementById('inspRunGeocoderBtn');
+    const statusEl = document.getElementById('inspMapStatus');
+    if (btn) { btn.disabled = true; btn.textContent = 'Geocoding…'; }
+    if (statusEl) statusEl.innerHTML = '⏳ Geocoding properties — this may take 30-90 seconds. You can keep working in List mode.';
+
+    try {
+      const r = await fetch('/api/inspections/geocode-community', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: inspState.communityId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `geocode failed (${r.status})`);
+      // Reload markers
+      await inspMapLoadProperties();
+      // Show a brief toast-style success line above the regular status
+      if (statusEl) {
+        const failed = j.failed || 0;
+        const failedNote = failed > 0 ? ` (${failed} couldn't be geocoded — check addresses)` : '';
+        const original = statusEl.innerHTML;
+        statusEl.innerHTML = `✅ Geocoded ${j.succeeded} of ${j.total} properties in ${Math.round((j.duration_ms || 0) / 1000)}s${failedNote}. ${original}`;
+      }
+    } catch (e) {
+      if (statusEl) statusEl.innerHTML = `❌ Geocoder failed: ${e.message}. ${statusEl.innerHTML}`;
+      if (btn) { btn.disabled = false; btn.textContent = '🌐 Run geocoder'; }
+    }
   }
 
   function inspMapHandleMarkerClick(propertyId, label) {
