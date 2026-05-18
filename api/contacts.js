@@ -370,6 +370,33 @@ router.get('/contacts/vantaca/recent', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// COMMUNITIES — basic list endpoint. Returns active communities for this
+// management company, sorted by name. Used by every UI that needs a
+// community dropdown (Inspect, Homes & Owners, etc.). Lives here because
+// the contacts router is already mounted at /api and the communities list
+// is structural data the spine depends on.
+//
+// Query params (all optional):
+//   include_inactive=1   include inactive communities too
+// ---------------------------------------------------------------------------
+router.get('/communities', async (req, res) => {
+  try {
+    let q = supabase
+      .from('communities')
+      .select('id, name, legal_name, slug, vantaca_code, total_lots, active')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('name');
+    if (req.query.include_inactive !== '1') q = q.eq('active', true);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ communities: data || [] });
+  } catch (err) {
+    console.error('[communities.list]', err);
+    res.status(500).json({ error: err.message || 'failed to list communities' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // PROPERTIES
 // ---------------------------------------------------------------------------
 router.get('/properties', async (req, res) => {
