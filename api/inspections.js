@@ -464,6 +464,155 @@ router.get('/inspections/properties', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/inspections/:id/route-trace
+// Batch-insert GPS pings for an active inspection. Body shape:
+//   { pings: [{ captured_at, latitude, longitude, accuracy_m?, heading_deg?, speed_mps? }, ...] }
+// Client polls every ~5s and POSTs in batches of ~6 pings (30s window). The
+// PostGIS point column auto-populates from lat/lng via trigger (migration 052).
+// ---------------------------------------------------------------------------
+router.post('/inspections/:id/route-trace', express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    const pings = (req.body && Array.isArray(req.body.pings)) ? req.body.pings : [];
+    if (!inspectionId) return res.status(400).json({ error: 'inspection id required' });
+    if (pings.length === 0) return res.json({ inserted: 0 });
+
+    // Validate + normalize
+    const rows = [];
+    for (const p of pings) {
+      if (typeof p.latitude !== 'number' || typeof p.longitude !== 'number') continue;
+      if (!p.captured_at) continue;
+      rows.push({
+        inspection_id: inspectionId,
+        captured_at:   p.captured_at,
+        latitude:      p.latitude,
+        longitude:     p.longitude,
+        accuracy_m:    typeof p.accuracy_m === 'number' ? p.accuracy_m : null,
+        heading_deg:   typeof p.heading_deg === 'number' ? p.heading_deg : null,
+        speed_mps:     typeof p.speed_mps === 'number' ? p.speed_mps : null,
+      });
+    }
+    if (rows.length === 0) return res.json({ inserted: 0 });
+
+    const { error } = await supabase.from('inspection_route_traces').insert(rows);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ inserted: rows.length });
+  } catch (err) {
+    console.error('[inspections.route-trace]', err);
+    res.status(500).json({ error: err.message || 'failed to save route trace' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/:id/route-trace
+// Returns the full polyline + coverage stats for an inspection.
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/route-trace', async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    const { data: pings, error } = await supabase
+      .from('inspection_route_traces')
+      .select('captured_at, latitude, longitude, heading_deg, accuracy_m')
+      .eq('inspection_id', inspectionId)
+      .order('captured_at', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({
+      pings: pings || [],
+      total_pings: (pings || []).length,
+    });
+  } catch (err) {
+    console.error('[inspections.route-trace.get]', err);
+    res.status(500).json({ error: err.message || 'failed to load route trace' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/:id/coverage
+// Computes which community properties were/weren't within `radius_m` of any
+// route trace ping during this inspection. Defaults to 50m (about 165ft —
+// generous enough to catch tap-from-the-curb captures).
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/coverage', async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    const radiusM = Number(req.query.radius_m) || 50;
+
+    // Get the inspection's community_id
+    const { data: inspection, error: insErr } = await supabase
+      .from('inspections')
+      .select('id, community_id, started_at, ended_at')
+      .eq('id', inspectionId)
+      .maybeSingle();
+    if (insErr || !inspection) return res.status(404).json({ error: 'inspection not found' });
+
+    // Get every property in the community with lat/lng
+    const { data: properties, error: pErr } = await supabase
+      .from('properties')
+      .select('id, street_address, unit, latitude, longitude')
+      .eq('community_id', inspection.community_id)
+      .not('latitude', 'is', null)
+      .not('longitude', 'is', null);
+    if (pErr) return res.status(500).json({ error: pErr.message });
+
+    const { data: pings, error: tErr } = await supabase
+      .from('inspection_route_traces')
+      .select('latitude, longitude')
+      .eq('inspection_id', inspectionId);
+    if (tErr) return res.status(500).json({ error: tErr.message });
+
+    if (!pings || pings.length === 0) {
+      return res.json({
+        total_properties: (properties || []).length,
+        covered_count: 0,
+        uncovered_count: (properties || []).length,
+        uncovered_property_ids: (properties || []).map((p) => p.id),
+        ping_count: 0,
+        radius_m: radiusM,
+      });
+    }
+
+    // Distance in meters between two lat/lng (haversine, good for short distances)
+    const R = 6371000;
+    const toRad = (d) => (d * Math.PI) / 180;
+    const distM = (lat1, lng1, lat2, lng2) => {
+      const dLat = toRad(lat2 - lat1);
+      const dLng = toRad(lng2 - lng1);
+      const a = Math.sin(dLat / 2) ** 2 +
+                Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+                Math.sin(dLng / 2) ** 2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    };
+
+    // For each property, find min distance to any ping. Within radius → covered.
+    const uncovered = [];
+    let coveredCount = 0;
+    for (const p of properties || []) {
+      let minD = Infinity;
+      for (const ping of pings) {
+        const d = distM(Number(p.latitude), Number(p.longitude),
+                        Number(ping.latitude), Number(ping.longitude));
+        if (d < minD) minD = d;
+        if (minD <= radiusM) break;
+      }
+      if (minD <= radiusM) coveredCount++;
+      else uncovered.push(p.id);
+    }
+
+    res.json({
+      total_properties: (properties || []).length,
+      covered_count: coveredCount,
+      uncovered_count: uncovered.length,
+      uncovered_property_ids: uncovered,
+      ping_count: pings.length,
+      radius_m: radiusM,
+    });
+  } catch (err) {
+    console.error('[inspections.coverage]', err);
+    res.status(500).json({ error: err.message || 'failed to compute coverage' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/property-detail/:property_id
 // ---------------------------------------------------------------------------
 // Full enforcement + ownership context for a single property — backs the

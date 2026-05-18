@@ -7474,7 +7474,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
            in Render env, shows a friendly placeholder instead of failing. -->
       <div id="inspMapPanel" style="display: none; margin-bottom: 14px;">
         <div id="inspMapStatus" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; padding: 8px 12px; font-size: 11px; color: #64748b; border-bottom: none;">Loading map…</div>
-        <div id="inspMapEl" style="width: 100%; height: 55vh; min-height: 320px; border-radius: 0 0 12px 12px; background: #f1f5f9; border: 1px solid #e2e8f0;"></div>
+        <div id="inspMapEl" style="width: 100%; height: 55vh; min-height: 320px; background: #f1f5f9; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;"></div>
+        <div style="background:#fff; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 12px 12px; padding:8px 12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button type="button" id="inspCoverageBtn" onclick="inspToggleCoverage()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">🗺️ Show coverage</button>
+          <div id="inspCoverageBanner" style="display:none; flex:1; min-width:200px; font-size:12px; color:#475569; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:5px 10px;"></div>
+        </div>
       </div>
 
       <!-- List panel — default view when an inspection starts. Shows every
@@ -7579,6 +7583,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     propertyMarkers: [],           // [{marker, propertyId, label}]
     selectedPropertyId: null,      // pre-selected property for next capture
     selectedPropertyLabel: null,
+    // Route coverage state
+    routePings: [],                // buffer of GPS pings not yet flushed to server
+    routePingsAll: [],             // all pings this session (for live polyline)
+    routeFlushTimer: null,         // interval ID for periodic POST
+    routeRenderTimer: null,        // throttle map polyline updates
+    coverageMode: false,           // when true, amber-tint uncovered properties
   };
 
   // Lazy-load Mapbox GL JS from CDN. Cached promise so subsequent map opens
@@ -8268,12 +8278,46 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             accuracy: pos.coords.accuracy,
           };
           inspUpdateGpsStatus();
+          // Route trace: record each ping for the polyline coverage view.
+          // Throttle to ~5s between recorded pings (watchPosition fires faster
+          // on most devices).
+          if (inspState.sessionId) {
+            const now = Date.now();
+            if (!inspState._lastTraceMs || now - inspState._lastTraceMs >= 4500) {
+              inspState._lastTraceMs = now;
+              const ping = {
+                captured_at: new Date().toISOString(),
+                latitude:    pos.coords.latitude,
+                longitude:   pos.coords.longitude,
+                accuracy_m:  pos.coords.accuracy || null,
+                heading_deg: inspState.lastHeading || null,
+                speed_mps:   pos.coords.speed || null,
+              };
+              inspState.routePings.push(ping);
+              inspState.routePingsAll.push(ping);
+              // Update the polyline on the map (if map is loaded), throttled
+              if (inspState.mapLoaded && !inspState.routeRenderTimer) {
+                inspState.routeRenderTimer = setTimeout(() => {
+                  inspState.routeRenderTimer = null;
+                  try { inspMapUpdateRoute(); } catch (_) {}
+                }, 1500);
+              }
+            }
+          }
         },
         (err) => {
           document.getElementById('inspGpsStatus').textContent = 'GPS unavailable — photos will be captured without coordinates';
         },
         { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
       );
+    }
+
+    // Periodic flush — batch-POST buffered route pings every 30s so a 90-minute
+    // inspection only makes ~180 HTTP calls instead of 1080.
+    if (!inspState.routeFlushTimer) {
+      inspState.routeFlushTimer = setInterval(() => {
+        inspFlushRoutePings();
+      }, 30000);
     }
 
     // Compass heading — iOS requires explicit permission (DeviceOrientationEvent.requestPermission)
@@ -8295,6 +8339,123 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       attachOrientationListener();
     }
     inspState._attachOrientationListener = attachOrientationListener;
+  }
+
+  // Flush buffered route pings to the server. Called every 30s by the timer
+  // and on inspection-end. Safe to call with an empty buffer.
+  async function inspFlushRoutePings() {
+    if (!inspState.sessionId) return;
+    const batch = inspState.routePings.splice(0);  // take + clear
+    if (batch.length === 0) return;
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(inspState.sessionId)}/route-trace`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pings: batch }),
+      });
+      if (!r.ok) {
+        // Push back into the buffer so we retry on the next flush
+        inspState.routePings.unshift(...batch);
+      }
+    } catch (_) {
+      inspState.routePings.unshift(...batch);
+    }
+  }
+
+  // Draw the route polyline on the map. Idempotent — adds the source+layer
+  // once, then updates the data on subsequent calls.
+  function inspMapUpdateRoute() {
+    if (!inspState.mapInstance || !inspState.mapLoaded) return;
+    const map = inspState.mapInstance;
+    const coords = inspState.routePingsAll.map((p) => [Number(p.longitude), Number(p.latitude)]);
+    if (coords.length < 2) return;  // no polyline until we have 2+ points
+    const geojson = {
+      type: 'Feature',
+      properties: {},
+      geometry: { type: 'LineString', coordinates: coords },
+    };
+    if (map.getSource('insp-route')) {
+      map.getSource('insp-route').setData(geojson);
+    } else {
+      map.addSource('insp-route', { type: 'geojson', data: geojson });
+      map.addLayer({
+        id: 'insp-route-line',
+        type: 'line',
+        source: 'insp-route',
+        layout: { 'line-cap': 'round', 'line-join': 'round' },
+        paint: {
+          'line-color': '#16a34a',           // green — "you walked here"
+          'line-width': 6,
+          'line-opacity': 0.65,
+        },
+      });
+    }
+  }
+
+  // Compute + display coverage. When activated:
+  //   - any property within 50m of a route ping stays navy
+  //   - uncovered properties turn amber so the operator sees the gaps
+  //   - a banner shows X of Y properties seen this pass
+  async function inspToggleCoverage() {
+    if (!inspState.sessionId) return;
+    // Flush first so the coverage reflects everything captured to this moment
+    await inspFlushRoutePings();
+    if (inspState.coverageMode) {
+      // Toggle off — reset all markers to default
+      inspState.coverageMode = false;
+      for (const m of inspState.propertyMarkers) {
+        const el = m._el;
+        if (!el) continue;
+        const isSelected = m._propertyId === inspState.selectedPropertyId;
+        if (!isSelected) {
+          el.style.background = '#1A3050';
+          el.style.width = '18px';
+          el.style.height = '18px';
+        }
+      }
+      const banner = document.getElementById('inspCoverageBanner');
+      if (banner) banner.style.display = 'none';
+      const btn = document.getElementById('inspCoverageBtn');
+      if (btn) btn.textContent = '🗺️ Show coverage';
+      return;
+    }
+    // Toggle on — fetch coverage from server
+    const btn = document.getElementById('inspCoverageBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Computing…'; }
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(inspState.sessionId)}/coverage`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspState.coverageMode = true;
+      const uncoveredSet = new Set(j.uncovered_property_ids || []);
+      for (const m of inspState.propertyMarkers) {
+        const el = m._el;
+        if (!el) continue;
+        const isSelected = m._propertyId === inspState.selectedPropertyId;
+        if (isSelected) continue;  // keep gold selection
+        if (uncoveredSet.has(m._propertyId)) {
+          el.style.background = '#f59e0b';   // amber — not yet covered
+          el.style.width = '18px';
+          el.style.height = '18px';
+        } else {
+          el.style.background = '#16a34a';   // green — covered
+          el.style.width = '14px';
+          el.style.height = '14px';
+        }
+      }
+      const banner = document.getElementById('inspCoverageBanner');
+      if (banner) {
+        const pct = j.total_properties ? Math.round((j.covered_count / j.total_properties) * 100) : 0;
+        banner.innerHTML = `✅ <strong>${j.covered_count} of ${j.total_properties}</strong> covered (${pct}%) · <strong>${j.uncovered_count}</strong> still unwalked · ${j.ping_count} GPS pings · 50m radius`;
+        banner.style.display = 'block';
+      }
+      if (btn) btn.textContent = '↺ Hide coverage';
+    } catch (e) {
+      alert('Coverage failed: ' + e.message);
+      if (btn) btn.textContent = '🗺️ Show coverage';
+    } finally {
+      if (btn) btn.disabled = false;
+    }
   }
 
   function inspUpdateGpsStatus() {
@@ -8402,6 +8563,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function inspEndSession() {
     if (!inspState.sessionId) return;
     if (!confirm('End this inspection? You can review captured photos later in Recent inspections.')) return;
+    // Flush any remaining route pings before tearing down session state
+    try { await inspFlushRoutePings(); } catch (_) {}
     try {
       await fetch(`/api/inspections/${inspState.sessionId}`, {
         method: 'PATCH',
@@ -8413,12 +8576,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       try { navigator.geolocation.clearWatch(inspState.gpsWatcher); } catch (_) {}
       inspState.gpsWatcher = null;
     }
+    if (inspState.routeFlushTimer) {
+      clearInterval(inspState.routeFlushTimer);
+      inspState.routeFlushTimer = null;
+    }
     inspState.sessionId = null;
     inspState.photoCount = 0;
     inspState.photos = [];
+    inspState.routePings = [];
+    inspState.routePingsAll = [];
+    inspState.coverageMode = false;
     document.getElementById('inspActivePanel').style.display = 'none';
     document.getElementById('inspStartCard').style.display = 'block';
     document.getElementById('inspPhotoCount').textContent = '0';
+    const banner = document.getElementById('inspCoverageBanner');
+    if (banner) banner.style.display = 'none';
     inspLoadRecent();
   }
 
