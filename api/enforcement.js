@@ -29,8 +29,27 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
+const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+// Supabase storage bucket for generated violation letters. Created lazily —
+// we attempt creation on first letter generation if missing.
+const LETTERS_BUCKET = 'violation-letters';
+let _bucketEnsured = false;
+async function _ensureLettersBucket() {
+  if (_bucketEnsured) return;
+  try {
+    const { data, error } = await supabase.storage.createBucket(LETTERS_BUCKET, { public: false });
+    // If the bucket already exists, error.message contains 'already exists' or 'duplicate' — fine.
+    if (error && !/already exists|duplicate/i.test(error.message || '')) {
+      console.warn('[enforcement] bucket creation note:', error.message);
+    }
+  } catch (e) {
+    console.warn('[enforcement] bucket creation threw:', e.message);
+  }
+  _bucketEnsured = true;
+}
 
 const router = express.Router();
 
@@ -245,6 +264,184 @@ router.post('/open-violation', express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error('[enforcement.open-violation]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/generate-letter
+// Body: { violation_id, sender_name?, sender_title? }
+//
+// Generates a Bedrock-branded PDF for an open violation, uploads to Supabase
+// storage, creates the corresponding interaction record (letter_courtesy_1 /
+// letter_courtesy_2 / letter_209), and returns a signed URL the UI can open
+// in a new tab. Idempotent-ish: if a letter for THIS violation at THIS stage
+// already exists, return the existing signed URL instead of generating a new one.
+// ---------------------------------------------------------------------------
+router.post('/generate-letter', express.json(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const violationId = body.violation_id;
+    if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+
+    // Fetch violation + property + community + category in one round trip
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .select(`
+        id, property_id, community_id, current_stage, cure_period_ends_at,
+        opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open,
+        enforcement_categories ( label, description ),
+        communities ( name )
+      `)
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
+
+    // Map stage to interaction type
+    const stageToType = {
+      courtesy_1:    'letter_courtesy_1',
+      courtesy_2:    'letter_courtesy_2',
+      certified_209: 'letter_209',
+      fine_assessed: 'letter_209',  // fines piggyback on §209 letter shell
+    };
+    const letterType = stageToType[violation.current_stage];
+    if (!letterType) {
+      return res.status(400).json({ error: `violation is in stage '${violation.current_stage}' — no letter applies` });
+    }
+
+    // Check for an existing letter interaction at this stage — return its URL
+    // instead of regenerating.
+    const { data: priorLetter } = await supabase
+      .from('interactions')
+      .select('id, subject, content, occurred_at')
+      .eq('violation_id', violationId)
+      .eq('type', letterType)
+      .order('occurred_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    if (priorLetter && priorLetter.content) {
+      // content stores the storage path; create a signed URL
+      const { data: sd } = await supabase.storage.from(LETTERS_BUCKET).createSignedUrl(priorLetter.content, 60 * 60);
+      if (sd && sd.signedUrl) {
+        return res.json({ ok: true, regenerated: false, letter_url: sd.signedUrl, interaction_id: priorLetter.id });
+      }
+    }
+
+    // Fetch property + owner from the view
+    const { data: pRow, error: pErr } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_email, owner_phone, owner_mailing_address')
+      .eq('property_id', violation.property_id)
+      .maybeSingle();
+    if (pErr || !pRow) return res.status(404).json({ error: 'property not found' });
+
+    // Latest confirmed observation for evidence photo
+    let observation = null;
+    let photoBuffer = null;
+    if (violation.opened_from_observation_id) {
+      const { data: obs } = await supabase
+        .from('property_observations')
+        .select('id, ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path)')
+        .eq('id', violation.opened_from_observation_id)
+        .maybeSingle();
+      if (obs) {
+        observation = {
+          ai_description: obs.ai_description,
+          severity: obs.severity,
+          captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at,
+        };
+        if (obs.inspection_photos && obs.inspection_photos.storage_path) {
+          try {
+            const { data: dl } = await supabase.storage
+              .from('inspection-photos')
+              .download(obs.inspection_photos.storage_path);
+            if (dl) {
+              const ab = await dl.arrayBuffer();
+              photoBuffer = Buffer.from(ab);
+            }
+          } catch (e) {
+            console.warn('[letter] photo download failed:', e.message);
+          }
+        }
+      }
+    }
+
+    // Generate the PDF
+    const pdfBuffer = await renderViolationLetterPdf({
+      violation: {
+        id: violation.id,
+        current_stage: violation.current_stage,
+        cure_period_ends_at: violation.cure_period_ends_at,
+        opened_at: violation.opened_at,
+        category_label: violation.enforcement_categories && violation.enforcement_categories.label,
+        category_description: violation.enforcement_categories && violation.enforcement_categories.description,
+        board_priority_at_open: violation.board_priority_at_open,
+      },
+      property: {
+        street_address: pRow.street_address,
+        unit:           pRow.unit,
+        city:           pRow.city,
+        state:          pRow.state,
+        zip:            pRow.zip,
+        lot_number:     pRow.lot_number,
+      },
+      owner: {
+        full_name:       pRow.owner_name,
+        mailing_address: pRow.owner_mailing_address,
+      },
+      community: { name: violation.communities && violation.communities.name },
+      observation,
+      photo_buffer: photoBuffer,
+      options: {
+        sender_name:  body.sender_name  || 'Bedrock Association Management',
+        sender_title: body.sender_title || null,
+      },
+    });
+
+    // Upload to storage bucket. Path: violation_id/stage-yyyymmdd-HHMMSS.pdf
+    await _ensureLettersBucket();
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const storagePath = `${violation.id}/${violation.current_stage}-${stamp}.pdf`;
+    const { error: upErr } = await supabase.storage
+      .from(LETTERS_BUCKET)
+      .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+    if (upErr) return res.status(500).json({ error: 'upload failed: ' + upErr.message });
+
+    // Record the interaction. Mail method depends on stage.
+    const isCertified = violation.current_stage === 'certified_209' || violation.current_stage === 'fine_assessed';
+    const { data: inter, error: iErr } = await supabase
+      .from('interactions')
+      .insert({
+        community_id:    violation.community_id,
+        property_id:     violation.property_id,
+        violation_id:    violation.id,
+        observation_id:  violation.opened_from_observation_id,
+        type:            letterType,
+        direction:       'outbound',
+        subject:         `Violation letter (${violation.current_stage})`,
+        content:         storagePath,         // canonical storage location; signed URLs derived on demand
+        delivery_method: isCertified ? 'certified_mail' : 'first_class_mail',
+        occurred_at:     new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (iErr) return res.status(500).json({ error: 'interaction insert failed: ' + iErr.message });
+
+    // Signed URL for immediate download
+    const { data: sd } = await supabase.storage.from(LETTERS_BUCKET).createSignedUrl(storagePath, 60 * 60);
+
+    res.json({
+      ok: true,
+      regenerated: true,
+      violation_id: violation.id,
+      interaction_id: inter.id,
+      letter_url: sd && sd.signedUrl,
+      letter_type: letterType,
+      delivery_method: isCertified ? 'certified_mail' : 'first_class_mail',
+      mailed_to: pRow.owner_mailing_address || `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}, ${pRow.city || ''} ${pRow.state || 'TX'} ${pRow.zip || ''}`,
+    });
+  } catch (err) {
+    console.error('[enforcement.generate-letter]', err);
     res.status(500).json({ error: err.message });
   }
 });

@@ -7814,7 +7814,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       ? '<span style="color:#15803d;">Clean record · next violation opens at Courtesy 1 (regular mail).</span>'
       : `<span style="color:#b45309;">⚠️ ${recentViolations.length} violation${recentViolations.length===1?'':'s'} in last 12mo${repeatCats.length ? ` · repeats in: ${repeatCats.join(', ')}` : ''}. Next violation may require <strong>certified mail</strong> under TX §209 escalation.</span>`;
 
-    // Violations table
+    // Violations table — non-resolved violations get a "Generate letter" button
+    // that runs the letter generator (idempotent — returns existing if already made).
+    const isOpenStage = (s) => !['cured','closed','voided'].includes(s);
     const viosHtml = (d.violations || []).length === 0
       ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No violations on record.</div>'
       : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
@@ -7823,6 +7825,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              <th style="text-align:left; padding:6px 8px;">Category</th>
              <th style="text-align:left; padding:6px 8px;">Stage</th>
              <th style="text-align:left; padding:6px 8px;">Resolved</th>
+             <th style="text-align:right; padding:6px 8px;">Action</th>
            </tr></thead>
            <tbody>
              ${d.violations.map((v) => {
@@ -7831,12 +7834,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                                 : stage === 'certified_209' ? '#b45309'
                                 : stage === 'fine_assessed' ? '#b91c1c'
                                 : stage === 'voided' ? '#94a3b8' : '#1A3050';
+               const showLetterBtn = isOpenStage(stage);
                return `
                  <tr style="border-bottom:1px solid #f1f5f9;">
                    <td style="padding:6px 8px;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : '—'}</td>
                    <td style="padding:6px 8px;">${escapeHtml(v.category_label || v.category_code || '—')}</td>
                    <td style="padding:6px 8px; color:${stageColor}; font-weight:600;">${escapeHtml(stage.replace(/_/g, ' '))}</td>
                    <td style="padding:6px 8px; color:#64748b;">${v.resolved_via ? escapeHtml(v.resolved_via) : (v.resolved_at ? new Date(v.resolved_at).toLocaleDateString() : '—')}</td>
+                   <td style="padding:6px 8px; text-align:right;">
+                     ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#1A3050; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">📄 Generate letter</button>` : ''}
+                   </td>
                  </tr>`;
              }).join('')}
            </tbody>
@@ -7975,6 +7982,38 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspMapHandleMarkerClick(inspPDCurrentPropertyId, inspPDCurrentLabel || 'Selected property');
     inspState._suppressDetailOpen = false;
     inspClosePropertyDetail();
+  }
+
+  // Generate the Bedrock-branded violation letter PDF for a specific violation.
+  // Idempotent on the server — if a letter for this violation at this stage
+  // already exists, we get the existing one back. Opens in a new tab and refreshes
+  // the property detail panel so the new interaction row shows up.
+  async function inspGenerateLetter(violationId, btn) {
+    if (!violationId) return;
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
+    try {
+      const r = await fetch('/api/enforcement/generate-letter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ violation_id: violationId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Open the PDF in a new tab
+      if (j.letter_url) window.open(j.letter_url, '_blank');
+      // Notify what happened (regenerated vs cached)
+      const note = j.regenerated
+        ? `📄 Letter generated · ${j.delivery_method === 'certified_mail' ? 'CERTIFIED MAIL' : 'first-class mail'} to ${j.mailed_to || 'owner mailing address'}`
+        : '📄 Existing letter opened (same stage, already generated)';
+      // Refresh the modal so the interaction row appears in the timeline
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+      // Brief toast (using alert for now; can switch to inline status later)
+      setTimeout(() => alert(note), 100);
+    } catch (e) {
+      alert('Letter generation failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '📄 Generate letter'; }
+    }
   }
 
   // Close modal on outside click
