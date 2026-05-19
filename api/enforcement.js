@@ -644,4 +644,120 @@ router.post('/drafts/reject', express.json(), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// MAIL QUEUE
+// ---------------------------------------------------------------------------
+// GET  /api/enforcement/mail-queue/summary
+//   Counts of pending (approved but not yet printed) letters by delivery
+//   method + community.
+//
+// POST /api/enforcement/mail-queue/batch-pdf
+//   Body: { delivery_method, community_id?, interaction_ids? }
+//   Merges all pending letter PDFs for that delivery_method (optionally
+//   filtered to a community OR a specific set of interaction IDs) into a
+//   single multi-page PDF, returns it as application/pdf with
+//   Content-Disposition: attachment. Sets printed_at = NOW on the included
+//   interactions so they don't re-export next time.
+// ---------------------------------------------------------------------------
+router.get('/mail-queue/summary', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
+    let q = supabase
+      .from('interactions')
+      .select('id, delivery_method, community_id, communities:community_id(name)')
+      .in('type', letterTypes)
+      .is('printed_at', null)
+      .not('subject', 'like', '[DRAFT]%');
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    const summary = { first_class_mail: 0, certified_mail: 0, by_community: {} };
+    (data || []).forEach((row) => {
+      if (row.delivery_method === 'first_class_mail') summary.first_class_mail += 1;
+      if (row.delivery_method === 'certified_mail')   summary.certified_mail   += 1;
+      const cName = (row.communities && row.communities.name) || 'Unknown community';
+      if (!summary.by_community[cName]) summary.by_community[cName] = { first_class: 0, certified: 0 };
+      if (row.delivery_method === 'first_class_mail') summary.by_community[cName].first_class += 1;
+      if (row.delivery_method === 'certified_mail')   summary.by_community[cName].certified  += 1;
+    });
+    res.json({ summary, total_pending: (data || []).length });
+  } catch (err) {
+    console.error('[mail-queue.summary]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const deliveryMethod = body.delivery_method;
+    const communityId = body.community_id || null;
+    const explicitIds = Array.isArray(body.interaction_ids) ? body.interaction_ids : null;
+    if (!deliveryMethod || !['first_class_mail', 'certified_mail'].includes(deliveryMethod)) {
+      return res.status(400).json({ error: "delivery_method must be 'first_class_mail' or 'certified_mail'" });
+    }
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
+
+    let q = supabase
+      .from('interactions')
+      .select('id, content, type, subject, occurred_at, community_id, property_id')
+      .in('type', letterTypes)
+      .eq('delivery_method', deliveryMethod)
+      .is('printed_at', null)
+      .not('subject', 'like', '[DRAFT]%')
+      .order('occurred_at', { ascending: true });
+    if (communityId) q = q.eq('community_id', communityId);
+    if (explicitIds) q = q.in('id', explicitIds);
+    const { data: letters, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!letters || letters.length === 0) {
+      return res.status(404).json({ error: 'No pending letters match those filters.' });
+    }
+
+    // Download all the PDFs from storage
+    const { PDFDocument } = require('pdf-lib');
+    const out = await PDFDocument.create();
+    let included = [];
+    let skipped = [];
+    for (const L of letters) {
+      if (!L.content) { skipped.push({ id: L.id, reason: 'no storage path' }); continue; }
+      try {
+        const { data: blob } = await supabase.storage.from('violation-letters').download(L.content);
+        if (!blob) { skipped.push({ id: L.id, reason: 'storage missing' }); continue; }
+        const ab = await blob.arrayBuffer();
+        const src = await PDFDocument.load(ab);
+        const copied = await out.copyPages(src, src.getPageIndices());
+        copied.forEach((page) => out.addPage(page));
+        included.push(L.id);
+      } catch (e) {
+        skipped.push({ id: L.id, reason: e.message });
+      }
+    }
+    if (included.length === 0) {
+      return res.status(500).json({ error: 'Could not load any letter PDFs.', skipped });
+    }
+    const mergedBytes = await out.save();
+
+    // Mark all included letters as printed
+    const stamp = new Date().toISOString();
+    await supabase
+      .from('interactions')
+      .update({ printed_at: stamp })
+      .in('id', included);
+
+    // Stream the PDF back to the browser
+    const filenameStamp = stamp.replace(/[:.]/g, '-').slice(0, 19);
+    const methodLabel = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="bedrock-mail-batch-${methodLabel}-${filenameStamp}.pdf"`);
+    res.setHeader('X-Bedrock-Included', included.length);
+    res.setHeader('X-Bedrock-Skipped', skipped.length);
+    res.end(Buffer.from(mergedBytes));
+  } catch (err) {
+    console.error('[mail-queue.batch-pdf]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };

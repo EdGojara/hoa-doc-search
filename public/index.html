@@ -7551,6 +7551,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- MAIL QUEUE — approved letters waiting to print. Two batches:
+         first-class mail (regular envelopes) and certified mail (post office trip).
+         Each Download button merges all pending letters of that method into one
+         multi-page PDF + marks them printed. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">📬 Mail Queue <span style="color:#64748b; font-weight:500;">— approved, ready to print</span></h3>
+        <button class="secondary-btn" onclick="inspMailQueueLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+      <div id="inspMailQueuePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px;">
+        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading mail queue…</div>
+      </div>
+    </div>
+
     <!-- Recent sessions (visible always, below the active workflow) -->
     <div style="margin-top: 20px;">
       <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0 0 10px;">Recent inspections</h3>
@@ -9220,6 +9234,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       alert(`✓ ${j.approved} letter${j.approved === 1 ? '' : 's'} approved. Use Mail Queue to download the print batch.`);
       await inspDraftsLoad();
+      await inspMailQueueLoad();
     } catch (e) {
       alert('Approve failed: ' + e.message);
       btn.disabled = false; btn.textContent = '✓ Approve selected';
@@ -9241,6 +9256,106 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       await inspDraftsLoad();
     } catch (e) {
       alert('Reject failed: ' + e.message);
+    }
+  }
+
+  // ============================================================
+  // MAIL QUEUE (Phase 6e)
+  // -------------------------------------------------------------
+  // Approved letters merged into one printable PDF per delivery method.
+  // ============================================================
+  async function inspMailQueueLoad() {
+    const wrap = document.getElementById('inspMailQueuePanel');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
+    try {
+      const r = await fetch('/api/enforcement/mail-queue/summary');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspMailQueueRender(j.summary);
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:14px;">Couldn't load mail queue: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspMailQueueRender(summary) {
+    const wrap = document.getElementById('inspMailQueuePanel');
+    if (!wrap) return;
+    const fc = summary.first_class_mail || 0;
+    const cm = summary.certified_mail || 0;
+    if (fc === 0 && cm === 0) {
+      wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">No letters waiting to print. Approve drafts in the Drafts queue above to populate.</div>';
+      return;
+    }
+    const byCommHtml = Object.entries(summary.by_community || {}).map(([name, counts]) =>
+      `<div style="font-size:11.5px; color:#64748b; margin-top:3px;">${escapeHtml(name)}: ${counts.first_class} first-class · ${counts.certified} certified</div>`
+    ).join('');
+
+    wrap.innerHTML = `
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+        <!-- First-class batch -->
+        <div style="border:1px solid #e2e8f0; border-radius:10px; padding:14px; background:${fc ? '#f8fafc' : '#fafafa'};">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div>
+              <div style="font-size:12px; font-weight:700; color:#1A3050; text-transform:uppercase; letter-spacing:0.05em;">📨 First-Class Mail</div>
+              <div style="font-size:11.5px; color:#64748b; margin-top:2px;">Stuff envelopes, mail standard</div>
+            </div>
+            <div style="font-size:32px; font-weight:700; color:${fc ? '#1A3050' : '#cbd5e1'}; line-height:1;">${fc}</div>
+          </div>
+          <button onclick="inspMailQueueDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
+                  style="width:100%; padding:9px; background:${fc ? '#1A3050' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'};">
+            ${fc ? '⬇ Download batch PDF' : 'Nothing pending'}
+          </button>
+        </div>
+        <!-- Certified batch -->
+        <div style="border:1px solid ${cm ? '#fecaca' : '#e2e8f0'}; border-radius:10px; padding:14px; background:${cm ? '#fef2f2' : '#fafafa'};">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+            <div>
+              <div style="font-size:12px; font-weight:700; color:#7f1d1d; text-transform:uppercase; letter-spacing:0.05em;">⚠ Certified Mail</div>
+              <div style="font-size:11.5px; color:#64748b; margin-top:2px;">Post office trip · return receipt</div>
+            </div>
+            <div style="font-size:32px; font-weight:700; color:${cm ? '#b91c1c' : '#cbd5e1'}; line-height:1;">${cm}</div>
+          </div>
+          <button onclick="inspMailQueueDownload('certified_mail')" ${cm === 0 ? 'disabled' : ''}
+                  style="width:100%; padding:9px; background:${cm ? '#b91c1c' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${cm ? 'pointer' : 'not-allowed'};">
+            ${cm ? '⬇ Download batch PDF' : 'Nothing pending'}
+          </button>
+        </div>
+      </div>
+      ${byCommHtml ? `<div style="margin-top:12px; padding-top:10px; border-top:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px;">By community</div>${byCommHtml}</div>` : ''}
+      <div style="margin-top:12px; padding:8px 10px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; font-size:11.5px; color:#92400e;">
+        💡 Downloading marks letters as printed — they won't appear in the next batch. If you need to reprint, contact support to reset the printed flag.
+      </div>
+    `;
+  }
+
+  async function inspMailQueueDownload(deliveryMethod) {
+    const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    if (!confirm(`Download all pending ${label} letters as one PDF?\n\nThis will:\n• Merge every approved letter into a single multi-page PDF\n• Mark them all as "printed" so they don't appear in the next batch\n• Download immediately to your computer\n\nProceed?`)) return;
+    try {
+      const r = await fetch('/api/enforcement/mail-queue/batch-pdf', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delivery_method: deliveryMethod }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const included = r.headers.get('X-Bedrock-Included');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bedrock-mail-batch-${label}-${new Date().toISOString().slice(0,10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setTimeout(() => alert(`✓ ${included || ''} letters downloaded as one batch PDF. They're now marked as printed.`), 200);
+      await inspMailQueueLoad();
+    } catch (e) {
+      alert('Download failed: ' + e.message);
     }
   }
 
@@ -9369,6 +9484,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         try { inspLoadCommunities(); } catch (e) { console.warn('[inspect] load communities', e); }
         try { inspLoadRecent(); }      catch (e) { console.warn('[inspect] load recent', e); }
         try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
+        try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
       }
       return result;
     };
