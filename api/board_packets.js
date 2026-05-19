@@ -268,6 +268,10 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
   const d = section.input_data || {};
   const lineItems = Array.isArray(d.line_items) ? d.line_items : [];
   const narrative = d.narrative || null;
+  const trailing = Array.isArray(d.trailing_months) ? d.trailing_months : [];
+  const isTrend = trailing.length >= 3;  // 3+ months = trend report; otherwise single-period
+  const currentPeriod = d.current_period || null;
+  const currentLabel = d.current_period_label || (packet.period_label || '');
 
   // KPI cards from top-level fields the extractor produces
   const netIncome = d.net_income != null ? Number(d.net_income) : null;
@@ -275,6 +279,7 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
   const totalExp = d.total_expense != null ? Number(d.total_expense) : null;
   const cashOp = d.cash_operating != null ? Number(d.cash_operating) : null;
   const cashRes = d.cash_reserves != null ? Number(d.cash_reserves) : null;
+  const monthlyAvgNet = isTrend && netIncome != null ? netIncome / trailing.length : null;
 
   // Net-income variance vs. budgeted (if a budgeted net-income row exists,
   // pull from line_items; else just show actual)
@@ -345,32 +350,111 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
   const niDeltaClass = niVariance == null ? '' : (niVariance >= 0 ? 'good' : 'bad');
   const niDeltaSign = niVariance == null ? '' : (niVariance >= 0 ? '+' : '');
 
+  // Trend chart — bar per month, height proportional to net income, current
+  // month highlighted in gold. Negative net renders below the zero line in red.
+  // Only rendered when we have ≥ 3 months of trailing data.
+  let trendChartHtml = '';
+  if (isTrend) {
+    const nets = trailing.map((m) => Number(m.net) || 0);
+    const maxAbs = nets.reduce((m, n) => Math.max(m, Math.abs(n)), 1);
+    const barMaxPx = 80;  // tallest bar height
+    const zeroBaselinePx = barMaxPx + 2;  // baseline y-position for zero
+    const chartH = barMaxPx * 2 + 28;  // total chart height (above + below zero + labels)
+    trendChartHtml = `
+      <div class="table-h2">12-month net-income trend</div>
+      <div style="display:flex; align-items:flex-end; gap:6px; padding:4px 0 6px; border-bottom:1px dashed var(--rule); margin: 4px 0;">
+        ${trailing.map((m, i) => {
+          const n = Number(m.net) || 0;
+          const h = Math.round((Math.abs(n) / maxAbs) * barMaxPx);
+          const positive = n >= 0;
+          const isCurrent = i === trailing.length - 1;
+          const color = isCurrent ? '#D4AF37' : (positive ? '#315A87' : '#dc2626');
+          return `<div style="flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; height:${chartH}px; justify-content:flex-end;">
+            <div style="height:${barMaxPx}px; display:flex; flex-direction:column; justify-content:flex-end; width:100%;">
+              ${positive ? `<div title="${esc(m.month_label)}: ${fmtMoney(n)}" style="width:100%; height:${h}px; background:${color}; border-radius:2px 2px 0 0;"></div>` : ''}
+            </div>
+            <div style="width:100%; height:2px; background:#cbd5e1;"></div>
+            <div style="height:${barMaxPx}px; width:100%; display:flex; flex-direction:column; justify-content:flex-start;">
+              ${!positive ? `<div title="${esc(m.month_label)}: ${fmtMoney(n)}" style="width:100%; height:${h}px; background:${color}; border-radius:0 0 2px 2px;"></div>` : ''}
+            </div>
+            <div style="font-size:10px; color:${isCurrent ? '#1F3A5F' : 'var(--ink-muted)'}; margin-top:4px; font-weight:${isCurrent ? '700' : '400'}; text-align:center; word-break:break-word;">${esc(String(m.month_label || '').slice(0, 6))}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--ink-muted); margin-bottom:14px;">
+        <span><span style="display:inline-block; width:10px; height:10px; background:#315A87; border-radius:2px; vertical-align:middle; margin-right:5px;"></span>Prior months</span>
+        <span><span style="display:inline-block; width:10px; height:10px; background:#D4AF37; border-radius:2px; vertical-align:middle; margin-right:5px;"></span>This month (${esc(currentLabel)})</span>
+        <span>Range: ${fmtMoney(Math.min(...nets), { precision: 0 })} to ${fmtMoney(Math.max(...nets), { precision: 0 })}</span>
+      </div>`;
+  }
+
+  // KPI layout — adapts based on whether this is a single-period or 12-month
+  // trend report. Trend mode leads with "This month" + "YTD" + "Monthly avg";
+  // single-period leads with "Net income (YTD)" + revenue + expense.
+  let kpiHtml = '';
+  if (isTrend && currentPeriod) {
+    const thisMonthNet = Number(currentPeriod.net) || 0;
+    const avgNet = monthlyAvgNet != null ? monthlyAvgNet : 0;
+    const monthVsAvg = thisMonthNet - avgNet;
+    const monthDeltaClass = monthVsAvg >= 0 ? 'good' : 'bad';
+    const monthDeltaSign = monthVsAvg >= 0 ? '+' : '';
+    kpiHtml = `
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="label">This month — ${esc(currentLabel)}</div>
+          <div class="value">${fmtMoney(thisMonthNet, { precision: 0 })}</div>
+          ${monthlyAvgNet != null ? `<div class="delta ${monthDeltaClass}">${monthDeltaSign}${fmtMoney(monthVsAvg, { precision: 0 })} vs. monthly avg</div>` : ''}
+        </div>
+        <div class="kpi-card">
+          <div class="label">YTD net income</div>
+          <div class="value">${fmtMoney(niActual, { precision: 0 })}</div>
+          <div class="delta">${trailing.length} months · ${fmtMoney(revTotal, { precision: 0 })} rev / ${fmtMoney(expTotal, { precision: 0 })} exp</div>
+        </div>
+        <div class="kpi-card">
+          <div class="label">Monthly average net</div>
+          <div class="value">${fmtMoney(monthlyAvgNet || 0, { precision: 0 })}</div>
+          <div class="delta">run-rate baseline</div>
+        </div>
+        ${(cashOp != null || cashRes != null) ? `
+          <div class="kpi-card">
+            <div class="label">Cash position</div>
+            <div class="value">${fmtMoney((cashOp || 0) + (cashRes || 0), { precision: 0 })}</div>
+            <div class="delta">${cashOp != null ? `Operating ${fmtMoney(cashOp, { precision: 0 })}` : ''}${cashOp != null && cashRes != null ? ' · ' : ''}${cashRes != null ? `Reserves ${fmtMoney(cashRes, { precision: 0 })}` : ''}</div>
+          </div>` : ''}
+      </div>`;
+  } else {
+    kpiHtml = `
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="label">Net income${currentLabel ? ` — ${esc(currentLabel)}` : ' (YTD)'}</div>
+          <div class="value">${fmtMoney(niActual, { precision: 0 })}</div>
+          ${niBudget ? `<div class="delta ${niDeltaClass}">${niDeltaSign}${fmtMoney(niVariance, { precision: 0 })} vs. budget${niVarPct != null ? ` (${niDeltaSign}${niVarPct.toFixed(1)}%)` : ''}</div>` : ''}
+        </div>
+        <div class="kpi-card">
+          <div class="label">Total revenue</div>
+          <div class="value">${fmtMoney(revTotal, { precision: 0 })}</div>
+          ${revBudget ? `<div class="delta">Budgeted ${fmtMoney(revBudget, { precision: 0 })}</div>` : ''}
+        </div>
+        <div class="kpi-card">
+          <div class="label">Total expense</div>
+          <div class="value">${fmtMoney(expTotal, { precision: 0 })}</div>
+          ${expBudget ? `<div class="delta">Budgeted ${fmtMoney(expBudget, { precision: 0 })}</div>` : ''}
+        </div>
+        ${(cashOp != null || cashRes != null) ? `
+          <div class="kpi-card">
+            <div class="label">Cash position</div>
+            <div class="value">${fmtMoney((cashOp || 0) + (cashRes || 0), { precision: 0 })}</div>
+            <div class="delta">${cashOp != null ? `Operating ${fmtMoney(cashOp, { precision: 0 })}` : ''}${cashOp != null && cashRes != null ? ' · ' : ''}${cashRes != null ? `Reserves ${fmtMoney(cashRes, { precision: 0 })}` : ''}</div>
+          </div>` : ''}
+      </div>`;
+  }
+
   const bodyHtml = `
     ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
 
-    <div class="kpi-row">
-      <div class="kpi-card">
-        <div class="label">Net income (YTD)</div>
-        <div class="value">${fmtMoney(niActual, { precision: 0 })}</div>
-        ${niBudget ? `<div class="delta ${niDeltaClass}">${niDeltaSign}${fmtMoney(niVariance, { precision: 0 })} vs. budget${niVarPct != null ? ` (${niDeltaSign}${niVarPct.toFixed(1)}%)` : ''}</div>` : ''}
-      </div>
-      <div class="kpi-card">
-        <div class="label">Total revenue</div>
-        <div class="value">${fmtMoney(revTotal, { precision: 0 })}</div>
-        ${revBudget ? `<div class="delta">Budgeted ${fmtMoney(revBudget, { precision: 0 })}</div>` : ''}
-      </div>
-      <div class="kpi-card">
-        <div class="label">Total expense</div>
-        <div class="value">${fmtMoney(expTotal, { precision: 0 })}</div>
-        ${expBudget ? `<div class="delta">Budgeted ${fmtMoney(expBudget, { precision: 0 })}</div>` : ''}
-      </div>
-      ${(cashOp != null || cashRes != null) ? `
-        <div class="kpi-card">
-          <div class="label">Cash position</div>
-          <div class="value">${fmtMoney((cashOp || 0) + (cashRes || 0), { precision: 0 })}</div>
-          <div class="delta">${cashOp != null ? `Operating ${fmtMoney(cashOp, { precision: 0 })}` : ''}${cashOp != null && cashRes != null ? ' · ' : ''}${cashRes != null ? `Reserves ${fmtMoney(cashRes, { precision: 0 })}` : ''}</div>
-        </div>` : ''}
-    </div>
+    ${kpiHtml}
+
+    ${trendChartHtml}
 
     ${tableHtml('Revenue', revenueRows, revTotal, revBudget)}
     ${tableHtml('Expenses', expenseRows, expTotal, expBudget)}
@@ -1127,21 +1211,47 @@ Return ONLY the JSON, no preamble.`,
 }
 Return ONLY the JSON, no preamble.`,
 
-  financials: `You are reviewing an HOA financial statement (P&L, Balance Sheet, or
-both). Extract the data AND write a short Ed-voiced narrative the board can
-act on. Output JSON with this exact shape:
+  financials: `You are reviewing an HOA financial statement. The format may be:
+  (A) Single-period P&L with a Budget column for variance, OR
+  (B) 12-month trailing actuals report ("Summary Statement of Revenues and
+      Expenses For MM/DD/YYYY") — columns are months (e.g., May Jun Jul Aug
+      Sep Oct Nov Dec Jan Feb Mar Apr Total). No budget column.
+
+Extract the data AND write a short Ed-voiced narrative the board can act on.
+Output JSON with this exact shape:
 
 {
-  "period_start": "YYYY-MM-DD or null",
-  "period_end": "YYYY-MM-DD or null",
-  "total_revenue": <number or null>,
-  "total_expense": <number or null>,
-  "net_income": <number or null>,
-  "cash_operating": <number or null>,
+  "period_start": "YYYY-MM-DD or null — first column's month start",
+  "period_end": "YYYY-MM-DD or null — latest period's month end",
+  "current_period_label": "string — latest month label, e.g., 'April 2026'. ALWAYS populate this for format (B); for (A) it's the single period.",
+  "total_revenue": <number — YTD total revenue (Total column on format B, or just the period total on A)>,
+  "total_expense": <number — YTD total expense>,
+  "net_income": <number — YTD net income>,
+  "current_period": {
+    "revenue": <number — latest-month revenue (rightmost non-Total column on format B; same as total_revenue on format A)>,
+    "expense": <number — latest-month expense>,
+    "net": <number — latest-month net income>
+  },
+  "trailing_months": [
+    { "month_label": "May 2025", "revenue": <number>, "expense": <number>, "net": <number> }
+    // 12 entries when format (B); empty array when format (A)
+  ],
+  "cash_operating": <number or null — only if a Balance Sheet section is included>,
   "cash_reserves": <number or null>,
-  "line_items": [{ "account": "string", "amount": <number>, "budget": <number or null>, "type": "revenue|expense|asset|liability|equity" }],
-  "narrative": "Ed-voiced commentary, 100-180 words. Treasurer-grade prose. Lead with the headline (net income vs. budget, cash position vs. typical month). Call out 2-3 line items with material variance and what's driving them if visible. Note reserves position relative to operating. End with one sentence on what to watch. Flowing prose, no bullets. Reference the Association by name if visible. Don't invent numbers."
+  "line_items": [
+    { "account": "string — full GL account name including code, e.g., '4000 - Current Year Assessment Income'", "amount": <number — YTD total>, "budget": <number or null — only for format A>, "type": "revenue|expense|asset|liability|equity" }
+  ],
+  "narrative": "Ed-voiced commentary, 120-200 words. Treasurer-grade prose. For format (B) — LEAD with the latest month vs. the trailing-12-month pattern ('April net income of $X is consistent with the YTD run-rate of $Y/mo') AND call out 1-2 categories where the latest month is materially out of pattern (seasonal items like pool, landscape, holiday). For format (A) — lead with net income vs. budget, then call out 2-3 line-item variances. In both: note reserves position if visible. End with one sentence on what to watch. Flowing prose, no bullets. Reference the Association by name if visible. Don't invent numbers."
 }
+
+FORMAT (B) extraction rules:
+- The column header line is "May Jun Jul Aug Sep Oct Nov Dec Jan Feb Mar Apr Total" — read carefully which numbers map to which column.
+- The PDF text often runs digits together; trust the column positions in the visual layout (you have document vision — use it).
+- Latest month = the column to the IMMEDIATE LEFT of "Total" (Apr in this example). Earliest month = the leftmost data column (May).
+- "current_period" object = the rightmost non-Total column.
+- "trailing_months" array = all 12 month columns in chronological order, oldest to newest.
+- For each month, compute revenue = sum of all revenue rows in that column, expense = sum of all expense rows in that column, net = revenue − expense.
+- "line_items" uses the Total column values (YTD).
 
 Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
 
