@@ -192,6 +192,24 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
       }
     }
 
+    // Photo pairing — wide-shot establishes identity (which house), close-up
+    // documents the issue. The pair travels together onto the violation
+    // letter as the wrong-house insurance + evidence stack.
+    //   'wide'     → identifying shot, no observation/AI categorization fires
+    //   'close_up' → issue evidence, observation row + AI fires; links back
+    //                to the wide via paired_wide_photo_id
+    //   'single'   → backward-compat unpaired shot (existing behavior)
+    const reqRole = (req.body.photo_role || '').toLowerCase();
+    const photoRole = ['wide', 'close_up', 'single'].includes(reqRole) ? reqRole : 'single';
+    const pairedWidePhotoId = req.body.paired_wide_photo_id && String(req.body.paired_wide_photo_id).trim()
+      ? String(req.body.paired_wide_photo_id).trim()
+      : null;
+
+    // Wide shots can't themselves be paired to another wide.
+    if (photoRole === 'wide' && pairedWidePhotoId) {
+      return res.status(400).json({ error: 'wide-shot photo_role cannot have a paired_wide_photo_id' });
+    }
+
     // Insert the photo row
     const photoRow = {
       inspection_id: inspectionId,
@@ -206,6 +224,8 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
       // If user-selected, also mark the photo as reviewer-confirmed now
       reviewed_at: userSelectedPropertyId ? new Date().toISOString() : null,
       notes: req.body.notes || null,
+      photo_role: photoRole,
+      paired_wide_photo_id: pairedWidePhotoId,
     };
 
     // capture_geo is a generated-ish field — set via raw SQL since the JS
@@ -237,13 +257,13 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
       .update({ total_photos: (insp.total_photos || 0) + 1, updated_at: new Date().toISOString() })
       .eq('id', inspectionId);
 
-    // Create the property_observations row if we know the property. AI
-    // categorization runs ASYNC after the response is sent — operator gets
-    // their 200 OK fast and can move to the next house. AI fields fill in
-    // server-side within ~3-5 seconds; Drafts queue picks up whenever ready.
+    // Create the property_observations row if we know the property AND this
+    // photo is evidence (close-up or single). Wide shots are identifying-only;
+    // they don't get observation rows or AI categorization — they ride along
+    // with the close-up's observation via paired_wide_photo_id.
     const resolvedPropertyId = userSelectedPropertyId || polygonMatchPropertyId;
     let observationId = null;
-    if (resolvedPropertyId) {
+    if (resolvedPropertyId && photoRole !== 'wide') {
       const { data: obsRow, error: obsErr } = await supabase
         .from('property_observations')
         .insert({
@@ -252,8 +272,6 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
           property_id:         resolvedPropertyId,
           community_id:        insp.community_id,
           reviewer_status:     'pending',
-          // AI fields (category_id, severity, ai_description, ai_recommended_action,
-          // ai_confidence) start NULL — populated by the async categorizer below.
         })
         .select('id')
         .single();

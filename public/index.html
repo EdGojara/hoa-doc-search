@@ -7692,16 +7692,35 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </div>
 
-      <!-- Big capture button (mobile-friendly tap target) -->
+      <!-- Big capture button (mobile-friendly tap target).
+           Cycle: tap → wide shot (identifies the house). After wide uploads,
+           button changes to "Capture close-up." Multiple close-ups can pair
+           to one wide. "Done with property" resets the pair. The wide+close
+           pair is the wrong-house insurance + the evidence — both ride along
+           on the violation letter. -->
       <div style="margin-bottom: 14px;">
         <!-- Hidden file input — uses device camera via capture="environment" -->
         <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="display: none;" onchange="inspOnPhotoSelected(this)">
+
+        <!-- Staged-wide chip (shown only after a wide is staged) -->
+        <div id="inspWidePairChip" style="display:none; background:#fff; border:1px solid #d8e2ed; border-radius:10px; padding:8px 10px; margin-bottom: 8px; display:flex; align-items:center; gap:10px;">
+          <div id="inspWideThumb" style="width:42px; height:42px; border-radius:6px; background:#1a3a5c; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px;">🏠</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; font-weight:600;">Pairing with</div>
+            <div id="inspWidePairLabel" style="font-size:12.5px; color:#1a3a5c; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Wide shot · uploading…</div>
+          </div>
+          <button type="button" onclick="inspEndPropertyPair()" style="background:#f8fafc; border:1px solid #cbd5e1; color:#475569; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">Done with property</button>
+        </div>
+
         <button id="inspCaptureBtn" onclick="inspTriggerCapture()"
                 style="width: 100%; padding: 22px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px;">
-          <span style="font-size: 26px;">📸</span>
-          <span>Capture photo</span>
+          <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
+          <span id="inspCaptureLabel">Capture wide shot</span>
         </button>
-        <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; margin-top: 6px; text-align: center;">Tap once to enable GPS + compass for accurate tagging</div>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:10px;">
+          <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; flex:1;">Tap once to enable GPS + compass for accurate tagging</div>
+          <a href="#" onclick="event.preventDefault(); inspTriggerCapture('single')" style="font-size: 10.5px; color: #64748b; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">Single shot</a>
+        </div>
       </div>
 
       <!-- Recently captured photos in this session -->
@@ -7884,6 +7903,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     propertyMarkers: [],           // [{marker, propertyId, label}]
     selectedPropertyId: null,      // pre-selected property for next capture
     selectedPropertyLabel: null,
+    // Photo-pairing state (wide → close-up flow)
+    stagedWidePhotoId: null,           // server id of the wide shot currently being paired against
+    stagedWidePreviewUrl: null,        // signed url for the chip thumbnail
+    stagedWidePropertyHint: null,      // address string for the chip label (best-effort)
     // Route coverage state
     routePings: [],                // buffer of GPS pings not yet flushed to server
     routePingsAll: [],             // all pings this session (for live polyline)
@@ -8765,6 +8788,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.communityName = sel.options[sel.selectedIndex].textContent;
       inspState.photoCount = 0;
       inspState.photos = [];
+      // Reset photo-pairing state for the new session
+      inspState.stagedWidePhotoId = null;
+      inspState.stagedWidePreviewUrl = null;
+      inspState.stagedWidePropertyHint = null;
+      if (typeof inspUpdateCaptureUi === 'function') inspUpdateCaptureUi();
       // Reset list cache so we re-fetch for the new community.
       inspState.listLoaded = false;
       inspState.listData = null;
@@ -9162,7 +9190,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
-  function inspTriggerCapture() {
+  // Capture-mode state machine:
+  //   stagedWidePhotoId === null → next tap captures a wide shot
+  //   stagedWidePhotoId !== null → next tap captures a close-up paired to it
+  //   inspNextCaptureOverride === 'single' → next tap is unpaired (escape hatch)
+  // Wide-shot establishes which house (wrong-house insurance). Close-ups
+  // document the issue (the evidence). They travel together onto the
+  // violation letter so a homeowner challenging the citation has nothing
+  // to argue with.
+  let inspNextCaptureOverride = null;
+
+  function inspTriggerCapture(modeOverride) {
+    if (modeOverride === 'single') inspNextCaptureOverride = 'single';
     // First tap on iOS also triggers the orientation permission request
     if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -9172,6 +9211,58 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }).catch(() => { inspState._needsOrientationPermission = false; });
     }
     document.getElementById('inspPhotoInput').click();
+  }
+
+  function inspResolveCaptureRole() {
+    if (inspNextCaptureOverride === 'single') {
+      inspNextCaptureOverride = null;
+      return { role: 'single', paired: null };
+    }
+    if (inspState.stagedWidePhotoId) {
+      return { role: 'close_up', paired: inspState.stagedWidePhotoId };
+    }
+    return { role: 'wide', paired: null };
+  }
+
+  function inspEndPropertyPair() {
+    inspState.stagedWidePhotoId = null;
+    inspState.stagedWidePreviewUrl = null;
+    inspUpdateCaptureUi();
+  }
+
+  // Best-effort address lookup for the staged-wide chip. Pulls from the
+  // property markers cache (loaded when the map was opened). Returns null
+  // if we don't know the address — chip falls back to a generic label.
+  function _inspPropertyAddressFromCache(propertyId) {
+    if (!propertyId || !inspState.propertyMarkers) return null;
+    const hit = inspState.propertyMarkers.find((m) => m.propertyId === propertyId);
+    return hit ? hit.label : null;
+  }
+
+  function inspUpdateCaptureUi() {
+    const label = document.getElementById('inspCaptureLabel');
+    const icon  = document.getElementById('inspCaptureIcon');
+    const chip  = document.getElementById('inspWidePairChip');
+    const thumb = document.getElementById('inspWideThumb');
+    const pairLabel = document.getElementById('inspWidePairLabel');
+    if (!label || !icon || !chip) return;
+    if (inspState.stagedWidePhotoId) {
+      label.textContent = 'Capture close-up of issue';
+      icon.textContent = '🔍';
+      chip.style.display = 'flex';
+      if (inspState.stagedWidePreviewUrl && thumb) {
+        thumb.innerHTML = `<img src="${inspState.stagedWidePreviewUrl}" style="width:100%; height:100%; object-fit:cover;" />`;
+      }
+      if (pairLabel) {
+        pairLabel.textContent = inspState.stagedWidePropertyHint
+          ? `Wide shot · ${inspState.stagedWidePropertyHint}`
+          : 'Wide shot for this property';
+      }
+    } else {
+      label.textContent = 'Capture wide shot';
+      icon.textContent = '📸';
+      chip.style.display = 'none';
+    }
   }
 
   // ===================================================================
@@ -9308,6 +9399,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           if (item.metadata.gps_accuracy_m != null) fd.append('gps_accuracy_m', item.metadata.gps_accuracy_m);
           if (item.metadata.compass_heading_deg != null) fd.append('compass_heading_deg', item.metadata.compass_heading_deg);
           if (item.metadata.property_id) fd.append('property_id', item.metadata.property_id);
+          if (item.metadata.photo_role) fd.append('photo_role', item.metadata.photo_role);
+          if (item.metadata.paired_wide_photo_id) fd.append('paired_wide_photo_id', item.metadata.paired_wide_photo_id);
           const r = await fetch(`/api/inspections/${item.metadata.inspection_id}/photos`, { method: 'POST', body: fd });
           if (!r.ok) {
             // 4xx — give up; the photo will be lost. 5xx and network errors retry.
@@ -9322,9 +9415,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           }
           const j = await r.json();
           await inspQueueRemove(item.id);
-          // Swap the pending tile with the real photo
+          // Swap the pending tile with the real photo (preserving the
+          // local preview blob URL — signed_url isn't in the upload response).
           const idx = inspState.photos.findIndex((p) => p.id === 'queue-' + item.id);
-          if (idx >= 0 && j.photo) inspState.photos[idx] = j.photo;
+          const localPreview = idx >= 0 ? inspState.photos[idx]._local_preview : null;
+          if (idx >= 0 && j.photo) {
+            inspState.photos[idx] = { ...j.photo, _local_preview: localPreview };
+          }
+          // If this was the wide shot for a new property, stage it so the
+          // subsequent close-ups can pair to it. The UI flips into "Capture
+          // close-up" mode automatically.
+          if (j.photo && j.photo.photo_role === 'wide' && !inspState.stagedWidePhotoId) {
+            inspState.stagedWidePhotoId = j.photo.id;
+            inspState.stagedWidePreviewUrl = j.photo.signed_url || localPreview || null;
+            // Property hint comes from whichever resolver fired
+            const propId = j.photo.reviewer_confirmed_property_id || j.photo.polygon_match_property_id;
+            inspState.stagedWidePropertyHint = propId ? _inspPropertyAddressFromCache(propId) : null;
+            inspUpdateCaptureUi();
+          }
           inspRenderPhotos();
         } catch (e) {
           await inspQueueUpdate(item.id, {
@@ -9506,6 +9614,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const file = input.files[0];
     input.value = ''; // allow re-selecting same file
 
+    // Resolve role (wide / close_up / single) + paired wide id at the moment
+    // of capture. Locked in here so retries don't re-evaluate the state.
+    const captureRole = inspResolveCaptureRole();
+
     // 1) Capture metadata at the moment of pick (GPS may move by retry time)
     const metadata = {
       inspection_id: inspState.sessionId,
@@ -9515,6 +9627,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       gps_accuracy_m: inspState.lastGps && inspState.lastGps.accuracy,
       compass_heading_deg: inspState.lastHeading,
       property_id: inspState.selectedPropertyId,
+      photo_role: captureRole.role,
+      paired_wide_photo_id: captureRole.paired,
     };
 
     // 2) Compress (4MB iPhone shot → ~400KB jpeg; 10x faster upload on weak cell)
@@ -9535,6 +9649,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       pending: true,
       captured_at: metadata.captured_at,
       _local_preview: URL.createObjectURL(compressed),  // show the compressed preview
+      photo_role: captureRole.role,
+      paired_wide_photo_id: captureRole.paired,
     });
     inspState.photoCount += 1;
     document.getElementById('inspPhotoCount').textContent = inspState.photoCount;
@@ -9561,8 +9677,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const imgHtml = previewSrc
         ? `<img src="${previewSrc}" style="width:100%; height:100%; object-fit:cover;" />`
         : `<div style="width:100%; height:100%; background:#1a3a5c;"></div>`;
-      return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9;">
+      // Role chip: wide shots get a navy chip, close-ups get a gold chip,
+      // singles get no chip (default behavior). The pair tells operators
+      // visually which photo is the identifier vs. the evidence.
+      let roleChip = '';
+      if (p.photo_role === 'wide') {
+        roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#1a3a5c; color:#fff; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🏠 WIDE</div>`;
+      } else if (p.photo_role === 'close_up') {
+        roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#D4AF37; color:#1a3a5c; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🔍 ISSUE</div>`;
+      }
+      const pairedBorder = p.paired_wide_photo_id ? 'border: 2px solid #D4AF37;' : '';
+      return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9; ${pairedBorder}">
         ${imgHtml}
+        ${roleChip}
         <!-- Top-right time stamp -->
         <div style="position:absolute; top:5px; right:6px; padding:2px 6px; background:rgba(15,23,42,0.65); color:#fff; font-size:10px; font-weight:600; border-radius:99px;">${time}</div>
         <!-- Bottom status overlay -->
@@ -9607,6 +9734,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspState.sessionId = null;
     inspState.photoCount = 0;
     inspState.photos = [];
+    inspState.stagedWidePhotoId = null;
+    inspState.stagedWidePreviewUrl = null;
+    inspState.stagedWidePropertyHint = null;
+    if (typeof inspUpdateCaptureUi === 'function') inspUpdateCaptureUi();
     inspState.routePings = [];
     inspState.routePingsAll = [];
     inspState.coverageMode = false;
@@ -10829,13 +10960,27 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </tbody>
         </table>
 
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">The wide + close-up pattern</h2>
+        <p>Every property you capture gets two kinds of shots, in this order:</p>
+        <ol style="padding-left: 22px;">
+          <li style="margin-bottom: 8px;"><strong>🏠 Wide shot first</strong> — frames the whole front of the house, ideally with the address visible (number on the curb, mailbox, plaque). This is the <em>wrong-house insurance</em>. If a homeowner ever challenges the citation, the wide shot proves which property we documented.</li>
+          <li style="margin-bottom: 8px;"><strong>🔍 Close-up(s) of the issue</strong> — one for each concern. Overgrown grass, faded paint, unapproved structure. The system pairs every close-up to the wide automatically — the chip above the capture button shows what you're paired with.</li>
+        </ol>
+        <p>For a property with three issues, the right pattern is <strong>1 wide + 3 close-ups</strong>, all paired together. When you're done at that property, tap <strong>"Done with property"</strong> to start a fresh pair for the next house.</p>
+
+        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #1A3050); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
+          <strong>Why we do it this way:</strong> the wide shot lands on every violation letter alongside the close-up. When a homeowner calls saying "that's not my house," the wide shot ends the conversation in 30 seconds — there's the address number, there's their door, there's the issue. The single most defensible inspection record we can produce.
+        </p>
+
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">How to capture well</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 8px;"><strong>Stand still when you tap Capture.</strong> The GPS+heading lock is sharpest for the half-second the photo is taken. Walking-and-snapping degrades the property snap.</li>
-          <li style="margin-bottom: 8px;"><strong>Frame the issue, not the whole property.</strong> One photo of the actual concern (overgrown grass, faded paint, unapproved structure) is more useful than five wide shots of the front of the house. Bedrock AI reads close-ups better.</li>
-          <li style="margin-bottom: 8px;"><strong>If something needs context, take a second photo.</strong> Wide shot showing the house, close shot showing the issue. The system will group them.</li>
+          <li style="margin-bottom: 8px;"><strong>Wide first, every time.</strong> Default behavior — first tap on a new property captures the wide. Resist the temptation to skip it for "obvious" houses. The wide shot is for the conversation 6 weeks from now, not this moment.</li>
+          <li style="margin-bottom: 8px;"><strong>Frame the close-up tight on the issue.</strong> The system reads close-ups better than wide-zoom shots. Overgrown grass → frame the section that's tall. Faded paint → frame a panel of the faded area.</li>
+          <li style="margin-bottom: 8px;"><strong>Multiple issues = multiple close-ups, one wide.</strong> Tap "Capture close-up" once per concern. They all pair to the same wide. Don't restart the pair between issues at the same property.</li>
           <li style="margin-bottom: 8px;"><strong>Don't double-capture.</strong> If you took a photo and aren't sure it landed, scroll down — you'll see it in the photo strip within ~3 seconds. Re-tapping creates duplicate observations.</li>
-          <li style="margin-bottom: 8px;"><strong>Skip the obvious-not-a-violation shots.</strong> A perfectly-maintained yard doesn't need a photo. If you wouldn't write a letter about it, don't capture it.</li>
+          <li style="margin-bottom: 8px;"><strong>"Single shot" escape hatch.</strong> If you genuinely need just one photo (e.g., a quick re-check of one issue you already documented), tap the small <em>Single shot</em> link below the capture button. Skips the pair.</li>
+          <li style="margin-bottom: 8px;"><strong>Skip the obvious-not-a-violation shots.</strong> A perfectly-maintained yard doesn't need a wide+close-up. If you wouldn't write a letter about it, don't capture it.</li>
         </ul>
 
         <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #1A3050); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
