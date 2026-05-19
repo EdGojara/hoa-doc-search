@@ -1836,9 +1836,15 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     -webkit-font-smoothing: antialiased;
   }
   .page {
-    width: 8.5in; min-height: 11in; margin: 32px auto;
+    width: 8.5in; margin: 32px auto;
     background: var(--paper); box-shadow: 0 4px 24px rgba(0,0,0,0.08);
     display: flex; flex-direction: column; position: relative; overflow: hidden;
+  }
+  /* The cover hero needs the 5.5in tall navy area — keep it. */
+  .page.cover { min-height: 11in; }
+  /* For print, every page fills letter size. */
+  @media print {
+    .page { min-height: 11in; }
   }
   /* ========== COVER PAGE ========== */
   .cover { padding: 0; color: var(--paper); }
