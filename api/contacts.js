@@ -397,6 +397,9 @@ router.post('/contacts/infer-residency', express.json(), async (req, res) => {
     if (!communityId) return res.status(400).json({ error: 'community_id is required.' });
     const force = req.body && req.body.force;
     const today = new Date().toISOString().slice(0, 10);
+    // Batch size — keeps .in() URL under PostgREST's ~8KB ceiling
+    // (200 UUIDs × ~38 chars + commas = ~7.6KB). Tuned for safety.
+    const BATCH = 200;
 
     // Pull all properties for the community.
     const { data: properties, error: pErr } = await supabase
@@ -408,37 +411,42 @@ router.post('/contacts/infer-residency', express.json(), async (req, res) => {
     if (!properties || properties.length === 0) {
       return res.json({ processed: 0, created_renter: 0, created_owner_occupied: 0, skipped_existing: 0, errors: [] });
     }
-    const propIds = properties.map((p) => p.id);
 
-    // Active primary ownerships with the owner contact (mailing_address included).
-    const { data: ownerships, error: oErr } = await supabase
-      .from('property_ownerships')
-      .select('property_id, contact_id, is_primary, end_date, contacts(id, full_name, mailing_address)')
-      .in('property_id', propIds)
-      .is('end_date', null);
-    if (oErr) return res.status(500).json({ error: oErr.message });
-    // Index by property_id; prefer is_primary=true.
+    // Batch the .in() queries so large communities (1000+ properties)
+    // don't blow past PostgREST's URL-length limit.
     const ownersByProp = new Map();
-    (ownerships || []).forEach((o) => {
-      const existing = ownersByProp.get(o.property_id);
-      if (!existing || (o.is_primary && !existing.is_primary)) {
-        ownersByProp.set(o.property_id, o);
-      }
-    });
+    const propsWithActiveResidency = new Set();
+    for (let i = 0; i < properties.length; i += BATCH) {
+      const chunkIds = properties.slice(i, i + BATCH).map((p) => p.id);
+      const [oRes, rRes] = await Promise.all([
+        supabase.from('property_ownerships')
+          .select('property_id, contact_id, is_primary, end_date, contacts(id, full_name, mailing_address)')
+          .in('property_id', chunkIds)
+          .is('end_date', null),
+        supabase.from('property_residencies')
+          .select('property_id')
+          .in('property_id', chunkIds)
+          .is('end_date', null),
+      ]);
+      if (oRes.error) return res.status(500).json({ error: 'ownership query: ' + oRes.error.message });
+      if (rRes.error) return res.status(500).json({ error: 'residency query: ' + rRes.error.message });
+      (oRes.data || []).forEach((o) => {
+        const existing = ownersByProp.get(o.property_id);
+        if (!existing || (o.is_primary && !existing.is_primary)) ownersByProp.set(o.property_id, o);
+      });
+      (rRes.data || []).forEach((r) => propsWithActiveResidency.add(r.property_id));
+    }
 
-    // Existing active residencies — skip these unless force.
-    const { data: existingRes, error: rErr } = await supabase
-      .from('property_residencies')
-      .select('property_id')
-      .in('property_id', propIds)
-      .is('end_date', null);
-    if (rErr) return res.status(500).json({ error: rErr.message });
-    const propsWithActiveResidency = new Set((existingRes || []).map((r) => r.property_id));
-
+    // Build all the residency rows in memory first, then bulk insert in
+    // batches. Single insert call per batch = ~5 calls for 1000 properties
+    // vs 1000 individual calls = avoids both PostgREST hammering and the
+    // request-timeout cliff that was killing Waterview (1171 properties).
     let createdRenter = 0;
     let createdOwner  = 0;
+    let createdUnknown = 0;
     let skipped       = 0;
-    const errors      = [];
+    const toInsert = [];
+    const forceCloseIds = [];
 
     for (const prop of properties) {
       if (!force && propsWithActiveResidency.has(prop.id)) { skipped += 1; continue; }
@@ -446,8 +454,6 @@ router.post('/contacts/infer-residency', express.json(), async (req, res) => {
       const contact   = ownership && ownership.contacts;
       const mailing   = contact && contact.mailing_address;
 
-      // Inference: if a separate mailing_address exists AND it doesn't contain the property
-      // street_address, the owner doesn't live there → mark as renter.
       let residencyType = 'owner_occupied';
       let residencyContactId = ownership ? ownership.contact_id : null;
       if (mailing && prop.street_address) {
@@ -455,49 +461,66 @@ router.post('/contacts/infer-residency', express.json(), async (req, res) => {
         const propNorm = prop.street_address.toLowerCase().replace(/\s+/g, ' ').trim();
         const propHouseNumMatch = propNorm.match(/^\d+/);
         const houseNum = propHouseNumMatch ? propHouseNumMatch[0] : '';
-        // Property street appears in mailing → owner-occupied; otherwise → renter.
         const propIsInMailing = houseNum && mailNorm.includes(houseNum) && mailNorm.includes(propNorm.replace(/^\d+\s*/, ''));
         if (!propIsInMailing) {
           residencyType = 'renter';
-          residencyContactId = null;  // Renter identity unknown from Vantaca export
+          residencyContactId = null;
         }
       }
-      // No owner contact on file at all → mark unknown so the rollup is honest.
       if (!ownership) {
         residencyType = 'unknown';
         residencyContactId = null;
       }
 
-      // If force: close any existing residency before inserting fresh.
       if (force && propsWithActiveResidency.has(prop.id)) {
-        await supabase
-          .from('property_residencies')
-          .update({ end_date: today, updated_at: new Date().toISOString() })
-          .eq('property_id', prop.id)
-          .is('end_date', null);
+        forceCloseIds.push(prop.id);
       }
-
-      const { error: insErr } = await supabase
-        .from('property_residencies')
-        .insert({
-          property_id:    prop.id,
-          contact_id:     residencyContactId,
-          start_date:     today,
-          residency_type: residencyType,
-          source:         'inferred_from_mailing_address',
-        });
-      if (insErr) {
-        errors.push({ property_id: prop.id, error: insErr.message });
-        continue;
-      }
+      toInsert.push({
+        property_id:    prop.id,
+        contact_id:     residencyContactId,
+        start_date:     today,
+        residency_type: residencyType,
+        source:         'inferred_from_mailing_address',
+      });
       if (residencyType === 'renter') createdRenter += 1;
       else if (residencyType === 'owner_occupied') createdOwner += 1;
+      else createdUnknown += 1;
+    }
+
+    // Force-close in batches if requested
+    const errors = [];
+    if (force && forceCloseIds.length > 0) {
+      for (let i = 0; i < forceCloseIds.length; i += BATCH) {
+        const chunk = forceCloseIds.slice(i, i + BATCH);
+        const { error: cErr } = await supabase
+          .from('property_residencies')
+          .update({ end_date: today, updated_at: new Date().toISOString() })
+          .in('property_id', chunk)
+          .is('end_date', null);
+        if (cErr) errors.push({ phase: 'force_close', error: cErr.message });
+      }
+    }
+
+    // Bulk insert in batches
+    for (let i = 0; i < toInsert.length; i += BATCH) {
+      const chunk = toInsert.slice(i, i + BATCH);
+      const { error: insErr } = await supabase.from('property_residencies').insert(chunk);
+      if (insErr) {
+        errors.push({ phase: 'insert', batch_start: i, error: insErr.message });
+        // Subtract the failed batch from counts so the summary is honest
+        chunk.forEach((row) => {
+          if (row.residency_type === 'renter') createdRenter -= 1;
+          else if (row.residency_type === 'owner_occupied') createdOwner -= 1;
+          else createdUnknown -= 1;
+        });
+      }
     }
 
     res.json({
       processed: properties.length,
       created_renter: createdRenter,
       created_owner_occupied: createdOwner,
+      created_unknown: createdUnknown,
       skipped_existing: skipped,
       errors,
     });

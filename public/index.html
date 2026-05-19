@@ -3490,11 +3490,21 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ community_id: communityId }),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      status.innerHTML = `<span style="color:#15803d;">✓ Processed ${j.processed} properties — created ${j.created_owner_occupied} owner-occupied, ${j.created_renter} renter${j.skipped_existing ? `, skipped ${j.skipped_existing} with existing residency` : ''}.</span>`;
+      // Read the body as text first so we can fall back gracefully when the
+      // server returns non-JSON (proxy timeouts, Cloudflare 502s, etc.)
+      const text = await r.text();
+      let j = {};
+      try { j = text ? JSON.parse(text) : {}; } catch (_) { /* non-JSON body */ }
+      if (!r.ok) {
+        const msg = j.error || text || `HTTP ${r.status} ${r.statusText || ''}`.trim();
+        throw new Error(msg.slice(0, 500));
+      }
+      const unknownNote = j.created_unknown ? `, ${j.created_unknown} unknown (no owner on file)` : '';
+      const errNote = j.errors && j.errors.length ? ` — ⚠ ${j.errors.length} batch error${j.errors.length === 1 ? '' : 's'}, check Render logs` : '';
+      status.innerHTML = `<span style="color:#15803d;">✓ Processed ${j.processed} properties — ${j.created_owner_occupied} owner-occupied, ${j.created_renter} renter${unknownNote}${j.skipped_existing ? `, skipped ${j.skipped_existing} with existing residency` : ''}.${errNote}</span>`;
       homesLoadSummary();
     } catch (e) {
+      console.error('[homesInferResidency]', e);
       status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     } finally {
       btn.disabled = false; btn.textContent = '🔍 Infer residency';
