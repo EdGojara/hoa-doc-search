@@ -4372,13 +4372,14 @@
           </div>
           <div>
             <label style="display:block; font-size:11px; color:#666; margin-bottom:2px;">Source type</label>
-            <select id="help-upload-source-type" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
+            <select id="help-upload-source-type" onchange="helpUploadSourceTypeChanged()" style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
               <option value="vendor_admin_guide">Vendor admin guide</option>
               <option value="vendor_user_guide">Vendor user guide</option>
               <option value="vendor_agreement">Vendor service agreement</option>
               <option value="vendor_release_notes">Vendor release notes</option>
               <option value="bedrock_sop">Bedrock SOP</option>
               <option value="governing_document">Governing document (CCR, bylaws, rules)</option>
+              <option value="legal_reference">⚖️ Legal reference (statute book)</option>
               <option value="training_material">Training material</option>
               <option value="other">Other</option>
             </select>
@@ -4388,6 +4389,41 @@
             <input type="text" id="help-upload-notes" placeholder="e.g., supersedes 1.2024 version"
                    style="padding:6px; width:100%; font-size:13px; box-sizing:border-box;">
           </div>
+        </div>
+
+        <!-- Legal-reference extra metadata. Shown only when source_type=legal_reference. -->
+        <div id="help-upload-legal-meta" style="display:none; background:#fffbeb; border:1px solid #f3d894; border-radius:6px; padding:10px 12px; margin-bottom:10px;">
+          <div style="font-size:12px; font-weight:600; color:#78350f; margin-bottom:6px;">⚖️ Legal reference metadata</div>
+          <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:8px;">
+            <div>
+              <label style="display:block; font-size:11px; color:#78350f; margin-bottom:2px;">Jurisdiction</label>
+              <input type="text" id="help-upload-jurisdiction" value="TX" style="padding:5px; width:100%; font-size:12px; box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#78350f; margin-bottom:2px;">Year start</label>
+              <input type="number" id="help-upload-year-start" placeholder="2025" style="padding:5px; width:100%; font-size:12px; box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#78350f; margin-bottom:2px;">Year end</label>
+              <input type="number" id="help-upload-year-end" placeholder="2027" style="padding:5px; width:100%; font-size:12px; box-sizing:border-box;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#78350f; margin-bottom:2px;">Community type</label>
+              <select id="help-upload-community-type" style="padding:5px; width:100%; font-size:12px; box-sizing:border-box;">
+                <option value="">— pick one —</option>
+                <option value="single_family">Single-family</option>
+                <option value="townhome">Townhome</option>
+                <option value="condo">Condo</option>
+                <option value="master_planned">Master-planned</option>
+                <option value="mixed">Mixed (single-family + townhome)</option>
+              </select>
+            </div>
+            <div style="grid-column:1/-1;">
+              <label style="display:block; font-size:11px; color:#78350f; margin-bottom:2px;">Publisher</label>
+              <input type="text" id="help-upload-publisher" placeholder="e.g., RMWBH (Roberts Markel Weinberg Butler Hailey)" style="padding:5px; width:100%; font-size:12px; box-sizing:border-box;">
+            </div>
+          </div>
+          <div style="font-size:10.5px; color:#a3651b; margin-top:6px; line-height:1.4;">Reference only — confirm with counsel for legal advice. Statutes themselves are public; the compilation/commentary belongs to the publisher.</div>
         </div>
         <div id="help-upload-drop"
              style="border:2px dashed #d0d7de; border-radius:6px; padding:20px; text-align:center; cursor:pointer; background:#fff;"
@@ -15439,7 +15475,9 @@ ${questionsPage}
         </div>`;
         return;
       }
-      el.innerHTML = `
+      const legalDocs = docs.filter(d => d.source_type === 'legal_reference');
+      const opDocs    = docs.filter(d => d.source_type !== 'legal_reference');
+      const opTable = opDocs.length === 0 ? '' : `
         <table style="width:100%; border-collapse:collapse; font-size:13px;">
           <thead><tr style="background:#f5f5f5;">
             <th style="padding:8px; text-align:left;">Title</th>
@@ -15451,7 +15489,7 @@ ${questionsPage}
             <th style="padding:8px; text-align:center;"></th>
           </tr></thead>
           <tbody>
-            ${docs.map(d => `
+            ${opDocs.map(d => `
               <tr style="border-bottom:1px solid #eee;">
                 <td style="padding:8px;"><strong>${escapeHtml(d.title)}</strong>${d.notes ? `<div style="color:#888; font-size:11px;">${escapeHtml(d.notes)}</div>` : ''}</td>
                 <td style="padding:8px; font-size:12px;">${escapeHtml(d.vendor || '—')}</td>
@@ -15465,7 +15503,41 @@ ${questionsPage}
               </tr>
             `).join('')}
           </tbody>
-        </table>
+        </table>`;
+      const legalCards = legalDocs.length === 0 ? '' : legalDocs.map(d => {
+        const yrs = (d.effective_year_start && d.effective_year_end) ? `${d.effective_year_start}–${d.effective_year_end}` : (d.effective_year_start || d.effective_year_end || '');
+        const cType = (d.community_type || '').replace(/_/g, ' ');
+        const meta = [
+          d.jurisdiction || null,
+          yrs || null,
+          cType || null,
+          d.publisher || null,
+        ].filter(Boolean).join(' · ');
+        return `
+          <div style="background:#fffbeb; border:1px solid #f3d894; border-left:4px solid #d4af37; border-radius:8px; padding:14px 16px; margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-family:var(--font-serif, Georgia); font-size:16px; font-weight:500; color:var(--navy, #1A3050);">⚖️ ${escapeHtml(d.title)}</div>
+                ${meta ? `<div style="font-size:11.5px; color:#78350f; margin-top:3px;">${escapeHtml(meta)}</div>` : ''}
+                <div style="font-size:11px; color:#94a3b8; margin-top:4px;">${d.page_count || '?'} pages · ${d.chunk_count || 0} sections indexed · ingested ${new Date(d.ingested_at).toLocaleDateString()}</div>
+                ${d.notes ? `<div style="color:#78350f; font-size:11.5px; margin-top:4px; font-style:italic;">${escapeHtml(d.notes)}</div>` : ''}
+              </div>
+              <a href="#" onclick="event.preventDefault(); helpDeleteDoc('${d.id}', '${escapeHtml(d.title).replace(/'/g, '&#039;')}')" title="Delete" style="color:#a00; text-decoration:none; font-size:14px;">🗑️</a>
+            </div>
+          </div>`;
+      }).join('');
+      el.innerHTML = `
+        ${legalDocs.length > 0 ? `
+          <div style="margin-bottom:18px;">
+            <h3 style="font-family:var(--font-serif, Georgia); font-size:18px; font-weight:500; color:var(--navy, #1A3050); margin:0 0 4px;">📚 Law <em style="font-style:italic; color:var(--gold, #D4AF37); font-weight:500;">Library</em></h3>
+            <p style="font-size:11.5px; color:#64748b; margin:0 0 10px;">Statute references the platform applies as the legal lens when triangulating answers. Reference only — confirm with counsel for legal advice.</p>
+            ${legalCards}
+          </div>` : ''}
+        ${opDocs.length > 0 ? `
+          <div>
+            <h3 style="font-family:var(--font-serif, Georgia); font-size:18px; font-weight:500; color:var(--navy, #1A3050); margin:0 0 10px;">🛠️ Operational Library</h3>
+            ${opTable}
+          </div>` : ''}
       `;
     } catch (e) {
       el.innerHTML = `<div style="color:#a00;">Failed to load: ${escapeHtml(e.message)}</div>`;
@@ -15495,6 +15567,20 @@ ${questionsPage}
       if (vendor) fd.append('vendor', vendor);
       if (notes) fd.append('notes', notes);
 
+      // Legal-reference metadata — only sent for that source type
+      if (source_type === 'legal_reference') {
+        const jur     = document.getElementById('help-upload-jurisdiction').value.trim();
+        const yrStart = document.getElementById('help-upload-year-start').value.trim();
+        const yrEnd   = document.getElementById('help-upload-year-end').value.trim();
+        const cType   = document.getElementById('help-upload-community-type').value;
+        const pub     = document.getElementById('help-upload-publisher').value.trim();
+        if (jur)     fd.append('jurisdiction', jur);
+        if (yrStart) fd.append('effective_year_start', yrStart);
+        if (yrEnd)   fd.append('effective_year_end', yrEnd);
+        if (cType)   fd.append('community_type', cType);
+        if (pub)     fd.append('publisher', pub);
+      }
+
       const r = await fetch('/api/help/ingest', { method: 'POST', body: fd });
       const data = await r.json();
 
@@ -15511,8 +15597,13 @@ ${questionsPage}
         return;
       }
 
+      const detailBits = [
+        data.pages ? `${data.pages} pages` : null,
+        data.sections ? `${data.sections} statute sections` : null,
+        `${data.chunks} searchable chunks`,
+      ].filter(Boolean).join(', ');
       status.innerHTML = `<div style="background:#e8f5e9; border:1px solid #b8d8b8; border-radius:6px; padding:10px; font-size:13px;">
-        ✅ Indexed in ${(data.duration_ms / 1000).toFixed(1)}s — ${data.pages} pages, ${data.chunks} searchable chunks. You can now ask questions about it.
+        ✅ Indexed in ${(data.duration_ms / 1000).toFixed(1)}s — ${detailBits}. You can now ask questions about it.
       </div>`;
       // clear form
       document.getElementById('help-upload-title').value = '';
@@ -15524,6 +15615,14 @@ ${questionsPage}
     } catch (e) {
       status.innerHTML = `<div style="background:#fde7e7; border:1px solid #f0b8b8; border-radius:6px; padding:10px; color:#a00; font-size:13px;">❌ ${escapeHtml(e.message)}</div>`;
     }
+  }
+
+  // Toggle the legal-reference metadata block based on source type pick.
+  function helpUploadSourceTypeChanged() {
+    const sel = document.getElementById('help-upload-source-type');
+    const legalMeta = document.getElementById('help-upload-legal-meta');
+    if (!sel || !legalMeta) return;
+    legalMeta.style.display = sel.value === 'legal_reference' ? 'block' : 'none';
   }
 
   async function helpDeleteDoc(id, title) {

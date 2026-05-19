@@ -25,6 +25,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const multer = require('multer');
+const { extractLegalReferenceChunks } = require('../lib/legal_reference_ingest');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -117,9 +118,14 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
     return res.status(400).json({ error: `Unsupported file type: ${req.file.mimetype}` });
   }
 
-  const { title, source_type, vendor, notes } = req.body || {};
+  const {
+    title, source_type, vendor, notes,
+    jurisdiction, effective_year_start, effective_year_end, community_type, publisher,
+  } = req.body || {};
   if (!title) return res.status(400).json({ error: 'title is required' });
   if (!source_type) return res.status(400).json({ error: 'source_type is required' });
+
+  const isLegal = source_type === 'legal_reference';
 
   try {
     // Dedup check by file hash. Check returns ANY existing record (regardless of status)
@@ -140,10 +146,25 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    // Extract page-level text from PDF via the AI
-    const { pages, usage } = await extractPdfPages(req.file.buffer);
-    if (!Array.isArray(pages) || pages.length === 0) {
-      return res.status(422).json({ error: 'the AI returned no pages from the PDF.' });
+    // Legal references use a section-aware ingest path (chunk by Sec. X.YYY
+    // boundaries) — gives clean citations and lets the compliance engine
+    // resolve to a specific statute. All other source types use the generic
+    // AI-based per-page extraction.
+    let pages = null;
+    let legalChunkData = null;
+    let usage = null;
+    if (isLegal) {
+      legalChunkData = await extractLegalReferenceChunks(req.file.buffer);
+      if (!legalChunkData.chunks || legalChunkData.chunks.length === 0) {
+        return res.status(422).json({ error: 'No statute sections detected in this PDF. Confirm it is an RMWBH-style quick-reference guide with "Sec. X.YYY" headings.' });
+      }
+    } else {
+      const extracted = await extractPdfPages(req.file.buffer);
+      pages = extracted.pages;
+      usage = extracted.usage;
+      if (!Array.isArray(pages) || pages.length === 0) {
+        return res.status(422).json({ error: 'the AI returned no pages from the PDF.' });
+      }
     }
 
     // Insert the document row
@@ -156,9 +177,14 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
         vendor: vendor || null,
         file_name: req.file.originalname,
         file_hash: fileHash,
-        page_count: pages.length,
+        page_count: isLegal ? (legalChunkData.page_count || null) : pages.length,
         notes: notes || null,
-        status: 'active'
+        status: 'active',
+        jurisdiction:         isLegal ? (jurisdiction || null) : null,
+        effective_year_start: isLegal && effective_year_start ? Number(effective_year_start) : null,
+        effective_year_end:   isLegal && effective_year_end   ? Number(effective_year_end)   : null,
+        community_type:       isLegal ? (community_type || null) : null,
+        publisher:            isLegal ? (publisher || null) : null,
       })
       .select()
       .single();
@@ -183,23 +209,41 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
       throw docErr;
     }
 
-    // Chunk each page, then embed all chunks in batches of 50 (OpenAI limit-friendly)
+    // Chunk each page (or each statute section, for legal references), then
+    // embed all chunks in batches of 50.
     const allChunkRows = [];
     let chunkIndex = 0;
-    for (const page of pages) {
-      const pageText = (page.text || '').trim();
-      if (!pageText) continue;
-      const chunks = chunkText(pageText, 500, 60);
-      for (const chunkBody of chunks) {
+    if (isLegal) {
+      for (const c of legalChunkData.chunks) {
         allChunkRows.push({
           document_id: doc.id,
           chunk_index: chunkIndex++,
-          text: chunkBody,
-          page_number: page.page_number || null,
-          section_heading: page.section_heading || null,
-          token_count: Math.round(chunkBody.split(/\s+/).length * 1.3),
-          embedding: null   // filled in below
+          text: c.text,
+          page_number: null,
+          section_heading: c.section_heading,
+          token_count: Math.round(c.text.split(/\s+/).length * 1.3),
+          embedding: null,
+          chapter_number:   c.chapter_number || null,
+          section_number:   c.section_number || null,
+          statute_citation: c.statute_citation || null,
         });
+      }
+    } else {
+      for (const page of pages) {
+        const pageText = (page.text || '').trim();
+        if (!pageText) continue;
+        const chunks = chunkText(pageText, 500, 60);
+        for (const chunkBody of chunks) {
+          allChunkRows.push({
+            document_id: doc.id,
+            chunk_index: chunkIndex++,
+            text: chunkBody,
+            page_number: page.page_number || null,
+            section_heading: page.section_heading || null,
+            token_count: Math.round(chunkBody.split(/\s+/).length * 1.3),
+            embedding: null,
+          });
+        }
       }
     }
 
@@ -234,9 +278,14 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
         title, source_type, vendor: vendor || null
       },
       retrieved_context: null,
-      prompt: 'extractPdfPages',
-      model: 'claude-sonnet-4-5 + openai-ada-002',
-      response: { document_id: doc.id, pages: pages.length, chunks: allChunkRows.length },
+      prompt: isLegal ? 'parseStatuteSections' : 'extractPdfPages',
+      model: isLegal ? 'pdf-parse + openai-ada-002' : 'AI page extractor + openai-ada-002',
+      response: {
+        document_id: doc.id,
+        pages: isLegal ? (legalChunkData.page_count || null) : pages.length,
+        sections: isLegal ? legalChunkData.section_count : null,
+        chunks: allChunkRows.length,
+      },
       input_tokens: usage?.input_tokens || null,
       output_tokens: usage?.output_tokens || null,
       duration_ms: Date.now() - t0
@@ -245,7 +294,8 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
     res.json({
       ok: true,
       document: { ...doc, chunk_count: allChunkRows.length },
-      pages: pages.length,
+      pages: isLegal ? (legalChunkData.page_count || null) : pages.length,
+      sections: isLegal ? legalChunkData.section_count : null,
       chunks: allChunkRows.length,
       duration_ms: Date.now() - t0
     });
@@ -380,7 +430,7 @@ router.get('/documents', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('knowledge_documents')
-      .select('id, title, source_type, vendor, file_name, page_count, chunk_count, status, notes, ingested_at')
+      .select('id, title, source_type, vendor, file_name, page_count, chunk_count, status, notes, ingested_at, jurisdiction, effective_year_start, effective_year_end, community_type, publisher')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('ingested_at', { ascending: false });
     if (error) throw error;
