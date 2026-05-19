@@ -7534,6 +7534,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- CURE-LAPSE PANEL — violations whose cure period has passed without
+         resolution. Process button bumps stage + drafts the new letter. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">⏰ Cure-lapse processor <span style="color:#64748b; font-weight:500;">— violations past their cure date</span></h3>
+        <div>
+          <button class="secondary-btn" onclick="inspCureLapsePreview()" style="font-size:11px; padding:4px 10px; margin-right:4px;">🔍 Preview</button>
+          <button class="action-btn" id="inspCureLapseProcessBtn" onclick="inspCureLapseProcess()" style="font-size:12px; padding:5px 14px;" disabled>⚙ Process all</button>
+        </div>
+      </div>
+      <div id="inspCureLapsePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
+        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Click Preview to see violations with expired cure periods. Process bumps each one to the next stage + auto-drafts the new letter.</div>
+      </div>
+    </div>
+
     <!-- DRAFTS QUEUE — letters drafted by AI after inspections, awaiting review.
          Visible always (no active session needed). Click anywhere outside an
          inspection to see this. Operator reviews each drafted letter PDF, picks
@@ -9937,6 +9952,105 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   // ============================================================
+  // CURE-LAPSE PROCESSOR (Bundle 5)
+  // ============================================================
+  let _inspCureLapseData = null;
+
+  async function inspCureLapsePreview() {
+    const wrap = document.getElementById('inspCureLapsePanel');
+    wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
+    try {
+      const r = await fetch('/api/enforcement/cure-lapse/pending?limit=200');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _inspCureLapseData = j;
+      inspCureLapseRender(j);
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:14px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspCureLapseRender(j) {
+    const wrap = document.getElementById('inspCureLapsePanel');
+    const btn = document.getElementById('inspCureLapseProcessBtn');
+    if (!j.pending_count) {
+      wrap.innerHTML = '<div style="color:#15803d; font-size:12px; text-align:center; padding:14px 0;">✓ No violations have expired cure periods. Lifecycle is current.</div>';
+      btn.disabled = true; btn.style.opacity = '0.5';
+      return;
+    }
+    btn.disabled = false; btn.style.opacity = '1';
+    btn.textContent = `⚙ Process all (${j.pending_count})`;
+
+    // Group by current_stage for at-a-glance summary
+    const byStage = (j.violations || []).reduce((acc, v) => {
+      acc[v.current_stage] = (acc[v.current_stage] || 0) + 1;
+      return acc;
+    }, {});
+    const pill = (label, count, tone) => count
+      ? `<span style="background:${tone}; padding:3px 9px; border-radius:99px; font-size:11px; font-weight:700; margin-right:6px;">${label}: ${count}</span>` : '';
+    const summary = `<div style="padding:8px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:12px;">
+      ${pill('Courtesy 1 → 2', byStage.courtesy_1 || 0, '#dcfce7')}
+      ${pill('Courtesy 2 → §209', byStage.courtesy_2 || 0, '#fef3c7')}
+      ${pill('§209 → Fine / Board review', byStage.certified_209 || 0, '#fecaca')}
+      <span style="color:#64748b; margin-left:8px;">· ${j.pending_count} total</span>
+    </div>`;
+
+    const rows = (j.violations || []).slice(0, 25).map((v) => {
+      const addr = v.property
+        ? `${escapeHtml(v.property.street_address || '')}${v.property.unit ? ' #' + escapeHtml(v.property.unit) : ''}`
+        : '—';
+      const stageColor = v.current_stage === 'certified_209' ? '#b91c1c' : v.current_stage === 'courtesy_2' ? '#b45309' : '#1A3050';
+      const overdueColor = v.days_overdue > 30 ? '#b91c1c' : v.days_overdue > 7 ? '#b45309' : '#475569';
+      return `<tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:7px 10px; font-weight:600; color:#1A3050;">${addr}</td>
+        <td style="padding:7px 10px; color:#475569;">${escapeHtml(v.property && v.property.owner_name || '—')}</td>
+        <td style="padding:7px 10px; color:${stageColor}; font-weight:600;">${escapeHtml(v.current_stage.replace(/_/g, ' '))}</td>
+        <td style="padding:7px 10px; color:${overdueColor}; font-weight:600;">${v.days_overdue}d overdue</td>
+      </tr>`;
+    }).join('');
+
+    wrap.innerHTML = summary + `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="background:#f8fafc; color:#64748b;">
+        <th style="text-align:left; padding:7px 10px;">Property</th>
+        <th style="text-align:left; padding:7px 10px;">Owner</th>
+        <th style="text-align:left; padding:7px 10px;">Current stage</th>
+        <th style="text-align:left; padding:7px 10px;">Overdue</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table>${j.pending_count > 25 ? `<div style="padding:8px; color:#94a3b8; font-size:11px; text-align:center;">…and ${j.pending_count - 25} more</div>` : ''}`;
+  }
+
+  async function inspCureLapseProcess() {
+    if (!_inspCureLapseData || _inspCureLapseData.pending_count === 0) return;
+    if (!confirm(`Process ${_inspCureLapseData.pending_count} expired violations?\n\n• courtesy_1 → courtesy_2 (new 21d cure)\n• courtesy_2 → certified §209 (new 30d cure, certified mail)\n• certified §209 → fine_assessed (if community has fines enabled) OR board review flag\n\nEach bumped stage auto-drafts a new letter into the Drafts queue for your review before sending. Continue?`)) return;
+    const btn = document.getElementById('inspCureLapseProcessBtn');
+    btn.disabled = true; btn.textContent = '⏳ Processing…';
+    try {
+      const r = await fetch('/api/enforcement/cure-lapse/process', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit: 200 }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const parts = [
+        `Processed: ${j.processed}`,
+        j.bumped ? `Bumped to next stage: ${j.bumped}` : null,
+        j.fines_assessed ? `Fines assessed: ${j.fines_assessed}` : null,
+        j.flagged_board ? `Flagged for board review: ${j.flagged_board}` : null,
+        j.errors && j.errors.length ? `Errors: ${j.errors.length}` : null,
+      ].filter(Boolean).join('\n');
+      alert(`✓ Cure-lapse processing complete:\n\n${parts}\n\nNew draft letters are in the Drafts queue below — review + approve before sending.`);
+      await inspCureLapsePreview();
+      await inspDraftsLoad();
+      await inspFineQueueLoad();
+    } catch (e) {
+      alert('Process failed: ' + e.message);
+      btn.disabled = false; btn.textContent = '⚙ Process all';
+    }
+  }
+
+  // ============================================================
   // VANTACA HISTORICAL VIOLATION IMPORT (Bundle 4)
   // ============================================================
   let _inspVViPreviewData = null;
@@ -10194,6 +10308,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
         try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
         try { inspFineQueueLoad(); }   catch (e) { console.warn('[inspect] load fine queue', e); }
+        try { inspCureLapsePreview(); } catch (e) { console.warn('[inspect] load cure-lapse', e); }
       }
       return result;
     };
