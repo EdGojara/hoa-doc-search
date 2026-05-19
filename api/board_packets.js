@@ -1140,7 +1140,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 <title>${esc(community.name)} — ${esc(packet.period_label)} Board Packet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
 <style>
   :root {
     --bedrock-navy: #315A87;
@@ -1174,8 +1174,10 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     position: relative; padding: 0.7in 0.8in;
     display: flex; flex-direction: column; justify-content: space-between;
   }
-  .cover-brand { display: flex; align-items: center; gap: 16px; }
-  .cover-brand img { height: 110px; width: auto; filter: brightness(0) invert(1); }
+  .cover-brand { display: flex; align-items: center; gap: 18px; }
+  .cover-brand .br-wordmark { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; color: #ffffff; line-height: 1; }
+  .cover-brand .br-wordmark .name { font-size: 38px; font-weight: 500; letter-spacing: -0.01em; }
+  .cover-brand .br-wordmark .descr { font-style: italic; font-size: 17px; font-weight: 500; color: #E8C96E; margin-top: 6px; }
   .cover-period {
     font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
     font-weight: 600; color: rgba(255,255,255,0.85); align-self: flex-end;
@@ -1295,7 +1297,11 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 <div class="page cover">
   <div class="cover-hero">
     <div class="cover-brand">
-      <img src="/logos/bedrock_logo.png" alt="${BRAND.service.name}">
+      ${BRAND.cornerstoneSvg({ height: 72, fill: '#D4AF37' })}
+      <div class="br-wordmark">
+        <div class="name">Bedrock</div>
+        <div class="descr">Association Management</div>
+      </div>
     </div>
     <div class="cover-period">${esc(packet.period_label || '')}</div>
     <div class="cover-title">
