@@ -671,7 +671,7 @@
           </div>
         </div>
 
-        <select id="accLetterDecision" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none; background:#fff; margin-bottom:8px;">
+        <select id="accLetterDecision" onchange="accUpdateDownloadBtnLabel()" style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:8px 10px; font-size:13px; font-family:inherit; outline:none; background:#fff; margin-bottom:8px;">
           <option value="approved">✓ Approved</option>
           <option value="approved_with_conditions" selected>✓ Approved with conditions</option>
           <option value="request_more_info">? Request more information</option>
@@ -679,7 +679,7 @@
         </select>
         <textarea id="accLetterBody" rows="8" placeholder="Letter body — pre-filled from the review above. Edit any text before downloading." style="width:100%; border:1px solid #d0d7de; border-radius:6px; padding:10px 12px; font-size:13px; font-family:inherit; outline:none; resize:vertical; box-sizing:border-box; margin-bottom:8px;"></textarea>
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <button class="action-btn" id="accDownloadLetterBtn" onclick="accDownloadLetter()" style="padding:10px 18px;">📥 Download letter</button>
+          <button class="action-btn" id="accDownloadLetterBtn" onclick="accDownloadLetter()" style="padding:10px 18px;">📥 Download approval letter (with conditions)</button>
           <button class="action-btn" id="accDownloadPacketBtn" onclick="accDownloadPacket()" style="padding:10px 18px; display:none; background:#1E2761;">📦 Download complete packet (letter + application + photos)</button>
           <span id="accLetterStatus" style="font-size:13px; color:#666;"></span>
         </div>
@@ -13692,6 +13692,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const o = document.getElementById('accDecision').value;
         const letterDec = document.getElementById('accLetterDecision');
         if (letterDec && o && overrideMap[o]) letterDec.value = overrideMap[o];
+        // Sync the download button label to whichever decision is now selected
+        try { accUpdateDownloadBtnLabel(); } catch (_) {}
         document.getElementById('accLetterStatus').textContent = '';
       }
     } catch (err) {
@@ -13725,6 +13727,31 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('accRecipSumProject').textContent = [proj, ref ? `Ref ${ref}` : ''].filter(Boolean).join(' · ');
     const nameEl = document.getElementById('accRecipSumName');
     if (nameEl) nameEl.style.color = name ? '#1E2761' : '#b91c1c';
+  }
+
+  // Dynamic button label so the operator sees "Download approval letter"
+  // / "Download denial letter" / "Download request-more-info letter" —
+  // matches the dropdown above so there's never confusion about what's
+  // about to be generated.
+  function accUpdateDownloadBtnLabel() {
+    const sel = document.getElementById('accLetterDecision');
+    const btn = document.getElementById('accDownloadLetterBtn');
+    if (!sel || !btn) return;
+    const labels = {
+      'approved':                  '📥 Download approval letter',
+      'approved_with_conditions':  '📥 Download approval letter (with conditions)',
+      'request_more_info':         '📥 Download request-more-info letter',
+      'denied':                    '📥 Download denial letter',
+    };
+    btn.textContent = labels[sel.value] || '📥 Download letter';
+    // Tint the button red for denial to make it visually distinct from approvals
+    if (sel.value === 'denied') {
+      btn.style.background = '#b91c1c';
+    } else if (sel.value === 'request_more_info') {
+      btn.style.background = '#b45309';
+    } else {
+      btn.style.background = '';
+    }
   }
 
   async function accDownloadLetter() {

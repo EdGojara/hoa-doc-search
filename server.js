@@ -950,6 +950,38 @@ app.post('/acc-review', upload.any(), async (req, res) => {
       }
       appDetails = rawExtract.replace(/<<<EXTRACTED_JSON>>>[\s\S]*?<<<END_JSON>>>/, '').trim();
     }
+
+    // FALLBACK — when the JSON block was dropped (long extract, model
+    // truncation, delimiter drift), do a small focused second call against
+    // the ALREADY-EXTRACTED text. Tiny + reliable, ~$0.001 per call.
+    const needsFallback = !extracted.homeowner_name || !extracted.homeowner_address;
+    if (needsFallback && appDetails && appDetails.length > 100) {
+      try {
+        const fallback = await anthropic.messages.create({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 400,
+          messages: [{ role: 'user', content:
+            `From the ACC application extract below, output a single-line JSON object with these EXACT keys (use null only if truly absent — homeowner name is always required on these applications, do your best):\n\n` +
+            `{"homeowner_name":"first last","homeowner_address":"street, city ST zip","project_summary":"one-line description","reference_number":"if present"}\n\n` +
+            `Ignore HOA / management company names — homeowner_name is the property owner who submitted the application, not Bedrock or the Association. Output ONLY the JSON object, nothing else.\n\n` +
+            `EXTRACT:\n${appDetails.slice(0, 6000)}`
+          }],
+        });
+        const txt = (fallback.content[0] && fallback.content[0].text) || '';
+        const jm = txt.match(/\{[\s\S]*\}/);
+        if (jm) {
+          const parsed = JSON.parse(jm[0]);
+          extracted = {
+            homeowner_name:    extracted.homeowner_name    || parsed.homeowner_name    || null,
+            homeowner_address: extracted.homeowner_address || parsed.homeowner_address || null,
+            project_summary:   extracted.project_summary   || parsed.project_summary   || null,
+            reference_number:  extracted.reference_number  || parsed.reference_number  || null,
+          };
+        }
+      } catch (e) {
+        console.warn('[acc-review] fallback extraction failed:', e.message);
+      }
+    }
     const context = await getRelevantChunks(appDetails, community);
 
     const { data: playbookEntries } = await supabase
