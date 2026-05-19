@@ -3351,11 +3351,12 @@ router.get('/:id/pdf', async (req, res) => {
     await browser.close();
     browser = null;
 
-    // Friendly filename: "Lakes of Pine Forest — May 2026 — Board Packet.pdf"
+    // Friendly filename. HTTP headers are ASCII-only, so hyphens not
+    // em-dashes (those caused "Invalid character in header content").
     const community = packet.community && packet.community.name ? packet.community.name : 'Community';
     const period = packet.period_label || 'Period';
     const safe = (s) => String(s).replace(/[^a-zA-Z0-9\- ]/g, '').trim();
-    const filename = `${safe(community)} — ${safe(period)} — Board Packet.pdf`;
+    const filename = `${safe(community)} - ${safe(period)} - Board Packet.pdf`;
 
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
