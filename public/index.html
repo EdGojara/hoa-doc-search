@@ -17455,7 +17455,7 @@ ${questionsPage}
             </div>
           </div>
           <p style="font-size:12px; color:#666; margin:0 0 12px 0;">
-            Each section accepts: <strong>📝 Manual</strong> input · <strong>📥 Upload PDF</strong> (system extracts) · <strong>⚡ Auto-fill</strong> from trustEd (where available) · <strong>🤖 AI</strong>-generate (for narrative sections).
+            Drop a PDF directly on any section card, or use the buttons: <strong>📥 Upload PDF</strong> (system extracts data + writes Ed-voiced commentary) · <strong>⚡ Auto-fill</strong> from trustEd (where available) · <strong>🤖 AI</strong>-generate (for narrative sections).
           </p>
           <div id="packets-sections-container"></div>
         </div>`;
@@ -17484,7 +17484,8 @@ ${questionsPage}
       const isSkipped = s.status === 'skipped';
       const inputOptions = [];
       if (!isSkipped) {
-        if (t.supports_manual)        inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsEditManual('${s.section_key}')">📝 Manual</button>`);
+        // Manual button removed — drop a PDF on the card or use Upload/Auto/AI.
+        // Operators rarely typed sections by hand; the slot was clutter.
         if (t.supports_upload)        inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsUploadSection('${s.section_key}')">📥 Upload</button>`);
         if (t.supports_auto_trusted)  inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsAutoFill('${s.section_key}')">⚡ Auto</button>`);
         if (t.supports_ai_generated)  inputOptions.push(`<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsAiGenerate('${s.section_key}')">🤖 AI</button>`);
@@ -17509,7 +17510,28 @@ ${questionsPage}
       }
       const cardOpacity = isSkipped ? 'opacity: 0.55;' : '';
 
-      return `<div style="border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}">
+      // Narrative-aware preview: when the extraction produced an Ed-voiced
+      // `narrative` field (aging, DRV, financials, etc.), render that as
+      // readable prose instead of dumping raw JSON. Falls back to the JSON
+      // dump for sections that don't have a narrative yet.
+      const narrative = hasData && typeof s.input_data.narrative === 'string' && s.input_data.narrative.trim();
+      const previewBlock = (() => {
+        if (!hasData || isSkipped) return '';
+        if (narrative) {
+          const nt = narrative.length > 600 ? narrative.slice(0, 600) + '…' : narrative;
+          return `<div style="margin-top:8px; background:#fffbeb; border-left:3px solid #d4af37; padding:8px 12px; border-radius:0 4px 4px 0; font-size:12.5px; color:#1a3a5c; line-height:1.5; white-space:pre-wrap;">${escapeHtml(nt)}</div>`;
+        }
+        return `<div style="margin-top:6px; background:#fafafa; padding:6px 8px; border-radius:4px; font-family:monospace; font-size:10px; color:#666; max-height:80px; overflow:hidden;">${escapeHtml(previewText)}${JSON.stringify(s.input_data).length > 280 ? '…' : ''}</div>`;
+      })();
+      const supportsDrop = t.supports_upload && !isSkipped;
+      const dropAttrs = supportsDrop
+        ? `ondragover="packetsDragOver(event, this)" ondragleave="packetsDragLeave(event, this)" ondrop="packetsDropOnCard(event, '${s.section_key}', this)"`
+        : '';
+      const dropHint = supportsDrop
+        ? `<div class="packets-drop-hint" style="display:none; pointer-events:none; position:absolute; inset:0; background:rgba(212,175,55,0.18); border:2px dashed #D4AF37; border-radius:6px; align-items:center; justify-content:center; color:#1A3050; font-weight:700; font-size:13px;">📥 Drop PDF here to extract this section</div>`
+        : '';
+
+      return `<div data-section-card="${s.section_key}" style="position:relative; border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}" ${dropAttrs}>
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <strong style="color:#315A87;">${escapeHtml(t.display_name || s.section_key)}</strong>
@@ -17522,9 +17544,37 @@ ${questionsPage}
           </div>
         </div>
         ${t.description ? `<div style="color:#888; font-size:11px; margin-top:4px;">${escapeHtml(t.description)}</div>` : ''}
-        ${hasData && !isSkipped ? `<div style="margin-top:6px; background:#fafafa; padding:6px 8px; border-radius:4px; font-family:monospace; font-size:10px; color:#666; max-height:80px; overflow:hidden;">${escapeHtml(previewText)}${JSON.stringify(s.input_data).length > 280 ? '…' : ''}</div>` : ''}
+        ${previewBlock}
+        ${dropHint}
       </div>`;
     }).join('');
+  }
+
+  // Drag-over visual feedback. Only shows the gold overlay if the dragged
+  // data includes a file (avoids flickering when the operator is just
+  // selecting text in a sibling element).
+  function packetsDragOver(e, card) {
+    if (e.dataTransfer && Array.from(e.dataTransfer.items || []).some((it) => it.kind === 'file')) {
+      e.preventDefault();
+      const hint = card.querySelector('.packets-drop-hint');
+      if (hint) hint.style.display = 'flex';
+    }
+  }
+  function packetsDragLeave(e, card) {
+    const hint = card.querySelector('.packets-drop-hint');
+    if (hint) hint.style.display = 'none';
+  }
+  async function packetsDropOnCard(e, sectionKey, card) {
+    e.preventDefault();
+    const hint = card.querySelector('.packets-drop-hint');
+    if (hint) hint.style.display = 'none';
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (!file) return;
+    if (!/\.pdf$/i.test(file.name) && file.type !== 'application/pdf') {
+      alert('Drop a PDF file — that section accepts PDF extracts only.');
+      return;
+    }
+    await packetsUploadSectionFile(sectionKey, file);
   }
 
   async function packetsUploadSection(sectionKey) {
@@ -17533,24 +17583,29 @@ ${questionsPage}
     input.accept = '.pdf';
     input.onchange = async () => {
       const f = input.files[0];
-      if (!f) return;
-      const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
-      if (sec) { sec.status = 'in_progress'; packetsRenderSections(); }
-      try {
-        const fd = new FormData();
-        fd.append('pdf', f);
-        const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/upload`, {
-          method: 'POST', body: fd
-        });
-        const data = await r.json();
-        if (!r.ok) throw new Error(data.error || 'failed');
-        await packetsLoadDetail(packetsCurrentPacketId);
-      } catch (e) {
-        alert('Upload failed: ' + e.message);
-        await packetsLoadDetail(packetsCurrentPacketId);
-      }
+      if (f) await packetsUploadSectionFile(sectionKey, f);
     };
     input.click();
+  }
+
+  // Shared upload path — drag-and-drop on a card uses this, and so does the
+  // legacy Upload button.
+  async function packetsUploadSectionFile(sectionKey, f) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (sec) { sec.status = 'in_progress'; packetsRenderSections(); }
+    try {
+      const fd = new FormData();
+      fd.append('pdf', f);
+      const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/upload`, {
+        method: 'POST', body: fd
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      await packetsLoadDetail(packetsCurrentPacketId);
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+      await packetsLoadDetail(packetsCurrentPacketId);
+    }
   }
 
   async function packetsAiGenerate(sectionKey) {

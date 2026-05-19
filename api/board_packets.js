@@ -433,7 +433,10 @@ Return ONLY the JSON, no preamble.`,
 }
 Return ONLY the JSON, no preamble.`,
 
-  financials: `Extract financial statement data from this PDF (P&L, Balance Sheet, or both):
+  financials: `You are reviewing an HOA financial statement (P&L, Balance Sheet, or
+both). Extract the data AND write a short Ed-voiced narrative the board can
+act on. Output JSON with this exact shape:
+
 {
   "period_start": "YYYY-MM-DD or null",
   "period_end": "YYYY-MM-DD or null",
@@ -442,25 +445,48 @@ Return ONLY the JSON, no preamble.`,
   "net_income": <number or null>,
   "cash_operating": <number or null>,
   "cash_reserves": <number or null>,
-  "line_items": [{ "account": "string", "amount": <number>, "budget": <number or null>, "type": "revenue|expense|asset|liability|equity" }]
+  "line_items": [{ "account": "string", "amount": <number>, "budget": <number or null>, "type": "revenue|expense|asset|liability|equity" }],
+  "narrative": "Ed-voiced commentary, 100-180 words. Treasurer-grade prose. Lead with the headline (net income vs. budget, cash position vs. typical month). Call out 2-3 line items with material variance and what's driving them if visible. Note reserves position relative to operating. End with one sentence on what to watch. Flowing prose, no bullets. Reference the Association by name if visible. Don't invent numbers."
 }
+
 Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
 
-  drv: `Extract the budget-to-actual variance analysis (Doctivity Variance Report):
-{
-  "variances": [
-    { "category": "string", "budget": <number>, "actual": <number>, "variance": <number>, "variance_pct": <number>, "commentary": "string or null" }
-  ]
-}
-Return ONLY the JSON.`,
+  drv: `You are reviewing a Vantaca / Doctivity budget-to-actual variance report
+for an HOA. Extract the data AND write a short Ed-voiced narrative the board
+can act on. Output JSON with this exact shape:
 
-  ar_aging: `Extract the AR aging / delinquencies data:
 {
+  "period": "string (e.g. 'YTD April 2026' or 'May 2026') or null",
+  "variances": [
+    { "category": "string", "budget": <number>, "actual": <number>, "variance": <number>, "variance_pct": <number>, "commentary": "one-line note about WHY this varied if you can tell from the doc, else null" }
+  ],
+  "watchouts": [
+    "one-line item for each variance >10% or >$2,500 that the board should notice"
+  ],
+  "narrative": "Ed-voiced commentary, 80-150 words. Tone: direct, treasurer-grade, pragmatic. Lead with the headline ('Operating expenses are running 4% under budget YTD'); identify 2-3 specific categories with material variance and what's driving them if visible; end with one sentence on what to watch or recommend. No bullet points in the narrative — flowing prose. Reference the Association by name if you can read it off the document. Do NOT invent numbers; only commentary on what's actually in the report."
+}
+
+The "narrative" field is the headline product — it's what a board member skims first. The structured data is the audit trail underneath. Return ONLY the JSON.`,
+
+  ar_aging: `You are reviewing an Accounts Receivable / delinquencies aging report
+from a Vantaca-style HOA accounting export. Extract the data AND write a short
+Ed-voiced narrative the board can act on. Output JSON with this exact shape:
+
+{
+  "as_of_date": "YYYY-MM-DD or null",
   "total_ar": <number>,
   "buckets": { "0_30": <number>, "31_60": <number>, "61_90": <number>, "over_90": <number> },
-  "top_delinquent": [{ "unit": "string", "owner": "string or null", "balance": <number>, "oldest_charge_days": <int> }]
+  "homeowner_count": { "current": <int or null>, "delinquent": <int or null> },
+  "top_delinquent": [
+    { "unit": "string", "owner": "string or null", "balance": <number>, "oldest_charge_days": <int or null>, "status": "string or null" }
+  ],
+  "watchouts": [
+    "one-line item for each material concern (e.g., 'Unit 12 is $4,200 over 90 days — recommend collections referral')"
+  ],
+  "narrative": "Ed-voiced commentary, 80-150 words. Tone: direct, treasurer-grade, pragmatic. Lead with the headline state of AR ('Receivables are in excellent shape — $0 outstanding across all buckets' OR 'Total AR sits at $X with $Y past 90 days'). Identify 1-3 specific accounts or buckets that need attention. End with one sentence on the recommended next action (offer payment plans, refer to attorney, etc.) OR confirm no action needed if the book is clean. No bullet points in the narrative — flowing prose. Do NOT invent numbers; commentary on what's actually in the report only."
 }
-Return ONLY the JSON.`,
+
+The "narrative" field is the headline product. Return ONLY the JSON.`,
 
   arc_decisions: `Extract ARC (Architectural Review Committee) decisions from this PDF:
 {
