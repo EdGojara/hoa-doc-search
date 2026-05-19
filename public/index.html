@@ -17597,8 +17597,9 @@ ${questionsPage}
             <div>
               <h3 style="margin:0;">${escapeHtml(p.community?.name || '—')} — ${escapeHtml(p.period_label)}</h3>
               <div style="color:#888; font-size:12px; margin-top:2px;">
-                Meeting: ${p.meeting_date || '(date TBD)'} ${p.meeting_type ? '· ' + p.meeting_type : ''}
+                Meeting: ${p.meeting_date || '(date TBD)'} ${p.meeting_time ? '· ' + escapeHtml(p.meeting_time) : ''} ${p.meeting_type ? '· ' + p.meeting_type : ''}
                 ${p.meeting_location ? '· ' + escapeHtml(p.meeting_location) : ''}
+                <button class="secondary-btn" style="font-size:10px; padding:1px 8px; margin-left:6px;" onclick="packetsEditMeta('${packetId}')">✎ Edit</button>
               </div>
             </div>
             <div style="display:flex; gap:8px;">
@@ -17622,6 +17623,54 @@ ${questionsPage}
   function packetsClose() {
     packetsCurrentPacketId = null;
     document.getElementById('packets-detail-container').style.display = 'none';
+  }
+
+  // Edit packet meta — period label, meeting date/time/location/type/format.
+  // These power the cover hero ('For the meeting of ...') and the meta grid
+  // on the cover sheet, plus the page-foot context on every interior page.
+  async function packetsEditMeta(packetId) {
+    const p = packetsCurrentPacket || {};
+    const currentDate = p.meeting_date || '';
+    const currentTime = p.meeting_time || '';
+    const currentLocation = p.meeting_location || '';
+    const currentPeriod = p.period_label || '';
+    const currentType = p.meeting_type || 'regular';
+    const currentFormat = p.meeting_format || '';
+
+    // Simple prompts-based flow — fast, no modal HTML required, and Ed can
+    // hit Cancel on any of them to abort.
+    const period = prompt('Period covered (e.g. "May 2026"):', currentPeriod);
+    if (period === null) return;
+    const date = prompt('Meeting date (YYYY-MM-DD):', currentDate);
+    if (date === null) return;
+    const time = prompt('Meeting time (e.g. "7:00 PM CT"). Leave blank if TBD:', currentTime);
+    if (time === null) return;
+    const location = prompt('Meeting location:', currentLocation);
+    if (location === null) return;
+    const type = prompt('Meeting type (regular / annual / special / executive):', currentType);
+    if (type === null) return;
+    const format = prompt('Format (in-person / virtual / hybrid). Leave blank to omit:', currentFormat);
+    if (format === null) return;
+
+    try {
+      const r = await fetch(`/api/board-packets/${packetId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          period_label: period.trim() || null,
+          meeting_date: date.trim() || null,
+          meeting_time: time.trim() || null,
+          meeting_location: location.trim() || null,
+          meeting_type: type.trim() || 'regular',
+          meeting_format: format.trim() || null,
+        })
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      await packetsLoadDetail(packetsCurrentPacketId);
+    } catch (e) {
+      alert('Could not save meeting details: ' + e.message);
+    }
   }
 
   function packetsRenderSections() {
