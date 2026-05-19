@@ -342,52 +342,80 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
                 : (d.cash_reserves != null ? Number(d.cash_reserves) : null);
   const cashSav = bsFundCash && bsFundCash.savings != null ? Number(bsFundCash.savings) : null;
 
-  // ---------- BALANCE SHEET helpers ----------
-  function bsRow(r, label) {
-    const cur = r.current != null ? Number(r.current) : null;
-    const prior = r.prior != null ? Number(r.prior) : null;
-    const change = (cur != null && prior != null) ? cur - prior : (r.change != null ? Number(r.change) : null);
-    const changePct = r.change_pct != null ? Number(r.change_pct) : (prior && prior !== 0 ? (change / Math.abs(prior)) * 100 : null);
-    const changeColor = change == null ? 'var(--ink-muted)' : (change >= 0 ? 'var(--good)' : 'var(--bad)');
+  // ---------- BALANCE SHEET helpers (fund-balance layout) ----------
+  // Vantaca BS has 4 columns: Operating · Reserve · Savings · Total.
+  // Each row populates one or more fund columns; blanks render as '—'.
+  // Section subtotal rows + grand totals match the source PDF structure.
+  function bsCell(v) {
+    return v == null ? '<td class="num" style="color:var(--ink-muted);">—</td>' : `<td class="num">${fmtMoney(Number(v))}</td>`;
+  }
+  function bsRow(r) {
     return `<tr>
-      <td>${esc(r.account || label || '(unnamed)')}</td>
-      <td class="num">${cur != null ? fmtMoney(cur) : '—'}</td>
-      <td class="num">${prior != null ? fmtMoney(prior) : '—'}</td>
-      <td class="num" style="color:${changeColor};">${change != null ? fmtMoney(change) : '—'}</td>
-      <td class="num" style="color:${changeColor};">${changePct != null ? `${change >= 0 ? '+' : ''}${changePct.toFixed(1)}%` : '—'}</td>
+      <td>${esc(r.account || '(unnamed)')}</td>
+      ${bsCell(r.operating)}
+      ${bsCell(r.reserve)}
+      ${bsCell(r.savings)}
+      <td class="num" style="font-weight:600;">${fmtMoney(Number(r.total) || 0)}</td>
     </tr>`;
   }
-  function bsTotalRow(label, t) {
-    if (!t) return '';
-    const cur = t.current != null ? Number(t.current) : null;
-    const prior = t.prior != null ? Number(t.prior) : null;
-    const change = (cur != null && prior != null) ? cur - prior : (t.change != null ? Number(t.change) : null);
-    const changePct = t.change_pct != null ? Number(t.change_pct) : (prior && prior !== 0 ? (change / Math.abs(prior)) * 100 : null);
-    const changeColor = change == null ? 'var(--ink)' : (change >= 0 ? 'var(--good)' : 'var(--bad)');
-    return `<tr>
-      <td>${esc(label)}</td>
-      <td class="num">${cur != null ? fmtMoney(cur) : '—'}</td>
-      <td class="num">${prior != null ? fmtMoney(prior) : '—'}</td>
-      <td class="num" style="color:${changeColor};">${change != null ? fmtMoney(change) : '—'}</td>
-      <td class="num" style="color:${changeColor};">${changePct != null ? `${change >= 0 ? '+' : ''}${changePct.toFixed(1)}%` : '—'}</td>
+  function bsSubtotalRow(label, t) {
+    return `<tr style="background:#fafbfc;">
+      <td style="font-weight:700; color:var(--navy);">${esc(label)}</td>
+      <td class="num" style="font-weight:700;">${t.operating != null ? fmtMoney(Number(t.operating)) : '—'}</td>
+      <td class="num" style="font-weight:700;">${t.reserve != null ? fmtMoney(Number(t.reserve)) : '—'}</td>
+      <td class="num" style="font-weight:700;">${t.savings != null ? fmtMoney(Number(t.savings)) : '—'}</td>
+      <td class="num" style="font-weight:800; color:var(--navy);">${fmtMoney(Number(t.total) || 0)}</td>
     </tr>`;
   }
-  function bsSection(title, rows, total) {
-    if (!rows || rows.length === 0) return '';
+  function bsGrandTotalRow(label, t) {
+    return `<tr>
+      <td style="font-weight:800; color:var(--navy);">${esc(label)}</td>
+      <td class="num" style="font-weight:800;">${t.operating != null ? fmtMoney(Number(t.operating)) : '—'}</td>
+      <td class="num" style="font-weight:800;">${t.reserve != null ? fmtMoney(Number(t.reserve)) : '—'}</td>
+      <td class="num" style="font-weight:800;">${t.savings != null ? fmtMoney(Number(t.savings)) : '—'}</td>
+      <td class="num" style="font-weight:900; color:var(--navy);">${fmtMoney(Number(t.total) || 0)}</td>
+    </tr>`;
+  }
+  function bsSection(title, rows, subtotals, grandTotal) {
+    if ((!rows || rows.length === 0) && (!grandTotal)) return '';
+    // Group rows by sub_section and interleave with subtotals when available
+    const grouped = [];
+    if (rows && rows.length) {
+      const seen = new Set();
+      for (const r of rows) {
+        const key = r.sub_section || '';
+        if (!seen.has(key)) {
+          grouped.push({ section: key, rows: [], subtotal: null });
+          seen.add(key);
+        }
+        grouped[grouped.length - 1].rows.push(r);
+      }
+      // Attach subtotals to matching sections
+      if (Array.isArray(subtotals)) {
+        for (const st of subtotals) {
+          const g = grouped.find((x) => x.section === st.section);
+          if (g) g.subtotal = st;
+        }
+      }
+    }
     return `
       <div class="table-h2">${esc(title)}</div>
       <table class="data-table">
         <thead><tr>
           <th>Account</th>
-          <th class="num">${esc(bs && bs.as_of_date ? fmtDateShort(bs.as_of_date) : 'Current')}</th>
-          <th class="num">${esc(bs && bs.prior_as_of_date ? fmtDateShort(bs.prior_as_of_date) : 'Prior')}</th>
-          <th class="num">Change ($)</th>
-          <th class="num">Change (%)</th>
+          <th class="num">Operating</th>
+          <th class="num">Reserve</th>
+          <th class="num">Savings</th>
+          <th class="num">Total</th>
         </tr></thead>
         <tbody>
-          ${rows.map((r) => bsRow(r)).join('')}
+          ${grouped.map((g) => `
+            ${g.section ? `<tr style="background:#f1f5fb;"><td colspan="5" style="font-weight:700; color:var(--navy); padding:6px 10px; font-size:12px; text-transform:uppercase; letter-spacing:0.04em;">${esc(g.section)}</td></tr>` : ''}
+            ${g.rows.map(bsRow).join('')}
+            ${g.subtotal ? bsSubtotalRow('Total ' + (g.section || title).toLowerCase(), g.subtotal) : ''}
+          `).join('')}
         </tbody>
-        ${total ? `<tfoot>${bsTotalRow('Total ' + title.toLowerCase(), total)}</tfoot>` : ''}
+        ${grandTotal ? `<tfoot>${bsGrandTotalRow('Total ' + title.toLowerCase(), grandTotal)}</tfoot>` : ''}
       </table>`;
   }
 
@@ -554,7 +582,7 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
     balanceSheetHtml = `
       <div style="margin-top: 8px;">
         <h2 style="font-family: 'Inter', sans-serif; font-size: 18px; font-weight: 800; color: var(--navy); margin: 6px 0 2px; letter-spacing: -0.01em;">Balance Sheet</h2>
-        <div style="font-size: 12px; color: var(--ink-muted); margin-bottom: 12px;">${esc(bs.as_of_date ? fmtDate(bs.as_of_date) : currentLabel)}${bs.prior_as_of_date ? ` vs. ${esc(fmtDate(bs.prior_as_of_date))}` : ''}</div>
+        <div style="font-size: 12px; color: var(--ink-muted); margin-bottom: 12px;">As of ${esc(bs.as_of_date ? fmtDate(bs.as_of_date) : currentLabel)}</div>
 
         ${(cashOp != null || cashRes != null || cashSav != null) ? `
           <div class="kpi-row">
@@ -581,9 +609,16 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
             </div>
           </div>` : ''}
 
-        ${bsSection('Assets', bs.assets, totals.total_assets)}
-        ${bsSection('Liabilities', bs.liabilities, totals.total_liabilities)}
-        ${bsSection('Equity / Fund Balance', bs.equity, totals.total_equity)}
+        ${bsSection('Assets',                bs.assets,      bs.asset_subtotals,     totals.total_assets)}
+        ${bsSection('Liabilities',           bs.liabilities, bs.liability_subtotals, null)}
+        ${bsSection('Equity / Fund Balance', bs.equity,      bs.equity_subtotals,    null)}
+
+        ${totals.total_liabilities_and_equity ? `
+          <table class="data-table" style="margin-top: 6px;">
+            <tbody>
+              ${bsGrandTotalRow('Total liabilities + equity', totals.total_liabilities_and_equity)}
+            </tbody>
+          </table>` : ''}
       </div>`;
   }
 
@@ -1307,10 +1342,18 @@ Income Statement may be:
   (B) 12-month trailing actuals report ("Summary Statement of Revenues and
       Expenses For MM/DD/YYYY") — columns are months.
 
-The Balance Sheet on a Vantaca-style HOA report usually has FOUR columns:
-Current Period · Prior Period · Change ($) · Change (%). Cash and other
-asset lines are typically split by FUND: Operating, Reserves, Savings
-(sometimes also "Capital" or "Maintenance Reserve" sub-funds).
+The Balance Sheet on a Vantaca-style HOA report has FOUR columns that are
+FUND-BALANCE columns, not a period-over-period comparison:
+  Operating · Reserve · Savings · Total
+Each account row populates ONE OR MORE of those fund columns (a cash account
+sits in one fund; an "intercompany" line like "Due from Operating to Savings"
+can sit in two). The "Total" column is the sum across funds.
+
+Assets are usually grouped under sub-section headers ("Cash", "Accounts
+Receivable", "Other Assets") each with its own subtotal row. Same for
+Liabilities ("Current Liabilities", "Deferred Revenue", "Prepaids and Other
+Liabilities") and Equity ("Current Year Surplus", "Accumulated Fund Balance").
+The Balance Sheet always balances: Total Assets = Total Liabilities + Equity.
 
 Extract the data AND write a short Ed-voiced narrative the board can act on.
 Output JSON with this exact shape:
@@ -1323,33 +1366,45 @@ Output JSON with this exact shape:
 
   "balance_sheet": {
     "as_of_date": "YYYY-MM-DD or null",
-    "prior_as_of_date": "YYYY-MM-DD or null",
     "assets": [
       {
-        "account": "string — exact GL account name, e.g., '1010 - Operating Cash'",
-        "current": <number>,
-        "prior": <number or null>,
-        "change": <number or null>,
-        "change_pct": <number or null>,
-        "fund": "operating|reserves|savings|other — based on the cash account or section header it appears under; default 'operating' if unclear",
-        "sub_section": "string or null — e.g., 'Current Assets', 'Fixed Assets'"
+        "account": "string — exact GL account name, e.g., '1000 - Operating Cash Account'",
+        "operating": <number or null — value in the Operating column for this row, null if blank>,
+        "reserve":   <number or null>,
+        "savings":   <number or null>,
+        "total":     <number — Total column>,
+        "sub_section": "string — section header this account sits under, e.g., 'Cash', 'Accounts Receivable', 'Other Assets'"
+      }
+    ],
+    "asset_subtotals": [
+      {
+        "section": "string — 'Cash' / 'Accounts Receivable' / 'Other Assets' / etc.",
+        "operating": <number or null>,
+        "reserve":   <number or null>,
+        "savings":   <number or null>,
+        "total":     <number>
       }
     ],
     "liabilities": [
-      { "account": "string", "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null>, "sub_section": "string or null" }
+      { "account": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number>, "sub_section": "string" }
+    ],
+    "liability_subtotals": [
+      { "section": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number> }
     ],
     "equity": [
-      { "account": "string", "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null>, "sub_section": "string or null" }
+      { "account": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number>, "sub_section": "string or null" }
+    ],
+    "equity_subtotals": [
+      { "section": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number> }
     ],
     "totals": {
-      "total_assets":      { "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null> },
-      "total_liabilities": { "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null> },
-      "total_equity":      { "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null> }
+      "total_assets":               { "operating": <number>, "reserve": <number>, "savings": <number>, "total": <number> },
+      "total_liabilities_and_equity": { "operating": <number>, "reserve": <number>, "savings": <number>, "total": <number> }
     },
     "fund_cash_summary": {
-      "operating": <number or null — total operating cash across all operating accounts>,
-      "reserves":  <number or null>,
-      "savings":   <number or null>
+      "operating": <number or null — sum of all rows under "Cash" section in the operating column>,
+      "reserves":  <number or null — sum under "Cash" in the reserve column>,
+      "savings":   <number or null — sum under "Cash" in the savings column>
     }
   },
 
@@ -1383,10 +1438,28 @@ Output JSON with this exact shape:
 EXTRACTION RULES:
 
 Balance Sheet:
-- The 4 columns are typically labeled like "4/30/2026 | 3/31/2026 | Change | %" — capture the as-of dates from those headers.
-- Cash and similar accounts often split per fund: "1010 - Operating Cash", "1015 - Operating Money Market", "1100 - Reserves Cash", "1105 - Reserves Money Market", "1200 - Savings Account". Tag each with the right "fund". When a section header says "Operating Account" / "Reserve Account" / "Savings Account", inherit that for everything under it.
-- "fund_cash_summary": sum the cash + cash-equivalent balances per fund. This is the headline the board cares about.
-- Asset categories ("Current Assets", "Fixed Assets", "Other Assets") go in sub_section.
+- 4 columns: Operating · Reserve · Savings · Total. Each row's values
+  populate only the column(s) where the account has a balance — blank
+  cells stay null. Total = sum of the three fund columns for that row.
+- Section headers visible on the report ("Cash", "Accounts Receivable",
+  "Other Assets" under Assets; "Current Liabilities", "Deferred Revenue",
+  "Prepaids and Other Liabilities" under Liabilities; "Equity") become
+  the "sub_section" value for the rows under them, AND each one has its
+  own subtotal row in the PDF (e.g., "Total Cash $292,179.31 $239,285.50
+  $196,698.69 $728,163.50"). Capture those subtotals into
+  asset_subtotals / liability_subtotals / equity_subtotals.
+- "Total Assets" line at the bottom of page 1 goes into
+  totals.total_assets. The grand "Total Liabilities / Equity" line on
+  page 2 goes into totals.total_liabilities_and_equity (the BS balances,
+  so these match).
+- "fund_cash_summary": sum the cash + cash-equivalent rows (everything
+  under the "Cash" section header) per fund. This is the headline number
+  the board cares about — used for the cash KPI cards at the top of the
+  rendered Balance Sheet.
+- Intercompany lines like "Due from Operating to Savings" or "Due to
+  Savings from Operating" populate the column they sit in (look at
+  account name + section to disambiguate). They net to zero across the
+  full BS but show separately on each side.
 
 Income Statement Format (B) — 12-month trend:
 - Column header is "May Jun Jul Aug Sep Oct Nov Dec Jan Feb Mar Apr Total".
