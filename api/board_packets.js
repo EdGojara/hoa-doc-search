@@ -1089,7 +1089,13 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     ? `background-color: #1F3A5F; background-image: linear-gradient(180deg, rgba(31,58,95,0.35) 0%, rgba(31,58,95,0.55) 55%, rgba(31,58,95,0.92) 100%), url('${assets.hero}'); background-size: cover; background-position: center;`
     : `background: linear-gradient(180deg, #4a7ab0 0%, #315A87 50%, #1F3A5F 100%);`;
 
-  const visibleSections = (sections || []).filter(s => s.status !== 'skipped').sort((a, b) => a.section_order - b.section_order);
+  // 'cover' is a vestigial section template from migration 014 — the cover
+  // hero at the top of every packet is rendered directly from packet metadata
+  // (community name, meeting date, period) so the cover section row is
+  // redundant. Exclude it from TOC + section pages.
+  const visibleSections = (sections || [])
+    .filter(s => s.status !== 'skipped' && s.section_key !== 'cover')
+    .sort((a, b) => a.section_order - b.section_order);
 
   // Estimate page numbers — cover = 1, TOC = 2, sections start at 3
   let pageCursor = 3;
@@ -1380,6 +1386,8 @@ ${(() => {
   const data = sec.input_data;
   const isAgendaText = sec.section_key === 'agenda' && data?.format === 'text' && data?.text;
   const isExecSummaryText = sec.section_key === 'exec_summary' && (data?.text || typeof data === 'string');
+  const isAgendaStructured = sec.section_key === 'agenda' && Array.isArray(data?.items) && data.items.length > 0;
+  const isPriorMinutes = sec.section_key === 'prior_minutes' && data && (data.summary || (Array.isArray(data.motions) && data.motions.length) || (Array.isArray(data.action_items_status) && data.action_items_status.length));
   // Section keys that have polished embed-mode renderers.
   const POLISHED_KEYS = new Set(['financials', 'ar_aging', 'drv']);
   const hasPolished = it.hasData && POLISHED_KEYS.has(sec.section_key);
@@ -1388,10 +1396,76 @@ ${(() => {
   <div class="section-eyebrow">${esc(it.num)} of ${tocItems.length}</div>
   <h1 class="section-title">${esc(it.title)}</h1>
   ${it.description ? `<p class="section-lede">${esc(it.description)}</p>` : ''}
-  ${isAgendaText
+  ${isAgendaStructured
+    ? (() => {
+        const totalMin = data.items.reduce((sum, r) => sum + (Number(r.duration_min) || 0), 0);
+        return `<table style="width:100%; border-collapse:collapse; margin: 8px 0 16px; font-size:13px;">
+          <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
+            <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">#</th>
+            <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Topic</th>
+            <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Presenter</th>
+            <th style="text-align:right; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Time</th>
+          </tr></thead>
+          <tbody>
+            ${data.items.map((r, i) => `
+              <tr style="border-bottom:1px solid var(--rule);">
+                <td style="padding:8px 10px; color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
+                <td style="padding:8px 10px;"><strong>${esc(r.topic || '—')}</strong>${r.notes ? `<div style="color:var(--ink-muted); font-size:11.5px; margin-top:3px;">${esc(r.notes)}</div>` : ''}</td>
+                <td style="padding:8px 10px; color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
+                <td style="padding:8px 10px; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
+              </tr>`).join('')}
+          </tbody>
+          ${totalMin > 0 ? `<tfoot><tr><td colspan="3" style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep);">Total scheduled</td><td style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep); font-variant-numeric:tabular-nums;">${totalMin} min</td></tr></tfoot>` : ''}
+        </table>`;
+      })()
+    : isAgendaText
     ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(data.text)}</div>`
     : isExecSummaryText
     ? `<div style="font-size: 14px; line-height: 1.65; color: var(--ink); white-space: pre-wrap;">${esc(data.text || data)}</div>`
+    : isPriorMinutes
+    ? (() => {
+        const dt = data.prior_meeting_date ? fmtDate(data.prior_meeting_date) : null;
+        const motions = Array.isArray(data.motions) ? data.motions : [];
+        const items = Array.isArray(data.action_items_status) ? data.action_items_status : [];
+        return `
+          ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 12px;">Previous meeting · <strong style="color:var(--bedrock-navy-deep);">${esc(dt)}</strong></div>` : ''}
+          ${data.summary ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 18px;">${esc(data.summary)}</div>` : ''}
+          ${motions.length ? `
+            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Motions (${motions.length})</div>
+            <table style="width:100%; border-collapse:collapse; font-size:13px;">
+              <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
+                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Motion</th>
+                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Moved by</th>
+                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Seconded</th>
+                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Result</th>
+              </tr></thead>
+              <tbody>
+                ${motions.map((m) => {
+                  const rcolor = m.result === 'passed' ? '#166534' : m.result === 'failed' ? '#7f1d1d' : '#78350f';
+                  const rbg = m.result === 'passed' ? '#dcfce7' : m.result === 'failed' ? '#fee2e2' : '#fef3c7';
+                  return `<tr style="border-bottom:1px solid var(--rule);">
+                    <td style="padding:8px 10px;">${esc(m.motion || '—')}</td>
+                    <td style="padding:8px 10px; color:var(--ink-soft);">${esc(m.moved_by || '—')}</td>
+                    <td style="padding:8px 10px; color:var(--ink-soft);">${esc(m.seconded_by || '—')}</td>
+                    <td style="padding:8px 10px;"><span style="background:${rbg}; color:${rcolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${esc(m.result || '—')}</span></td>
+                  </tr>`;
+                }).join('')}
+              </tbody>
+            </table>` : ''}
+          ${items.length ? `
+            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 22px 0 8px;">Action items carried over (${items.length})</div>
+            <ul style="margin: 0; padding: 0; list-style: none;">
+              ${items.map((a) => {
+                const scolor = a.status === 'complete' ? '#166534' : a.status === 'in_progress' ? '#78350f' : '#7f1d1d';
+                const sbg = a.status === 'complete' ? '#dcfce7' : a.status === 'in_progress' ? '#fef3c7' : '#fee2e2';
+                return `<li style="padding:10px 0; border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; gap:14px; font-size:13px;">
+                  <span>${esc(a.item || '—')}</span>
+                  <span style="background:${sbg}; color:${scolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; flex-shrink:0;">${esc((a.status || '—').replace(/_/g, ' '))}</span>
+                </li>`;
+              }).join('')}
+            </ul>` : ''}
+        `;
+      })()
     : hasPolished
     ? `<iframe class="bp-section-iframe"
               src="/api/board-packets/${esc(packet.id)}/sections/${esc(sec.section_key)}/preview?embed=1"
