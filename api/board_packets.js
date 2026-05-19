@@ -144,31 +144,102 @@ function fmtDateShort(d) {
 // to the board, this is Bedrock institutional data).
 // ============================================================================
 
-function renderSectionStandaloneHtml({ packet, section }) {
+function renderSectionStandaloneHtml({ packet, section, embed = false }) {
   if (section.section_key === 'financials') {
-    return renderFinancialStatementsStandaloneHtml({ packet, section });
+    return renderFinancialStatementsStandaloneHtml({ packet, section, embed });
   }
   if (section.section_key === 'ar_aging') {
-    return renderArAgingStandaloneHtml({ packet, section });
+    return renderArAgingStandaloneHtml({ packet, section, embed });
   }
   // 'drv' = Deed Restriction Violations. Pre-migration-069 it was mislabeled
   // as "Doctivity Variance Report" (budget variance). Now consolidated:
   // one section, properly named, using the violations workflow.
   if (section.section_key === 'drv') {
-    return renderViolationsSummaryStandaloneHtml({ packet, section });
+    return renderViolationsSummaryStandaloneHtml({ packet, section, embed });
   }
-  return renderGenericSectionStandaloneHtml({ packet, section });
+  return renderGenericSectionStandaloneHtml({ packet, section, embed });
 }
 
 // Shared HTML shell — header lockup (community logo + Bedrock cornerstone),
 // styles, footer. Body content slots in via the `bodyHtml` arg.
-function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F' }) {
+function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F', embed = false }) {
   const community = packet.community || {};
   const assets = resolveCommunityAssets(community);
   const hoaName = community.legal_name || (community.name ? `${community.name} Homeowners Association` : 'Your Association');
   const periodLabel = packet.period_label || '';
   const meetingDate = packet.meeting_date ? fmtDate(packet.meeting_date) : '';
   const title = (section.template && section.template.display_name) || section.section_key;
+
+  // Embed mode: the page is being shown inside a packet iframe that already
+  // has its own community header + section title. Drop the outer .page card,
+  // the header lockup, and the sources footer — just emit the styled body.
+  // Auto-height the document so the parent can resize the iframe to fit.
+  if (embed) {
+    return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${esc(hoaName)} — ${esc(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  html, body { margin: 0; padding: 0; background: transparent; }
+  body {
+    color: #1a1a1a; font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px; font-feature-settings: "tnum" 1; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  :root {
+    --navy: #1F3A5F; --navy-deep: #14283F; --navy-tint: #EAF0F7;
+    --gold: #D4AF37; --gold-tint: #FFFBEB;
+    --ink: #1a1a1a; --ink-soft: #4a4a4a; --ink-muted: #888;
+    --rule: #E5E7EB; --paper: #ffffff;
+    --good: #166534; --good-tint: #DCFCE7;
+    --bad: #B91C1C; --bad-tint: #FEE2E2;
+  }
+  * { box-sizing: border-box; }
+  .embed-body { padding: 0; }
+  .narrative { background: var(--gold-tint); border-left: 4px solid var(--gold); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 0 0 18px 0; font-size: 14px; color: var(--ink); line-height: 1.65; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 12px 0 18px; }
+  .kpi-card { background: var(--navy-tint); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; }
+  .kpi-card .label { font-size: 11px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.08em; }
+  .kpi-card .value { font-size: 22px; font-weight: 800; color: var(--navy-deep); margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .kpi-card .delta { font-size: 11px; font-weight: 600; margin-top: 4px; }
+  .kpi-card .delta.good { color: var(--good); }
+  .kpi-card .delta.bad { color: var(--bad); }
+  .data-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+  .data-table thead th { background: var(--navy-tint); color: var(--navy); font-weight: 700; text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--navy); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .data-table thead th.num { text-align: right; }
+  .data-table tbody td { padding: 7px 10px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+  .data-table tbody td.num { text-align: right; }
+  .data-table tbody tr:nth-child(even) { background: #fafbfc; }
+  .data-table tfoot td { padding: 9px 10px; border-top: 2px solid var(--navy); font-weight: 800; color: var(--navy); background: var(--navy-tint); font-variant-numeric: tabular-nums; }
+  .data-table tfoot td.num { text-align: right; }
+  .variance-bar { display: inline-block; height: 6px; min-width: 4px; border-radius: 3px; vertical-align: middle; margin-left: 6px; }
+  .table-h2 { font-size: 14px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 6px; }
+</style>
+</head>
+<body>
+<div class="embed-body">
+  ${bodyHtml}
+</div>
+<script>
+  // Tell the parent how tall this iframe needs to be so it can resize.
+  function _postHeight() {
+    var h = document.documentElement.scrollHeight;
+    if (window.parent && window.parent !== window) {
+      window.parent.postMessage({ kind: 'bp-section-iframe-height', height: h }, '*');
+    }
+  }
+  window.addEventListener('load', _postHeight);
+  // Recompute on font-load (Inter takes a beat) and on resize.
+  document.fonts && document.fonts.ready && document.fonts.ready.then(_postHeight);
+  window.addEventListener('resize', _postHeight);
+</script>
+</body>
+</html>`;
+  }
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -264,7 +335,7 @@ function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F' })
 </html>`;
 }
 
-function renderFinancialStatementsStandaloneHtml({ packet, section }) {
+function renderFinancialStatementsStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
   const narrative = d.narrative || null;
 
@@ -671,7 +742,7 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
     ${incomeStatementHtml}
   `;
 
-  return renderStandalonePage({ packet, section, bodyHtml, accent: '#1F3A5F' });
+  return renderStandalonePage({ packet, section, bodyHtml, accent: '#1F3A5F', embed });
 }
 
 // ----------------------------------------------------------------------------
@@ -681,7 +752,7 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
 // AI's flagged watchouts. Full underlying data still lives in input_data
 // for the audit trail.
 // ----------------------------------------------------------------------------
-function renderArAgingStandaloneHtml({ packet, section }) {
+function renderArAgingStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
   const narrative = d.narrative || null;
   const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
@@ -834,7 +905,7 @@ function renderArAgingStandaloneHtml({ packet, section }) {
         ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
       </ul>` : ''}
   `;
-  return renderStandalonePage({ packet, section, bodyHtml });
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
 }
 
 // ----------------------------------------------------------------------------
@@ -843,7 +914,7 @@ function renderArAgingStandaloneHtml({ packet, section }) {
 // 30-second-readable picture: stage counts, top categories, certified §209
 // cases, fine-assessed cases, pending hearings, top problem properties.
 // ----------------------------------------------------------------------------
-function renderViolationsSummaryStandaloneHtml({ packet, section }) {
+function renderViolationsSummaryStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
   const narrative = d.narrative || null;
   const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
@@ -979,11 +1050,11 @@ function renderViolationsSummaryStandaloneHtml({ packet, section }) {
       </ul>` : ''}
   `;
 
-  return renderStandalonePage({ packet, section, bodyHtml });
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
 }
 
 // ----------------------------------------------------------------------------
-function renderGenericSectionStandaloneHtml({ packet, section }) {
+function renderGenericSectionStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
   const narrative = (d.narrative || d.text || '').trim();
   const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
@@ -997,7 +1068,7 @@ function renderGenericSectionStandaloneHtml({ packet, section }) {
       </ul>` : ''}
     ${!narrative && !watchouts.length ? `<p style="color:var(--ink-muted); font-style:italic;">This section is in progress. Upload the source PDF or run AI generation to populate the polished view.</p>` : ''}
   `;
-  return renderStandalonePage({ packet, section, bodyHtml });
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
 }
 
 // ----------------------------------------------------------------------------
@@ -1275,13 +1346,31 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   ${footer(2)}
 </div>
 
-<!-- SECTION PLACEHOLDER PAGES (Day 3 will replace with real renders) -->
+<!-- SECTION PAGES -->
+<script>
+  // Iframe height messaging from the embed-mode section previews. Each
+  // section iframe posts its scrollHeight; we resize accordingly so the
+  // packet page grows to fit the polished section content.
+  window.addEventListener('message', function (e) {
+    if (!e.data || e.data.kind !== 'bp-section-iframe-height') return;
+    var frames = document.querySelectorAll('iframe.bp-section-iframe');
+    for (var i = 0; i < frames.length; i++) {
+      if (frames[i].contentWindow === e.source) {
+        frames[i].style.height = (e.data.height + 16) + 'px';
+        break;
+      }
+    }
+  });
+</script>
 ${tocItems.map(it => `
 ${(() => {
   const sec = sections.find(s => s.section_key === it.sectionKey) || {};
   const data = sec.input_data;
   const isAgendaText = sec.section_key === 'agenda' && data?.format === 'text' && data?.text;
   const isExecSummaryText = sec.section_key === 'exec_summary' && (data?.text || typeof data === 'string');
+  // Section keys that have polished embed-mode renderers.
+  const POLISHED_KEYS = new Set(['financials', 'ar_aging', 'drv']);
+  const hasPolished = it.hasData && POLISHED_KEYS.has(sec.section_key);
   return `<div class="page interior">
   ${pageHeader}
   <div class="section-eyebrow">${esc(it.num)} of ${tocItems.length}</div>
@@ -1291,14 +1380,28 @@ ${(() => {
     ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(data.text)}</div>`
     : isExecSummaryText
     ? `<div style="font-size: 14px; line-height: 1.65; color: var(--ink); white-space: pre-wrap;">${esc(data.text || data)}</div>`
+    : hasPolished
+    ? `<iframe class="bp-section-iframe"
+              src="/api/board-packets/${esc(packet.id)}/sections/${esc(sec.section_key)}/preview?embed=1"
+              style="width:100%; min-height:280px; border:0; display:block;"
+              scrolling="no"
+              loading="lazy"></iframe>`
     : `<div class="section-placeholder">
         <h4>
           Section data ${it.hasData ? '<span class="badge badge-ready">ready</span>' : '<span class="badge badge-pending">pending</span>'}
           <span class="badge badge-mode">${esc(it.inputMode)}</span>
         </h4>
-        <p>Day 3 ships per-section Bedrock-branded renderers (charts, tables, formatted narrative). Below: structured data as currently stored.</p>
         ${it.hasData
-          ? `<pre>${esc(JSON.stringify(data, null, 2))}</pre>`
+          ? (() => {
+              // Non-polished sections: prefer narrative if the extraction
+              // produced one (generic Ed-voiced commentary), else fall back
+              // to a clean structured-data summary, not the raw JSON dump.
+              const nar = data && typeof data.narrative === 'string' && data.narrative.trim();
+              if (nar) {
+                return `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 0;">${esc(nar)}</div>`;
+              }
+              return `<p style="color:var(--ink-muted); font-size:13px;">Data captured. Polished in-packet renderer for this section ships next — for now, view via the section's Preview button.</p>`;
+            })()
           : `<p style="color: var(--ink-muted);"><em>No data entered yet. Use the wizard to add Manual, Upload, Auto-fill, or AI-generated content for this section.</em></p>`
         }
       </div>`
@@ -2226,7 +2329,8 @@ router.get('/:id/sections/:section_key/preview', async (req, res) => {
       .maybeSingle();
     if (!section) return res.status(404).send('<h1>Section not found</h1>');
 
-    const html = renderSectionStandaloneHtml({ packet, section });
+    const embed = req.query.embed === '1' || req.query.embed === 'true';
+    const html = renderSectionStandaloneHtml({ packet, section, embed });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {
