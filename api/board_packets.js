@@ -2159,9 +2159,8 @@ ${(() => {
     : hasPolished
     ? `<iframe class="bp-section-iframe"
               src="/api/board-packets/${esc(packet.id)}/sections/${esc(sec.section_key)}/preview?embed=1"
-              style="width:100%; min-height:280px; border:0; display:block;"
-              scrolling="no"
-              loading="lazy"></iframe>`
+              style="width:100%; height:80px; border:0; display:block;"
+              scrolling="no"></iframe>`
     : `<div class="section-placeholder">
         <h4>
           Section data ${it.hasData ? '<span class="badge badge-ready">ready</span>' : '<span class="badge badge-pending">pending</span>'}
