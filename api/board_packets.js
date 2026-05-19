@@ -145,6 +145,15 @@ function fmtDateShort(d) {
 // ============================================================================
 
 function renderSectionStandaloneHtml({ packet, section, embed = false }) {
+  // 'balance_sheet' + 'income_statement' are the split sections (migration 070).
+  // 'financials' is the legacy combined section that still renders for any
+  // historic data captured before the split.
+  if (section.section_key === 'balance_sheet') {
+    return renderBalanceSheetStandaloneHtml({ packet, section, embed });
+  }
+  if (section.section_key === 'income_statement') {
+    return renderIncomeStatementStandaloneHtml({ packet, section, embed });
+  }
   if (section.section_key === 'financials') {
     return renderFinancialStatementsStandaloneHtml({ packet, section, embed });
   }
@@ -156,6 +165,12 @@ function renderSectionStandaloneHtml({ packet, section, embed = false }) {
   // one section, properly named, using the violations workflow.
   if (section.section_key === 'drv') {
     return renderViolationsSummaryStandaloneHtml({ packet, section, embed });
+  }
+  if (section.section_key === 'agenda') {
+    return renderAgendaStandaloneHtml({ packet, section, embed });
+  }
+  if (section.section_key === 'prior_minutes') {
+    return renderPriorMinutesStandaloneHtml({ packet, section, embed });
   }
   return renderGenericSectionStandaloneHtml({ packet, section, embed });
 }
@@ -800,6 +815,442 @@ function renderFinancialStatementsStandaloneHtml({ packet, section, embed = fals
 }
 
 // ----------------------------------------------------------------------------
+// Balance Sheet — standalone section (post-migration-070). Fund-balance
+// layout with 4 columns: Operating · Reserve · Savings · Total. Section
+// subtotals interleaved. Cash KPI cards lead with the headline.
+// ----------------------------------------------------------------------------
+function renderBalanceSheetStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
+  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  const bsAssets = Array.isArray(d.assets) ? d.assets : [];
+  const bsLiab = Array.isArray(d.liabilities) ? d.liabilities : [];
+  const bsEquity = Array.isArray(d.equity) ? d.equity : [];
+  const totals = d.totals || {};
+  const fundCash = d.fund_cash_summary || {};
+  const cashOp = fundCash.operating != null ? Number(fundCash.operating) : null;
+  const cashRes = fundCash.reserves != null ? Number(fundCash.reserves) : null;
+  const cashSav = fundCash.savings != null ? Number(fundCash.savings) : null;
+  const totalCash = (cashOp || 0) + (cashRes || 0) + (cashSav || 0);
+  const asOfLabel = d.as_of_date ? fmtDate(d.as_of_date) : (d.current_period_label || packet.period_label || '');
+
+  function bsCell(v) {
+    return v == null ? '<td class="num" style="color:var(--ink-muted);">—</td>' : `<td class="num">${fmtMoney(Number(v))}</td>`;
+  }
+  function bsRow(r) {
+    return `<tr>
+      <td>${esc(r.account || '(unnamed)')}</td>
+      ${bsCell(r.operating)}
+      ${bsCell(r.reserve)}
+      ${bsCell(r.savings)}
+      <td class="num" style="font-weight:600;">${fmtMoney(Number(r.total) || 0)}</td>
+    </tr>`;
+  }
+  function bsSubtotalRow(label, t) {
+    return `<tr style="background:#fafbfc;">
+      <td style="font-weight:700; color:var(--navy);">${esc(label)}</td>
+      <td class="num" style="font-weight:700;">${t.operating != null ? fmtMoney(Number(t.operating)) : '—'}</td>
+      <td class="num" style="font-weight:700;">${t.reserve != null ? fmtMoney(Number(t.reserve)) : '—'}</td>
+      <td class="num" style="font-weight:700;">${t.savings != null ? fmtMoney(Number(t.savings)) : '—'}</td>
+      <td class="num" style="font-weight:800; color:var(--navy);">${fmtMoney(Number(t.total) || 0)}</td>
+    </tr>`;
+  }
+  function bsGrandTotalRow(label, t) {
+    return `<tr>
+      <td style="font-weight:800; color:var(--navy);">${esc(label)}</td>
+      <td class="num" style="font-weight:800;">${t.operating != null ? fmtMoney(Number(t.operating)) : '—'}</td>
+      <td class="num" style="font-weight:800;">${t.reserve != null ? fmtMoney(Number(t.reserve)) : '—'}</td>
+      <td class="num" style="font-weight:800;">${t.savings != null ? fmtMoney(Number(t.savings)) : '—'}</td>
+      <td class="num" style="font-weight:900; color:var(--navy);">${fmtMoney(Number(t.total) || 0)}</td>
+    </tr>`;
+  }
+  function bsSection(title, rows, subtotals, grandTotal) {
+    if ((!rows || rows.length === 0) && (!grandTotal)) return '';
+    const grouped = [];
+    if (rows && rows.length) {
+      const seen = new Set();
+      for (const r of rows) {
+        const key = r.sub_section || '';
+        if (!seen.has(key)) {
+          grouped.push({ section: key, rows: [], subtotal: null });
+          seen.add(key);
+        }
+        grouped[grouped.length - 1].rows.push(r);
+      }
+      if (Array.isArray(subtotals)) {
+        for (const st of subtotals) {
+          const g = grouped.find((x) => x.section === st.section);
+          if (g) g.subtotal = st;
+        }
+      }
+    }
+    return `
+      <div class="table-h2">${esc(title)}</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Account</th>
+          <th class="num">Operating</th>
+          <th class="num">Reserve</th>
+          <th class="num">Savings</th>
+          <th class="num">Total</th>
+        </tr></thead>
+        <tbody>
+          ${grouped.map((g) => `
+            ${g.section ? `<tr style="background:#f1f5fb;"><td colspan="5" style="font-weight:700; color:var(--navy); padding:6px 10px; font-size:12px; text-transform:uppercase; letter-spacing:0.04em;">${esc(g.section)}</td></tr>` : ''}
+            ${g.rows.map(bsRow).join('')}
+            ${g.subtotal ? bsSubtotalRow('Total ' + (g.section || title).toLowerCase(), g.subtotal) : ''}
+          `).join('')}
+        </tbody>
+        ${grandTotal ? `<tfoot>${bsGrandTotalRow('Total ' + title.toLowerCase(), grandTotal)}</tfoot>` : ''}
+      </table>`;
+  }
+
+  const isEmpty = bsAssets.length === 0 && bsLiab.length === 0 && bsEquity.length === 0;
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+    ${isEmpty ? `
+      <div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">
+        No Balance Sheet uploaded yet. Drop the Vantaca Balance Sheet PDF on this section card in the packet detail.
+      </div>` : `
+      <div style="font-size:13px; color:var(--ink-muted); margin: 0 0 10px;">As of ${esc(asOfLabel)}</div>
+
+      ${(cashOp != null || cashRes != null || cashSav != null) ? `
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="label">Operating cash</div>
+            <div class="value">${fmtMoney(cashOp || 0, { precision: 0 })}</div>
+            <div class="delta">day-to-day ops</div>
+          </div>
+          <div class="kpi-card" style="background:#fffbeb; border-color:#fde68a;">
+            <div class="label" style="color:#78350f;">Reserves cash</div>
+            <div class="value" style="color:#1F3A5F;">${fmtMoney(cashRes || 0, { precision: 0 })}</div>
+            <div class="delta">long-term capital</div>
+          </div>
+          ${cashSav != null ? `
+            <div class="kpi-card">
+              <div class="label">Savings cash</div>
+              <div class="value">${fmtMoney(cashSav, { precision: 0 })}</div>
+              <div class="delta">overflow / interim</div>
+            </div>` : ''}
+          <div class="kpi-card">
+            <div class="label">Total cash</div>
+            <div class="value">${fmtMoney(totalCash, { precision: 0 })}</div>
+            <div class="delta">across all funds</div>
+          </div>
+        </div>` : ''}
+
+      ${bsSection('Assets',                bsAssets, d.asset_subtotals,     totals.total_assets)}
+      ${bsSection('Liabilities',           bsLiab,   d.liability_subtotals, null)}
+      ${bsSection('Equity / Fund Balance', bsEquity, d.equity_subtotals,    null)}
+
+      ${totals.total_liabilities_and_equity ? `
+        <table class="data-table" style="margin-top: 6px;">
+          <tbody>
+            ${bsGrandTotalRow('Total liabilities + equity', totals.total_liabilities_and_equity)}
+          </tbody>
+        </table>` : ''}
+    `}
+
+    ${watchouts.length ? `
+      <div class="table-h2">🚩 Watchouts</div>
+      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
+        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
+      </ul>` : ''}
+  `;
+
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
+// Income Statement — standalone section (post-migration-070). Fund-grouped
+// line items with budget variance (format A) or 12-month trend (format B).
+// ----------------------------------------------------------------------------
+function renderIncomeStatementStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
+  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  const currentLabel = d.current_period_label || d.period_label || packet.period_label || '';
+  const lineItems = Array.isArray(d.line_items) ? d.line_items : [];
+  const trailing = Array.isArray(d.trailing_months) ? d.trailing_months : [];
+  const isTrend = trailing.length >= 3;
+  const currentPeriod = d.current_period || null;
+
+  const totalRev = d.total_revenue != null ? Number(d.total_revenue) : null;
+  const totalExp = d.total_expense != null ? Number(d.total_expense) : null;
+  const netIncome = d.net_income != null ? Number(d.net_income) : null;
+  const monthlyAvgNet = isTrend && netIncome != null ? netIncome / trailing.length : null;
+
+  const revenueRows = lineItems.filter((x) => x && x.type === 'revenue');
+  const expenseRows = lineItems.filter((x) => x && x.type === 'expense');
+  const sumActual = (rows) => rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const sumBudget = (rows) => rows.reduce((s, r) => s + (Number(r.budget) || 0), 0);
+  const revTotal = totalRev != null ? totalRev : sumActual(revenueRows);
+  const revBudget = sumBudget(revenueRows);
+  const expTotal = totalExp != null ? totalExp : sumActual(expenseRows);
+  const expBudget = sumBudget(expenseRows);
+  const niBudget = revBudget - expBudget;
+  const niActual = netIncome != null ? netIncome : (revTotal - expTotal);
+  const niVariance = niActual - niBudget;
+  const niVarPct = pct(niVariance, Math.abs(niBudget || 0));
+
+  function fundTotals(fundKey) {
+    if (d.by_fund && d.by_fund[fundKey]) {
+      const f = d.by_fund[fundKey];
+      return {
+        revenue: f.revenue != null ? Number(f.revenue) : null,
+        expense: f.expense != null ? Number(f.expense) : null,
+        net:     f.net     != null ? Number(f.net)     : null,
+      };
+    }
+    const fund = lineItems.filter((r) => r.fund === fundKey);
+    if (fund.length === 0 && fundKey !== 'operating') return { revenue: null, expense: null, net: null };
+    if (fund.length === 0 && fundKey === 'operating') {
+      return { revenue: revTotal, expense: expTotal, net: niActual };
+    }
+    const r = sumActual(fund.filter((x) => x.type === 'revenue'));
+    const e = sumActual(fund.filter((x) => x.type === 'expense'));
+    return { revenue: r, expense: e, net: r - e };
+  }
+  const fundOperating = fundTotals('operating');
+  const fundReserves  = fundTotals('reserves');
+  const fundSavings   = fundTotals('savings');
+  const fundBreakdownAvailable = (fundReserves.net != null) || (fundSavings.net != null);
+
+  function rowsWithVariance(rows) {
+    const maxAbs = rows.reduce((m, r) => Math.max(m, Math.abs((Number(r.amount) || 0) - (Number(r.budget) || 0))), 1);
+    return rows.map((r) => {
+      const amt = Number(r.amount) || 0;
+      const bud = r.budget != null ? Number(r.budget) : null;
+      const variance = bud != null ? amt - bud : null;
+      const barW = bud != null ? Math.min(60, Math.round((Math.abs(variance) / maxAbs) * 60)) : 0;
+      const varianceFavorable = variance != null && (
+        (r.type === 'revenue' && variance >= 0) || (r.type === 'expense' && variance <= 0)
+      );
+      return { ...r, _amt: amt, _bud: bud, _variance: variance, _barW: barW, _favorable: varianceFavorable };
+    });
+  }
+
+  function isTableHtml(title, rows, totalActual, totalBudget) {
+    if (!rows.length) return '';
+    const withVar = rowsWithVariance(rows);
+    const hasBudget = withVar.some((r) => r._bud != null);
+
+    const FUND_ORDER = [
+      { key: 'operating', label: 'Operating Fund',  bg: '#EAF0F7', fg: '#1F3A5F' },
+      { key: 'reserves',  label: 'Reserves Fund',   bg: '#FFFBEB', fg: '#78350f' },
+      { key: 'savings',   label: 'Savings Fund',    bg: '#EAF0F7', fg: '#1F3A5F' },
+      { key: 'other',     label: 'Other',           bg: '#F5F5F5', fg: '#475569' },
+    ];
+    const buckets = FUND_ORDER.map((f) => ({
+      ...f,
+      rows: withVar.filter((r) => (r.fund || 'operating') === f.key),
+    })).filter((b) => b.rows.length > 0);
+    const showFundGroups = buckets.length > 1;
+
+    function rowHtml(r) {
+      return hasBudget ? `
+        <tr>
+          <td>${esc(r.account || '(unnamed)')}</td>
+          <td class="num">${fmtMoney(r._amt)}</td>
+          <td class="num">${r._bud != null ? fmtMoney(r._bud) : '—'}</td>
+          <td class="num" style="color:${r._variance == null ? 'var(--ink-muted)' : (r._favorable ? 'var(--good)' : 'var(--bad)')};">
+            ${r._variance == null ? '—' : fmtMoney(r._variance)}
+            ${r._barW ? `<span class="variance-bar" style="background:${r._favorable ? 'var(--good)' : 'var(--bad)'}; width:${r._barW}px;"></span>` : ''}
+          </td>
+        </tr>` : `
+        <tr>
+          <td>${esc(r.account || '(unnamed)')}</td>
+          <td class="num">${fmtMoney(r._amt)}</td>
+        </tr>`;
+    }
+    function subtotalRow(label, bucketRows) {
+      const sub = bucketRows.reduce((s, r) => s + r._amt, 0);
+      const subBud = bucketRows.reduce((s, r) => s + (r._bud || 0), 0);
+      const subVar = subBud ? sub - subBud : null;
+      const favorable = subVar != null && ((title === 'Revenue' && subVar >= 0) || (title === 'Expenses' && subVar <= 0));
+      return `
+        <tr style="background:#fafbfc;">
+          <td style="font-weight:700; color:var(--navy); padding-top:9px;">${esc(label)}</td>
+          <td class="num" style="font-weight:700; color:var(--navy);">${fmtMoney(sub)}</td>
+          ${hasBudget ? `
+            <td class="num" style="font-weight:700; color:var(--navy);">${subBud ? fmtMoney(subBud) : '—'}</td>
+            <td class="num" style="font-weight:700; color:${subVar == null ? 'var(--ink-muted)' : (favorable ? 'var(--good)' : 'var(--bad)')};">${subVar == null ? '—' : fmtMoney(subVar)}</td>
+          ` : ''}
+        </tr>`;
+    }
+    function fundHeaderRow(bucket) {
+      const cols = hasBudget ? 4 : 2;
+      return `
+        <tr>
+          <td colspan="${cols}" style="background:${bucket.bg}; color:${bucket.fg}; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; padding:8px 10px; border-top:2px solid ${bucket.fg}; border-bottom:1px solid ${bucket.fg};">
+            ${esc(bucket.label)}
+          </td>
+        </tr>`;
+    }
+
+    return `
+      <div class="table-h2">${esc(title)}</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Account</th>
+          ${hasBudget ? `<th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th>` : `<th class="num">Amount</th>`}
+        </tr></thead>
+        <tbody>
+          ${showFundGroups
+            ? buckets.map((b) => `
+                ${fundHeaderRow(b)}
+                ${b.rows.map(rowHtml).join('')}
+                ${subtotalRow(`Total ${b.label}`, b.rows)}
+              `).join('')
+            : withVar.map(rowHtml).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td>Total ${esc(title.toLowerCase())}</td>
+          ${hasBudget ? `
+            <td class="num">${fmtMoney(totalActual)}</td>
+            <td class="num">${totalBudget ? fmtMoney(totalBudget) : '—'}</td>
+            <td class="num" style="color:${(totalActual - (totalBudget || 0)) === 0 ? 'var(--ink)' : (((title === 'Revenue' ? 1 : -1) * (totalActual - (totalBudget || 0))) >= 0 ? 'var(--good)' : 'var(--bad)')};">${totalBudget ? fmtMoney(totalActual - totalBudget) : '—'}</td>
+          ` : `<td class="num">${fmtMoney(totalActual)}</td>`}
+        </tr></tfoot>
+      </table>
+    `;
+  }
+
+  let trendChartHtml = '';
+  if (isTrend) {
+    const nets = trailing.map((m) => Number(m.net) || 0);
+    const maxAbs = nets.reduce((m, n) => Math.max(m, Math.abs(n)), 1);
+    const barMaxPx = 80;
+    const chartH = barMaxPx * 2 + 28;
+    trendChartHtml = `
+      <div class="table-h2">12-month net-income trend</div>
+      <div style="display:flex; align-items:flex-end; gap:6px; padding:4px 0 6px; border-bottom:1px dashed var(--rule); margin: 4px 0;">
+        ${trailing.map((m, i) => {
+          const n = Number(m.net) || 0;
+          const h = Math.round((Math.abs(n) / maxAbs) * barMaxPx);
+          const positive = n >= 0;
+          const isCurrent = i === trailing.length - 1;
+          const color = isCurrent ? '#D4AF37' : (positive ? '#315A87' : '#dc2626');
+          return `<div style="flex:1; min-width:0; display:flex; flex-direction:column; align-items:center; height:${chartH}px; justify-content:flex-end;">
+            <div style="height:${barMaxPx}px; display:flex; flex-direction:column; justify-content:flex-end; width:100%;">
+              ${positive ? `<div title="${esc(m.month_label)}: ${fmtMoney(n)}" style="width:100%; height:${h}px; background:${color}; border-radius:2px 2px 0 0;"></div>` : ''}
+            </div>
+            <div style="width:100%; height:2px; background:#cbd5e1;"></div>
+            <div style="height:${barMaxPx}px; width:100%; display:flex; flex-direction:column; justify-content:flex-start;">
+              ${!positive ? `<div title="${esc(m.month_label)}: ${fmtMoney(n)}" style="width:100%; height:${h}px; background:${color}; border-radius:0 0 2px 2px;"></div>` : ''}
+            </div>
+            <div style="font-size:10px; color:${isCurrent ? '#1F3A5F' : 'var(--ink-muted)'}; margin-top:4px; font-weight:${isCurrent ? '700' : '400'}; text-align:center; word-break:break-word;">${esc(String(m.month_label || '').slice(0, 6))}</div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div style="display:flex; justify-content:space-between; font-size:11px; color:var(--ink-muted); margin-bottom:14px;">
+        <span><span style="display:inline-block; width:10px; height:10px; background:#315A87; border-radius:2px; vertical-align:middle; margin-right:5px;"></span>Prior months</span>
+        <span><span style="display:inline-block; width:10px; height:10px; background:#D4AF37; border-radius:2px; vertical-align:middle; margin-right:5px;"></span>This month (${esc(currentLabel)})</span>
+        <span>Range: ${fmtMoney(Math.min(...nets), { precision: 0 })} to ${fmtMoney(Math.max(...nets), { precision: 0 })}</span>
+      </div>`;
+  }
+
+  const niDeltaClass = niVariance == null ? '' : (niVariance >= 0 ? 'good' : 'bad');
+  const niDeltaSign = niVariance == null ? '' : (niVariance >= 0 ? '+' : '');
+
+  let kpiHtml = '';
+  if (isTrend && currentPeriod) {
+    const thisMonthNet = Number(currentPeriod.net) || 0;
+    const avgNet = monthlyAvgNet != null ? monthlyAvgNet : 0;
+    const monthVsAvg = thisMonthNet - avgNet;
+    const monthDeltaClass = monthVsAvg >= 0 ? 'good' : 'bad';
+    const monthDeltaSign = monthVsAvg >= 0 ? '+' : '';
+    kpiHtml = `
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="label">This month — ${esc(currentLabel)}</div>
+          <div class="value">${fmtMoney(thisMonthNet, { precision: 0 })}</div>
+          ${monthlyAvgNet != null ? `<div class="delta ${monthDeltaClass}">${monthDeltaSign}${fmtMoney(monthVsAvg, { precision: 0 })} vs. monthly avg</div>` : ''}
+        </div>
+        <div class="kpi-card">
+          <div class="label">YTD net income</div>
+          <div class="value">${fmtMoney(niActual, { precision: 0 })}</div>
+          <div class="delta">${trailing.length} months · ${fmtMoney(revTotal, { precision: 0 })} rev / ${fmtMoney(expTotal, { precision: 0 })} exp</div>
+        </div>
+        <div class="kpi-card">
+          <div class="label">Monthly average net</div>
+          <div class="value">${fmtMoney(monthlyAvgNet || 0, { precision: 0 })}</div>
+          <div class="delta">run-rate baseline</div>
+        </div>
+      </div>`;
+  } else {
+    kpiHtml = `
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="label">Net income${currentLabel ? ` — ${esc(currentLabel)}` : ' (YTD)'}</div>
+          <div class="value">${fmtMoney(niActual, { precision: 0 })}</div>
+          ${niBudget ? `<div class="delta ${niDeltaClass}">${niDeltaSign}${fmtMoney(niVariance, { precision: 0 })} vs. budget${niVarPct != null ? ` (${niDeltaSign}${niVarPct.toFixed(1)}%)` : ''}</div>` : ''}
+        </div>
+        <div class="kpi-card">
+          <div class="label">Total revenue</div>
+          <div class="value">${fmtMoney(revTotal, { precision: 0 })}</div>
+          ${revBudget ? `<div class="delta">Budgeted ${fmtMoney(revBudget, { precision: 0 })}</div>` : ''}
+        </div>
+        <div class="kpi-card">
+          <div class="label">Total expense</div>
+          <div class="value">${fmtMoney(expTotal, { precision: 0 })}</div>
+          ${expBudget ? `<div class="delta">Budgeted ${fmtMoney(expBudget, { precision: 0 })}</div>` : ''}
+        </div>
+      </div>`;
+  }
+
+  let fundBreakdownHtml = '';
+  if (fundBreakdownAvailable) {
+    fundBreakdownHtml = `
+      <div class="table-h2">Net by fund — ${esc(currentLabel)}</div>
+      <div class="kpi-row" style="margin-top:4px;">
+        <div class="kpi-card">
+          <div class="label">Operating</div>
+          <div class="value" style="color:${(fundOperating.net || 0) >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(fundOperating.net || 0, { precision: 0 })}</div>
+          <div class="delta">${fmtMoney(fundOperating.revenue || 0, { precision: 0 })} rev / ${fmtMoney(fundOperating.expense || 0, { precision: 0 })} exp</div>
+        </div>
+        <div class="kpi-card" style="background:#fffbeb; border-color:#fde68a;">
+          <div class="label" style="color:#78350f;">Reserves</div>
+          <div class="value" style="color:${(fundReserves.net || 0) >= 0 ? 'var(--good)' : 'var(--bad)'};">${fundReserves.net != null ? fmtMoney(fundReserves.net, { precision: 0 }) : '—'}</div>
+          <div class="delta">${fundReserves.revenue != null ? fmtMoney(fundReserves.revenue, { precision: 0 }) : '—'} contrib / ${fundReserves.expense != null ? fmtMoney(fundReserves.expense, { precision: 0 }) : '—'} cap-ex</div>
+        </div>
+        ${fundSavings.net != null ? `
+          <div class="kpi-card">
+            <div class="label">Savings</div>
+            <div class="value" style="color:${fundSavings.net >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(fundSavings.net, { precision: 0 })}</div>
+            <div class="delta">${fundSavings.revenue != null ? fmtMoney(fundSavings.revenue, { precision: 0 }) : '—'} in / ${fundSavings.expense != null ? fmtMoney(fundSavings.expense, { precision: 0 }) : '—'} out</div>
+          </div>` : ''}
+      </div>`;
+  }
+
+  const isEmpty = lineItems.length === 0 && totalRev == null;
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+    ${isEmpty ? `
+      <div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">
+        No Income Statement uploaded yet. Drop the Vantaca Income Statement PDF on this section card in the packet detail.
+      </div>` : `
+      <div style="font-size:13px; color:var(--ink-muted); margin: 0 0 10px;">${esc(currentLabel)}${isTrend ? ` · ${trailing.length}-month trailing` : ''}</div>
+
+      ${fundBreakdownHtml || kpiHtml}
+
+      ${trendChartHtml}
+
+      ${isTableHtml('Revenue', revenueRows, revTotal, revBudget)}
+      ${isTableHtml('Expenses', expenseRows, expTotal, expBudget)}
+    `}
+
+    ${watchouts.length ? `
+      <div class="table-h2">🚩 Watchouts</div>
+      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
+        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
+      </ul>` : ''}
+  `;
+
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
 // AR Aging — polished board-facing summary. Distills the raw aging dump into
 // the 30-second-readable picture: total AR + delinquent count, an aging
 // bucket bar, the top 10 worst accounts by balance with status, and the
@@ -1104,6 +1555,105 @@ function renderViolationsSummaryStandaloneHtml({ packet, section, embed = false 
       </ul>` : ''}
   `;
 
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Meeting Agenda — table of items with topic / presenter / duration / notes.
+// ----------------------------------------------------------------------------
+function renderAgendaStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
+  const items = Array.isArray(d.items) ? d.items : [];
+  const totalMin = items.reduce((s, r) => s + (Number(r.duration_min) || 0), 0);
+  const txt = !items.length && d.format === 'text' && d.text ? String(d.text) : null;
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+    ${items.length ? `
+      <table class="data-table" style="margin: 8px 0 16px;">
+        <thead><tr>
+          <th>#</th>
+          <th>Topic</th>
+          <th>Presenter</th>
+          <th class="num">Time</th>
+        </tr></thead>
+        <tbody>
+          ${items.map((r, i) => `
+            <tr>
+              <td style="color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
+              <td><strong>${esc(r.topic || '—')}</strong>${r.notes ? `<div style="color:var(--ink-muted); font-size:11.5px; margin-top:3px;">${esc(r.notes)}</div>` : ''}</td>
+              <td style="color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
+              <td class="num" style="color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+        ${totalMin > 0 ? `<tfoot><tr>
+          <td colspan="3" style="text-align:right;">Total scheduled</td>
+          <td class="num">${totalMin} min</td>
+        </tr></tfoot>` : ''}
+      </table>` : ''}
+    ${txt ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(txt)}</div>` : ''}
+    ${(!items.length && !txt) ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No agenda content yet. Use Manual (paste text), Upload (PDF), or AI-generate on the section card.</div>` : ''}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml, embed });
+}
+
+// ----------------------------------------------------------------------------
+// Prior Meeting Minutes — date + Ed-voiced summary + motions table + action-items.
+// ----------------------------------------------------------------------------
+function renderPriorMinutesStandaloneHtml({ packet, section, embed = false }) {
+  const d = section.input_data || {};
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
+  const dt = d.prior_meeting_date ? fmtDate(d.prior_meeting_date) : null;
+  const summary = (d.summary || '').trim();
+  const motions = Array.isArray(d.motions) ? d.motions : [];
+  const items = Array.isArray(d.action_items_status) ? d.action_items_status : [];
+  const empty = !dt && !summary && !motions.length && !items.length;
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+    ${empty ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No prior-meeting minutes captured yet. Upload the previous month's signed minutes PDF on the section card.</div>` : `
+      ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 12px;">Previous meeting · <strong style="color:var(--navy);">${esc(dt)}</strong></div>` : ''}
+      ${summary ? `<div style="background:var(--gold-tint); border-left:4px solid var(--gold); padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 0 0 18px;">${esc(summary)}</div>` : ''}
+
+      ${motions.length ? `
+        <div class="table-h2">Motions (${motions.length})</div>
+        <table class="data-table">
+          <thead><tr>
+            <th>Motion</th>
+            <th>Moved by</th>
+            <th>Seconded</th>
+            <th>Result</th>
+          </tr></thead>
+          <tbody>
+            ${motions.map((m) => {
+              const rcolor = m.result === 'passed' ? '#166534' : m.result === 'failed' ? '#7f1d1d' : '#78350f';
+              const rbg = m.result === 'passed' ? '#dcfce7' : m.result === 'failed' ? '#fee2e2' : '#fef3c7';
+              return `<tr>
+                <td>${esc(m.motion || '—')}</td>
+                <td style="color:var(--ink-soft);">${esc(m.moved_by || '—')}</td>
+                <td style="color:var(--ink-soft);">${esc(m.seconded_by || '—')}</td>
+                <td><span style="background:${rbg}; color:${rcolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${esc(m.result || '—')}</span></td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>` : ''}
+
+      ${items.length ? `
+        <div class="table-h2">Action items carried over (${items.length})</div>
+        <ul style="margin: 0; padding: 0; list-style: none;">
+          ${items.map((a) => {
+            const scolor = a.status === 'complete' ? '#166534' : a.status === 'in_progress' ? '#78350f' : '#7f1d1d';
+            const sbg = a.status === 'complete' ? '#dcfce7' : a.status === 'in_progress' ? '#fef3c7' : '#fee2e2';
+            return `<li style="padding:10px 0; border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; gap:14px; font-size:13px;">
+              <span>${esc(a.item || '—')}</span>
+              <span style="background:${sbg}; color:${scolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; flex-shrink:0;">${esc((a.status || '—').replace(/_/g, ' '))}</span>
+            </li>`;
+          }).join('')}
+        </ul>` : ''}
+    `}
+  `;
   return renderStandalonePage({ packet, section, bodyHtml, embed });
 }
 
@@ -1442,10 +1992,24 @@ ${(() => {
   const data = sec.input_data;
   const isAgendaText = sec.section_key === 'agenda' && data?.format === 'text' && data?.text;
   const isExecSummaryText = sec.section_key === 'exec_summary' && (data?.text || typeof data === 'string');
-  const isAgendaStructured = sec.section_key === 'agenda' && Array.isArray(data?.items) && data.items.length > 0;
-  const isPriorMinutes = sec.section_key === 'prior_minutes' && data && (data.summary || (Array.isArray(data.motions) && data.motions.length) || (Array.isArray(data.action_items_status) && data.action_items_status.length));
+  // Be defensive about agenda shape — model may return items wrapped in a
+  // top-level "agenda" key or as a bare array. Normalize before the render.
+  const agendaItems = sec.section_key === 'agenda' ? (
+    Array.isArray(data?.items) ? data.items :
+    Array.isArray(data?.agenda?.items) ? data.agenda.items :
+    Array.isArray(data) ? data : []
+  ) : [];
+  const isAgendaStructured = sec.section_key === 'agenda' && agendaItems.length > 0;
+  // Same for prior_minutes — may be wrapped or fields named differently.
+  const minutesData = sec.section_key === 'prior_minutes' ? (data?.minutes || data || {}) : null;
+  const isPriorMinutes = sec.section_key === 'prior_minutes' && minutesData && (
+    minutesData.summary ||
+    (Array.isArray(minutesData.motions) && minutesData.motions.length) ||
+    (Array.isArray(minutesData.action_items_status) && minutesData.action_items_status.length) ||
+    minutesData.prior_meeting_date
+  );
   // Section keys that have polished embed-mode renderers.
-  const POLISHED_KEYS = new Set(['financials', 'ar_aging', 'drv']);
+  const POLISHED_KEYS = new Set(['balance_sheet', 'income_statement', 'financials', 'ar_aging', 'drv']);
   const hasPolished = it.hasData && POLISHED_KEYS.has(sec.section_key);
   return `<div class="page interior">
   ${pageHeader}
@@ -1454,7 +2018,7 @@ ${(() => {
   ${it.description ? `<p class="section-lede">${esc(it.description)}</p>` : ''}
   ${isAgendaStructured
     ? (() => {
-        const totalMin = data.items.reduce((sum, r) => sum + (Number(r.duration_min) || 0), 0);
+        const totalMin = agendaItems.reduce((sum, r) => sum + (Number(r.duration_min) || 0), 0);
         return `<table style="width:100%; border-collapse:collapse; margin: 8px 0 16px; font-size:13px;">
           <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
             <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">#</th>
@@ -1463,7 +2027,7 @@ ${(() => {
             <th style="text-align:right; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Time</th>
           </tr></thead>
           <tbody>
-            ${data.items.map((r, i) => `
+            ${agendaItems.map((r, i) => `
               <tr style="border-bottom:1px solid var(--rule);">
                 <td style="padding:8px 10px; color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
                 <td style="padding:8px 10px;"><strong>${esc(r.topic || '—')}</strong>${r.notes ? `<div style="color:var(--ink-muted); font-size:11.5px; margin-top:3px;">${esc(r.notes)}</div>` : ''}</td>
@@ -1480,12 +2044,12 @@ ${(() => {
     ? `<div style="font-size: 14px; line-height: 1.65; color: var(--ink); white-space: pre-wrap;">${esc(data.text || data)}</div>`
     : isPriorMinutes
     ? (() => {
-        const dt = data.prior_meeting_date ? fmtDate(data.prior_meeting_date) : null;
-        const motions = Array.isArray(data.motions) ? data.motions : [];
-        const items = Array.isArray(data.action_items_status) ? data.action_items_status : [];
+        const dt = minutesData.prior_meeting_date ? fmtDate(minutesData.prior_meeting_date) : null;
+        const motions = Array.isArray(minutesData.motions) ? minutesData.motions : [];
+        const items = Array.isArray(minutesData.action_items_status) ? minutesData.action_items_status : [];
         return `
           ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 12px;">Previous meeting · <strong style="color:var(--bedrock-navy-deep);">${esc(dt)}</strong></div>` : ''}
-          ${data.summary ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 18px;">${esc(data.summary)}</div>` : ''}
+          ${minutesData.summary ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 18px;">${esc(minutesData.summary)}</div>` : ''}
           ${motions.length ? `
             <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Motions (${motions.length})</div>
             <table style="width:100%; border-collapse:collapse; font-size:13px;">
@@ -1734,6 +2298,115 @@ Income-Statement-only PDF. Do not fabricate data for the other side.
   return income_statement with EMPTY arrays + null totals + null by_fund + empty trailing_months.
 The operator uploads BS and IS separately; the system merges them later, so
 inventing the missing side overwrites real data from the other file.`,
+
+  // ---------- BALANCE SHEET (standalone section) ----------
+  balance_sheet: `You are reviewing a Vantaca-style HOA Balance Sheet PDF. The
+Balance Sheet has FOUR columns: Operating · Reserve · Savings · Total — these
+are FUND-BALANCE columns, NOT a period-over-period comparison.
+
+Each account row populates one or more fund columns; blank cells stay null.
+Total = sum of the three fund columns. Section headers ("Cash", "Accounts
+Receivable", "Other Assets", "Current Liabilities", "Deferred Revenue",
+"Prepaids and Other Liabilities", "Equity") group rows and each has its own
+subtotal row visible in the PDF. The BS balances: Total Assets = Total
+Liabilities + Equity (visible on page 2 of the report).
+
+Output JSON with this exact shape:
+
+{
+  "as_of_date": "YYYY-MM-DD or null",
+  "current_period_label": "string — e.g., 'April 2026'",
+  "assets": [
+    {
+      "account":     "string — full GL account name with code",
+      "operating":   <number or null — Operating column value, null if blank>,
+      "reserve":     <number or null>,
+      "savings":     <number or null>,
+      "total":       <number — Total column>,
+      "sub_section": "string — section header for this row (e.g., 'Cash')"
+    }
+  ],
+  "asset_subtotals": [
+    { "section": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number> }
+  ],
+  "liabilities": [
+    { "account": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number>, "sub_section": "string" }
+  ],
+  "liability_subtotals": [
+    { "section": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number> }
+  ],
+  "equity": [
+    { "account": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number>, "sub_section": "string or null" }
+  ],
+  "equity_subtotals": [
+    { "section": "string", "operating": <number or null>, "reserve": <number or null>, "savings": <number or null>, "total": <number> }
+  ],
+  "totals": {
+    "total_assets":                 { "operating": <number>, "reserve": <number>, "savings": <number>, "total": <number> },
+    "total_liabilities_and_equity": { "operating": <number>, "reserve": <number>, "savings": <number>, "total": <number> }
+  },
+  "fund_cash_summary": {
+    "operating": <number or null — sum of all rows under 'Cash' section, Operating column>,
+    "reserves":  <number or null — sum under 'Cash' section, Reserve column>,
+    "savings":   <number or null — sum under 'Cash' section, Savings column>
+  },
+  "narrative": "Ed-voiced commentary, 90-150 words. Lead with the cash position by fund ('$X operating, $Y reserves, $Z savings'). Call out any material AR or prepaid balances. Note whether the BS balances (Total Assets vs. Total Liab+Equity) — if not, that's a watchout. Treasurer-grade prose, flowing, no bullets. Reference the Association by name if visible.",
+  "watchouts": ["string", "..."]
+}
+
+EXTRACTION RULES:
+- Blank cells in a fund column stay null. Total column always has a value.
+- Capture each section's subtotal row (e.g., "Total Cash $292,179 $239,285 $196,698 $728,163") into the matching subtotals array.
+- "Total Assets" row → totals.total_assets. "Total Liabilities / Equity" → totals.total_liabilities_and_equity.
+- fund_cash_summary: sum the rows under the 'Cash' section header per fund.
+- Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
+
+  // ---------- INCOME STATEMENT (standalone section) ----------
+  income_statement: `You are reviewing a Vantaca-style HOA Income Statement
+(Statement of Revenues and Expenses). It may be one of two formats:
+  (A) Single-period P&L with a Budget column for variance, OR
+  (B) 12-month trailing actuals — column headers are months
+      (e.g., "May Jun Jul Aug Sep Oct Nov Dec Jan Feb Mar Apr Total").
+
+Output JSON with this exact shape:
+
+{
+  "period_label":  "string — e.g., 'April 2026' or 'YTD through April 2026'",
+  "current_period_label": "string — same as period_label for format A; for format B it's the latest-month label (Apr 2026)",
+  "format": "A_period_with_budget | B_twelve_month_trailing",
+  "total_revenue": <number — primary column (period or YTD)>,
+  "total_expense": <number>,
+  "net_income":    <number>,
+  "current_period": {
+    "revenue": <number — latest-month revenue (rightmost non-Total column on format B; same as total_revenue on format A)>,
+    "expense": <number>,
+    "net":     <number>
+  },
+  "by_fund": {
+    "operating": { "revenue": <number or null>, "expense": <number or null>, "net": <number or null> },
+    "reserves":  { "revenue": <number or null>, "expense": <number or null>, "net": <number or null> },
+    "savings":   { "revenue": <number or null>, "expense": <number or null>, "net": <number or null> }
+  },
+  "trailing_months": [
+    { "month_label": "string — 'May 2025'", "revenue": <number>, "expense": <number>, "net": <number> }
+    // 12 entries when format B; empty array when format A.
+  ],
+  "line_items": [
+    { "account": "string — full GL account name with code", "amount": <number — period or YTD total>, "budget": <number or null — format A only>, "type": "revenue|expense", "fund": "operating|reserves|savings|other" }
+  ],
+  "narrative": "Ed-voiced commentary, 100-180 words. Lead with net income vs. budget (format A) or this-month vs. monthly-average (format B). Call out the largest favorable + unfavorable variances by line, and any seasonal patterns visible on a 12-month trend. Note any line where actuals are well outside budget. End with one sentence on what to watch.",
+  "watchouts": ["string", "..."]
+}
+
+EXTRACTION RULES:
+- Format B: current_period is the column IMMEDIATELY LEFT of Total. trailing_months is all 12 months oldest→newest. line_items.amount is the Total column (YTD).
+- Format A: capture line_items.budget when a Budget column is visible. trailing_months stays empty.
+- Tag each line_item.fund based on the account name and/or section header
+  (e.g., "Reserve Contribution" → reserves; "Interest - Savings" → savings;
+  most operating expenses → operating). When uncertain, default to operating.
+- A 12-month trailing statement is usually operating-only — by_fund.reserves
+  and by_fund.savings stay null unless the report has per-fund sub-sections.
+- Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
 
   // section_key='drv' is the Deed Restriction Violations summary.
   // Powered by the same extraction prompt that violations_summary used to
