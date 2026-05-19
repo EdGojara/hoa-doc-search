@@ -151,10 +151,10 @@ function renderSectionStandaloneHtml({ packet, section }) {
   if (section.section_key === 'ar_aging') {
     return renderArAgingStandaloneHtml({ packet, section });
   }
+  // 'drv' = Deed Restriction Violations. Pre-migration-069 it was mislabeled
+  // as "Doctivity Variance Report" (budget variance). Now consolidated:
+  // one section, properly named, using the violations workflow.
   if (section.section_key === 'drv') {
-    return renderBudgetVarianceStandaloneHtml({ packet, section });
-  }
-  if (section.section_key === 'violations_summary') {
     return renderViolationsSummaryStandaloneHtml({ packet, section });
   }
   return renderGenericSectionStandaloneHtml({ packet, section });
@@ -772,94 +772,6 @@ function renderViolationsSummaryStandaloneHtml({ packet, section }) {
 }
 
 // ----------------------------------------------------------------------------
-// Budget Variance (currently labeled "drv" in section_key — Doctivity Variance
-// Report). Distills budget-to-actual into the categories that materially
-// missed, with the AI's commentary at the top.
-// ----------------------------------------------------------------------------
-function renderBudgetVarianceStandaloneHtml({ packet, section }) {
-  const d = section.input_data || {};
-  const narrative = d.narrative || null;
-  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
-  const variances = Array.isArray(d.variances) ? d.variances : [];
-
-  // Sort by absolute variance, descending. Board cares about the biggest
-  // misses first.
-  const sorted = [...variances].sort((a, b) => Math.abs(Number(b.variance) || 0) - Math.abs(Number(a.variance) || 0));
-  const topVariances = sorted.slice(0, 10);
-
-  const maxAbsVar = topVariances.reduce((m, v) => Math.max(m, Math.abs(Number(v.variance) || 0)), 1);
-
-  // KPIs
-  const onTrack = variances.filter((v) => Math.abs(Number(v.variance_pct) || 0) <= 5).length;
-  const overBudget = variances.filter((v) => (Number(v.variance) || 0) < 0 && Math.abs(Number(v.variance_pct) || 0) > 5).length; // expense over budget = unfavorable
-  const underBudget = variances.filter((v) => (Number(v.variance) || 0) > 0 && Math.abs(Number(v.variance_pct) || 0) > 5).length;
-  const netVariance = variances.reduce((s, v) => s + (Number(v.variance) || 0), 0);
-
-  const bodyHtml = `
-    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
-
-    <div class="kpi-row">
-      <div class="kpi-card">
-        <div class="label">Net variance</div>
-        <div class="value" style="color:${netVariance >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(netVariance, { precision: 0 })}</div>
-        <div class="delta">${variances.length} categories tracked${d.period ? ` · ${esc(d.period)}` : ''}</div>
-      </div>
-      <div class="kpi-card">
-        <div class="label">On track</div>
-        <div class="value" style="color:var(--good);">${onTrack}</div>
-        <div class="delta">within ±5% of plan</div>
-      </div>
-      <div class="kpi-card">
-        <div class="label">Under budget</div>
-        <div class="value">${underBudget}</div>
-        <div class="delta good">favorable</div>
-      </div>
-      <div class="kpi-card" style="${overBudget > 0 ? 'background:#fef2f2; border-color:#fecaca;' : ''}">
-        <div class="label" style="${overBudget > 0 ? 'color:#991b1b;' : ''}">Over budget</div>
-        <div class="value" style="${overBudget > 0 ? 'color:#7f1d1d;' : ''}">${overBudget}</div>
-        <div class="delta ${overBudget > 0 ? 'bad' : 'good'}">${overBudget > 0 ? 'needs attention' : 'clean'}</div>
-      </div>
-    </div>
-
-    ${topVariances.length ? `
-      <div class="table-h2">Largest variances</div>
-      <table class="data-table">
-        <thead><tr>
-          <th>Category</th>
-          <th class="num">Actual</th>
-          <th class="num">Budget</th>
-          <th class="num">Variance</th>
-          <th class="num">vs. budget</th>
-        </tr></thead>
-        <tbody>
-          ${topVariances.map((v) => {
-            const variance = Number(v.variance) || 0;
-            const favorable = variance >= 0;
-            const barW = Math.min(60, Math.round((Math.abs(variance) / maxAbsVar) * 60));
-            return `
-            <tr>
-              <td><strong>${esc(v.category || '(unnamed)')}</strong>${v.commentary ? `<div style="font-size:11px; color:var(--ink-muted); margin-top:2px;">${esc(v.commentary)}</div>` : ''}</td>
-              <td class="num">${fmtMoney(Number(v.actual) || 0)}</td>
-              <td class="num">${v.budget != null ? fmtMoney(Number(v.budget)) : '—'}</td>
-              <td class="num" style="color:${favorable ? 'var(--good)' : 'var(--bad)'};">
-                ${fmtMoney(variance)}
-                ${barW ? `<span class="variance-bar" style="background:${favorable ? 'var(--good)' : 'var(--bad)'}; width:${barW}px;"></span>` : ''}
-              </td>
-              <td class="num" style="color:${favorable ? 'var(--good)' : 'var(--bad)'};">${v.variance_pct != null ? `${favorable ? '+' : ''}${Number(v.variance_pct).toFixed(1)}%` : '—'}</td>
-            </tr>`;
-          }).join('')}
-        </tbody>
-      </table>` : ''}
-
-    ${watchouts.length ? `
-      <div class="table-h2">🚩 Watchouts</div>
-      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
-        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
-      </ul>` : ''}
-  `;
-  return renderStandalonePage({ packet, section, bodyHtml });
-}
-
 function renderGenericSectionStandaloneHtml({ packet, section }) {
   const d = section.input_data || {};
   const narrative = (d.narrative || d.text || '').trim();
@@ -1255,22 +1167,58 @@ FORMAT (B) extraction rules:
 
 Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
 
-  drv: `You are reviewing a Vantaca / Doctivity budget-to-actual variance report
-for an HOA. Extract the data AND write a short Ed-voiced narrative the board
-can act on. Output JSON with this exact shape:
+  // section_key='drv' is the Deed Restriction Violations summary.
+  // Powered by the same extraction prompt that violations_summary used to
+  // have (which is now removed — migration 069 consolidates the two).
+  drv: `You are reviewing a Vantaca "Violation Report - Detail" PDF for an HOA.
+The report lists every violation in a date range, grouped by stage (First
+Notice / Second Notice / Certified Letter Notice / Pending Hearing /
+Monthly Fine Assessed / Closed) and includes a top "Distribution by Type"
+pie summary.
+
+Extract the data AND write a short Ed-voiced narrative the board can act on.
+Output JSON with this exact shape:
 
 {
-  "period": "string (e.g. 'YTD April 2026' or 'May 2026') or null",
-  "variances": [
-    { "category": "string", "budget": <number>, "actual": <number>, "variance": <number>, "variance_pct": <number>, "commentary": "one-line note about WHY this varied if you can tell from the doc, else null" }
+  "report_period": "MM/DD/YYYY - MM/DD/YYYY or null",
+  "total_violations": <int>,
+  "by_stage": {
+    "first_notice": <int>,
+    "second_notice": <int>,
+    "certified_letter_notice": <int>,
+    "pending_hearing": <int>,
+    "monthly_fine_assessed": <int>,
+    "closed": <int>
+  },
+  "top_categories": [
+    { "category": "string — e.g. 'Trash Cans/Recycling Containers'", "pct": <number 0-100>, "count": <int or null> }
+  ],
+  "certified_cases": [
+    { "address": "string", "homeowner": "string or null", "category": "string", "account": "string or null" }
+  ],
+  "fine_assessed_cases": [
+    { "address": "string", "homeowner": "string or null", "category": "string", "account": "string or null" }
+  ],
+  "pending_hearing_cases": [
+    { "address": "string", "homeowner": "string or null", "category": "string", "hearing_date": "YYYY-MM-DD or null", "account": "string or null" }
+  ],
+  "top_problem_properties": [
+    { "address": "string", "homeowner": "string or null", "violation_count": <int>, "categories": ["string"] }
   ],
   "watchouts": [
-    "one-line item for each variance >10% or >$2,500 that the board should notice"
+    "one-line concerns the board should notice (e.g., 'Landscaping-Flowerbeds dominates Pending Hearing — 8 cases, 47% of pending')"
   ],
-  "narrative": "Ed-voiced commentary, 80-150 words. Tone: direct, treasurer-grade, pragmatic. Lead with the headline ('Operating expenses are running 4% under budget YTD'); identify 2-3 specific categories with material variance and what's driving them if visible; end with one sentence on what to watch or recommend. No bullet points in the narrative — flowing prose. Reference the Association by name if you can read it off the document. Do NOT invent numbers; only commentary on what's actually in the report."
+  "narrative": "Ed-voiced commentary, 100-160 words. Treasurer-grade prose. Lead with the headline (total violations in the period + closed-to-open ratio). Identify the top 2-3 categories and what they signal about the community. Call out the high-stakes pools specifically: certified §209 letters + fine-assessed + pending hearings. End with one sentence on what to watch. Flowing prose, no bullets. Don't invent numbers."
 }
 
-The "narrative" field is the headline product — it's what a board member skims first. The structured data is the audit trail underneath. Return ONLY the JSON.`,
+EXTRACTION RULES:
+- The "SUMMARY" page lists every stage with a total count, then per-stage breakdowns by category. Capture both.
+- The pie chart at the top shows TOP DISTRIBUTION BY TYPE — extract the top 10 percentages and labels.
+- Each per-violation row format: "Hearing Date | Details | Address | Homeowner | Account/XN" then "Stage - DATE - processor name" on the next line.
+- top_problem_properties: any property that appears 2+ times anywhere in the report. List the address once with the count and the distinct violation categories.
+- certified_cases / fine_assessed_cases / pending_hearing_cases: every row in those stage sections (don't sample — the board wants the full list of high-stakes items, which is small enough to enumerate).
+
+The "narrative" field is the headline product. Return ONLY the JSON.`,
 
   ar_aging: `You are reviewing a Vantaca AR Aging report for a homeowners
 association board. The report lists every account with an outstanding balance,
@@ -1328,56 +1276,6 @@ EXTRACTION RULES:
 - at_legal_accounts: every account whose status starts with "With Attorney" OR "Violation Collections" — sort by balance desc.
 - top_delinquent: top 15 by balance, EXCLUDING the at_legal accounts already in that list (board sees them separately above).
 - A typical recurring-delinquent balance is one annual assessment ($719) plus small late fees ($17-50). Don't bother flagging these individually; they're the baseline. Material accounts are $1,000+.
-
-The "narrative" field is the headline product. Return ONLY the JSON.`,
-
-  violations_summary: `You are reviewing a Vantaca "Violation Report - Detail"
-PDF for an HOA. The report lists every violation in a date range, grouped
-by stage (First Notice / Second Notice / Certified Letter Notice / Pending
-Hearing / Monthly Fine Assessed / Closed) and includes a top "Distribution
-by Type" pie summary.
-
-Extract the data AND write a short Ed-voiced narrative the board can act on.
-Output JSON with this exact shape:
-
-{
-  "report_period": "MM/DD/YYYY - MM/DD/YYYY or null",
-  "total_violations": <int>,
-  "by_stage": {
-    "first_notice": <int>,
-    "second_notice": <int>,
-    "certified_letter_notice": <int>,
-    "pending_hearing": <int>,
-    "monthly_fine_assessed": <int>,
-    "closed": <int>
-  },
-  "top_categories": [
-    { "category": "string — e.g. 'Trash Cans/Recycling Containers'", "pct": <number 0-100>, "count": <int or null> }
-  ],
-  "certified_cases": [
-    { "address": "string", "homeowner": "string or null", "category": "string", "account": "string or null" }
-  ],
-  "fine_assessed_cases": [
-    { "address": "string", "homeowner": "string or null", "category": "string", "account": "string or null" }
-  ],
-  "pending_hearing_cases": [
-    { "address": "string", "homeowner": "string or null", "category": "string", "hearing_date": "YYYY-MM-DD or null", "account": "string or null" }
-  ],
-  "top_problem_properties": [
-    { "address": "string", "homeowner": "string or null", "violation_count": <int>, "categories": ["string"] }
-  ],
-  "watchouts": [
-    "one-line concerns the board should notice (e.g., 'Landscaping-Flowerbeds dominates Pending Hearing — 8 cases, 47% of pending')"
-  ],
-  "narrative": "Ed-voiced commentary, 100-160 words. Treasurer-grade prose. Lead with the headline (total violations in the period + closed-to-open ratio). Identify the top 2-3 categories and what they signal about the community. Call out the high-stakes pools specifically: certified §209 letters + fine-assessed + pending hearings. End with one sentence on what to watch. Flowing prose, no bullets. Don't invent numbers."
-}
-
-EXTRACTION RULES:
-- The "SUMMARY" page lists every stage with a total count, then per-stage breakdowns by category. Capture both.
-- The pie chart at the top shows TOP DISTRIBUTION BY TYPE — extract the top 10 percentages and labels.
-- Each per-violation row format: "Hearing Date | Details | Address | Homeowner | Account/XN" then "Stage - DATE - processor name" on the next line.
-- top_problem_properties: any property that appears 2+ times anywhere in the report. List the address once with the count and the distinct violation categories.
-- certified_cases / fine_assessed_cases / pending_hearing_cases: every row in those stage sections (don't sample — the board wants the full list of high-stakes items, which is small enough to enumerate).
 
 The "narrative" field is the headline product. Return ONLY the JSON.`,
 
