@@ -17698,6 +17698,12 @@ ${questionsPage}
           </div>
           <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end;">
             ${inputOptions.join('')}
+            ${hasData && !isSkipped && s.input_data && typeof s.input_data.narrative === 'string' && s.input_data.narrative.trim() ? (() => {
+              const hidden = !!s.input_data.hide_narrative;
+              const label = hidden ? '➕ Show analysis' : '➖ Hide analysis';
+              const color = hidden ? '#2e7d32' : '#888';
+              return `<button class="secondary-btn" style="font-size:11px; padding:3px 8px; color:${color};" onclick="packetsToggleNarrative('${s.section_key}')">${label}</button>`;
+            })() : ''}
             ${hasData && !isSkipped ? `<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsViewSection('${s.section_key}')">View raw</button>` : ''}
             ${hasData && !isSkipped ? `<a class="secondary-btn" style="font-size:11px; padding:3px 8px; text-decoration:none; display:inline-block;" target="_blank" href="/api/board-packets/${packetsCurrentPacketId}/sections/${s.section_key}/preview">👁 Preview</a>` : ''}
           </div>
@@ -18032,6 +18038,27 @@ ${questionsPage}
       packetsRenderSections();
     } catch (e) {
       alert('Skip toggle failed: ' + e.message);
+    }
+  }
+
+  // Hide/show the AI-voiced analysis narrative on a section. Affects
+  // both the section preview (👁) and the in-packet rendering.
+  async function packetsToggleNarrative(sectionKey) {
+    const sec = packetsCurrentSections.find(s => s.section_key === sectionKey);
+    if (!sec) return;
+    try {
+      const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}/sections/${sectionKey}/narrative/toggle`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({})
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || 'failed');
+      // Optimistic local update so the button label flips immediately
+      sec.input_data = { ...(sec.input_data || {}), hide_narrative: data.hide_narrative };
+      packetsRenderSections();
+    } catch (e) {
+      alert('Analysis toggle failed: ' + e.message);
     }
   }
 

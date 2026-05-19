@@ -337,7 +337,7 @@ function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F', e
 
 function renderFinancialStatementsStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.narrative || null;
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
 
   // Normalize into BS + IS objects. Supports two data shapes:
   //   - New: input_data.balance_sheet + input_data.income_statement (rich)
@@ -508,6 +508,67 @@ function renderFinancialStatementsStandaloneHtml({ packet, section, embed = fals
     if (!rows.length) return '';
     const withVar = rowsWithVariance(rows);
     const hasBudget = withVar.some((r) => r._bud != null);
+
+    // Group by fund (operating/reserves/savings/other). Vantaca IS reports
+    // tag rows by fund — surface that visually so reserve interest doesn't
+    // hide inside the operating-fund table. Falls back to a single ungrouped
+    // section when only one fund (or no fund tags) is present.
+    const FUND_ORDER = [
+      { key: 'operating', label: 'Operating Fund',  bg: '#EAF0F7', fg: '#1F3A5F' },
+      { key: 'reserves',  label: 'Reserves Fund',   bg: '#FFFBEB', fg: '#78350f' },
+      { key: 'savings',   label: 'Savings Fund',    bg: '#EAF0F7', fg: '#1F3A5F' },
+      { key: 'other',     label: 'Other',           bg: '#F5F5F5', fg: '#475569' },
+    ];
+    const buckets = FUND_ORDER.map((f) => ({
+      ...f,
+      rows: withVar.filter((r) => (r.fund || 'operating') === f.key),
+    })).filter((b) => b.rows.length > 0);
+    // Treat fund-less data (or single-fund data) as one ungrouped section.
+    const showFundGroups = buckets.length > 1;
+
+    function rowHtml(r) {
+      return hasBudget ? `
+        <tr>
+          <td>${esc(r.account || '(unnamed)')}</td>
+          <td class="num">${fmtMoney(r._amt)}</td>
+          <td class="num">${r._bud != null ? fmtMoney(r._bud) : '—'}</td>
+          <td class="num" style="color:${r._variance == null ? 'var(--ink-muted)' : (r._favorable ? 'var(--good)' : 'var(--bad)')};">
+            ${r._variance == null ? '—' : fmtMoney(r._variance)}
+            ${r._barW ? `<span class="variance-bar" style="background:${r._favorable ? 'var(--good)' : 'var(--bad)'}; width:${r._barW}px;"></span>` : ''}
+          </td>
+        </tr>` : `
+        <tr>
+          <td>${esc(r.account || '(unnamed)')}</td>
+          <td class="num">${fmtMoney(r._amt)}</td>
+        </tr>`;
+    }
+
+    function subtotalRow(label, bucketRows) {
+      const sub = bucketRows.reduce((s, r) => s + r._amt, 0);
+      const subBud = bucketRows.reduce((s, r) => s + (r._bud || 0), 0);
+      const subVar = subBud ? sub - subBud : null;
+      const favorable = subVar != null && ((title === 'Revenue' && subVar >= 0) || (title === 'Expenses' && subVar <= 0));
+      return `
+        <tr style="background:#fafbfc;">
+          <td style="font-weight:700; color:var(--navy); padding-top:9px;">${esc(label)}</td>
+          <td class="num" style="font-weight:700; color:var(--navy);">${fmtMoney(sub)}</td>
+          ${hasBudget ? `
+            <td class="num" style="font-weight:700; color:var(--navy);">${subBud ? fmtMoney(subBud) : '—'}</td>
+            <td class="num" style="font-weight:700; color:${subVar == null ? 'var(--ink-muted)' : (favorable ? 'var(--good)' : 'var(--bad)')};">${subVar == null ? '—' : fmtMoney(subVar)}</td>
+          ` : ''}
+        </tr>`;
+    }
+
+    function fundHeaderRow(bucket) {
+      const cols = hasBudget ? 4 : 2;
+      return `
+        <tr>
+          <td colspan="${cols}" style="background:${bucket.bg}; color:${bucket.fg}; font-weight:700; font-size:11px; text-transform:uppercase; letter-spacing:0.06em; padding:8px 10px; border-top:2px solid ${bucket.fg}; border-bottom:1px solid ${bucket.fg};">
+            ${esc(bucket.label)}
+          </td>
+        </tr>`;
+    }
+
     return `
       <div class="table-h2">${esc(title)}</div>
       <table class="data-table">
@@ -516,20 +577,13 @@ function renderFinancialStatementsStandaloneHtml({ packet, section, embed = fals
           ${hasBudget ? `<th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th>` : `<th class="num">Amount</th>`}
         </tr></thead>
         <tbody>
-          ${withVar.map((r) => hasBudget ? `
-            <tr>
-              <td>${esc(r.account || '(unnamed)')}</td>
-              <td class="num">${fmtMoney(r._amt)}</td>
-              <td class="num">${r._bud != null ? fmtMoney(r._bud) : '—'}</td>
-              <td class="num" style="color:${r._variance == null ? 'var(--ink-muted)' : (r._favorable ? 'var(--good)' : 'var(--bad)')};">
-                ${r._variance == null ? '—' : fmtMoney(r._variance)}
-                ${r._barW ? `<span class="variance-bar" style="background:${r._favorable ? 'var(--good)' : 'var(--bad)'}; width:${r._barW}px;"></span>` : ''}
-              </td>
-            </tr>` : `
-            <tr>
-              <td>${esc(r.account || '(unnamed)')}</td>
-              <td class="num">${fmtMoney(r._amt)}</td>
-            </tr>`).join('')}
+          ${showFundGroups
+            ? buckets.map((b) => `
+                ${fundHeaderRow(b)}
+                ${b.rows.map(rowHtml).join('')}
+                ${subtotalRow(`Total ${b.label}`, b.rows)}
+              `).join('')
+            : withVar.map(rowHtml).join('')}
         </tbody>
         <tfoot><tr>
           <td>Total ${esc(title.toLowerCase())}</td>
@@ -754,7 +808,7 @@ function renderFinancialStatementsStandaloneHtml({ packet, section, embed = fals
 // ----------------------------------------------------------------------------
 function renderArAgingStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.narrative || null;
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
   const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
   const total = d.total_ar != null ? Number(d.total_ar) : null;
   const buckets = d.buckets || {};
@@ -916,7 +970,7 @@ function renderArAgingStandaloneHtml({ packet, section, embed = false }) {
 // ----------------------------------------------------------------------------
 function renderViolationsSummaryStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.narrative || null;
+  const narrative = d.hide_narrative ? null : (d.narrative || null);
   const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
   const period = d.report_period || (packet.period_label || '');
   const byStage = d.by_stage || {};
@@ -1056,7 +1110,7 @@ function renderViolationsSummaryStandaloneHtml({ packet, section, embed = false 
 // ----------------------------------------------------------------------------
 function renderGenericSectionStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = (d.narrative || d.text || '').trim();
+  const narrative = d.hide_narrative ? '' : (d.narrative || d.text || '').trim();
   const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
 
   const bodyHtml = `
@@ -1484,7 +1538,8 @@ ${(() => {
               // Non-polished sections: prefer narrative if the extraction
               // produced one (generic Ed-voiced commentary), else fall back
               // to a clean structured-data summary, not the raw JSON dump.
-              const nar = data && typeof data.narrative === 'string' && data.narrative.trim();
+              // Operators can hide the narrative per-section via the toggle.
+              const nar = !data?.hide_narrative && data && typeof data.narrative === 'string' && data.narrative.trim();
               if (nar) {
                 return `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 0;">${esc(nar)}</div>`;
               }
@@ -2076,6 +2131,39 @@ router.patch('/:id/sections/:section_key', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/board-packets/:id/sections/:section_key/narrative/toggle
+// Hide or show the AI-voiced narrative card for a section without touching
+// the underlying structured data. Sets input_data.hide_narrative = true|false.
+// Body: { hide: boolean } — defaults to flipping the current value.
+// ----------------------------------------------------------------------------
+router.post('/:id/sections/:section_key/narrative/toggle', async (req, res) => {
+  try {
+    const { data: row, error: e1 } = await supabase
+      .from('board_packet_sections')
+      .select('input_data')
+      .eq('packet_id', req.params.id)
+      .eq('section_key', req.params.section_key)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (!row) return res.status(404).json({ error: 'section not found' });
+    const existing = row.input_data || {};
+    const next = (typeof req.body?.hide === 'boolean') ? req.body.hide : !existing.hide_narrative;
+    const { data, error } = await supabase
+      .from('board_packet_sections')
+      .update({ input_data: { ...existing, hide_narrative: next } })
+      .eq('packet_id', req.params.id)
+      .eq('section_key', req.params.section_key)
+      .select()
+      .single();
+    if (error) throw error;
+    res.json({ section: data, hide_narrative: next });
+  } catch (err) {
+    console.error('[board_packets] narrative toggle failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/board-packets/:id/sections/:section_key/upload
 // Upload a PDF for a section. the AI extracts structured data using the
 // section-specific prompt.
@@ -2093,12 +2181,47 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
     }
     // Run the AI
     const { parsed, usage } = await extractSectionFromPdf(sectionKey, req.file.buffer);
+
+    // For 'financials', merge with existing input_data — operators often
+    // upload the Balance Sheet PDF and Income Statement PDF separately. Without
+    // merging, the second upload overwrites the first and the board ends up
+    // missing one statement. We preserve whichever block the new extraction
+    // didn't populate. Other sections keep replace semantics.
+    let nextInput = parsed;
+    if (sectionKey === 'financials') {
+      const { data: existingRow } = await supabase
+        .from('board_packet_sections')
+        .select('input_data')
+        .eq('packet_id', req.params.id)
+        .eq('section_key', sectionKey)
+        .maybeSingle();
+      const existing = existingRow && existingRow.input_data ? existingRow.input_data : {};
+      const newHasBs = parsed && parsed.balance_sheet && Array.isArray(parsed.balance_sheet.assets) && parsed.balance_sheet.assets.length > 0;
+      const newHasIs = parsed && parsed.income_statement && (
+        (Array.isArray(parsed.income_statement.line_items) && parsed.income_statement.line_items.length > 0) ||
+        parsed.income_statement.total_revenue != null
+      );
+      const existingHasBs = existing && existing.balance_sheet && Array.isArray(existing.balance_sheet.assets) && existing.balance_sheet.assets.length > 0;
+      const existingHasIs = existing && existing.income_statement && (
+        (Array.isArray(existing.income_statement.line_items) && existing.income_statement.line_items.length > 0) ||
+        existing.income_statement.total_revenue != null
+      );
+      nextInput = { ...existing, ...parsed };
+      // Preserve the side the new upload didn't bring
+      if (!newHasBs && existingHasBs) nextInput.balance_sheet = existing.balance_sheet;
+      if (!newHasIs && existingHasIs) nextInput.income_statement = existing.income_statement;
+      // Period labels: prefer new if present, else keep existing
+      if (!parsed.period_start && existing.period_start) nextInput.period_start = existing.period_start;
+      if (!parsed.period_end && existing.period_end) nextInput.period_end = existing.period_end;
+      if (!parsed.current_period_label && existing.current_period_label) nextInput.current_period_label = existing.current_period_label;
+    }
+
     // Save to the section row
     const { data: section, error } = await supabase
       .from('board_packet_sections')
       .update({
         input_mode: 'upload',
-        input_data: parsed,
+        input_data: nextInput,
         status: 'ready',
         extraction_model: 'claude-sonnet-4-5',
         extraction_confidence: 'medium',
