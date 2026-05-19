@@ -1613,7 +1613,9 @@ async function extractSectionFromPdf(sectionKey, pdfBuffer) {
     try {
       const completion = await anthropic.messages.create({
         model: 'claude-sonnet-4-5',
-        max_tokens: 4000,
+        // Fund-balance BS + 12-month IS extractions can produce 6-10k tokens
+        // of structured JSON. Stay generous to avoid mid-string truncation.
+        max_tokens: 16000,
         messages: [{
           role: 'user',
           content: [
@@ -1623,8 +1625,19 @@ async function extractSectionFromPdf(sectionKey, pdfBuffer) {
         }]
       });
       const text = completion.content?.[0]?.text || '';
+      const stopReason = completion.stop_reason;
       const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-      return { parsed: JSON.parse(cleaned), usage: completion.usage };
+      try {
+        return { parsed: JSON.parse(cleaned), usage: completion.usage };
+      } catch (parseErr) {
+        const truncated = stopReason === 'max_tokens';
+        const hint = truncated
+          ? ` Model hit max_tokens (${completion.usage?.output_tokens}) — output truncated before close. Consider bumping max_tokens or tightening the prompt.`
+          : ` Response text (${cleaned.length} chars) was not valid JSON.`;
+        const err = new Error(`Extraction returned malformed JSON.${hint} Parse error: ${parseErr.message}`);
+        err.rawText = cleaned.slice(0, 500);
+        throw err;
+      }
     } catch (err) {
       lastError = err;
       const isRetryable = err.status === 429 || err.status === 529 ||
