@@ -1653,50 +1653,15 @@ function renderPriorMinutesStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
   const dt = d.prior_meeting_date ? fmtDate(d.prior_meeting_date) : null;
   const fullText = (d.full_text || '').trim();
-  const motions = Array.isArray(d.motions) ? d.motions : [];
-  const items = Array.isArray(d.action_items_status) ? d.action_items_status : [];
   // Legacy summary kept as fallback if no full_text was captured (old extractions).
   const legacySummary = !fullText ? (d.summary || '').trim() : '';
-  const empty = !dt && !fullText && !legacySummary && !motions.length && !items.length;
+  const empty = !dt && !fullText && !legacySummary;
 
   const bodyHtml = `
     ${empty ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No prior-meeting minutes captured yet. Upload the previous month's signed minutes PDF on the section card.</div>` : `
       ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 18px;">Previous meeting · <strong style="color:var(--navy);">${esc(dt)}</strong></div>` : ''}
-
       ${fullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(fullText)}</div>` : ''}
       ${legacySummary ? `<div style="background:var(--gold-tint); border-left:4px solid var(--gold); padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 0 0 18px;">${esc(legacySummary)}</div>` : ''}
-
-      ${motions.length ? `
-        <div class="table-h2">Motions (${motions.length})</div>
-        <table class="data-table">
-          <thead><tr>
-            <th>Motion</th>
-            <th>Result</th>
-          </tr></thead>
-          <tbody>
-            ${motions.map((m) => {
-              const rcolor = m.result === 'passed' ? '#166534' : m.result === 'failed' ? '#7f1d1d' : '#78350f';
-              const rbg = m.result === 'passed' ? '#dcfce7' : m.result === 'failed' ? '#fee2e2' : '#fef3c7';
-              return `<tr>
-                <td>${esc(m.motion || '—')}</td>
-                <td><span style="background:${rbg}; color:${rcolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${esc(m.result || '—')}</span></td>
-              </tr>`;
-            }).join('')}
-          </tbody>
-        </table>` : ''}
-
-      ${items.length ? `
-        <div class="table-h2">Action items carried over (${items.length})</div>
-        <ul style="margin: 0; padding: 0; list-style: none;">
-          ${items.map((a) => {
-            const scolor = a.status === 'complete' ? '#166534' : a.status === 'in_progress' ? '#78350f' : '#7f1d1d';
-            const sbg = a.status === 'complete' ? '#dcfce7' : a.status === 'in_progress' ? '#fef3c7' : '#fee2e2';
-            return `<li style="padding:10px 0; border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; gap:14px; font-size:13px;">
-              <span>${esc(a.item || '—')}</span>
-              <span style="background:${sbg}; color:${scolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; flex-shrink:0;">${esc((a.status || '—').replace(/_/g, ' '))}</span>
-            </li>`;
-          }).join('')}
-        </ul>` : ''}
     `}
   `;
   return renderStandalonePage({ packet, section, bodyHtml, embed });
@@ -2100,43 +2065,11 @@ ${(() => {
     ? (() => {
         const dt = minutesData.prior_meeting_date ? fmtDate(minutesData.prior_meeting_date) : null;
         const fullText = (minutesData.full_text || '').trim();
-        const motions = Array.isArray(minutesData.motions) ? minutesData.motions : [];
-        const items = Array.isArray(minutesData.action_items_status) ? minutesData.action_items_status : [];
         const legacySummary = !fullText ? (minutesData.summary || '').trim() : '';
         return `
           ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 18px;">Previous meeting · <strong style="color:var(--bedrock-navy-deep);">${esc(dt)}</strong></div>` : ''}
           ${fullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(fullText)}</div>` : ''}
           ${legacySummary ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 18px;">${esc(legacySummary)}</div>` : ''}
-          ${motions.length ? `
-            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Motions (${motions.length})</div>
-            <table style="width:100%; border-collapse:collapse; font-size:13px;">
-              <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
-                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Motion</th>
-                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Result</th>
-              </tr></thead>
-              <tbody>
-                ${motions.map((m) => {
-                  const rcolor = m.result === 'passed' ? '#166534' : m.result === 'failed' ? '#7f1d1d' : '#78350f';
-                  const rbg = m.result === 'passed' ? '#dcfce7' : m.result === 'failed' ? '#fee2e2' : '#fef3c7';
-                  return `<tr style="border-bottom:1px solid var(--rule);">
-                    <td style="padding:8px 10px;">${esc(m.motion || '—')}</td>
-                    <td style="padding:8px 10px;"><span style="background:${rbg}; color:${rcolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${esc(m.result || '—')}</span></td>
-                  </tr>`;
-                }).join('')}
-              </tbody>
-            </table>` : ''}
-          ${items.length ? `
-            <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 22px 0 8px;">Action items carried over (${items.length})</div>
-            <ul style="margin: 0; padding: 0; list-style: none;">
-              ${items.map((a) => {
-                const scolor = a.status === 'complete' ? '#166534' : a.status === 'in_progress' ? '#78350f' : '#7f1d1d';
-                const sbg = a.status === 'complete' ? '#dcfce7' : a.status === 'in_progress' ? '#fef3c7' : '#fee2e2';
-                return `<li style="padding:10px 0; border-bottom:1px solid var(--rule); display:flex; justify-content:space-between; gap:14px; font-size:13px;">
-                  <span>${esc(a.item || '—')}</span>
-                  <span style="background:${sbg}; color:${scolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; white-space:nowrap; flex-shrink:0;">${esc((a.status || '—').replace(/_/g, ' '))}</span>
-                </li>`;
-              }).join('')}
-            </ul>` : ''}
         `;
       })()
     : hasPolished
