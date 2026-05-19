@@ -9943,9 +9943,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             </div>
             <div style="font-size:32px; font-weight:700; color:${fc ? '#1A3050' : '#cbd5e1'}; line-height:1;">${fc}</div>
           </div>
+          <button onclick="inspMailQueueLockAndDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
+                  style="width:100%; padding:9px; background:${fc ? '#1A3050' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
+            ${fc ? '🔒 Lock dates + print' : 'Nothing pending'}
+          </button>
           <button onclick="inspMailQueueDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
-                  style="width:100%; padding:9px; background:${fc ? '#1A3050' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'};">
-            ${fc ? '⬇ Download batch PDF' : 'Nothing pending'}
+                  style="width:100%; padding:6px; background:transparent; color:${fc ? '#64748b' : '#cbd5e1'}; border:1px solid ${fc ? '#cbd5e1' : '#e2e8f0'}; border-radius:6px; font-size:11px; cursor:${fc ? 'pointer' : 'not-allowed'};">
+            ${fc ? 'Print without re-locking dates' : ''}
           </button>
         </div>
         <!-- Certified batch -->
@@ -9957,17 +9961,56 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             </div>
             <div style="font-size:32px; font-weight:700; color:${cm ? '#b91c1c' : '#cbd5e1'}; line-height:1;">${cm}</div>
           </div>
+          <button onclick="inspMailQueueLockAndDownload('certified_mail')" ${cm === 0 ? 'disabled' : ''}
+                  style="width:100%; padding:9px; background:${cm ? '#b91c1c' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${cm ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
+            ${cm ? '🔒 Lock dates + print (required)' : 'Nothing pending'}
+          </button>
           <button onclick="inspMailQueueDownload('certified_mail')" ${cm === 0 ? 'disabled' : ''}
-                  style="width:100%; padding:9px; background:${cm ? '#b91c1c' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${cm ? 'pointer' : 'not-allowed'};">
-            ${cm ? '⬇ Download batch PDF' : 'Nothing pending'}
+                  style="width:100%; padding:6px; background:transparent; color:${cm ? '#64748b' : '#cbd5e1'}; border:1px solid ${cm ? '#cbd5e1' : '#e2e8f0'}; border-radius:6px; font-size:11px; cursor:${cm ? 'pointer' : 'not-allowed'};">
+            ${cm ? 'Skip lock (legacy, not recommended)' : ''}
           </button>
         </div>
       </div>
       ${byCommHtml ? `<div style="margin-top:12px; padding-top:10px; border-top:1px solid #e2e8f0;"><div style="font-size:11px; color:#64748b; font-weight:700; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:3px;">By community</div>${byCommHtml}</div>` : ''}
-      <div style="margin-top:12px; padding:8px 10px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; font-size:11.5px; color:#92400e;">
-        💡 Downloading marks letters as printed — they won't appear in the next batch. If you need to reprint, contact support to reset the printed flag.
+      <div style="margin-top:12px; padding:8px 10px; background:#f0f9ff; border:1px solid #93c5fd; border-radius:6px; font-size:11.5px; color:#1e40af;">
+        🔒 <strong>Lock dates + print</strong> regenerates each letter with today's date as the postmark and recalculates every cure deadline from today. Required for certified §209 letters under Tex. Prop. Code §209.006 — the cure clock legally starts at mailing. The "skip lock" option exists only for letters where dates were already locked in a prior session.
       </div>
     `;
+  }
+
+  async function inspMailQueueLockAndDownload(deliveryMethod) {
+    const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    const todayStr = new Date().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const confirmMsg = deliveryMethod === 'certified_mail'
+      ? `Lock dates and print ${label} batch?\n\nThis will:\n• Stamp every letter with TODAY'S DATE (${todayStr}) as the postmark\n• Recalculate every cure-by + hearing-request deadline from today\n• Update each violation's cure_period_ends_at to anchor from today\n• Regenerate the PDFs (replaces previous drafts)\n• Mark them as printed + sent\n• Download as one batch PDF\n\nFor certified §209 letters under Tex. Prop. Code §209.006, this is the legally-safe path. Do this ONLY when you are about to physically mail the batch.\n\nProceed?`
+      : `Lock dates and print ${label} batch?\n\nToday's date (${todayStr}) will be stamped on every letter, and cure deadlines will be recalculated from today. Do this when you're about to mail.\n\nProceed?`;
+    if (!confirm(confirmMsg)) return;
+    try {
+      const r = await fetch('/api/enforcement/mail-queue/lock-and-batch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delivery_method: deliveryMethod }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const blob = await r.blob();
+      const included = r.headers.get('X-Bedrock-Included');
+      const postmark = r.headers.get('X-Bedrock-Postmark');
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `bedrock-mail-batch-${label}-locked-${postmark || new Date().toISOString().slice(0,10)}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+      setTimeout(() => alert(`✓ ${included || ''} letter${included == '1' ? '' : 's'} regenerated with postmark ${postmark}, dates locked. Mail today.`), 200);
+      await inspMailQueueLoad();
+    } catch (e) {
+      alert('Lock + print failed: ' + e.message);
+    }
   }
 
   async function inspMailQueueDownload(deliveryMethod) {

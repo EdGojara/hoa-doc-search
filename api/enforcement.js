@@ -826,6 +826,277 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/mail-queue/lock-and-batch
+// Body: { delivery_method, community_id?, interaction_ids?, postmark_date? }
+//
+// LEGAL-CRITICAL ENDPOINT. This is the version of batch-pdf that should be
+// used for certified §209 letters — and arguably for all letters. It:
+//   1. Re-generates each letter PDF with letter_date = postmark_date (today
+//      by default), so the cure-by + hearing-request dates in the letter
+//      MATCH the actual postmark date. § 209.006(b)(2)(B) keys the 30-day
+//      clock to mailing date; this endpoint closes the legal-challenge
+//      surface that exists when a letter is drafted today but mailed in
+//      three days.
+//   2. Updates the corresponding violations' cure_period_ends_at to anchor
+//      from the postmark date.
+//   3. Stamps interaction.postmark_date + sent_at + printed_at = NOW so the
+//      audit trail records the actual legal mailing date.
+//   4. Merges the regenerated PDFs into one batch PDF and streams it back.
+//
+// Per-community letter fees + cure days drive the dates + amounts; defaults
+// kick in when the community row hasn't been customized.
+// ---------------------------------------------------------------------------
+router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const deliveryMethod = body.delivery_method;
+    const communityId = body.community_id || null;
+    const explicitIds = Array.isArray(body.interaction_ids) ? body.interaction_ids : null;
+    if (!deliveryMethod || !['first_class_mail', 'certified_mail'].includes(deliveryMethod)) {
+      return res.status(400).json({ error: "delivery_method must be 'first_class_mail' or 'certified_mail'" });
+    }
+    // Postmark date — today by default. Operator can override (e.g. mailing
+    // a batch tomorrow morning, lock it tonight with tomorrow's date).
+    const postmarkIso = body.postmark_date
+      ? new Date(body.postmark_date).toISOString().slice(0, 10)
+      : new Date().toISOString().slice(0, 10);
+    const postmarkDate = new Date(postmarkIso + 'T12:00:00Z'); // noon UTC anchor
+
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
+
+    let q = supabase
+      .from('interactions')
+      .select('id, content, type, subject, community_id, property_id, violation_id, observation_id, status, bundle_id')
+      .in('type', letterTypes)
+      .eq('delivery_method', deliveryMethod)
+      .in('status', ['approved', 'sent'])
+      .is('printed_at', null)
+      .order('sent_at', { ascending: true });
+    if (communityId) q = q.eq('community_id', communityId);
+    if (explicitIds) q = q.in('id', explicitIds);
+    const { data: letters, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!letters || letters.length === 0) {
+      return res.status(404).json({ error: 'No pending letters match those filters.' });
+    }
+
+    const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+    const { PDFDocument } = require('pdf-lib');
+    const out = await PDFDocument.create();
+
+    // Cache joined community config + property data across iterations
+    const communityCache = new Map();
+    async function getCommunity(id) {
+      if (communityCache.has(id)) return communityCache.get(id);
+      const { data } = await supabase
+        .from('communities')
+        .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_payment_url, letter_pay_to_name, letter_pay_to_address, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
+        .eq('id', id)
+        .maybeSingle();
+      communityCache.set(id, data);
+      return data;
+    }
+
+    const included = [];
+    const skipped = [];
+
+    for (const L of letters) {
+      try {
+        // Fetch violation + joined data needed for regeneration
+        const { data: vio } = await supabase
+          .from('violations')
+          .select('id, property_id, community_id, current_stage, primary_category_id, opened_at, board_priority_at_open, opened_from_observation_id')
+          .eq('id', L.violation_id)
+          .maybeSingle();
+        if (!vio) { skipped.push({ id: L.id, reason: 'violation not found' }); continue; }
+
+        const community = await getCommunity(vio.community_id);
+        if (!community) { skipped.push({ id: L.id, reason: 'community not found' }); continue; }
+
+        // Cure-by date anchored to the postmark date + per-community cure days
+        const cureDays = vio.current_stage === 'courtesy_1' ? Number(community.letter_cure_days_courtesy_1 || 20)
+                       : vio.current_stage === 'courtesy_2' ? Number(community.letter_cure_days_courtesy_2 || 20)
+                       : Number(community.letter_cure_days_certified_209 || 30);
+        const cureBy = new Date(postmarkDate.getTime() + cureDays * 24 * 60 * 60 * 1000).toISOString();
+
+        // Property + owner
+        const { data: pRow } = await supabase
+          .from('v_current_property_owners')
+          .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+          .eq('property_id', vio.property_id)
+          .maybeSingle();
+        if (!pRow) { skipped.push({ id: L.id, reason: 'property not found' }); continue; }
+
+        // Category + governing doc
+        const { data: catRow } = await supabase
+          .from('enforcement_categories')
+          .select('label, description')
+          .eq('id', vio.primary_category_id)
+          .maybeSingle();
+        let govDoc = null;
+        try {
+          const { data: prioRow } = await supabase
+            .from('community_enforcement_priorities')
+            .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
+            .eq('community_id', vio.community_id)
+            .eq('category_id', vio.primary_category_id)
+            .is('end_date', null)
+            .maybeSingle();
+          if (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote)) {
+            govDoc = {
+              reference:     prioRow.governing_doc_reference,
+              section_title: prioRow.governing_doc_section_title,
+              quote:         prioRow.governing_doc_quote,
+              page:          prioRow.governing_doc_page,
+            };
+          }
+        } catch (_) {}
+
+        // Observation + photo
+        let observation = null;
+        let closeUpBuffer = null;
+        let wideBuffer = null;
+        if (vio.opened_from_observation_id) {
+          const { data: obs } = await supabase
+            .from('property_observations')
+            .select('ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
+            .eq('id', vio.opened_from_observation_id)
+            .maybeSingle();
+          if (obs) {
+            observation = { ai_description: obs.ai_description, severity: obs.severity, captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at };
+            // Close-up photo
+            if (obs.inspection_photos && obs.inspection_photos.storage_path) {
+              try {
+                const { data: blob } = await supabase.storage.from('inspection-photos').download(obs.inspection_photos.storage_path);
+                if (blob) closeUpBuffer = Buffer.from(await blob.arrayBuffer());
+              } catch (_) {}
+            }
+            // Paired wide photo
+            const widePhotoId = obs.inspection_photos && obs.inspection_photos.paired_wide_photo_id;
+            if (widePhotoId) {
+              try {
+                const { data: wide } = await supabase
+                  .from('inspection_photos')
+                  .select('storage_path')
+                  .eq('id', widePhotoId)
+                  .maybeSingle();
+                if (wide && wide.storage_path) {
+                  const { data: wideBlob } = await supabase.storage.from('inspection-photos').download(wide.storage_path);
+                  if (wideBlob) wideBuffer = Buffer.from(await wideBlob.arrayBuffer());
+                }
+              } catch (_) {}
+            }
+          }
+        }
+
+        // Priors for §209 history block
+        const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
+        const { data: priors } = await supabase
+          .from('violations')
+          .select('opened_at, current_stage')
+          .eq('property_id', vio.property_id)
+          .eq('primary_category_id', vio.primary_category_id)
+          .neq('id', vio.id)
+          .gte('opened_at', yearAgo.toISOString())
+          .neq('quality_status', 'superseded')
+          .order('opened_at', { ascending: false })
+          .limit(5);
+
+        // Regenerate the letter PDF anchored at the postmark date
+        const pdfBuffer = await renderViolationLetterPdf({
+          violation: {
+            id: vio.id,
+            current_stage: vio.current_stage,
+            cure_period_ends_at: cureBy,
+            opened_at: vio.opened_at,
+            category_label: catRow && catRow.label,
+            board_priority_at_open: vio.board_priority_at_open,
+          },
+          property: {
+            street_address: pRow.street_address, unit: pRow.unit,
+            city: pRow.city, state: pRow.state, zip: pRow.zip, lot_number: pRow.lot_number,
+          },
+          owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
+          community,
+          observation,
+          governing_doc: govDoc,
+          prior_violations: priors || [],
+          wide_photo_buffer: wideBuffer,
+          photo_buffer: closeUpBuffer,
+          options: {
+            letter_date: postmarkDate,
+            sender_name:  community.letter_sender_name,
+            sender_title: community.letter_sender_title,
+          },
+        });
+
+        // Upload regenerated PDF — new path with postmark stamp
+        const LETTERS_BUCKET = 'violation-letters';
+        const stamp = postmarkIso.replace(/-/g, '');
+        const letterPath = `${vio.id}/${vio.current_stage}-postmark-${stamp}.pdf`;
+        const { error: upErr } = await supabase.storage
+          .from(LETTERS_BUCKET)
+          .upload(letterPath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+        if (upErr) {
+          skipped.push({ id: L.id, reason: 'upload failed: ' + upErr.message });
+          continue;
+        }
+
+        // Update violation's cure_period_ends_at + the interaction's
+        // content path + postmark_date + sent_at
+        const nowIso = new Date().toISOString();
+        await supabase.from('violations')
+          .update({ cure_period_ends_at: cureBy })
+          .eq('id', vio.id);
+        await supabase.from('interactions')
+          .update({
+            content: letterPath,
+            postmark_date: postmarkIso,
+            sent_at: nowIso,
+            status: 'sent',
+            letter_fee_cents:
+              vio.current_stage === 'courtesy_1' ? Number(community.letter_fee_courtesy_1_cents || 0)
+              : vio.current_stage === 'courtesy_2' ? Number(community.letter_fee_courtesy_2_cents || 2500)
+              : Number(community.letter_fee_certified_209_cents || 3500),
+          })
+          .eq('id', L.id);
+
+        // Append to merged batch PDF
+        const src = await PDFDocument.load(pdfBuffer);
+        const copied = await out.copyPages(src, src.getPageIndices());
+        copied.forEach((page) => out.addPage(page));
+        included.push(L.id);
+      } catch (e) {
+        skipped.push({ id: L.id, reason: e.message });
+      }
+    }
+
+    if (included.length === 0) {
+      return res.status(500).json({ error: 'Could not regenerate any letter PDFs.', skipped });
+    }
+
+    // Mark all included letters as printed
+    await supabase
+      .from('interactions')
+      .update({ printed_at: new Date().toISOString() })
+      .in('id', included);
+
+    const mergedBytes = await out.save();
+    const filenameStamp = postmarkIso.replace(/-/g, '');
+    const methodLabel = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="bedrock-mail-batch-${methodLabel}-locked-${filenameStamp}.pdf"`);
+    res.setHeader('X-Bedrock-Included', included.length);
+    res.setHeader('X-Bedrock-Skipped', skipped.length);
+    res.setHeader('X-Bedrock-Postmark', postmarkIso);
+    res.end(Buffer.from(mergedBytes));
+  } catch (err) {
+    console.error('[mail-queue.lock-and-batch]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // AI DOC-REFERENCE EXTRACTOR
 // ---------------------------------------------------------------------------
 // Given a community + an enforcement category, scan the community's loaded
