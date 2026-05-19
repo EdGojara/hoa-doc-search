@@ -3320,28 +3320,42 @@ router.get('/:id/pdf', async (req, res) => {
     // cookie — without one it lands on /staff-login.html and the PDF
     // would render the login page instead of the packet. Mint a short-
     // lived cookie using the same HMAC scheme server.js uses
-    // (bedrock_gate = ts.sig). Cookie is set on this page only, expires
-    // automatically after STAFF_GATE_TTL_DAYS (server config).
+    // (bedrock_gate = ts.sig). Belt-and-suspenders: set it via Puppeteer's
+    // cookie API (url-form) AND via setExtraHTTPHeaders Cookie, so both
+    // top-level navigation and same-origin iframe requests carry auth.
     const staffPassword = process.env.STAFF_PASSWORD;
     if (staffPassword) {
       const secret = process.env.STAFF_GATE_SECRET || staffPassword;
       const ts = String(Date.now());
       const sig = crypto.createHmac('sha256', secret).update(ts).digest('hex');
       const token = `${ts}.${sig}`;
-      // host can include :port — strip it for cookie domain.
-      const cookieDomain = host.replace(/:\d+$/, '');
+
       await page.setCookie({
         name: 'bedrock_gate',
         value: token,
-        domain: cookieDomain,
+        url: previewUrl,
         path: '/',
         httpOnly: true,
         secure: proto === 'https',
         sameSite: 'Lax',
       });
+      await page.setExtraHTTPHeaders({
+        'Cookie': `bedrock_gate=${token}`,
+      });
+      console.log(`[board_packets] minted staff gate cookie for puppeteer (ts=${ts})`);
+    } else {
+      console.log('[board_packets] STAFF_PASSWORD unset, skipping cookie mint');
     }
 
     await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 60000 });
+
+    // Quick sanity check — if Puppeteer ended up on the login page, the
+    // cookie didn't stick. Fail fast with a useful error instead of
+    // returning a PDF of the login screen.
+    const finalUrl = page.url();
+    if (/\/staff-login\.html/.test(finalUrl)) {
+      throw new Error('staff_gate_blocked — puppeteer landed on login page despite cookie. Check STAFF_GATE_SECRET matches between sign + verify.');
+    }
 
     // Wait for the embed-mode section iframes to settle. Each one posts
     // its scrollHeight via postMessage on load + fonts-ready; the parent
