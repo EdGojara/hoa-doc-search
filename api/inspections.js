@@ -433,9 +433,34 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       .maybeSingle();
                     const { data: commRow } = await supabase
                       .from('communities')
-                      .select('name')
+                      .select('name, legal_name, letter_sender_name, letter_sender_title')
                       .eq('id', insp.community_id)
                       .maybeSingle();
+
+                    // Phase 7 — pull governing-doc reference + prior-violation history
+                    // so the letter cites the actual CC&R section and (on §209)
+                    // lists prior notices for this property + category.
+                    let govDocForAuto = null;
+                    try {
+                      const { data: prioRow } = await supabase
+                        .from('community_enforcement_priorities')
+                        .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
+                        .eq('community_id', insp.community_id)
+                        .eq('category_id', categoryId)
+                        .is('end_date', null)
+                        .maybeSingle();
+                      if (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote)) {
+                        govDocForAuto = {
+                          reference:     prioRow.governing_doc_reference,
+                          section_title: prioRow.governing_doc_section_title,
+                          quote:         prioRow.governing_doc_quote,
+                          page:          prioRow.governing_doc_page,
+                        };
+                      }
+                    } catch (_) {}
+
+                    // priors already pulled above for the engine; reuse
+                    const priorsForLetter = (priors || []).filter((pv) => pv.id !== vio.id);
 
                     const pdfBuffer = await renderViolationLetterPdf({
                       violation: {
@@ -444,7 +469,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                         cure_period_ends_at: cureEnd,
                         opened_at: new Date().toISOString(),
                         category_label: catRow && catRow.label,
-                        category_description: result.description,  // AI's specific description for THIS photo
+                        category_description: result.description,
                         board_priority_at_open: priorityWeight,
                       },
                       property: {
@@ -459,14 +484,22 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                         full_name:       pRow.owner_name,
                         mailing_address: pRow.owner_mailing_address,
                       },
-                      community: { name: commRow && commRow.name },
+                      community: {
+                        name:       commRow && commRow.name,
+                        legal_name: commRow && commRow.legal_name,
+                      },
                       observation: {
                         ai_description: result.description,
                         severity: result.severity,
                         captured_at: capturedAt,
                       },
-                      photo_buffer: req.file.buffer,
-                      options: { sender_name: 'Bedrock Association Management' },
+                      governing_doc:    govDocForAuto,
+                      prior_violations: priorsForLetter,
+                      photo_buffer:     req.file.buffer,
+                      options: {
+                        sender_name:  (commRow && commRow.letter_sender_name)  || null,
+                        sender_title: (commRow && commRow.letter_sender_title) || null,
+                      },
                     });
 
                     // Upload to letters bucket

@@ -366,6 +366,61 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       }
     }
 
+    // Phase 7 — enrich context for the new template
+    //   - community.legal_name (HOA primary header)
+    //   - community.letter_sender_name / _title (per-community sign-off override)
+    //   - governing_doc (community_enforcement_priorities row for this category)
+    //   - prior_violations (history list rendered on §209 letters)
+    let commLegalName = null;
+    let senderName = body.sender_name || null;
+    let senderTitle = body.sender_title || null;
+    try {
+      const { data: comm } = await supabase
+        .from('communities')
+        .select('legal_name, letter_sender_name, letter_sender_title')
+        .eq('id', violation.community_id)
+        .maybeSingle();
+      if (comm) {
+        commLegalName = comm.legal_name || null;
+        if (!senderName)  senderName  = comm.letter_sender_name || null;
+        if (!senderTitle) senderTitle = comm.letter_sender_title || null;
+      }
+    } catch (_) {}
+
+    let govDoc = null;
+    try {
+      const { data: prio } = await supabase
+        .from('community_enforcement_priorities')
+        .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
+        .eq('community_id', violation.community_id)
+        .eq('category_id', violation.primary_category_id)
+        .is('end_date', null)
+        .maybeSingle();
+      if (prio && (prio.governing_doc_reference || prio.governing_doc_section_title || prio.governing_doc_quote)) {
+        govDoc = {
+          reference:     prio.governing_doc_reference,
+          section_title: prio.governing_doc_section_title,
+          quote:         prio.governing_doc_quote,
+          page:          prio.governing_doc_page,
+        };
+      }
+    } catch (_) {}
+
+    let priorViolations = [];
+    try {
+      const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
+      const { data: pv } = await supabase
+        .from('violations')
+        .select('opened_at, current_stage')
+        .eq('property_id', violation.property_id)
+        .eq('primary_category_id', violation.primary_category_id)
+        .neq('id', violation.id)
+        .gte('opened_at', yearAgo.toISOString())
+        .order('opened_at', { ascending: false })
+        .limit(10);
+      priorViolations = pv || [];
+    } catch (_) {}
+
     // Generate the PDF
     const pdfBuffer = await renderViolationLetterPdf({
       violation: {
@@ -389,12 +444,17 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         full_name:       pRow.owner_name,
         mailing_address: pRow.owner_mailing_address,
       },
-      community: { name: violation.communities && violation.communities.name },
+      community: {
+        name:       violation.communities && violation.communities.name,
+        legal_name: commLegalName,
+      },
       observation,
-      photo_buffer: photoBuffer,
+      governing_doc:    govDoc,
+      prior_violations: priorViolations,
+      photo_buffer:     photoBuffer,
       options: {
-        sender_name:  body.sender_name  || 'Bedrock Association Management',
-        sender_title: body.sender_title || null,
+        sender_name:  senderName,
+        sender_title: senderTitle,
       },
     });
 
@@ -756,6 +816,213 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
     res.end(Buffer.from(mergedBytes));
   } catch (err) {
     console.error('[mail-queue.batch-pdf]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// AI DOC-REFERENCE EXTRACTOR
+// ---------------------------------------------------------------------------
+// Given a community + an enforcement category, scan the community's loaded
+// governing documents (declaration_ccrs / bylaws / rules_and_regulations /
+// design_document) and ask Claude to identify the specific section that
+// addresses this category. Writes the result back to
+// community_enforcement_priorities.governing_doc_* so the next letter for
+// that (community, category) cites the actual section + quote.
+//
+// Two flavors:
+//   POST /api/enforcement/extract-doc-references/:community_id/:category_id
+//     One-shot for a specific pair (used by a UI "suggest reference" button).
+//
+//   POST /api/enforcement/extract-doc-references/:community_id
+//     Batch — scans every category that has priority_weight != 'disabled' and
+//     no governing_doc_reference yet (or force=true to redo all).
+//
+// Uses the existing knowledge_documents + knowledge_chunks vector-search
+// infrastructure (migration 011). If the community's CC&Rs haven't been
+// ingested as knowledge_documents (source_type='governing_document'),
+// returns a hint to ingest first — no error.
+// ---------------------------------------------------------------------------
+
+async function _extractDocRefForCategory(communityId, categoryId, options = {}) {
+  const Anthropic = require('@anthropic-ai/sdk');
+  const apiKey = process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) return { ok: false, reason: 'ANTHROPIC_API_KEY not set' };
+
+  // 1. Get the category + community context
+  const { data: cat } = await supabase
+    .from('enforcement_categories')
+    .select('id, slug, label, description')
+    .eq('id', categoryId)
+    .maybeSingle();
+  if (!cat) return { ok: false, reason: 'category not found' };
+
+  const { data: comm } = await supabase
+    .from('communities')
+    .select('id, name, legal_name, management_company_id')
+    .eq('id', communityId)
+    .maybeSingle();
+  if (!comm) return { ok: false, reason: 'community not found' };
+
+  // 2. Find this community's governing-doc knowledge_chunks via vector search.
+  //    Build the query embedding from the category label + description so the
+  //    semantic search lands on the relevant section.
+  const OpenAI = require('openai');
+  const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+  if (!process.env.OPENAI_API_KEY) {
+    return { ok: false, reason: 'OPENAI_API_KEY not set (needed for embedding query)' };
+  }
+
+  const queryText = `${cat.label}. ${cat.description || ''} — covenant or rule for this in an HOA's CC&Rs, bylaws, or rules and regulations.`;
+  let queryEmbedding;
+  try {
+    const embedResp = await openai.embeddings.create({
+      model: 'text-embedding-ada-002',
+      input: queryText,
+    });
+    queryEmbedding = embedResp.data[0].embedding;
+  } catch (e) {
+    return { ok: false, reason: 'embedding failed: ' + e.message };
+  }
+
+  // 3. Vector search the knowledge base for the most relevant chunks
+  const { data: chunks, error: matchErr } = await supabase.rpc('match_knowledge_chunks', {
+    query_embedding: queryEmbedding,
+    mgmt_co_id:      comm.management_company_id,
+    match_count:     6,
+    source_filter:   ['governing_document'],
+  });
+  if (matchErr) return { ok: false, reason: 'search failed: ' + matchErr.message };
+  if (!chunks || chunks.length === 0) {
+    return { ok: false, reason: 'no governing docs found in knowledge base — ingest CC&Rs / Bylaws first (source_type=governing_document)' };
+  }
+
+  // 4. Ask Claude to identify the best section + extract a clean quote
+  const client = new Anthropic({ apiKey });
+  const chunkBlocks = chunks.map((c, i) =>
+    `--- Chunk ${i + 1}  (${c.document_title}, page ${c.page_number || '?'}${c.section_heading ? ', ' + c.section_heading : ''}) ---\n${c.text}`
+  ).join('\n\n');
+
+  const systemPrompt = `You are reviewing excerpts from an HOA's governing documents to identify the most relevant section that addresses a specific enforcement category. Your job is to extract a clean citation + short verbatim quote that a violation letter can reference.
+
+Voice: just return the JSON. No preamble, no commentary.
+
+If no chunk clearly addresses the category, set "found": false and explain briefly in "notes".
+
+Always respond with valid JSON:
+{
+  "found": true|false,
+  "reference":     "DCC&Rs Article IV, Section 4.3",   // canonical citation
+  "section_title": "Landscaping Standards",             // human-readable heading
+  "quote":         "Each Owner shall maintain the Lot in a neat, clean...",  // 1-2 sentences max, verbatim
+  "page":          14,                                  // page number from chunk metadata
+  "chunk_index":   2,                                   // which provided chunk was used (1-based)
+  "confidence":    "low|medium|high",
+  "notes":         "optional"
+}`;
+
+  const userText = `Community: ${comm.name}
+Enforcement category: ${cat.label}
+${cat.description ? 'Description: ' + cat.description : ''}
+
+Below are 6 excerpts from the community's governing documents (CC&Rs, Bylaws, or Rules & Regulations). Identify which excerpt most directly addresses this category and extract the citation + a brief verbatim quote.
+
+${chunkBlocks}`;
+
+  let raw;
+  try {
+    const resp = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 500,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: userText }],
+    });
+    raw = (resp.content || []).find((b) => b.type === 'text');
+    raw = raw && raw.text || '';
+  } catch (e) {
+    return { ok: false, reason: 'Claude call failed: ' + e.message };
+  }
+
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { ok: false, reason: 'no JSON in Claude response', raw };
+  let parsed;
+  try { parsed = JSON.parse(jsonMatch[0]); }
+  catch (e) { return { ok: false, reason: 'JSON parse failed', raw }; }
+
+  if (!parsed.found) return { ok: true, found: false, notes: parsed.notes, raw };
+
+  // 5. Write back to community_enforcement_priorities (active row)
+  const { error: upErr } = await supabase
+    .from('community_enforcement_priorities')
+    .update({
+      governing_doc_reference:     parsed.reference || null,
+      governing_doc_section_title: parsed.section_title || null,
+      governing_doc_quote:         parsed.quote || null,
+      governing_doc_page:          parsed.page || null,
+      governing_doc_source:        'ai_extracted',
+      governing_doc_extracted_at:  new Date().toISOString(),
+    })
+    .eq('community_id', communityId)
+    .eq('category_id', categoryId)
+    .is('end_date', null);
+  if (upErr) return { ok: false, reason: 'update failed: ' + upErr.message };
+
+  return {
+    ok: true, found: true,
+    reference:     parsed.reference,
+    section_title: parsed.section_title,
+    quote:         parsed.quote,
+    page:          parsed.page,
+    confidence:    parsed.confidence,
+  };
+}
+
+router.post('/extract-doc-references/:community_id/:category_id', async (req, res) => {
+  try {
+    const result = await _extractDocRefForCategory(req.params.community_id, req.params.category_id);
+    return res.json(result);
+  } catch (err) {
+    console.error('[extract-doc-references.single]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/extract-doc-references/:community_id', express.json(), async (req, res) => {
+  try {
+    const communityId = req.params.community_id;
+    const force = !!(req.body && req.body.force);
+
+    // List active enforcement priorities for this community + their current state
+    const { data: prios, error: prioErr } = await supabase
+      .from('community_enforcement_priorities')
+      .select('category_id, priority_weight, governing_doc_reference, enforcement_categories(label)')
+      .eq('community_id', communityId)
+      .is('end_date', null);
+    if (prioErr) return res.status(500).json({ error: prioErr.message });
+
+    const targets = (prios || []).filter((p) => p.priority_weight !== 'disabled' &&
+                                                 (force || !p.governing_doc_reference));
+    if (targets.length === 0) {
+      return res.json({ processed: 0, skipped: (prios || []).length, message: 'Nothing to extract (all categories have references already, or pass force=true).' });
+    }
+
+    const results = [];
+    for (const t of targets) {
+      const r = await _extractDocRefForCategory(communityId, t.category_id);
+      results.push({
+        category: t.enforcement_categories && t.enforcement_categories.label,
+        category_id: t.category_id,
+        ...r,
+      });
+      // gentle pacing to keep Claude + OpenAI happy
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    const found = results.filter((r) => r.ok && r.found).length;
+    const notFound = results.filter((r) => r.ok && !r.found).length;
+    const errored = results.filter((r) => !r.ok).length;
+    res.json({ processed: results.length, found, not_found: notFound, errored, results });
+  } catch (err) {
+    console.error('[extract-doc-references.batch]', err);
     res.status(500).json({ error: err.message });
   }
 });
