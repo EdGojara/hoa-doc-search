@@ -1747,16 +1747,29 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   function detectLocationFromAgenda() {
     if (packet.meeting_location) return null; // explicit override wins
     const agenda = (sections || []).find((s) => s.section_key === 'agenda');
-    const txt = agenda && agenda.input_data && agenda.input_data.full_text ? String(agenda.input_data.full_text) : '';
+    if (!agenda || !agenda.input_data) return null;
+    const ad = agenda.input_data;
+    // Scan everywhere meaningful in the agenda extraction — full_text first
+    // (verbatim from the new prompt), then items[].topic + items[].notes
+    // (covers legacy extractions that captured items only).
+    const parts = [];
+    if (ad.full_text) parts.push(String(ad.full_text));
+    if (Array.isArray(ad.items)) {
+      for (const it of ad.items) {
+        if (it.topic) parts.push(String(it.topic));
+        if (it.notes) parts.push(String(it.notes));
+      }
+    }
+    const txt = parts.join('\n');
     if (!txt) return null;
     // Common patterns operators write in agendas:
-    //   "@ Steve Radack Community Center"
-    //   "at Steve Radack Community Center"
-    //   "Location: Steve Radack Community Center"
-    //   "Meeting Location: ..."
+    //   "Location: <venue>"
+    //   "@ <venue>"
+    //   "at <venue> Community Center/Hall/Building/..."
     const patterns = [
       /(?:meeting\s+location|location)\s*[:\-]\s*([^\n]{4,80})/i,
-      /\bat\s+([A-Z][^\n,.;]{4,60}(?:Center|Hall|Building|Office|Pavilion|Clubhouse|Pool|Park|Room|Library))/,
+      /@\s*([A-Z][^\n,.;]{4,80}(?:Center|Hall|Building|Office|Pavilion|Clubhouse|Pool|Park|Room|Library))/,
+      /\bat\s+([A-Z][^\n,.;]{4,80}(?:Center|Hall|Building|Office|Pavilion|Clubhouse|Pool|Park|Room|Library))/,
       /@\s*([A-Z][^\n,.;]{4,60})/,
     ];
     for (const re of patterns) {
@@ -2046,10 +2059,6 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     <div class="cover-meta-block">
       <div class="label">Period covered</div>
       <div class="body"><strong>${esc(packet.period_label || '')}</strong></div>
-    </div>
-    <div class="cover-meta-block">
-      <div class="label">Issued</div>
-      <div class="body"><strong>${esc(fmtDateShort(packet.created_at || new Date()))}</strong></div>
     </div>
   </div>
 </div>
