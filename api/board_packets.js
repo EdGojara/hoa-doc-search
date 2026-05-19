@@ -1605,6 +1605,11 @@ Extract the data AND write a short Ed-voiced narrative the board can act on.
 Output JSON with this exact shape:
 
 {
+  "document_contains": {
+    "balance_sheet":    <true if the PDF actually contains a Balance Sheet — Assets / Liabilities / Equity sections — otherwise false>,
+    "income_statement": <true if the PDF actually contains an Income Statement / Statement of Revenues and Expenses, otherwise false>
+  },
+
   "period_start": "YYYY-MM-DD or null",
   "period_end": "YYYY-MM-DD or null",
   "current_period_label": "string — e.g., 'April 2026'",
@@ -1718,7 +1723,17 @@ Income Statement Format (A) — single period with budget:
 - Capture line_items.budget when a Budget column is visible.
 - trailing_months stays empty (length 0).
 
-Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
+Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.
+
+CRITICAL — only-one-statement uploads:
+The package commonly arrives as a Balance-Sheet-only PDF or an
+Income-Statement-only PDF. Do not fabricate data for the other side.
+- Set document_contains.balance_sheet = false when no BS pages are present;
+  return balance_sheet with EMPTY arrays + null totals + null fund_cash_summary.
+- Set document_contains.income_statement = false when no IS pages are present;
+  return income_statement with EMPTY arrays + null totals + null by_fund + empty trailing_months.
+The operator uploads BS and IS separately; the system merges them later, so
+inventing the missing side overwrites real data from the other file.`,
 
   // section_key='drv' is the Deed Restriction Violations summary.
   // Powered by the same extraction prompt that violations_summary used to
@@ -2196,19 +2211,33 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
         .eq('section_key', sectionKey)
         .maybeSingle();
       const existing = existingRow && existingRow.input_data ? existingRow.input_data : {};
-      const newHasBs = parsed && parsed.balance_sheet && Array.isArray(parsed.balance_sheet.assets) && parsed.balance_sheet.assets.length > 0;
-      const newHasIs = parsed && parsed.income_statement && (
+
+      // Trust the explicit document_contains flag from the model when present —
+      // it explicitly says whether each statement appeared in this PDF, which
+      // avoids hallucinated empty BS/IS shapes overwriting real prior data.
+      // Falls back to a data-shape heuristic when the flag is missing.
+      const flag = (parsed && parsed.document_contains) || null;
+      const dataShapeHasBs = parsed && parsed.balance_sheet && Array.isArray(parsed.balance_sheet.assets) && parsed.balance_sheet.assets.length > 0;
+      const dataShapeHasIs = parsed && parsed.income_statement && (
         (Array.isArray(parsed.income_statement.line_items) && parsed.income_statement.line_items.length > 0) ||
         parsed.income_statement.total_revenue != null
       );
+      const newHasBs = flag ? !!flag.balance_sheet    : dataShapeHasBs;
+      const newHasIs = flag ? !!flag.income_statement : dataShapeHasIs;
+
       const existingHasBs = existing && existing.balance_sheet && Array.isArray(existing.balance_sheet.assets) && existing.balance_sheet.assets.length > 0;
       const existingHasIs = existing && existing.income_statement && (
         (Array.isArray(existing.income_statement.line_items) && existing.income_statement.line_items.length > 0) ||
         existing.income_statement.total_revenue != null
       );
+
+      // Start from existing, layer new keys on top (e.g., narrative,
+      // current_period_label), then explicitly preserve the side the new
+      // upload did NOT bring. Crucial: even if the new parse includes a
+      // (hallucinated) balance_sheet shape, we trust the document_contains
+      // flag and keep the existing real one.
       nextInput = { ...existing, ...parsed };
-      // Preserve the side the new upload didn't bring
-      if (!newHasBs && existingHasBs) nextInput.balance_sheet = existing.balance_sheet;
+      if (!newHasBs && existingHasBs) nextInput.balance_sheet    = existing.balance_sheet;
       if (!newHasIs && existingHasIs) nextInput.income_statement = existing.income_statement;
       // Period labels: prefer new if present, else keep existing
       if (!parsed.period_start && existing.period_start) nextInput.period_start = existing.period_start;
