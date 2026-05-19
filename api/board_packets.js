@@ -1784,12 +1784,11 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   // Solid navy base color ensures the cover never reads as "empty" even if
   // the hero image 404s on Render — the rgba gradient overlay alone would
   // otherwise fade against the white .page underneath.
-  // Lighter overlay — was rgba(31,58,95, 0.35→0.92), too heavy + everything
-  // read as 'blue tint'. Now: barely any tint at top, mostly natural photo
-  // in middle, dark gradient only at the bottom where the title text sits
-  // and needs contrast.
+  // Top of cover photo is fully transparent — no tint at all. Dark
+  // gradient kicks in only in the bottom third where the white title
+  // text sits and needs contrast against the photo.
   const heroStyle = assets.hero
-    ? `background-color: #1F3A5F; background-image: linear-gradient(180deg, rgba(31,58,95,0.05) 0%, rgba(31,58,95,0.10) 50%, rgba(31,58,95,0.75) 100%), url('${assets.hero}'); background-size: cover; background-position: center;`
+    ? `background-color: #1F3A5F; background-image: linear-gradient(180deg, transparent 0%, transparent 55%, rgba(15,30,55,0.55) 80%, rgba(15,30,55,0.85) 100%), url('${assets.hero}'); background-size: cover; background-position: center;`
     : `background: linear-gradient(180deg, #4a7ab0 0%, #315A87 50%, #1F3A5F 100%);`;
 
   // 'cover' is a vestigial section template from migration 014 — the cover
@@ -2010,23 +2009,20 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 
   @media print {
     body { background: white; }
-    .page {
-      box-shadow: none; margin: 0;
-      /* Flex layout interferes with print page breaks — switch to plain
-         block so Chrome's print engine handles content flow naturally. */
-      display: block;
+    .page { box-shadow: none; margin: 0; }
+    /* Cover + TOC always fill their own letter sheet. Keep flex so the
+       footer pushes to the bottom of the page (margin-top: auto). */
+    .page.cover, .page.toc {
+      display: flex; flex-direction: column;
+      min-height: 11in; page-break-after: always;
     }
-    /* Cover + TOC always fill their own letter sheet. */
-    .page.cover, .page.toc { min-height: 11in; page-break-after: always; }
-    /* Each section starts on a fresh page. Better than letting Chrome
-       guess where to break — Ed saw 'pages cut off at weird places'
-       because sections were splitting mid-content. Clean section
-       boundaries = clean printed packet. */
-    .page.interior:not(.toc) { page-break-before: always; }
-    /* Within a section page, keep tables and content blocks together. */
-    table, .kpi-row, .narrative { page-break-inside: avoid; }
-    /* But tables that overflow a page CAN break — between rows is
-       fine, just not mid-row. */
+    /* Section pages flow naturally — block layout lets Chrome's print
+       engine continue content across pages without flex weirdness. */
+    .page.interior:not(.toc) { display: block; }
+    /* Keep section titles glued to the content immediately following
+       them so headers don't end up orphaned at the bottom of a page. */
+    .section-eyebrow, .section-title, .section-lede { page-break-after: avoid; }
+    /* Don't split a row mid-row, but tables CAN break between rows. */
     .data-table tbody tr { page-break-inside: avoid; }
   }
 </style>
