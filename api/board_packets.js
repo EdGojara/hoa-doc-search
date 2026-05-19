@@ -1042,22 +1042,36 @@ router.post('/:id/render', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.get('/:id/preview', async (req, res) => {
   try {
+    // Main packet load — kept minimal so a missing column from a not-yet-run
+    // migration can't take the whole Preview down. The logo enrichment is a
+    // separate, gracefully-failing query below.
     const { data: packet } = await supabase
       .from('board_packets')
-      .select('*, community:communities(id, name, legal_name, logo_storage_path, logo_mime_type)')
+      .select('*, community:communities(id, name, legal_name)')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
     if (!packet) return res.status(404).send('<h1>Packet not found</h1>');
 
-    // Generate a signed URL for the community logo so the HTML <img> can
-    // load it. 24h expiry so the preview survives a printer round-trip.
-    if (packet.community && packet.community.logo_storage_path) {
+    // Logo enrichment — try to fetch logo_storage_path + sign a URL. If the
+    // column doesn't exist yet (migration 066 not run), skip silently and
+    // render without the custom logo.
+    if (packet.community && packet.community.id) {
       try {
-        const { data: signed } = await supabase.storage
-          .from('documents').createSignedUrl(packet.community.logo_storage_path, 60 * 60 * 24);
-        if (signed) packet.community.logo_signed_url = signed.signedUrl;
-      } catch (_) {}
+        const { data: logoRow } = await supabase
+          .from('communities')
+          .select('logo_storage_path')
+          .eq('id', packet.community.id)
+          .maybeSingle();
+        if (logoRow && logoRow.logo_storage_path) {
+          packet.community.logo_storage_path = logoRow.logo_storage_path;
+          const { data: signed } = await supabase.storage
+            .from('documents').createSignedUrl(logoRow.logo_storage_path, 60 * 60 * 24);
+          if (signed) packet.community.logo_signed_url = signed.signedUrl;
+        }
+      } catch (e) {
+        console.warn('[board_packets] logo enrichment skipped:', e.message);
+      }
     }
 
     const { data: sections } = await supabase

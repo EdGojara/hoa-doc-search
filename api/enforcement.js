@@ -1335,11 +1335,26 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     const communityCache = new Map();
     async function getCommunity(id) {
       if (communityCache.has(id)) return communityCache.get(id);
-      const { data } = await supabase
-        .from('communities')
-        .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_payment_url, letter_pay_to_name, letter_pay_to_address, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, logo_storage_path, logo_mime_type')
-        .eq('id', id)
-        .maybeSingle();
+      // Try the full select first; fall back to a column-conservative select
+      // when a not-yet-run migration leaves new columns absent (so the Mail
+      // Queue keeps working even before migration 066 is applied).
+      let data = null;
+      try {
+        const r = await supabase
+          .from('communities')
+          .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_payment_url, letter_pay_to_name, letter_pay_to_address, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, logo_storage_path, logo_mime_type')
+          .eq('id', id)
+          .maybeSingle();
+        if (r.error) throw r.error;
+        data = r.data;
+      } catch (_) {
+        const r2 = await supabase
+          .from('communities')
+          .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_payment_url, letter_pay_to_name, letter_pay_to_address, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
+          .eq('id', id)
+          .maybeSingle();
+        data = r2.data;
+      }
       communityCache.set(id, data);
       return data;
     }
