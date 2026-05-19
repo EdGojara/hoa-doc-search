@@ -3396,8 +3396,45 @@ router.get('/:id/pdf', async (req, res) => {
       tick();
     }));
 
-    // One more frame for layout reflow after the iframe heights changed.
+    // CRITICAL FOR PRINT: iframes are indivisible blocks to the print
+    // engine — content taller than one page gets clipped or breaks at
+    // the iframe boundary, never between rows. Solution: inline each
+    // iframe's body content into the parent document and remove the
+    // iframe. Now the print engine sees ordinary block elements (tables,
+    // divs, kpi-rows) that paginate naturally between rows.
+    await page.evaluate(() => {
+      const frames = document.querySelectorAll('iframe.bp-section-iframe');
+      let stylesCopied = false;
+      frames.forEach((frame) => {
+        const doc = frame.contentDocument;
+        if (!doc) return;
+        // Copy embed-mode styles into parent head ONCE — every section
+        // iframe uses identical CSS so we only need them on the parent
+        // page once. Subsequent iframes reuse those styles.
+        if (!stylesCopied) {
+          doc.querySelectorAll('style').forEach((s) => {
+            const ns = document.createElement('style');
+            ns.setAttribute('data-source', 'bp-embed-inlined');
+            ns.textContent = s.textContent;
+            document.head.appendChild(ns);
+          });
+          stylesCopied = true;
+        }
+        // Replace the iframe with its body content. .embed-body is the
+        // padded content wrapper inside the embed-mode HTML.
+        const bodyContent = doc.querySelector('.embed-body');
+        const wrapper = document.createElement('div');
+        wrapper.className = 'bp-section-inlined';
+        wrapper.innerHTML = bodyContent ? bodyContent.innerHTML : doc.body.innerHTML;
+        frame.parentNode.replaceChild(wrapper, frame);
+      });
+    });
+
+    // Two animation frames after the DOM mutation so layout fully reflows
+    // before we snapshot.
     await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+    // Belt: 500ms of slack for any remaining font / image paints.
+    await new Promise((r) => setTimeout(r, 500));
 
     const pdfBuffer = await page.pdf({
       format: 'Letter',
