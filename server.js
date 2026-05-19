@@ -877,8 +877,9 @@ app.post('/acc-review', upload.any(), async (req, res) => {
     }
 
     // Build the multimodal content array for extraction. The vision model sees
-    // the PDF AND every photo, then produces a unified summary that includes
-    // what's visible in the photos (color, scale, materials, neighbor context).
+    // the PDF AND every photo (and any brochure PDFs in the photos field),
+    // then produces a unified summary that includes what's visible in the
+    // photos (color, scale, materials, neighbor context).
     const extractContent = [];
     if (pdfFile) {
       extractContent.push({
@@ -887,6 +888,18 @@ app.post('/acc-review', upload.any(), async (req, res) => {
       });
     }
     for (const img of imageFiles) {
+      // Brochures + manufacturer color cards often come as PDFs even though
+      // they live in the "photos / samples" field. Route those as document
+      // blocks (Claude reads embedded images + text) instead of trying to
+      // shoehorn them through the image pipeline.
+      const isPdf = (img.mimetype === 'application/pdf') || /\.pdf$/i.test(img.originalname || '');
+      if (isPdf) {
+        extractContent.push({
+          type: 'document',
+          source: { type: 'base64', media_type: 'application/pdf', data: img.buffer.toString('base64') },
+        });
+        continue;
+      }
       const mt = img.mimetype && img.mimetype.startsWith('image/') ? img.mimetype : 'image/jpeg';
       const shrunk = await shrinkImageForAnthropic(img.buffer, mt);
       extractContent.push({
@@ -1122,6 +1135,16 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
             });
           }
           for (const img of imageFiles) {
+            // PDFs in the photos field (brochures, manufacturer color cards)
+            // ride as document blocks — same as the primary application PDF.
+            const isPdf = (img.mimetype === 'application/pdf') || /\.pdf$/i.test(img.originalname || '');
+            if (isPdf) {
+              parts.push({
+                type: 'document',
+                source: { type: 'base64', media_type: 'application/pdf', data: img.buffer.toString('base64') },
+              });
+              continue;
+            }
             const mt = img.mimetype && img.mimetype.startsWith('image/') ? img.mimetype : 'image/jpeg';
             const shrunk = await shrinkImageForAnthropic(img.buffer, mt);
             parts.push({
@@ -1293,13 +1316,19 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
         if (aErr) console.warn('[acc-decision] application upload failed:', aErr.message);
       }
 
-      // 5) Upload each photo
+      // 5) Upload each photo (or brochure PDF — these ride in the photos
+      // field but get preserved as PDFs for packet merging downstream).
       for (let i = 0; i < photoFiles.length; i++) {
         const f = photoFiles[i];
-        const ext = (f.mimetype || '').includes('png') ? 'png' : (f.mimetype || '').includes('webp') ? 'webp' : 'jpg';
+        const mt = f.mimetype || '';
+        const isPdf = mt === 'application/pdf' || /\.pdf$/i.test(f.originalname || '');
+        const ext = isPdf ? 'pdf'
+                  : mt.includes('png')  ? 'png'
+                  : mt.includes('webp') ? 'webp'
+                  : 'jpg';
         const path = `acc_decisions/${decisionId}/photo_${i + 1}.${ext}`;
         const { error: pErr } = await supabase.storage.from('documents').upload(path, f.buffer, {
-          contentType: f.mimetype || 'image/jpeg', upsert: true,
+          contentType: isPdf ? 'application/pdf' : (mt || 'image/jpeg'), upsert: true,
         });
         if (!pErr) photoStoragePaths.push(path);
         else console.warn('[acc-decision] photo upload failed:', pErr.message);
@@ -1456,11 +1485,18 @@ app.get('/acc-review/decisions/:id/packet', async (req, res) => {
       }
     }
 
-    // Order: letter first, then application, then photos
+    // Order: letter first, then application, then photos/brochures.
+    // Items in photo_storage_paths can be either images (JPG/PNG/WebP) or
+    // brochure PDFs — merge the PDF pages directly when the path ends .pdf,
+    // otherwise rasterize the image onto a letter-size page.
     await mergePdf(dec.letter_pdf_storage_path);
     await mergePdf(dec.application_pdf_storage_path);
     for (const p of (dec.photo_storage_paths || [])) {
-      await addImageAsPage(p);
+      if (/\.pdf$/i.test(p)) {
+        await mergePdf(p);
+      } else {
+        await addImageAsPage(p);
+      }
     }
 
     const bytes = await out.save();
