@@ -1183,10 +1183,16 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     position: relative; padding: 0.7in 0.8in;
     display: flex; flex-direction: column; justify-content: space-between;
   }
-  .cover-brand { display: flex; align-items: center; gap: 18px; }
-  .cover-brand .br-wordmark { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; color: #ffffff; line-height: 1; }
-  .cover-brand .br-wordmark .name { font-size: 38px; font-weight: 500; letter-spacing: -0.01em; }
-  .cover-brand .br-wordmark .descr { font-style: italic; font-size: 17px; font-weight: 500; color: #E8C96E; margin-top: 6px; }
+  .cover-brand { display: flex; align-items: center; }
+  /* BAM lockup PNG has a cream background — show it as a clean brand card
+     on the navy hero rather than trying to invert/recolor it. Sized so it
+     reads as the prepared-by mark without overwhelming the community name. */
+  .cover-brand img {
+    height: 130px; width: auto; display: block;
+    background: #F2F2F2; padding: 8px 16px;
+    border-radius: 6px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+  }
   .cover-period {
     font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
     font-weight: 600; color: rgba(255,255,255,0.85); align-self: flex-end;
@@ -1306,11 +1312,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 <div class="page cover">
   <div class="cover-hero">
     <div class="cover-brand">
-      ${BRAND.cornerstoneSvg({ height: 72, fill: '#D4AF37' })}
-      <div class="br-wordmark">
-        <div class="name">Bedrock</div>
-        <div class="descr">Association Management</div>
-      </div>
+      <img src="${BRAND.logos.bamFull}" alt="${BRAND.service.name}">
     </div>
     <div class="cover-period">${esc(packet.period_label || '')}</div>
     <div class="cover-title">
