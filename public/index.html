@@ -697,24 +697,9 @@
     <div data-drafts-list="acc_review" style="font-size:12.5px; color:#6B7280; max-height:90px; overflow-y:auto;">No saved drafts yet.</div>
   </div>
 
-  <!-- Past decisions — saved automatically every time a letter is generated.
-       Capped at ~340px with internal scroll so the working area on top
-       stays the primary surface. The header stays sticky inside the panel
-       so search + Refresh are always reachable while scrolling rows. -->
-  <div style="margin:10px 24px 14px; padding:10px 14px; background:#fff; border:1px solid #e3e8ef; border-radius:10px; flex-shrink:0;">
-    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
-      <h3 style="margin:0; font-size:14px; color:#1a3a5c;">📋 Past ACC decisions</h3>
-      <div style="display:flex; gap:6px; align-items:center;">
-        <input id="accHistorySearch" placeholder="Search by address, name, or project…"
-               style="border:1px solid #d0d7de; border-radius:6px; padding:5px 10px; font-size:12.5px; min-width:240px;"
-               oninput="accLoadHistory()">
-        <button class="secondary-btn" onclick="accLoadHistory()" style="font-size:11px; padding:4px 10px;">Refresh</button>
-      </div>
-    </div>
-    <div id="accHistoryList" style="border:1px solid #e2e8f0; border-radius:8px; min-height:60px; max-height:340px; overflow-y:auto;">
-      <div style="color:#999; font-size:13px; padding:14px;">Loading…</div>
-    </div>
-  </div>
+  <!-- Past ACC decisions moved to the History tab — they belong with the
+       broader decision archive rather than fighting the Review form for
+       vertical space. See tab-archistory. -->
 </div>
 
 <!-- Ask Ed Tab — single AI surface, multiple modes -->
@@ -5922,9 +5907,32 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <button type="button" class="ed-mode-btn active" data-acc-mode="history" onclick="setAccMode('history')">🗂️ History</button>
   </div>
   <div style="max-width: 1180px; margin: 0 auto;">
+
+    <!-- Past ACC decisions made through trustEd — one-tap re-download of
+         the letter or full packet. Distinct from the ARC History import
+         pipeline below (which is for pre-trustEd letters). Moved here
+         from the Review tab so the working surface up there isn't crowded. -->
+    <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:16px; margin-bottom:18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <div>
+          <h3 style="margin:0; font-size:16px; color:#1a3a5c;">📋 Past ACC decisions <span style="color:#94A3B8; font-weight:400; font-size:13px;">(decisions made through trustEd)</span></h3>
+          <p style="margin:4px 0 0 0; font-size:12px; color:#666;">Every letter generated through the Review tab is saved here. One-tap re-download of the homeowner letter or the complete packet (letter + application + photos + brochures).</p>
+        </div>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <input id="accHistorySearch" placeholder="Search by address, name, or project…"
+                 style="border:1px solid #d0d7de; border-radius:6px; padding:6px 10px; font-size:13px; min-width:240px;"
+                 oninput="accLoadHistory()">
+          <button class="secondary-btn" onclick="accLoadHistory()" style="font-size:12px; padding:6px 10px;">Refresh</button>
+        </div>
+      </div>
+      <div id="accHistoryList" style="border:1px solid #e2e8f0; border-radius:8px; min-height:60px; max-height:520px; overflow-y:auto;">
+        <div style="color:#999; font-size:13px; padding:14px;">Loading…</div>
+      </div>
+    </div>
+
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏗️ ACC History</h2>
+        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏗️ Imported ARC history <span style="color:#94A3B8; font-weight:500; font-size:14px;">(pre-trustEd letters)</span></h2>
         <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. trustEd extracts structured fields — review → save. The AI assessment engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
       </div>
     </div>
@@ -13527,6 +13535,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.querySelectorAll('.acc-mode-picker [data-acc-mode]').forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-acc-mode') === mode);
     });
+    // Load the Past ACC decisions list when entering History (it now lives
+    // here, not on the Review tab).
+    if (mode === 'history') {
+      try { accLoadHistory(); } catch (_) {}
+    }
   }
 
   // Updates the canonical currentCommunity used by the rest of the app.
@@ -13855,18 +13868,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
-  // Lazy-load history when the ACC tab is opened.
-  (function () {
-    const orig = window.switchTab;
-    if (typeof orig !== 'function') return;
-    window.switchTab = function (tab) {
-      const r = orig.apply(this, arguments);
-      if (tab === 'acc') {
-        try { accLoadHistory(); } catch (_) {}
-      }
-      return r;
-    };
-  })();
+  // Past ACC decisions list now lives on the History sub-tab. setAccMode
+  // calls accLoadHistory() when mode === 'history' — no switchTab hook
+  // needed here anymore.
 
   async function accDownloadPacket() {
     if (!accLastReview.decision_id) {
