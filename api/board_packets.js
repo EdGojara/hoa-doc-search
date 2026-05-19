@@ -878,8 +878,10 @@ function renderFinancialStatementsStandaloneHtml({ packet, section, embed = fals
 // ----------------------------------------------------------------------------
 function renderBalanceSheetStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.hide_narrative ? null : (d.narrative || null);
-  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  // Narrative + watchouts intentionally hidden until the AI commentary
+  // for financial statements is tightened up (Ed asked to defer).
+  const narrative = null;
+  const watchouts = [];
   const bsAssets = Array.isArray(d.assets) ? d.assets : [];
   const bsLiab = Array.isArray(d.liabilities) ? d.liabilities : [];
   const bsEquity = Array.isArray(d.equity) ? d.equity : [];
@@ -1024,8 +1026,10 @@ function renderBalanceSheetStandaloneHtml({ packet, section, embed = false }) {
 // ----------------------------------------------------------------------------
 function renderIncomeStatementStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.hide_narrative ? null : (d.narrative || null);
-  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  // Narrative + watchouts intentionally hidden until the AI commentary
+  // for financial statements is tightened up (Ed asked to defer).
+  const narrative = null;
+  const watchouts = [];
   const currentLabel = d.current_period_label || d.period_label || packet.period_label || '';
   const lineItems = Array.isArray(d.line_items) ? d.line_items : [];
   const trailing = Array.isArray(d.trailing_months) ? d.trailing_months : [];
@@ -1280,28 +1284,67 @@ function renderIncomeStatementStandaloneHtml({ packet, section, embed = false })
       </div>`;
   }
 
+  // Render a complete income statement scoped to a single fund. Returns
+  // empty string if the fund has zero activity. Used to split the report
+  // into Operating / Savings / Reserves sections, each its own IS.
+  function fundIsHtml(fundKey, fundLabel, accentColor) {
+    const fundRows = lineItems.filter((r) => (r.fund || 'operating') === fundKey);
+    const rev = fundRows.filter((r) => r.type === 'revenue');
+    const exp = fundRows.filter((r) => r.type === 'expense');
+    const totals = fundTotals(fundKey);
+    // Skip rendering an empty fund section entirely — keeps the page clean
+    // when only operating has activity.
+    if (rev.length === 0 && exp.length === 0 && (totals.revenue == null || totals.revenue === 0) && (totals.expense == null || totals.expense === 0)) {
+      return '';
+    }
+    const rTotal = totals.revenue != null ? Number(totals.revenue) : sumActual(rev);
+    const eTotal = totals.expense != null ? Number(totals.expense) : sumActual(exp);
+    const nTotal = totals.net != null ? Number(totals.net) : (rTotal - eTotal);
+    const rBudget = sumBudget(rev);
+    const eBudget = sumBudget(exp);
+    const nBudget = rBudget - eBudget;
+    const nVariance = nBudget ? nTotal - nBudget : null;
+
+    return `
+      <section style="margin-top: 18px; padding-top: 14px; border-top: 3px solid ${accentColor};">
+        <h2 style="font-family:'Inter', sans-serif; font-size:18px; font-weight:800; color:${accentColor}; margin: 0 0 4px; letter-spacing:-0.01em;">${esc(fundLabel)} Income Statement</h2>
+        <div style="font-size:12px; color:var(--ink-muted); margin-bottom:12px;">${esc(currentLabel)}${isTrend ? ` · ${trailing.length}-month trailing` : ''}</div>
+
+        <div class="kpi-row" style="margin-bottom:12px;">
+          <div class="kpi-card">
+            <div class="label">Revenue</div>
+            <div class="value">${fmtMoney(rTotal, { precision: 0 })}</div>
+            ${rBudget ? `<div class="delta">Budget ${fmtMoney(rBudget, { precision: 0 })}</div>` : ''}
+          </div>
+          <div class="kpi-card">
+            <div class="label">Expense</div>
+            <div class="value">${fmtMoney(eTotal, { precision: 0 })}</div>
+            ${eBudget ? `<div class="delta">Budget ${fmtMoney(eBudget, { precision: 0 })}</div>` : ''}
+          </div>
+          <div class="kpi-card">
+            <div class="label">Net income</div>
+            <div class="value" style="color:${nTotal >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(nTotal, { precision: 0 })}</div>
+            ${nVariance != null ? `<div class="delta ${nVariance >= 0 ? 'good' : 'bad'}">${nVariance >= 0 ? '+' : ''}${fmtMoney(nVariance, { precision: 0 })} vs. budget</div>` : ''}
+          </div>
+        </div>
+
+        ${isTableHtml('Revenue', rev, rTotal, rBudget)}
+        ${isTableHtml('Expenses', exp, eTotal, eBudget)}
+      </section>`;
+  }
+
   const isEmpty = lineItems.length === 0 && totalRev == null;
   const bodyHtml = `
-    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
     ${isEmpty ? `
       <div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">
         No Income Statement uploaded yet. Drop the Vantaca Income Statement PDF on this section card in the packet detail.
       </div>` : `
-      <div style="font-size:13px; color:var(--ink-muted); margin: 0 0 10px;">${esc(currentLabel)}${isTrend ? ` · ${trailing.length}-month trailing` : ''}</div>
-
-      ${fundBreakdownHtml || kpiHtml}
-
       ${trendChartHtml}
 
-      ${isTableHtml('Revenue', revenueRows, revTotal, revBudget)}
-      ${isTableHtml('Expenses', expenseRows, expTotal, expBudget)}
+      ${fundIsHtml('operating', 'Operating Fund', '#1F3A5F')}
+      ${fundIsHtml('savings',   'Savings Fund',   '#0F766E')}
+      ${fundIsHtml('reserves',  'Reserves Fund',  '#B47B00')}
     `}
-
-    ${watchouts.length ? `
-      <div class="table-h2">🚩 Watchouts</div>
-      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
-        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
-      </ul>` : ''}
   `;
 
   return renderStandalonePage({ packet, section, bodyHtml, embed });
