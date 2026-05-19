@@ -444,13 +444,26 @@ router.get('/:id', async (req, res) => {
       .select(`*,
         community:communities(id, name, slug),
         supersedes:supersedes_id(id, subject, extracted_summary, ingested_at, extraction_status),
-        superseded_by:superseded_by_id(id, subject, extracted_summary, ingested_at, extraction_status)
+        superseded_by:superseded_by_id(id, subject, extracted_summary, ingested_at, extraction_status),
+        attached_violation:attached_violation_id(id, current_stage, opened_at, primary_category_id, enforcement_categories(label, code))
       `)
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .single();
     if (error) throw error;
-    res.json({ intake: data });
+
+    // Enrich attached-violation with property address so the UI can show
+    // "Attached to violation at 1234 Oak St" without an extra round-trip.
+    let attachedProperty = null;
+    if (data && data.attached_property_id) {
+      const { data: pRow } = await supabase
+        .from('v_current_property_owners')
+        .select('property_id, street_address, unit, owner_name')
+        .eq('property_id', data.attached_property_id)
+        .maybeSingle();
+      attachedProperty = pRow || null;
+    }
+    res.json({ intake: { ...data, attached_property: attachedProperty } });
   } catch (err) {
     console.error('[email-intake] get failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -583,6 +596,304 @@ router.post('/:id/approve', async (req, res) => {
     });
   } catch (err) {
     console.error('[email-intake] approve failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// OWNER REPLY ATTACHMENT — link an intake to an open violation
+// ----------------------------------------------------------------------------
+// When a homeowner emails about a violation, the operator attaches the intake
+// to that violation. We insert a fresh interactions row (the single source of
+// truth for property + violation timeline) and tag the intake.
+// ============================================================================
+
+// Cheap string-scan to score a candidate violation against the email body.
+// Higher score = more likely the email is about this violation.
+function scoreCandidate({ violation, property, owner, contact, normalizedBody, senderHint }) {
+  let score = 0;
+  const reasons = [];
+
+  const addr = (property.street_address || '').toLowerCase();
+  // Match the numeric street + first word of the street name (e.g. "1234 oak").
+  // Full-address match is brittle (apt suffixes, formatting differ).
+  if (addr) {
+    const tokens = addr.split(/\s+/).filter(Boolean);
+    if (tokens.length >= 2) {
+      const head = `${tokens[0]} ${tokens[1]}`;
+      if (normalizedBody.includes(head)) {
+        score += 10;
+        reasons.push(`address "${head}" mentioned`);
+      } else if (tokens[0].match(/^\d+$/) && normalizedBody.includes(tokens[0])) {
+        // Just the house number — weaker signal
+        score += 3;
+        reasons.push(`house number ${tokens[0]} mentioned`);
+      }
+    }
+    if (property.unit && normalizedBody.includes(String(property.unit).toLowerCase())) {
+      score += 2;
+      reasons.push(`unit ${property.unit} mentioned`);
+    }
+  }
+
+  if (senderHint && owner && owner.email) {
+    if (senderHint.toLowerCase().includes(owner.email.toLowerCase())) {
+      score += 8;
+      reasons.push('sender matches owner email');
+    }
+  }
+  if (senderHint && contact && contact.email) {
+    if (senderHint.toLowerCase().includes(contact.email.toLowerCase())) {
+      score += 8;
+      reasons.push('sender matches contact email');
+    }
+  }
+
+  if (owner && owner.full_name) {
+    const lastName = owner.full_name.split(/\s+/).pop().toLowerCase();
+    if (lastName && lastName.length >= 3 && normalizedBody.includes(lastName)) {
+      score += 2;
+      reasons.push(`owner last name "${lastName}" mentioned`);
+    }
+  }
+
+  // Recency boost — newer violations are likelier to receive replies
+  const days = (Date.now() - new Date(violation.opened_at).getTime()) / (24 * 60 * 60 * 1000);
+  if (days <= 30) score += 2;
+  else if (days <= 90) score += 1;
+
+  return { score, reasons };
+}
+
+// GET /api/email-intelligence/:id/violation-candidates
+// Returns ranked open violations the intake might be about. Used by the UI
+// to suggest matches when the operator views an intake.
+router.get('/:id/violation-candidates', async (req, res) => {
+  try {
+    const { data: intake, error } = await supabase
+      .from('email_intake')
+      .select('id, community_id, raw_content, sender_hint, subject, attached_violation_id')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (error) throw error;
+    if (!intake) return res.status(404).json({ error: 'not found' });
+    if (!intake.community_id) {
+      return res.json({ candidates: [], message: 'Set a community on the intake to see violation matches.' });
+    }
+
+    // Pull open violations + the joined data we need to score
+    const { data: violations, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, primary_category_id, current_stage, current_stage_started_at, opened_at, cure_period_ends_at, enforcement_categories(label, code)')
+      .eq('community_id', intake.community_id)
+      .not('current_stage', 'in', '(cured,closed,voided)')
+      .order('opened_at', { ascending: false })
+      .limit(200);
+    if (vErr) throw vErr;
+    if (!violations || violations.length === 0) {
+      return res.json({ candidates: [] });
+    }
+
+    // Pull property/owner/contact info in bulk
+    const propIds = [...new Set(violations.map((v) => v.property_id))];
+    const { data: propRows } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, street_address, unit, owner_contact_id, owner_name, owner_email, owner_phone')
+      .in('property_id', propIds);
+    const propMap = new Map((propRows || []).map((p) => [p.property_id, p]));
+
+    const normalizedBody = (intake.raw_content || '').toLowerCase();
+    const senderHint = intake.sender_hint || '';
+
+    const scored = violations.map((v) => {
+      const p = propMap.get(v.property_id) || { property_id: v.property_id, street_address: null };
+      const owner = p.owner_contact_id ? { full_name: p.owner_name, email: p.owner_email } : null;
+      const s = scoreCandidate({
+        violation: v,
+        property: p,
+        owner,
+        contact: null,
+        normalizedBody,
+        senderHint,
+      });
+      return {
+        violation_id:     v.id,
+        property_id:      v.property_id,
+        street_address:   p.street_address,
+        unit:             p.unit,
+        owner_name:       p.owner_name,
+        owner_email:      p.owner_email,
+        owner_contact_id: p.owner_contact_id,
+        category_label:   v.enforcement_categories && v.enforcement_categories.label,
+        current_stage:    v.current_stage,
+        opened_at:        v.opened_at,
+        cure_period_ends_at: v.cure_period_ends_at,
+        score:            s.score,
+        reasons:          s.reasons,
+      };
+    });
+
+    // Sort by score desc, then opened_at desc. Cap at 10. Drop zeros unless
+    // there are < 3 non-zero hits (so the operator always has SOMETHING to pick).
+    scored.sort((a, b) => (b.score - a.score) || (new Date(b.opened_at) - new Date(a.opened_at)));
+    const positive = scored.filter((c) => c.score > 0);
+    const top = positive.length >= 3 ? positive.slice(0, 10) : scored.slice(0, 10);
+
+    res.json({
+      candidates: top,
+      attached_violation_id: intake.attached_violation_id,
+      total_open_violations: violations.length,
+    });
+  } catch (err) {
+    console.error('[email-intake] violation-candidates failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/email-intelligence/:id/attach-to-violation
+// Body: { violation_id }
+// Creates an interactions row (type=email_inbound, status=received) linked to
+// the violation, then sets the attached_* fields on the intake.
+router.post('/:id/attach-to-violation', express.json(), async (req, res) => {
+  try {
+    const { violation_id } = req.body || {};
+    if (!violation_id) return res.status(400).json({ error: 'violation_id is required' });
+
+    const { data: intake, error: iErr } = await supabase
+      .from('email_intake')
+      .select('id, community_id, subject, raw_content, sender_hint, ingested_at, attached_violation_id, attached_interaction_id')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (iErr) throw iErr;
+    if (!intake) return res.status(404).json({ error: 'intake not found' });
+
+    if (intake.attached_violation_id) {
+      return res.status(400).json({
+        error: 'already attached',
+        attached_violation_id: intake.attached_violation_id,
+        attached_interaction_id: intake.attached_interaction_id,
+      });
+    }
+
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .select('id, community_id, property_id')
+      .eq('id', violation_id)
+      .single();
+    if (vErr) throw vErr;
+    if (!violation) return res.status(404).json({ error: 'violation not found' });
+
+    // Sanity: violation must be in the same community as the intake
+    if (intake.community_id && violation.community_id !== intake.community_id) {
+      return res.status(400).json({ error: 'violation belongs to a different community than the intake' });
+    }
+
+    // Best-effort contact lookup from the property's current owner so the
+    // interaction shows up under their contact history too.
+    let contactId = null;
+    try {
+      const { data: pRow } = await supabase
+        .from('v_current_property_owners')
+        .select('owner_contact_id')
+        .eq('property_id', violation.property_id)
+        .maybeSingle();
+      contactId = pRow && pRow.owner_contact_id;
+    } catch (_) {}
+
+    const receivedAt = intake.ingested_at || new Date().toISOString();
+
+    const { data: interaction, error: insErr } = await supabase
+      .from('interactions')
+      .insert({
+        community_id:    violation.community_id,
+        property_id:     violation.property_id,
+        contact_id:      contactId,
+        violation_id:    violation.id,
+        type:            'email_inbound',
+        direction:       'inbound',
+        subject:         intake.subject || '(owner email)',
+        content:         intake.raw_content,
+        delivery_method: 'email',
+        status:          'received',
+        sent_at:         receivedAt,
+        received_at:     receivedAt,
+        source:          'manual',
+        original_external_id: `email_intake:${intake.id}`,
+        notes:           intake.sender_hint ? `From: ${intake.sender_hint}` : null,
+      })
+      .select('id')
+      .single();
+    if (insErr) throw insErr;
+
+    const { data: updated, error: upErr } = await supabase
+      .from('email_intake')
+      .update({
+        attached_violation_id:   violation.id,
+        attached_interaction_id: interaction.id,
+        attached_property_id:    violation.property_id,
+        attached_at:             new Date().toISOString(),
+        updated_at:              new Date().toISOString(),
+      })
+      .eq('id', intake.id)
+      .select()
+      .single();
+    if (upErr) throw upErr;
+
+    res.json({
+      intake: updated,
+      interaction_id: interaction.id,
+      violation_id: violation.id,
+      property_id: violation.property_id,
+    });
+  } catch (err) {
+    console.error('[email-intake] attach-to-violation failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/email-intelligence/:id/detach-violation
+// Undoes the attach. Deletes the interaction row + clears the intake link.
+router.post('/:id/detach-violation', async (req, res) => {
+  try {
+    const { data: intake, error: iErr } = await supabase
+      .from('email_intake')
+      .select('id, attached_interaction_id, attached_violation_id')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .single();
+    if (iErr) throw iErr;
+    if (!intake) return res.status(404).json({ error: 'intake not found' });
+    if (!intake.attached_violation_id) {
+      return res.status(400).json({ error: 'not attached to a violation' });
+    }
+
+    if (intake.attached_interaction_id) {
+      await supabase
+        .from('interactions')
+        .delete()
+        .eq('id', intake.attached_interaction_id)
+        .eq('original_external_id', `email_intake:${intake.id}`); // safety
+    }
+
+    const { data: updated, error: upErr } = await supabase
+      .from('email_intake')
+      .update({
+        attached_violation_id:   null,
+        attached_interaction_id: null,
+        attached_property_id:    null,
+        attached_at:             null,
+        updated_at:              new Date().toISOString(),
+      })
+      .eq('id', intake.id)
+      .select()
+      .single();
+    if (upErr) throw upErr;
+
+    res.json({ intake: updated });
+  } catch (err) {
+    console.error('[email-intake] detach-violation failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

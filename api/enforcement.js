@@ -1828,160 +1828,157 @@ router.get('/cure-lapse/pending', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// processCureLapses — the cure-lapse engine, callable from both the HTTP
+// endpoint and the scheduler. Returns a summary object. Throws on hard error.
+// ---------------------------------------------------------------------------
+async function processCureLapses({ communityId = null, dryRun = false, limit = 100 } = {}) {
+  const effLimit = Math.min(200, Number(limit) || 100);
+  const violations = await _findExpiredViolations(communityId, effLimit);
+  if (violations.length === 0) {
+    return { processed: 0, bumped: 0, flagged_board: 0, fines_assessed: 0, errors: [], dry_run: dryRun, message: 'No violations have expired cure periods.' };
+  }
+
+  let bumped = 0;
+  let flaggedBoard = 0;
+  let finesAssessed = 0;
+  const results = [];
+  const errors = [];
+
+  for (const v of violations) {
+    let commFinesEnabled = false;
+    let catFinesEnabled = false;
+    let fineAmount = null;
+    let offenseCount = 1;
+    try {
+      const { data: comm } = await supabase
+        .from('communities').select('fines_enabled').eq('id', v.community_id).maybeSingle();
+      commFinesEnabled = comm && comm.fines_enabled;
+      const { data: sched } = await supabase
+        .from('v_resolved_fine_schedule')
+        .select('effective_fines_enabled, first_offense_amount, second_offense_amount, third_offense_amount, recurring_offense_amount')
+        .eq('community_id', v.community_id).eq('category_id', v.primary_category_id).maybeSingle();
+      if (sched) {
+        catFinesEnabled = sched.effective_fines_enabled;
+        const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+        const { data: priors } = await supabase
+          .from('violations')
+          .select('id')
+          .eq('property_id', v.property_id)
+          .eq('primary_category_id', v.primary_category_id)
+          .gte('opened_at', cutoff.toISOString())
+          .neq('quality_status', 'superseded')
+          .neq('id', v.id);
+        offenseCount = (priors || []).length + 1;
+        fineAmount = (offenseCount <= 1) ? sched.first_offense_amount
+                   : (offenseCount === 2) ? sched.second_offense_amount
+                   : (offenseCount === 3) ? sched.third_offense_amount
+                   : sched.recurring_offense_amount;
+      }
+    } catch (_) {}
+
+    const decision = decideEscalation({
+      prior_violations: [],
+      priority_weight: v.board_priority_at_open || 'standard',
+      is_cure_lapse: true,
+      current_stage: v.current_stage,
+      community_fines_enabled: commFinesEnabled,
+      category_fines_enabled: catFinesEnabled,
+      fine_amount: typeof fineAmount === 'number' ? fineAmount : null,
+    });
+
+    const summary = {
+      violation_id: v.id,
+      property: v.property_id,
+      from_stage: v.current_stage,
+      to_stage: decision.stage,
+      cure_was_ends_at: v.cure_period_ends_at,
+      decision_rationale: decision.rationale,
+      needs_board_review: !!decision.needs_board_review,
+    };
+
+    if (dryRun) {
+      results.push(summary);
+      continue;
+    }
+
+    if (decision.needs_board_review) {
+      await supabase.from('interactions').insert({
+        community_id: v.community_id,
+        property_id: v.property_id,
+        violation_id: v.id,
+        type: 'internal_note',
+        direction: 'internal',
+        subject: `Cure expired — board review needed`,
+        content: decision.rationale,
+        sent_at: new Date().toISOString(),
+        status: 'sent',
+      });
+      flaggedBoard += 1;
+      results.push(summary);
+      continue;
+    }
+
+    if (!decision.should_open) {
+      results.push({ ...summary, skipped: true });
+      continue;
+    }
+
+    const newCureEnd = _newCureDate(decision);
+    const { error: upErr } = await supabase
+      .from('violations')
+      .update({
+        current_stage: decision.stage,
+        current_stage_started_at: new Date().toISOString(),
+        cure_period_ends_at: newCureEnd,
+      })
+      .eq('id', v.id);
+    if (upErr) {
+      errors.push({ violation_id: v.id, error: 'stage bump failed: ' + upErr.message });
+      continue;
+    }
+
+    if (decision.stage === 'fine_assessed' && fineAmount) {
+      await supabase.from('fine_posting_queue').insert({
+        violation_id: v.id,
+        property_id: v.property_id,
+        community_id: v.community_id,
+        amount: fineAmount,
+        notes: `Auto-assessed via cure-lapse processor (offense ${offenseCount}).`,
+      });
+      finesAssessed += 1;
+    } else {
+      bumped += 1;
+    }
+
+    const letterResult = await _draftLetterForBumpedViolation(v, decision, v.community_id);
+    if (letterResult.error) {
+      errors.push({ violation_id: v.id, error: 'letter draft failed: ' + letterResult.error });
+    }
+    results.push({ ...summary, letter_drafted: !letterResult.error, new_cure_ends_at: newCureEnd });
+  }
+
+  return {
+    processed: results.length,
+    bumped,
+    flagged_board: flaggedBoard,
+    fines_assessed: finesAssessed,
+    errors,
+    dry_run: dryRun,
+    results: dryRun ? results : results.slice(0, 20),
+  };
+}
+
 // POST /api/enforcement/cure-lapse/process
 // Body: { community_id?, dry_run?, limit? }
-// Processes all violations whose cure has expired. For each:
-//   - Runs decideEscalation with is_cure_lapse=true
-//   - If decision.should_open: bump stage + draft new letter
-//   - If decision.needs_board_review (cert §209 cure expired but fines off):
-//     leave stage at certified_209, drop an internal_note interaction
-// Returns summary. dry_run=true returns what WOULD happen without writing.
-// ---------------------------------------------------------------------------
 router.post('/cure-lapse/process', express.json(), async (req, res) => {
   try {
     const body = req.body || {};
-    const communityId = body.community_id || null;
-    const dryRun = !!body.dry_run;
-    const limit = Math.min(200, Number(body.limit) || 100);
-    const violations = await _findExpiredViolations(communityId, limit);
-    if (violations.length === 0) {
-      return res.json({ processed: 0, bumped: 0, flagged_board: 0, fines_assessed: 0, errors: [], dry_run: dryRun, message: 'No violations have expired cure periods.' });
-    }
-
-    let bumped = 0;
-    let flaggedBoard = 0;
-    let finesAssessed = 0;
-    const results = [];
-    const errors = [];
-
-    for (const v of violations) {
-      // Resolve community + per-category fine schedule for this row
-      let commFinesEnabled = false;
-      let catFinesEnabled = false;
-      let fineAmount = null;
-      let offenseCount = 1;
-      try {
-        const { data: comm } = await supabase
-          .from('communities').select('fines_enabled').eq('id', v.community_id).maybeSingle();
-        commFinesEnabled = comm && comm.fines_enabled;
-        const { data: sched } = await supabase
-          .from('v_resolved_fine_schedule')
-          .select('effective_fines_enabled, first_offense_amount, second_offense_amount, third_offense_amount, recurring_offense_amount')
-          .eq('community_id', v.community_id).eq('category_id', v.primary_category_id).maybeSingle();
-        if (sched) {
-          catFinesEnabled = sched.effective_fines_enabled;
-          // Count prior in 12mo (excluding this one + superseded)
-          const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
-          const { data: priors } = await supabase
-            .from('violations')
-            .select('id')
-            .eq('property_id', v.property_id)
-            .eq('primary_category_id', v.primary_category_id)
-            .gte('opened_at', cutoff.toISOString())
-            .neq('quality_status', 'superseded')
-            .neq('id', v.id);
-          offenseCount = (priors || []).length + 1;
-          fineAmount = (offenseCount <= 1) ? sched.first_offense_amount
-                     : (offenseCount === 2) ? sched.second_offense_amount
-                     : (offenseCount === 3) ? sched.third_offense_amount
-                     : sched.recurring_offense_amount;
-        }
-      } catch (_) {}
-
-      const decision = decideEscalation({
-        prior_violations: [],
-        priority_weight: v.board_priority_at_open || 'standard',
-        is_cure_lapse: true,
-        current_stage: v.current_stage,
-        community_fines_enabled: commFinesEnabled,
-        category_fines_enabled: catFinesEnabled,
-        fine_amount: typeof fineAmount === 'number' ? fineAmount : null,
-      });
-
-      const summary = {
-        violation_id: v.id,
-        property: v.property_id,
-        from_stage: v.current_stage,
-        to_stage: decision.stage,
-        cure_was_ends_at: v.cure_period_ends_at,
-        decision_rationale: decision.rationale,
-        needs_board_review: !!decision.needs_board_review,
-      };
-
-      if (dryRun) {
-        results.push(summary);
-        continue;
-      }
-
-      if (decision.needs_board_review) {
-        // Drop an internal note flagging this for board review — do NOT bump stage
-        await supabase.from('interactions').insert({
-          community_id: v.community_id,
-          property_id: v.property_id,
-          violation_id: v.id,
-          type: 'internal_note',
-          direction: 'internal',
-          subject: `Cure expired — board review needed`,
-          content: decision.rationale,
-          sent_at: new Date().toISOString(),
-          status: 'sent',
-        });
-        flaggedBoard += 1;
-        results.push(summary);
-        continue;
-      }
-
-      if (!decision.should_open) {
-        results.push({ ...summary, skipped: true });
-        continue;
-      }
-
-      // Bump the stage
-      const newCureEnd = _newCureDate(decision);
-      const { error: upErr } = await supabase
-        .from('violations')
-        .update({
-          current_stage: decision.stage,
-          current_stage_started_at: new Date().toISOString(),
-          cure_period_ends_at: newCureEnd,
-        })
-        .eq('id', v.id);
-      if (upErr) {
-        errors.push({ violation_id: v.id, error: 'stage bump failed: ' + upErr.message });
-        continue;
-      }
-
-      // If this lands at fine_assessed, also drop a fine_posting_queue row
-      if (decision.stage === 'fine_assessed' && fineAmount) {
-        await supabase.from('fine_posting_queue').insert({
-          violation_id: v.id,
-          property_id: v.property_id,
-          community_id: v.community_id,
-          amount: fineAmount,
-          notes: `Auto-assessed via cure-lapse processor (offense ${offenseCount}).`,
-        });
-        finesAssessed += 1;
-      } else {
-        bumped += 1;
-      }
-
-      // Draft the new letter
-      const letterResult = await _draftLetterForBumpedViolation(v, decision, v.community_id);
-      if (letterResult.error) {
-        errors.push({ violation_id: v.id, error: 'letter draft failed: ' + letterResult.error });
-      }
-      results.push({ ...summary, letter_drafted: !letterResult.error, new_cure_ends_at: newCureEnd });
-    }
-
-    res.json({
-      processed: results.length,
-      bumped,
-      flagged_board: flaggedBoard,
-      fines_assessed: finesAssessed,
-      errors,
-      dry_run: dryRun,
-      results: dryRun ? results : results.slice(0, 20),  // cap response size on real runs
+    const result = await processCureLapses({
+      communityId: body.community_id || null,
+      dryRun: !!body.dry_run,
+      limit: Number(body.limit) || 100,
     });
+    res.json(result);
   } catch (err) {
     console.error('[cure-lapse.process]', err);
     res.status(500).json({ error: err.message });
@@ -2150,4 +2147,4 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
   }
 });
 
-module.exports = { router };
+module.exports = { router, processCureLapses };

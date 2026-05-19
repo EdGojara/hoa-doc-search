@@ -584,6 +584,26 @@ app.use('/api', inspectionsRouter);
 const { router: enforcementRouter } = require('./api/enforcement');
 app.use('/api/enforcement', enforcementRouter);
 
+// Cron run history — feeds the "Last automatic run" indicators in the UI.
+app.get('/api/cron/runs', async (req, res) => {
+  try {
+    const job = (req.query.job || '').trim();
+    const limit = Math.min(50, Number(req.query.limit) || 10);
+    let q = supabase
+      .from('cron_runs')
+      .select('id, job_name, started_at, finished_at, ok, summary, error, triggered_by')
+      .order('started_at', { ascending: false })
+      .limit(limit);
+    if (job) q = q.eq('job_name', job);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ runs: data || [] });
+  } catch (err) {
+    console.error('[/api/cron/runs]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Bedrock Office > HOA Financial Review module
 // Endpoints under /api/financial-review/*. See api/financial_review.js and
 // migrations/008_financial_review.sql for the schema.
@@ -6453,4 +6473,10 @@ app.get('/api/me', async (req, res) => {
 
 app.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
+  try {
+    const { startScheduler } = require('./lib/scheduler');
+    startScheduler();
+  } catch (e) {
+    console.error('[scheduler] failed to start:', e.message);
+  }
 });

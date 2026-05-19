@@ -5625,11 +5625,139 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
       ${extractionHtml}
 
+      <!-- Owner reply → violation attachment panel -->
+      <div id="in-violation-attach" style="margin-top:14px;"></div>
+
       <details style="background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-top:14px;">
         <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">📄 Original email thread (raw)</summary>
         <pre style="white-space:pre-wrap; font-size:12px; color:#444; margin-top:10px; padding:12px; background:#fff; border:1px solid #f0f2f5; border-radius:6px; max-height:400px; overflow-y:auto;">${inEsc(i.raw_content)}</pre>
       </details>
     `;
+
+    inRenderAttachedState();
+    if (!i.attached_violation_id && i.community_id) {
+      inLoadViolationCandidates();
+    }
+  }
+
+  // ----- Owner reply → violation attachment -----
+  function inRenderAttachedState() {
+    const wrap = document.getElementById('in-violation-attach');
+    if (!wrap || !inCurrent) return;
+    const i = inCurrent;
+
+    if (i.attached_violation_id) {
+      const av = i.attached_violation || {};
+      const ap = i.attached_property || {};
+      const cat = av.enforcement_categories && av.enforcement_categories.label;
+      const stage = (av.current_stage || '').replace(/_/g, ' ');
+      const addr = [ap.street_address, ap.unit].filter(Boolean).join(' ');
+      wrap.innerHTML = `
+        <div style="background:#dcfce7; border:1px solid #86efac; border-radius:8px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+            <div style="flex:1;">
+              <div style="font-weight:700; color:#166534; margin-bottom:4px;">🏷️ Attached to violation</div>
+              <div style="font-size:13px; color:#15803d;">
+                ${addr ? inEsc(addr) : '(address unknown)'} ${cat ? `— ${inEsc(cat)}` : ''}
+                ${stage ? ` · <span style="font-size:11px; color:#166534; background:#bbf7d0; padding:1px 6px; border-radius:4px;">${inEsc(stage)}</span>` : ''}
+              </div>
+              <div style="font-size:11.5px; color:#15803d; margin-top:6px;">
+                A copy appears on the violation timeline and on ${inEsc(ap.owner_name || 'the homeowner')}'s interaction history.
+              </div>
+            </div>
+            <button onclick="inDetachViolation()" style="background:#fff; border:1px solid #86efac; color:#166534; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">Detach</button>
+          </div>
+        </div>`;
+    } else {
+      wrap.innerHTML = `
+        <div style="background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
+            <div>
+              <div style="font-weight:700; color:#1a3a5c; margin-bottom:2px;">🏷️ Owner reply on a violation?</div>
+              <div style="font-size:12px; color:#64748b;">If this email is about an open violation, attach it so the response lands on that violation's timeline.</div>
+            </div>
+          </div>
+          <div id="in-violation-candidates" style="margin-top:10px; font-size:12px; color:#94a3b8;">Looking for matching violations…</div>
+        </div>`;
+    }
+  }
+
+  async function inLoadViolationCandidates() {
+    const cWrap = document.getElementById('in-violation-candidates');
+    if (!cWrap || !inCurrent) return;
+    try {
+      const r = await fetch('/api/email-intelligence/' + inCurrent.id + '/violation-candidates');
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      const cs = j.candidates || [];
+      if (!inCurrent.community_id) {
+        cWrap.innerHTML = '<em>Set a community on this intake to see violation matches.</em>';
+        return;
+      }
+      if (cs.length === 0) {
+        cWrap.innerHTML = `<em>No open violations${j.total_open_violations === 0 ? ' in this community' : ' matched'} — nothing to attach to.</em>`;
+        return;
+      }
+      const positive = cs.filter((c) => c.score > 0);
+      const header = positive.length > 0
+        ? `<div style="font-weight:600; color:#1a3a5c; margin-bottom:6px;">🎯 Likely matches</div>`
+        : `<div style="font-weight:600; color:#475569; margin-bottom:6px;">All open violations in this community (no signals matched)</div>`;
+      const rows = cs.map((c) => {
+        const addr = [c.street_address, c.unit].filter(Boolean).join(' ');
+        const stage = (c.current_stage || '').replace(/_/g, ' ');
+        const opened = c.opened_at ? new Date(c.opened_at).toLocaleDateString() : '—';
+        const reasonText = c.reasons && c.reasons.length
+          ? `<div style="font-size:10.5px; color:#16a34a; margin-top:2px;">${c.reasons.map(inEsc).join(' · ')}</div>`
+          : '';
+        return `
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 10px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:6px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:13px; color:#1a3a5c; font-weight:600;">${inEsc(addr || '(unknown address)')}</div>
+              <div style="font-size:11.5px; color:#475569;">
+                ${inEsc(c.category_label || 'uncategorized')} · <span style="background:#f1f5f9; padding:1px 5px; border-radius:3px; font-size:10.5px;">${inEsc(stage)}</span> · opened ${opened}
+                ${c.owner_name ? ` · ${inEsc(c.owner_name)}` : ''}
+              </div>
+              ${reasonText}
+            </div>
+            <button onclick="inAttachToViolation('${c.violation_id}')" style="background:#1a3a5c; border:none; color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">Attach →</button>
+          </div>`;
+      }).join('');
+      cWrap.innerHTML = header + rows;
+    } catch (e) {
+      cWrap.innerHTML = `<span style="color:#b91c1c;">Couldn't load candidates: ${inEsc(e.message)}</span>`;
+    }
+  }
+
+  async function inAttachToViolation(violationId) {
+    if (!inCurrent) return;
+    const cWrap = document.getElementById('in-violation-candidates');
+    if (cWrap) cWrap.innerHTML = '<em>Attaching…</em>';
+    try {
+      const r = await fetch('/api/email-intelligence/' + inCurrent.id + '/attach-to-violation', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ violation_id: violationId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await inOpenDetail(inCurrent.id);
+    } catch (e) {
+      alert('Attach failed: ' + e.message);
+      if (cWrap) cWrap.innerHTML = `<span style="color:#b91c1c;">${inEsc(e.message)}</span>`;
+    }
+  }
+
+  async function inDetachViolation() {
+    if (!inCurrent || !inCurrent.attached_violation_id) return;
+    if (!confirm('Detach this email from the violation? The interaction row on the violation timeline will be removed. The intake itself stays.')) return;
+    try {
+      const r = await fetch('/api/email-intelligence/' + inCurrent.id + '/detach-violation', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await inOpenDetail(inCurrent.id);
+    } catch (e) {
+      alert('Detach failed: ' + e.message);
+    }
   }
 
   async function inApprove() {
@@ -7545,7 +7673,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     </div>
 
     <!-- CURE-LAPSE PANEL — violations whose cure period has passed without
-         resolution. Process button bumps stage + drafts the new letter. -->
+         resolution. Process button bumps stage + drafts the new letter.
+         Also auto-fires daily at 06:00 Central via the scheduler. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
         <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">⏰ Cure-lapse processor <span style="color:#64748b; font-weight:500;">— violations past their cure date</span></h3>
@@ -7554,6 +7683,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <button class="action-btn" id="inspCureLapseProcessBtn" onclick="inspCureLapseProcess()" style="font-size:12px; padding:5px 14px;" disabled>⚙ Process all</button>
         </div>
       </div>
+      <div id="inspCureLapseAutoStatus" style="font-size:11px; color:#64748b; margin-bottom:6px; min-height:14px;">Auto-run schedule: daily at 06:00 Central. Loading last run…</div>
       <div id="inspCureLapsePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
         <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Click Preview to see violations with expired cure periods. Process bumps each one to the next stage + auto-drafts the new letter.</div>
       </div>
@@ -9966,6 +10096,50 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ============================================================
   let _inspCureLapseData = null;
 
+  async function inspCureLapseAutoStatusLoad() {
+    const el = document.getElementById('inspCureLapseAutoStatus');
+    if (!el) return;
+    try {
+      const r = await fetch('/api/cron/runs?job=cure_lapse&limit=1');
+      const j = await r.json();
+      const last = (j.runs || [])[0];
+      if (!last) {
+        el.innerHTML = '<span style="color:#94a3b8;">Auto-run schedule: daily at 06:00 Central. <em>No automatic run recorded yet.</em></span>';
+        return;
+      }
+      const when = new Date(last.started_at);
+      const ago = _inspFmtAgo(when);
+      const okBadge = last.ok
+        ? '<span style="color:#16a34a;">✓</span>'
+        : (last.finished_at ? '<span style="color:#dc2626;">✗</span>' : '<span style="color:#eab308;">⏳</span>');
+      const s = last.summary || {};
+      const detailBits = [];
+      if (typeof s.processed === 'number') detailBits.push(`${s.processed} processed`);
+      if (s.bumped) detailBits.push(`${s.bumped} bumped`);
+      if (s.fines_assessed) detailBits.push(`${s.fines_assessed} fines`);
+      if (s.flagged_board) detailBits.push(`${s.flagged_board} board flags`);
+      if (s.errors && s.errors.length) detailBits.push(`${s.errors.length} errors`);
+      const detail = detailBits.length ? ` — ${detailBits.join(', ')}` : '';
+      const err = last.error ? ` <span style="color:#dc2626;">(${_inspEsc(last.error)})</span>` : '';
+      el.innerHTML = `Auto-run schedule: daily at 06:00 Central. Last automatic run: ${okBadge} <strong>${when.toLocaleString()}</strong> (${ago})${detail}${err}`;
+    } catch (e) {
+      el.innerHTML = '<span style="color:#94a3b8;">Auto-run schedule: daily at 06:00 Central. <em>Could not load last-run status.</em></span>';
+    }
+  }
+  function _inspFmtAgo(d) {
+    const ms = Date.now() - d.getTime();
+    const m = Math.floor(ms / 60000);
+    if (m < 1) return 'just now';
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const days = Math.floor(h / 24);
+    return `${days}d ago`;
+  }
+  function _inspEsc(s) {
+    return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
   async function inspCureLapsePreview() {
     const wrap = document.getElementById('inspCureLapsePanel');
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
@@ -10054,6 +10228,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       await inspCureLapsePreview();
       await inspDraftsLoad();
       await inspFineQueueLoad();
+      try { await inspCureLapseAutoStatusLoad(); } catch (_) {}
     } catch (e) {
       alert('Process failed: ' + e.message);
       btn.disabled = false; btn.textContent = '⚙ Process all';
@@ -10319,6 +10494,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
         try { inspFineQueueLoad(); }   catch (e) { console.warn('[inspect] load fine queue', e); }
         try { inspCureLapsePreview(); } catch (e) { console.warn('[inspect] load cure-lapse', e); }
+        try { inspCureLapseAutoStatusLoad(); } catch (e) { console.warn('[inspect] load cure-lapse status', e); }
       }
       return result;
     };
