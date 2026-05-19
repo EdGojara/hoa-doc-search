@@ -1119,12 +1119,15 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
       <span class="foot-context">${esc(community.name || '')} · ${esc(packet.period_label || '')} · pg ${pageNum} / ${totalPages}</span>
     </div>`;
 
-  // Common interior page header template
+  // Common interior page header template. Uses the MINIMAL Bedrock wordmark
+  // in compact header spaces — the full lockup (with cornerstone + tagline)
+  // is reserved for the cover hero and standalone letterheads, where it has
+  // room to breathe.
   const pageHeader = `
     <div class="page-header">
       <div class="page-header-brand">
-        <img src="${assets.logo || '/logos/bedrock_logo.png'}" alt="${esc(community.name)}">
-        ${assets.logo && assets.logo !== '/logos/bedrock_logo.png' ? `<img src="/logos/bedrock_logo.png" alt="${BRAND.service.short}" style="height:42px; margin-left:10px;">` : ''}
+        <img src="${assets.logo || BRAND.logos.bamMinimal}" alt="${esc(community.name)}">
+        ${assets.logo && assets.logo !== BRAND.logos.bamMinimal ? `<img src="${BRAND.logos.bamMinimal}" alt="${BRAND.service.short}" style="height:36px; margin-left:14px;">` : ''}
       </div>
       <div class="page-header-context">
         <strong>${esc(community.name || '')}</strong>
