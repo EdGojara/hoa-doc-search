@@ -5,7 +5,7 @@
 //
 // Workflow:
 //   1. Staff drags a PDF / image / .eml of a past ARC letter
-//   2. Claude extracts structured fields (project_type, decision_type,
+//   2. the AI extracts structured fields (project_type, decision_type,
 //      decided_at, conditions, reasoning, summary)
 //   3. Staff reviews the extracted preview, edits if needed, approves
 //   4. Row inserts into arc_historical_decisions (with embedding) — and
@@ -57,13 +57,13 @@ async function extractFileText(file) {
     const parsed = await pdfParse(file.buffer);
     return parsed.text || '';
   }
-  // For images, defer to Claude vision in extractWithClaude.
+  // For images, defer to the AI vision in extractWithAi.
   if (mime.startsWith('image/')) return null;
   // .eml / .txt / anything else as text
   return file.buffer.toString('utf8');
 }
 
-async function extractWithClaude({ text, file, communityName }) {
+async function extractWithAi({ text, file, communityName }) {
   const system = `You extract structured fields from a single historical ARC (Architectural Control Committee) decision letter or meeting-minute excerpt for an HOA.
 
 Your job: read the document carefully and return strict JSON in this exact shape (no commentary, no markdown, just JSON):
@@ -141,7 +141,7 @@ router.post('/extract', upload.single('file'), async (req, res) => {
     const communityName = comm?.name;
 
     const text = await extractFileText(req.file);
-    const { data: extracted } = await extractWithClaude({ text, file: req.file, communityName });
+    const { data: extracted } = await extractWithAi({ text, file: req.file, communityName });
 
     res.json({
       preview: extracted,

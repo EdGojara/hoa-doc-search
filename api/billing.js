@@ -700,7 +700,7 @@ router.patch('/contracts/:contractId/rates', async (req, res) => {
 // POST /api/billing/invoices/:invoiceId/import-vantaca-violations
 // multipart/form-data with field "pdf" containing the Vantaca Violation Report
 //
-// Parses the report's Summary section using Claude (resilient to format
+// Parses the report's Summary section using the AI (resilient to format
 // drift; PDF goes in as document content type), maps the status counts to
 // billable line items via the contract's rate card, and replaces the
 // invoice's line items with the result.
@@ -750,7 +750,7 @@ router.post('/invoices/:invoiceId/import-vantaca-violations', upload.single('pdf
     const findReimb = (cat) => (reimb || []).find(r => r.category === cat);
     const findOwner = (cat) => (ownerCharges || []).find(r => r.category === cat);
 
-    // Call Claude to extract the summary counts.
+    // Call the AI to extract the summary counts.
     const promptText = `Extract the SUMMARY status counts from this Vantaca Violation Report PDF.
 
 Return ONLY a JSON object with these keys (use 0 if a status is not present in the summary):
@@ -1031,7 +1031,7 @@ router.get('/invoices/:invoiceId/pdf', async (req, res) => {
 // ============================================================================
 
 /**
- * Claude prompt for extracting Bedrock management contract terms.
+ * the AI prompt for extracting Bedrock management contract terms.
  * Returns strict JSON shape that maps to contracts + child tables.
  */
 const CONTRACT_EXTRACTION_PROMPT = `You are extracting structured data from a Bedrock Association Management management agreement PDF. Return a JSON object with EXACTLY this shape (omit fields you cannot determine):
@@ -1114,13 +1114,13 @@ router.post('/contracts/parse', upload.single('pdf'), async (req, res) => {
     const text = completion.content?.[0]?.text || '';
     let parsed;
     try {
-      // Strip any code fences if Claude added them despite the instruction.
+      // Strip any code fences if the AI added them despite the instruction.
       const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
       parsed = JSON.parse(cleaned);
     } catch (jsonErr) {
       console.error('[billing] contract parse JSON failed:', jsonErr.message);
       return res.status(500).json({
-        error: 'Could not parse Claude response as JSON',
+        error: 'Could not parse the AI response as JSON',
         raw_response: text
       });
     }

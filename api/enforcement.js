@@ -830,7 +830,7 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
 // ---------------------------------------------------------------------------
 // Given a community + an enforcement category, scan the community's loaded
 // governing documents (declaration_ccrs / bylaws / rules_and_regulations /
-// design_document) and ask Claude to identify the specific section that
+// design_document) and ask the AI to identify the specific section that
 // addresses this category. Writes the result back to
 // community_enforcement_priorities.governing_doc_* so the next letter for
 // that (community, category) cites the actual section + quote.
@@ -902,7 +902,7 @@ async function _extractDocRefForCategory(communityId, categoryId, options = {}) 
     return { ok: false, reason: 'no governing docs found in knowledge base — ingest CC&Rs / Bylaws first (source_type=governing_document)' };
   }
 
-  // 4. Ask Claude to identify the best section + extract a clean quote
+  // 4. Ask the AI to identify the best section + extract a clean quote
   const client = new Anthropic({ apiKey });
   const chunkBlocks = chunks.map((c, i) =>
     `--- Chunk ${i + 1}  (${c.document_title}, page ${c.page_number || '?'}${c.section_heading ? ', ' + c.section_heading : ''}) ---\n${c.text}`
@@ -945,11 +945,11 @@ ${chunkBlocks}`;
     raw = (resp.content || []).find((b) => b.type === 'text');
     raw = raw && raw.text || '';
   } catch (e) {
-    return { ok: false, reason: 'Claude call failed: ' + e.message };
+    return { ok: false, reason: 'the AI call failed: ' + e.message };
   }
 
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  if (!jsonMatch) return { ok: false, reason: 'no JSON in Claude response', raw };
+  if (!jsonMatch) return { ok: false, reason: 'no JSON in the AI response', raw };
   let parsed;
   try { parsed = JSON.parse(jsonMatch[0]); }
   catch (e) { return { ok: false, reason: 'JSON parse failed', raw }; }
@@ -1247,7 +1247,7 @@ router.post('/extract-doc-references/:community_id', express.json(), async (req,
         category_id: t.category_id,
         ...r,
       });
-      // gentle pacing to keep Claude + OpenAI happy
+      // gentle pacing to keep the AI + OpenAI happy
       await new Promise((r) => setTimeout(r, 300));
     }
     const found = results.filter((r) => r.ok && r.found).length;

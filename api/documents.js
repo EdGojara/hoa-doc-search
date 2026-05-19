@@ -16,7 +16,7 @@
 //   POST /duplicates/:id/resolve   accept keep/delete decisions
 //   POST /:id/supersede   mark this doc as superseded by another (library or legacy)
 //   POST /legacy/categorize        promote a legacy doc into library_documents
-//                                   via Claude metadata extraction from chunks
+//                                   via the AI metadata extraction from chunks
 //   GET  /legacy                   list legacy docs (grouped, with chunk counts)
 //
 // Three-repository reality:
@@ -155,7 +155,7 @@ async function extractDocumentMetadata(pdfBuffer) {
                           /rate_limit|overloaded/i.test(err.message || '');
       if (!isRetryable || attempt >= RETRY_DELAYS_MS.length) throw err;
       const delay = RETRY_DELAYS_MS[attempt];
-      console.warn(`[documents] Claude rate-limited, retrying in ${delay/1000}s (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length})`);
+      console.warn(`[documents] the AI rate-limited, retrying in ${delay/1000}s (attempt ${attempt + 1}/${RETRY_DELAYS_MS.length})`);
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -236,7 +236,7 @@ async function findCommunityByName(name) {
       best = c;
     }
   }
-  // Threshold of 0.4 — generous because community names are short and Claude often
+  // Threshold of 0.4 — generous because community names are short and the AI often
   // drops a letter or pluralizes wrong. False positives are caught by the user
   // reviewing the upload card.
   return bestScore >= 0.4 ? best : null;
@@ -294,12 +294,12 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    // 2) Extract metadata via Claude
+    // 2) Extract metadata via the AI
     const { parsed, usage } = await extractDocumentMetadata(req.file.buffer);
 
     // 3) Match community — caller can LOCK the community via form field
     //    community_id (e.g., the user picked "Lock to: Waterview" in the upload
-    //    UI). Locking overrides Claude's detection — useful when the doc
+    //    UI). Locking overrides the AI's detection — useful when the doc
     //    doesn't name the community internally (recorded amendments,
     //    insurance policies, generic templates).
     let community = null;
@@ -647,7 +647,7 @@ router.get('/', async (req, res) => {
       .select('*, community:communities(id, name, legal_name), extracted:document_extracted_fields(fields)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('uploaded_at', { ascending: false });
-    // Support 'community_id=null' filter for orphan discovery (docs Claude
+    // Support 'community_id=null' filter for orphan discovery (docs the AI
     // couldn't match to a community, awaiting manual assignment).
     if (req.query.community_id === 'null' || req.query.community_id === 'unassigned') {
       q = q.is('community_id', null);
@@ -833,7 +833,7 @@ router.get('/asked-coverage', async (req, res) => {
 // ----------------------------------------------------------------------------
 
 // 180-second hard ceiling per doc. Was 60s; bumped to accommodate the OCR
-// fallback path for scanned PDFs (multi-page splits + concurrent Claude
+// fallback path for scanned PDFs (multi-page splits + concurrent the AI
 // vision calls can take 60-120s on older 50+ page bylaws/CC&Rs). Text-only
 // PDFs still finish well under the old 60s budget.
 async function _indexWithTimeout(supabase, openai, doc, timeoutMs = 180000) {
@@ -1024,7 +1024,7 @@ router.post('/query', async (req, res) => {
   if (!question || !question.trim()) return res.status(400).json({ error: 'question is required' });
 
   try {
-    // Parse the NL question into structured filters via Claude
+    // Parse the NL question into structured filters via the AI
     const { data: cats } = await supabase.from('document_categories').select('category, display_name');
     const { data: comms } = await supabase
       .from('communities')
@@ -1061,7 +1061,7 @@ Return ONLY the JSON, no preamble.`;
       (parseRes.content?.[0]?.text || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim()
     );
 
-    // Backstop: if Claude failed to set a community AND the UI has one selected,
+    // Backstop: if the AI failed to set a community AND the UI has one selected,
     // apply the UI default. Also annotate the interpretation so the user sees
     // the assumption.
     if (!parsedFilters.community_name && default_community) {
@@ -1288,7 +1288,7 @@ router.post('/:id/supersede', async (req, res) => {
 //
 // Promote a legacy askEd doc into library_documents:
 //   1) Fetch all chunks for this (community, filename) and concatenate.
-//   2) Ask Claude (text-only, no PDF) to extract metadata using the same
+//   2) Ask the AI (text-only, no PDF) to extract metadata using the same
 //      DOC_EXTRACTION_PROMPT.
 //   3) Insert a new library_documents row with source_origin='migrated_from_legacy'
 //      and link the legacy chunks via migrated_to_library_id.
@@ -1323,7 +1323,7 @@ router.post('/legacy/categorize', async (req, res) => {
     const fullText = (typeof textRows === 'string' ? textRows : '') || '';
     if (!fullText) return res.status(422).json({ error: 'No text content found in legacy chunks' });
 
-    // 3) Ask Claude to extract metadata from the text (not a PDF — text-only path)
+    // 3) Ask the AI to extract metadata from the text (not a PDF — text-only path)
     const textPrompt = `${DOC_EXTRACTION_PROMPT}
 
 NOTE: I'm giving you the EXTRACTED TEXT of this document, not the PDF. Set page_count to null. Be honest about extraction_confidence — text-only extraction is generally less reliable than PDF-based extraction.

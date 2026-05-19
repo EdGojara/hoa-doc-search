@@ -507,7 +507,7 @@ async function extractSectionFromPdf(sectionKey, pdfBuffer) {
                           /rate_limit|overloaded/i.test(err.message || '');
       if (!isRetryable || attempt >= RETRY_DELAYS_MS.length) throw err;
       const delay = RETRY_DELAYS_MS[attempt];
-      console.warn(`[board_packets] Claude rate-limited, retrying in ${delay/1000}s (attempt ${attempt+1})`);
+      console.warn(`[board_packets] the AI rate-limited, retrying in ${delay/1000}s (attempt ${attempt+1})`);
       await new Promise(r => setTimeout(r, delay));
     }
   }
@@ -749,7 +749,7 @@ router.patch('/:id/sections/:section_key', async (req, res) => {
 
 // ----------------------------------------------------------------------------
 // POST /api/board-packets/:id/sections/:section_key/upload
-// Upload a PDF for a section. Claude extracts structured data using the
+// Upload a PDF for a section. the AI extracts structured data using the
 // section-specific prompt.
 // ----------------------------------------------------------------------------
 router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (req, res) => {
@@ -763,7 +763,7 @@ router.post('/:id/sections/:section_key/upload', upload.single('pdf'), async (re
     if (!SECTION_EXTRACTION_PROMPTS[sectionKey]) {
       return res.status(400).json({ error: `Section "${sectionKey}" does not support upload extraction` });
     }
-    // Run Claude
+    // Run the AI
     const { parsed, usage } = await extractSectionFromPdf(sectionKey, req.file.buffer);
     // Save to the section row
     const { data: section, error } = await supabase
@@ -824,7 +824,7 @@ router.post('/:id/sections/:section_key/auto-fill', async (req, res) => {
 // ----------------------------------------------------------------------------
 // POST /api/board-packets/:id/sections/:section_key/ai-generate
 // AI-generates content for sections like exec_summary, action_items.
-// Reads all OTHER sections' input_data, gives Claude full context, asks for
+// Reads all OTHER sections' input_data, gives the AI full context, asks for
 // the section in Bedrock voice using askEd 4-part template structure.
 // ----------------------------------------------------------------------------
 router.post('/:id/sections/:section_key/ai-generate', async (req, res) => {

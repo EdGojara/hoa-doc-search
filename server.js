@@ -613,7 +613,7 @@ app.use('/api/financial-review', financialReviewRouter);
 // Bedrock Office > Vendor Master + Invoice Intake module (Push 1)
 // Endpoints under /api/vendors/*. See api/vendors.js and
 // migrations/009_vendor_master.sql for the schema.
-// Drop a vendor invoice PDF -> Claude parses identity + dates + amounts,
+// Drop a vendor invoice PDF -> the AI parses identity + dates + amounts,
 // fuzzy-matches against existing vendor master (token Jaccard + EIN exact),
 // persists invoice + agent_runs trade tape. Push 2 will add GL reconciliation
 // with accrual-aware service_period matching.
@@ -623,9 +623,9 @@ app.use('/api/vendors', vendorsRouter);
 // Operational Training Layer (Help / Knowledge Base)
 // Endpoints under /api/help/*. See api/help.js and
 // migrations/011_knowledge_base.sql for the schema.
-// Drop a vendor admin guide / SOP / agreement -> Claude extracts text
+// Drop a vendor admin guide / SOP / agreement -> the AI extracts text
 // page-by-page, chunks + embeds, stores for semantic retrieval. Ask a
-// question -> top chunks retrieved -> Claude synthesizes answer in the
+// question -> top chunks retrieved -> the AI synthesizes answer in the
 // askEd 4-part template (Action / Output / Reasoning / Watch Outs) with
 // source citations. Breaks vendor support-tier extraction; encodes tribal
 // knowledge that survives staff turnover.
@@ -691,7 +691,7 @@ app.get('/event/:slug/checkin', (req, res) => {
 // Documents Tracker — Bedrock's canonical document library.
 // Endpoints under /api/documents/*. See api/documents.js and
 // migrations/012_documents_module.sql for the schema.
-// Drop a PDF -> Claude extracts metadata (community, category, period,
+// Drop a PDF -> the AI extracts metadata (community, category, period,
 // status) + structured fields (insurance premium, budget total, etc.).
 // Files stored in Supabase Storage with normalized filenames. Dedup
 // detection across byte-identical, content-identical, and semantic-match
@@ -705,7 +705,7 @@ app.use('/api/documents', documentsRouter);
 // migrations/014_board_packets.sql for the schema.
 // Pick community + period -> get 11 canonical sections (cover, agenda,
 // financials, DRV, AR aging, etc.) each accepting manual / upload /
-// auto-from-trustEd input. Claude extracts uploaded PDFs into structured
+// auto-from-trustEd input. the AI extracts uploaded PDFs into structured
 // data per section. AI-generates exec summary + watch-outs from assembled
 // data. Renders as Bedrock-branded HTML/PDF (Day 3) using the design
 // language from /public/board_packet_preview.html.
@@ -1740,7 +1740,7 @@ function buildAskEdUserMessage({ situation, community, communityContext, playboo
 // ============================================================================
 // POST /ask-ed-stream — SSE streaming version of /ask-ed
 // ----------------------------------------------------------------------------
-// Same prompt + retrieval as /ask-ed, but streams Claude's deltas as they
+// Same prompt + retrieval as /ask-ed, but streams the AI's deltas as they
 // generate. Used by /voice.html so words appear in real time and the
 // client can kick off TTS on the first complete sentence instead of
 // waiting for the full answer.
@@ -2353,7 +2353,7 @@ app.get('/bid-requests', async (req, res) => {
 // ============================================================================
 // Component Taxonomy Mapping
 // ----------------------------------------------------------------------------
-// Given a proposal's extracted line items + the service category, ask Claude
+// Given a proposal's extracted line items + the service category, ask the AI
 // to map each line item to a canonical component from service_category_components.
 // Also detects MISSING components (canonical entries with typical_inclusion_rate
 // of 'always'/'usually' that this proposal doesn't address — the gap detection
@@ -3028,7 +3028,7 @@ app.get('/bid-requests/:id/proposals', async (req, res) => {
 //   - GET  /download-proposal/:id             Bedrock-branded HTML summary of the extracted proposal
 //
 // Note: original proposal PDFs are NOT currently saved to storage — only the
-// Claude-extracted structured data lives in vendor_proposals. The download
+// the AI-extracted structured data lives in vendor_proposals. The download
 // endpoint renders that extracted data as a clean branded summary, which is
 // what Ed wants to hand to a board. Future: persist original PDF to Supabase
 // Storage at upload time so we have both the source and the rendered summary.
@@ -5711,7 +5711,7 @@ app.post('/api/nominations/cycles/:id/nominations', async (req, res) => {
 // Extract structured nomination fields from a scanned paper form. Staff
 // drops the scan into the manual-entry modal, hits "Extract", and the
 // modal pre-fills so they just verify instead of transcribing. Uses
-// Claude Sonnet 4.6 vision; returns the structured JSON the modal expects.
+// the AI Sonnet 4.6 vision; returns the structured JSON the modal expects.
 // ----------------------------------------------------------------------------
 app.post('/api/nominations/extract-from-scan', upload.single('scan'), async (req, res) => {
   try {

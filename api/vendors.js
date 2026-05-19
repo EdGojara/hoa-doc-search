@@ -2,7 +2,7 @@
 // Vendor Master + Invoice Intake
 // ----------------------------------------------------------------------------
 // Endpoints under /api/vendors for:
-//   - drop a vendor invoice PDF -> Claude parses -> fuzzy-match to existing
+//   - drop a vendor invoice PDF -> the AI parses -> fuzzy-match to existing
 //     vendor (or create) -> save invoice + update vendor rollups
 //   - vendor list / detail / update
 //   - vendor document upload (contracts, COIs, W-9s)
@@ -275,7 +275,7 @@ router.patch('/:vendorId', async (req, res) => {
 //
 // Dedup defense (real AP workflow gotcha — same invoice shouldn't get filed twice):
 //   1. byte-level: if the EXACT same PDF bytes already exist for this mgmt co,
-//      short-circuit before paying for a Claude call. Returns 409 with existing
+//      short-circuit before paying for a the AI call. Returns 409 with existing
 //      invoice info; client can choose to force_insert (rare — only legit if
 //      the same PDF is the source for two communities, which is unusual).
 //   2. semantic: after parse, if (vendor_id, invoice_number) already exists,
@@ -310,14 +310,14 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
         return res.status(409).json({
           duplicate: true,
           dup_reason: 'file_hash',
-          message: 'Exact same PDF file is already on file. Skipping Claude parse — confirm if you really want a second copy.',
+          message: 'Exact same PDF file is already on file. Skipping the AI parse — confirm if you really want a second copy.',
           existing_invoice: hashHit,
           new_file_name: req.file.originalname
         });
       }
     }
 
-    // ---- Parse with Claude ----
+    // ---- Parse with the AI ----
     const { parsed, usage } = await parseVendorInvoicePDF(req.file.buffer);
 
     if (!parsed.vendor_name || !parsed.total_amount) {

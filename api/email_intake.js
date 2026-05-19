@@ -5,7 +5,7 @@
 //
 // Two halves:
 //
-// 1. INTAKE  — paste an email thread, Claude extracts structured data,
+// 1. INTAKE  — paste an email thread, the AI extracts structured data,
 //              staff reviews + approves, approved facts flow into
 //              community_facts (existing table from migration 023) and
 //              decisions flow into community_decisions.
@@ -19,7 +19,7 @@
 //                PATCH  /:id                   edit extracted_data before approval
 //                DELETE /:id                   throw away
 //
-// 2. RECAPS  — pick community + audience + date range, Claude synthesizes
+// 2. RECAPS  — pick community + audience + date range, the AI synthesizes
 //              a markdown report from approved intakes, decisions, facts,
 //              events in that window. Manager-controlled board_visible
 //              filter on each decision controls what reaches boards.
@@ -87,10 +87,10 @@ const RECAP_MODEL = 'claude-sonnet-4-6';
 const router = express.Router();
 
 // ============================================================================
-// EXTRACTION — Claude prompt + response parsing
+// EXTRACTION — the AI prompt + response parsing
 // ============================================================================
 
-async function extractEmailWithClaude(rawContent, communityName) {
+async function extractEmailWithAi(rawContent, communityName) {
   const system = `You are a structured-data extractor working for Bedrock Association Management. You read email threads about community matters and extract operational knowledge in clean JSON.
 
 The goal: turn unstructured email noise into structured facts, decisions, contacts, and tasks that go into a permanent community knowledge library. Staff will review your extraction before saving — be accurate, but err on the side of capturing more rather than missing things.
@@ -337,7 +337,7 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
     // 6. Run extraction
     let extracted, extractionError = null;
     try {
-      const result = await extractEmailWithClaude(raw_content, communityName);
+      const result = await extractEmailWithAi(raw_content, communityName);
       extracted = result.data;
     } catch (err) {
       extractionError = err.message;
@@ -391,7 +391,7 @@ router.post('/:id/re-extract', async (req, res) => {
     if (error) throw error;
     if (!intake) return res.status(404).json({ error: 'not found' });
 
-    const result = await extractEmailWithClaude(intake.raw_content, intake.community?.name);
+    const result = await extractEmailWithAi(intake.raw_content, intake.community?.name);
 
     const { data: updated } = await supabase
       .from('email_intake')

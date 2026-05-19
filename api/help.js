@@ -2,18 +2,18 @@
 // Operational Training Layer (Help)
 // ----------------------------------------------------------------------------
 // Endpoints under /api/help for:
-//   - POST /ingest    Drop a PDF (admin guide, SOP, agreement). Claude
+//   - POST /ingest    Drop a PDF (admin guide, SOP, agreement). the AI
 //                     extracts text page-by-page, chunks it, OpenAI embeds
 //                     each chunk, results stored for semantic search.
 //   - POST /query     Ask a question (with optional workflow context). Top
-//                     chunks retrieved by cosine similarity, Claude
+//                     chunks retrieved by cosine similarity, the AI
 //                     synthesizes answer in askEd 4-part template (Action /
 //                     Output / Reasoning / Watch Outs) with source citations.
 //   - GET  /documents List ingested documents (what knowledge is loaded).
 //   - DELETE /documents/:id  Remove a document (and its chunks via cascade).
 //
 // Design principles applied (from locked-in standards):
-//   - askEd 4-part template — every Claude answer follows this structure
+//   - askEd 4-part template — every the AI answer follows this structure
 //   - Proactive Guidance — answers cite specific pages; no "see the docs"
 //   - Frustration Test — query latency budget < 6s; clear empty states
 //   - Fire-Myself Test — answers in Bedrock voice, not generic AI
@@ -41,7 +41,7 @@ const router = express.Router();
 // ----------------------------------------------------------------------------
 
 /**
- * Ask Claude to extract structured text from a PDF, page by page, with
+ * Ask the AI to extract structured text from a PDF, page by page, with
  * section headings preserved. Returns an array of page objects.
  */
 async function extractPdfPages(pdfBuffer) {
@@ -140,10 +140,10 @@ router.post('/ingest', upload.single('pdf'), async (req, res) => {
       });
     }
 
-    // Extract page-level text from PDF via Claude
+    // Extract page-level text from PDF via the AI
     const { pages, usage } = await extractPdfPages(req.file.buffer);
     if (!Array.isArray(pages) || pages.length === 0) {
-      return res.status(422).json({ error: 'Claude returned no pages from the PDF.' });
+      return res.status(422).json({ error: 'the AI returned no pages from the PDF.' });
     }
 
     // Insert the document row
@@ -293,7 +293,7 @@ router.post('/query', async (req, res) => {
       });
     }
 
-    // 3. Build context + prompt for Claude
+    // 3. Build context + prompt for the AI
     const contextBlocks = chunks.map((c, i) => `[Source ${i + 1}: ${c.document_title}${c.page_number ? `, p. ${c.page_number}` : ''}${c.section_heading ? ` — ${c.section_heading}` : ''}]
 ${c.text}`).join('\n\n---\n\n');
 

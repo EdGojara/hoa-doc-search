@@ -6042,7 +6042,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       items.appendChild(row);
 
       try {
-        // Step 1: Claude extracts structured fields
+        // Step 1: AI extracts structured fields
         const fd = new FormData();
         fd.append('file', file);
         fd.append('community_id', communityId);
@@ -10754,7 +10754,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>Your phone tags it</strong> with GPS coordinates, compass heading, and capture time.</li>
           <li style="margin-bottom: 6px;"><strong>The system snaps it to the right property</strong> — the GPS + heading lets us figure out which house you were facing.</li>
-          <li style="margin-bottom: 6px;"><strong>Claude looks at the photo</strong> and decides: is there a deed-restriction issue here? Which category? How severe?</li>
+          <li style="margin-bottom: 6px;"><strong>Bedrock AI looks at the photo</strong> and decides: is there a deed-restriction issue here? Which category? How severe?</li>
           <li style="margin-bottom: 6px;"><strong>A violation letter gets drafted</strong> and dropped into the Drafts queue, in the right tone, citing the right governing-doc section.</li>
           <li style="margin-bottom: 6px;"><strong>You review the drafts</strong> at the end of the day, approve the ones that are right, reject the ones that aren't.</li>
         </ol>
@@ -10789,7 +10789,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">How to capture well</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 8px;"><strong>Stand still when you tap Capture.</strong> The GPS+heading lock is sharpest for the half-second the photo is taken. Walking-and-snapping degrades the property snap.</li>
-          <li style="margin-bottom: 8px;"><strong>Frame the issue, not the whole property.</strong> One photo of the actual concern (overgrown grass, faded paint, unapproved structure) is more useful than five wide shots of the front of the house. Claude reads close-ups better.</li>
+          <li style="margin-bottom: 8px;"><strong>Frame the issue, not the whole property.</strong> One photo of the actual concern (overgrown grass, faded paint, unapproved structure) is more useful than five wide shots of the front of the house. Bedrock AI reads close-ups better.</li>
           <li style="margin-bottom: 8px;"><strong>If something needs context, take a second photo.</strong> Wide shot showing the house, close shot showing the issue. The system will group them.</li>
           <li style="margin-bottom: 8px;"><strong>Don't double-capture.</strong> If you took a photo and aren't sure it landed, scroll down — you'll see it in the photo strip within ~3 seconds. Re-tapping creates duplicate observations.</li>
           <li style="margin-bottom: 8px;"><strong>Skip the obvious-not-a-violation shots.</strong> A perfectly-maintained yard doesn't need a photo. If you wouldn't write a letter about it, don't capture it.</li>
@@ -10800,9 +10800,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </p>
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">After the walk — Drafts queue review</h2>
-        <p>Back at the office (or on your phone over coffee), open the <strong>Drafts queue</strong> in the Inspect tab. Each photo that Claude categorized as a likely violation has a draft letter waiting. Your job:</p>
+        <p>Back at the office (or on your phone over coffee), open the <strong>Drafts queue</strong> in the Inspect tab. Each photo the system categorized as a likely violation has a draft letter waiting. Your job:</p>
         <ol style="padding-left: 22px;">
-          <li style="margin-bottom: 8px;"><strong>Look at the photo.</strong> Does it show what the draft says it shows? If Claude wrote "yard not maintained" but the photo is actually a parked trailer — that's a miscategorization.</li>
+          <li style="margin-bottom: 8px;"><strong>Look at the photo.</strong> Does it show what the draft says it shows? If the system wrote "yard not maintained" but the photo is actually a parked trailer — that's a miscategorization.</li>
           <li style="margin-bottom: 8px;"><strong>Verify the address.</strong> The "wrong house" check — does the property the system snapped to match the property in the photo? A house number visible in the shot is the gold-standard tiebreaker.</li>
           <li style="margin-bottom: 8px;"><strong>Read the draft letter.</strong> Apply the 5-point check from Module 1 (askEd Foundations) — facts, tone, jurisdiction, sign-off, empathy.</li>
           <li style="margin-bottom: 8px;"><strong>Approve in bulk or one-by-one.</strong> Select all the ones that look good, click Approve. The rejected ones go back for correction or get voided.</li>
@@ -10812,7 +10812,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <p>Every violation has a quality status that signals how trustworthy the record is for later analysis. As an inspector, you control two of them:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>✓ Verified</strong> — you reviewed the photo, the categorization is right, the address is right. Full weight on this record going forward. Use liberally — most are verified.</li>
-          <li style="margin-bottom: 6px;"><strong>⚠ Correct</strong> — something's wrong. Maybe the photo got snapped to the neighbor's house, maybe Claude called it the wrong category, maybe the homeowner already fixed it before the letter would have gone out. Correcting voids the record and (if applicable) opens a fresh one against the right data.</li>
+          <li style="margin-bottom: 6px;"><strong>⚠ Correct</strong> — something's wrong. Maybe the photo got snapped to the neighbor's house, maybe the system called it the wrong category, maybe the homeowner already fixed it before the letter would have gone out. Correcting voids the record and (if applicable) opens a fresh one against the right data.</li>
         </ul>
         <p>Don't agonize. If you're 80% confident, mark Verified. If you're not, correct it — the audit trail is cleaner if "uncertainty" is captured at correction time, not buried in your memory.</p>
 
@@ -10848,7 +10848,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <p>Time-box this to ~25 minutes. The point isn't to perfect the workflow on day one; it's to feel the rhythm: capture → AI does its work → you review → letters land in the mail queue. Once that loop feels natural, the rest is volume.</p>
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">If something looks off</h2>
-        <p>If Claude consistently mis-categorizes something (e.g. mistakes mulch for unmaintained yard), the photo snapped to the wrong house, or a draft letter quotes a governing doc section that isn't right — flag it to Ed with a screenshot. Pattern errors are how the model gets better; one-off corrections only fix that one violation.</p>
+        <p>If the system consistently mis-categorizes something (e.g. mistakes mulch for unmaintained yard), the photo snapped to the wrong house, or a draft letter quotes a governing doc section that isn't right — flag it to Ed with a screenshot. Pattern errors are how the platform gets better; one-off corrections only fix that one violation.</p>
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Mastery signals</h2>
         <p>You're inspecting well when:</p>
@@ -15538,7 +15538,7 @@ ${questionsPage}
   /**
    * Tiny markdown renderer good enough for askEd-template responses
    * (headings, bold, lists, code). Not a full markdown parser; just
-   * what Claude actually produces in the 4-part template.
+   * what the AI actually produces in the 4-part template.
    */
   function helpRenderMarkdown(md) {
     if (!md) return '';
@@ -15623,7 +15623,7 @@ ${questionsPage}
         fd.append('pdf', item.file);
         // Community lock (optional): if user selected a target community in the
         // upload UI, every doc in this batch is force-assigned to it regardless
-        // of what Claude reads from the PDF.
+        // of what the AI reads from the PDF.
         const lockedCommunityId = document.getElementById('docs-upload-community-lock')?.value || '';
         if (lockedCommunityId) fd.append('community_id', lockedCommunityId);
         const r = await fetch('/api/documents/upload', { method: 'POST', body: fd });
@@ -16070,7 +16070,7 @@ ${questionsPage}
   // ---------- Legacy library panel ----------
   // Pulls the pre-trustEd askEd index, grouped by (community, filename), and
   // shows a "Categorize" button per doc that promotes it into library_documents
-  // via Claude text extraction.
+  // via AI text extraction.
   async function docsLoadLegacy() {
     const wrap = document.getElementById('docs-legacy-container');
     if (!wrap) return;
@@ -16891,7 +16891,7 @@ ${questionsPage}
   // Agenda generator modal — wires the existing /generate-agenda endpoint
   // to the packet's agenda section. Pre-fills meeting metadata from the
   // packet, takes Ed's inputs (ratifications / new biz / etc.), runs
-  // Claude, saves the result as the agenda section's input_data.
+  // the AI, saves the result as the agenda section's input_data.
   // --------------------------------------------------------------------------
   function packetsOpenAgendaModal() {
     if (!packetsCurrentPacket) { alert('Packet not loaded.'); return; }

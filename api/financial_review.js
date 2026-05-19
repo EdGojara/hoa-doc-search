@@ -5,7 +5,7 @@
 //
 // Workflow (v0):
 //   1. Accountant clerk uploads a rolling-12 income statement (PDF).
-//   2. Claude parses the PDF into structured GL data
+//   2. the AI parses the PDF into structured GL data
 //      (account lines + month-by-month actuals/budgets).
 //   3. Check engine runs analytical procedures and emits findings:
 //        - zero_where_never_zero       silent line vs. baseline
@@ -13,10 +13,10 @@
 //        - materiality_threshold       line above $X for board attention
 //        - contract_cross_tie          GL line doesn't match contract rate
 //                                      (management fee, website, onsite staff)
-//        - ai_observed                 free-form judgment findings from Claude
+//        - ai_observed                 free-form judgment findings from the AI
 //   4. Findings appear in a queue ranked by severity for clerk to address.
 //
-// Same trade-tape discipline as billing: every Claude call is recorded in
+// Same trade-tape discipline as billing: every the AI call is recorded in
 // agent_runs + analytical_review_runs so the analysis is replayable and
 // auditable. Layer-3 defensibility from day one.
 // ============================================================================
@@ -394,7 +394,7 @@ router.post('/packages', upload.single('pdf'), async (req, res) => {
   if (!fiscal_period) return res.status(400).json({ error: 'fiscal_period (YYYY-MM-DD) required' });
 
   try {
-    // 1. Parse PDF via Claude
+    // 1. Parse PDF via the AI
     const { parsed: parsedData, usage: parseUsage } = await parseFinancialPDF(req.file.buffer, period_label || fiscal_period);
     const parseDuration = Date.now() - t0;
 
