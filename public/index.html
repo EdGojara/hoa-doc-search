@@ -7423,10 +7423,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="margin-bottom: 10px;">
         <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Mode</label>
         <div style="display: flex; gap: 6px; flex-wrap: wrap;">
-          <button type="button" class="ed-mode-btn active" data-mode="foot"  onclick="inspSetMode('foot')">🚶 On foot</button>
-          <button type="button" class="ed-mode-btn"        data-mode="drive_by" onclick="inspSetMode('drive_by')">🚗 Drive-by</button>
-          <button type="button" class="ed-mode-btn"        data-mode="spot_check" onclick="inspSetMode('spot_check')">📍 Spot check</button>
+          <button type="button" class="ed-mode-btn active" data-mode="drive_by"        onclick="inspSetMode('drive_by')">🚗 Drive-by</button>
+          <button type="button" class="ed-mode-btn"        data-mode="resale"          onclick="inspSetMode('resale')">📄 Resale</button>
+          <button type="button" class="ed-mode-btn"        data-mode="mounted_camera"  onclick="inspSetMode('mounted_camera')">📷 Mounted camera</button>
         </div>
+        <div id="inspModeHint" style="font-size:11.5px; color:#64748b; margin-top:6px; line-height:1.4;">Community-wide inspection. Drive the neighborhood, capture violations across many properties.</div>
       </div>
 
       <div style="margin-bottom: 14px;">
@@ -7570,7 +7571,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ============================================================
   let inspState = {
     sessionId: null,
-    mode: 'foot',
+    mode: 'drive_by',
     communityId: null,
     communityName: null,
     photoCount: 0,
@@ -8260,6 +8261,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.querySelectorAll('#tab-inspect .ed-mode-btn').forEach((btn) => {
       btn.classList.toggle('active', btn.getAttribute('data-mode') === mode);
     });
+    // Mode-specific hint so staff knows what this mode is for
+    const hint = document.getElementById('inspModeHint');
+    if (hint) {
+      const hints = {
+        drive_by: 'Community-wide inspection. Drive the neighborhood, capture violations across many properties.',
+        resale:   'Single-property inspection for a title-company resale request. Captures feed the Resale Inspection Report — not violation letters.',
+        mounted_camera: 'Mounted-vehicle camera (future autonomous mode). Same data flow as drive-by; reserved for vehicle-mounted hardware.',
+      };
+      hint.textContent = hints[mode] || '';
+    }
   }
 
   // Populate the community dropdown when the Inspect tab opens
@@ -8309,7 +8320,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       document.getElementById('inspStartCard').style.display = 'none';
       document.getElementById('inspActivePanel').style.display = 'block';
       document.getElementById('inspSessionCommunity').textContent = inspState.communityName;
-      const modeLabel = { foot: 'On foot', drive_by: 'Drive-by', spot_check: 'Spot check' }[inspState.mode] || inspState.mode;
+      const modeLabel = { drive_by: 'Drive-by', resale: 'Resale', mounted_camera: 'Mounted camera' }[inspState.mode] || inspState.mode;
       document.getElementById('inspSessionMeta').textContent = `${modeLabel}${routeLabel ? ' · ' + routeLabel : ''}`;
       inspRenderPhotos();
       inspStartLocationWatch();
