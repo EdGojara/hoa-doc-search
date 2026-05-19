@@ -148,6 +148,12 @@ function renderSectionStandaloneHtml({ packet, section }) {
   if (section.section_key === 'financials') {
     return renderFinancialStatementsStandaloneHtml({ packet, section });
   }
+  if (section.section_key === 'ar_aging') {
+    return renderArAgingStandaloneHtml({ packet, section });
+  }
+  if (section.section_key === 'drv') {
+    return renderBudgetVarianceStandaloneHtml({ packet, section });
+  }
   return renderGenericSectionStandaloneHtml({ packet, section });
 }
 
@@ -368,6 +374,203 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
   `;
 
   return renderStandalonePage({ packet, section, bodyHtml, accent: '#1F3A5F' });
+}
+
+// ----------------------------------------------------------------------------
+// AR Aging — polished board-facing summary. Distills the raw aging dump into
+// the 30-second-readable picture: total AR + delinquent count, an aging
+// bucket bar, the top 10 worst accounts by balance with status, and the
+// AI's flagged watchouts. Full underlying data still lives in input_data
+// for the audit trail.
+// ----------------------------------------------------------------------------
+function renderArAgingStandaloneHtml({ packet, section }) {
+  const d = section.input_data || {};
+  const narrative = d.narrative || null;
+  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  const total = d.total_ar != null ? Number(d.total_ar) : null;
+  const buckets = d.buckets || {};
+  const b0_30   = Number(buckets['0_30']   || 0);
+  const b31_60  = Number(buckets['31_60']  || 0);
+  const b61_90  = Number(buckets['61_90']  || 0);
+  const bOver90 = Number(buckets['over_90'] || 0);
+  const computedTotal = b0_30 + b31_60 + b61_90 + bOver90;
+  const arTotal = total != null && total > 0 ? total : computedTotal;
+  const counts = d.homeowner_count || {};
+  const delinqCount = counts.delinquent != null ? Number(counts.delinquent) : null;
+  const currentCount = counts.current != null ? Number(counts.current) : null;
+  const totalAccounts = (delinqCount != null && currentCount != null) ? delinqCount + currentCount : null;
+  const pctDelinq = totalAccounts ? (delinqCount / totalAccounts) * 100 : null;
+
+  // Aging-bucket horizontal bar — each segment proportional to its share of
+  // total AR. Color shifts redder as buckets age.
+  const segs = arTotal > 0 ? [
+    { label: '0–30',  amt: b0_30,   color: '#bbf7d0' },
+    { label: '31–60', amt: b31_60,  color: '#fde68a' },
+    { label: '61–90', amt: b61_90,  color: '#fdba74' },
+    { label: '>90',   amt: bOver90, color: '#fca5a5' },
+  ].map((s) => ({ ...s, pct: (s.amt / arTotal) * 100 })) : [];
+
+  // Top delinquents (cap at 10 — board can't action more than that in one meeting)
+  const top = Array.isArray(d.top_delinquent) ? d.top_delinquent : [];
+  const topRows = top.slice(0, 10).map((r) => ({
+    address:    r.unit || r.address || '(unknown)',
+    owner:      r.owner || null,
+    balance:    Number(r.balance) || 0,
+    oldest:     r.oldest_charge_days != null ? Number(r.oldest_charge_days) : null,
+    status:     r.status || null,
+  })).sort((a, b) => b.balance - a.balance);
+
+  const asOf = d.as_of_date ? fmtDateShort(d.as_of_date) : (packet.period_label || '');
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="label">Total AR outstanding</div>
+        <div class="value">${fmtMoney(arTotal, { precision: 0 })}</div>
+        ${asOf ? `<div class="delta">As of ${esc(asOf)}</div>` : ''}
+      </div>
+      ${delinqCount != null ? `
+        <div class="kpi-card">
+          <div class="label">Delinquent accounts</div>
+          <div class="value">${delinqCount}${totalAccounts ? ` <span style="font-size:14px; color:var(--ink-muted); font-weight:600;">/ ${totalAccounts}</span>` : ''}</div>
+          ${pctDelinq != null ? `<div class="delta">${pctDelinq.toFixed(1)}% past due</div>` : ''}
+        </div>` : ''}
+      <div class="kpi-card" style="${bOver90 > 0 ? 'background:#fef2f2; border-color:#fecaca;' : ''}">
+        <div class="label" style="${bOver90 > 0 ? 'color:#991b1b;' : ''}">Over 90 days</div>
+        <div class="value" style="${bOver90 > 0 ? 'color:#7f1d1d;' : ''}">${fmtMoney(bOver90, { precision: 0 })}</div>
+        <div class="delta ${bOver90 > 0 ? 'bad' : 'good'}">${bOver90 > 0 ? '⚠ Collection candidates' : '✓ Clean'}</div>
+      </div>
+    </div>
+
+    ${arTotal > 0 ? `
+      <div class="table-h2">Aging distribution</div>
+      <div style="display:flex; height:32px; border-radius:6px; overflow:hidden; border:1px solid var(--rule); margin: 6px 0 6px;">
+        ${segs.map((s) => s.pct > 0 ? `<div title="${s.label}: ${fmtMoney(s.amt)}" style="width:${s.pct}%; background:${s.color}; display:flex; align-items:center; justify-content:center; font-size:11px; color:#1a1a1a; font-weight:600; min-width:0; overflow:hidden;">${s.pct >= 8 ? esc(`${s.label}: ${fmtMoney(s.amt, { precision: 0 })}`) : ''}</div>` : '').join('')}
+      </div>
+      <div style="display:flex; gap:14px; font-size:11px; color:var(--ink-muted); flex-wrap:wrap;">
+        ${segs.map((s) => `<span><span style="display:inline-block; width:10px; height:10px; background:${s.color}; border-radius:2px; vertical-align:middle; margin-right:5px;"></span>${esc(s.label)}: ${fmtMoney(s.amt, { precision: 0 })} (${s.pct.toFixed(0)}%)</span>`).join('')}
+      </div>` : ''}
+
+    ${topRows.length ? `
+      <div class="table-h2">Top delinquent accounts</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Address</th>
+          <th>Owner</th>
+          <th class="num">Balance</th>
+          <th class="num">Days oldest</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>
+          ${topRows.map((r) => `
+            <tr>
+              <td><strong>${esc(r.address)}</strong></td>
+              <td>${esc(r.owner || '—')}</td>
+              <td class="num" style="color:${r.balance >= 1000 ? 'var(--bad)' : 'var(--ink)'}; font-weight:${r.balance >= 1000 ? '700' : '400'};">${fmtMoney(r.balance)}</td>
+              <td class="num">${r.oldest != null ? r.oldest : '—'}</td>
+              <td>${r.status ? `<span style="background:var(--rule); padding:2px 8px; border-radius:99px; font-size:11px;">${esc(r.status)}</span>` : '—'}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>` : ''}
+
+    ${watchouts.length ? `
+      <div class="table-h2">🚩 Watchouts</div>
+      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
+        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
+      </ul>` : ''}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml });
+}
+
+// ----------------------------------------------------------------------------
+// Budget Variance (currently labeled "drv" in section_key — Doctivity Variance
+// Report). Distills budget-to-actual into the categories that materially
+// missed, with the AI's commentary at the top.
+// ----------------------------------------------------------------------------
+function renderBudgetVarianceStandaloneHtml({ packet, section }) {
+  const d = section.input_data || {};
+  const narrative = d.narrative || null;
+  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  const variances = Array.isArray(d.variances) ? d.variances : [];
+
+  // Sort by absolute variance, descending. Board cares about the biggest
+  // misses first.
+  const sorted = [...variances].sort((a, b) => Math.abs(Number(b.variance) || 0) - Math.abs(Number(a.variance) || 0));
+  const topVariances = sorted.slice(0, 10);
+
+  const maxAbsVar = topVariances.reduce((m, v) => Math.max(m, Math.abs(Number(v.variance) || 0)), 1);
+
+  // KPIs
+  const onTrack = variances.filter((v) => Math.abs(Number(v.variance_pct) || 0) <= 5).length;
+  const overBudget = variances.filter((v) => (Number(v.variance) || 0) < 0 && Math.abs(Number(v.variance_pct) || 0) > 5).length; // expense over budget = unfavorable
+  const underBudget = variances.filter((v) => (Number(v.variance) || 0) > 0 && Math.abs(Number(v.variance_pct) || 0) > 5).length;
+  const netVariance = variances.reduce((s, v) => s + (Number(v.variance) || 0), 0);
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="label">Net variance</div>
+        <div class="value" style="color:${netVariance >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(netVariance, { precision: 0 })}</div>
+        <div class="delta">${variances.length} categories tracked${d.period ? ` · ${esc(d.period)}` : ''}</div>
+      </div>
+      <div class="kpi-card">
+        <div class="label">On track</div>
+        <div class="value" style="color:var(--good);">${onTrack}</div>
+        <div class="delta">within ±5% of plan</div>
+      </div>
+      <div class="kpi-card">
+        <div class="label">Under budget</div>
+        <div class="value">${underBudget}</div>
+        <div class="delta good">favorable</div>
+      </div>
+      <div class="kpi-card" style="${overBudget > 0 ? 'background:#fef2f2; border-color:#fecaca;' : ''}">
+        <div class="label" style="${overBudget > 0 ? 'color:#991b1b;' : ''}">Over budget</div>
+        <div class="value" style="${overBudget > 0 ? 'color:#7f1d1d;' : ''}">${overBudget}</div>
+        <div class="delta ${overBudget > 0 ? 'bad' : 'good'}">${overBudget > 0 ? 'needs attention' : 'clean'}</div>
+      </div>
+    </div>
+
+    ${topVariances.length ? `
+      <div class="table-h2">Largest variances</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Category</th>
+          <th class="num">Actual</th>
+          <th class="num">Budget</th>
+          <th class="num">Variance</th>
+          <th class="num">vs. budget</th>
+        </tr></thead>
+        <tbody>
+          ${topVariances.map((v) => {
+            const variance = Number(v.variance) || 0;
+            const favorable = variance >= 0;
+            const barW = Math.min(60, Math.round((Math.abs(variance) / maxAbsVar) * 60));
+            return `
+            <tr>
+              <td><strong>${esc(v.category || '(unnamed)')}</strong>${v.commentary ? `<div style="font-size:11px; color:var(--ink-muted); margin-top:2px;">${esc(v.commentary)}</div>` : ''}</td>
+              <td class="num">${fmtMoney(Number(v.actual) || 0)}</td>
+              <td class="num">${v.budget != null ? fmtMoney(Number(v.budget)) : '—'}</td>
+              <td class="num" style="color:${favorable ? 'var(--good)' : 'var(--bad)'};">
+                ${fmtMoney(variance)}
+                ${barW ? `<span class="variance-bar" style="background:${favorable ? 'var(--good)' : 'var(--bad)'}; width:${barW}px;"></span>` : ''}
+              </td>
+              <td class="num" style="color:${favorable ? 'var(--good)' : 'var(--bad)'};">${v.variance_pct != null ? `${favorable ? '+' : ''}${Number(v.variance_pct).toFixed(1)}%` : '—'}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>` : ''}
+
+    ${watchouts.length ? `
+      <div class="table-h2">🚩 Watchouts</div>
+      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
+        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
+      </ul>` : ''}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml });
 }
 
 function renderGenericSectionStandaloneHtml({ packet, section }) {
