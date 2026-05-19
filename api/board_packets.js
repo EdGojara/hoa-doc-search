@@ -1628,13 +1628,10 @@ function renderAgendaStandaloneHtml({ packet, section, embed = false }) {
   const legacyTxt = !fullText && !items.length && d.format === 'text' && d.text ? String(d.text) : null;
   const empty = !fullText && !items.length && !legacyTxt;
 
-  // Only render the timing-summary table when it actually has signal
-  // (presenters or durations) — otherwise it's a wall of dashes. When no
-  // full_text yet (legacy extractions) but items exist, fall back to a
-  // simple numbered list of topics so the section isn't empty.
-  const hasTimingSignal = items.some((r) => (r.presenter && r.presenter !== '—') || (r.duration_min != null));
-  const showTable = items.length > 0 && hasTimingSignal;
-  const showFallbackList = items.length > 0 && !fullText && !legacyTxt && !hasTimingSignal;
+  // Agenda renders the verbatim text only — no timing-summary table. When
+  // no full_text yet (legacy extractions captured topics only), fall back
+  // to a numbered list of topics so the section isn't empty.
+  const showFallbackList = items.length > 0 && !fullText && !legacyTxt;
 
   const bodyHtml = `
     ${empty ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No agenda content yet. Use Manual (paste text), Upload (PDF), or AI-generate on the section card.</div>` : `
@@ -1644,30 +1641,6 @@ function renderAgendaStandaloneHtml({ packet, section, embed = false }) {
         <ol style="margin: 6px 0 16px 0; padding-left: 22px; font-size:14px; line-height:1.7;">
           ${items.map((r) => `<li style="margin-bottom: 4px;">${esc(r.topic || '—')}</li>`).join('')}
         </ol>` : ''}
-
-      ${showTable ? `
-        <div class="table-h2">Timing summary</div>
-        <table class="data-table" style="margin: 8px 0 16px;">
-          <thead><tr>
-            <th>#</th>
-            <th>Topic</th>
-            <th>Presenter</th>
-            <th class="num">Time</th>
-          </tr></thead>
-          <tbody>
-            ${items.map((r, i) => `
-              <tr>
-                <td style="color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
-                <td><strong>${esc(r.topic || '—')}</strong></td>
-                <td style="color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
-                <td class="num" style="color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
-              </tr>`).join('')}
-          </tbody>
-          ${totalMin > 0 ? `<tfoot><tr>
-            <td colspan="3" style="text-align:right;">Total scheduled</td>
-            <td class="num">${totalMin} min</td>
-          </tr></tfoot>` : ''}
-        </table>` : ''}
     `}
   `;
   return renderStandalonePage({ packet, section, bodyHtml, embed });
@@ -2109,40 +2082,15 @@ ${(() => {
   ${it.description ? `<p class="section-lede">${esc(it.description)}</p>` : ''}
   ${isAgendaStructured
     ? (() => {
-        const totalMin = agendaItems.reduce((sum, r) => sum + (Number(r.duration_min) || 0), 0);
+        // Agenda renders the verbatim full_text only — no timing summary.
+        // Legacy fallback: when no full_text yet, show topics as a clean
+        // numbered list so the section isn't empty.
         const fullHtml = agendaFullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(agendaFullText)}</div>` : '';
-        // Only show the timing summary table when it has actual signal —
-        // presenters or times. Otherwise it's a column of dashes that adds
-        // visual noise instead of information.
-        const hasTimingSignal = agendaItems.some((r) => (r.presenter && r.presenter !== '—') || (r.duration_min != null));
-        // Fallback: when there's no full_text yet (legacy extractions) AND
-        // no timing signal, still show topics as a simple numbered list so
-        // operators see something useful instead of an empty timing table.
-        const fallbackList = (!fullHtml && !hasTimingSignal && agendaItems.length) ? `
+        const fallbackList = (!fullHtml && agendaItems.length) ? `
           <ol style="margin: 6px 0 16px 0; padding-left: 22px; font-size:14px; line-height:1.7;">
             ${agendaItems.map((r) => `<li style="margin-bottom: 4px;">${esc(r.topic || '—')}</li>`).join('')}
           </ol>` : '';
-        const tableHtml = (agendaItems.length && hasTimingSignal) ? `
-          <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Timing summary</div>
-          <table style="width:100%; border-collapse:collapse; margin: 0 0 16px; font-size:13px;">
-            <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">#</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Topic</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Presenter</th>
-              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Time</th>
-            </tr></thead>
-            <tbody>
-              ${agendaItems.map((r, i) => `
-                <tr style="border-bottom:1px solid var(--rule);">
-                  <td style="padding:8px 10px; color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
-                  <td style="padding:8px 10px;"><strong>${esc(r.topic || '—')}</strong></td>
-                  <td style="padding:8px 10px; color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
-                  <td style="padding:8px 10px; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
-                </tr>`).join('')}
-            </tbody>
-            ${totalMin > 0 ? `<tfoot><tr><td colspan="3" style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep);">Total scheduled</td><td style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep); font-variant-numeric:tabular-nums;">${totalMin} min</td></tr></tfoot>` : ''}
-          </table>` : '';
-        return fullHtml + fallbackList + tableHtml;
+        return fullHtml + fallbackList;
       })()
     : isAgendaText
     ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(data.text)}</div>`
