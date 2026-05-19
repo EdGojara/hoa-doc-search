@@ -1621,37 +1621,42 @@ function renderViolationsSummaryStandaloneHtml({ packet, section, embed = false 
 // ----------------------------------------------------------------------------
 function renderAgendaStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.hide_narrative ? null : (d.narrative || null);
+  const fullText = (d.full_text || '').trim();
   const items = Array.isArray(d.items) ? d.items : [];
   const totalMin = items.reduce((s, r) => s + (Number(r.duration_min) || 0), 0);
-  const txt = !items.length && d.format === 'text' && d.text ? String(d.text) : null;
+  // Legacy fallbacks for older extractions
+  const legacyTxt = !fullText && !items.length && d.format === 'text' && d.text ? String(d.text) : null;
+  const empty = !fullText && !items.length && !legacyTxt;
 
   const bodyHtml = `
-    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
-    ${items.length ? `
-      <table class="data-table" style="margin: 8px 0 16px;">
-        <thead><tr>
-          <th>#</th>
-          <th>Topic</th>
-          <th>Presenter</th>
-          <th class="num">Time</th>
-        </tr></thead>
-        <tbody>
-          ${items.map((r, i) => `
-            <tr>
-              <td style="color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
-              <td><strong>${esc(r.topic || '—')}</strong>${r.notes ? `<div style="color:var(--ink-muted); font-size:11.5px; margin-top:3px;">${esc(r.notes)}</div>` : ''}</td>
-              <td style="color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
-              <td class="num" style="color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
-            </tr>`).join('')}
-        </tbody>
-        ${totalMin > 0 ? `<tfoot><tr>
-          <td colspan="3" style="text-align:right;">Total scheduled</td>
-          <td class="num">${totalMin} min</td>
-        </tr></tfoot>` : ''}
-      </table>` : ''}
-    ${txt ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(txt)}</div>` : ''}
-    ${(!items.length && !txt) ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No agenda content yet. Use Manual (paste text), Upload (PDF), or AI-generate on the section card.</div>` : ''}
+    ${empty ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No agenda content yet. Use Manual (paste text), Upload (PDF), or AI-generate on the section card.</div>` : `
+      ${fullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(fullText)}</div>` : ''}
+      ${legacyTxt ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink); margin: 0 0 18px;">${esc(legacyTxt)}</div>` : ''}
+
+      ${items.length ? `
+        <div class="table-h2">Timing summary</div>
+        <table class="data-table" style="margin: 8px 0 16px;">
+          <thead><tr>
+            <th>#</th>
+            <th>Topic</th>
+            <th>Presenter</th>
+            <th class="num">Time</th>
+          </tr></thead>
+          <tbody>
+            ${items.map((r, i) => `
+              <tr>
+                <td style="color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
+                <td><strong>${esc(r.topic || '—')}</strong></td>
+                <td style="color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
+                <td class="num" style="color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
+              </tr>`).join('')}
+          </tbody>
+          ${totalMin > 0 ? `<tfoot><tr>
+            <td colspan="3" style="text-align:right;">Total scheduled</td>
+            <td class="num">${totalMin} min</td>
+          </tr></tfoot>` : ''}
+        </table>` : ''}
+    `}
   `;
   return renderStandalonePage({ packet, section, bodyHtml, embed });
 }
@@ -2060,12 +2065,13 @@ ${(() => {
   const isExecSummaryText = sec.section_key === 'exec_summary' && (data?.text || typeof data === 'string');
   // Be defensive about agenda shape — model may return items wrapped in a
   // top-level "agenda" key or as a bare array. Normalize before the render.
+  const agendaFullText = sec.section_key === 'agenda' ? (data?.full_text || data?.agenda?.full_text || '').trim() : '';
   const agendaItems = sec.section_key === 'agenda' ? (
     Array.isArray(data?.items) ? data.items :
     Array.isArray(data?.agenda?.items) ? data.agenda.items :
     Array.isArray(data) ? data : []
   ) : [];
-  const isAgendaStructured = sec.section_key === 'agenda' && agendaItems.length > 0;
+  const isAgendaStructured = sec.section_key === 'agenda' && (agendaFullText.length > 0 || agendaItems.length > 0);
   // Same for prior_minutes — may be wrapped or fields named differently.
   const minutesData = sec.section_key === 'prior_minutes' ? (data?.minutes || data || {}) : null;
   const isPriorMinutes = sec.section_key === 'prior_minutes' && minutesData && (
@@ -2086,24 +2092,28 @@ ${(() => {
   ${isAgendaStructured
     ? (() => {
         const totalMin = agendaItems.reduce((sum, r) => sum + (Number(r.duration_min) || 0), 0);
-        return `<table style="width:100%; border-collapse:collapse; margin: 8px 0 16px; font-size:13px;">
-          <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
-            <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">#</th>
-            <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Topic</th>
-            <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Presenter</th>
-            <th style="text-align:right; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Time</th>
-          </tr></thead>
-          <tbody>
-            ${agendaItems.map((r, i) => `
-              <tr style="border-bottom:1px solid var(--rule);">
-                <td style="padding:8px 10px; color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
-                <td style="padding:8px 10px;"><strong>${esc(r.topic || '—')}</strong>${r.notes ? `<div style="color:var(--ink-muted); font-size:11.5px; margin-top:3px;">${esc(r.notes)}</div>` : ''}</td>
-                <td style="padding:8px 10px; color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
-                <td style="padding:8px 10px; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
-              </tr>`).join('')}
-          </tbody>
-          ${totalMin > 0 ? `<tfoot><tr><td colspan="3" style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep);">Total scheduled</td><td style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep); font-variant-numeric:tabular-nums;">${totalMin} min</td></tr></tfoot>` : ''}
-        </table>`;
+        const fullHtml = agendaFullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(agendaFullText)}</div>` : '';
+        const tableHtml = agendaItems.length ? `
+          <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Timing summary</div>
+          <table style="width:100%; border-collapse:collapse; margin: 0 0 16px; font-size:13px;">
+            <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">#</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Topic</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Presenter</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Time</th>
+            </tr></thead>
+            <tbody>
+              ${agendaItems.map((r, i) => `
+                <tr style="border-bottom:1px solid var(--rule);">
+                  <td style="padding:8px 10px; color:var(--ink-muted); font-variant-numeric:tabular-nums;">${i + 1}</td>
+                  <td style="padding:8px 10px;"><strong>${esc(r.topic || '—')}</strong></td>
+                  <td style="padding:8px 10px; color:var(--ink-soft);">${esc(r.presenter || '—')}</td>
+                  <td style="padding:8px 10px; text-align:right; font-variant-numeric:tabular-nums; color:var(--ink-soft);">${r.duration_min != null ? `${r.duration_min} min` : '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+            ${totalMin > 0 ? `<tfoot><tr><td colspan="3" style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep);">Total scheduled</td><td style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep); font-variant-numeric:tabular-nums;">${totalMin} min</td></tr></tfoot>` : ''}
+          </table>` : '';
+        return fullHtml + tableHtml;
       })()
     : isAgendaText
     ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(data.text)}</div>`
@@ -2193,13 +2203,18 @@ ${(() => {
 // Per-section extraction prompts. Each returns structured JSON matching the
 // section's data_schema_hint. Keep these short and concrete.
 const SECTION_EXTRACTION_PROMPTS = {
-  agenda: `Extract the meeting agenda from this PDF. Return JSON:
+  agenda: `This is the meeting agenda PDF. Do NOT summarize or paraphrase —
+capture the agenda verbatim, formatted as markdown so the packet renderer
+can display it professionally with the original substance preserved.
+
+Return JSON:
 {
+  "full_text": "string — markdown of the FULL agenda content.\\n\\nUse '## Heading' for major sections (Call to Order, Roll Call, Approval of Minutes, Treasurer's Report, Old Business, New Business, Open Forum, Adjournment, etc.).\\nUse '1.' / '2.' for numbered items, '- ' for bullets.\\nPreserve every topic, every presenter named, every time allocation, every note, every dollar figure, every sub-item.\\nUse '**bold**' for emphasized terms in the source. Reproduce the agenda as written.",
   "items": [
-    { "topic": "string", "presenter": "string or null", "duration_min": <int or null>, "notes": "string or null" }
+    { "topic": "string — verbatim topic text", "presenter": "string or null", "duration_min": <int or null>, "notes": "string or null" }
   ]
 }
-Return ONLY the JSON, no preamble.`,
+Return ONLY the JSON, no preamble. full_text is the primary content the packet renders; items is a structured copy for reference and timing totals.`,
 
   prior_minutes: `This is the previous board meeting minutes PDF. Do NOT summarize
 or paraphrase — capture the minutes verbatim, formatted as markdown so the
