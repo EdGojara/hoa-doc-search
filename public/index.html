@@ -4866,6 +4866,67 @@
         </div>
       </div>
 
+      <!-- ===== Letter & enforcement settings — per-community letter config ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+          <div>
+            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">⚖️ Letter &amp; enforcement settings</h3>
+            <p style="font-size:12px; color:#888; margin-top:2px;">Drives every violation letter generated for this community — sender, fees, cure deadlines, payment routing (lockbox), and the master fines toggle.</p>
+          </div>
+        </div>
+
+        <!-- Sender + fines master -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:12px 18px; margin-bottom:14px;">
+          <label class="prof-fld" style="grid-column: 1 / -1;"><span>Master fines toggle</span>
+            <select id="lc-fines-enabled">
+              <option value="false">Off — letters only, no fines fire</option>
+              <option value="true">On — fines may be assessed per fine schedule</option>
+            </select>
+          </label>
+          <label class="prof-fld"><span>Letter sender — name</span><input id="lc-sender-name" placeholder="e.g., Sarah Henderson" /></label>
+          <label class="prof-fld" style="grid-column: span 2;"><span>Letter sender — title</span><input id="lc-sender-title" placeholder='e.g., "Property Manager" or "On behalf of the Lakes of Pine Forest Board of Directors"' /></label>
+        </div>
+
+        <!-- Per-stage fees -->
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:12px; font-weight:700; color:#1a3a5c; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Admin fees per letter (dollars)</div>
+          <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
+            <label class="prof-fld"><span>Courtesy 1</span><input id="lc-fee-courtesy1" type="number" step="1" min="0" placeholder="0" /></label>
+            <label class="prof-fld"><span>Courtesy 2</span><input id="lc-fee-courtesy2" type="number" step="1" min="0" placeholder="25" /></label>
+            <label class="prof-fld"><span>Certified §209</span><input id="lc-fee-cert209" type="number" step="1" min="0" placeholder="35" /></label>
+            <label class="prof-fld"><span>Fine notice</span><input id="lc-fee-fine" type="number" step="1" min="0" placeholder="0" /></label>
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:6px;">One-time admin fee per mailed letter. Separate from the violation fine itself (set on the per-category fine schedule below or in the Inspect tab → Fine Schedule).</div>
+        </div>
+
+        <!-- Per-stage cure days -->
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:12px; font-weight:700; color:#1a3a5c; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Cure period (days)</div>
+          <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
+            <label class="prof-fld"><span>Courtesy 1</span><input id="lc-cure-courtesy1" type="number" step="1" min="1" placeholder="20" /></label>
+            <label class="prof-fld"><span>Courtesy 2</span><input id="lc-cure-courtesy2" type="number" step="1" min="1" placeholder="20" /></label>
+            <label class="prof-fld"><span>Certified §209</span><input id="lc-cure-cert209" type="number" step="1" min="1" placeholder="30" /></label>
+          </div>
+          <div style="font-size:11px; color:#64748b; margin-top:6px;">Counted from the postmark date (stamped at Mail Queue lock time). Certified §209 should stay at 30 days unless counsel approves otherwise — it aligns with the statutory hearing-request window in Tex. Prop. Code §209.006.</div>
+        </div>
+
+        <!-- Payment routing (lockbox) -->
+        <div style="background:#fffbeb; border:1px solid #f3d894; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:12px; font-weight:700; color:#78350f; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🏦 Payment routing (lockbox)</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 18px;">
+            <label class="prof-fld"><span>Online payment URL</span><input id="lc-payment-url" placeholder="home.bedrocktx.com" /></label>
+            <label class="prof-fld"><span>Check payable to</span><input id="lc-pay-to-name" placeholder="e.g., Lakes of Pine Forest HOA, Inc." /></label>
+            <label class="prof-fld" style="grid-column: 1 / -1;"><span>Lockbox / check mailing address</span><input id="lc-pay-to-address" placeholder="e.g., P.O. Box 1992, Richmond, TX 77406-0050" /></label>
+          </div>
+          <div style="font-size:11px; color:#78350f; margin-top:6px;">Each association may bank with a different lockbox. The PO Box on the letter is where homeowner checks land — verify with your accountant before changing.</div>
+        </div>
+
+        <div style="text-align:right;">
+          <button class="primary-btn" onclick="lcSaveLetterConfig()" style="padding:8px 18px;">💾 Save letter settings</button>
+          <span id="lc-save-status" style="margin-left:10px; font-size:12px; color:#2d7a3a;"></span>
+        </div>
+      </div>
+
       <!-- ===== Contacts (structured — vendors, board members, key people) ===== -->
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
@@ -12176,6 +12237,67 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     set('prof-banking', profile.banking);
     set('prof-insurance_carrier', profile.insurance_carrier);
     set('prof-notes', profile.notes);
+
+    // Letter & enforcement config — top-level columns on the communities row
+    const c = community || {};
+    set('lc-fines-enabled', c.fines_enabled ? 'true' : 'false');
+    set('lc-sender-name',   c.letter_sender_name);
+    set('lc-sender-title',  c.letter_sender_title);
+    set('lc-fee-courtesy1', c.letter_fee_courtesy_1_cents != null    ? (c.letter_fee_courtesy_1_cents    / 100) : '');
+    set('lc-fee-courtesy2', c.letter_fee_courtesy_2_cents != null    ? (c.letter_fee_courtesy_2_cents    / 100) : '');
+    set('lc-fee-cert209',   c.letter_fee_certified_209_cents != null ? (c.letter_fee_certified_209_cents / 100) : '');
+    set('lc-fee-fine',      c.letter_fee_fine_assessed_cents != null ? (c.letter_fee_fine_assessed_cents / 100) : '');
+    set('lc-cure-courtesy1', c.letter_cure_days_courtesy_1);
+    set('lc-cure-courtesy2', c.letter_cure_days_courtesy_2);
+    set('lc-cure-cert209',   c.letter_cure_days_certified_209);
+    set('lc-payment-url',    c.letter_payment_url);
+    set('lc-pay-to-name',    c.letter_pay_to_name);
+    set('lc-pay-to-address', c.letter_pay_to_address);
+  }
+
+  async function lcSaveLetterConfig() {
+    if (!profCurrent) return;
+    const status = document.getElementById('lc-save-status');
+    status.textContent = 'Saving…'; status.style.color = '#64748b';
+    const val = (id) => (document.getElementById(id).value || '').trim();
+    const numOrNull = (id) => { const v = val(id); return v === '' ? null : Number(v); };
+    const dollarsToCents = (id) => {
+      const v = val(id); if (v === '') return null;
+      return Math.round(Number(v) * 100);
+    };
+    const updates = {
+      fines_enabled:                     val('lc-fines-enabled') === 'true',
+      letter_sender_name:                val('lc-sender-name')  || null,
+      letter_sender_title:               val('lc-sender-title') || null,
+      letter_fee_courtesy_1_cents:       dollarsToCents('lc-fee-courtesy1'),
+      letter_fee_courtesy_2_cents:       dollarsToCents('lc-fee-courtesy2'),
+      letter_fee_certified_209_cents:    dollarsToCents('lc-fee-cert209'),
+      letter_fee_fine_assessed_cents:    dollarsToCents('lc-fee-fine'),
+      letter_cure_days_courtesy_1:       numOrNull('lc-cure-courtesy1'),
+      letter_cure_days_courtesy_2:       numOrNull('lc-cure-courtesy2'),
+      letter_cure_days_certified_209:    numOrNull('lc-cure-cert209'),
+      letter_payment_url:                val('lc-payment-url')    || null,
+      letter_pay_to_name:                val('lc-pay-to-name')    || null,
+      letter_pay_to_address:             val('lc-pay-to-address') || null,
+    };
+    // Drop nulls so the endpoint only patches what's actually provided
+    Object.keys(updates).forEach((k) => { if (updates[k] === null || updates[k] === undefined) delete updates[k]; });
+
+    try {
+      const r = await fetch(`/api/community-profile/${profCurrent.id}/letter-config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(updates),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Merge returned values back into profCurrent so reloading isn't required
+      if (j.community) Object.assign(profCurrent, j.community);
+      status.textContent = '✓ Saved'; status.style.color = '#2d7a3a';
+      setTimeout(() => { status.textContent = ''; }, 2500);
+    } catch (e) {
+      status.textContent = '✗ ' + e.message; status.style.color = '#b91c1c';
+    }
   }
 
   async function profSaveProfile() {
