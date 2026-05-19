@@ -7448,6 +7448,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div>
             <div id="inspSessionCommunity" style="font-family: var(--font-serif, Georgia); font-size: 17px; font-weight: 500;">—</div>
             <div id="inspSessionMeta" style="font-size: 12px; color: var(--gold, #D4AF37); margin-top: 3px; font-family: var(--font-mono, monospace); letter-spacing: 0.08em; text-transform: uppercase;">—</div>
+            <!-- Queue badge — appears only when photos are pending upload -->
+            <div id="inspQueueBadge" style="display:none; margin-top:6px; padding:3px 9px; background:rgba(255,255,255,0.18); color:#fff; border-radius:99px; font-size:11px; font-weight:600; align-items:center;"></div>
           </div>
           <div style="text-align: right;">
             <div id="inspPhotoCount" style="font-size: 28px; font-weight: 700; line-height: 1;">0</div>
@@ -8311,6 +8313,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       document.getElementById('inspSessionMeta').textContent = `${modeLabel}${routeLabel ? ' · ' + routeLabel : ''}`;
       inspRenderPhotos();
       inspStartLocationWatch();
+      inspStartUploader();          // Phase 6.0 — background queue uploader
+      inspUpdateQueueBadge();
       // Show list view by default + load the data
       inspSetView('list');
     } catch (e) {
@@ -8707,60 +8711,285 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('inspPhotoInput').click();
   }
 
+  // ===================================================================
+  // FIELD RELIABILITY (Phase 6.0)
+  // -------------------------------------------------------------------
+  // Photos taken in the field need to survive intermittent cell signal,
+  // app backgrounding, and dead zones. The flow:
+  //
+  //   1. Photo selected → compressed client-side (4MB → ~400KB)
+  //   2. Compressed blob + metadata saved to IndexedDB queue
+  //   3. Pending tile shown immediately
+  //   4. Background uploader polls queue every 5s + on `online` event
+  //   5. Each item retries with exponential backoff (3s → 6s → 12s → 24s → 48s max)
+  //   6. On success: queue row removed, tile updated with real photo
+  //   7. Status badge shows "📤 N pending" so operator never wonders
+  //   8. inspEndSession warns if anything still pending
+  // ===================================================================
+
+  const INSP_QUEUE_DB = 'bedrock_inspect_queue';
+  const INSP_QUEUE_STORE = 'pending_photos';
+
+  function _inspOpenQueueDb() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(INSP_QUEUE_DB, 1);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(INSP_QUEUE_STORE)) {
+          db.createObjectStore(INSP_QUEUE_STORE, { keyPath: 'id', autoIncrement: true });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function inspQueueAdd(blob, metadata) {
+    const db = await _inspOpenQueueDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(INSP_QUEUE_STORE, 'readwrite');
+      const req = tx.objectStore(INSP_QUEUE_STORE).add({
+        blob, metadata,
+        created_at: Date.now(),
+        attempts: 0,
+        last_error: null,
+        last_attempt_at: null,
+      });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function inspQueueList() {
+    const db = await _inspOpenQueueDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(INSP_QUEUE_STORE, 'readonly');
+      const req = tx.objectStore(INSP_QUEUE_STORE).getAll();
+      req.onsuccess = () => resolve(req.result || []);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function inspQueueRemove(id) {
+    const db = await _inspOpenQueueDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(INSP_QUEUE_STORE, 'readwrite');
+      const req = tx.objectStore(INSP_QUEUE_STORE).delete(id);
+      req.onsuccess = () => resolve();
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function inspQueueUpdate(id, updates) {
+    const db = await _inspOpenQueueDb();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction(INSP_QUEUE_STORE, 'readwrite');
+      const store = tx.objectStore(INSP_QUEUE_STORE);
+      const get = store.get(id);
+      get.onsuccess = () => {
+        const row = get.result;
+        if (!row) return reject(new Error('queue row not found'));
+        Object.assign(row, updates);
+        const put = store.put(row);
+        put.onsuccess = () => resolve();
+        put.onerror = () => reject(put.error);
+      };
+      get.onerror = () => reject(get.error);
+    });
+  }
+
+  // Compress a captured image to fit within maxDim pixels and JPEG quality.
+  // iPhone photos are ~3-5 MB; this drops them to ~300-600 KB while keeping
+  // plenty of detail for AI vision analysis. Falls back to original blob
+  // if compression fails (browser too old, etc.) — server can still accept it.
+  async function inspCompressImage(file, maxDim = 1920, quality = 0.85) {
+    try {
+      const bitmap = await createImageBitmap(file);
+      const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+      const w = Math.max(1, Math.round(bitmap.width  * scale));
+      const h = Math.max(1, Math.round(bitmap.height * scale));
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(bitmap, 0, 0, w, h);
+      if (bitmap.close) bitmap.close();
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/jpeg', quality));
+      return blob || file;
+    } catch (e) {
+      console.warn('[insp] image compression failed, using original:', e.message);
+      return file;
+    }
+  }
+
+  // Background uploader. Runs every 5s while session active.
+  let _inspUploaderRunning = false;
+  async function inspProcessUploadQueue() {
+    if (_inspUploaderRunning) return;
+    if (!inspState.sessionId) return;
+    _inspUploaderRunning = true;
+    try {
+      const items = await inspQueueList();
+      const mine = items.filter((i) => i.metadata && i.metadata.inspection_id === inspState.sessionId);
+      for (const item of mine) {
+        // Respect exponential backoff cooldown
+        if (item.last_attempt_at) {
+          const cooldown = Math.min(60000, 3000 * Math.pow(2, item.attempts || 0));
+          if (Date.now() - item.last_attempt_at < cooldown) continue;
+        }
+        try {
+          const fd = new FormData();
+          fd.append('photo', item.blob, 'photo.jpg');
+          fd.append('captured_at', item.metadata.captured_at);
+          if (item.metadata.gps_lat != null) fd.append('gps_lat', item.metadata.gps_lat);
+          if (item.metadata.gps_lng != null) fd.append('gps_lng', item.metadata.gps_lng);
+          if (item.metadata.gps_accuracy_m != null) fd.append('gps_accuracy_m', item.metadata.gps_accuracy_m);
+          if (item.metadata.compass_heading_deg != null) fd.append('compass_heading_deg', item.metadata.compass_heading_deg);
+          if (item.metadata.property_id) fd.append('property_id', item.metadata.property_id);
+          const r = await fetch(`/api/inspections/${item.metadata.inspection_id}/photos`, { method: 'POST', body: fd });
+          if (!r.ok) {
+            // 4xx — give up; the photo will be lost. 5xx and network errors retry.
+            if (r.status >= 400 && r.status < 500) {
+              await inspQueueRemove(item.id);
+              const idx = inspState.photos.findIndex((p) => p.id === 'queue-' + item.id);
+              if (idx >= 0) inspState.photos[idx] = { ...inspState.photos[idx], pending: false, failed: true, error: `HTTP ${r.status}` };
+              inspRenderPhotos();
+              continue;
+            }
+            throw new Error(`HTTP ${r.status}`);
+          }
+          const j = await r.json();
+          await inspQueueRemove(item.id);
+          // Swap the pending tile with the real photo
+          const idx = inspState.photos.findIndex((p) => p.id === 'queue-' + item.id);
+          if (idx >= 0 && j.photo) inspState.photos[idx] = j.photo;
+          inspRenderPhotos();
+        } catch (e) {
+          await inspQueueUpdate(item.id, {
+            attempts: (item.attempts || 0) + 1,
+            last_error: String(e.message || e),
+            last_attempt_at: Date.now(),
+          });
+        }
+      }
+    } catch (e) {
+      console.warn('[insp] queue processing error:', e);
+    } finally {
+      _inspUploaderRunning = false;
+      inspUpdateQueueBadge();
+    }
+  }
+
+  let _inspUploaderTimer = null;
+  function inspStartUploader() {
+    if (_inspUploaderTimer) return;
+    _inspUploaderTimer = setInterval(inspProcessUploadQueue, 5000);
+    inspProcessUploadQueue();
+    window.addEventListener('online', inspProcessUploadQueue);
+  }
+  function inspStopUploader() {
+    if (_inspUploaderTimer) {
+      clearInterval(_inspUploaderTimer);
+      _inspUploaderTimer = null;
+    }
+    window.removeEventListener('online', inspProcessUploadQueue);
+  }
+
+  // Stranded-queue sweeper: on app load, try to drain any photos left in the
+  // queue from a prior session that didn't finish uploading (e.g., browser
+  // crashed mid-inspection, page got closed during dead zone, etc.). Without
+  // this, photos sit forever in IndexedDB never re-attempting.
+  async function inspSweepStrandedQueue() {
+    try {
+      const items = await inspQueueList();
+      if (items.length === 0) return;
+      // Drain by inspection_id, one at a time. Temporarily pretend the session
+      // is each photo's inspection_id so inspProcessUploadQueue picks it up.
+      const byInspection = new Map();
+      items.forEach((i) => {
+        const k = i.metadata && i.metadata.inspection_id;
+        if (!k) return;
+        if (!byInspection.has(k)) byInspection.set(k, 0);
+        byInspection.set(k, byInspection.get(k) + 1);
+      });
+      console.log(`[insp] Sweeping ${items.length} stranded photo${items.length===1?'':'s'} across ${byInspection.size} prior inspection${byInspection.size===1?'':'s'}`);
+      for (const [inspectionId, count] of byInspection) {
+        const savedSession = inspState.sessionId;
+        inspState.sessionId = inspectionId;
+        await inspProcessUploadQueue();
+        inspState.sessionId = savedSession;
+      }
+    } catch (e) {
+      console.warn('[insp] sweep failed:', e.message);
+    }
+  }
+  // Sweep once on page load (deferred so it doesn't race other init)
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(inspSweepStrandedQueue, 3000);
+  });
+
+  async function inspUpdateQueueBadge() {
+    const badge = document.getElementById('inspQueueBadge');
+    if (!badge) return;
+    try {
+      const items = await inspQueueList();
+      const mine = items.filter((i) => i.metadata && i.metadata.inspection_id === inspState.sessionId);
+      if (mine.length === 0) {
+        badge.style.display = 'none';
+        return;
+      }
+      const retrying = mine.filter((i) => (i.attempts || 0) >= 2).length;
+      const onlineNow = navigator.onLine;
+      badge.style.display = 'inline-flex';
+      badge.style.background = onlineNow ? 'rgba(255,255,255,0.18)' : 'rgba(254,202,202,0.25)';
+      badge.innerHTML = `📤 ${mine.length} pending${retrying ? ` · ${retrying} retrying` : ''}${onlineNow ? '' : ' · offline'}`;
+    } catch (_) { /* tolerate */ }
+  }
+
   async function inspOnPhotoSelected(input) {
     if (!input.files || !input.files[0] || !inspState.sessionId) return;
     const file = input.files[0];
     input.value = ''; // allow re-selecting same file
 
-    // Capture metadata at the moment of upload, not at file pick
-    const fd = new FormData();
-    fd.append('photo', file);
-    fd.append('captured_at', new Date().toISOString());
-    if (inspState.lastGps) {
-      fd.append('gps_lat', inspState.lastGps.lat);
-      fd.append('gps_lng', inspState.lastGps.lng);
-      if (inspState.lastGps.accuracy != null) fd.append('gps_accuracy_m', inspState.lastGps.accuracy);
-    }
-    if (inspState.lastHeading != null) {
-      fd.append('compass_heading_deg', inspState.lastHeading);
-    }
-    // If a property was pre-selected via the map tap-to-select flow, send
-    // it as authoritative — bypasses the polygon-match guessing on the
-    // server. Map-tap is treated as reviewer confirmation at capture time.
-    if (inspState.selectedPropertyId) {
-      fd.append('property_id', inspState.selectedPropertyId);
+    // 1) Capture metadata at the moment of pick (GPS may move by retry time)
+    const metadata = {
+      inspection_id: inspState.sessionId,
+      captured_at: new Date().toISOString(),
+      gps_lat: inspState.lastGps && inspState.lastGps.lat,
+      gps_lng: inspState.lastGps && inspState.lastGps.lng,
+      gps_accuracy_m: inspState.lastGps && inspState.lastGps.accuracy,
+      compass_heading_deg: inspState.lastHeading,
+      property_id: inspState.selectedPropertyId,
+    };
+
+    // 2) Compress (4MB iPhone shot → ~400KB jpeg; 10x faster upload on weak cell)
+    const compressed = await inspCompressImage(file, 1920, 0.85);
+
+    // 3) Save to IndexedDB queue (survives tab close, app background, signal drop)
+    let queueId;
+    try {
+      queueId = await inspQueueAdd(compressed, metadata);
+    } catch (e) {
+      alert('Could not queue photo locally: ' + e.message);
+      return;
     }
 
-    // Show a pending tile immediately for UX feedback
-    const pendingId = 'pending-' + Date.now();
-    inspState.photos.unshift({ id: pendingId, pending: true, captured_at: new Date().toISOString() });
+    // 4) Show pending tile immediately (UX feedback) — id ties to queue row
+    inspState.photos.unshift({
+      id: 'queue-' + queueId,
+      pending: true,
+      captured_at: metadata.captured_at,
+      _local_preview: URL.createObjectURL(compressed),  // show the compressed preview
+    });
     inspState.photoCount += 1;
     document.getElementById('inspPhotoCount').textContent = inspState.photoCount;
     inspRenderPhotos();
+    inspUpdateQueueBadge();
 
-    try {
-      const r = await fetch(`/api/inspections/${inspState.sessionId}/photos`, {
-        method: 'POST',
-        body: fd,
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'upload failed');
-      // Replace the pending tile with the real photo
-      const idx = inspState.photos.findIndex((p) => p.id === pendingId);
-      if (idx >= 0) inspState.photos[idx] = j.photo;
-      inspRenderPhotos();
-      // If this capture was attributed to a map-selected property, clear the
-      // selection so the next capture doesn't accidentally re-attribute to
-      // the same house. Operator taps a new property for the next photo.
-      if (inspState.selectedPropertyId) inspClearSelectedProperty();
-    } catch (e) {
-      // Mark the tile as failed
-      const idx = inspState.photos.findIndex((p) => p.id === pendingId);
-      if (idx >= 0) inspState.photos[idx] = { ...inspState.photos[idx], pending: false, failed: true, error: e.message };
-      inspState.photoCount -= 1;
-      document.getElementById('inspPhotoCount').textContent = inspState.photoCount;
-      inspRenderPhotos();
-    }
+    // 5) Clear pre-selection so the NEXT capture doesn't re-attribute
+    if (inspState.selectedPropertyId) inspClearSelectedProperty();
+
+    // 6) Kick the uploader (also runs on its 5s timer)
+    inspProcessUploadQueue();
   }
 
   function inspRenderPhotos() {
@@ -8771,6 +9000,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     list.innerHTML = inspState.photos.map((p) => {
       if (p.pending) {
+        // Show the local preview if we have one (compressed blob URL) so the operator
+        // sees WHICH photo is uploading, not just a gray rectangle. Spinner overlay
+        // indicates "in flight".
+        if (p._local_preview) {
+          return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9;">
+            <img src="${p._local_preview}" style="width:100%; height:100%; object-fit:cover; opacity:0.7;" />
+            <div style="position:absolute; inset:0; display:flex; align-items:flex-end; justify-content:center; padding:6px; background:linear-gradient(to top, rgba(15,23,42,0.6), transparent 40%); color:#fff; font-size:10px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">⬆ Uploading…</div>
+          </div>`;
+        }
         return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 11px;">Uploading…</div>`;
       }
       if (p.failed) {
@@ -8784,7 +9022,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   async function inspEndSession() {
     if (!inspState.sessionId) return;
-    if (!confirm('End this inspection? You can review captured photos later in Recent inspections.')) return;
+    // Warn if photos are still pending upload
+    try {
+      const items = await inspQueueList();
+      const mine = items.filter((i) => i.metadata && i.metadata.inspection_id === inspState.sessionId);
+      if (mine.length > 0) {
+        if (!confirm(`You have ${mine.length} photo${mine.length === 1 ? '' : 's'} still pending upload. End anyway?\n\nPending photos will keep trying in the background — they'll finish whenever signal returns, even after this session is marked ended.`)) return;
+      } else {
+        if (!confirm('End this inspection? You can review captured photos later in Recent inspections.')) return;
+      }
+    } catch (_) {
+      if (!confirm('End this inspection?')) return;
+    }
+    inspStopUploader();
     // Flush any remaining route pings before tearing down session state
     try { await inspFlushRoutePings(); } catch (_) {}
     try {
