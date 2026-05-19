@@ -17605,6 +17605,7 @@ ${questionsPage}
             <div style="display:flex; gap:8px;">
               <a class="action-btn" style="font-size:12px; padding:6px 12px; text-decoration:none;"
                  href="/api/board-packets/${packetId}/preview" target="_blank">👁️ Preview</a>
+              <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsDownloadPdf('${packetId}', this)">⬇ Download PDF</button>
               <button class="secondary-btn" style="font-size:12px; padding:6px 12px;" onclick="packetsClose()">Close</button>
             </div>
           </div>
@@ -17622,6 +17623,46 @@ ${questionsPage}
   function packetsClose() {
     packetsCurrentPacketId = null;
     document.getElementById('packets-detail-container').style.display = 'none';
+  }
+
+  // Trigger server-side PDF render + browser download. Puppeteer needs a
+  // few seconds to load the preview, wait for iframes to settle, and
+  // print — so we disable the button + show a spinner while it works.
+  async function packetsDownloadPdf(packetId, btn) {
+    const originalLabel = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span style="display:inline-block; width:10px; height:10px; border:2px solid currentColor; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:middle; margin-right:6px;"></span>Rendering PDF…';
+    }
+    try {
+      const r = await fetch(`/api/board-packets/${packetId}/pdf`);
+      if (!r.ok) {
+        let msg = `${r.status} ${r.statusText}`;
+        try { const j = await r.json(); if (j.error) msg = j.error; } catch (_) {}
+        throw new Error(msg);
+      }
+      const blob = await r.blob();
+      // Try to read filename out of Content-Disposition; fall back to a sane default.
+      let filename = 'board_packet.pdf';
+      const cd = r.headers.get('Content-Disposition') || '';
+      const m = cd.match(/filename\s*=\s*"?([^";]+)"?/i);
+      if (m && m[1]) filename = m[1];
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 1500);
+    } catch (e) {
+      alert('PDF download failed: ' + e.message);
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalLabel;
+      }
+    }
   }
 
   // Edit packet meta — period label, meeting date/time/location/type/format.

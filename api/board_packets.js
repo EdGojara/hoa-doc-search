@@ -38,6 +38,7 @@ const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const multer = require('multer');
+const puppeteer = require('puppeteer');
 const BRAND = require('../lib/brand');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -3280,6 +3281,91 @@ router.get('/:id/preview', async (req, res) => {
   } catch (err) {
     console.error('[board_packets] preview failed:', err.message);
     res.status(500).send(`<h1>Preview failed</h1><pre>${String(err.message).replace(/</g,'&lt;')}</pre>`);
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/board-packets/:id/pdf  — download the full packet as a PDF
+// Visits the preview URL in headless Chrome, waits for embed-mode iframes
+// to settle (each posts its scrollHeight back to the parent), then prints
+// the page to a Letter-format PDF and streams it as a download.
+// ----------------------------------------------------------------------------
+router.get('/:id/pdf', async (req, res) => {
+  const t0 = Date.now();
+  let browser = null;
+  try {
+    // Get packet metadata for the filename
+    const { data: packet } = await supabase
+      .from('board_packets')
+      .select('id, period_label, meeting_date, community:communities(name)')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!packet) return res.status(404).json({ error: 'Packet not found' });
+
+    // Build the preview URL — Puppeteer visits this server's own preview
+    // endpoint so iframes (which reference relative URLs) resolve correctly.
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = req.get('host');
+    const previewUrl = `${proto}://${host}/api/board-packets/${req.params.id}/preview`;
+
+    browser = await puppeteer.launch({
+      headless: 'new',
+      args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+    });
+    const page = await browser.newPage();
+    await page.setViewport({ width: 1240, height: 1600, deviceScaleFactor: 1 });
+    await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 60000 });
+
+    // Wait for the embed-mode section iframes to settle. Each one posts
+    // its scrollHeight via postMessage on load + fonts-ready; the parent
+    // listener writes that height into the iframe's style. Poll every
+    // 250ms (max 12s) until every section iframe has a real height set.
+    await page.evaluate(() => new Promise((resolve) => {
+      const allSettled = () => {
+        const frames = document.querySelectorAll('iframe.bp-section-iframe');
+        if (frames.length === 0) return true;
+        return Array.from(frames).every((f) => {
+          const h = parseInt(f.style.height || '0', 10);
+          return h > 120;
+        });
+      };
+      if (allSettled()) return resolve();
+      const start = Date.now();
+      const tick = () => {
+        if (allSettled() || Date.now() - start > 12000) resolve();
+        else setTimeout(tick, 250);
+      };
+      tick();
+    }));
+
+    // One more frame for layout reflow after the iframe heights changed.
+    await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+
+    const pdfBuffer = await page.pdf({
+      format: 'Letter',
+      printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 },
+      preferCSSPageSize: false,
+    });
+    await browser.close();
+    browser = null;
+
+    // Friendly filename: "Lakes of Pine Forest — May 2026 — Board Packet.pdf"
+    const community = packet.community && packet.community.name ? packet.community.name : 'Community';
+    const period = packet.period_label || 'Period';
+    const safe = (s) => String(s).replace(/[^a-zA-Z0-9\- ]/g, '').trim();
+    const filename = `${safe(community)} — ${safe(period)} — Board Packet.pdf`;
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader('Content-Length', pdfBuffer.length);
+    res.end(pdfBuffer);
+    console.log(`[board_packets] pdf rendered in ${Date.now() - t0}ms (${pdfBuffer.length} bytes)`);
+  } catch (err) {
+    if (browser) { try { await browser.close(); } catch (_) {} }
+    console.error('[board_packets] pdf render failed:', err.message);
+    res.status(500).json({ error: 'PDF generation failed: ' + err.message });
   }
 });
 
