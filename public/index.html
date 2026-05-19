@@ -7565,11 +7565,44 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- FINE QUEUE — assessed fines waiting to post to Vantaca GL.
+         Visible always. Per-row mark-as-posted action with optional Vantaca
+         charge reference. Empty by default since most communities have
+         fines disabled and no auto-fines fire. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">💰 Fine Queue <span style="color:#64748b; font-weight:500;">— assessed, awaiting posting to Vantaca</span></h3>
+        <div>
+          <button class="secondary-btn" onclick="inspFineScheduleOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;">⚙ Fine schedule</button>
+          <button class="secondary-btn" onclick="inspFineQueueLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="inspFineQueuePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
+        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>
+      </div>
+    </div>
+
     <!-- Recent sessions (visible always, below the active workflow) -->
     <div style="margin-top: 20px;">
       <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0 0 10px;">Recent inspections</h3>
       <div id="inspRecentList" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px;">
         <div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px 0;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- FINE SCHEDULE MANAGER MODAL -->
+    <div id="inspFineScheduleModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center;">
+      <div style="background:#fff; border-radius:14px; max-width:900px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
+        <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">⚙ Fine Schedule</div>
+            <div id="inspFSCommunityLabel" style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">—</div>
+          </div>
+          <button onclick="inspFineScheduleClose()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:13px; cursor:pointer;">✕ Close</button>
+        </div>
+        <div id="inspFSBody" style="padding:18px; overflow-y:auto; flex:1;">
+          <div style="color:#94a3b8; text-align:center; padding:30px;">Loading schedule…</div>
+        </div>
       </div>
     </div>
 
@@ -9604,6 +9637,272 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // ============================================================
+  // FINE QUEUE (Phase 7c)
+  // ============================================================
+  async function inspFineQueueLoad() {
+    const wrap = document.getElementById('inspFineQueuePanel');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
+    try {
+      const r = await fetch('/api/enforcement/fine-queue?status=queued');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const items = j.queue || [];
+      if (items.length === 0) {
+        wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">No fines queued. Most communities have fine enforcement paused — turn on per community in the Fine Schedule above.</div>';
+        return;
+      }
+      const total = items.reduce((s, i) => s + Number(i.amount || 0), 0);
+      wrap.innerHTML = `
+        <div style="padding:8px 12px; background:#fffbeb; border-bottom:1px solid #fde68a; font-size:12px; color:#92400e;">
+          <strong>${items.length} fine${items.length === 1 ? '' : 's'}</strong> queued for posting to Vantaca · total $${total.toFixed(2)}
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead><tr style="background:#f8fafc; color:#64748b;">
+            <th style="text-align:left; padding:6px 10px;">Property</th>
+            <th style="text-align:left; padding:6px 10px;">Owner</th>
+            <th style="text-align:left; padding:6px 10px;">Community</th>
+            <th style="text-align:left; padding:6px 10px;">Category</th>
+            <th style="text-align:right; padding:6px 10px;">Amount</th>
+            <th style="text-align:right; padding:6px 10px;">Action</th>
+          </tr></thead>
+          <tbody>
+            ${items.map((i) => {
+              const addr = i.property
+                ? `${escapeHtml(i.property.street_address || '—')}${i.property.unit ? ' #' + escapeHtml(i.property.unit) : ''}`
+                : '—';
+              return `<tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:7px 10px; font-weight:600; color:#1A3050;">${addr}</td>
+                <td style="padding:7px 10px; color:#475569;">${escapeHtml(i.property && i.property.owner_name || '—')}</td>
+                <td style="padding:7px 10px; color:#64748b;">${escapeHtml(i.communities && i.communities.name || '—')}</td>
+                <td style="padding:7px 10px;">${escapeHtml(i.category_label || '—')}</td>
+                <td style="padding:7px 10px; text-align:right; font-weight:700; color:#b91c1c;">$${Number(i.amount || 0).toFixed(2)}</td>
+                <td style="padding:7px 10px; text-align:right;">
+                  <button onclick="inspFineMarkPosted('${i.id}')" style="background:#16a34a; color:#fff; border:none; padding:4px 11px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">✓ Mark posted</button>
+                </td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>`;
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:14px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function inspFineMarkPosted(queueId) {
+    const ref = prompt('Vantaca charge reference (optional — leave blank if you don\'t track it):') || '';
+    if (ref === null) return;
+    try {
+      const r = await fetch('/api/enforcement/fine-queue/' + encodeURIComponent(queueId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'posted', vantaca_charge_ref: ref || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await inspFineQueueLoad();
+    } catch (e) {
+      alert('Failed: ' + e.message);
+    }
+  }
+
+  // ============================================================
+  // FINE SCHEDULE MANAGER MODAL
+  // ============================================================
+  let _inspFSCurrentCommunityId = null;
+
+  function inspFineScheduleOpen() {
+    // Pick community from the start-card community dropdown or list dropdown
+    const sel = document.getElementById('inspCommunity') || document.getElementById('homesListCommunity');
+    let communityId = sel && sel.value;
+    let communityName = (sel && sel.options[sel.selectedIndex] && sel.options[sel.selectedIndex].textContent) || null;
+    if (!communityId) {
+      // Prompt the user to pick
+      const candidates = sel ? Array.from(sel.options).filter((o) => o.value) : [];
+      if (candidates.length === 0) {
+        alert('Pick a community first (use the community dropdown above).');
+        return;
+      }
+      const menu = candidates.map((o, i) => `${i + 1}. ${o.textContent}`).join('\n');
+      const pick = prompt(`Pick community for fine schedule:\n\n${menu}\n\nEnter number:`);
+      const idx = parseInt(pick, 10) - 1;
+      if (isNaN(idx) || !candidates[idx]) return;
+      communityId = candidates[idx].value;
+      communityName = candidates[idx].textContent;
+    }
+    _inspFSCurrentCommunityId = communityId;
+    document.getElementById('inspFSCommunityLabel').textContent = communityName || '';
+    document.getElementById('inspFineScheduleModal').style.display = 'flex';
+    inspFineScheduleLoad();
+  }
+
+  function inspFineScheduleClose() {
+    document.getElementById('inspFineScheduleModal').style.display = 'none';
+    _inspFSCurrentCommunityId = null;
+  }
+
+  async function inspFineScheduleLoad() {
+    const body = document.getElementById('inspFSBody');
+    body.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:30px;">Loading…</div>';
+    try {
+      const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId));
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspFineScheduleRender(j);
+    } catch (e) {
+      body.innerHTML = `<div style="color:#b91c1c; padding:20px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspFineScheduleRender(data) {
+    const comm = data.community;
+    const sched = data.schedule || [];
+    const body = document.getElementById('inspFSBody');
+
+    // Master toggle section
+    const masterBlock = `
+      <div style="background:${comm.fines_enabled ? '#dcfce7' : '#f1f5f9'}; border:1px solid ${comm.fines_enabled ? '#bbf7d0' : '#d0d7de'}; border-radius:10px; padding:14px; margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+          <div>
+            <div style="font-size:13px; font-weight:700; color:#1A3050; letter-spacing:0.04em; text-transform:uppercase;">Community-wide fine enforcement</div>
+            <div style="font-size:14px; margin-top:6px; color:${comm.fines_enabled ? '#166534' : '#475569'};">
+              <strong>${comm.fines_enabled ? '✓ ENABLED' : '⏸ PAUSED'}</strong>
+              ${comm.fines_enabled_set_by_board_date ? ` · set ${new Date(comm.fines_enabled_set_by_board_date).toLocaleDateString()}` : ''}
+              ${comm.fines_enabled_board_minutes_ref ? ` · board ref: ${escapeHtml(comm.fines_enabled_board_minutes_ref)}` : ''}
+            </div>
+            ${!comm.fines_enabled && comm.fines_disabled_reason ? `<div style="font-size:12px; color:#64748b; margin-top:4px;">Reason: ${escapeHtml(comm.fines_disabled_reason)}</div>` : ''}
+          </div>
+          <button onclick="inspFineToggleCommunity(${!comm.fines_enabled})" style="background:${comm.fines_enabled ? '#fff' : '#16a34a'}; color:${comm.fines_enabled ? '#b91c1c' : '#fff'}; border:1px solid ${comm.fines_enabled ? '#fecaca' : '#16a34a'}; padding:8px 16px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">
+            ${comm.fines_enabled ? '⏸ Pause fines' : '▶ Enable fines'}
+          </button>
+        </div>
+        ${comm.fines_enabled ? '' : '<div style="margin-top:10px; padding:8px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; font-size:11.5px; color:#92400e;">While paused, certified §209 cure-expiry will NOT auto-create fines. Staff can still manually assess fines with board approval reference (override workflow on each violation).</div>'}
+      </div>`;
+
+    // Schedule rows — per category, only show ones with config OR allow setting up
+    const rowsHtml = sched.map((s) => {
+      const hasSchedule = s.source_row !== 'no_schedule';
+      const isCommDefault = s.source_row === 'community_default';
+      const effective = s.effective_fines_enabled;
+      return `<tr style="border-bottom:1px solid #f1f5f9;">
+        <td style="padding:8px 10px; font-weight:600; color:#1A3050;">${escapeHtml(s.category_label)}</td>
+        <td style="padding:8px 10px; text-align:center;">
+          ${effective
+            ? '<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">ENABLED</span>'
+            : '<span style="background:#f1f5f9; color:#64748b; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">' + (hasSchedule ? 'DISABLED' : 'NO SCHEDULE') + '</span>'}
+        </td>
+        <td style="padding:8px 10px; text-align:right; color:#475569;">${s.first_offense_amount != null ? '$' + Number(s.first_offense_amount).toFixed(2) : '—'}</td>
+        <td style="padding:8px 10px; text-align:right; color:#475569;">${s.second_offense_amount != null ? '$' + Number(s.second_offense_amount).toFixed(2) : '—'}</td>
+        <td style="padding:8px 10px; text-align:right; color:#475569;">${s.third_offense_amount != null ? '$' + Number(s.third_offense_amount).toFixed(2) : '—'}</td>
+        <td style="padding:8px 10px; text-align:right; color:#475569;">${s.recurring_offense_amount != null ? '$' + Number(s.recurring_offense_amount).toFixed(2) : '—'}</td>
+        <td style="padding:8px 10px; font-size:10.5px; color:${isCommDefault ? '#92400e' : '#64748b'};">${isCommDefault ? 'community default' : (hasSchedule ? 'category-specific' : '—')}</td>
+        <td style="padding:8px 10px; text-align:right;">
+          <button onclick="inspFineRowEdit('${s.category_id}', '${escapeHtml(s.category_label)}')" style="background:#1A3050; color:#fff; border:none; padding:4px 11px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">Edit</button>
+        </td>
+      </tr>`;
+    }).join('');
+
+    body.innerHTML = masterBlock + `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <div>
+          <div style="font-size:12.5px; font-weight:700; color:#1A3050; text-transform:uppercase; letter-spacing:0.04em;">Per-category schedule</div>
+          <div style="font-size:11.5px; color:#64748b; margin-top:3px;">Set the community default row (covers all categories) and/or override per category.</div>
+        </div>
+        <button onclick="inspFineRowEdit(null, 'Community default — all categories')" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">⚙ Set community default</button>
+      </div>
+      <div style="overflow-x:auto;">
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead><tr style="background:#f8fafc; color:#64748b;">
+            <th style="text-align:left; padding:7px 10px;">Category</th>
+            <th style="text-align:center; padding:7px 10px;">Status</th>
+            <th style="text-align:right; padding:7px 10px;">1st</th>
+            <th style="text-align:right; padding:7px 10px;">2nd</th>
+            <th style="text-align:right; padding:7px 10px;">3rd</th>
+            <th style="text-align:right; padding:7px 10px;">4th+</th>
+            <th style="text-align:left; padding:7px 10px;">Source</th>
+            <th style="text-align:right; padding:7px 10px;"></th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      </div>`;
+  }
+
+  async function inspFineToggleCommunity(enable) {
+    if (enable) {
+      const ref = prompt('Board minutes reference for enabling fines (e.g., "Quail Ridge 2026-05-15 Board Meeting Resolution 2026-03"):');
+      if (!ref || !ref.trim()) {
+        if (ref !== null) alert('Board reference is required to enable fines.');
+        return;
+      }
+      const dateStr = prompt('Board vote date (YYYY-MM-DD), or leave blank for today:') || '';
+      try {
+        const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/community-toggle', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fines_enabled: true, board_minutes_ref: ref.trim(), board_vote_date: dateStr || null }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        inspFineScheduleLoad();
+      } catch (e) { alert('Failed: ' + e.message); }
+    } else {
+      const reason = prompt('Reason for pausing fines (e.g., "Board declined to authorize fine enforcement"):') || '';
+      if (!reason && !confirm('Pause fines with no reason recorded? (Recommended to add a reason for the audit trail.)')) return;
+      try {
+        const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/community-toggle', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ fines_enabled: false, disabled_reason: reason || null }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        inspFineScheduleLoad();
+      } catch (e) { alert('Failed: ' + e.message); }
+    }
+  }
+
+  async function inspFineRowEdit(categoryId, categoryLabel) {
+    // Simple sequential-prompt edit. UI can be replaced with a proper form later.
+    const enabledStr = prompt(`Edit fine schedule for: ${categoryLabel}\n\n1. ENABLED — fines auto-fire when cure expires\n2. DISABLED — no auto-fines for this category\n\nEnter 1 or 2:`);
+    if (!enabledStr) return;
+    const enabled = enabledStr.trim() === '1';
+    let amounts = { first: null, second: null, third: null, recurring: null };
+    if (enabled) {
+      const a1 = prompt('1st offense fine amount in dollars (blank or 0 for no fine at this offense):');
+      if (a1 === null) return;
+      const a2 = prompt('2nd offense fine amount:');
+      if (a2 === null) return;
+      const a3 = prompt('3rd offense fine amount:');
+      if (a3 === null) return;
+      const a4 = prompt('4th+ recurring fine amount (caps after 3rd):');
+      if (a4 === null) return;
+      amounts.first     = a1.trim() ? Number(a1) : null;
+      amounts.second    = a2.trim() ? Number(a2) : null;
+      amounts.third     = a3.trim() ? Number(a3) : null;
+      amounts.recurring = a4.trim() ? Number(a4) : null;
+    }
+    const ref = prompt('Board minutes / resolution reference (optional but recommended):') || '';
+    try {
+      const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/row', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          category_id: categoryId,  // null for community default
+          fines_enabled: enabled,
+          first_offense_amount:     amounts.first,
+          second_offense_amount:    amounts.second,
+          third_offense_amount:     amounts.third,
+          recurring_offense_amount: amounts.recurring,
+          board_minutes_ref: ref || null,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspFineScheduleLoad();
+    } catch (e) { alert('Save failed: ' + e.message); }
+  }
+
   async function inspLoadRecent() {
     const wrap = document.getElementById('inspRecentList');
     try {
@@ -9730,6 +10029,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         try { inspLoadRecent(); }      catch (e) { console.warn('[inspect] load recent', e); }
         try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
         try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
+        try { inspFineQueueLoad(); }   catch (e) { console.warn('[inspect] load fine queue', e); }
       }
       return result;
     };

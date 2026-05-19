@@ -1256,4 +1256,356 @@ router.post('/extract-doc-references/:community_id', express.json(), async (req,
   }
 });
 
+// ===========================================================================
+// FINE SCHEDULE + FINE ASSESSMENT (Phase 7c)
+// ---------------------------------------------------------------------------
+// Most TX HOAs have a fine schedule in their CC&Rs but the board has
+// historically declined to fine. The schema is built to default-OFF: a
+// community must explicitly turn fines_enabled = TRUE (with board minutes
+// reference) before auto-fines fire. Per-category overrides let boards
+// fine for some things but not others.
+// ===========================================================================
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/fine-schedule/:community_id
+//   Returns the resolved per-(category) schedule for the community plus the
+//   community-level toggle state. Backs the Fine Schedule UI.
+// ---------------------------------------------------------------------------
+router.get('/fine-schedule/:community_id', async (req, res) => {
+  try {
+    const communityId = req.params.community_id;
+    const { data: comm } = await supabase
+      .from('communities')
+      .select('id, name, fines_enabled, fines_enabled_set_by_board_date, fines_enabled_board_minutes_ref, fines_disabled_reason')
+      .eq('id', communityId)
+      .maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community not found' });
+
+    const { data: resolved, error: rErr } = await supabase
+      .from('v_resolved_fine_schedule')
+      .select('*')
+      .eq('community_id', communityId);
+    if (rErr) return res.status(500).json({ error: rErr.message });
+
+    res.json({ community: comm, schedule: resolved || [] });
+  } catch (err) {
+    console.error('[fine-schedule.get]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/enforcement/fine-schedule/:community_id/community-toggle
+//   Body: { fines_enabled, board_minutes_ref?, board_vote_date?, disabled_reason? }
+//   Master toggle for the community. Records who/when/why.
+// ---------------------------------------------------------------------------
+router.patch('/fine-schedule/:community_id/community-toggle', express.json(), async (req, res) => {
+  try {
+    const communityId = req.params.community_id;
+    const body = req.body || {};
+    if (typeof body.fines_enabled !== 'boolean') {
+      return res.status(400).json({ error: 'fines_enabled (boolean) required' });
+    }
+    const patch = {
+      fines_enabled: body.fines_enabled,
+    };
+    if (body.fines_enabled) {
+      patch.fines_enabled_board_minutes_ref = body.board_minutes_ref || null;
+      patch.fines_enabled_set_by_board_date = body.board_vote_date || new Date().toISOString().slice(0, 10);
+      patch.fines_disabled_reason = null;
+    } else {
+      patch.fines_disabled_reason = body.disabled_reason || 'Board has not authorized fine enforcement';
+    }
+    const { data, error } = await supabase
+      .from('communities')
+      .update(patch)
+      .eq('id', communityId)
+      .select('id, fines_enabled, fines_enabled_set_by_board_date, fines_enabled_board_minutes_ref, fines_disabled_reason')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, community: data });
+  } catch (err) {
+    console.error('[fine-schedule.community-toggle]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/enforcement/fine-schedule/:community_id/row
+//   Body: { category_id?: null|uuid, fines_enabled, first_offense_amount,
+//           second_offense_amount, third_offense_amount, recurring_offense_amount,
+//           board_minutes_ref?, board_vote_date?, notes? }
+//   Upserts a per-(category-or-default) schedule row. Time-bounded: ends the
+//   active row (if any) and inserts the new one so history is preserved.
+//   category_id = null means this is the COMMUNITY-DEFAULT row.
+// ---------------------------------------------------------------------------
+router.put('/fine-schedule/:community_id/row', express.json(), async (req, res) => {
+  try {
+    const communityId = req.params.community_id;
+    const body = req.body || {};
+    const categoryId = body.category_id || null;
+    const today = new Date().toISOString().slice(0, 10);
+
+    // End-date any active row for this (community, category) pair
+    let endQ = supabase.from('community_category_fine_schedule')
+      .update({ effective_end_date: today, updated_at: new Date().toISOString() })
+      .eq('community_id', communityId)
+      .is('effective_end_date', null);
+    if (categoryId) endQ = endQ.eq('category_id', categoryId);
+    else            endQ = endQ.is('category_id', null);
+    await endQ;
+
+    // Insert the new active row
+    const { data: created, error: cErr } = await supabase
+      .from('community_category_fine_schedule')
+      .insert({
+        community_id: communityId,
+        category_id: categoryId,
+        fines_enabled: body.fines_enabled !== false,   // default true if the row exists
+        first_offense_amount:     body.first_offense_amount   != null ? Number(body.first_offense_amount)   : null,
+        second_offense_amount:    body.second_offense_amount  != null ? Number(body.second_offense_amount)  : null,
+        third_offense_amount:     body.third_offense_amount   != null ? Number(body.third_offense_amount)   : null,
+        recurring_offense_amount: body.recurring_offense_amount != null ? Number(body.recurring_offense_amount) : null,
+        set_by_board_vote_date:   body.board_vote_date || null,
+        board_meeting_minutes_ref: body.board_minutes_ref || null,
+        notes: body.notes || null,
+      })
+      .select()
+      .single();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    res.json({ ok: true, schedule_row: created });
+  } catch (err) {
+    console.error('[fine-schedule.row]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Helper — resolve the fine amount for a (community, category, offense_count)
+// triple. Returns { amount, source, community_enabled, category_enabled } so
+// the engine and the manual-assess flow can both reason about it.
+// ---------------------------------------------------------------------------
+async function _resolveFineAmount(communityId, categoryId, offenseCount) {
+  const { data: rows } = await supabase
+    .from('v_resolved_fine_schedule')
+    .select('community_fines_enabled, effective_fines_enabled, first_offense_amount, second_offense_amount, third_offense_amount, recurring_offense_amount, source_row')
+    .eq('community_id', communityId)
+    .eq('category_id', categoryId);
+  if (!rows || rows.length === 0) {
+    return { amount: null, source: 'no_schedule', community_enabled: false, category_enabled: false };
+  }
+  const r = rows[0];
+  const amt = (offenseCount <= 1) ? r.first_offense_amount
+            : (offenseCount === 2) ? r.second_offense_amount
+            : (offenseCount === 3) ? r.third_offense_amount
+            : r.recurring_offense_amount;
+  return {
+    amount: amt,
+    source: r.source_row,
+    community_enabled: r.community_fines_enabled,
+    category_enabled:  r.effective_fines_enabled,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/assess-fine
+//   Body: { amount?, board_resolution_ref?, override_reason?, user_id? }
+//   Assesses a fine on a violation. If amount is omitted, looks up the
+//   schedule based on the offense count for this (property, category, 12mo).
+//   Required if fines are disabled: board_resolution_ref + override_reason
+//   (since this is a one-off override of board policy).
+//   Side effects:
+//     - violation.current_stage = 'fine_assessed'
+//     - violation.cure_period_ends_at = NULL (cure window has passed)
+//     - fine_posting_queue row created (status='queued')
+//     - interactions row created (type='internal_note' for the assessment record)
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/assess-fine', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const body = req.body || {};
+    const { data: v, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id, current_stage, quality_status')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
+    if (v.quality_status === 'superseded') {
+      return res.status(400).json({ error: 'violation is superseded; cannot assess fine on corrected record' });
+    }
+    if (v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
+      return res.status(400).json({ error: `violation is in terminal stage '${v.current_stage}'; cannot fine` });
+    }
+
+    // Count prior violations same property + category in last 12mo (this one counts as the current offense)
+    const cutoff = new Date(); cutoff.setMonth(cutoff.getMonth() - 12);
+    const { data: priors } = await supabase
+      .from('violations')
+      .select('id, opened_at, current_stage, quality_status, confidence_weight')
+      .eq('property_id', v.property_id)
+      .eq('primary_category_id', v.primary_category_id)
+      .gte('opened_at', cutoff.toISOString())
+      .neq('quality_status', 'superseded');
+    const offenseCount = (priors || []).filter((p) => p.id !== v.id).length + 1;
+
+    // Resolve amount + permission
+    const resolved = await _resolveFineAmount(v.community_id, v.primary_category_id, offenseCount);
+    let amount = (typeof body.amount === 'number' && body.amount > 0)
+      ? Number(body.amount)
+      : resolved.amount;
+
+    const finesAreOff = !resolved.community_enabled || !resolved.category_enabled;
+    const overriding = finesAreOff || (typeof body.amount === 'number' && body.amount !== resolved.amount);
+    if (overriding) {
+      if (!body.board_resolution_ref || !body.override_reason) {
+        return res.status(400).json({
+          error: 'board_resolution_ref + override_reason required when assessing fine that overrides schedule or with fines disabled',
+          schedule_state: resolved,
+        });
+      }
+    }
+    if (amount == null || amount <= 0) {
+      return res.status(400).json({
+        error: 'No fine amount could be resolved (no schedule for this category, and no explicit amount provided).',
+        schedule_state: resolved,
+        offense_count: offenseCount,
+      });
+    }
+
+    // Update violation
+    await supabase.from('violations').update({
+      current_stage: 'fine_assessed',
+      current_stage_started_at: new Date().toISOString(),
+      cure_period_ends_at: null,
+    }).eq('id', violationId);
+
+    // Insert fine queue entry
+    const { data: queueEntry, error: qErr } = await supabase
+      .from('fine_posting_queue')
+      .insert({
+        violation_id: violationId,
+        property_id: v.property_id,
+        community_id: v.community_id,
+        amount: amount,
+        assessed_by_user_id: body.user_id || null,
+        notes: overriding
+          ? `Override assessment. Board res: ${body.board_resolution_ref}. Reason: ${body.override_reason}`
+          : `Auto-assessed per ${resolved.source} schedule (offense ${offenseCount}).`,
+      })
+      .select()
+      .single();
+    if (qErr) return res.status(500).json({ error: 'fine_posting_queue insert failed: ' + qErr.message });
+
+    // Audit interaction (internal note — not customer-facing)
+    await supabase.from('interactions').insert({
+      community_id: v.community_id,
+      property_id: v.property_id,
+      violation_id: violationId,
+      type: 'internal_note',
+      direction: 'internal',
+      subject: `Fine assessed: $${amount.toFixed(2)} (offense #${offenseCount})`,
+      content: overriding
+        ? `Override assessment. Board resolution: ${body.board_resolution_ref}. Reason: ${body.override_reason}. Source: ${resolved.source}.`
+        : `Auto-assessed per ${resolved.source} schedule.`,
+      sent_at: new Date().toISOString(),
+      status: 'sent',
+    });
+
+    res.json({
+      ok: true,
+      violation_id: violationId,
+      fine_amount: amount,
+      offense_count: offenseCount,
+      queue_entry_id: queueEntry.id,
+      schedule_state: resolved,
+      override: overriding,
+    });
+  } catch (err) {
+    console.error('[violations.assess-fine]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/fine-queue?community_id=&status=
+//   Lists fines in the posting queue. Default: queued + recently posted.
+// ---------------------------------------------------------------------------
+router.get('/fine-queue', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    const status = req.query.status || 'queued';
+    let q = supabase
+      .from('fine_posting_queue')
+      .select(`
+        id, violation_id, property_id, community_id, amount, status,
+        assessed_at, posted_to_vantaca_at, vantaca_charge_ref, notes,
+        violations:violation_id ( primary_category_id, current_stage,
+          enforcement_categories ( label ) ),
+        communities:community_id ( name )
+      `)
+      .order('assessed_at', { ascending: false })
+      .limit(200);
+    if (communityId) q = q.eq('community_id', communityId);
+    if (status !== 'all') q = q.eq('status', status);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Fetch property addresses in one round trip
+    const propIds = [...new Set((data || []).map((d) => d.property_id))];
+    let propMap = new Map();
+    if (propIds.length > 0) {
+      const { data: props } = await supabase
+        .from('v_current_property_owners')
+        .select('property_id, street_address, unit, owner_name, owner_mailing_address')
+        .in('property_id', propIds);
+      (props || []).forEach((p) => propMap.set(p.property_id, p));
+    }
+    const enriched = (data || []).map((q) => ({
+      ...q,
+      property: propMap.get(q.property_id) || null,
+      category_label: q.violations && q.violations.enforcement_categories
+        && q.violations.enforcement_categories.label,
+    }));
+    res.json({ queue: enriched });
+  } catch (err) {
+    console.error('[fine-queue.list]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PATCH /api/enforcement/fine-queue/:id
+//   Body: { status, vantaca_charge_ref?, notes? }
+//   Mark a queued fine as posted to Vantaca (status='posted') or reversed.
+// ---------------------------------------------------------------------------
+router.patch('/fine-queue/:id', express.json(), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const body = req.body || {};
+    const allowedStatuses = ['queued', 'posted', 'reversed', 'error'];
+    if (body.status && !allowedStatuses.includes(body.status)) {
+      return res.status(400).json({ error: 'invalid status' });
+    }
+    const patch = { updated_at: new Date().toISOString() };
+    if (body.status) {
+      patch.status = body.status;
+      if (body.status === 'posted') patch.posted_to_vantaca_at = new Date().toISOString();
+    }
+    if (body.vantaca_charge_ref !== undefined) patch.vantaca_charge_ref = body.vantaca_charge_ref;
+    if (body.notes !== undefined) patch.notes = body.notes;
+    if (body.user_id) patch.posted_by_user_id = body.user_id;
+    const { data, error } = await supabase
+      .from('fine_posting_queue')
+      .update(patch)
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, queue_entry: data });
+  } catch (err) {
+    console.error('[fine-queue.patch]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };
