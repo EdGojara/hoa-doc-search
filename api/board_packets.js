@@ -3305,8 +3305,13 @@ router.get('/:id/pdf', async (req, res) => {
 
     // Build the preview URL — Puppeteer visits this server's own preview
     // endpoint so iframes (which reference relative URLs) resolve correctly.
-    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    // Force HTTPS in production. On localhost we'll use whatever the
+    // request came in as.
     const host = req.get('host');
+    const isLocal = /^localhost(:|$)/.test(host) || /^127\./.test(host);
+    const proto = isLocal
+      ? ((req.headers['x-forwarded-proto'] || req.protocol || 'http').split(',')[0].trim())
+      : 'https';
     const previewUrl = `${proto}://${host}/api/board-packets/${req.params.id}/preview`;
 
     browser = await puppeteer.launch({
@@ -3316,45 +3321,40 @@ router.get('/:id/pdf', async (req, res) => {
     const page = await browser.newPage();
     await page.setViewport({ width: 1240, height: 1600, deviceScaleFactor: 1 });
 
-    // Puppeteer can't pass the staff auth gate without a valid session
-    // cookie — without one it lands on /staff-login.html and the PDF
-    // would render the login page instead of the packet. Mint a short-
-    // lived cookie using the same HMAC scheme server.js uses
-    // (bedrock_gate = ts.sig). Belt-and-suspenders: set it via Puppeteer's
-    // cookie API (url-form) AND via setExtraHTTPHeaders Cookie, so both
-    // top-level navigation and same-origin iframe requests carry auth.
+    // Mint a valid staff_gate token using the same HMAC scheme server.js
+    // implements (HMAC-SHA256 over Date.now() with STAFF_GATE_SECRET
+    // falling back to STAFF_PASSWORD). Send it via setExtraHTTPHeaders so
+    // every Puppeteer-originated request — initial nav AND iframe loads —
+    // carries the Cookie header. This is the most reliable path; the
+    // previous setCookie API call had subtle behavior differences across
+    // Puppeteer versions.
     const staffPassword = process.env.STAFF_PASSWORD;
     if (staffPassword) {
       const secret = process.env.STAFF_GATE_SECRET || staffPassword;
       const ts = String(Date.now());
       const sig = crypto.createHmac('sha256', secret).update(ts).digest('hex');
       const token = `${ts}.${sig}`;
-
-      await page.setCookie({
-        name: 'bedrock_gate',
-        value: token,
-        url: previewUrl,
-        path: '/',
-        httpOnly: true,
-        secure: proto === 'https',
-        sameSite: 'Lax',
-      });
+      // Cookie value is encoded the same way server.js writes it (via
+      // encodeURIComponent at write, decodeURIComponent at read).
+      const encodedToken = encodeURIComponent(token);
       await page.setExtraHTTPHeaders({
-        'Cookie': `bedrock_gate=${token}`,
+        'Cookie': `bedrock_gate=${encodedToken}`,
       });
-      console.log(`[board_packets] minted staff gate cookie for puppeteer (ts=${ts})`);
+      console.log(`[board_packets] minted staff gate token for puppeteer (ts=${ts}, secret_source=${process.env.STAFF_GATE_SECRET ? 'STAFF_GATE_SECRET' : 'STAFF_PASSWORD'})`);
     } else {
-      console.log('[board_packets] STAFF_PASSWORD unset, skipping cookie mint');
+      console.log('[board_packets] STAFF_PASSWORD unset, skipping cookie mint (gate disabled)');
     }
 
-    await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 60000 });
-
-    // Quick sanity check — if Puppeteer ended up on the login page, the
-    // cookie didn't stick. Fail fast with a useful error instead of
-    // returning a PDF of the login screen.
+    const response = await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 60000 });
+    const status = response ? response.status() : 0;
     const finalUrl = page.url();
-    if (/\/staff-login\.html/.test(finalUrl)) {
-      throw new Error('staff_gate_blocked — puppeteer landed on login page despite cookie. Check STAFF_GATE_SECRET matches between sign + verify.');
+    console.log(`[board_packets] pdf goto: status=${status} finalUrl=${finalUrl}`);
+
+    // Fail-fast on auth bounce. If we ended up on the login page OR got
+    // a non-2xx response, return a clear error instead of producing a
+    // PDF of the login screen.
+    if (/\/staff-login\.html/.test(finalUrl) || (status && (status < 200 || status >= 400))) {
+      throw new Error(`Auth bounce: status=${status} finalUrl=${finalUrl}. The staff_gate cookie minted server-side did not validate. Check STAFF_GATE_SECRET / STAFF_PASSWORD env vars.`);
     }
 
     // Wait for the embed-mode section iframes to settle. Each one posts
