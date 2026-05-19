@@ -90,6 +90,21 @@ function resolveCommunityAssets(community) {
   };
 }
 
+// ----------------------------------------------------------------------------
+// Money + variance helpers used by the polished per-section renderers
+// ----------------------------------------------------------------------------
+function fmtMoney(n, opts = {}) {
+  if (n == null || Number.isNaN(Number(n))) return opts.dash || '—';
+  const negative = Number(n) < 0;
+  const abs = Math.abs(Number(n));
+  const out = abs.toLocaleString('en-US', { style: 'currency', currency: 'USD', minimumFractionDigits: opts.precision != null ? opts.precision : 2, maximumFractionDigits: opts.precision != null ? opts.precision : 2 });
+  return negative ? `(${out})` : out;
+}
+function pct(numerator, denominator) {
+  if (!denominator || Number(denominator) === 0) return null;
+  return (Number(numerator) / Number(denominator)) * 100;
+}
+
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -112,6 +127,264 @@ function fmtDateShort(d) {
     if (Number.isNaN(dt.getTime())) return String(d);
     return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
   } catch (_) { return String(d); }
+}
+
+// ============================================================================
+// PER-SECTION STANDALONE RENDERERS
+// ----------------------------------------------------------------------------
+// Each section can be previewed individually so operators see exactly what
+// the board will see before approving the packet. The renderer dispatches
+// on section_key — financial section gets the full polished treatment
+// (logo header, narrative callout, revenue/expense tables, budget variance,
+// cash card, "from our records" sources line). Other sections fall back
+// to a generic Bedrock-branded card.
+//
+// The "from our records" framing intentionally hides the mechanism (we don't
+// say "extracted from Vantaca PDF via AI vision" on the board-facing page —
+// to the board, this is Bedrock institutional data).
+// ============================================================================
+
+function renderSectionStandaloneHtml({ packet, section }) {
+  if (section.section_key === 'financials') {
+    return renderFinancialStatementsStandaloneHtml({ packet, section });
+  }
+  return renderGenericSectionStandaloneHtml({ packet, section });
+}
+
+// Shared HTML shell — header lockup (community logo + Bedrock cornerstone),
+// styles, footer. Body content slots in via the `bodyHtml` arg.
+function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F' }) {
+  const community = packet.community || {};
+  const assets = resolveCommunityAssets(community);
+  const hoaName = community.legal_name || (community.name ? `${community.name} Homeowners Association` : 'Your Association');
+  const periodLabel = packet.period_label || '';
+  const meetingDate = packet.meeting_date ? fmtDate(packet.meeting_date) : '';
+  const title = (section.template && section.template.display_name) || section.section_key;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>${esc(hoaName)} — ${esc(title)}</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --navy: #1F3A5F;
+    --navy-deep: #14283F;
+    --navy-tint: #EAF0F7;
+    --gold: #D4AF37;
+    --gold-tint: #FFFBEB;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-muted: #888;
+    --rule: #E5E7EB;
+    --paper: #ffffff;
+    --good: #166534;
+    --good-tint: #DCFCE7;
+    --bad: #B91C1C;
+    --bad-tint: #FEE2E2;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: #f4f5f7; color: var(--ink);
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-size: 14px; font-feature-settings: "tnum" 1; line-height: 1.55;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 880px; margin: 24px auto; background: var(--paper); border: 1px solid var(--rule); border-radius: 12px; overflow: hidden; box-shadow: 0 2px 12px rgba(15,23,42,0.06); }
+  .page-header { display: flex; align-items: center; gap: 14px; padding: 18px 28px; border-bottom: 2px solid ${accent}; background: linear-gradient(180deg, #fff 0%, #fafbfc 100%); }
+  .page-header .logo-box { width: 64px; height: 64px; flex-shrink: 0; display: flex; align-items: center; justify-content: center; background: #fff; border-radius: 8px; padding: 4px; }
+  .page-header .logo-box img { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .page-header .meta { flex: 1; min-width: 0; }
+  .page-header .hoa-name { font-size: 18px; font-weight: 700; color: var(--navy); line-height: 1.2; }
+  .page-header .sub { font-size: 12px; color: var(--ink-muted); margin-top: 3px; }
+  .page-header .br-mark { font-size: 11px; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.1em; }
+  .page-header .br-mark strong { color: var(--gold); font-weight: 800; }
+  .section-title { padding: 22px 28px 0 28px; }
+  .section-title h1 { font-size: 26px; font-weight: 800; color: var(--navy); margin: 0 0 4px; letter-spacing: -0.02em; }
+  .section-title .period { font-size: 13px; color: var(--ink-muted); }
+  .section-body { padding: 18px 28px 28px; }
+  .narrative { background: var(--gold-tint); border-left: 4px solid var(--gold); padding: 14px 18px; border-radius: 0 8px 8px 0; margin: 18px 0; font-size: 14px; color: var(--ink); line-height: 1.65; }
+  .kpi-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 18px 0; }
+  .kpi-card { background: var(--navy-tint); border: 1px solid var(--rule); border-radius: 8px; padding: 14px 16px; }
+  .kpi-card .label { font-size: 11px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.08em; }
+  .kpi-card .value { font-size: 22px; font-weight: 800; color: var(--navy-deep); margin-top: 6px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+  .kpi-card .delta { font-size: 11px; font-weight: 600; margin-top: 4px; }
+  .kpi-card .delta.good { color: var(--good); }
+  .kpi-card .delta.bad { color: var(--bad); }
+  .data-table { width: 100%; border-collapse: collapse; margin: 14px 0; font-size: 13px; }
+  .data-table thead th { background: var(--navy-tint); color: var(--navy); font-weight: 700; text-align: left; padding: 8px 10px; border-bottom: 2px solid var(--navy); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .data-table thead th.num { text-align: right; }
+  .data-table tbody td { padding: 7px 10px; border-bottom: 1px solid var(--rule); font-variant-numeric: tabular-nums; }
+  .data-table tbody td.num { text-align: right; }
+  .data-table tbody tr:nth-child(even) { background: #fafbfc; }
+  .data-table tfoot td { padding: 9px 10px; border-top: 2px solid var(--navy); font-weight: 800; color: var(--navy); background: var(--navy-tint); font-variant-numeric: tabular-nums; }
+  .data-table tfoot td.num { text-align: right; }
+  .variance-bar { display: inline-block; height: 6px; min-width: 4px; border-radius: 3px; vertical-align: middle; margin-left: 6px; }
+  .table-h2 { font-size: 14px; font-weight: 700; color: var(--navy); text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 6px; }
+  .sources { font-size: 11px; color: var(--ink-muted); font-style: italic; padding: 14px 28px 22px; border-top: 1px dashed var(--rule); background: #fafbfc; }
+  .sources strong { color: var(--ink-soft); font-style: normal; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header class="page-header">
+    <div class="logo-box">
+      ${assets.logo ? `<img src="${esc(assets.logo)}" alt="${esc(hoaName)}">` : `<div style="color:var(--navy); font-weight:800; font-size:11px; text-align:center;">${esc(community.name || '')}</div>`}
+    </div>
+    <div class="meta">
+      <div class="hoa-name">${esc(hoaName)}</div>
+      <div class="sub">${esc(periodLabel)}${meetingDate ? ` · Meeting ${esc(meetingDate)}` : ''}</div>
+    </div>
+    <div class="br-mark">Managed by <strong>Bedrock</strong></div>
+  </header>
+  <div class="section-title">
+    <h1>${esc(title)}</h1>
+    ${(section.template && section.template.description) ? `<div class="period">${esc(section.template.description)}</div>` : ''}
+  </div>
+  <div class="section-body">
+    ${bodyHtml}
+  </div>
+  <div class="sources">
+    Reflects current Association financial records as of ${esc(periodLabel)}. Maintained by ${esc(BRAND.service.legal)} on behalf of the ${esc(community.name || 'Association')} Board of Directors.
+  </div>
+</div>
+</body>
+</html>`;
+}
+
+function renderFinancialStatementsStandaloneHtml({ packet, section }) {
+  const d = section.input_data || {};
+  const lineItems = Array.isArray(d.line_items) ? d.line_items : [];
+  const narrative = d.narrative || null;
+
+  // KPI cards from top-level fields the extractor produces
+  const netIncome = d.net_income != null ? Number(d.net_income) : null;
+  const totalRev = d.total_revenue != null ? Number(d.total_revenue) : null;
+  const totalExp = d.total_expense != null ? Number(d.total_expense) : null;
+  const cashOp = d.cash_operating != null ? Number(d.cash_operating) : null;
+  const cashRes = d.cash_reserves != null ? Number(d.cash_reserves) : null;
+
+  // Net-income variance vs. budgeted (if a budgeted net-income row exists,
+  // pull from line_items; else just show actual)
+  const revenueRows = lineItems.filter((x) => x && x.type === 'revenue');
+  const expenseRows = lineItems.filter((x) => x && x.type === 'expense');
+  const sumActual = (rows) => rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
+  const sumBudget = (rows) => rows.reduce((s, r) => s + (Number(r.budget) || 0), 0);
+
+  const revTotal = totalRev != null ? totalRev : sumActual(revenueRows);
+  const revBudget = sumBudget(revenueRows);
+  const expTotal = totalExp != null ? totalExp : sumActual(expenseRows);
+  const expBudget = sumBudget(expenseRows);
+  const niBudget = revBudget - expBudget;
+  const niActual = netIncome != null ? netIncome : (revTotal - expTotal);
+  const niVariance = niActual - niBudget;
+  const niVarPct = pct(niVariance, Math.abs(niBudget || 0));
+
+  // Per-row variance + visual bar (relative to the largest absolute variance
+  // in the set, so the eye can compare).
+  function rowsWithVariance(rows) {
+    const maxAbs = rows.reduce((m, r) => Math.max(m, Math.abs((Number(r.amount) || 0) - (Number(r.budget) || 0))), 1);
+    return rows.map((r) => {
+      const amt = Number(r.amount) || 0;
+      const bud = r.budget != null ? Number(r.budget) : null;
+      const variance = bud != null ? amt - bud : null;
+      const barW = bud != null ? Math.min(60, Math.round((Math.abs(variance) / maxAbs) * 60)) : 0;
+      const varianceFavorable = variance != null && (
+        (r.type === 'revenue' && variance >= 0) || (r.type === 'expense' && variance <= 0)
+      );
+      return { ...r, _amt: amt, _bud: bud, _variance: variance, _barW: barW, _favorable: varianceFavorable };
+    });
+  }
+
+  function tableHtml(title, rows, totalActual, totalBudget) {
+    if (!rows.length) return '';
+    const withVar = rowsWithVariance(rows);
+    return `
+      <div class="table-h2">${esc(title)}</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Account</th>
+          <th class="num">Actual</th>
+          <th class="num">Budget</th>
+          <th class="num">Variance</th>
+        </tr></thead>
+        <tbody>
+          ${withVar.map((r) => `
+            <tr>
+              <td>${esc(r.account || '(unnamed)')}</td>
+              <td class="num">${fmtMoney(r._amt)}</td>
+              <td class="num">${r._bud != null ? fmtMoney(r._bud) : '—'}</td>
+              <td class="num" style="color:${r._variance == null ? 'var(--ink-muted)' : (r._favorable ? 'var(--good)' : 'var(--bad)')};">
+                ${r._variance == null ? '—' : fmtMoney(r._variance)}
+                ${r._barW ? `<span class="variance-bar" style="background:${r._favorable ? 'var(--good)' : 'var(--bad)'}; width:${r._barW}px;"></span>` : ''}
+              </td>
+            </tr>`).join('')}
+        </tbody>
+        <tfoot><tr>
+          <td>Total ${esc(title.toLowerCase())}</td>
+          <td class="num">${fmtMoney(totalActual)}</td>
+          <td class="num">${totalBudget ? fmtMoney(totalBudget) : '—'}</td>
+          <td class="num" style="color:${(totalActual - (totalBudget || 0)) === 0 ? 'var(--ink)' : (((title === 'Revenue' ? 1 : -1) * (totalActual - (totalBudget || 0))) >= 0 ? 'var(--good)' : 'var(--bad)')};">${totalBudget ? fmtMoney(totalActual - totalBudget) : '—'}</td>
+        </tr></tfoot>
+      </table>
+    `;
+  }
+
+  const niDeltaClass = niVariance == null ? '' : (niVariance >= 0 ? 'good' : 'bad');
+  const niDeltaSign = niVariance == null ? '' : (niVariance >= 0 ? '+' : '');
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="label">Net income (YTD)</div>
+        <div class="value">${fmtMoney(niActual, { precision: 0 })}</div>
+        ${niBudget ? `<div class="delta ${niDeltaClass}">${niDeltaSign}${fmtMoney(niVariance, { precision: 0 })} vs. budget${niVarPct != null ? ` (${niDeltaSign}${niVarPct.toFixed(1)}%)` : ''}</div>` : ''}
+      </div>
+      <div class="kpi-card">
+        <div class="label">Total revenue</div>
+        <div class="value">${fmtMoney(revTotal, { precision: 0 })}</div>
+        ${revBudget ? `<div class="delta">Budgeted ${fmtMoney(revBudget, { precision: 0 })}</div>` : ''}
+      </div>
+      <div class="kpi-card">
+        <div class="label">Total expense</div>
+        <div class="value">${fmtMoney(expTotal, { precision: 0 })}</div>
+        ${expBudget ? `<div class="delta">Budgeted ${fmtMoney(expBudget, { precision: 0 })}</div>` : ''}
+      </div>
+      ${(cashOp != null || cashRes != null) ? `
+        <div class="kpi-card">
+          <div class="label">Cash position</div>
+          <div class="value">${fmtMoney((cashOp || 0) + (cashRes || 0), { precision: 0 })}</div>
+          <div class="delta">${cashOp != null ? `Operating ${fmtMoney(cashOp, { precision: 0 })}` : ''}${cashOp != null && cashRes != null ? ' · ' : ''}${cashRes != null ? `Reserves ${fmtMoney(cashRes, { precision: 0 })}` : ''}</div>
+        </div>` : ''}
+    </div>
+
+    ${tableHtml('Revenue', revenueRows, revTotal, revBudget)}
+    ${tableHtml('Expenses', expenseRows, expTotal, expBudget)}
+  `;
+
+  return renderStandalonePage({ packet, section, bodyHtml, accent: '#1F3A5F' });
+}
+
+function renderGenericSectionStandaloneHtml({ packet, section }) {
+  const d = section.input_data || {};
+  const narrative = (d.narrative || d.text || '').trim();
+  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative).replace(/\n+/g, '<br><br>')}</div>` : ''}
+    ${watchouts.length ? `
+      <div class="table-h2">🚩 Watchouts</div>
+      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
+        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
+      </ul>` : ''}
+    ${!narrative && !watchouts.length ? `<p style="color:var(--ink-muted); font-style:italic;">This section is in progress. Upload the source PDF or run AI generation to populate the polished view.</p>` : ''}
+  `;
+  return renderStandalonePage({ packet, section, bodyHtml });
 }
 
 // ----------------------------------------------------------------------------
@@ -1084,6 +1357,53 @@ router.get('/:id/preview', async (req, res) => {
     // alongside the meeting date. Period label alone is cleaner.
     let volume = null;
     const html = renderPacketPreviewHtml({ packet, sections: sections || [], volume });
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(html);
+  } catch (err) {
+    console.error('[board_packets] preview failed:', err.message);
+    res.status(500).send(`<h1>Preview failed</h1><pre>${String(err.message).replace(/</g,'&lt;')}</pre>`);
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/board-packets/:id/sections/:section_key/preview
+// Renders ONE section as a standalone Bedrock-branded HTML page. Operator
+// uses this to spot-check what the board will see before approving the
+// final packet. Per-section preview is the right place to review the
+// AI-voiced commentary on Financials / AR Aging / DRV before lock-in.
+// ----------------------------------------------------------------------------
+router.get('/:id/sections/:section_key/preview', async (req, res) => {
+  try {
+    const { data: packet } = await supabase
+      .from('board_packets')
+      .select('*, community:communities(id, name, legal_name)')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!packet) return res.status(404).send('<h1>Packet not found</h1>');
+
+    if (packet.community && packet.community.id) {
+      try {
+        const { data: logoRow } = await supabase
+          .from('communities').select('logo_storage_path')
+          .eq('id', packet.community.id).maybeSingle();
+        if (logoRow && logoRow.logo_storage_path) {
+          const { data: signed } = await supabase.storage
+            .from('documents').createSignedUrl(logoRow.logo_storage_path, 60 * 60 * 24);
+          if (signed) packet.community.logo_signed_url = signed.signedUrl;
+        }
+      } catch (_) {}
+    }
+
+    const { data: section } = await supabase
+      .from('board_packet_sections')
+      .select('*, template:board_packet_section_templates(display_name, description)')
+      .eq('packet_id', req.params.id)
+      .eq('section_key', req.params.section_key)
+      .maybeSingle();
+    if (!section) return res.status(404).send('<h1>Section not found</h1>');
+
+    const html = renderSectionStandaloneHtml({ packet, section });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
   } catch (err) {

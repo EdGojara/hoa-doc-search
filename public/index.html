@@ -17629,12 +17629,16 @@ ${questionsPage}
     if (!wrap || !packetsCurrentSections) return;
     wrap.innerHTML = packetsCurrentSections.map(s => {
       const t = s.template || {};
+      const isAnalyzing = s.status === 'in_progress';
       const statusColor = s.status === 'ready' ? '#2e7d32' :
                           s.status === 'pending' ? '#aaa' :
-                          s.status === 'error' ? '#d32f2f' : '#888';
+                          s.status === 'error' ? '#d32f2f' :
+                          isAnalyzing ? '#b45309' : '#888';
       const statusBg = s.status === 'ready' ? '#dff5e0' :
                        s.status === 'pending' ? '#f0f0f0' :
-                       s.status === 'error' ? '#fbe9e7' : '#f5f5f5';
+                       s.status === 'error' ? '#fbe9e7' :
+                       isAnalyzing ? '#fef3c7' : '#f5f5f5';
+      const statusLabel = isAnalyzing ? '⏳ analyzing…' : s.status;
       const isSkipped = s.status === 'skipped';
       const inputOptions = [];
       if (!isSkipped) {
@@ -17685,23 +17689,53 @@ ${questionsPage}
         ? `<div class="packets-drop-hint" style="display:none; pointer-events:none; position:absolute; inset:0; background:rgba(212,175,55,0.18); border:2px dashed #D4AF37; border-radius:6px; align-items:center; justify-content:center; color:#1A3050; font-weight:700; font-size:13px;">📥 Drop PDF here to extract this section</div>`
         : '';
 
-      return `<div data-section-card="${s.section_key}" style="position:relative; border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}" ${dropAttrs}>
+      return `<div data-section-card="${s.section_key}" data-section-status="${s.status}" style="position:relative; border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}" ${dropAttrs}>
         <div style="display:flex; justify-content:space-between; align-items:center;">
           <div>
             <strong style="color:#315A87;">${escapeHtml(t.display_name || s.section_key)}</strong>
-            <span style="background:${statusBg}; color:${statusColor}; padding:1px 8px; border-radius:10px; font-size:10px; margin-left:8px; font-weight:600;">${escapeHtml(s.status)}</span>
-            ${!isSkipped ? `<span style="background:#f5f5f5; color:#666; padding:1px 6px; border-radius:3px; font-size:10px; margin-left:4px;">${escapeHtml(s.input_mode)}</span>` : ''}
+            <span style="background:${statusBg}; color:${statusColor}; padding:1px 8px; border-radius:10px; font-size:10px; margin-left:8px; font-weight:600;">${escapeHtml(statusLabel)}</span>
+            ${!isSkipped && !isAnalyzing ? `<span style="background:#f5f5f5; color:#666; padding:1px 6px; border-radius:3px; font-size:10px; margin-left:4px;">${escapeHtml(s.input_mode)}</span>` : ''}
           </div>
           <div style="display:flex; gap:4px; flex-wrap:wrap; justify-content:flex-end;">
             ${inputOptions.join('')}
-            ${hasData && !isSkipped ? `<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsViewSection('${s.section_key}')">View</button>` : ''}
+            ${hasData && !isSkipped ? `<button class="secondary-btn" style="font-size:11px; padding:3px 8px;" onclick="packetsViewSection('${s.section_key}')">View raw</button>` : ''}
+            ${hasData && !isSkipped ? `<a class="secondary-btn" style="font-size:11px; padding:3px 8px; text-decoration:none; display:inline-block;" target="_blank" href="/api/board-packets/${packetsCurrentPacketId}/sections/${s.section_key}/preview">👁 Preview</a>` : ''}
           </div>
         </div>
         ${t.description ? `<div style="color:#888; font-size:11px; margin-top:4px;">${escapeHtml(t.description)}</div>` : ''}
+        ${isAnalyzing ? `<div style="margin-top:8px; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; padding:8px 12px; font-size:12px; color:#78350f; display:flex; align-items:center; gap:8px;"><span style="display:inline-block; width:12px; height:12px; border:2px solid #d4af37; border-top-color:transparent; border-radius:50%; animation:spin 0.8s linear infinite;"></span><span><strong>Analyzing…</strong> extracting structured data and writing Ed-voiced commentary. Usually 10–30 seconds. The page auto-refreshes when it's done.</span></div>` : ''}
         ${previewBlock}
         ${dropHint}
       </div>`;
     }).join('');
+    packetsMaybeStartPoll();
+  }
+
+  // While any section is mid-extraction, the page polls every 3s until
+  // they all settle. Avoids the operator staring at a spinner with no
+  // feedback for 30 seconds, and avoids them clicking Refresh manually.
+  let _packetsPollTimer = null;
+  function packetsMaybeStartPoll() {
+    const anyInProgress = (packetsCurrentSections || []).some((s) => s.status === 'in_progress');
+    if (anyInProgress && !_packetsPollTimer) {
+      _packetsPollTimer = setInterval(async () => {
+        if (!packetsCurrentPacketId) {
+          clearInterval(_packetsPollTimer); _packetsPollTimer = null; return;
+        }
+        try {
+          const r = await fetch(`/api/board-packets/${packetsCurrentPacketId}`);
+          const j = await r.json();
+          if (j.sections) {
+            packetsCurrentSections = j.sections;
+            packetsRenderSections();
+          }
+          const stillRunning = (packetsCurrentSections || []).some((s) => s.status === 'in_progress');
+          if (!stillRunning) { clearInterval(_packetsPollTimer); _packetsPollTimer = null; }
+        } catch (_) { /* keep polling */ }
+      }, 3000);
+    } else if (!anyInProgress && _packetsPollTimer) {
+      clearInterval(_packetsPollTimer); _packetsPollTimer = null;
+    }
   }
 
   // Drag-over: MUST call preventDefault unconditionally for the drop
