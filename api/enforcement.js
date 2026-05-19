@@ -27,9 +27,13 @@
 // ============================================================================
 
 const express = require('express');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+const { parseVantacaViolations } = require('../lib/enforcement/vantaca_violation_import');
+
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -1604,6 +1608,168 @@ router.patch('/fine-queue/:id', express.json(), async (req, res) => {
     res.json({ ok: true, queue_entry: data });
   } catch (err) {
     console.error('[fine-queue.patch]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// BUNDLE 4 — Vantaca historical violation import
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/vantaca-violations/preview
+//   multipart: file=<csv|xlsx>, community_id=<uuid>
+//   Parses + resolves property + category for each row WITHOUT writing.
+//   Returns diff: { resolved, unresolved_property, unresolved_category,
+//                   category_label_mapping (slug → label), sample_rows }
+//
+// POST /api/enforcement/vantaca-violations/apply
+//   JSON body: { community_id, rows: [...] }
+//   Imports the resolved rows as violations with source='vantaca_import',
+//   confidence_weight=0.5, quality_status='unreviewed'. Cured rows get
+//   resolved_at + resolved_via set. Skips rows already imported (dedup on
+//   (property_id, primary_category_id, opened_at)).
+// ===========================================================================
+router.post('/vantaca-violations/preview', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file required' });
+    const communityId = req.body.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    const { rows, mapping, headers, errors } = parseVantacaViolations(req.file.buffer, req.file.originalname);
+    if ((!rows || rows.length === 0) && errors && errors.length > 0) {
+      return res.status(400).json({ error: errors.join(' '), headers, mapping });
+    }
+
+    // Fetch properties + categories for this community to resolve refs
+    const { data: props } = await supabase
+      .from('properties')
+      .select('id, street_address, unit, vantaca_account_id')
+      .eq('community_id', communityId);
+    const byAcct = new Map();
+    const byStreet = new Map();
+    (props || []).forEach((p) => {
+      if (p.vantaca_account_id) byAcct.set(String(p.vantaca_account_id), p);
+      if (p.street_address) byStreet.set(p.street_address.toLowerCase().trim(), p);
+    });
+
+    const { data: cats } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug, label');
+    // Build flexible category matcher
+    const catBySlug = new Map();
+    const catByLabel = new Map();
+    (cats || []).forEach((c) => {
+      catBySlug.set(c.slug.toLowerCase(), c);
+      catByLabel.set(c.label.toLowerCase(), c);
+    });
+    const resolveCategory = (rawLabel) => {
+      if (!rawLabel) return null;
+      const s = String(rawLabel).toLowerCase().trim();
+      // 1. Exact label
+      if (catByLabel.has(s)) return catByLabel.get(s);
+      // 2. Substring match (label contains s OR s contains label)
+      for (const [label, c] of catByLabel) {
+        if (label.includes(s) || s.includes(label)) return c;
+      }
+      // 3. Slug substring match
+      for (const [slug, c] of catBySlug) {
+        if (slug.replace(/_/g, ' ').includes(s) || s.includes(slug.replace(/_/g, ' '))) return c;
+      }
+      return null;
+    };
+
+    // Check for existing violations (dedup at apply time)
+    const { data: existingV } = await supabase
+      .from('violations')
+      .select('property_id, primary_category_id, opened_at')
+      .eq('community_id', communityId)
+      .eq('source', 'vantaca_import');
+    const existingKeys = new Set((existingV || []).map((v) =>
+      `${v.property_id}::${v.primary_category_id}::${(v.opened_at || '').slice(0, 10)}`
+    ));
+
+    const resolved = [];
+    const unresolved_property = [];
+    const unresolved_category = [];
+    const duplicates = [];
+
+    for (const row of rows) {
+      let prop = null;
+      if (row.vantaca_account_id) prop = byAcct.get(String(row.vantaca_account_id));
+      if (!prop && row.street_address) prop = byStreet.get(row.street_address.toLowerCase().trim());
+      if (!prop) { unresolved_property.push(row); continue; }
+      const cat = resolveCategory(row.category_label);
+      if (!cat) { unresolved_category.push({ ...row, property_id: prop.id }); continue; }
+      const dedupKey = `${prop.id}::${cat.id}::${row.opened_at}`;
+      if (existingKeys.has(dedupKey)) { duplicates.push({ ...row, property_id: prop.id, category_id: cat.id }); continue; }
+      resolved.push({
+        ...row,
+        property_id: prop.id,
+        property_street: prop.street_address,
+        category_id: cat.id,
+        category_resolved_label: cat.label,
+      });
+    }
+
+    res.json({
+      total_rows: rows.length,
+      mapping,
+      headers,
+      sample_rows: rows.slice(0, 5),
+      resolved_count: resolved.length,
+      unresolved_property_count: unresolved_property.length,
+      unresolved_category_count: unresolved_category.length,
+      duplicate_count: duplicates.length,
+      resolved,
+      unresolved_property: unresolved_property.slice(0, 50),  // cap for response size
+      unresolved_category: unresolved_category.slice(0, 50),
+      duplicates: duplicates.slice(0, 20),
+    });
+  } catch (err) {
+    console.error('[vantaca-violations.preview]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const communityId = body.community_id;
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    if (rows.length === 0) return res.json({ inserted: 0, skipped: 0 });
+
+    let inserted = 0;
+    let skipped = 0;
+    const errors = [];
+
+    for (const r of rows) {
+      if (!r.property_id || !r.category_id || !r.opened_at) { skipped += 1; continue; }
+      const insertRow = {
+        property_id: r.property_id,
+        community_id: communityId,
+        primary_category_id: r.category_id,
+        board_priority_at_open: 'standard',
+        current_stage: r.stage || 'courtesy_1',
+        current_stage_started_at: r.opened_at,
+        opened_at: r.opened_at,
+        resolved_at: r.resolved_at || null,
+        resolved_via: r.resolved_via || (r.resolved_at ? 'cured' : null),
+        resolved_notes: r.notes || null,
+        source: 'vantaca_import',
+        confidence_weight: 0.5,         // half-weight until reviewed
+        quality_status: 'unreviewed',
+        review_notes: 'Imported from Vantaca violations export. Needs verification.',
+      };
+      const { error } = await supabase.from('violations').insert(insertRow);
+      if (error) {
+        errors.push({ row: r._source_row, error: error.message });
+      } else {
+        inserted += 1;
+      }
+    }
+
+    res.json({ inserted, skipped, errors });
+  } catch (err) {
+    console.error('[vantaca-violations.apply]', err);
     res.status(500).json({ error: err.message });
   }
 });
