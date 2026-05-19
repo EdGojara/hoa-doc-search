@@ -372,10 +372,11 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
               cutoff.setMonth(cutoff.getMonth() - 12);
               const { data: priors } = await supabase
                 .from('violations')
-                .select('id, opened_at, primary_category_id, current_stage')
+                .select('id, opened_at, primary_category_id, current_stage, quality_status, confidence_weight, source')
                 .eq('property_id', resolvedPropertyId)
                 .eq('primary_category_id', categoryId)
-                .gte('opened_at', cutoff.toISOString());
+                .gte('opened_at', cutoff.toISOString())
+                .neq('quality_status', 'superseded');  // exclude corrected-out rows
 
               const decision = decideEscalation({
                 prior_violations: priors || [],
@@ -1034,7 +1035,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
     const [violationsRes, interactionsRes, inspectionsRes, observationsRes] = await Promise.all([
       // Violations with category name joined
       supabase.from('violations')
-        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, enforcement_categories(id, code, label)')
+        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, enforcement_categories(id, code, label)')
         .eq('property_id', propertyId)
         .order('opened_at', { ascending: false }),
       // Interactions
@@ -1146,6 +1147,12 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         board_priority_at_open: v.board_priority_at_open,
         category_code:     v.enforcement_categories && v.enforcement_categories.code,
         category_label:    v.enforcement_categories && v.enforcement_categories.label,
+        // Quality fields (Phase 7b)
+        quality_status:    v.quality_status,
+        confidence_weight: v.confidence_weight,
+        source:            v.source,
+        reviewed_at:       v.reviewed_at,
+        review_notes:      v.review_notes,
       })),
       interactions: interactions.map((i) => ({
         id:              i.id,

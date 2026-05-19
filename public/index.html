@@ -7851,9 +7851,35 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       ? '<span style="color:#15803d;">Clean record · next violation opens at Courtesy 1 (regular mail).</span>'
       : `<span style="color:#b45309;">⚠️ ${recentViolations.length} violation${recentViolations.length===1?'':'s'} in last 12mo${repeatCats.length ? ` · repeats in: ${repeatCats.join(', ')}` : ''}. Next violation may require <strong>certified mail</strong> under TX §209 escalation.</span>`;
 
-    // Violations table — non-resolved violations get a "Generate letter" button
-    // that runs the letter generator (idempotent — returns existing if already made).
+    // Violations table — quality badges + inline actions (Phase 7b)
+    // Each row shows quality_status + source + confidence_weight so staff
+    // sees at a glance which priors are trusted and which need review.
+    // Inline actions: Verify / Dispute / Void / Generate letter.
     const isOpenStage = (s) => !['cured','closed','voided'].includes(s);
+    const qBadge = (v) => {
+      if (v.quality_status === 'superseded') {
+        return '<span style="background:#e2e8f0; color:#475569; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em;">SUPERSEDED</span>';
+      }
+      if (v.quality_status === 'verified') {
+        return '<span style="background:#dcfce7; color:#166534; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em;">✓ VERIFIED</span>';
+      }
+      if (v.quality_status === 'disputed_by_owner') {
+        return '<span style="background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em;">⚠ DISPUTED</span>';
+      }
+      if (v.quality_status === 'flagged_internal') {
+        return '<span style="background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em;">⚠ FLAGGED</span>';
+      }
+      // unreviewed
+      const wt = typeof v.confidence_weight === 'number' ? v.confidence_weight : 1.0;
+      const tone = wt < 0.6 ? 'background:#fef3c7; color:#92400e;' : 'background:#e2e8f0; color:#475569;';
+      const wtLabel = wt < 1.0 ? ` (${wt}×)` : '';
+      return `<span style="${tone} padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em;">UNREVIEWED${wtLabel}</span>`;
+    };
+    const sourceBadge = (s) => {
+      if (!s || s === 'trustEd_native') return '';
+      const label = { vantaca_import: 'Vantaca', predecessor_import: 'Predecessor', manual_entry: 'Manual', legacy_unknown: 'Legacy' }[s] || s;
+      return `<span style="background:#f1f5f9; color:#64748b; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:600; margin-left:4px;">${label}</span>`;
+    };
     const viosHtml = (d.violations || []).length === 0
       ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No violations on record.</div>'
       : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
@@ -7861,8 +7887,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              <th style="text-align:left; padding:6px 8px;">Opened</th>
              <th style="text-align:left; padding:6px 8px;">Category</th>
              <th style="text-align:left; padding:6px 8px;">Stage</th>
-             <th style="text-align:left; padding:6px 8px;">Resolved</th>
-             <th style="text-align:right; padding:6px 8px;">Action</th>
+             <th style="text-align:left; padding:6px 8px;">Quality</th>
+             <th style="text-align:right; padding:6px 8px;">Actions</th>
            </tr></thead>
            <tbody>
              ${d.violations.map((v) => {
@@ -7870,21 +7896,27 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                const stageColor = stage === 'cured' || stage === 'closed' ? '#15803d'
                                 : stage === 'certified_209' ? '#b45309'
                                 : stage === 'fine_assessed' ? '#b91c1c'
-                                : stage === 'voided' ? '#94a3b8' : '#1A3050';
-               const showLetterBtn = isOpenStage(stage);
+                                : stage === 'voided' || stage === 'superseded' ? '#94a3b8' : '#1A3050';
+               const showLetterBtn = isOpenStage(stage) && v.quality_status !== 'superseded';
+               const showQualityActions = v.quality_status !== 'superseded' && v.quality_status !== 'verified';
                return `
                  <tr style="border-bottom:1px solid #f1f5f9;">
                    <td style="padding:6px 8px;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : '—'}</td>
                    <td style="padding:6px 8px;">${escapeHtml(v.category_label || v.category_code || '—')}</td>
                    <td style="padding:6px 8px; color:${stageColor}; font-weight:600;">${escapeHtml(stage.replace(/_/g, ' '))}</td>
-                   <td style="padding:6px 8px; color:#64748b;">${v.resolved_via ? escapeHtml(v.resolved_via) : (v.resolved_at ? new Date(v.resolved_at).toLocaleDateString() : '—')}</td>
-                   <td style="padding:6px 8px; text-align:right;">
-                     ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#1A3050; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">📄 Generate letter</button>` : ''}
+                   <td style="padding:6px 8px;">${qBadge(v)}${sourceBadge(v.source)}</td>
+                   <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
+                     ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
+                     ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
+                     ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#1A3050; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
                  </tr>`;
              }).join('')}
            </tbody>
-         </table>`;
+         </table>
+         <div style="text-align:right; padding:8px 0 4px 0;">
+           <button onclick="inspViolationAddPrior('${escapeHtml(d.property.id)}')" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">+ Add prior violation</button>
+         </div>`;
 
     // Recent observations
     const obsHtml = (d.observations_recent || []).length === 0
@@ -8019,6 +8051,126 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspMapHandleMarkerClick(inspPDCurrentPropertyId, inspPDCurrentLabel || 'Selected property');
     inspState._suppressDetailOpen = false;
     inspClosePropertyDetail();
+  }
+
+  // ===================================================================
+  // VIOLATION QUALITY ACTIONS (Phase 7b)
+  // -------------------------------------------------------------------
+  // Verify, correct/void, and manually add prior violations from the
+  // property detail panel.
+  // ===================================================================
+  async function inspViolationVerify(violationId) {
+    if (!confirm('Mark this violation as VERIFIED?\n\nThis sets confidence_weight=1.0 so it counts at full weight toward future escalation decisions on this property + category.')) return;
+    try {
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/quality`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ quality_status: 'verified', confidence_weight: 1.0 }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Refresh the modal so the new quality badge shows
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+    } catch (e) {
+      alert('Verify failed: ' + e.message);
+    }
+  }
+
+  async function inspViolationCorrect(violationId) {
+    // Pick the correction type
+    const choices = {
+      '1': { type: 'wrong_property',          label: 'Wrong property (attributed to the wrong house)' },
+      '2': { type: 'duplicate',                label: 'Duplicate (already on file)' },
+      '3': { type: 'resolved_at_inspection',   label: 'Resolved at inspection (owner had cured before letter)' },
+      '4': { type: 'voided',                   label: 'Void entirely (record was wrong)' },
+      '5': { type: 'reclassified',             label: 'Reclassified (wrong category)' },
+    };
+    const menu = Object.entries(choices).map(([k, v]) => `  ${k}. ${v.label}`).join('\n');
+    const pick = prompt(`Correct this violation — pick a type:\n\n${menu}\n\nEnter 1-5:`);
+    if (!pick || !choices[pick.trim()]) return;
+    const correction = choices[pick.trim()];
+    const reason = prompt(`Reason for correction (required — recorded on the audit trail):\n\nType: ${correction.label}`);
+    if (!reason || !reason.trim()) {
+      if (reason !== null) alert('Reason is required.');
+      return;
+    }
+    try {
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/correct`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ correction_type: correction.type, reason: reason.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`✓ Correction recorded. Original violation marked superseded (weight=0 for future escalation). Audit trail preserved.`);
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+    } catch (e) {
+      alert('Correction failed: ' + e.message);
+    }
+  }
+
+  async function inspViolationAddPrior(propertyId) {
+    // Need to know the available categories first. Cache them globally.
+    if (!window._inspCategoriesCache) {
+      try {
+        // Borrow from any source — quickest is the enforcement_categories table
+        // via a tiny dedicated endpoint we add separately. For now we'll prompt
+        // for a category slug if cache miss.
+        const r = await fetch('/api/enforcement/categories');
+        if (r.ok) {
+          const j = await r.json();
+          window._inspCategoriesCache = j.categories || [];
+        }
+      } catch (_) {}
+    }
+    const cats = window._inspCategoriesCache || [];
+    let categoryId;
+    if (cats.length === 0) {
+      const slug = prompt('Category slug (e.g. lawn_overgrowth, tree_overgrowth, trash_bin_storage):');
+      if (!slug) return;
+      // Can't resolve without the API; would need a server call. Fallback: ask user to look it up.
+      alert('No categories cached. Refresh the page and try again — categories will load.');
+      return;
+    } else {
+      const menu = cats.map((c, i) => `${i + 1}. ${c.label}`).join('\n');
+      const pick = prompt(`Pick category:\n\n${menu}\n\nEnter number:`);
+      const idx = parseInt(pick, 10) - 1;
+      if (isNaN(idx) || !cats[idx]) return;
+      categoryId = cats[idx].id;
+    }
+    const stage = prompt('Stage of this prior violation:\n  1. courtesy_1 (first courtesy)\n  2. courtesy_2 (second courtesy)\n  3. certified_209 (certified §209)\n  4. fine_assessed\n  5. cured (resolved)\n\nEnter 1-5:');
+    const stages = { '1': 'courtesy_1', '2': 'courtesy_2', '3': 'certified_209', '4': 'fine_assessed', '5': 'cured' };
+    if (!stages[stage]) return;
+    const dateStr = prompt('Date this violation was opened (YYYY-MM-DD):');
+    if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+      if (dateStr) alert('Invalid date format. Use YYYY-MM-DD.');
+      return;
+    }
+    const sourceMenu = '1. Vantaca import (weight 0.5)\n2. Predecessor mgmt company (weight 0.3)\n3. Manual entry — verified (weight 1.0)\n4. Legacy unknown (weight 0.4)';
+    const sourcePick = prompt(`Source of this record:\n\n${sourceMenu}\n\nEnter 1-4:`);
+    const sources = { '1': 'vantaca_import', '2': 'predecessor_import', '3': 'manual_entry', '4': 'legacy_unknown' };
+    if (!sources[sourcePick]) return;
+    const notes = prompt('Notes (optional):') || '';
+    try {
+      const r = await fetch('/api/enforcement/violations/manual', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          property_id: propertyId,
+          category_id: categoryId,
+          opened_at: dateStr + 'T00:00:00Z',
+          current_stage: stages[stage],
+          source: sources[sourcePick],
+          notes,
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert('✓ Prior violation recorded. It will count toward future escalation at the source-default weight.');
+      if (inspPDCurrentPropertyId) await inspOpenPropertyDetail(inspPDCurrentPropertyId);
+    } catch (e) {
+      alert('Add failed: ' + e.message);
+    }
   }
 
   // Generate the Bedrock-branded violation letter PDF for a specific violation.
@@ -9018,6 +9170,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     return { label: '⏳ ' + (obs.category_label || 'awaiting review'), color: '#fff', bg: 'rgba(15,23,42,0.7)' };
   }
+
+  // Cache enforcement categories on app load so the manual prior-add menu
+  // populates the first time staff opens it. Cheap — one small request.
+  document.addEventListener('DOMContentLoaded', () => {
+    setTimeout(async () => {
+      try {
+        const r = await fetch('/api/enforcement/categories');
+        if (r.ok) {
+          const j = await r.json();
+          window._inspCategoriesCache = j.categories || [];
+        }
+      } catch (_) {}
+    }, 2000);
+  });
 
   // Stranded-queue sweeper: on app load, try to drain any photos left in the
   // queue from a prior session that didn't finish uploading (e.g., browser

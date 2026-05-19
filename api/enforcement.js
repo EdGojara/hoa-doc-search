@@ -79,10 +79,11 @@ async function _getRecentSameCategory(propertyId, categoryId, months = 12) {
   cutoff.setMonth(cutoff.getMonth() - months);
   const { data } = await supabase
     .from('violations')
-    .select('id, opened_at, primary_category_id, current_stage')
+    .select('id, opened_at, primary_category_id, current_stage, quality_status, confidence_weight, source')
     .eq('property_id', propertyId)
     .eq('primary_category_id', categoryId)
     .gte('opened_at', cutoff.toISOString())
+    .neq('quality_status', 'superseded')   // exclude corrected-out rows
     .order('opened_at', { ascending: false });
   return data || [];
 }
@@ -976,6 +977,234 @@ ${chunkBlocks}`;
     confidence:    parsed.confidence,
   };
 }
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/categories — list of canonical enforcement categories.
+// Used by UI dropdowns (manual prior-violation entry, category override, etc.)
+// ---------------------------------------------------------------------------
+router.get('/categories', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug, label, description, default_priority_weight, display_order')
+      .order('display_order', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ categories: data || [] });
+  } catch (err) {
+    console.error('[enforcement.categories]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// VIOLATION QUALITY ACTIONS
+// ---------------------------------------------------------------------------
+// PATCH /api/enforcement/violations/:id/quality
+//   Body: { quality_status: 'verified' | 'unreviewed' | 'disputed_by_owner' |
+//                            'flagged_internal',
+//           confidence_weight?: 0-1,
+//           review_notes?: string,
+//           user_id?: string }
+//   Updates the violation's quality fields + records reviewer + timestamp.
+//   For 'superseded' (which means "this is being corrected"), use the
+//   /violations/:id/correct endpoint instead so an audit row is created.
+// ---------------------------------------------------------------------------
+router.patch('/violations/:id/quality', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const body = req.body || {};
+    const allowedStatuses = ['verified', 'unreviewed', 'disputed_by_owner', 'flagged_internal'];
+    if (body.quality_status && !allowedStatuses.includes(body.quality_status)) {
+      return res.status(400).json({ error: 'invalid quality_status (use /correct for superseded)' });
+    }
+    const patch = { reviewed_at: new Date().toISOString() };
+    if (body.quality_status) patch.quality_status = body.quality_status;
+    if (typeof body.confidence_weight === 'number') {
+      patch.confidence_weight = Math.max(0, Math.min(1, body.confidence_weight));
+    } else if (body.quality_status === 'verified') {
+      patch.confidence_weight = 1.0;   // verified always promotes to full weight
+    }
+    if (body.review_notes != null) patch.review_notes = body.review_notes;
+    if (body.user_id) patch.reviewed_by_user_id = body.user_id;
+
+    const { data, error } = await supabase
+      .from('violations')
+      .update(patch)
+      .eq('id', violationId)
+      .select('id, quality_status, confidence_weight, reviewed_at, reviewed_by_user_id, review_notes')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true, violation: data });
+  } catch (err) {
+    console.error('[violations.quality]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/correct
+// Body: { correction_type, reason, replacement: {...} | null, user_id? }
+//   Records a correction row + sets the original to status='superseded'
+//   (which makes confidence_weight=0 effective for escalation math).
+//   If correction_type is 'reclassified' / 'wrong_property' and the body
+//   includes a replacement object, creates a new violation with the
+//   corrected fields and links it via replacement_violation_id.
+// ---------------------------------------------------------------------------
+router.post('/violations/:id/correct', express.json(), async (req, res) => {
+  try {
+    const originalId = req.params.id;
+    const body = req.body || {};
+    const validTypes = ['voided','reclassified','wrong_property','duplicate',
+                        'resolved_at_inspection','reissued','merged_into','split_from'];
+    if (!validTypes.includes(body.correction_type)) {
+      return res.status(400).json({ error: 'invalid correction_type', allowed: validTypes });
+    }
+    if (!body.reason) {
+      return res.status(400).json({ error: 'reason is required for any correction' });
+    }
+    // Fetch original for snapshot
+    const { data: original, error: oErr } = await supabase
+      .from('violations')
+      .select('*')
+      .eq('id', originalId)
+      .maybeSingle();
+    if (oErr || !original) return res.status(404).json({ error: 'violation not found' });
+
+    // Optionally create a replacement violation
+    let replacementId = null;
+    if (body.replacement && (body.correction_type === 'reclassified' ||
+                              body.correction_type === 'wrong_property' ||
+                              body.correction_type === 'reissued')) {
+      const r = body.replacement;
+      const { data: created, error: cErr } = await supabase
+        .from('violations')
+        .insert({
+          property_id:         r.property_id || original.property_id,
+          community_id:        r.community_id || original.community_id,
+          primary_category_id: r.primary_category_id || original.primary_category_id,
+          board_priority_at_open: r.board_priority_at_open || original.board_priority_at_open,
+          current_stage:       r.current_stage || original.current_stage,
+          opened_at:           r.opened_at || original.opened_at,
+          opened_from_observation_id: original.opened_from_observation_id,
+          source:              'manual_entry',
+          confidence_weight:   1.0,
+          quality_status:      'verified',
+          review_notes:        `Replacement for corrected violation ${originalId}. Reason: ${body.reason}`,
+        })
+        .select('id')
+        .single();
+      if (cErr) return res.status(500).json({ error: 'failed to create replacement: ' + cErr.message });
+      replacementId = created.id;
+    }
+
+    // Mark original superseded
+    await supabase.from('violations')
+      .update({
+        quality_status: 'superseded',
+        confidence_weight: 0,
+        reviewed_at: new Date().toISOString(),
+        reviewed_by_user_id: body.user_id || null,
+        review_notes: `Superseded via ${body.correction_type}: ${body.reason}`,
+      })
+      .eq('id', originalId);
+
+    // Drop a correction row
+    const { data: correction, error: corrErr } = await supabase
+      .from('violation_corrections')
+      .insert({
+        original_violation_id: originalId,
+        correction_type: body.correction_type,
+        replacement_violation_id: replacementId,
+        reason: body.reason,
+        corrected_by_user_id: body.user_id || null,
+        original_state: original,
+        notes: body.notes || null,
+      })
+      .select()
+      .single();
+    if (corrErr) return res.status(500).json({ error: 'failed to record correction: ' + corrErr.message });
+
+    res.json({
+      ok: true,
+      correction,
+      replacement_violation_id: replacementId,
+    });
+  } catch (err) {
+    console.error('[violations.correct]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/manual
+// Body: { property_id, category_id, opened_at, current_stage, source?,
+//         confidence_weight?, notes?, user_id? }
+//   Manually creates a prior violation. Used to backfill known-existing
+//   violations that aren't in trustEd (e.g., Vantaca records not yet imported,
+//   verbal history from a homeowner). Defaults to source='manual_entry',
+//   confidence_weight=0.8, quality_status='verified'.
+// ---------------------------------------------------------------------------
+router.post('/violations/manual', express.json(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.property_id || !body.category_id || !body.opened_at) {
+      return res.status(400).json({ error: 'property_id, category_id, opened_at required' });
+    }
+    const validStages = ['courtesy_1','courtesy_2','certified_209','fine_assessed','cured','closed','voided'];
+    const stage = body.current_stage || 'courtesy_1';
+    if (!validStages.includes(stage)) {
+      return res.status(400).json({ error: 'invalid current_stage' });
+    }
+    // Look up community_id from property
+    const { data: prop } = await supabase
+      .from('properties')
+      .select('community_id')
+      .eq('id', body.property_id)
+      .maybeSingle();
+    if (!prop) return res.status(404).json({ error: 'property not found' });
+
+    const source = body.source || 'manual_entry';
+    const sourceDefaults = {
+      manual_entry:        0.8,
+      vantaca_import:      0.5,
+      predecessor_import:  0.3,
+      legacy_unknown:      0.4,
+      trustEd_native:      1.0,
+    };
+    const weight = (typeof body.confidence_weight === 'number')
+      ? Math.max(0, Math.min(1, body.confidence_weight))
+      : sourceDefaults[source] || 0.8;
+
+    const { data, error } = await supabase
+      .from('violations')
+      .insert({
+        property_id:        body.property_id,
+        community_id:       prop.community_id,
+        primary_category_id: body.category_id,
+        board_priority_at_open: body.board_priority_at_open || 'standard',
+        current_stage:      stage,
+        cure_period_ends_at: body.cure_period_ends_at || null,
+        opened_at:          body.opened_at,
+        resolved_at:        body.resolved_at || null,
+        resolved_via:       body.resolved_via || null,
+        resolved_notes:     body.resolved_notes || null,
+        source,
+        confidence_weight:  weight,
+        quality_status:     body.quality_status || 'verified',
+        reviewed_at:        new Date().toISOString(),
+        reviewed_by_user_id: body.user_id || null,
+        review_notes:       body.notes || 'Manually entered prior violation',
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    res.json({ ok: true, violation: data });
+  } catch (err) {
+    console.error('[violations.manual]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 router.post('/extract-doc-references/:community_id/:category_id', async (req, res) => {
   try {
