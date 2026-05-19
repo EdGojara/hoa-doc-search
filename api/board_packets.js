@@ -1786,9 +1786,12 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   // otherwise fade against the white .page underneath.
   // Top of cover photo is fully transparent — no tint at all. Dark
   // gradient kicks in only in the bottom third where the white title
-  // text sits and needs contrast against the photo.
+  // text sits and needs contrast against the photo. No background-color
+  // fallback so if the image fails to load it's obviously broken
+  // (showing white .page underneath) rather than masquerading as a
+  // navy 'design choice' that Ed reads as 'too blue.'
   const heroStyle = assets.hero
-    ? `background-color: #1F3A5F; background-image: linear-gradient(180deg, transparent 0%, transparent 55%, rgba(15,30,55,0.55) 80%, rgba(15,30,55,0.85) 100%), url('${assets.hero}'); background-size: cover; background-position: center;`
+    ? `background-image: linear-gradient(180deg, transparent 0%, transparent 60%, rgba(15,30,55,0.5) 85%, rgba(15,30,55,0.8) 100%), url('${assets.hero}'); background-size: cover; background-position: center;`
     : `background: linear-gradient(180deg, #4a7ab0 0%, #315A87 50%, #1F3A5F 100%);`;
 
   // 'cover' is a vestigial section template from migration 014 — the cover
@@ -1929,7 +1932,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   .interior { padding: 0.6in 0.7in; }
   .page-header {
     display: flex; justify-content: space-between; align-items: center;
-    padding-bottom: 16px; margin-bottom: 32px;
+    padding-bottom: 12px; margin-bottom: 18px;
     border-bottom: 2px solid var(--bedrock-navy);
   }
   .page-header-brand { display: flex; align-items: center; gap: 12px; }
@@ -1951,8 +1954,13 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
   }
   .section-lede {
     font-size: 14px; color: var(--ink-soft); line-height: 1.6;
-    margin: 0 0 32px 0; max-width: 520px;
+    margin: 0 0 18px 0; max-width: 520px;
   }
+  /* TOC keeps the lede (sets the tone for the contents page). Section
+     pages drop it — operational metadata about the section adds
+     vertical noise before the actual board content. */
+  .page.interior:not(.toc-page) .section-lede { display: none; }
+  .page.interior:not(.toc-page) .section-title { margin: 0 0 18px 0; }
   .page-foot {
     margin-top: auto; padding-top: 18px; border-top: 1px solid var(--rule);
     display: flex; justify-content: space-between; align-items: baseline;
@@ -2012,13 +2020,13 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     .page { box-shadow: none; margin: 0; }
     /* Cover + TOC always fill their own letter sheet. Keep flex so the
        footer pushes to the bottom of the page (margin-top: auto). */
-    .page.cover, .page.toc {
+    .page.cover, .page.toc-page {
       display: flex; flex-direction: column;
       min-height: 11in; page-break-after: always;
     }
     /* Section pages flow naturally — block layout lets Chrome's print
        engine continue content across pages without flex weirdness. */
-    .page.interior:not(.toc) { display: block; }
+    .page.interior:not(.toc-page) { display: block; }
     /* Keep section titles glued to the content immediately following
        them so headers don't end up orphaned at the bottom of a page. */
     .section-eyebrow, .section-title, .section-lede { page-break-after: avoid; }
@@ -2074,7 +2082,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 </div>
 
 <!-- TOC PAGE -->
-<div class="page interior toc">
+<div class="page interior toc-page">
   ${pageHeader}
   <div class="section-eyebrow">Inside this packet</div>
   <h1 class="section-title">Table of Contents</h1>
