@@ -338,6 +338,185 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 
           await supabase.from('property_observations').update(updates).eq('id', observationId);
           console.log(`[ai_vision] observation ${observationId} categorized: ${result.category_slug || 'no-match'} / ${result.severity} / conf=${result.confidence} / violation=${result.is_violation}`);
+
+          // ---- Phase 6c: AUTO-DRAFT LETTER if conditions are right ----
+          // Auto-draft only when:
+          //   - AI saw a real violation (is_violation && severity != 'clean')
+          //   - Confidence is medium or high (low confidence → human reviews
+          //     the photo first, no drafted letter yet)
+          //   - We matched to a known category slug (no_category → can't run
+          //     escalation engine)
+          // Otherwise observation stays 'pending' for full manual review and
+          // the operator chooses category + opens violation manually in Phase 6d.
+          if (result.is_violation && result.severity !== 'clean' &&
+              ['medium','high'].includes(result.confidence) &&
+              result.category_slug && slugToId.has(result.category_slug)) {
+            try {
+              // Use the same library code the manual /open-violation endpoint uses,
+              // requiring HTTP call so we hit the route's full pipeline (engine
+              // decision → violation row + interaction record).
+              const { decideEscalation } = require('../lib/enforcement/escalation');
+              const categoryId = slugToId.get(result.category_slug);
+
+              // Pull priority + prior violations for the engine
+              const { data: prio } = await supabase
+                .from('community_enforcement_priorities')
+                .select('priority_weight')
+                .eq('community_id', insp.community_id)
+                .eq('category_id', categoryId)
+                .is('end_date', null)
+                .maybeSingle();
+              const priorityWeight = (prio && prio.priority_weight) || 'standard';
+
+              const cutoff = new Date();
+              cutoff.setMonth(cutoff.getMonth() - 12);
+              const { data: priors } = await supabase
+                .from('violations')
+                .select('id, opened_at, primary_category_id, current_stage')
+                .eq('property_id', resolvedPropertyId)
+                .eq('primary_category_id', categoryId)
+                .gte('opened_at', cutoff.toISOString());
+
+              const decision = decideEscalation({
+                prior_violations: priors || [],
+                priority_weight: priorityWeight,
+              });
+
+              if (decision.should_open) {
+                const cureEnd = decision.cure_days > 0
+                  ? new Date(Date.now() + decision.cure_days * 24 * 60 * 60 * 1000).toISOString()
+                  : null;
+
+                // Insert violation row in 'draft' substate via notes — current_stage
+                // matches what would be sent. The Drafts queue (Phase 6d) shows the
+                // pending-approval letter; ACTUAL mail only happens after Approve.
+                const { data: vio, error: vErr } = await supabase
+                  .from('violations')
+                  .insert({
+                    property_id: resolvedPropertyId,
+                    community_id: insp.community_id,
+                    opened_from_observation_id: observationId,
+                    primary_category_id: categoryId,
+                    board_priority_at_open: priorityWeight === 'disabled' ? 'standard' : priorityWeight,
+                    current_stage: decision.stage,
+                    current_stage_started_at: new Date().toISOString(),
+                    cure_period_ends_at: cureEnd,
+                    opened_at: new Date().toISOString(),
+                  })
+                  .select('id')
+                  .single();
+                if (vErr) {
+                  console.warn('[auto-draft] violation insert failed:', vErr.message);
+                } else {
+                  // Mark observation confirmed so it's tied to the violation
+                  await supabase.from('property_observations').update({
+                    reviewer_status: 'confirmed',
+                    reviewed_at: new Date().toISOString(),
+                  }).eq('id', observationId);
+
+                  // Generate the letter PDF immediately — sits in storage with the
+                  // interaction logged as 'letter_*' but tagged as DRAFT until approved.
+                  // We reuse the existing /api/enforcement/generate-letter logic by
+                  // calling the underlying library directly (no internal HTTP hop).
+                  try {
+                    const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+                    // Re-fetch the joined data the letter generator needs
+                    const { data: pRow } = await supabase
+                      .from('v_current_property_owners')
+                      .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+                      .eq('property_id', resolvedPropertyId)
+                      .maybeSingle();
+                    const { data: catRow } = await supabase
+                      .from('enforcement_categories')
+                      .select('label, description')
+                      .eq('id', categoryId)
+                      .maybeSingle();
+                    const { data: commRow } = await supabase
+                      .from('communities')
+                      .select('name')
+                      .eq('id', insp.community_id)
+                      .maybeSingle();
+
+                    const pdfBuffer = await renderViolationLetterPdf({
+                      violation: {
+                        id: vio.id,
+                        current_stage: decision.stage,
+                        cure_period_ends_at: cureEnd,
+                        opened_at: new Date().toISOString(),
+                        category_label: catRow && catRow.label,
+                        category_description: result.description,  // AI's specific description for THIS photo
+                        board_priority_at_open: priorityWeight,
+                      },
+                      property: {
+                        street_address: pRow.street_address,
+                        unit:           pRow.unit,
+                        city:           pRow.city,
+                        state:          pRow.state,
+                        zip:            pRow.zip,
+                        lot_number:     pRow.lot_number,
+                      },
+                      owner: {
+                        full_name:       pRow.owner_name,
+                        mailing_address: pRow.owner_mailing_address,
+                      },
+                      community: { name: commRow && commRow.name },
+                      observation: {
+                        ai_description: result.description,
+                        severity: result.severity,
+                        captured_at: capturedAt,
+                      },
+                      photo_buffer: req.file.buffer,
+                      options: { sender_name: 'Bedrock Association Management' },
+                    });
+
+                    // Upload to letters bucket
+                    const LETTERS_BUCKET = 'violation-letters';
+                    const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+                    const letterPath = `${vio.id}/${decision.stage}-${stamp}.pdf`;
+                    const { error: upErr } = await supabase.storage
+                      .from(LETTERS_BUCKET)
+                      .upload(letterPath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+                    if (upErr && !/already exists|duplicate/i.test(upErr.message)) {
+                      // Try to create bucket if missing
+                      try {
+                        await supabase.storage.createBucket(LETTERS_BUCKET, { public: false });
+                        await supabase.storage.from(LETTERS_BUCKET).upload(letterPath, pdfBuffer, { contentType: 'application/pdf' });
+                      } catch (_) {}
+                    }
+
+                    // Log a DRAFT interaction — subject prefix '[DRAFT]' lets the
+                    // Drafts queue filter it. When Phase 6d's Approve fires,
+                    // it strips the prefix + sets occurred_at to send time.
+                    const stageToType = {
+                      courtesy_1: 'letter_courtesy_1',
+                      courtesy_2: 'letter_courtesy_2',
+                      certified_209: 'letter_209',
+                      fine_assessed: 'letter_209',
+                    };
+                    await supabase.from('interactions').insert({
+                      community_id:    insp.community_id,
+                      property_id:     resolvedPropertyId,
+                      violation_id:    vio.id,
+                      observation_id:  observationId,
+                      inspection_id:   inspectionId,
+                      type:            stageToType[decision.stage] || 'ai_draft',
+                      direction:       'outbound',
+                      subject:         `[DRAFT] Violation letter (${decision.stage})`,
+                      content:         letterPath,
+                      delivery_method: (decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
+                      occurred_at:     new Date().toISOString(),
+                    });
+
+                    console.log(`[auto-draft] violation ${vio.id} drafted as ${decision.stage} (${decision.mail_type}), ${decision.cure_days}d cure`);
+                  } catch (letterErr) {
+                    console.warn('[auto-draft] letter PDF generation failed:', letterErr.message);
+                  }
+                }
+              }
+            } catch (escErr) {
+              console.warn('[auto-draft] escalation engine threw:', escErr.message);
+            }
+          }
         } catch (e) {
           console.error('[ai_vision] async categorization failed:', e.message);
         }
