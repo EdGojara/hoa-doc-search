@@ -7629,6 +7629,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     boundaryDrawMode: false,       // when true, map clicks add vertices
     boundaryDrawCoords: [],        // [[lng, lat], ...] in-progress polygon
     boundaryClickHandler: null,    // Mapbox click listener (so we can remove)
+    // Per-photo observation status (Phase 6 visibility patch)
+    observations: [],              // [{ photo_id, severity, ai_confidence, reviewer_status, ... }]
+    observationsPollTimer: null,
   };
 
   // Lazy-load Mapbox GL JS from CDN. Cached promise so subsequent map opens
@@ -8355,8 +8358,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       document.getElementById('inspSessionMeta').textContent = `${modeLabel}${routeLabel ? ' · ' + routeLabel : ''}`;
       inspRenderPhotos();
       inspStartLocationWatch();
-      inspStartUploader();          // Phase 6.0 — background queue uploader
+      inspStartUploader();             // Phase 6.0 — background queue uploader
       inspUpdateQueueBadge();
+      inspStartObservationsPoll();     // Per-photo status polling (visibility patch)
       // Show list view by default + load the data
       inspSetView('list');
     } catch (e) {
@@ -8936,6 +8940,85 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     window.removeEventListener('online', inspProcessUploadQueue);
   }
 
+  // ===================================================================
+  // PER-PHOTO STATUS POLLING
+  // -------------------------------------------------------------------
+  // After photos upload, the server runs AI categorization async +
+  // potentially generates a draft letter. Poll the observations endpoint
+  // every 4s so each photo tile can show its live status:
+  //   - "AI processing..." (observation exists, no AI fields yet)
+  //   - "🚫 No property tied" (no observation row was created for this photo)
+  //   - "✓ Draft created" (observation confirmed + draft letter exists)
+  //   - "✗ No violation" (observation auto-rejected by AI)
+  //   - "⚠ AI uncertain" (low confidence, awaiting human review)
+  //   - "⚠ AI failed" (no AI fields after >60s — categorization errored)
+  // ===================================================================
+  async function inspPollObservations() {
+    if (!inspState.sessionId) return;
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(inspState.sessionId)}/observations`);
+      if (!r.ok) return;
+      const j = await r.json();
+      inspState.observations = j.observations || [];
+      inspRenderPhotos();   // re-render to attach status badges
+    } catch (_) {}
+  }
+  function inspStartObservationsPoll() {
+    if (inspState.observationsPollTimer) return;
+    inspState.observationsPollTimer = setInterval(inspPollObservations, 4000);
+    setTimeout(inspPollObservations, 1500);
+  }
+  function inspStopObservationsPoll() {
+    if (inspState.observationsPollTimer) {
+      clearInterval(inspState.observationsPollTimer);
+      inspState.observationsPollTimer = null;
+    }
+  }
+
+  // Given a photo row, return a status label + tone color for the tile overlay.
+  function inspPhotoStatusFor(photo) {
+    if (photo.pending) return { label: '⬆ Uploading', color: '#1A3050', bg: 'rgba(15,23,42,0.7)' };
+    if (photo.failed)  return { label: '⚠ Failed', color: '#fff', bg: 'rgba(185,28,28,0.85)' };
+    if (!photo.id || photo.id.startsWith('queue-')) return { label: '⬆ Uploading', color: '#1A3050', bg: 'rgba(15,23,42,0.7)' };
+    // Look up matching observation by inspection_photo_id
+    const obs = (inspState.observations || []).find((o) => o.photo_id === photo.id);
+    if (!obs) {
+      // Photo uploaded but no observation row → no property was tied
+      const ageMs = Date.now() - new Date(photo.captured_at).getTime();
+      if (ageMs < 15000) return { label: '⏳ Linking…', color: '#fff', bg: 'rgba(59,130,246,0.7)' };
+      return { label: '🚫 No property tied', color: '#fff', bg: 'rgba(180,83,9,0.85)' };
+    }
+    // Observation exists — check its state
+    if (obs.reviewer_status === 'rejected') {
+      // Could be AI-auto-rejected ("no violation") OR manually rejected
+      if (obs.reviewer_notes && /AI.*no violation/i.test(obs.reviewer_notes)) {
+        return { label: '✓ AI: no violation', color: '#fff', bg: 'rgba(22,163,74,0.85)' };
+      }
+      return { label: '✗ Rejected', color: '#fff', bg: 'rgba(100,116,139,0.85)' };
+    }
+    if (obs.reviewer_status === 'confirmed') {
+      if (obs.letter_status === 'approved' || obs.letter_status === 'sent') {
+        return { label: '📬 Letter approved', color: '#fff', bg: 'rgba(22,163,74,0.85)' };
+      }
+      if (obs.letter_status === 'draft') {
+        return { label: '✓ Draft ready', color: '#fff', bg: 'rgba(22,163,74,0.85)' };
+      }
+      return { label: '✓ Confirmed', color: '#fff', bg: 'rgba(22,163,74,0.85)' };
+    }
+    // Pending — has AI run yet?
+    if (!obs.ai_description && !obs.category_label) {
+      // AI hasn't responded yet — show progress
+      const obsAgeMs = Date.now() - new Date(obs.created_at).getTime();
+      if (obsAgeMs > 90000) return { label: '⚠ AI timeout', color: '#fff', bg: 'rgba(185,28,28,0.85)' };
+      return { label: '🔍 AI analyzing…', color: '#fff', bg: 'rgba(59,130,246,0.85)' };
+    }
+    // AI ran but observation is pending — likely low-confidence
+    if (obs.ai_confidence === 'low') {
+      return { label: '⚠ AI low confidence', color: '#fff', bg: 'rgba(180,83,9,0.85)' };
+    }
+    return { label: '⏳ ' + (obs.category_label || 'awaiting review'), color: '#fff', bg: 'rgba(15,23,42,0.7)' };
+  }
+
   // Stranded-queue sweeper: on app load, try to drain any photos left in the
   // queue from a prior session that didn't finish uploading (e.g., browser
   // crashed mid-inspection, page got closed during dead zone, etc.). Without
@@ -9041,24 +9124,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       return;
     }
     list.innerHTML = inspState.photos.map((p) => {
-      if (p.pending) {
-        // Show the local preview if we have one (compressed blob URL) so the operator
-        // sees WHICH photo is uploading, not just a gray rectangle. Spinner overlay
-        // indicates "in flight".
-        if (p._local_preview) {
-          return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9;">
-            <img src="${p._local_preview}" style="width:100%; height:100%; object-fit:cover; opacity:0.7;" />
-            <div style="position:absolute; inset:0; display:flex; align-items:flex-end; justify-content:center; padding:6px; background:linear-gradient(to top, rgba(15,23,42,0.6), transparent 40%); color:#fff; font-size:10px; font-weight:600; letter-spacing:0.05em; text-transform:uppercase;">⬆ Uploading…</div>
-          </div>`;
-        }
-        return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #f1f5f9; display: flex; align-items: center; justify-content: center; color: #64748b; font-size: 11px;">Uploading…</div>`;
-      }
-      if (p.failed) {
-        return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #fee2e2; display: flex; align-items: center; justify-content: center; color: #991b1b; font-size: 11px; padding: 6px; text-align: center;">Failed</div>`;
-      }
+      const status = inspPhotoStatusFor(p);
       const time = p.captured_at ? new Date(p.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
-      // Server returns the row but no signed URL on upload — fine, we'll just show a tile
-      return `<div style="aspect-ratio: 1/1; border-radius: 8px; background: #1a3a5c; display: flex; align-items: end; justify-content: center; color: #fff; font-size: 11px; padding: 6px;">${time || '✓'}</div>`;
+      const previewSrc = p._local_preview || (p.signed_url || '');
+      const imgHtml = previewSrc
+        ? `<img src="${previewSrc}" style="width:100%; height:100%; object-fit:cover;" />`
+        : `<div style="width:100%; height:100%; background:#1a3a5c;"></div>`;
+      return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9;">
+        ${imgHtml}
+        <!-- Top-right time stamp -->
+        <div style="position:absolute; top:5px; right:6px; padding:2px 6px; background:rgba(15,23,42,0.65); color:#fff; font-size:10px; font-weight:600; border-radius:99px;">${time}</div>
+        <!-- Bottom status overlay -->
+        <div style="position:absolute; left:0; right:0; bottom:0; padding:5px 6px; background:${status.bg}; color:${status.color}; font-size:10.5px; font-weight:700; text-align:center; letter-spacing:0.02em;">${status.label}</div>
+      </div>`;
     }).join('');
   }
 
@@ -9077,6 +9155,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (!confirm('End this inspection?')) return;
     }
     inspStopUploader();
+    inspStopObservationsPoll();
     // Flush any remaining route pings before tearing down session state
     try { await inspFlushRoutePings(); } catch (_) {}
     try {

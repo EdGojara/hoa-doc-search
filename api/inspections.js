@@ -1134,6 +1134,64 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/inspections/:id/observations
+// Returns every observation for an inspection with status + AI fields so the
+// UI can show per-photo lifecycle ("AI categorizing", "drafted", "no
+// violation", "failed"). Backs the per-photo status badge in the capture
+// session view.
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/observations', async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    if (!inspectionId) return res.status(400).json({ error: 'inspection id required' });
+    const { data, error } = await supabase
+      .from('property_observations')
+      .select(`
+        id, inspection_photo_id, property_id, severity, ai_description,
+        ai_recommended_action, ai_confidence, reviewer_status, reviewer_notes,
+        created_at, reviewed_at, category_id,
+        enforcement_categories ( label )
+      `)
+      .eq('inspection_id', inspectionId)
+      .order('created_at', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Also pull any drafted-letter interactions tied to this inspection so the UI
+    // can show "✓ Draft letter created" per photo even before the draft queue
+    // surfaces them.
+    const { data: interactions } = await supabase
+      .from('interactions')
+      .select('id, observation_id, status, type')
+      .eq('inspection_id', inspectionId)
+      .in('type', ['letter_courtesy_1','letter_courtesy_2','letter_209']);
+    const byObs = new Map();
+    (interactions || []).forEach((i) => {
+      if (!i.observation_id) return;
+      const cur = byObs.get(i.observation_id);
+      if (!cur || i.status === 'approved' || i.status === 'sent') byObs.set(i.observation_id, i);
+    });
+
+    const observations = (data || []).map((o) => ({
+      id: o.id,
+      photo_id: o.inspection_photo_id,
+      property_id: o.property_id,
+      severity: o.severity,
+      ai_description: o.ai_description,
+      ai_confidence: o.ai_confidence,
+      reviewer_status: o.reviewer_status,
+      reviewer_notes: o.reviewer_notes,
+      category_label: o.enforcement_categories && o.enforcement_categories.label,
+      created_at: o.created_at,
+      letter_status: byObs.get(o.id) ? byObs.get(o.id).status : null,
+    }));
+    res.json({ observations });
+  } catch (err) {
+    console.error('[inspections.observations]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/inspections/recent', async (req, res) => {
   try {
     const limit = Math.min(parseInt(req.query.limit, 10) || 20, 100);
