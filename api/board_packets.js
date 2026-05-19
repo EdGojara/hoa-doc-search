@@ -129,6 +129,63 @@ function fmtDateShort(d) {
   } catch (_) { return String(d); }
 }
 
+// Lightweight markdown renderer for content where we capture verbatim source
+// (minutes, narratives) with light structure. Handles:
+//   ## Heading     → <h3>
+//   - list item    → <ul><li>
+//   1. ordered     → <ol><li>
+//   **bold**       → <strong>
+//   blank line     → paragraph break
+// Returns HTML-safe output. Anything that looks like raw HTML is escaped first.
+function renderLightMarkdown(md) {
+  if (!md || typeof md !== 'string') return '';
+  const lines = md.replace(/\r\n/g, '\n').split('\n');
+  const out = [];
+  let listType = null; // 'ul' | 'ol' | null
+  let paraBuf = [];
+  function flushPara() {
+    if (paraBuf.length) {
+      const txt = paraBuf.join(' ').trim();
+      if (txt) out.push(`<p style="margin: 0 0 12px 0; line-height: 1.7;">${inlineMd(txt)}</p>`);
+      paraBuf = [];
+    }
+  }
+  function flushList() {
+    if (listType) { out.push(`</${listType}>`); listType = null; }
+  }
+  function inlineMd(s) {
+    return esc(s).replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  }
+  for (const raw of lines) {
+    const line = raw.trim();
+    if (!line) { flushPara(); flushList(); continue; }
+    const h2 = line.match(/^##\s+(.+)$/);
+    const h3 = line.match(/^###\s+(.+)$/);
+    const ul = line.match(/^[-*]\s+(.+)$/);
+    const ol = line.match(/^\d+\.\s+(.+)$/);
+    if (h2) {
+      flushPara(); flushList();
+      out.push(`<h3 style="font-size: 14px; font-weight: 700; color: var(--navy, #1F3A5F); text-transform: uppercase; letter-spacing: 0.06em; margin: 22px 0 8px 0; padding-bottom: 4px; border-bottom: 1px solid var(--rule, #E5E7EB);">${inlineMd(h2[1])}</h3>`);
+    } else if (h3) {
+      flushPara(); flushList();
+      out.push(`<h4 style="font-size: 13px; font-weight: 600; color: var(--navy, #1F3A5F); margin: 16px 0 6px 0;">${inlineMd(h3[1])}</h4>`);
+    } else if (ul) {
+      flushPara();
+      if (listType !== 'ul') { flushList(); out.push('<ul style="margin: 6px 0 12px 0; padding-left: 22px;">'); listType = 'ul'; }
+      out.push(`<li style="margin-bottom: 4px; line-height: 1.6;">${inlineMd(ul[1])}</li>`);
+    } else if (ol) {
+      flushPara();
+      if (listType !== 'ol') { flushList(); out.push('<ol style="margin: 6px 0 12px 0; padding-left: 22px;">'); listType = 'ol'; }
+      out.push(`<li style="margin-bottom: 4px; line-height: 1.6;">${inlineMd(ol[1])}</li>`);
+    } else {
+      flushList();
+      paraBuf.push(line);
+    }
+  }
+  flushPara(); flushList();
+  return out.join('\n');
+}
+
 // ============================================================================
 // PER-SECTION STANDALONE RENDERERS
 // ----------------------------------------------------------------------------
@@ -1604,26 +1661,26 @@ function renderAgendaStandaloneHtml({ packet, section, embed = false }) {
 // ----------------------------------------------------------------------------
 function renderPriorMinutesStandaloneHtml({ packet, section, embed = false }) {
   const d = section.input_data || {};
-  const narrative = d.hide_narrative ? null : (d.narrative || null);
   const dt = d.prior_meeting_date ? fmtDate(d.prior_meeting_date) : null;
-  const summary = (d.summary || '').trim();
+  const fullText = (d.full_text || '').trim();
   const motions = Array.isArray(d.motions) ? d.motions : [];
   const items = Array.isArray(d.action_items_status) ? d.action_items_status : [];
-  const empty = !dt && !summary && !motions.length && !items.length;
+  // Legacy summary kept as fallback if no full_text was captured (old extractions).
+  const legacySummary = !fullText ? (d.summary || '').trim() : '';
+  const empty = !dt && !fullText && !legacySummary && !motions.length && !items.length;
 
   const bodyHtml = `
-    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
     ${empty ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No prior-meeting minutes captured yet. Upload the previous month's signed minutes PDF on the section card.</div>` : `
-      ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 12px;">Previous meeting · <strong style="color:var(--navy);">${esc(dt)}</strong></div>` : ''}
-      ${summary ? `<div style="background:var(--gold-tint); border-left:4px solid var(--gold); padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 0 0 18px;">${esc(summary)}</div>` : ''}
+      ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 18px;">Previous meeting · <strong style="color:var(--navy);">${esc(dt)}</strong></div>` : ''}
+
+      ${fullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(fullText)}</div>` : ''}
+      ${legacySummary ? `<div style="background:var(--gold-tint); border-left:4px solid var(--gold); padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 0 0 18px;">${esc(legacySummary)}</div>` : ''}
 
       ${motions.length ? `
         <div class="table-h2">Motions (${motions.length})</div>
         <table class="data-table">
           <thead><tr>
             <th>Motion</th>
-            <th>Moved by</th>
-            <th>Seconded</th>
             <th>Result</th>
           </tr></thead>
           <tbody>
@@ -1632,8 +1689,6 @@ function renderPriorMinutesStandaloneHtml({ packet, section, embed = false }) {
               const rbg = m.result === 'passed' ? '#dcfce7' : m.result === 'failed' ? '#fee2e2' : '#fef3c7';
               return `<tr>
                 <td>${esc(m.motion || '—')}</td>
-                <td style="color:var(--ink-soft);">${esc(m.moved_by || '—')}</td>
-                <td style="color:var(--ink-soft);">${esc(m.seconded_by || '—')}</td>
                 <td><span style="background:${rbg}; color:${rcolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${esc(m.result || '—')}</span></td>
               </tr>`;
             }).join('')}
@@ -2014,6 +2069,7 @@ ${(() => {
   // Same for prior_minutes — may be wrapped or fields named differently.
   const minutesData = sec.section_key === 'prior_minutes' ? (data?.minutes || data || {}) : null;
   const isPriorMinutes = sec.section_key === 'prior_minutes' && minutesData && (
+    minutesData.full_text ||
     minutesData.summary ||
     (Array.isArray(minutesData.motions) && minutesData.motions.length) ||
     (Array.isArray(minutesData.action_items_status) && minutesData.action_items_status.length) ||
@@ -2056,18 +2112,19 @@ ${(() => {
     : isPriorMinutes
     ? (() => {
         const dt = minutesData.prior_meeting_date ? fmtDate(minutesData.prior_meeting_date) : null;
+        const fullText = (minutesData.full_text || '').trim();
         const motions = Array.isArray(minutesData.motions) ? minutesData.motions : [];
         const items = Array.isArray(minutesData.action_items_status) ? minutesData.action_items_status : [];
+        const legacySummary = !fullText ? (minutesData.summary || '').trim() : '';
         return `
-          ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 12px;">Previous meeting · <strong style="color:var(--bedrock-navy-deep);">${esc(dt)}</strong></div>` : ''}
-          ${minutesData.summary ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 18px;">${esc(minutesData.summary)}</div>` : ''}
+          ${dt ? `<div style="font-size:13px; color:var(--ink-muted); margin: 0 0 18px;">Previous meeting · <strong style="color:var(--bedrock-navy-deep);">${esc(dt)}</strong></div>` : ''}
+          ${fullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(fullText)}</div>` : ''}
+          ${legacySummary ? `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 18px;">${esc(legacySummary)}</div>` : ''}
           ${motions.length ? `
             <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Motions (${motions.length})</div>
             <table style="width:100%; border-collapse:collapse; font-size:13px;">
               <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
                 <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Motion</th>
-                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Moved by</th>
-                <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Seconded</th>
                 <th style="text-align:left; padding:8px 10px; border-bottom:2px solid var(--bedrock-navy);">Result</th>
               </tr></thead>
               <tbody>
@@ -2076,8 +2133,6 @@ ${(() => {
                   const rbg = m.result === 'passed' ? '#dcfce7' : m.result === 'failed' ? '#fee2e2' : '#fef3c7';
                   return `<tr style="border-bottom:1px solid var(--rule);">
                     <td style="padding:8px 10px;">${esc(m.motion || '—')}</td>
-                    <td style="padding:8px 10px; color:var(--ink-soft);">${esc(m.moved_by || '—')}</td>
-                    <td style="padding:8px 10px; color:var(--ink-soft);">${esc(m.seconded_by || '—')}</td>
                     <td style="padding:8px 10px;"><span style="background:${rbg}; color:${rcolor}; padding:2px 10px; border-radius:99px; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;">${esc(m.result || '—')}</span></td>
                   </tr>`;
                 }).join('')}
@@ -2146,14 +2201,23 @@ const SECTION_EXTRACTION_PROMPTS = {
 }
 Return ONLY the JSON, no preamble.`,
 
-  prior_minutes: `This is the previous board meeting minutes. Extract:
+  prior_minutes: `This is the previous board meeting minutes PDF. Do NOT summarize
+or paraphrase — capture the minutes verbatim, formatted as markdown so the
+packet renderer can display them professionally with the original substance
+preserved.
+
+Return JSON:
 {
   "prior_meeting_date": "YYYY-MM-DD or null",
-  "summary": "2-3 sentence summary of what happened",
-  "motions": [{ "motion": "string", "moved_by": "string", "seconded_by": "string", "result": "passed|failed|tabled" }],
-  "action_items_status": [{ "item": "string", "status": "complete|in_progress|carried_forward" }]
+  "full_text": "string — markdown of the FULL minutes content.\\n\\nUse '## Heading' for major sections (Call to Order, Attendance, Approval of Prior Minutes, Old Business, New Business, Treasurer's Report, Motions, Action Items, Adjournment, etc.).\\nPreserve every discussion point, every motion (with verbatim wording), every vote tally, every action item, every name mentioned, every dollar figure.\\nUse '- ' for list items where the source uses bullets/numbering.\\nUse '**bold**' for emphasized terms in the source.\\nDo NOT invent content. Do NOT condense. Reproduce the minutes as written.",
+  "motions": [
+    { "motion": "string — verbatim motion text", "result": "passed|failed|tabled" }
+  ],
+  "action_items_status": [
+    { "item": "string — verbatim action-item text", "status": "complete|in_progress|carried_forward" }
+  ]
 }
-Return ONLY the JSON, no preamble.`,
+Return ONLY the JSON, no preamble. full_text is the primary content the packet renders; motions and action_items_status are structured copies for reference.`,
 
   financials: `You are reviewing an HOA financial package. The package usually
 contains BOTH a Balance Sheet AND an Income Statement (Statement of Revenues
