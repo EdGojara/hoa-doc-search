@@ -1628,12 +1628,24 @@ function renderAgendaStandaloneHtml({ packet, section, embed = false }) {
   const legacyTxt = !fullText && !items.length && d.format === 'text' && d.text ? String(d.text) : null;
   const empty = !fullText && !items.length && !legacyTxt;
 
+  // Only render the timing-summary table when it actually has signal
+  // (presenters or durations) — otherwise it's a wall of dashes. When no
+  // full_text yet (legacy extractions) but items exist, fall back to a
+  // simple numbered list of topics so the section isn't empty.
+  const hasTimingSignal = items.some((r) => (r.presenter && r.presenter !== '—') || (r.duration_min != null));
+  const showTable = items.length > 0 && hasTimingSignal;
+  const showFallbackList = items.length > 0 && !fullText && !legacyTxt && !hasTimingSignal;
+
   const bodyHtml = `
     ${empty ? `<div style="background:#f1f5f9; border:1px dashed #cbd5e1; border-radius:8px; padding:18px 22px; color:var(--ink-muted); font-size:13px;">No agenda content yet. Use Manual (paste text), Upload (PDF), or AI-generate on the section card.</div>` : `
       ${fullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(fullText)}</div>` : ''}
       ${legacyTxt ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink); margin: 0 0 18px;">${esc(legacyTxt)}</div>` : ''}
+      ${showFallbackList ? `
+        <ol style="margin: 6px 0 16px 0; padding-left: 22px; font-size:14px; line-height:1.7;">
+          ${items.map((r) => `<li style="margin-bottom: 4px;">${esc(r.topic || '—')}</li>`).join('')}
+        </ol>` : ''}
 
-      ${items.length ? `
+      ${showTable ? `
         <div class="table-h2">Timing summary</div>
         <table class="data-table" style="margin: 8px 0 16px;">
           <thead><tr>
@@ -2099,7 +2111,18 @@ ${(() => {
     ? (() => {
         const totalMin = agendaItems.reduce((sum, r) => sum + (Number(r.duration_min) || 0), 0);
         const fullHtml = agendaFullText ? `<div style="font-size:13.5px; color:var(--ink); margin: 0 0 18px;">${renderLightMarkdown(agendaFullText)}</div>` : '';
-        const tableHtml = agendaItems.length ? `
+        // Only show the timing summary table when it has actual signal —
+        // presenters or times. Otherwise it's a column of dashes that adds
+        // visual noise instead of information.
+        const hasTimingSignal = agendaItems.some((r) => (r.presenter && r.presenter !== '—') || (r.duration_min != null));
+        // Fallback: when there's no full_text yet (legacy extractions) AND
+        // no timing signal, still show topics as a simple numbered list so
+        // operators see something useful instead of an empty timing table.
+        const fallbackList = (!fullHtml && !hasTimingSignal && agendaItems.length) ? `
+          <ol style="margin: 6px 0 16px 0; padding-left: 22px; font-size:14px; line-height:1.7;">
+            ${agendaItems.map((r) => `<li style="margin-bottom: 4px;">${esc(r.topic || '—')}</li>`).join('')}
+          </ol>` : '';
+        const tableHtml = (agendaItems.length && hasTimingSignal) ? `
           <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.06em; font-weight:700; color:var(--bedrock-navy); margin: 18px 0 8px;">Timing summary</div>
           <table style="width:100%; border-collapse:collapse; margin: 0 0 16px; font-size:13px;">
             <thead><tr style="background:var(--bedrock-navy-tint); color:var(--bedrock-navy-deep); text-transform:uppercase; font-size:10px; letter-spacing:0.06em;">
@@ -2119,7 +2142,7 @@ ${(() => {
             </tbody>
             ${totalMin > 0 ? `<tfoot><tr><td colspan="3" style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep);">Total scheduled</td><td style="padding:8px 10px; border-top:2px solid var(--bedrock-navy); text-align:right; font-weight:700; color:var(--bedrock-navy-deep); font-variant-numeric:tabular-nums;">${totalMin} min</td></tr></tfoot>` : ''}
           </table>` : '';
-        return fullHtml + tableHtml;
+        return fullHtml + fallbackList + tableHtml;
       })()
     : isAgendaText
     ? `<div style="white-space: pre-wrap; font-size: 13px; line-height: 1.7; color: var(--ink);">${esc(data.text)}</div>`
@@ -2181,17 +2204,13 @@ ${(() => {
         </h4>
         ${it.hasData
           ? (() => {
-              // Non-polished sections: prefer narrative if the extraction
-              // produced one (generic Ed-voiced commentary), else fall back
-              // to a clean structured-data summary, not the raw JSON dump.
-              // Operators can hide the narrative per-section via the toggle.
               const nar = !data?.hide_narrative && data && typeof data.narrative === 'string' && data.narrative.trim();
               if (nar) {
                 return `<div style="background:#FFFBEB; border-left:4px solid #D4AF37; padding:14px 18px; border-radius:0 8px 8px 0; font-size:14px; color:var(--ink); line-height:1.65; margin: 8px 0 0;">${esc(nar)}</div>`;
               }
               return `<p style="color:var(--ink-muted); font-size:13px;">Data captured. Polished in-packet renderer for this section ships next — for now, view via the section's Preview button.</p>`;
             })()
-          : `<p style="color: var(--ink-muted);"><em>No data entered yet. Use the wizard to add Manual, Upload, Auto-fill, or AI-generated content for this section.</em></p>`
+          : `<p style="color: var(--ink-muted); margin: 4px 0 6px;"><em>This section is pending. <strong>To populate it:</strong> close this preview, find the <strong>${esc(it.title)}</strong> card on the packet page, and drop the source PDF on it (or click 📥 Upload). The card will analyze and the next preview will render the content here.</em></p>`
         }
       </div>`
   }
