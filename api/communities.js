@@ -19,6 +19,7 @@
 // ============================================================================
 
 const express = require('express');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const OpenAI = require('openai');
 const Anthropic = require('@anthropic-ai/sdk');
@@ -26,6 +27,7 @@ const Anthropic = require('@anthropic-ai/sdk');
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
@@ -161,7 +163,7 @@ router.get('/:communityId/full', async (req, res) => {
 
     const [{ data: community, error: cErr }, factsResp, computed] = await Promise.all([
       supabase.from('communities')
-        .select('id, name, slug, legal_name, total_lots, vantaca_code, profile, active, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address')
+        .select('id, name, slug, legal_name, total_lots, vantaca_code, profile, active, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, logo_storage_path, logo_mime_type, logo_width, logo_height, logo_uploaded_at')
         .eq('id', communityId)
         .single(),
       supabase.from('v_community_facts')
@@ -178,14 +180,106 @@ router.get('/:communityId/full', async (req, res) => {
     const manualFacts = factsResp.data || [];
     const merged = mergeComputedAndManual(computed, manualFacts);
 
+    // Sign the logo URL so the Settings UI can render an immediate preview
+    // without a separate round-trip. Expires in 24h; UI re-fetches on each
+    // community selection anyway.
+    let logo_preview_url = null;
+    if (community && community.logo_storage_path) {
+      try {
+        const { data: signed } = await supabase.storage
+          .from('documents').createSignedUrl(community.logo_storage_path, 60 * 60 * 24);
+        if (signed) logo_preview_url = signed.signedUrl;
+      } catch (_) {}
+    }
+
     res.json({
       community,
       profile: community?.profile || {},
       facts: merged.manual,
-      computed_facts: merged.computed
+      computed_facts: merged.computed,
+      logo_preview_url,
     });
   } catch (err) {
     console.error('[community-profile] /full failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /:communityId/logo — upload the community logo image. PNG / JPG.
+// Stored at community_assets/<id>/logo.<ext> in the 'documents' bucket.
+// Path + dimensions persisted on the community row so the renderer can do
+// aspect-ratio math without re-decoding on every packet.
+// ----------------------------------------------------------------------------
+router.post('/:communityId/logo', upload.single('logo'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'logo file is required (multipart field "logo")' });
+    const mt = req.file.mimetype || '';
+    const allowed = ['image/png', 'image/jpeg', 'image/jpg'];
+    if (!allowed.includes(mt)) {
+      return res.status(400).json({ error: `unsupported mime type ${mt} — PNG or JPG only` });
+    }
+    const ext = mt.includes('png') ? 'png' : 'jpg';
+    const storagePath = `community_assets/${req.params.communityId}/logo.${ext}`;
+    const { error: upErr } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, req.file.buffer, { contentType: mt, upsert: true });
+    if (upErr) return res.status(500).json({ error: `storage: ${upErr.message}` });
+
+    // Decode dimensions (best-effort; needed for aspect-ratio math in renderer).
+    // Uses node-canvas if available, falls back to null dims.
+    let width = null, height = null;
+    try {
+      const { loadImage } = require('canvas');
+      const img = await loadImage(req.file.buffer);
+      width = img.width;
+      height = img.height;
+    } catch (_) {}
+
+    const { data, error: dbErr } = await supabase
+      .from('communities')
+      .update({
+        logo_storage_path: storagePath,
+        logo_mime_type:    mt,
+        logo_width:        width,
+        logo_height:       height,
+        logo_uploaded_at:  new Date().toISOString(),
+      })
+      .eq('id', req.params.communityId)
+      .select('id, logo_storage_path, logo_mime_type, logo_width, logo_height, logo_uploaded_at')
+      .single();
+    if (dbErr) throw dbErr;
+
+    // Return a 24-hour signed URL so the UI can render an immediate preview.
+    let preview_url = null;
+    try {
+      const { data: signed } = await supabase.storage.from('documents').createSignedUrl(storagePath, 60 * 60 * 24);
+      if (signed) preview_url = signed.signedUrl;
+    } catch (_) {}
+
+    res.json({ ok: true, community: data, preview_url });
+  } catch (err) {
+    console.error('[community-profile] logo upload failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// DELETE /:communityId/logo — remove the community logo
+// ----------------------------------------------------------------------------
+router.delete('/:communityId/logo', async (req, res) => {
+  try {
+    const { data: comm } = await supabase
+      .from('communities').select('logo_storage_path').eq('id', req.params.communityId).maybeSingle();
+    if (comm && comm.logo_storage_path) {
+      try { await supabase.storage.from('documents').remove([comm.logo_storage_path]); } catch (_) {}
+    }
+    await supabase.from('communities').update({
+      logo_storage_path: null, logo_mime_type: null, logo_width: null, logo_height: null, logo_uploaded_at: null,
+    }).eq('id', req.params.communityId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[community-profile] logo delete failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

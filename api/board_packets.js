@@ -75,6 +75,21 @@ function getCommunityAssets(communityName) {
   return COMMUNITY_ASSETS[communityName] || { hero: null, logo: null, legal_suffix: '' };
 }
 
+// Build the per-community asset set used by the renderer. Prefers a logo
+// uploaded via the Community Settings panel (community.logo_signed_url) over
+// any hard-coded file in COMMUNITY_ASSETS — so every association controls
+// its own brand without a code change.
+function resolveCommunityAssets(community) {
+  const fromMap = getCommunityAssets(community && community.name);
+  const uploadedLogo = community && community.logo_signed_url ? community.logo_signed_url : null;
+  return {
+    hero: fromMap.hero,
+    logo: uploadedLogo || fromMap.logo,
+    legal_suffix: fromMap.legal_suffix,
+    has_custom_logo: !!uploadedLogo,
+  };
+}
+
 function esc(s) {
   return String(s == null ? '' : s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -109,7 +124,7 @@ function fmtDateShort(d) {
 // ----------------------------------------------------------------------------
 function renderPacketPreviewHtml({ packet, sections, volume }) {
   const community = packet.community || {};
-  const assets = getCommunityAssets(community.name);
+  const assets = resolveCommunityAssets(community);
   const heroStyle = assets.hero
     ? `background: linear-gradient(180deg, rgba(31,58,95,0.25) 0%, rgba(31,58,95,0.45) 55%, rgba(31,58,95,0.85) 100%), url('${assets.hero}') center/cover;`
     : `background: linear-gradient(180deg, #4a7ab0 0%, #315A87 50%, #1F3A5F 100%);`;
@@ -1029,11 +1044,21 @@ router.get('/:id/preview', async (req, res) => {
   try {
     const { data: packet } = await supabase
       .from('board_packets')
-      .select('*, community:communities(id, name, legal_name)')
+      .select('*, community:communities(id, name, legal_name, logo_storage_path, logo_mime_type)')
       .eq('id', req.params.id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
     if (!packet) return res.status(404).send('<h1>Packet not found</h1>');
+
+    // Generate a signed URL for the community logo so the HTML <img> can
+    // load it. 24h expiry so the preview survives a printer round-trip.
+    if (packet.community && packet.community.logo_storage_path) {
+      try {
+        const { data: signed } = await supabase.storage
+          .from('documents').createSignedUrl(packet.community.logo_storage_path, 60 * 60 * 24);
+        if (signed) packet.community.logo_signed_url = signed.signedUrl;
+      } catch (_) {}
+    }
 
     const { data: sections } = await supabase
       .from('board_packet_sections')

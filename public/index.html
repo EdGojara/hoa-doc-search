@@ -4853,6 +4853,29 @@
         </div>
       </div>
 
+      <!-- ===== Community brand assets — logo for co-branded artifacts ===== -->
+      <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+          <div>
+            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🎨 Community brand assets</h3>
+            <p style="font-size:12px; color:#888; margin-top:2px;">Upload the Association's logo. It will appear alongside Bedrock's mark on board packets, violation letters, and other customer-facing artifacts. PNG or JPG, ideally 400px+ wide with a transparent background.</p>
+          </div>
+        </div>
+        <div style="display:flex; gap:18px; align-items:flex-start; flex-wrap:wrap;">
+          <div id="logoPreviewWrap" style="width:160px; height:160px; border:1px dashed #cbd5e1; border-radius:10px; display:flex; align-items:center; justify-content:center; background:#fafbfc; padding:8px; flex-shrink:0;">
+            <div id="logoPreviewEmpty" style="color:#94a3b8; font-size:12px; text-align:center;">No logo<br/>uploaded yet</div>
+            <img id="logoPreviewImg" style="display:none; max-width:100%; max-height:100%; object-fit:contain;" />
+          </div>
+          <div style="flex:1; min-width:240px;">
+            <input type="file" id="logoFileInput" accept="image/png,image/jpeg,image/jpg" style="display:none;" onchange="logoOnFileSelected(this)">
+            <button class="primary-btn" onclick="document.getElementById('logoFileInput').click()" style="padding:8px 16px;">📤 Upload logo</button>
+            <button class="secondary-btn" id="logoRemoveBtn" onclick="logoRemove()" style="padding:8px 16px; margin-left:8px; display:none;">🗑 Remove</button>
+            <div id="logoUploadStatus" style="margin-top:8px; font-size:12px; color:#64748b;"></div>
+            <div id="logoDimensions" style="margin-top:4px; font-size:11px; color:#94a3b8;"></div>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Letter & enforcement settings — per-community letter config ===== -->
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
@@ -12404,6 +12427,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       profRenderContacts();
       profRenderFacts();
       profRenderComputed();
+      // Render community logo preview if uploaded
+      logoRenderPreview(j.logo_preview_url || null, j.community ? { w: j.community.logo_width, h: j.community.logo_height } : null);
     } catch (err) {
       console.warn('[profile] load failed:', err);
       const wrap = document.getElementById('profile-page') || document.body;
@@ -13727,6 +13752,84 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('accRecipSumProject').textContent = [proj, ref ? `Ref ${ref}` : ''].filter(Boolean).join(' · ');
     const nameEl = document.getElementById('accRecipSumName');
     if (nameEl) nameEl.style.color = name ? '#1E2761' : '#b91c1c';
+  }
+
+  // Community logo upload — drives co-branded PDFs (board packets, letters)
+  function logoRenderPreview(url, dims) {
+    const empty = document.getElementById('logoPreviewEmpty');
+    const img   = document.getElementById('logoPreviewImg');
+    const rmBtn = document.getElementById('logoRemoveBtn');
+    const dimEl = document.getElementById('logoDimensions');
+    if (!empty || !img || !rmBtn) return;
+    if (url) {
+      empty.style.display = 'none';
+      img.style.display = 'block';
+      img.src = url;
+      rmBtn.style.display = 'inline-block';
+      if (dimEl && dims && dims.w && dims.h) {
+        dimEl.textContent = `${dims.w} × ${dims.h}px`;
+      } else if (dimEl) {
+        dimEl.textContent = '';
+      }
+    } else {
+      empty.style.display = 'block';
+      img.style.display = 'none';
+      img.src = '';
+      rmBtn.style.display = 'none';
+      if (dimEl) dimEl.textContent = '';
+    }
+  }
+
+  async function logoOnFileSelected(input) {
+    if (!profCurrent || !input.files || !input.files[0]) return;
+    const f = input.files[0];
+    input.value = '';
+    const status = document.getElementById('logoUploadStatus');
+    status.textContent = 'Uploading…';
+    status.style.color = '#64748b';
+    try {
+      const fd = new FormData();
+      fd.append('logo', f);
+      const r = await fetch(`/api/community-profile/${profCurrent.id}/logo`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const c = j.community || {};
+      profCurrent.logo_storage_path = c.logo_storage_path;
+      profCurrent.logo_mime_type    = c.logo_mime_type;
+      profCurrent.logo_width        = c.logo_width;
+      profCurrent.logo_height       = c.logo_height;
+      logoRenderPreview(j.preview_url, { w: c.logo_width, h: c.logo_height });
+      status.textContent = '✓ Uploaded — co-branded artifacts will use this logo from now on.';
+      status.style.color = '#2d7a3a';
+      setTimeout(() => { status.textContent = ''; }, 4000);
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+      status.style.color = '#b91c1c';
+    }
+  }
+
+  async function logoRemove() {
+    if (!profCurrent) return;
+    if (!confirm('Remove this community\'s logo? Future packets and letters will fall back to Bedrock branding only until a new logo is uploaded.')) return;
+    const status = document.getElementById('logoUploadStatus');
+    status.textContent = 'Removing…';
+    status.style.color = '#64748b';
+    try {
+      const r = await fetch(`/api/community-profile/${profCurrent.id}/logo`, { method: 'DELETE' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      profCurrent.logo_storage_path = null;
+      profCurrent.logo_mime_type    = null;
+      profCurrent.logo_width        = null;
+      profCurrent.logo_height       = null;
+      logoRenderPreview(null);
+      status.textContent = '✓ Removed.';
+      status.style.color = '#2d7a3a';
+      setTimeout(() => { status.textContent = ''; }, 3000);
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+      status.style.color = '#b91c1c';
+    }
   }
 
   // Dynamic button label so the operator sees "Download approval letter"
