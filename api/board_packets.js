@@ -3315,6 +3315,32 @@ router.get('/:id/pdf', async (req, res) => {
     });
     const page = await browser.newPage();
     await page.setViewport({ width: 1240, height: 1600, deviceScaleFactor: 1 });
+
+    // Puppeteer can't pass the staff auth gate without a valid session
+    // cookie — without one it lands on /staff-login.html and the PDF
+    // would render the login page instead of the packet. Mint a short-
+    // lived cookie using the same HMAC scheme server.js uses
+    // (bedrock_gate = ts.sig). Cookie is set on this page only, expires
+    // automatically after STAFF_GATE_TTL_DAYS (server config).
+    const staffPassword = process.env.STAFF_PASSWORD;
+    if (staffPassword) {
+      const secret = process.env.STAFF_GATE_SECRET || staffPassword;
+      const ts = String(Date.now());
+      const sig = crypto.createHmac('sha256', secret).update(ts).digest('hex');
+      const token = `${ts}.${sig}`;
+      // host can include :port — strip it for cookie domain.
+      const cookieDomain = host.replace(/:\d+$/, '');
+      await page.setCookie({
+        name: 'bedrock_gate',
+        value: token,
+        domain: cookieDomain,
+        path: '/',
+        httpOnly: true,
+        secure: proto === 'https',
+        sameSite: 'Lax',
+      });
+    }
+
     await page.goto(previewUrl, { waitUntil: 'networkidle0', timeout: 60000 });
 
     // Wait for the embed-mode section iframes to settle. Each one posts
