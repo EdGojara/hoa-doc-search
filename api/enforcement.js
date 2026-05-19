@@ -32,6 +32,8 @@ const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { parseVantacaViolations } = require('../lib/enforcement/vantaca_violation_import');
+const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
+const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
@@ -56,6 +58,148 @@ async function _ensureLettersBucket() {
 }
 
 const router = express.Router();
+
+// ---------------------------------------------------------------------------
+// _fireSupplementalNotices — multi-channel evidence trail
+// Fires email + SMS supplemental notices alongside the postal mailing of a
+// violation letter. The mail is the legal artifact; email + SMS are belt-
+// and-suspenders evidence that the homeowner had multiple opportunities to
+// learn about the notice. Each send writes a delivery_receipts row.
+//
+// TCPA: SMS only goes when contacts.sms_opt_in=TRUE and not opted out.
+// CAN-SPAM: email is transactional under the existing customer relationship;
+// we still respect explicit email_opt_out.
+// Safe-fallback throughout — if Resend/Twilio env vars are missing, the
+// sends are skipped and the failure (with reason='not_configured') is
+// recorded so the evidence trail still shows the attempt.
+// ---------------------------------------------------------------------------
+async function _fireSupplementalNotices(args) {
+  const { interactionId, communityId, community, propertyId, property,
+          violationId, violation, categoryLabel, postmarkIso, cureBy,
+          pdfBuffer, letterPath } = args;
+  const stage = violation && violation.current_stage;
+  const isCertified = stage === 'certified_209' || stage === 'fine_assessed';
+  const communityName = (community && community.name) || 'your Association';
+  const propAddr = property
+    ? `${property.street_address || ''}${property.unit ? ' #' + property.unit : ''}`
+    : 'your property';
+  const cureByLong = cureBy
+    ? new Date(cureBy).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })
+    : 'the date specified in the letter';
+
+  // Owner contact — for email + phone + opt-in flags
+  let contact = null;
+  if (property && property.owner_contact_id) {
+    const { data } = await supabase
+      .from('contacts')
+      .select('id, full_name, email, phone, notification_phone, sms_opt_in, sms_opt_out, email_opt_out')
+      .eq('id', property.owner_contact_id)
+      .maybeSingle();
+    contact = data;
+  }
+
+  // Signed URL for the letter PDF — used by both email and SMS. 30-day
+  // expiry so the URL stays valid through the cure window.
+  let letterUrl = null;
+  if (letterPath) {
+    try {
+      const { data: signed } = await supabase.storage
+        .from('violation-letters')
+        .createSignedUrl(letterPath, 60 * 60 * 24 * 30);
+      if (signed) letterUrl = signed.signedUrl;
+    } catch (_) {}
+  }
+
+  // ---------- Email ----------
+  if (contact && contact.email && !contact.email_opt_out) {
+    const subject = isCertified
+      ? `Formal notice (certified) regarding ${propAddr} — ${communityName}`
+      : `Compliance concern regarding ${propAddr} — ${communityName}`;
+    const greeting = contact.full_name ? `Dear ${contact.full_name.split(/\s+/).pop()},` : 'Dear Property Owner,';
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif; max-width: 600px; margin: 0 auto; color: #1a1a1a; line-height: 1.55;">
+        <h2 style="color: #1A3050; margin-bottom: 4px;">${communityName}</h2>
+        <p style="color: #5a5a5a; margin-top: 0; font-size: 13px;">via Bedrock Association Management</p>
+        <hr style="border: none; border-top: 1px solid #e2e8f0; margin: 14px 0;" />
+        <p>${greeting}</p>
+        <p>${isCertified
+          ? `This is a courtesy email accompanying a certified §209 notice mailed today regarding a covenant matter at <strong>${propAddr}</strong>. The certified letter is the legal artifact; this email is supplemental so you don't first learn of the matter when the certified envelope arrives.`
+          : `We're writing about a compliance concern noted recently at <strong>${propAddr}</strong>. A letter is being mailed to you today — this email is the same notice in advance so you can address it promptly.`}</p>
+        <p><strong>Matter:</strong> ${categoryLabel || 'covenant compliance'}<br/>
+           <strong>Please cure by:</strong> ${cureByLong}<br/>
+           <strong>Postmark date:</strong> ${postmarkIso}</p>
+        ${letterUrl ? `<p style="margin: 18px 0;"><a href="${letterUrl}" style="background: #1A3050; color: #fff; padding: 10px 18px; border-radius: 6px; text-decoration: none; font-weight: 600;">View the full letter (PDF)</a></p>` : ''}
+        <p>If you have questions, please reply to this email or call <a href="tel:8325882485" style="color: #1A3050;">(832) 588-2485</a>. We'd rather resolve this with you than continue escalation.</p>
+        <p style="font-size: 12px; color: #5a5a5a; margin-top: 24px; border-top: 1px solid #e2e8f0; padding-top: 12px;">
+          This is a transactional communication regarding your property. To stop receiving non-essential email from us, reply with "OPT OUT" in the subject line.
+        </p>
+      </div>
+    `;
+    const text = `${greeting}\n\n${isCertified
+      ? `This is a courtesy email accompanying a certified §209 notice mailed today regarding a covenant matter at ${propAddr}. The certified letter is the legal artifact; this email is supplemental.`
+      : `We're writing about a compliance concern noted recently at ${propAddr}. A letter is being mailed to you today — this email is the same notice in advance.`}\n\nMatter: ${categoryLabel || 'covenant compliance'}\nPlease cure by: ${cureByLong}\nPostmark date: ${postmarkIso}\n${letterUrl ? `\nView the full letter: ${letterUrl}\n` : ''}\nQuestions: reply or call (832) 588-2485.\n\n— ${communityName} via Bedrock Association Management`;
+
+    // Attach PDF for courtesy notices (lightweight + frequent). Certified
+    // notices link only — the certified mailing IS the legal artifact and
+    // an attached PDF dilutes that.
+    let attachments;
+    if (pdfBuffer && !isCertified) {
+      attachments = [{
+        filename: `Bedrock-Notice-${(propAddr || 'property').replace(/[^A-Za-z0-9]+/g, '-')}.pdf`,
+        content: pdfBuffer.toString('base64'),
+      }];
+    }
+
+    const result = await sendEmail({ to: contact.email, subject, html, text, attachments, tags: [
+      { name: 'stage',     value: stage || 'unknown' },
+      { name: 'community', value: communityName.replace(/[^A-Za-z0-9]+/g, '_').slice(0, 30) },
+    ] });
+    try {
+      await supabase.from('delivery_receipts').insert({
+        interaction_id: interactionId,
+        contact_id:     contact.id,
+        community_id:   communityId,
+        property_id:    propertyId,
+        violation_id:   violationId,
+        channel:        'email',
+        to_address:     contact.email,
+        status:         result.ok ? 'sent' : 'failed',
+        vendor:         'resend',
+        vendor_message_id: result.vendor_message_id || null,
+        sent_at:        new Date().toISOString(),
+        failure_reason: result.ok ? null : (result.error || null),
+        raw_response:   result.raw || null,
+      });
+    } catch (recErr) { console.warn('[supplemental] email receipt insert failed:', recErr.message); }
+  }
+
+  // ---------- SMS ----------
+  const smsPhone = contact && (contact.notification_phone || contact.phone);
+  const smsAllowed = contact && contact.sms_opt_in && !contact.sms_opt_out && smsPhone;
+  if (smsAllowed) {
+    const body = isCertified
+      ? `${communityName}: A CERTIFIED §209 notice was mailed to you today regarding ${propAddr}. Please cure by ${new Date(cureBy).toLocaleDateString('en-US')}. View letter: ${letterUrl || '(see your mail)'}\nQuestions: (832) 588-2485`
+      : `${communityName}: A compliance notice was mailed to you regarding ${propAddr}. Please cure by ${new Date(cureBy).toLocaleDateString('en-US')}. View letter: ${letterUrl || '(see your mail)'}\nQuestions: (832) 588-2485`;
+    const result = await sendSms({ to: smsPhone, body });
+    try {
+      await supabase.from('delivery_receipts').insert({
+        interaction_id: interactionId,
+        contact_id:     contact.id,
+        community_id:   communityId,
+        property_id:    propertyId,
+        violation_id:   violationId,
+        channel:        'sms',
+        to_address:     result.to || smsPhone,
+        status:         result.ok ? 'sent' : 'failed',
+        vendor:         'twilio',
+        vendor_message_id: result.vendor_message_id || null,
+        sent_at:        new Date().toISOString(),
+        failure_reason: result.ok ? null : (result.error || null),
+        raw_response:   result.raw || null,
+      });
+    } catch (recErr) { console.warn('[supplemental] sms receipt insert failed:', recErr.message); }
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Helper: fetch the active priority weight for (community, category).
@@ -1102,6 +1246,50 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
 // Per-community letter fees + cure days drive the dates + amounts; defaults
 // kick in when the community row hasn't been customized.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/interactions/:id/delivery-receipts
+// Returns the full multi-channel delivery trail for one interaction. Powers
+// the property-detail Evidence panel: "mail postmarked May 19, email sent
+// May 19 (opened May 20), SMS delivered May 19." When a homeowner calls
+// claiming they never got the letter, the operator opens this panel and
+// shows — not argues — that three channels reached them on three dates.
+// ---------------------------------------------------------------------------
+router.get('/interactions/:id/delivery-receipts', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('delivery_receipts')
+      .select('id, channel, to_address, status, vendor, vendor_message_id, sent_at, delivered_at, opened_at, clicked_at, failed_at, failure_reason, notes')
+      .eq('interaction_id', req.params.id)
+      .order('sent_at', { ascending: true });
+    if (error) throw error;
+    res.json({ receipts: data || [] });
+  } catch (err) {
+    console.error('[enforcement.delivery-receipts]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/violations/:id/delivery-receipts
+// Same shape but scoped to all interactions tied to one violation.
+// Used by the violation-evidence view (every letter ever sent + every
+// channel attempt on each of those letters).
+// ---------------------------------------------------------------------------
+router.get('/violations/:id/delivery-receipts', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('delivery_receipts')
+      .select('id, interaction_id, channel, to_address, status, vendor, vendor_message_id, sent_at, delivered_at, opened_at, clicked_at, failed_at, failure_reason, notes')
+      .eq('violation_id', req.params.id)
+      .order('sent_at', { ascending: true });
+    if (error) throw error;
+    res.json({ receipts: data || [] });
+  } catch (err) {
+    console.error('[enforcement.violations.delivery-receipts]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
   try {
     const body = req.body || {};
@@ -1175,10 +1363,11 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
                        : Number(community.letter_cure_days_certified_209 || 30);
         const cureBy = new Date(postmarkDate.getTime() + cureDays * 24 * 60 * 60 * 1000).toISOString();
 
-        // Property + owner
+        // Property + owner. owner_contact_id is needed for multi-channel
+        // supplemental notices (email/SMS lookups go through contacts).
         const { data: pRow } = await supabase
           .from('v_current_property_owners')
-          .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+          .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_contact_id')
           .eq('property_id', vio.property_id)
           .maybeSingle();
         if (!pRow) { skipped.push({ id: L.id, reason: 'property not found' }); continue; }
@@ -1316,6 +1505,50 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
               : Number(community.letter_fee_certified_209_cents || 3500),
           })
           .eq('id', L.id);
+
+        // Mail channel delivery receipt — records the postmark side of the
+        // evidence trail. Every channel send produces a delivery_receipts
+        // row so the homeowner-complaint defense ("I never got it") can
+        // surface all attempts on the property-detail evidence panel.
+        try {
+          await supabase.from('delivery_receipts').insert({
+            interaction_id: L.id,
+            community_id:   vio.community_id,
+            property_id:    vio.property_id,
+            violation_id:   vio.id,
+            channel:        deliveryMethod,
+            to_address:     pRow.owner_mailing_address || pRow.street_address || '',
+            status:         'sent',
+            vendor:         'usps',
+            vendor_message_id: opts && opts.certified_tracking_number || null,
+            sent_at:        nowIso,
+            notes:          'Postmarked ' + postmarkIso,
+          });
+        } catch (recErr) { console.warn('[lock-and-batch] mail receipt insert failed:', recErr.message); }
+
+        // Multi-channel supplemental notices — email + SMS to the homeowner
+        // owner contact, where channel preferences allow. These are TRANSACTIONAL
+        // (related to an existing customer relationship under the CC&Rs), so
+        // email goes by default; SMS requires explicit sms_opt_in. Each send
+        // logs a delivery_receipts row regardless of vendor success.
+        try {
+          await _fireSupplementalNotices({
+            interactionId: L.id,
+            communityId:   vio.community_id,
+            community,
+            propertyId:    vio.property_id,
+            property:      pRow,
+            violationId:   vio.id,
+            violation:     vio,
+            categoryLabel: catRow && catRow.label,
+            postmarkIso,
+            cureBy,
+            pdfBuffer,
+            letterPath,
+          });
+        } catch (notifErr) {
+          console.warn('[lock-and-batch] supplemental notices failed:', notifErr.message);
+        }
 
         // Append to merged batch PDF
         const src = await PDFDocument.load(pdfBuffer);

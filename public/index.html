@@ -8281,7 +8281,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              </div>`).join('')}
          </div>`;
 
-    // Interactions
+    // Interactions — each letter row gets an "Evidence" expander that
+    // lazy-loads the multi-channel delivery trail. This is the "I never
+    // got the letter" defense: a homeowner sees email + SMS + certified
+    // mail all logged with timestamps, and the conversation reframes
+    // from "did this arrive?" to "let's discuss what's needed now."
+    const isLetterType = (t) => t && (t.startsWith('letter_') || t === 'ai_draft');
     const interactionsHtml = (d.interactions || []).length === 0
       ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No interactions on record.</div>'
       : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
@@ -8290,14 +8295,25 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              <th style="text-align:left; padding:6px 8px;">Type</th>
              <th style="text-align:left; padding:6px 8px;">Subject</th>
              <th style="text-align:left; padding:6px 8px;">Method</th>
+             <th style="text-align:left; padding:6px 8px;">Evidence</th>
            </tr></thead>
            <tbody>
              ${d.interactions.slice(0, 12).map((i) => `
-               <tr style="border-bottom:1px solid #f1f5f9;">
+               <tr style="border-bottom:1px solid #f1f5f9;" data-interaction-id="${i.id}">
                  <td style="padding:6px 8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
                  <td style="padding:6px 8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}</td>
                  <td style="padding:6px 8px; color:#475569;">${escapeHtml(i.subject || '—')}</td>
                  <td style="padding:6px 8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
+                 <td style="padding:6px 8px;">
+                   ${isLetterType(i.type)
+                     ? `<a href="#" onclick="event.preventDefault(); inspEvidenceToggle('${i.id}')" style="color:#1A3050; font-size:11px; font-weight:600; text-decoration:none;">📡 Show trail</a>`
+                     : '<span style="color:#cbd5e1; font-size:11px;">—</span>'}
+                 </td>
+               </tr>
+               <tr id="evidence-${i.id}" style="display:none;">
+                 <td colspan="5" style="padding:0;">
+                   <div id="evidence-body-${i.id}" style="background:#f8fafc; border-top:1px solid #f1f5f9; padding:10px 14px; font-size:11.5px;">Loading…</div>
+                 </td>
                </tr>`).join('')}
            </tbody>
          </table>`;
@@ -8391,6 +8407,77 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (modal) modal.style.display = 'none';
     inspPDCurrentPropertyId = null;
     inspPDCurrentLabel = null;
+  }
+
+  // Lazy-load the multi-channel delivery trail for a letter interaction.
+  // Renders the timeline inline so the operator can spot-check "we tried
+  // X, Y, Z on these dates" without leaving the property-detail modal.
+  async function inspEvidenceToggle(interactionId) {
+    const row = document.getElementById('evidence-' + interactionId);
+    const body = document.getElementById('evidence-body-' + interactionId);
+    if (!row || !body) return;
+    if (row.style.display === 'table-row') {
+      row.style.display = 'none';
+      return;
+    }
+    row.style.display = 'table-row';
+    body.innerHTML = 'Loading…';
+    try {
+      const r = await fetch(`/api/enforcement/interactions/${interactionId}/delivery-receipts`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const receipts = j.receipts || [];
+      if (receipts.length === 0) {
+        body.innerHTML = '<span style="color:#94a3b8;">No delivery receipts on record. Older letters may pre-date the multi-channel evidence trail.</span>';
+        return;
+      }
+      const channelIcon = (ch) => ({
+        certified_mail:   '✉️',
+        first_class_mail: '📬',
+        email:            '📧',
+        sms:              '📱',
+        postcard:         '🪪',
+        portal_notify:    '🌐',
+      })[ch] || '📡';
+      const statusBadge = (rcpt) => {
+        if (rcpt.opened_at)    return `<span style="background:#dcfce7; color:#166534; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700;">OPENED</span>`;
+        if (rcpt.delivered_at) return `<span style="background:#dbeafe; color:#1e40af; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700;">DELIVERED</span>`;
+        if (rcpt.status === 'failed' || rcpt.status === 'bounced' || rcpt.status === 'undelivered')
+          return `<span style="background:#fecaca; color:#7f1d1d; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700;">${escapeHtml((rcpt.status || '').toUpperCase())}</span>`;
+        return `<span style="background:#f1f5f9; color:#475569; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700;">${escapeHtml((rcpt.status || 'SENT').toUpperCase())}</span>`;
+      };
+      const rows = receipts.map((rcpt) => {
+        const fmtTs = (ts) => ts ? new Date(ts).toLocaleString() : null;
+        const events = [
+          rcpt.sent_at      ? `sent ${fmtTs(rcpt.sent_at)}` : null,
+          rcpt.delivered_at ? `delivered ${fmtTs(rcpt.delivered_at)}` : null,
+          rcpt.opened_at    ? `opened ${fmtTs(rcpt.opened_at)}` : null,
+          rcpt.clicked_at   ? `clicked ${fmtTs(rcpt.clicked_at)}` : null,
+          rcpt.failed_at    ? `failed ${fmtTs(rcpt.failed_at)} — ${escapeHtml(rcpt.failure_reason || 'unknown')}` : null,
+        ].filter(Boolean).join(' · ');
+        return `<div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px dashed #e2e8f0;">
+          <div style="font-size:16px;">${channelIcon(rcpt.channel)}</div>
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:11.5px; color:#1a3a5c;">
+              <strong>${escapeHtml(rcpt.channel.replace(/_/g, ' '))}</strong>
+              · ${escapeHtml(rcpt.to_address || '—')}
+              ${rcpt.vendor ? ` · via ${escapeHtml(rcpt.vendor)}` : ''}
+              ${rcpt.vendor_message_id ? ` · <span style="font-family:monospace; color:#64748b;">${escapeHtml(rcpt.vendor_message_id.slice(0, 18))}…</span>` : ''}
+            </div>
+            <div style="font-size:11px; color:#64748b; margin-top:2px;">${events}</div>
+            ${rcpt.notes ? `<div style="font-size:11px; color:#64748b; margin-top:2px; font-style:italic;">${escapeHtml(rcpt.notes)}</div>` : ''}
+          </div>
+          <div style="flex-shrink:0;">${statusBadge(rcpt)}</div>
+        </div>`;
+      }).join('');
+      body.innerHTML = `
+        <div style="font-weight:700; color:#1A3050; margin-bottom:6px;">📡 Multi-channel delivery trail</div>
+        ${rows}
+        <div style="font-size:10.5px; color:#94a3b8; margin-top:8px; font-style:italic;">When a homeowner says they never received the notice, the trail above is the evidence. Each row is a separate attempt; together they're hard to dispute.</div>
+      `;
+    } catch (e) {
+      body.innerHTML = `<span style="color:#b91c1c;">Couldn't load trail: ${escapeHtml(e.message)}</span>`;
+    }
   }
 
   function inspPDPreselect() {
