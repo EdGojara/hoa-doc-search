@@ -31,6 +31,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations } = require('../lib/enforcement/vantaca_violation_import');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
 const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
@@ -1127,7 +1128,9 @@ router.post('/drafts/reject', express.json(), async (req, res) => {
 router.get('/mail-queue/summary', async (req, res) => {
   try {
     const communityId = req.query.community_id;
-    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
+    // Postcards ride the same Mail Queue but are not bundled — one per
+    // violation, just a printed reminder.
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
     let q = supabase
       .from('interactions')
       .select('id, delivery_method, community_id, communities:community_id(name)')
@@ -1162,7 +1165,7 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
     if (!deliveryMethod || !['first_class_mail', 'certified_mail'].includes(deliveryMethod)) {
       return res.status(400).json({ error: "delivery_method must be 'first_class_mail' or 'certified_mail'" });
     }
-    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
 
     let q = supabase
       .from('interactions')
@@ -2927,4 +2930,171 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
   }
 });
 
-module.exports = { router, processCureLapses };
+// ===========================================================================
+// POSTCARD REMINDER PROCESSOR
+// ---------------------------------------------------------------------------
+// Daily sweep: finds courtesy_1 violations where the mailing happened N days
+// ago (default 7, per-community setting on communities.postcard_reminder_days),
+// the cure window is still open, and no postcard reminder has been drafted
+// for this violation yet. Generates a postcard PDF + drops a draft interaction
+// into the Mail Queue. Operator prints the postcard batch on the same Mail
+// Queue tab.
+// ===========================================================================
+
+async function processPostcardReminders({ communityId = null, dryRun = false, limit = 100 } = {}) {
+  const effLimit = Math.min(200, Number(limit) || 100);
+  const now = new Date();
+
+  // Pull communities that have postcard reminders enabled + their N-day setting
+  let cq = supabase
+    .from('communities')
+    .select('id, name, legal_name, postcard_reminder_enabled, postcard_reminder_days, logo_storage_path');
+  if (communityId) cq = cq.eq('id', communityId);
+  const { data: communities, error: cErr } = await cq;
+  if (cErr) throw cErr;
+  const enabledCommunities = (communities || []).filter((c) => c.postcard_reminder_enabled !== false);
+  if (enabledCommunities.length === 0) {
+    return { eligible: 0, drafted: 0, skipped: 0, errors: [], dry_run: dryRun };
+  }
+  const communityById = new Map(enabledCommunities.map((c) => [c.id, c]));
+
+  // Open courtesy_1 violations in those communities with cure still ahead
+  const { data: vios, error: vErr } = await supabase
+    .from('violations')
+    .select('id, community_id, property_id, opened_at, cure_period_ends_at, primary_category_id, quality_status')
+    .in('community_id', enabledCommunities.map((c) => c.id))
+    .eq('current_stage', 'courtesy_1')
+    .gte('cure_period_ends_at', now.toISOString())
+    .in('quality_status', ['verified', 'unreviewed'])
+    .order('opened_at', { ascending: true })
+    .limit(effLimit);
+  if (vErr) throw vErr;
+  if (!vios || vios.length === 0) {
+    return { eligible: 0, drafted: 0, skipped: 0, errors: [], dry_run: dryRun };
+  }
+
+  let drafted = 0;
+  let skipped = 0;
+  const errors = [];
+
+  // Logo buffer cache per community for the batch
+  const logoCache = new Map();
+  async function getLogo(comm) {
+    if (!comm || !comm.logo_storage_path) return null;
+    if (logoCache.has(comm.id)) return logoCache.get(comm.id);
+    try {
+      const { data: blob } = await supabase.storage.from('documents').download(comm.logo_storage_path);
+      const buf = blob ? Buffer.from(await blob.arrayBuffer()) : null;
+      logoCache.set(comm.id, buf);
+      return buf;
+    } catch (_) { logoCache.set(comm.id, null); return null; }
+  }
+
+  for (const v of vios) {
+    const community = communityById.get(v.community_id);
+    if (!community) { skipped++; continue; }
+
+    // Eligibility window: original courtesy_1 mailed N days ago
+    const daysWindow = Number(community.postcard_reminder_days || 7);
+
+    // Find the Courtesy 1 interaction for this violation (so we know when it
+    // was actually mailed — postmark_date is the legal anchor, falling back
+    // to sent_at if postmark wasn't stamped).
+    const { data: c1Inter } = await supabase
+      .from('interactions')
+      .select('id, sent_at, postmark_date')
+      .eq('violation_id', v.id)
+      .eq('type', 'letter_courtesy_1')
+      .in('status', ['sent', 'approved'])
+      .order('sent_at', { ascending: false })
+      .limit(1).maybeSingle();
+    if (!c1Inter) { skipped++; continue; }
+    const c1MailedAt = c1Inter.postmark_date ? new Date(c1Inter.postmark_date + 'T12:00:00Z') : new Date(c1Inter.sent_at);
+    const daysSince = Math.floor((now.getTime() - c1MailedAt.getTime()) / (24 * 60 * 60 * 1000));
+    if (daysSince < daysWindow) { skipped++; continue; }
+
+    // Already drafted/sent a postcard for this violation?
+    const { data: existingPc } = await supabase
+      .from('interactions')
+      .select('id')
+      .eq('violation_id', v.id)
+      .eq('type', 'letter_postcard_reminder')
+      .maybeSingle();
+    if (existingPc) { skipped++; continue; }
+
+    if (dryRun) { drafted++; continue; }
+
+    try {
+      // Resolve property + owner
+      const { data: pRow } = await supabase
+        .from('v_current_property_owners')
+        .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address, owner_contact_id')
+        .eq('property_id', v.property_id).maybeSingle();
+      if (!pRow) { skipped++; continue; }
+
+      const logoBuffer = await getLogo(community);
+
+      const pdfBuffer = await renderPostcardReminderPdf({
+        community: { name: community.name, legal_name: community.legal_name },
+        property: {
+          street_address: pRow.street_address, unit: pRow.unit,
+          city: pRow.city, state: pRow.state, zip: pRow.zip,
+        },
+        owner: { full_name: pRow.owner_name, mailing_address: pRow.owner_mailing_address },
+        original_letter_date: c1MailedAt,
+        cure_by_date: v.cure_period_ends_at,
+        community_logo_buffer: logoBuffer,
+      });
+
+      // Upload + insert interaction row (status='draft' — operator approves
+      // in Drafts queue, then mails from Mail Queue like any other letter).
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const storagePath = `${v.id}/postcard-reminder-${stamp}.pdf`;
+      const LETTERS_BUCKET = 'violation-letters';
+      const { error: upErr } = await supabase.storage
+        .from(LETTERS_BUCKET).upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+      if (upErr && !/already exists/i.test(upErr.message)) {
+        errors.push({ violation_id: v.id, error: 'upload: ' + upErr.message });
+        continue;
+      }
+
+      await supabase.from('interactions').insert({
+        community_id:    v.community_id,
+        property_id:     v.property_id,
+        violation_id:    v.id,
+        type:            'letter_postcard_reminder',
+        direction:       'outbound',
+        subject:         'Postcard reminder — pre-courtesy-2',
+        content:         storagePath,
+        delivery_method: 'first_class_mail',
+        status:          'draft',
+        ai_drafted:      true,
+        ai_model:        'pdfkit_template',
+      });
+      drafted++;
+    } catch (e) {
+      errors.push({ violation_id: v.id, error: e.message });
+    }
+  }
+
+  return { eligible: vios.length, drafted, skipped, errors, dry_run: dryRun };
+}
+
+// POST /api/enforcement/postcard-reminders/process
+// Body: { community_id?, dry_run?, limit? }
+router.post('/postcard-reminders/process', express.json(), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const result = await processPostcardReminders({
+      communityId: body.community_id || null,
+      dryRun: !!body.dry_run,
+      limit: Number(body.limit) || 100,
+    });
+    res.json(result);
+  } catch (err) {
+    console.error('[postcard-reminders.process]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+module.exports = { router, processCureLapses, processPostcardReminders };
