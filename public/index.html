@@ -7534,6 +7534,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- DRAFTS QUEUE — letters drafted by AI after inspections, awaiting review.
+         Visible always (no active session needed). Click anywhere outside an
+         inspection to see this. Operator reviews each drafted letter PDF, picks
+         which to approve in bulk, rejects the wrong ones. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">📄 Drafts queue <span style="color:#64748b; font-weight:500;">— awaiting review</span></h3>
+        <div style="display:flex; gap:6px;">
+          <button class="secondary-btn" onclick="inspDraftsLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+          <button class="action-btn" id="inspDraftsApproveAllBtn" onclick="inspDraftsApproveSelected()" style="font-size:12px; padding:5px 14px; background:#16a34a; border-color:#16a34a;" disabled>✓ Approve selected (0)</button>
+        </div>
+      </div>
+      <div id="inspDraftsList" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px;">
+        <div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 18px 0;">No drafts yet. Letters will appear here automatically after each inspection.</div>
+      </div>
+    </div>
+
     <!-- Recent sessions (visible always, below the active workflow) -->
     <div style="margin-top: 20px;">
       <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0 0 10px;">Recent inspections</h3>
@@ -9075,6 +9092,156 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const banner = document.getElementById('inspCoverageBanner');
     if (banner) banner.style.display = 'none';
     inspLoadRecent();
+    // Delay drafts reload by 8s so AI categorization + auto-draft have time to
+    // complete on the server for the photos uploaded just before End. Operator
+    // can also hit ↻ Refresh manually.
+    setTimeout(() => inspDraftsLoad(), 8000);
+  }
+
+  // ============================================================
+  // DRAFTS QUEUE (Phase 6d)
+  // -------------------------------------------------------------
+  // After an inspection ends, AI has drafted letters per violation. This
+  // queue is where staff approves them in bulk or rejects bad ones.
+  // ============================================================
+  let inspDraftsData = [];
+  let inspDraftsSelected = new Set();
+
+  async function inspDraftsLoad() {
+    const wrap = document.getElementById('inspDraftsList');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:18px 0;">Loading drafts…</div>';
+    try {
+      const r = await fetch('/api/enforcement/drafts?limit=100');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspDraftsData = j.drafts || [];
+      inspDraftsSelected = new Set();
+      inspDraftsRender();
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:18px;">Couldn't load drafts: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspDraftsRender() {
+    const wrap = document.getElementById('inspDraftsList');
+    if (!wrap) return;
+    if (inspDraftsData.length === 0) {
+      wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:18px 0;">No drafts yet. Letters will appear here after the next inspection finishes auto-drafting.</div>';
+      inspDraftsUpdateApproveBtn();
+      return;
+    }
+    // Group by stage for at-a-glance summary
+    const byStage = inspDraftsData.reduce((acc, d) => {
+      const s = (d.violation && d.violation.current_stage) || 'unknown';
+      acc[s] = (acc[s] || 0) + 1;
+      return acc;
+    }, {});
+    const stagePill = (label, count, tone) => count
+      ? `<span style="background:${tone}; padding:3px 9px; border-radius:99px; font-size:11px; font-weight:700; margin-right:6px;">${label}: ${count}</span>`
+      : '';
+    const summaryBar = `<div style="padding:8px 12px; background:#f8fafc; border-bottom:1px solid #e2e8f0; font-size:12px;">
+      ${stagePill('Courtesy 1', byStage.courtesy_1 || 0, '#dcfce7')}
+      ${stagePill('Courtesy 2', byStage.courtesy_2 || 0, '#fef3c7')}
+      ${stagePill('CERTIFIED §209', byStage.certified_209 || 0, '#fecaca')}
+      ${stagePill('Fine', byStage.fine_assessed || 0, '#fca5a5')}
+      <span style="color:#64748b; margin-left:8px;">· ${inspDraftsData.length} total · select to approve in bulk</span>
+    </div>`;
+
+    const items = inspDraftsData.map((d) => {
+      const isSelected = inspDraftsSelected.has(d.interaction_id);
+      const isCertified = d.delivery_method === 'certified_mail';
+      const stage = d.violation && d.violation.current_stage;
+      const stageColor = stage === 'certified_209' ? '#b45309'
+                       : stage === 'courtesy_2' ? '#b45309'
+                       : stage === 'fine_assessed' ? '#b91c1c'
+                       : '#1A3050';
+      const cureDate = d.violation && d.violation.cure_period_ends_at
+        ? new Date(d.violation.cure_period_ends_at).toLocaleDateString() : '—';
+      const confidence = d.observation && d.observation.ai_confidence;
+      const confColor = confidence === 'low' ? '#b91c1c' : confidence === 'medium' ? '#b45309' : '#15803d';
+      const photoCol = d.observation && d.observation.photo_url
+        ? `<img src="${escapeHtml(d.observation.photo_url)}" style="width:90px; height:90px; object-fit:cover; border-radius:6px; flex-shrink:0;" />`
+        : `<div style="width:90px; height:90px; background:#f1f5f9; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:11px;">no photo</div>`;
+      const ownerLine = d.owner ? `${escapeHtml(d.owner.full_name || '—')}${d.owner.mailing_address ? ` · mail: ${escapeHtml(d.owner.mailing_address)}` : ''}` : '—';
+
+      return `<div style="display:flex; gap:10px; padding:12px; border-bottom:1px solid #f1f5f9; align-items:flex-start; background:${isSelected ? '#eff6ff' : '#fff'}; transition:background 0.15s;">
+        <input type="checkbox" ${isSelected ? 'checked' : ''} onchange="inspDraftsToggle('${d.interaction_id}')" style="margin-top:36px; cursor:pointer; transform:scale(1.2);" />
+        ${photoCol}
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
+            <span style="font-weight:700; color:#1A3050; font-size:14px;">${escapeHtml(d.property && d.property.street_address || '—')}${d.property && d.property.unit ? ' #' + escapeHtml(d.property.unit) : ''}</span>
+            <span style="color:${stageColor}; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;">${escapeHtml(stage || '—').replace(/_/g, ' ')}</span>
+            ${isCertified ? `<span style="background:#fecaca; color:#7f1d1d; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.05em;">CERTIFIED MAIL</span>` : ''}
+          </div>
+          <div style="font-size:12px; color:#475569; margin-bottom:3px;">→ ${ownerLine}</div>
+          <div style="font-size:12px; color:#1A3050; margin-bottom:3px;">${escapeHtml(d.violation && d.violation.category_label || '—')} · cure by ${cureDate}</div>
+          ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
+          <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
+            ${confidence ? `<span style="color:${confColor}; font-weight:600;">AI confidence: ${escapeHtml(confidence)}</span>` : ''}
+            ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#1A3050; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
+            <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
+          </div>
+        </div>
+      </div>`;
+    }).join('');
+
+    wrap.innerHTML = summaryBar + items;
+    inspDraftsUpdateApproveBtn();
+  }
+
+  function inspDraftsToggle(id) {
+    if (inspDraftsSelected.has(id)) inspDraftsSelected.delete(id);
+    else inspDraftsSelected.add(id);
+    inspDraftsRender();
+  }
+
+  function inspDraftsUpdateApproveBtn() {
+    const btn = document.getElementById('inspDraftsApproveAllBtn');
+    if (!btn) return;
+    const n = inspDraftsSelected.size;
+    btn.textContent = `✓ Approve selected (${n})`;
+    btn.disabled = n === 0;
+  }
+
+  async function inspDraftsApproveSelected() {
+    const ids = [...inspDraftsSelected];
+    if (ids.length === 0) return;
+    if (!confirm(`Approve ${ids.length} letter${ids.length === 1 ? '' : 's'}? Approved letters are ready to print + mail. Certified letters need to be taken to the post office.`)) return;
+    const btn = document.getElementById('inspDraftsApproveAllBtn');
+    btn.disabled = true; btn.textContent = '⏳ Approving…';
+    try {
+      const r = await fetch('/api/enforcement/drafts/approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interaction_ids: ids }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`✓ ${j.approved} letter${j.approved === 1 ? '' : 's'} approved. Use Mail Queue to download the print batch.`);
+      await inspDraftsLoad();
+    } catch (e) {
+      alert('Approve failed: ' + e.message);
+      btn.disabled = false; btn.textContent = '✓ Approve selected';
+    }
+  }
+
+  async function inspDraftsReject(interactionId) {
+    const reason = prompt('Reason for rejecting? (e.g., "wrong property", "no violation visible", "duplicate of earlier draft")') || '';
+    if (reason === null) return;  // user cancelled prompt entirely
+    try {
+      const r = await fetch('/api/enforcement/drafts/reject', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ interaction_id: interactionId, reason }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspDraftsSelected.delete(interactionId);
+      await inspDraftsLoad();
+    } catch (e) {
+      alert('Reject failed: ' + e.message);
+    }
   }
 
   async function inspLoadRecent() {
@@ -9200,7 +9367,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const result = orig.apply(this, arguments);
       if (tab === 'inspect') {
         try { inspLoadCommunities(); } catch (e) { console.warn('[inspect] load communities', e); }
-        try { inspLoadRecent(); } catch (e) { console.warn('[inspect] load recent', e); }
+        try { inspLoadRecent(); }      catch (e) { console.warn('[inspect] load recent', e); }
+        try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
       }
       return result;
     };

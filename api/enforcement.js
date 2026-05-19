@@ -446,4 +446,202 @@ router.post('/generate-letter', express.json(), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/drafts
+//   Query params: ?community_id=  ?inspection_id=  ?limit=50
+//   Returns DRAFT interactions (subject starts with '[DRAFT]') + joined
+//   violation + property + photo data, ready for the review UI.
+//
+//   Subject prefix '[DRAFT]' is the gate set in Phase 6c. When a letter is
+//   approved + sent (POST /approve-draft below), the prefix is removed and
+//   occurred_at is bumped to the approval time, so the same interactions
+//   row represents the actual send event.
+// ---------------------------------------------------------------------------
+router.get('/drafts', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    const inspectionId = req.query.inspection_id;
+    const limit = Math.min(200, Number(req.query.limit) || 50);
+
+    let q = supabase
+      .from('interactions')
+      .select(`
+        id, subject, content, type, delivery_method, occurred_at,
+        community_id, property_id, violation_id, observation_id, inspection_id
+      `)
+      .like('subject', '[DRAFT]%')
+      .order('occurred_at', { ascending: false })
+      .limit(limit);
+    if (communityId) q = q.eq('community_id', communityId);
+    if (inspectionId) q = q.eq('inspection_id', inspectionId);
+    const { data: drafts, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!drafts || drafts.length === 0) return res.json({ drafts: [] });
+
+    // Bulk-fetch violations, properties, observations, photos so we can join
+    // in JS (Supabase's nested-select can't handle this many cross-table joins
+    // cleanly).
+    const violationIds = [...new Set(drafts.map((d) => d.violation_id).filter(Boolean))];
+    const propertyIds  = [...new Set(drafts.map((d) => d.property_id).filter(Boolean))];
+    const observationIds = [...new Set(drafts.map((d) => d.observation_id).filter(Boolean))];
+
+    const [vRes, pRes, oRes] = await Promise.all([
+      supabase.from('violations')
+        .select('id, primary_category_id, current_stage, cure_period_ends_at, board_priority_at_open, enforcement_categories(label)')
+        .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
+      supabase.from('v_current_property_owners')
+        .select('property_id, street_address, unit, city, owner_name, owner_mailing_address')
+        .in('property_id', propertyIds.length ? propertyIds : ['00000000-0000-0000-0000-000000000000']),
+      supabase.from('property_observations')
+        .select('id, severity, ai_description, ai_confidence, reviewer_notes, inspection_photo_id, inspection_photos(captured_at, storage_path)')
+        .in('id', observationIds.length ? observationIds : ['00000000-0000-0000-0000-000000000000']),
+    ]);
+    const violationById = new Map((vRes.data || []).map((v) => [v.id, v]));
+    const propertyById  = new Map((pRes.data || []).map((p) => [p.property_id, p]));
+    const observationById = new Map((oRes.data || []).map((o) => [o.id, o]));
+
+    // Generate signed URLs for both letter PDFs and observation photos (in parallel)
+    const enrichedAll = await Promise.all(drafts.map(async (d) => {
+      const v = violationById.get(d.violation_id);
+      const p = propertyById.get(d.property_id);
+      const o = observationById.get(d.observation_id);
+      const photoPath = o && o.inspection_photos && o.inspection_photos.storage_path;
+      let photoUrl = null;
+      if (photoPath) {
+        try {
+          const { data: sd } = await supabase.storage.from('documents').createSignedUrl(photoPath, 60 * 60);
+          if (sd) photoUrl = sd.signedUrl;
+        } catch (_) {}
+      }
+      let letterUrl = null;
+      if (d.content) {
+        try {
+          const { data: sd } = await supabase.storage.from('violation-letters').createSignedUrl(d.content, 60 * 60);
+          if (sd) letterUrl = sd.signedUrl;
+        } catch (_) {}
+      }
+      return {
+        interaction_id: d.id,
+        violation_id:   d.violation_id,
+        property_id:    d.property_id,
+        observation_id: d.observation_id,
+        inspection_id:  d.inspection_id,
+        drafted_at:     d.occurred_at,
+        letter_type:    d.type,
+        delivery_method: d.delivery_method,
+        letter_url:     letterUrl,
+        violation: v ? {
+          current_stage: v.current_stage,
+          cure_period_ends_at: v.cure_period_ends_at,
+          board_priority_at_open: v.board_priority_at_open,
+          category_label: v.enforcement_categories && v.enforcement_categories.label,
+        } : null,
+        property: p ? {
+          street_address: p.street_address,
+          unit:           p.unit,
+          city:           p.city,
+        } : null,
+        owner: p ? {
+          full_name: p.owner_name,
+          mailing_address: p.owner_mailing_address,
+        } : null,
+        observation: o ? {
+          severity: o.severity,
+          ai_description: o.ai_description,
+          ai_confidence: o.ai_confidence,
+          reviewer_notes: o.reviewer_notes,
+          captured_at: o.inspection_photos && o.inspection_photos.captured_at,
+          photo_url: photoUrl,
+        } : null,
+      };
+    }));
+
+    res.json({ drafts: enrichedAll });
+  } catch (err) {
+    console.error('[enforcement.drafts]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/drafts/approve
+// Body: { interaction_ids: [uuid, ...] }
+// Strips '[DRAFT]' prefix from subject + sets occurred_at to NOW so each
+// interaction represents an actual send event. Returns count + list.
+// ---------------------------------------------------------------------------
+router.post('/drafts/approve', express.json(), async (req, res) => {
+  try {
+    const ids = (req.body && req.body.interaction_ids) || [];
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return res.status(400).json({ error: 'interaction_ids (array) required' });
+    }
+    const { data: rows, error: getErr } = await supabase
+      .from('interactions')
+      .select('id, subject')
+      .in('id', ids);
+    if (getErr) return res.status(500).json({ error: getErr.message });
+    let approved = 0;
+    for (const r of rows || []) {
+      const cleanSubject = String(r.subject || '').replace(/^\[DRAFT\]\s*/i, '').trim() || 'Violation letter';
+      const { error: upErr } = await supabase
+        .from('interactions')
+        .update({ subject: cleanSubject, occurred_at: new Date().toISOString() })
+        .eq('id', r.id);
+      if (!upErr) approved += 1;
+    }
+    res.json({ approved, requested: ids.length });
+  } catch (err) {
+    console.error('[enforcement.drafts.approve]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/drafts/reject
+// Body: { interaction_id, reason? }
+// Soft-discard: deletes the draft interaction + closes the violation as
+// 'voided' (no letter sent, observation stays for audit trail).
+// ---------------------------------------------------------------------------
+router.post('/drafts/reject', express.json(), async (req, res) => {
+  try {
+    const interactionId = req.body && req.body.interaction_id;
+    const reason = (req.body && req.body.reason) || null;
+    if (!interactionId) return res.status(400).json({ error: 'interaction_id required' });
+    const { data: inter } = await supabase
+      .from('interactions')
+      .select('id, violation_id, observation_id')
+      .eq('id', interactionId)
+      .maybeSingle();
+    if (!inter) return res.status(404).json({ error: 'draft not found' });
+
+    // Void the violation
+    if (inter.violation_id) {
+      await supabase.from('violations')
+        .update({
+          current_stage: 'voided',
+          resolved_via: 'voided',
+          resolved_at: new Date().toISOString(),
+          resolved_notes: reason || 'Rejected from Drafts review',
+        })
+        .eq('id', inter.violation_id);
+    }
+    // Mark the observation rejected
+    if (inter.observation_id) {
+      await supabase.from('property_observations')
+        .update({
+          reviewer_status: 'rejected',
+          reviewer_notes: reason || 'Rejected from Drafts review',
+          reviewed_at: new Date().toISOString(),
+        })
+        .eq('id', inter.observation_id);
+    }
+    // Delete the draft interaction row entirely
+    await supabase.from('interactions').delete().eq('id', interactionId);
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[enforcement.drafts.reject]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };
