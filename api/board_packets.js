@@ -266,28 +266,40 @@ function renderStandalonePage({ packet, section, bodyHtml, accent = '#1F3A5F' })
 
 function renderFinancialStatementsStandaloneHtml({ packet, section }) {
   const d = section.input_data || {};
-  const lineItems = Array.isArray(d.line_items) ? d.line_items : [];
   const narrative = d.narrative || null;
-  const trailing = Array.isArray(d.trailing_months) ? d.trailing_months : [];
-  const isTrend = trailing.length >= 3;  // 3+ months = trend report; otherwise single-period
-  const currentPeriod = d.current_period || null;
-  const currentLabel = d.current_period_label || (packet.period_label || '');
 
-  // KPI cards from top-level fields the extractor produces
-  const netIncome = d.net_income != null ? Number(d.net_income) : null;
-  const totalRev = d.total_revenue != null ? Number(d.total_revenue) : null;
-  const totalExp = d.total_expense != null ? Number(d.total_expense) : null;
-  const cashOp = d.cash_operating != null ? Number(d.cash_operating) : null;
-  const cashRes = d.cash_reserves != null ? Number(d.cash_reserves) : null;
+  // Normalize into BS + IS objects. Supports two data shapes:
+  //   - New: input_data.balance_sheet + input_data.income_statement (rich)
+  //   - Legacy: flat fields on input_data (line_items, total_revenue, etc.)
+  // The renderer treats either consistently.
+  const bs = d.balance_sheet || null;
+  const is = d.income_statement || {
+    period_label: d.current_period_label || (packet.period_label || ''),
+    total_revenue: d.total_revenue,
+    total_expense: d.total_expense,
+    net_income: d.net_income,
+    current_period: d.current_period,
+    by_fund: null,
+    trailing_months: Array.isArray(d.trailing_months) ? d.trailing_months : [],
+    line_items: Array.isArray(d.line_items) ? d.line_items : [],
+  };
+
+  const currentLabel = d.current_period_label || is.period_label || (packet.period_label || '');
+  const lineItems = Array.isArray(is.line_items) ? is.line_items : [];
+  const trailing = Array.isArray(is.trailing_months) ? is.trailing_months : [];
+  const isTrend = trailing.length >= 3;
+  const currentPeriod = is.current_period || null;
+
+  // Income-statement totals + per-fund totals
+  const totalRev = is.total_revenue != null ? Number(is.total_revenue) : null;
+  const totalExp = is.total_expense != null ? Number(is.total_expense) : null;
+  const netIncome = is.net_income != null ? Number(is.net_income) : null;
   const monthlyAvgNet = isTrend && netIncome != null ? netIncome / trailing.length : null;
 
-  // Net-income variance vs. budgeted (if a budgeted net-income row exists,
-  // pull from line_items; else just show actual)
   const revenueRows = lineItems.filter((x) => x && x.type === 'revenue');
   const expenseRows = lineItems.filter((x) => x && x.type === 'expense');
   const sumActual = (rows) => rows.reduce((s, r) => s + (Number(r.amount) || 0), 0);
   const sumBudget = (rows) => rows.reduce((s, r) => s + (Number(r.budget) || 0), 0);
-
   const revTotal = totalRev != null ? totalRev : sumActual(revenueRows);
   const revBudget = sumBudget(revenueRows);
   const expTotal = totalExp != null ? totalExp : sumActual(expenseRows);
@@ -297,8 +309,89 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
   const niVariance = niActual - niBudget;
   const niVarPct = pct(niVariance, Math.abs(niBudget || 0));
 
-  // Per-row variance + visual bar (relative to the largest absolute variance
-  // in the set, so the eye can compare).
+  // Per-fund summary — derived from is.by_fund (preferred) OR by aggregating
+  // line_items.fund when present. Falls back to "operating-only" attribution
+  // for legacy data with no fund tags.
+  function fundTotals(fundKey) {
+    if (is.by_fund && is.by_fund[fundKey]) {
+      const f = is.by_fund[fundKey];
+      return {
+        revenue: f.revenue != null ? Number(f.revenue) : null,
+        expense: f.expense != null ? Number(f.expense) : null,
+        net:     f.net     != null ? Number(f.net)     : null,
+      };
+    }
+    const fundLineItems = lineItems.filter((r) => r.fund === fundKey);
+    if (fundLineItems.length === 0 && fundKey !== 'operating') return { revenue: null, expense: null, net: null };
+    if (fundLineItems.length === 0 && fundKey === 'operating') {
+      return { revenue: revTotal, expense: expTotal, net: niActual };
+    }
+    const r = sumActual(fundLineItems.filter((x) => x.type === 'revenue'));
+    const e = sumActual(fundLineItems.filter((x) => x.type === 'expense'));
+    return { revenue: r, expense: e, net: r - e };
+  }
+  const fundOperating = fundTotals('operating');
+  const fundReserves  = fundTotals('reserves');
+  const fundSavings   = fundTotals('savings');
+
+  // BS fund cash summary — preferred source for the headline cash card
+  const bsFundCash = bs && bs.fund_cash_summary ? bs.fund_cash_summary : null;
+  const cashOp  = bsFundCash && bsFundCash.operating != null ? Number(bsFundCash.operating)
+                : (d.cash_operating != null ? Number(d.cash_operating) : null);
+  const cashRes = bsFundCash && bsFundCash.reserves != null ? Number(bsFundCash.reserves)
+                : (d.cash_reserves != null ? Number(d.cash_reserves) : null);
+  const cashSav = bsFundCash && bsFundCash.savings != null ? Number(bsFundCash.savings) : null;
+
+  // ---------- BALANCE SHEET helpers ----------
+  function bsRow(r, label) {
+    const cur = r.current != null ? Number(r.current) : null;
+    const prior = r.prior != null ? Number(r.prior) : null;
+    const change = (cur != null && prior != null) ? cur - prior : (r.change != null ? Number(r.change) : null);
+    const changePct = r.change_pct != null ? Number(r.change_pct) : (prior && prior !== 0 ? (change / Math.abs(prior)) * 100 : null);
+    const changeColor = change == null ? 'var(--ink-muted)' : (change >= 0 ? 'var(--good)' : 'var(--bad)');
+    return `<tr>
+      <td>${esc(r.account || label || '(unnamed)')}</td>
+      <td class="num">${cur != null ? fmtMoney(cur) : '—'}</td>
+      <td class="num">${prior != null ? fmtMoney(prior) : '—'}</td>
+      <td class="num" style="color:${changeColor};">${change != null ? fmtMoney(change) : '—'}</td>
+      <td class="num" style="color:${changeColor};">${changePct != null ? `${change >= 0 ? '+' : ''}${changePct.toFixed(1)}%` : '—'}</td>
+    </tr>`;
+  }
+  function bsTotalRow(label, t) {
+    if (!t) return '';
+    const cur = t.current != null ? Number(t.current) : null;
+    const prior = t.prior != null ? Number(t.prior) : null;
+    const change = (cur != null && prior != null) ? cur - prior : (t.change != null ? Number(t.change) : null);
+    const changePct = t.change_pct != null ? Number(t.change_pct) : (prior && prior !== 0 ? (change / Math.abs(prior)) * 100 : null);
+    const changeColor = change == null ? 'var(--ink)' : (change >= 0 ? 'var(--good)' : 'var(--bad)');
+    return `<tr>
+      <td>${esc(label)}</td>
+      <td class="num">${cur != null ? fmtMoney(cur) : '—'}</td>
+      <td class="num">${prior != null ? fmtMoney(prior) : '—'}</td>
+      <td class="num" style="color:${changeColor};">${change != null ? fmtMoney(change) : '—'}</td>
+      <td class="num" style="color:${changeColor};">${changePct != null ? `${change >= 0 ? '+' : ''}${changePct.toFixed(1)}%` : '—'}</td>
+    </tr>`;
+  }
+  function bsSection(title, rows, total) {
+    if (!rows || rows.length === 0) return '';
+    return `
+      <div class="table-h2">${esc(title)}</div>
+      <table class="data-table">
+        <thead><tr>
+          <th>Account</th>
+          <th class="num">${esc(bs && bs.as_of_date ? fmtDateShort(bs.as_of_date) : 'Current')}</th>
+          <th class="num">${esc(bs && bs.prior_as_of_date ? fmtDateShort(bs.prior_as_of_date) : 'Prior')}</th>
+          <th class="num">Change ($)</th>
+          <th class="num">Change (%)</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r) => bsRow(r)).join('')}
+        </tbody>
+        ${total ? `<tfoot>${bsTotalRow('Total ' + title.toLowerCase(), total)}</tfoot>` : ''}
+      </table>`;
+  }
+
+  // ---------- INCOME-STATEMENT helpers ----------
   function rowsWithVariance(rows) {
     const maxAbs = rows.reduce((m, r) => Math.max(m, Math.abs((Number(r.amount) || 0) - (Number(r.budget) || 0))), 1);
     return rows.map((r) => {
@@ -312,21 +405,19 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
       return { ...r, _amt: amt, _bud: bud, _variance: variance, _barW: barW, _favorable: varianceFavorable };
     });
   }
-
-  function tableHtml(title, rows, totalActual, totalBudget) {
+  function isTableHtml(title, rows, totalActual, totalBudget) {
     if (!rows.length) return '';
     const withVar = rowsWithVariance(rows);
+    const hasBudget = withVar.some((r) => r._bud != null);
     return `
       <div class="table-h2">${esc(title)}</div>
       <table class="data-table">
         <thead><tr>
           <th>Account</th>
-          <th class="num">Actual</th>
-          <th class="num">Budget</th>
-          <th class="num">Variance</th>
+          ${hasBudget ? `<th class="num">Actual</th><th class="num">Budget</th><th class="num">Variance</th>` : `<th class="num">Amount</th>`}
         </tr></thead>
         <tbody>
-          ${withVar.map((r) => `
+          ${withVar.map((r) => hasBudget ? `
             <tr>
               <td>${esc(r.account || '(unnamed)')}</td>
               <td class="num">${fmtMoney(r._amt)}</td>
@@ -335,13 +426,19 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
                 ${r._variance == null ? '—' : fmtMoney(r._variance)}
                 ${r._barW ? `<span class="variance-bar" style="background:${r._favorable ? 'var(--good)' : 'var(--bad)'}; width:${r._barW}px;"></span>` : ''}
               </td>
+            </tr>` : `
+            <tr>
+              <td>${esc(r.account || '(unnamed)')}</td>
+              <td class="num">${fmtMoney(r._amt)}</td>
             </tr>`).join('')}
         </tbody>
         <tfoot><tr>
           <td>Total ${esc(title.toLowerCase())}</td>
-          <td class="num">${fmtMoney(totalActual)}</td>
-          <td class="num">${totalBudget ? fmtMoney(totalBudget) : '—'}</td>
-          <td class="num" style="color:${(totalActual - (totalBudget || 0)) === 0 ? 'var(--ink)' : (((title === 'Revenue' ? 1 : -1) * (totalActual - (totalBudget || 0))) >= 0 ? 'var(--good)' : 'var(--bad)')};">${totalBudget ? fmtMoney(totalActual - totalBudget) : '—'}</td>
+          ${hasBudget ? `
+            <td class="num">${fmtMoney(totalActual)}</td>
+            <td class="num">${totalBudget ? fmtMoney(totalBudget) : '—'}</td>
+            <td class="num" style="color:${(totalActual - (totalBudget || 0)) === 0 ? 'var(--ink)' : (((title === 'Revenue' ? 1 : -1) * (totalActual - (totalBudget || 0))) >= 0 ? 'var(--good)' : 'var(--bad)')};">${totalBudget ? fmtMoney(totalActual - totalBudget) : '—'}</td>
+          ` : `<td class="num">${fmtMoney(totalActual)}</td>`}
         </tr></tfoot>
       </table>
     `;
@@ -449,15 +546,94 @@ function renderFinancialStatementsStandaloneHtml({ packet, section }) {
       </div>`;
   }
 
+  // ---------- BALANCE SHEET block ----------
+  let balanceSheetHtml = '';
+  if (bs && (Array.isArray(bs.assets) && bs.assets.length > 0)) {
+    const totals = bs.totals || {};
+    const totalCash = (cashOp || 0) + (cashRes || 0) + (cashSav || 0);
+    balanceSheetHtml = `
+      <div style="margin-top: 8px;">
+        <h2 style="font-family: 'Inter', sans-serif; font-size: 18px; font-weight: 800; color: var(--navy); margin: 6px 0 2px; letter-spacing: -0.01em;">Balance Sheet</h2>
+        <div style="font-size: 12px; color: var(--ink-muted); margin-bottom: 12px;">${esc(bs.as_of_date ? fmtDate(bs.as_of_date) : currentLabel)}${bs.prior_as_of_date ? ` vs. ${esc(fmtDate(bs.prior_as_of_date))}` : ''}</div>
+
+        ${(cashOp != null || cashRes != null || cashSav != null) ? `
+          <div class="kpi-row">
+            <div class="kpi-card">
+              <div class="label">Operating cash</div>
+              <div class="value">${fmtMoney(cashOp || 0, { precision: 0 })}</div>
+              <div class="delta">day-to-day ops</div>
+            </div>
+            <div class="kpi-card" style="background:#fffbeb; border-color:#fde68a;">
+              <div class="label" style="color:#78350f;">Reserves cash</div>
+              <div class="value" style="color:#1F3A5F;">${fmtMoney(cashRes || 0, { precision: 0 })}</div>
+              <div class="delta">long-term capital</div>
+            </div>
+            ${cashSav != null ? `
+              <div class="kpi-card">
+                <div class="label">Savings cash</div>
+                <div class="value">${fmtMoney(cashSav, { precision: 0 })}</div>
+                <div class="delta">overflow / interim</div>
+              </div>` : ''}
+            <div class="kpi-card">
+              <div class="label">Total cash</div>
+              <div class="value">${fmtMoney(totalCash, { precision: 0 })}</div>
+              <div class="delta">across all funds</div>
+            </div>
+          </div>` : ''}
+
+        ${bsSection('Assets', bs.assets, totals.total_assets)}
+        ${bsSection('Liabilities', bs.liabilities, totals.total_liabilities)}
+        ${bsSection('Equity / Fund Balance', bs.equity, totals.total_equity)}
+      </div>`;
+  }
+
+  // ---------- INCOME-STATEMENT block ----------
+  // Fund-breakdown card row when by_fund data is meaningful (at least one
+  // non-operating fund populated). For operating-only reports, falls back
+  // to the single KPI row below.
+  const fundBreakdownAvailable = (fundReserves.net != null) || (fundSavings.net != null);
+  let fundBreakdownHtml = '';
+  if (fundBreakdownAvailable) {
+    fundBreakdownHtml = `
+      <div class="table-h2">Net by fund — ${esc(currentLabel)}</div>
+      <div class="kpi-row" style="margin-top:4px;">
+        <div class="kpi-card">
+          <div class="label">Operating</div>
+          <div class="value" style="color:${(fundOperating.net || 0) >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(fundOperating.net || 0, { precision: 0 })}</div>
+          <div class="delta">${fmtMoney(fundOperating.revenue || 0, { precision: 0 })} rev / ${fmtMoney(fundOperating.expense || 0, { precision: 0 })} exp</div>
+        </div>
+        <div class="kpi-card" style="background:#fffbeb; border-color:#fde68a;">
+          <div class="label" style="color:#78350f;">Reserves</div>
+          <div class="value" style="color:${(fundReserves.net || 0) >= 0 ? 'var(--good)' : 'var(--bad)'};">${fundReserves.net != null ? fmtMoney(fundReserves.net, { precision: 0 }) : '—'}</div>
+          <div class="delta">${fundReserves.revenue != null ? fmtMoney(fundReserves.revenue, { precision: 0 }) : '—'} contrib / ${fundReserves.expense != null ? fmtMoney(fundReserves.expense, { precision: 0 }) : '—'} cap-ex</div>
+        </div>
+        ${fundSavings.net != null ? `
+          <div class="kpi-card">
+            <div class="label">Savings</div>
+            <div class="value" style="color:${fundSavings.net >= 0 ? 'var(--good)' : 'var(--bad)'};">${fmtMoney(fundSavings.net, { precision: 0 })}</div>
+            <div class="delta">${fundSavings.revenue != null ? fmtMoney(fundSavings.revenue, { precision: 0 }) : '—'} in / ${fundSavings.expense != null ? fmtMoney(fundSavings.expense, { precision: 0 }) : '—'} out</div>
+          </div>` : ''}
+      </div>`;
+  }
+
+  const incomeStatementHtml = `
+    <div style="margin-top: 14px;">
+      <h2 style="font-family: 'Inter', sans-serif; font-size: 18px; font-weight: 800; color: var(--navy); margin: 18px 0 2px; letter-spacing: -0.01em;">Income Statement</h2>
+      <div style="font-size: 12px; color: var(--ink-muted); margin-bottom: 12px;">${esc(currentLabel)}${isTrend ? ` · ${trailing.length}-month trailing` : ''}</div>
+
+      ${fundBreakdownHtml || kpiHtml}
+
+      ${trendChartHtml}
+
+      ${isTableHtml('Revenue', revenueRows, revTotal, revBudget)}
+      ${isTableHtml('Expenses', expenseRows, expTotal, expBudget)}
+    </div>`;
+
   const bodyHtml = `
     ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
 
-    ${kpiHtml}
-
-    ${trendChartHtml}
-
-    ${tableHtml('Revenue', revenueRows, revTotal, revBudget)}
-    ${tableHtml('Expenses', expenseRows, expTotal, expBudget)}
+    ${balanceSheetHtml}
+    ${incomeStatementHtml}
   `;
 
   return renderStandalonePage({ packet, section, bodyHtml, accent: '#1F3A5F' });
@@ -1123,47 +1299,105 @@ Return ONLY the JSON, no preamble.`,
 }
 Return ONLY the JSON, no preamble.`,
 
-  financials: `You are reviewing an HOA financial statement. The format may be:
+  financials: `You are reviewing an HOA financial package. The package usually
+contains BOTH a Balance Sheet AND an Income Statement (Statement of Revenues
+and Expenses). Either may be present on its own, or both together. The
+Income Statement may be:
   (A) Single-period P&L with a Budget column for variance, OR
   (B) 12-month trailing actuals report ("Summary Statement of Revenues and
-      Expenses For MM/DD/YYYY") — columns are months (e.g., May Jun Jul Aug
-      Sep Oct Nov Dec Jan Feb Mar Apr Total). No budget column.
+      Expenses For MM/DD/YYYY") — columns are months.
+
+The Balance Sheet on a Vantaca-style HOA report usually has FOUR columns:
+Current Period · Prior Period · Change ($) · Change (%). Cash and other
+asset lines are typically split by FUND: Operating, Reserves, Savings
+(sometimes also "Capital" or "Maintenance Reserve" sub-funds).
 
 Extract the data AND write a short Ed-voiced narrative the board can act on.
 Output JSON with this exact shape:
 
 {
-  "period_start": "YYYY-MM-DD or null — first column's month start",
-  "period_end": "YYYY-MM-DD or null — latest period's month end",
-  "current_period_label": "string — latest month label, e.g., 'April 2026'. ALWAYS populate this for format (B); for (A) it's the single period.",
-  "total_revenue": <number — YTD total revenue (Total column on format B, or just the period total on A)>,
-  "total_expense": <number — YTD total expense>,
-  "net_income": <number — YTD net income>,
-  "current_period": {
-    "revenue": <number — latest-month revenue (rightmost non-Total column on format B; same as total_revenue on format A)>,
-    "expense": <number — latest-month expense>,
-    "net": <number — latest-month net income>
+  "period_start": "YYYY-MM-DD or null",
+  "period_end": "YYYY-MM-DD or null",
+  "current_period_label": "string — e.g., 'April 2026'",
+  "prior_period_label": "string or null — e.g., 'March 2026' or 'April 2025' — the BS comparison column header",
+
+  "balance_sheet": {
+    "as_of_date": "YYYY-MM-DD or null",
+    "prior_as_of_date": "YYYY-MM-DD or null",
+    "assets": [
+      {
+        "account": "string — exact GL account name, e.g., '1010 - Operating Cash'",
+        "current": <number>,
+        "prior": <number or null>,
+        "change": <number or null>,
+        "change_pct": <number or null>,
+        "fund": "operating|reserves|savings|other — based on the cash account or section header it appears under; default 'operating' if unclear",
+        "sub_section": "string or null — e.g., 'Current Assets', 'Fixed Assets'"
+      }
+    ],
+    "liabilities": [
+      { "account": "string", "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null>, "sub_section": "string or null" }
+    ],
+    "equity": [
+      { "account": "string", "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null>, "sub_section": "string or null" }
+    ],
+    "totals": {
+      "total_assets":      { "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null> },
+      "total_liabilities": { "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null> },
+      "total_equity":      { "current": <number>, "prior": <number or null>, "change": <number or null>, "change_pct": <number or null> }
+    },
+    "fund_cash_summary": {
+      "operating": <number or null — total operating cash across all operating accounts>,
+      "reserves":  <number or null>,
+      "savings":   <number or null>
+    }
   },
-  "trailing_months": [
-    { "month_label": "May 2025", "revenue": <number>, "expense": <number>, "net": <number> }
-    // 12 entries when format (B); empty array when format (A)
-  ],
-  "cash_operating": <number or null — only if a Balance Sheet section is included>,
-  "cash_reserves": <number or null>,
-  "line_items": [
-    { "account": "string — full GL account name including code, e.g., '4000 - Current Year Assessment Income'", "amount": <number — YTD total>, "budget": <number or null — only for format A>, "type": "revenue|expense|asset|liability|equity" }
-  ],
-  "narrative": "Ed-voiced commentary, 120-200 words. Treasurer-grade prose. For format (B) — LEAD with the latest month vs. the trailing-12-month pattern ('April net income of $X is consistent with the YTD run-rate of $Y/mo') AND call out 1-2 categories where the latest month is materially out of pattern (seasonal items like pool, landscape, holiday). For format (A) — lead with net income vs. budget, then call out 2-3 line-item variances. In both: note reserves position if visible. End with one sentence on what to watch. Flowing prose, no bullets. Reference the Association by name if visible. Don't invent numbers."
+
+  "income_statement": {
+    "period_label": "string — e.g., 'April 2026' or 'YTD through April 2026'",
+    "total_revenue": <number — current-period or YTD revenue, whatever the report's primary column is>,
+    "total_expense": <number>,
+    "net_income":    <number>,
+    "current_period": {
+      "revenue": <number — latest-month revenue (rightmost non-Total column on format B; same as total_revenue on format A)>,
+      "expense": <number>,
+      "net": <number>
+    },
+    "by_fund": {
+      "operating": { "revenue": <number or null>, "expense": <number or null>, "net": <number or null> },
+      "reserves":  { "revenue": <number or null>, "expense": <number or null>, "net": <number or null> },
+      "savings":   { "revenue": <number or null>, "expense": <number or null>, "net": <number or null> }
+    },
+    "trailing_months": [
+      { "month_label": "May 2025", "revenue": <number>, "expense": <number>, "net": <number> }
+      // 12 entries when format (B); empty array when format (A)
+    ],
+    "line_items": [
+      { "account": "string — full GL account name including code", "amount": <number — period or YTD total>, "budget": <number or null — only when format A has a Budget column>, "type": "revenue|expense", "fund": "operating|reserves|savings|other" }
+    ]
+  },
+
+  "narrative": "Ed-voiced commentary, 120-200 words. Treasurer-grade prose. Cover BOTH statements when both are present: lead with the Balance Sheet headline (cash position by fund — '$X operating, $Y reserves, $Z savings'), call out any material change vs. prior period (e.g., 'Operating cash up $15k from end of March, AR down $5k'). Then turn to the Income Statement: latest-month or YTD net income, key variances or seasonal patterns. End with one sentence on what to watch. Flowing prose, no bullets. Reference the Association by name if visible. Don't invent numbers."
 }
 
-FORMAT (B) extraction rules:
-- The column header line is "May Jun Jul Aug Sep Oct Nov Dec Jan Feb Mar Apr Total" — read carefully which numbers map to which column.
-- The PDF text often runs digits together; trust the column positions in the visual layout (you have document vision — use it).
-- Latest month = the column to the IMMEDIATE LEFT of "Total" (Apr in this example). Earliest month = the leftmost data column (May).
-- "current_period" object = the rightmost non-Total column.
-- "trailing_months" array = all 12 month columns in chronological order, oldest to newest.
-- For each month, compute revenue = sum of all revenue rows in that column, expense = sum of all expense rows in that column, net = revenue − expense.
-- "line_items" uses the Total column values (YTD).
+EXTRACTION RULES:
+
+Balance Sheet:
+- The 4 columns are typically labeled like "4/30/2026 | 3/31/2026 | Change | %" — capture the as-of dates from those headers.
+- Cash and similar accounts often split per fund: "1010 - Operating Cash", "1015 - Operating Money Market", "1100 - Reserves Cash", "1105 - Reserves Money Market", "1200 - Savings Account". Tag each with the right "fund". When a section header says "Operating Account" / "Reserve Account" / "Savings Account", inherit that for everything under it.
+- "fund_cash_summary": sum the cash + cash-equivalent balances per fund. This is the headline the board cares about.
+- Asset categories ("Current Assets", "Fixed Assets", "Other Assets") go in sub_section.
+
+Income Statement Format (B) — 12-month trend:
+- Column header is "May Jun Jul Aug Sep Oct Nov Dec Jan Feb Mar Apr Total".
+- "current_period" = the column IMMEDIATELY LEFT of "Total" (the latest month).
+- "trailing_months" = all 12 month columns, oldest to newest.
+- "line_items.amount" = the Total column (YTD).
+- A 12-month trailing statement typically only shows the OPERATING fund. by_fund.operating gets all the revenue/expense totals; by_fund.reserves and by_fund.savings stay null UNLESS the statement has separate fund sections (sometimes Vantaca exports a multi-fund statement with sub-headers per fund).
+
+Income Statement Format (A) — single period with budget:
+- Capture line_items.budget when a Budget column is visible.
+- trailing_months stays empty (length 0).
 
 Money values are NUMBERS not strings. Use null for missing. Return ONLY the JSON.`,
 
