@@ -1829,16 +1829,12 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     -webkit-font-smoothing: antialiased;
   }
   .page {
-    width: 8.5in; margin: 32px auto;
+    width: 8.5in; margin: 16px auto;
     background: var(--paper); box-shadow: 0 4px 24px rgba(0,0,0,0.08);
     display: flex; flex-direction: column; position: relative; overflow: hidden;
   }
   /* The cover hero needs the 5.5in tall navy area — keep it. */
   .page.cover { min-height: 11in; }
-  /* For print, every page fills letter size. */
-  @media print {
-    .page { min-height: 11in; }
-  }
   /* ========== COVER PAGE ========== */
   .cover { padding: 0; color: var(--paper); }
   .cover-hero {
@@ -1968,7 +1964,15 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 
   @media print {
     body { background: white; }
-    .page { box-shadow: none; margin: 0; page-break-after: always; }
+    .page { box-shadow: none; margin: 0; page-break-inside: avoid; }
+    /* Force a break ONLY after the cover and TOC — section pages flow
+       naturally so multiple short sections share a printed page rather
+       than each taking a full letter sheet with white space below. */
+    .page.cover, .page.toc { min-height: 11in; page-break-after: always; }
+    /* Section pages: avoid splitting a section across pages mid-content,
+       but they don't each demand their own page. */
+    .page.interior { page-break-after: auto; }
+    .interior + .interior { page-break-before: auto; }
   }
 </style>
 </head>
@@ -2023,7 +2027,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 </div>
 
 <!-- TOC PAGE -->
-<div class="page interior">
+<div class="page interior toc">
   ${pageHeader}
   <div class="section-eyebrow">Inside this packet</div>
   <h1 class="section-title">Table of Contents</h1>
