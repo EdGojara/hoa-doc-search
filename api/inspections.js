@@ -27,6 +27,7 @@
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
+const { categorizePhoto } = require('../lib/enforcement/ai_vision');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -236,7 +237,112 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
       .update({ total_photos: (insp.total_photos || 0) + 1, updated_at: new Date().toISOString() })
       .eq('id', inspectionId);
 
-    res.json({ photo });
+    // Create the property_observations row if we know the property. AI
+    // categorization runs ASYNC after the response is sent — operator gets
+    // their 200 OK fast and can move to the next house. AI fields fill in
+    // server-side within ~3-5 seconds; Drafts queue picks up whenever ready.
+    const resolvedPropertyId = userSelectedPropertyId || polygonMatchPropertyId;
+    let observationId = null;
+    if (resolvedPropertyId) {
+      const { data: obsRow, error: obsErr } = await supabase
+        .from('property_observations')
+        .insert({
+          inspection_id:       inspectionId,
+          inspection_photo_id: photo.id,
+          property_id:         resolvedPropertyId,
+          community_id:        insp.community_id,
+          reviewer_status:     'pending',
+          // AI fields (category_id, severity, ai_description, ai_recommended_action,
+          // ai_confidence) start NULL — populated by the async categorizer below.
+        })
+        .select('id')
+        .single();
+      if (!obsErr && obsRow) observationId = obsRow.id;
+    }
+
+    // Respond immediately — operator can keep capturing
+    res.json({ photo, observation_id: observationId });
+
+    // ---- Fire async AI categorization ----------------------------------
+    // Runs after res.json so the field worker doesn't wait. If it succeeds,
+    // observation row is updated with category + severity + description.
+    // If it fails (no API key, network, parse error), observation stays
+    // pending — full human review path still works.
+    if (observationId) {
+      setImmediate(async () => {
+        try {
+          // Load enforcement categories for the prompt
+          const { data: cats } = await supabase
+            .from('enforcement_categories')
+            .select('id, slug, label, description')
+            .order('display_order');
+          // Build slug -> id lookup for resolving AI's category_slug
+          const slugToId = new Map();
+          (cats || []).forEach((c) => slugToId.set(c.slug, c.id));
+
+          // Optionally pull property + community name for richer context
+          let context = {};
+          try {
+            const { data: pv } = await supabase
+              .from('v_current_property_owners')
+              .select('street_address, unit, communities:community_id')
+              .eq('property_id', resolvedPropertyId)
+              .maybeSingle();
+            if (pv) {
+              context.property_address = `${pv.street_address || ''}${pv.unit ? ' #' + pv.unit : ''}`;
+            }
+            const { data: comm } = await supabase
+              .from('communities')
+              .select('name')
+              .eq('id', insp.community_id)
+              .maybeSingle();
+            if (comm) context.community_name = comm.name;
+          } catch (_) {}
+
+          const result = await categorizePhoto({
+            image_buffer:     req.file.buffer,
+            image_media_type: req.file.mimetype || 'image/jpeg',
+            categories:       cats || [],
+            context,
+          });
+          if (!result) {
+            console.log(`[ai_vision] observation ${observationId} got null result — staying pending`);
+            return;
+          }
+
+          // Build the update payload. Map AI's category_slug to category_id.
+          const updates = {
+            severity:               result.severity,
+            ai_description:         result.description,
+            ai_recommended_action:  result.recommended_action,
+            ai_confidence:          result.confidence,
+          };
+          if (result.category_slug && slugToId.has(result.category_slug)) {
+            updates.category_id = slugToId.get(result.category_slug);
+          }
+          // Internal note (notes column) — combine AI notes with the raw response
+          // tag for traceability if confidence is low.
+          if (result.notes || result.confidence === 'low') {
+            updates.reviewer_notes = result.notes ||
+              `AI low-confidence — recommend human review of the photo before any action.`;
+          }
+          // Clean photos (no violation visible) get reviewer_status='rejected' so
+          // they don't pollute the Drafts queue. Operator can still see them in the
+          // Recent inspection detail.
+          if (!result.is_violation || result.severity === 'clean') {
+            updates.reviewer_status = 'rejected';
+            updates.reviewed_at = new Date().toISOString();
+            updates.reviewer_notes = (updates.reviewer_notes ? updates.reviewer_notes + ' · ' : '') +
+              'AI: no violation visible — auto-filed for documentation only.';
+          }
+
+          await supabase.from('property_observations').update(updates).eq('id', observationId);
+          console.log(`[ai_vision] observation ${observationId} categorized: ${result.category_slug || 'no-match'} / ${result.severity} / conf=${result.confidence} / violation=${result.is_violation}`);
+        } catch (e) {
+          console.error('[ai_vision] async categorization failed:', e.message);
+        }
+      });
+    }
   } catch (err) {
     console.error('[inspections.upload-photo]', err);
     res.status(500).json({ error: err.message || 'failed to upload photo' });
