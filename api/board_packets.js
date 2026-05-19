@@ -1739,6 +1739,34 @@ function renderGenericSectionStandaloneHtml({ packet, section, embed = false }) 
 function renderPacketPreviewHtml({ packet, sections, volume }) {
   const community = packet.community || {};
   const assets = resolveCommunityAssets(community);
+
+  // If packet.meeting_location isn't set, fall back to detecting a location
+  // from the agenda's full_text — that's where meeting locations naturally
+  // live ("@ Steve Radack Community Center", "Location: ...", etc.). Saves
+  // operators from re-entering info that's already in an uploaded PDF.
+  function detectLocationFromAgenda() {
+    if (packet.meeting_location) return null; // explicit override wins
+    const agenda = (sections || []).find((s) => s.section_key === 'agenda');
+    const txt = agenda && agenda.input_data && agenda.input_data.full_text ? String(agenda.input_data.full_text) : '';
+    if (!txt) return null;
+    // Common patterns operators write in agendas:
+    //   "@ Steve Radack Community Center"
+    //   "at Steve Radack Community Center"
+    //   "Location: Steve Radack Community Center"
+    //   "Meeting Location: ..."
+    const patterns = [
+      /(?:meeting\s+location|location)\s*[:\-]\s*([^\n]{4,80})/i,
+      /\bat\s+([A-Z][^\n,.;]{4,60}(?:Center|Hall|Building|Office|Pavilion|Clubhouse|Pool|Park|Room|Library))/,
+      /@\s*([A-Z][^\n,.;]{4,60})/,
+    ];
+    for (const re of patterns) {
+      const m = txt.match(re);
+      if (m && m[1]) return m[1].trim().replace(/[*_]+$/, '');
+    }
+    return null;
+  }
+  const inferredLocation = detectLocationFromAgenda();
+  const effectiveLocation = packet.meeting_location || inferredLocation || null;
   // Solid navy base color ensures the cover never reads as "empty" even if
   // the hero image 404s on Render — the rgba gradient overlay alone would
   // otherwise fade against the white .page underneath.
@@ -2004,7 +2032,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
       <div class="label">Meeting</div>
       <div class="body">
         <strong>${esc(fmtDate(packet.meeting_date))}${packet.meeting_time ? ' — ' + esc(packet.meeting_time) : ''}</strong><br>
-        ${packet.meeting_location ? esc(packet.meeting_location) : '<span style="color:var(--ink-muted);">(location TBD)</span>'}
+        ${effectiveLocation ? esc(effectiveLocation) : '<span style="color:var(--ink-muted);">(location TBD)</span>'}
       </div>
     </div>
     <div class="cover-meta-block">
