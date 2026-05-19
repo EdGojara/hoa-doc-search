@@ -1082,8 +1082,11 @@ function renderGenericSectionStandaloneHtml({ packet, section, embed = false }) 
 function renderPacketPreviewHtml({ packet, sections, volume }) {
   const community = packet.community || {};
   const assets = resolveCommunityAssets(community);
+  // Solid navy base color ensures the cover never reads as "empty" even if
+  // the hero image 404s on Render — the rgba gradient overlay alone would
+  // otherwise fade against the white .page underneath.
   const heroStyle = assets.hero
-    ? `background: linear-gradient(180deg, rgba(31,58,95,0.25) 0%, rgba(31,58,95,0.45) 55%, rgba(31,58,95,0.85) 100%), url('${assets.hero}') center/cover;`
+    ? `background-color: #1F3A5F; background-image: linear-gradient(180deg, rgba(31,58,95,0.35) 0%, rgba(31,58,95,0.55) 55%, rgba(31,58,95,0.92) 100%), url('${assets.hero}'); background-size: cover; background-position: center;`
     : `background: linear-gradient(180deg, #4a7ab0 0%, #315A87 50%, #1F3A5F 100%);`;
 
   const visibleSections = (sections || []).filter(s => s.status !== 'skipped').sort((a, b) => a.section_order - b.section_order);
