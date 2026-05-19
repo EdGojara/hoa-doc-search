@@ -3351,15 +3351,29 @@ router.get('/:id/pdf', async (req, res) => {
     await browser.close();
     browser = null;
 
-    // Friendly filename. HTTP headers are ASCII-only, so hyphens not
-    // em-dashes (those caused "Invalid character in header content").
+    // Friendly filename. HTTP/1.1 headers must be ISO-8859-1 — any byte
+    // outside printable ASCII (em-dash, smart quotes, accented chars,
+    // zero-width spaces, etc.) makes Node throw "Invalid character in
+    // header content [Content-Disposition]". Belt-and-suspenders:
+    //   (a) Aggressively strip to printable ASCII, then to a safe subset.
+    //   (b) Also send filename* per RFC 5987 for UTF-8-aware clients,
+    //       so the human-readable name survives any non-ASCII community
+    //       names down the road.
     const community = packet.community && packet.community.name ? packet.community.name : 'Community';
     const period = packet.period_label || 'Period';
-    const safe = (s) => String(s).replace(/[^a-zA-Z0-9\- ]/g, '').trim();
-    const filename = `${safe(community)} - ${safe(period)} - Board Packet.pdf`;
+    const utf8Filename = `${community} - ${period} - Board Packet.pdf`;
+    const asciiFilename = utf8Filename
+      .normalize('NFKD')
+      .replace(/[^\x20-\x7E]/g, '')                  // anything outside printable ASCII
+      .replace(/[^a-zA-Z0-9\-_. ]/g, '')             // belt-and-suspenders: safe filename charset
+      .replace(/\s+/g, ' ')
+      .trim() || 'Board Packet.pdf';
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="${asciiFilename}"; filename*=UTF-8''${encodeURIComponent(utf8Filename)}`
+    );
     res.setHeader('Content-Length', pdfBuffer.length);
     res.end(pdfBuffer);
     console.log(`[board_packets] pdf rendered in ${Date.now() - t0}ms (${pdfBuffer.length} bytes)`);
