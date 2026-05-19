@@ -1753,7 +1753,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 <title>${esc(community.name)} — ${esc(packet.period_label)} Board Packet</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;500;600&family=Inter:wght@300;400;500;600;700;800;900&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,500&family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
     --bedrock-navy: #315A87;
@@ -1787,16 +1787,19 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     position: relative; padding: 0.7in 0.8in;
     display: flex; flex-direction: column; justify-content: space-between;
   }
-  .cover-brand { display: flex; align-items: center; }
-  /* BAM lockup PNG has a cream background — show it as a clean brand card
-     on the navy hero rather than trying to invert/recolor it. Sized so it
-     reads as the prepared-by mark without overwhelming the community name. */
-  .cover-brand img {
-    height: 130px; width: auto; display: block;
-    background: #F2F2F2; padding: 8px 16px;
-    border-radius: 6px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.15);
-  }
+  /* BAM lockup rebuilt inline so it sits directly on the hero photo with no
+     card around it. Mirrors the canonical BAM brand: gold cornerstone-style
+     mark flanked by hairline rules, then Playfair Display 'Bedrock' wordmark,
+     italic 'Association Management' in warm gold, monospace
+     'COMMUNITY. SIMPLIFIED.' tagline below. All inverted to read on the photo. */
+  .cover-brand { display: inline-flex; flex-direction: column; align-items: center; text-align: center; }
+  .cover-brand .mark-row { display: flex; align-items: center; gap: 14px; }
+  .cover-brand .mark-rule { height: 1.5px; width: 70px; background: rgba(255,255,255,0.85); }
+  .cover-brand .mark-cs { width: 14px; height: 14px; background: #E8C96E; border-radius: 2px; box-shadow: 0 0 0 2px rgba(232, 201, 110, 0.25); }
+  .cover-brand .br-name { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; font-size: 44px; font-weight: 500; color: #ffffff; letter-spacing: -0.01em; line-height: 1; margin-top: 12px; }
+  .cover-brand .br-divider { height: 1px; width: 100%; background: rgba(255,255,255,0.7); margin: 10px 0 8px; }
+  .cover-brand .br-descr { font-family: 'Playfair Display', Georgia, 'Times New Roman', serif; font-style: italic; font-size: 19px; font-weight: 500; color: #E8C96E; line-height: 1; }
+  .cover-brand .br-tagline { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 9px; font-weight: 500; letter-spacing: 0.28em; color: rgba(255,255,255,0.75); margin-top: 12px; }
   .cover-period {
     font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase;
     font-weight: 600; color: rgba(255,255,255,0.85); align-self: flex-end;
@@ -1916,7 +1919,15 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
 <div class="page cover">
   <div class="cover-hero">
     <div class="cover-brand">
-      <img src="${BRAND.logos.bamFull}" alt="${BRAND.service.name}">
+      <div class="mark-row">
+        <div class="mark-rule"></div>
+        <div class="mark-cs"></div>
+        <div class="mark-rule"></div>
+      </div>
+      <div class="br-name">Bedrock</div>
+      <div class="br-divider"></div>
+      <div class="br-descr">Association Management</div>
+      <div class="br-tagline">${esc(BRAND.service.taglineUpper)}</div>
     </div>
     <div class="cover-period">${esc(packet.period_label || '')}</div>
     <div class="cover-title">
