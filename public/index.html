@@ -7910,7 +7910,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
            <tbody>
              ${d.interactions.slice(0, 12).map((i) => `
                <tr style="border-bottom:1px solid #f1f5f9;">
-                 <td style="padding:6px 8px;">${i.occurred_at ? new Date(i.occurred_at).toLocaleDateString() : '—'}</td>
+                 <td style="padding:6px 8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
                  <td style="padding:6px 8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}</td>
                  <td style="padding:6px 8px; color:#475569;">${escapeHtml(i.subject || '—')}</td>
                  <td style="padding:6px 8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>

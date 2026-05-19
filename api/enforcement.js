@@ -251,7 +251,7 @@ router.post('/open-violation', express.json(), async (req, res) => {
       direction: 'internal',
       subject: `Violation opened: ${decision.stage}`,
       content: decision.rationale,
-      occurred_at: new Date().toISOString(),
+      sent_at: new Date().toISOString(),
     });
 
     res.json({
@@ -313,10 +313,10 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     // instead of regenerating.
     const { data: priorLetter } = await supabase
       .from('interactions')
-      .select('id, subject, content, occurred_at')
+      .select('id, subject, content, sent_at')
       .eq('violation_id', violationId)
       .eq('type', letterType)
-      .order('occurred_at', { ascending: false })
+      .order('sent_at', { ascending: false })
       .limit(1)
       .maybeSingle();
     if (priorLetter && priorLetter.content) {
@@ -421,7 +421,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         subject:         `Violation letter (${violation.current_stage})`,
         content:         storagePath,         // canonical storage location; signed URLs derived on demand
         delivery_method: isCertified ? 'certified_mail' : 'first_class_mail',
-        occurred_at:     new Date().toISOString(),
+        sent_at:     new Date().toISOString(),
       })
       .select()
       .single();
@@ -454,7 +454,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
 //
 //   Subject prefix '[DRAFT]' is the gate set in Phase 6c. When a letter is
 //   approved + sent (POST /approve-draft below), the prefix is removed and
-//   occurred_at is bumped to the approval time, so the same interactions
+//   sent_at is bumped to the approval time, so the same interactions
 //   row represents the actual send event.
 // ---------------------------------------------------------------------------
 router.get('/drafts', async (req, res) => {
@@ -466,11 +466,11 @@ router.get('/drafts', async (req, res) => {
     let q = supabase
       .from('interactions')
       .select(`
-        id, subject, content, type, delivery_method, occurred_at,
+        id, subject, content, type, delivery_method, sent_at, created_at, status,
         community_id, property_id, violation_id, observation_id, inspection_id
       `)
-      .like('subject', '[DRAFT]%')
-      .order('occurred_at', { ascending: false })
+      .eq('status', 'draft')
+      .order('created_at', { ascending: false })
       .limit(limit);
     if (communityId) q = q.eq('community_id', communityId);
     if (inspectionId) q = q.eq('inspection_id', inspectionId);
@@ -526,7 +526,7 @@ router.get('/drafts', async (req, res) => {
         property_id:    d.property_id,
         observation_id: d.observation_id,
         inspection_id:  d.inspection_id,
-        drafted_at:     d.occurred_at,
+        drafted_at:     d.created_at,
         letter_type:    d.type,
         delivery_method: d.delivery_method,
         letter_url:     letterUrl,
@@ -566,8 +566,9 @@ router.get('/drafts', async (req, res) => {
 // ---------------------------------------------------------------------------
 // POST /api/enforcement/drafts/approve
 // Body: { interaction_ids: [uuid, ...] }
-// Strips '[DRAFT]' prefix from subject + sets occurred_at to NOW so each
-// interaction represents an actual send event. Returns count + list.
+// Flips status from 'draft' to 'approved' + sets sent_at to NOW. From this
+// point forward the interaction represents an actual sent letter. Mail Queue
+// picks them up via status='approved' AND printed_at IS NULL.
 // ---------------------------------------------------------------------------
 router.post('/drafts/approve', express.json(), async (req, res) => {
   try {
@@ -575,21 +576,14 @@ router.post('/drafts/approve', express.json(), async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'interaction_ids (array) required' });
     }
-    const { data: rows, error: getErr } = await supabase
+    const now = new Date().toISOString();
+    const { error: upErr, count } = await supabase
       .from('interactions')
-      .select('id, subject')
-      .in('id', ids);
-    if (getErr) return res.status(500).json({ error: getErr.message });
-    let approved = 0;
-    for (const r of rows || []) {
-      const cleanSubject = String(r.subject || '').replace(/^\[DRAFT\]\s*/i, '').trim() || 'Violation letter';
-      const { error: upErr } = await supabase
-        .from('interactions')
-        .update({ subject: cleanSubject, occurred_at: new Date().toISOString() })
-        .eq('id', r.id);
-      if (!upErr) approved += 1;
-    }
-    res.json({ approved, requested: ids.length });
+      .update({ status: 'approved', sent_at: now }, { count: 'exact' })
+      .in('id', ids)
+      .eq('status', 'draft');
+    if (upErr) return res.status(500).json({ error: upErr.message });
+    res.json({ approved: count || 0, requested: ids.length });
   } catch (err) {
     console.error('[enforcement.drafts.approve]', err);
     res.status(500).json({ error: err.message });
@@ -635,8 +629,14 @@ router.post('/drafts/reject', express.json(), async (req, res) => {
         })
         .eq('id', inter.observation_id);
     }
-    // Delete the draft interaction row entirely
-    await supabase.from('interactions').delete().eq('id', interactionId);
+    // Flip the draft to status='rejected' so it disappears from the queue
+    // but stays on the property timeline as an audit-trail record.
+    await supabase.from('interactions')
+      .update({
+        status: 'rejected',
+        notes: reason || 'Rejected from Drafts review',
+      })
+      .eq('id', interactionId);
     res.json({ ok: true });
   } catch (err) {
     console.error('[enforcement.drafts.reject]', err);
@@ -667,8 +667,8 @@ router.get('/mail-queue/summary', async (req, res) => {
       .from('interactions')
       .select('id, delivery_method, community_id, communities:community_id(name)')
       .in('type', letterTypes)
-      .is('printed_at', null)
-      .not('subject', 'like', '[DRAFT]%');
+      .in('status', ['approved', 'sent'])
+      .is('printed_at', null);
     if (communityId) q = q.eq('community_id', communityId);
     const { data, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
@@ -701,12 +701,12 @@ router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
 
     let q = supabase
       .from('interactions')
-      .select('id, content, type, subject, occurred_at, community_id, property_id')
+      .select('id, content, type, subject, sent_at, community_id, property_id')
       .in('type', letterTypes)
       .eq('delivery_method', deliveryMethod)
+      .in('status', ['approved', 'sent'])
       .is('printed_at', null)
-      .not('subject', 'like', '[DRAFT]%')
-      .order('occurred_at', { ascending: true });
+      .order('sent_at', { ascending: true });
     if (communityId) q = q.eq('community_id', communityId);
     if (explicitIds) q = q.in('id', explicitIds);
     const { data: letters, error } = await q;

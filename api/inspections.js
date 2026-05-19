@@ -486,7 +486,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 
                     // Log a DRAFT interaction — subject prefix '[DRAFT]' lets the
                     // Drafts queue filter it. When Phase 6d's Approve fires,
-                    // it strips the prefix + sets occurred_at to send time.
+                    // it strips the prefix + sets sent_at to send time.
                     const stageToType = {
                       courtesy_1: 'letter_courtesy_1',
                       courtesy_2: 'letter_courtesy_2',
@@ -501,10 +501,13 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       inspection_id:   inspectionId,
                       type:            stageToType[decision.stage] || 'ai_draft',
                       direction:       'outbound',
-                      subject:         `[DRAFT] Violation letter (${decision.stage})`,
+                      subject:         `Violation letter (${decision.stage})`,
                       content:         letterPath,
                       delivery_method: (decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
-                      occurred_at:     new Date().toISOString(),
+                      status:          'draft',           // Phase 6d will flip to 'approved' or 'rejected'
+                      ai_drafted:      true,
+                      ai_model:        'claude-sonnet-4-5',
+                      // sent_at left NULL — set when approved
                     });
 
                     console.log(`[auto-draft] violation ${vio.id} drafted as ${decision.stage} (${decision.mail_type}), ${decision.cure_days}d cure`);
@@ -966,7 +969,7 @@ router.get('/inspections/:id/coverage', async (req, res) => {
 //     owner:    { contact_id, full_name, email, phone, mailing_address }
 //     residency:{ residency_type, contact_name, lease_end_date }
 //     violations: [{ id, opened_at, category_name, current_stage, ... }]  -- newest first
-//     interactions: [{ id, type, subject, occurred_at, delivery_method, direction }] -- newest first
+//     interactions: [{ id, type, subject, sent_at, delivery_method, direction }] -- newest first
 //     inspections: [{ id, started_at, ended_at, mode, observation_count }]
 //     observations_recent: [{ id, severity, ai_description, reviewer_status, captured_at, photo_url }]
 //     counts: { violations_open, violations_ytd, violations_lifetime, inspections_lifetime, photos_lifetime }
@@ -1003,9 +1006,9 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         .order('opened_at', { ascending: false }),
       // Interactions
       supabase.from('interactions')
-        .select('id, type, direction, subject, occurred_at, delivery_method, violation_id, content')
+        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content')
         .eq('property_id', propertyId)
-        .order('occurred_at', { ascending: false })
+        .order('sent_at', { ascending: false })
         .limit(50),
       // Inspections that touched this property (via observations)
       supabase.from('property_observations')
@@ -1116,7 +1119,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         type:            i.type,
         direction:       i.direction,
         subject:         i.subject,
-        occurred_at:     i.occurred_at,
+        sent_at:     i.sent_at,
         delivery_method: i.delivery_method,
         violation_id:    i.violation_id,
         preview:         i.content ? String(i.content).slice(0, 240) : null,
