@@ -154,6 +154,9 @@ function renderSectionStandaloneHtml({ packet, section }) {
   if (section.section_key === 'drv') {
     return renderBudgetVarianceStandaloneHtml({ packet, section });
   }
+  if (section.section_key === 'violations_summary') {
+    return renderViolationsSummaryStandaloneHtml({ packet, section });
+  }
   return renderGenericSectionStandaloneHtml({ packet, section });
 }
 
@@ -453,14 +456,69 @@ function renderArAgingStandaloneHtml({ packet, section }) {
         ${segs.map((s) => `<span><span style="display:inline-block; width:10px; height:10px; background:${s.color}; border-radius:2px; vertical-align:middle; margin-right:5px;"></span>${esc(s.label)}: ${fmtMoney(s.amt, { precision: 0 })} (${s.pct.toFixed(0)}%)</span>`).join('')}
       </div>` : ''}
 
+    ${(() => {
+      // At-legal callout — accounts at "With Attorney" or "Violation
+      // Collections - With Attorney". Surfaced FIRST because they're the
+      // high-stakes pool the board acts on.
+      const atLegal = Array.isArray(d.at_legal_accounts) ? d.at_legal_accounts : [];
+      if (!atLegal.length) return '';
+      const sumLegal = atLegal.reduce((s, a) => s + (Number(a.balance) || 0), 0);
+      return `
+        <div class="table-h2" style="color:#7f1d1d;">⚖️ Accounts at legal (with attorney)</div>
+        <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:8px; padding:14px 16px; margin: 6px 0 12px;">
+          <div style="font-size:13px; color:#7f1d1d; margin-bottom:8px;"><strong>${atLegal.length} account${atLegal.length === 1 ? '' : 's'}</strong> currently in legal collections — total exposure <strong>${fmtMoney(sumLegal, { precision: 0 })}</strong>.</div>
+          <table class="data-table" style="margin: 4px 0;">
+            <thead><tr>
+              <th>Address</th>
+              <th>Owner</th>
+              <th class="num">Balance</th>
+              <th class="num">Over 90</th>
+              <th>Status</th>
+            </tr></thead>
+            <tbody>
+              ${atLegal.map((r) => `
+                <tr>
+                  <td><strong>${esc(r.address || '—')}</strong></td>
+                  <td>${esc(r.owner || '—')}</td>
+                  <td class="num" style="color:var(--bad); font-weight:700;">${fmtMoney(Number(r.balance) || 0)}</td>
+                  <td class="num">${r.over_90 != null ? fmtMoney(Number(r.over_90)) : '—'}</td>
+                  <td><span style="background:#fee2e2; color:#7f1d1d; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:700;">${esc(r.status || 'With Attorney')}</span></td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    })()}
+
+    ${(() => {
+      // Status breakdown chips — quick read on where accounts sit in the
+      // collection ladder. Skipped silently when not in input_data.
+      const sb = d.status_summary || null;
+      if (!sb) return '';
+      const chips = [
+        { k: 'with_attorney',       label: 'With Attorney',          bg: '#fee2e2', fg: '#7f1d1d' },
+        { k: 'notice_209',          label: '§209 Notice',            bg: '#fef3c7', fg: '#78350f' },
+        { k: 'board_review',        label: 'Board Review',           bg: '#fef3c7', fg: '#78350f' },
+        { k: 'payment_plan',        label: 'Payment Plan',           bg: '#dcfce7', fg: '#166534' },
+        { k: 'delinquent_reminder', label: 'Delinquency Reminder',   bg: '#e0e7ff', fg: '#3730a3' },
+        { k: 'late_notice',         label: 'Late Notice',            bg: '#e0e7ff', fg: '#3730a3' },
+        { k: 'other',               label: 'Other',                  bg: '#f1f5f9', fg: '#475569' },
+      ].filter((c) => sb[c.k] != null && sb[c.k] > 0);
+      if (!chips.length) return '';
+      return `
+        <div class="table-h2">Collection status</div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin: 4px 0 12px;">
+          ${chips.map((c) => `<div style="background:${c.bg}; color:${c.fg}; padding:6px 12px; border-radius:8px; font-size:12px; font-weight:600;"><span style="font-size:18px; font-weight:800;">${sb[c.k]}</span> · ${esc(c.label)}</div>`).join('')}
+        </div>`;
+    })()}
+
     ${topRows.length ? `
-      <div class="table-h2">Top delinquent accounts</div>
+      <div class="table-h2">Top delinquent accounts (non-legal)</div>
       <table class="data-table">
         <thead><tr>
           <th>Address</th>
           <th>Owner</th>
           <th class="num">Balance</th>
-          <th class="num">Days oldest</th>
+          <th class="num">Over 90</th>
           <th>Status</th>
         </tr></thead>
         <tbody>
@@ -469,7 +527,7 @@ function renderArAgingStandaloneHtml({ packet, section }) {
               <td><strong>${esc(r.address)}</strong></td>
               <td>${esc(r.owner || '—')}</td>
               <td class="num" style="color:${r.balance >= 1000 ? 'var(--bad)' : 'var(--ink)'}; font-weight:${r.balance >= 1000 ? '700' : '400'};">${fmtMoney(r.balance)}</td>
-              <td class="num">${r.oldest != null ? r.oldest : '—'}</td>
+              <td class="num">${r.over_90 != null ? fmtMoney(Number(r.over_90)) : (r.oldest != null ? `${r.oldest}d` : '—')}</td>
               <td>${r.status ? `<span style="background:var(--rule); padding:2px 8px; border-radius:99px; font-size:11px;">${esc(r.status)}</span>` : '—'}</td>
             </tr>`).join('')}
         </tbody>
@@ -481,6 +539,151 @@ function renderArAgingStandaloneHtml({ packet, section }) {
         ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
       </ul>` : ''}
   `;
+  return renderStandalonePage({ packet, section, bodyHtml });
+}
+
+// ----------------------------------------------------------------------------
+// Deed Restriction Violations — polished summary of the Vantaca Violation
+// Report Detail. Distills 12 pages of per-violation rows into the board's
+// 30-second-readable picture: stage counts, top categories, certified §209
+// cases, fine-assessed cases, pending hearings, top problem properties.
+// ----------------------------------------------------------------------------
+function renderViolationsSummaryStandaloneHtml({ packet, section }) {
+  const d = section.input_data || {};
+  const narrative = d.narrative || null;
+  const watchouts = Array.isArray(d.watchouts) ? d.watchouts : [];
+  const period = d.report_period || (packet.period_label || '');
+  const byStage = d.by_stage || {};
+  const stages = [
+    { k: 'first_notice',            label: 'First Notice',            bg: '#dcfce7', fg: '#166534' },
+    { k: 'second_notice',           label: 'Second Notice',           bg: '#fef3c7', fg: '#78350f' },
+    { k: 'certified_letter_notice', label: 'Certified §209',          bg: '#fecaca', fg: '#7f1d1d' },
+    { k: 'pending_hearing',         label: 'Pending Hearing',         bg: '#e0e7ff', fg: '#3730a3' },
+    { k: 'monthly_fine_assessed',   label: 'Monthly Fine Assessed',   bg: '#fca5a5', fg: '#7f1d1d' },
+    { k: 'closed',                  label: 'Closed (period)',         bg: '#bbf7d0', fg: '#14532d' },
+  ];
+  const totalOpen = ['first_notice', 'second_notice', 'certified_letter_notice', 'pending_hearing', 'monthly_fine_assessed']
+    .reduce((s, k) => s + (Number(byStage[k]) || 0), 0);
+  const totalAll = d.total_violations != null ? Number(d.total_violations) : (totalOpen + (Number(byStage.closed) || 0));
+
+  const topCategories = Array.isArray(d.top_categories) ? d.top_categories.slice(0, 10) : [];
+  const certified = Array.isArray(d.certified_cases) ? d.certified_cases : [];
+  const fines = Array.isArray(d.fine_assessed_cases) ? d.fine_assessed_cases : [];
+  const hearings = Array.isArray(d.pending_hearing_cases) ? d.pending_hearing_cases : [];
+  const problems = Array.isArray(d.top_problem_properties) ? d.top_problem_properties.slice(0, 8) : [];
+
+  function caseTable(rows, opts = {}) {
+    if (!rows.length) return `<div style="font-size:12px; color:var(--ink-muted); font-style:italic; margin: 4px 0 12px;">None.</div>`;
+    const showHearing = !!opts.showHearing;
+    return `
+      <table class="data-table" style="margin: 4px 0 14px;">
+        <thead><tr>
+          <th>Address</th>
+          <th>Homeowner</th>
+          <th>Category</th>
+          ${showHearing ? `<th>Hearing</th>` : ''}
+          <th>Account</th>
+        </tr></thead>
+        <tbody>
+          ${rows.map((r) => `
+            <tr>
+              <td><strong>${esc(r.address || '—')}</strong></td>
+              <td>${esc(r.homeowner || '—')}</td>
+              <td>${esc(r.category || '—')}</td>
+              ${showHearing ? `<td>${r.hearing_date ? esc(fmtDateShort(r.hearing_date)) : '—'}</td>` : ''}
+              <td style="font-family:monospace; color:var(--ink-muted); font-size:11px;">${esc(r.account || '—')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>`;
+  }
+
+  // Distribution bar — top 10 categories by percentage. Width proportional
+  // to share of all violations in the period.
+  const maxCatPct = topCategories.reduce((m, c) => Math.max(m, Number(c.pct) || 0), 1);
+
+  const bodyHtml = `
+    ${narrative ? `<div class="narrative">${esc(narrative)}</div>` : ''}
+
+    <div class="kpi-row">
+      <div class="kpi-card">
+        <div class="label">Total tracked</div>
+        <div class="value">${totalAll || '—'}</div>
+        <div class="delta">${esc(period)}</div>
+      </div>
+      <div class="kpi-card" style="background:#fef2f2; border-color:#fecaca;">
+        <div class="label" style="color:#991b1b;">High-stakes pool</div>
+        <div class="value" style="color:#7f1d1d;">${(Number(byStage.certified_letter_notice) || 0) + (Number(byStage.monthly_fine_assessed) || 0) + (Number(byStage.pending_hearing) || 0)}</div>
+        <div class="delta bad">§209 + Fines + Pending Hearing</div>
+      </div>
+      <div class="kpi-card" style="background:#dcfce7; border-color:#bbf7d0;">
+        <div class="label" style="color:#14532d;">Closed in period</div>
+        <div class="value" style="color:#166534;">${byStage.closed || 0}</div>
+        <div class="delta good">resolved</div>
+      </div>
+    </div>
+
+    <div class="table-h2">Distribution by stage</div>
+    <div style="display:flex; gap:8px; flex-wrap:wrap; margin: 4px 0 14px;">
+      ${stages.map((s) => (Number(byStage[s.k]) || 0) > 0 ? `<div style="background:${s.bg}; color:${s.fg}; padding:8px 14px; border-radius:8px; font-size:12px; font-weight:600; display:flex; flex-direction:column; align-items:flex-start; min-width:120px;"><span style="font-size:20px; font-weight:800; line-height:1;">${byStage[s.k]}</span><span>${esc(s.label)}</span></div>` : '').join('')}
+    </div>
+
+    ${topCategories.length ? `
+      <div class="table-h2">Top categories</div>
+      <div style="display:flex; flex-direction:column; gap:4px; margin: 4px 0 14px;">
+        ${topCategories.map((c) => {
+          const pct = Number(c.pct) || 0;
+          const w = (pct / maxCatPct) * 100;
+          return `<div style="display:flex; align-items:center; gap:10px; font-size:12px;">
+            <div style="flex:0 0 200px; color:var(--ink);">${esc(c.category)}</div>
+            <div style="flex:1; height:14px; background:#f1f5f9; border-radius:3px; overflow:hidden;"><div style="height:100%; width:${w}%; background:linear-gradient(90deg, #1F3A5F 0%, #315A87 100%);"></div></div>
+            <div style="flex:0 0 60px; text-align:right; font-weight:700; color:var(--navy); font-variant-numeric:tabular-nums;">${pct.toFixed(1)}%</div>
+            ${c.count != null ? `<div style="flex:0 0 30px; text-align:right; font-size:11px; color:var(--ink-muted);">${c.count}</div>` : ''}
+          </div>`;
+        }).join('')}
+      </div>` : ''}
+
+    ${(certified.length || fines.length) ? `
+      <div class="table-h2" style="color:#7f1d1d;">⚖️ High-stakes cases</div>` : ''}
+
+    ${certified.length ? `
+      <div style="font-size:12px; font-weight:700; color:#1a3a5c; margin: 8px 0 2px; text-transform:uppercase; letter-spacing:0.04em;">Certified §209 (${certified.length})</div>
+      ${caseTable(certified)}` : ''}
+
+    ${fines.length ? `
+      <div style="font-size:12px; font-weight:700; color:#1a3a5c; margin: 8px 0 2px; text-transform:uppercase; letter-spacing:0.04em;">Monthly Fine Assessed (${fines.length})</div>
+      ${caseTable(fines)}` : ''}
+
+    ${hearings.length ? `
+      <div class="table-h2">Pending Hearing (${hearings.length})</div>
+      ${caseTable(hearings, { showHearing: true })}` : ''}
+
+    ${problems.length ? `
+      <div class="table-h2">Top problem properties (multiple open violations)</div>
+      <table class="data-table" style="margin: 4px 0 14px;">
+        <thead><tr>
+          <th>Address</th>
+          <th>Homeowner</th>
+          <th class="num">Violations</th>
+          <th>Categories</th>
+        </tr></thead>
+        <tbody>
+          ${problems.map((p) => `
+            <tr>
+              <td><strong>${esc(p.address || '—')}</strong></td>
+              <td>${esc(p.homeowner || '—')}</td>
+              <td class="num" style="font-weight:700;">${p.violation_count || '—'}</td>
+              <td style="font-size:11.5px; color:var(--ink-soft);">${(Array.isArray(p.categories) ? p.categories : []).map((c) => esc(c)).join(' · ')}</td>
+            </tr>`).join('')}
+        </tbody>
+      </table>` : ''}
+
+    ${watchouts.length ? `
+      <div class="table-h2">🚩 Watchouts</div>
+      <ul style="margin: 6px 0 16px 0; padding-left: 18px;">
+        ${watchouts.map((w) => `<li style="margin-bottom: 4px;">${esc(w)}</li>`).join('')}
+      </ul>` : ''}
+  `;
+
   return renderStandalonePage({ packet, section, bodyHtml });
 }
 
@@ -959,23 +1162,112 @@ can act on. Output JSON with this exact shape:
 
 The "narrative" field is the headline product — it's what a board member skims first. The structured data is the audit trail underneath. Return ONLY the JSON.`,
 
-  ar_aging: `You are reviewing an Accounts Receivable / delinquencies aging report
-from a Vantaca-style HOA accounting export. Extract the data AND write a short
-Ed-voiced narrative the board can act on. Output JSON with this exact shape:
+  ar_aging: `You are reviewing a Vantaca AR Aging report for a homeowners
+association board. The report lists every account with an outstanding balance,
+broken down into buckets (0-30 / Over 30 / Over 60 / Over 90 days) and a
+"Coll Status" line per account (e.g., "With Attorney", "Violation Collections
+- With Attorney", "Board Review", "209 Notice", "Delinquent Balance Reminder",
+"Late Notice", "Payment Plan").
+
+Extract the data AND write a short Ed-voiced narrative the board can act on.
+Output JSON with this exact shape:
 
 {
   "as_of_date": "YYYY-MM-DD or null",
-  "total_ar": <number>,
-  "buckets": { "0_30": <number>, "31_60": <number>, "61_90": <number>, "over_90": <number> },
-  "homeowner_count": { "current": <int or null>, "delinquent": <int or null> },
+  "total_ar": <number — the grand total ($77,344.56 type number)>,
+  "buckets": { "0_30": <number>, "31_60": <number — the "Over 30" column>, "61_90": <number — the "Over 60" column>, "over_90": <number — the "Over 90" column> },
+  "homeowner_count": { "current": <int or null>, "delinquent": <int or null — distinct properties with a balance> },
+  "status_summary": {
+    "with_attorney": <int — count of accounts whose Coll Status is "With Attorney" or "Violation Collections - With Attorney">,
+    "notice_209": <int — count of "209 Notice">,
+    "board_review": <int — count of "Board Review">,
+    "delinquent_reminder": <int — count of "Delinquent Balance Reminder">,
+    "late_notice": <int — count of "Late Notice">,
+    "payment_plan": <int — count on a payment plan, if surfaced>,
+    "other": <int — any status not in the above buckets>
+  },
+  "at_legal_accounts": [
+    {
+      "address": "string — the property address part (e.g., '4819 Harbor Glen Lane')",
+      "owner": "string — last name visible after the dash",
+      "balance": <number — Balance column>,
+      "status": "string — exact Coll Status text",
+      "over_90": <number — the Over 90 column for this row>
+    }
+  ],
   "top_delinquent": [
-    { "unit": "string", "owner": "string or null", "balance": <number>, "oldest_charge_days": <int or null>, "status": "string or null" }
+    {
+      "address": "string",
+      "owner": "string or null",
+      "balance": <number>,
+      "over_90": <number>,
+      "oldest_charge_days": <int or null>,
+      "status": "string — exact Coll Status text"
+    }
   ],
   "watchouts": [
-    "one-line item for each material concern (e.g., 'Unit 12 is $4,200 over 90 days — recommend collections referral')"
+    "one-line item for each material concern (e.g., '8 accounts now With Attorney — $25k+ in legal-handled balances', 'Late-fee revenue line is $X — outsized relative to base assessments, may signal collection-process gaps')"
   ],
-  "narrative": "Ed-voiced commentary, 80-150 words. Tone: direct, treasurer-grade, pragmatic. Lead with the headline state of AR ('Receivables are in excellent shape — $0 outstanding across all buckets' OR 'Total AR sits at $X with $Y past 90 days'). Identify 1-3 specific accounts or buckets that need attention. End with one sentence on the recommended next action (offer payment plans, refer to attorney, etc.) OR confirm no action needed if the book is clean. No bullet points in the narrative — flowing prose. Do NOT invent numbers; commentary on what's actually in the report only."
+  "narrative": "Ed-voiced commentary, 100-160 words. Treasurer-grade prose. Lead with the headline state of AR: total + what share is past 90 days. Call out the legal-handled portion specifically — how many accounts are With Attorney + total dollars in that pool. Identify any single account materially larger than the rest (e.g., $15k vs. $700-800 average). End with one sentence on recommended next action. Flowing prose, no bullets. Don't invent numbers."
 }
+
+EXTRACTION RULES:
+- The top "Charge" section ("Annual Assessment (71) $47,290.26" etc.) is a count + total per charge type. The number in parentheses is HOW MANY accounts owe that charge type. Total at the bottom of that section ($77,344.56) is the grand total — use that for total_ar.
+- The "SUMMARY" pie chart shows distribution: 0-30 / Over 30 / Over 60 / Over 90 percentages. Cross-check against your computed sums.
+- Per-property rows have format "2012515 - 4819 Harbor Glen Lane - Berry" followed by "Coll Status: ...". Extract the property address (middle segment) and owner last name (after the second dash).
+- at_legal_accounts: every account whose status starts with "With Attorney" OR "Violation Collections" — sort by balance desc.
+- top_delinquent: top 15 by balance, EXCLUDING the at_legal accounts already in that list (board sees them separately above).
+- A typical recurring-delinquent balance is one annual assessment ($719) plus small late fees ($17-50). Don't bother flagging these individually; they're the baseline. Material accounts are $1,000+.
+
+The "narrative" field is the headline product. Return ONLY the JSON.`,
+
+  violations_summary: `You are reviewing a Vantaca "Violation Report - Detail"
+PDF for an HOA. The report lists every violation in a date range, grouped
+by stage (First Notice / Second Notice / Certified Letter Notice / Pending
+Hearing / Monthly Fine Assessed / Closed) and includes a top "Distribution
+by Type" pie summary.
+
+Extract the data AND write a short Ed-voiced narrative the board can act on.
+Output JSON with this exact shape:
+
+{
+  "report_period": "MM/DD/YYYY - MM/DD/YYYY or null",
+  "total_violations": <int>,
+  "by_stage": {
+    "first_notice": <int>,
+    "second_notice": <int>,
+    "certified_letter_notice": <int>,
+    "pending_hearing": <int>,
+    "monthly_fine_assessed": <int>,
+    "closed": <int>
+  },
+  "top_categories": [
+    { "category": "string — e.g. 'Trash Cans/Recycling Containers'", "pct": <number 0-100>, "count": <int or null> }
+  ],
+  "certified_cases": [
+    { "address": "string", "homeowner": "string or null", "category": "string", "account": "string or null" }
+  ],
+  "fine_assessed_cases": [
+    { "address": "string", "homeowner": "string or null", "category": "string", "account": "string or null" }
+  ],
+  "pending_hearing_cases": [
+    { "address": "string", "homeowner": "string or null", "category": "string", "hearing_date": "YYYY-MM-DD or null", "account": "string or null" }
+  ],
+  "top_problem_properties": [
+    { "address": "string", "homeowner": "string or null", "violation_count": <int>, "categories": ["string"] }
+  ],
+  "watchouts": [
+    "one-line concerns the board should notice (e.g., 'Landscaping-Flowerbeds dominates Pending Hearing — 8 cases, 47% of pending')"
+  ],
+  "narrative": "Ed-voiced commentary, 100-160 words. Treasurer-grade prose. Lead with the headline (total violations in the period + closed-to-open ratio). Identify the top 2-3 categories and what they signal about the community. Call out the high-stakes pools specifically: certified §209 letters + fine-assessed + pending hearings. End with one sentence on what to watch. Flowing prose, no bullets. Don't invent numbers."
+}
+
+EXTRACTION RULES:
+- The "SUMMARY" page lists every stage with a total count, then per-stage breakdowns by category. Capture both.
+- The pie chart at the top shows TOP DISTRIBUTION BY TYPE — extract the top 10 percentages and labels.
+- Each per-violation row format: "Hearing Date | Details | Address | Homeowner | Account/XN" then "Stage - DATE - processor name" on the next line.
+- top_problem_properties: any property that appears 2+ times anywhere in the report. List the address once with the count and the distinct violation categories.
+- certified_cases / fine_assessed_cases / pending_hearing_cases: every row in those stage sections (don't sample — the board wants the full list of high-stakes items, which is small enough to enumerate).
 
 The "narrative" field is the headline product. Return ONLY the JSON.`,
 
