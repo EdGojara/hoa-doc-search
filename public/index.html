@@ -5996,6 +5996,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <option value="high">🟢 High</option>
       </select>
       <input id="ah-search" type="search" placeholder="Address, owner, or project…" oninput="ahSearchDebounced()" style="flex:1; min-width:220px; padding:7px 12px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px;" />
+      <button class="action-btn" onclick="ahOpenManualEntry()" style="font-size:13px; padding:7px 14px;">+ Add manual entry</button>
       <button class="secondary-btn" onclick="ahFindDuplicates()" style="font-size:13px; padding:7px 14px;">🔍 Find &amp; dedupe</button>
     </div>
 
@@ -6239,13 +6240,63 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   }
 
   // --- Review modal ---
+  // Manual ARC decision entry — opens the same review modal the system
+  // upload uses, but with empty fields. Operator picks community first
+  // (uses the History tab's community filter), fills in address +
+  // decision + project type + dates + reasoning, hits Save → row lands
+  // in arc_historical_decisions just like an extracted one. Marked
+  // manually_edited=true on save (the existing flow detects "no
+  // extracted source" and treats it as manual).
+  async function ahOpenManualEntry() {
+    let communityId = (document.getElementById('ah-filter-community') || {}).value || '';
+    let communityName = '';
+    if (!communityId) {
+      // Resolve from the cached community list
+      const sel = document.getElementById('ah-filter-community');
+      if (sel && sel.selectedOptions && sel.selectedOptions[0]) communityName = sel.selectedOptions[0].textContent;
+    }
+    if (!communityId) {
+      alert('Pick a community at the top filter first so the entry lands in the right community library.');
+      const dropHint = document.getElementById('ah-drop-context-hint');
+      if (dropHint) dropHint.style.display = 'block';
+      return;
+    }
+    ahPendingReview = {
+      community_id: communityId,
+      community_name: communityName,
+      source_filename: 'manual_entry',
+      source_excerpt: '',
+      manual: true,
+      extracted: {
+        property_address: '',
+        homeowner_name: '',
+        project_type: '',
+        project_description: '',
+        decision_type: '',
+        decided_at: new Date().toISOString().slice(0, 10),
+        decided_by: '',
+        conditions: '',
+        reasoning: '',
+        summary: '',
+        confidence: 'high', // manual entry = the operator vouched for it
+      },
+    };
+    ahShowReviewModal();
+  }
+
   function ahShowReviewModal() {
     if (!ahPendingReview) return;
     const e = ahPendingReview.extracted || {};
-    document.getElementById('ah-review-meta').innerHTML = `
-      <strong>Source:</strong> ${ahEsc(ahPendingReview.source_filename || '(no name)')}
-      · <strong>Confidence:</strong> <span style="color:${e.confidence === 'high' ? '#166534' : e.confidence === 'medium' ? '#b45309' : '#c0392b'};">${ahEsc(e.confidence || '—')}</span>
-    `;
+    const isManual = !!ahPendingReview.manual;
+    // Title swaps based on entry path so the operator always knows which
+    // flow they're in. Reset on every open so a prior manual session
+    // doesn't leak into a follow-up system extraction.
+    const h = document.querySelector('#ah-review-modal h3');
+    if (h) h.textContent = isManual ? '+ Add ARC decision (manual entry)' : 'Review extracted decision';
+    document.getElementById('ah-review-meta').innerHTML = isManual
+      ? `<strong>Manual entry</strong> · fill in the fields below and Save to add to the ${ahEsc(ahPendingReview.community_name || 'community')} library.`
+      : `<strong>Source:</strong> ${ahEsc(ahPendingReview.source_filename || '(no name)')}
+         · <strong>Confidence:</strong> <span style="color:${e.confidence === 'high' ? '#166534' : e.confidence === 'medium' ? '#b45309' : '#c0392b'};">${ahEsc(e.confidence || '—')}</span>`;
 
     const fields = [
       { key: 'property_address', label: 'Property address', type: 'text' },
@@ -17653,15 +17704,15 @@ ${questionsPage}
     }).join('');
   }
 
-  // Drag-over visual feedback. Only shows the gold overlay if the dragged
-  // data includes a file (avoids flickering when the operator is just
-  // selecting text in a sibling element).
+  // Drag-over: MUST call preventDefault unconditionally for the drop
+  // event to fire. During dragover, dataTransfer.items is often empty
+  // for security reasons (file metadata only appears on drop), so we
+  // can't gate on file presence here — we gate at drop time instead.
   function packetsDragOver(e, card) {
-    if (e.dataTransfer && Array.from(e.dataTransfer.items || []).some((it) => it.kind === 'file')) {
-      e.preventDefault();
-      const hint = card.querySelector('.packets-drop-hint');
-      if (hint) hint.style.display = 'flex';
-    }
+    e.preventDefault();
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+    const hint = card.querySelector('.packets-drop-hint');
+    if (hint) hint.style.display = 'flex';
   }
   function packetsDragLeave(e, card) {
     const hint = card.querySelector('.packets-drop-hint');

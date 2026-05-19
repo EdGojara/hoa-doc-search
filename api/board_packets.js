@@ -337,7 +337,7 @@ function renderPacketPreviewHtml({ packet, sections, volume }) {
     <div class="cover-brand">
       <img src="/logos/bedrock_logo.png" alt="${BRAND.service.name}">
     </div>
-    <div class="cover-period">${esc(packet.period_label || '')} ${volume ? `· Volume ${volume}` : ''}</div>
+    <div class="cover-period">${esc(packet.period_label || '')}</div>
     <div class="cover-title">
       <div class="cover-eyebrow">Board Meeting Packet</div>
       <div class="cover-community">${esc(community.name || '')}${assets.legal_suffix ? `<br>${esc(assets.legal_suffix)}` : ''}</div>
@@ -1080,18 +1080,9 @@ router.get('/:id/preview', async (req, res) => {
       .eq('packet_id', req.params.id)
       .order('section_order');
 
-    // Volume number = how many packets exist for this community up to and
-    // including this one's meeting date. Adds a nice Bedrock touch ("Volume 4").
-    let volume = 1;
-    if (packet.community_id) {
-      const { count } = await supabase
-        .from('board_packets')
-        .select('id', { count: 'exact', head: true })
-        .eq('community_id', packet.community_id)
-        .lte('meeting_date', packet.meeting_date || '9999-12-31');
-      volume = Math.max(1, count || 1);
-    }
-
+    // Volume number was removed — it didn't read like meaningful context
+    // alongside the meeting date. Period label alone is cleaner.
+    let volume = null;
     const html = renderPacketPreviewHtml({ packet, sections: sections || [], volume });
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(html);
