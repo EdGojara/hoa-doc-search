@@ -50,6 +50,101 @@ async function embed(text) {
   return r.data[0].embedding;
 }
 
+// Compose the display title + chunk text used by the unified knowledge
+// substrate (project_unified_architecture.md). Same algorithm migration 074
+// uses for historical rows so re-runs across the two paths produce
+// equivalent content.
+function buildArcSubstrateBody(decision) {
+  const title = [
+    decision.property_address && String(decision.property_address).trim(),
+    decision.project_type && String(decision.project_type)[0].toUpperCase() + String(decision.project_type).slice(1),
+    decision.decision_type && String(decision.decision_type)[0].toUpperCase() + String(decision.decision_type).slice(1),
+  ].filter(Boolean).join(' — ') || (`ARC decision ${decision.decided_at || decision.created_at || ''}`).trim();
+
+  const lines = [];
+  lines.push(`Project: ${decision.project_type || 'unspecified'}`);
+  if (decision.property_address) lines.push(`Property: ${decision.property_address}`);
+  if (decision.homeowner_name)   lines.push(`Homeowner: ${decision.homeowner_name}`);
+  if (decision.decided_at)       lines.push(`Decided: ${decision.decided_at}`);
+  if (decision.decision_type)    lines.push(`Outcome: ${decision.decision_type}`);
+  if (decision.decided_by)       lines.push(`Decided by: ${decision.decided_by}`);
+  if (decision.project_description) lines.push(`\nDescription: ${decision.project_description}`);
+  if (decision.summary)             lines.push(`\nSummary: ${decision.summary}`);
+  if (decision.conditions)          lines.push(`\nConditions: ${decision.conditions}`);
+  if (decision.reasoning)           lines.push(`\nReasoning: ${decision.reasoning}`);
+  return { title, text: lines.join('\n') };
+}
+
+// Dual-write an ARC decision into the unified substrate. Idempotent on
+// source_record_id so re-saves update the existing parent + chunk in place.
+// Non-fatal: failures here never block the primary arc_historical_decisions
+// write.
+async function upsertArcDecisionIntoSubstrate(decision) {
+  if (!decision || !decision.id || !decision.embedding) return null;
+  const { title, text } = buildArcSubstrateBody(decision);
+
+  try {
+    const { data: existing } = await supabase
+      .from('knowledge_documents')
+      .select('id')
+      .eq('source_type', 'arc_decision')
+      .eq('source_record_id', decision.id)
+      .maybeSingle();
+
+    let parentId = existing && existing.id;
+    if (parentId) {
+      await supabase
+        .from('knowledge_documents')
+        .update({
+          title,
+          community_id: decision.community_id || null,
+          effective_date: decision.decided_at || null,
+          chunk_count: 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', parentId);
+    } else {
+      const { data: newParent, error: parentErr } = await supabase
+        .from('knowledge_documents')
+        .insert({
+          management_company_id: decision.management_company_id || BEDROCK_MGMT_CO_ID,
+          title,
+          source_type: 'arc_decision',
+          community_id: decision.community_id || null,
+          source_record_id: decision.id,
+          status: 'active',
+          ingested_at: decision.created_at || new Date().toISOString(),
+          effective_date: decision.decided_at || null,
+          model_version: 'text-embedding-ada-002@v1',
+          access_level: 'staff_internal',
+          notes: [decision.source_filename, decision.extraction_confidence ? `extraction:${decision.extraction_confidence}` : null].filter(Boolean).join(' · ') || null,
+          file_name: decision.source_filename || null,
+          chunk_count: 1,
+        })
+        .select('id')
+        .single();
+      if (parentErr) throw parentErr;
+      parentId = newParent.id;
+    }
+
+    // Wipe + reinsert single chunk so text/embedding stay in sync with edits
+    await supabase.from('knowledge_chunks').delete().eq('document_id', parentId);
+    const { error: chunkErr } = await supabase.from('knowledge_chunks').insert({
+      document_id:   parentId,
+      chunk_index:   0,
+      text,
+      embedding:     decision.embedding,
+      model_version: 'text-embedding-ada-002@v1',
+    });
+    if (chunkErr) throw chunkErr;
+
+    return parentId;
+  } catch (e) {
+    console.warn('[arc-history] substrate upsert failed (non-fatal):', e.message);
+    return null;
+  }
+}
+
 async function extractFileText(file) {
   const mime = file.mimetype || '';
   const name = (file.originalname || '').toLowerCase();
@@ -237,6 +332,10 @@ router.post('/', upload.single('file'), async (req, res) => {
       .single();
     if (error) throw error;
 
+    // Dual-write into the unified substrate so askEd can retrieve this
+    // decision alongside library docs + emails. Non-fatal if it fails.
+    await upsertArcDecisionIntoSubstrate(data);
+
     res.json({ decision: data });
   } catch (err) {
     console.error('[arc-history] save failed:', err.message);
@@ -360,6 +459,11 @@ router.patch('/:id', express.json({ limit: '1mb' }), async (req, res) => {
       .select()
       .single();
     if (error) throw error;
+
+    // Mirror the edit into the unified substrate (title may have changed,
+    // text may have changed, embedding may have changed if textChanged).
+    await upsertArcDecisionIntoSubstrate(data);
+
     res.json({ decision: data });
   } catch (err) {
     console.error('[arc-history] patch failed:', err.message);
@@ -372,6 +476,16 @@ router.patch('/:id', express.json({ limit: '1mb' }), async (req, res) => {
 // ----------------------------------------------------------------------------
 router.delete('/:id', async (req, res) => {
   try {
+    // Also remove the substrate parent so deleted decisions stop appearing
+    // in askEd results. knowledge_chunks cascade via the FK on document_id.
+    try {
+      await supabase
+        .from('knowledge_documents')
+        .delete()
+        .eq('source_type', 'arc_decision')
+        .eq('source_record_id', req.params.id);
+    } catch (e) { console.warn('[arc-history] substrate cleanup failed (non-fatal):', e.message); }
+
     const { error } = await supabase
       .from('arc_historical_decisions')
       .delete()
