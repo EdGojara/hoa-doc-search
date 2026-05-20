@@ -1301,4 +1301,134 @@ router.delete('/recaps/:id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /api/email-intelligence/backfill-entities
+// One-shot (re-runnable) backfill of property_id + contact_id on historic
+// email_intake rows that pre-date the entity-linkage save path. Same pattern
+// as arc-history/backfill-entities — batched, idempotent, mirrors FKs onto
+// the knowledge_documents substrate parent so askEd can filter by property
+// or person from the moment a row gets linked.
+//
+// Query params: offset, limit (max 100), community_id, force
+// ----------------------------------------------------------------------------
+router.post('/backfill-entities', async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const offset = Math.max(0, parseInt(req.query.offset || req.body?.offset || 0, 10));
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || req.body?.limit || 25, 10)));
+    const force = (req.query.force === '1' || req.body?.force === true);
+
+    let q = supabase
+      .from('email_intake')
+      .select('id, community_id, subject, sender_hint, extracted_data, property_id, contact_id', { count: 'exact' })
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .neq('extraction_status', 'error')
+      .order('ingested_at', { ascending: true });
+
+    if (!force) q = q.or('property_id.is.null,contact_id.is.null');
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+
+    const { data: rows, error, count } = await q.range(offset, offset + limit - 1);
+    if (error) throw error;
+
+    const results = {
+      queue_total: count || 0,
+      offset,
+      limit,
+      processed_this_batch: 0,
+      indexed_property: 0,
+      indexed_contact: 0,
+      already_linked: 0,
+      unmatched_property: 0,
+      unmatched_contact: 0,
+      ambiguous_contact: 0,
+      details: [],
+    };
+
+    for (const row of (rows || [])) {
+      const wasFullyLinked = row.property_id && row.contact_id;
+      if (wasFullyLinked && !force) {
+        results.already_linked += 1;
+        continue;
+      }
+
+      const ed = row.extracted_data || {};
+      const senderEmail = ed.sender_email || ed.from_email || ed.email_from || null;
+      const senderName = ed.sender_name || ed.from_name || ed.sender || row.sender_hint || null;
+      const propertyAddress = ed.property_address || ed.address
+        || (Array.isArray(ed.mentioned_addresses) && ed.mentioned_addresses[0])
+        || null;
+
+      let propertyId = row.property_id;
+      let contactId = row.contact_id;
+      let propStatus = propertyId ? 'kept' : (propertyAddress ? 'unmatched' : 'no_address');
+      let contactStatus = contactId ? 'kept' : ((senderEmail || senderName) ? 'unmatched' : 'no_sender');
+
+      if ((!propertyId || force) && propertyAddress && row.community_id) {
+        const p = await resolveProperty(supabase, row.community_id, propertyAddress);
+        if (p && p.id) {
+          propertyId = p.id;
+          propStatus = 'matched';
+          results.indexed_property += 1;
+        } else {
+          results.unmatched_property += 1;
+        }
+      }
+
+      if ((!contactId || force) && (senderEmail || senderName)) {
+        const c = await resolveContact(supabase, {
+          email: senderEmail,
+          name: senderName,
+          communityId: row.community_id,
+          propertyId,
+        });
+        if (c && c.id && !c.ambiguous) {
+          contactId = c.id;
+          contactStatus = 'matched';
+          results.indexed_contact += 1;
+        } else if (c && c.ambiguous) {
+          contactStatus = 'ambiguous';
+          results.ambiguous_contact += 1;
+        } else {
+          results.unmatched_contact += 1;
+        }
+      }
+
+      if (propertyId !== row.property_id || contactId !== row.contact_id) {
+        await supabase
+          .from('email_intake')
+          .update({ property_id: propertyId, contact_id: contactId })
+          .eq('id', row.id);
+
+        await supabase
+          .from('knowledge_documents')
+          .update({ property_id: propertyId, contact_id: contactId })
+          .eq('source_type', 'email')
+          .eq('source_record_id', row.id);
+      }
+
+      results.processed_this_batch += 1;
+      if (propStatus !== 'matched' && contactStatus !== 'matched') {
+        results.details.push({
+          id: row.id,
+          subject: row.subject ? row.subject.slice(0, 80) : null,
+          sender: senderName,
+          email: senderEmail,
+          address: propertyAddress,
+          property: propStatus,
+          contact: contactStatus,
+        });
+      }
+    }
+
+    results.next_offset = offset + (rows || []).length;
+    results.done = (rows || []).length < limit;
+    results.duration_ms = Date.now() - t0;
+    res.json(results);
+  } catch (err) {
+    console.error('[email-intake] backfill-entities failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };

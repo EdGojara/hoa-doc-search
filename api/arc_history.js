@@ -676,4 +676,134 @@ router.post('/auto-dedupe', express.json(), async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /api/arc-history/backfill-entities
+// One-shot (re-runnable) backfill of property_id + contact_id on historic
+// arc_historical_decisions rows that pre-date the entity-linkage save path.
+// Walks rows that still have a NULL FK, resolves via the entity resolver,
+// updates the row + the substrate parent. Batched with offset/limit so the
+// operator can watch progress and so we never block on a single huge run.
+//
+// Idempotent: rows that already have both FKs filled are skipped. Re-running
+// after Vantaca sync picks up new properties/contacts that weren't there
+// on a previous pass.
+//
+// Query params:
+//   ?offset=0       paging offset (default 0)
+//   ?limit=25       rows per batch (default 25, max 100)
+//   ?community_id=  optional scope to one community
+//   ?force=1        also re-resolve rows that already have FKs (e.g., after
+//                   a property/contact merge or address correction)
+// ----------------------------------------------------------------------------
+router.post('/backfill-entities', async (req, res) => {
+  const t0 = Date.now();
+  try {
+    const offset = Math.max(0, parseInt(req.query.offset || req.body?.offset || 0, 10));
+    const limit = Math.max(1, Math.min(100, parseInt(req.query.limit || req.body?.limit || 25, 10)));
+    const force = (req.query.force === '1' || req.body?.force === true);
+
+    let q = supabase
+      .from('arc_historical_decisions')
+      .select('id, community_id, property_address, homeowner_name, property_id, contact_id, decided_at, source_filename, extraction_confidence, created_at, embedding', { count: 'exact' })
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('created_at', { ascending: true });
+
+    if (!force) q = q.or('property_id.is.null,contact_id.is.null');
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+
+    const { data: rows, error, count } = await q.range(offset, offset + limit - 1);
+    if (error) throw error;
+
+    const results = {
+      queue_total: count || 0,
+      offset,
+      limit,
+      processed_this_batch: 0,
+      indexed_property: 0,
+      indexed_contact: 0,
+      already_linked: 0,
+      unmatched_property: 0,
+      unmatched_contact: 0,
+      ambiguous_contact: 0,
+      details: [],
+    };
+
+    for (const row of (rows || [])) {
+      const wasFullyLinked = row.property_id && row.contact_id;
+      if (wasFullyLinked && !force) {
+        results.already_linked += 1;
+        continue;
+      }
+
+      let propertyId = row.property_id;
+      let contactId = row.contact_id;
+      let propStatus = propertyId ? 'kept' : 'unmatched';
+      let contactStatus = contactId ? 'kept' : 'unmatched';
+
+      if ((!propertyId || force) && row.property_address) {
+        const p = await resolveProperty(supabase, row.community_id, row.property_address);
+        if (p && p.id) {
+          propertyId = p.id;
+          propStatus = 'matched';
+          results.indexed_property += 1;
+        } else {
+          results.unmatched_property += 1;
+        }
+      }
+
+      if ((!contactId || force) && row.homeowner_name) {
+        const c = await resolveContact(supabase, {
+          name: row.homeowner_name,
+          communityId: row.community_id,
+          propertyId,
+        });
+        if (c && c.id && !c.ambiguous) {
+          contactId = c.id;
+          contactStatus = 'matched';
+          results.indexed_contact += 1;
+        } else if (c && c.ambiguous) {
+          contactStatus = 'ambiguous';
+          results.ambiguous_contact += 1;
+        } else {
+          results.unmatched_contact += 1;
+        }
+      }
+
+      // Persist FKs if anything changed
+      if (propertyId !== row.property_id || contactId !== row.contact_id) {
+        await supabase
+          .from('arc_historical_decisions')
+          .update({ property_id: propertyId, contact_id: contactId })
+          .eq('id', row.id);
+
+        // Mirror to substrate parent
+        await supabase
+          .from('knowledge_documents')
+          .update({ property_id: propertyId, contact_id: contactId })
+          .eq('source_type', 'arc_decision')
+          .eq('source_record_id', row.id);
+      }
+
+      results.processed_this_batch += 1;
+      if (propStatus !== 'matched' || contactStatus !== 'matched') {
+        results.details.push({
+          id: row.id,
+          address: row.property_address,
+          name: row.homeowner_name,
+          property: propStatus,
+          contact: contactStatus,
+        });
+      }
+    }
+
+    results.next_offset = offset + (rows || []).length;
+    results.done = (rows || []).length < limit;
+    results.duration_ms = Date.now() - t0;
+    res.json(results);
+  } catch (err) {
+    console.error('[arc-history] backfill-entities failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };
