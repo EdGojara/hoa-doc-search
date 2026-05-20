@@ -458,7 +458,9 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 
                     // Phase 7 — pull governing-doc reference + prior-violation history
                     // so the letter cites the actual CC&R section and (on §209)
-                    // lists prior notices for this property + category.
+                    // lists prior notices for this property + category. Manual
+                    // override in community_enforcement_priorities wins; falls
+                    // back to a semantic-search lookup of the community's CC&Rs.
                     let govDocForAuto = null;
                     try {
                       const { data: prioRow } = await supabase
@@ -477,6 +479,25 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                         };
                       }
                     } catch (_) {}
+                    if (!govDocForAuto) {
+                      try {
+                        const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
+                        const auto = await lookupGoverningDoc({
+                          communityId:         insp.community_id,
+                          categoryLabel:       catRow && catRow.label,
+                          categoryDescription: catRow && catRow.description,
+                          aiDescription:       result.description,
+                        });
+                        if (auto) {
+                          govDocForAuto = {
+                            reference:     auto.reference,
+                            section_title: auto.section_title,
+                            quote:         auto.quote,
+                            page:          auto.page,
+                          };
+                        }
+                      } catch (_) {}
+                    }
 
                     // priors already pulled above for the engine; reuse
                     const priorsForLetter = (priors || []).filter((pv) => pv.id !== vio.id);

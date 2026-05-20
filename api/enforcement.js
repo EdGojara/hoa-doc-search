@@ -577,6 +577,29 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       }
     } catch (_) {}
 
+    // Auto-lookup the governing-doc section from the community's CC&Rs in the
+    // knowledge substrate. Only fires when the manual override above didn't
+    // produce a citation. Returns null silently if no doc / no key / no match.
+    if (!govDoc) {
+      try {
+        const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
+        const auto = await lookupGoverningDoc({
+          communityId:         violation.community_id,
+          categoryLabel:       violation.enforcement_categories && violation.enforcement_categories.label,
+          categoryDescription: violation.enforcement_categories && violation.enforcement_categories.description,
+          aiDescription:       observation && observation.ai_description,
+        });
+        if (auto) {
+          govDoc = {
+            reference:     auto.reference,
+            section_title: auto.section_title,
+            quote:         auto.quote,
+            page:          auto.page,
+          };
+        }
+      } catch (_) {}
+    }
+
     let priorViolations = [];
     try {
       const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
@@ -883,7 +906,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
 
         const [vRes, oRes, pRes, cRes] = await Promise.all([
           supabase.from('violations')
-            .select('id, primary_category_id, current_stage, cure_period_ends_at, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(label)')
+            .select('id, primary_category_id, current_stage, cure_period_ends_at, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(label, description)')
             .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
           supabase.from('property_observations')
             .select('id, ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
@@ -956,6 +979,26 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
               };
             }
           } catch (_) {}
+          // Auto-lookup fallback — substrate semantic search
+          if (!govDoc) {
+            try {
+              const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
+              const auto = await lookupGoverningDoc({
+                communityId:         communityIdForGroup,
+                categoryLabel:       v.enforcement_categories && v.enforcement_categories.label,
+                categoryDescription: v.enforcement_categories && v.enforcement_categories.description,
+                aiDescription:       o && o.ai_description,
+              });
+              if (auto) {
+                govDoc = {
+                  reference: auto.reference,
+                  section_title: auto.section_title,
+                  quote: auto.quote,
+                  page: auto.page,
+                };
+              }
+            } catch (_) {}
+          }
 
           const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
           const { data: priors } = await supabase
@@ -2530,7 +2573,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
       } catch (_) {}
     }
 
-    const govDoc = (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote))
+    let govDoc = (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote))
       ? {
           reference:     prioRow.governing_doc_reference,
           section_title: prioRow.governing_doc_section_title,
@@ -2538,6 +2581,26 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
           page:          prioRow.governing_doc_page,
         }
       : null;
+    // Auto-lookup the section from the community's CC&Rs when no manual override exists.
+    if (!govDoc) {
+      try {
+        const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
+        const auto = await lookupGoverningDoc({
+          communityId:         communityId,
+          categoryLabel:       catRow && catRow.label,
+          categoryDescription: catRow && catRow.description,
+          aiDescription:       obsRow && obsRow.ai_description,
+        });
+        if (auto) {
+          govDoc = {
+            reference:     auto.reference,
+            section_title: auto.section_title,
+            quote:         auto.quote,
+            page:          auto.page,
+          };
+        }
+      } catch (_) {}
+    }
 
     const newCureEnd = _newCureDate(decision);
     const pdfBuffer = await renderViolationLetterPdf({
