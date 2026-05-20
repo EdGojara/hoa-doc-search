@@ -372,6 +372,8 @@
        Order: Review → Requests → History (act, see queue, reference). -->
   <!-- Inspect — mobile-first capture flow for community walkthroughs. -->
   <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
+  <!-- Owner Receivables — Vantaca AR ingest + portfolio at-legal view. -->
+  <div class="tab" onclick="switchTab('ownerar')">💵 Owner AR</div>
   <!-- Board Portal — opens the standalone board-facing surface in a new tab. -->
   <div class="tab" onclick="window.open('/board-portal.html', '_blank'); return false;">🏠 Board Portal</div>
   <!-- Bedrock University — how-to modules + role competency badges for operators. -->
@@ -7738,6 +7740,302 @@ If you have questions or want to discuss alternatives, just reply or give us a c
      V1: start a session, capture photos with GPS + heading, end session.
      Reviewer queue + AI analysis + letter generation ship in later builds.
      ============================================================================= -->
+
+<!-- =============================================================================
+     OWNER AR TAB
+     -----------------------------------------------------------------------------
+     Drag-drop Vantaca AR Aging PDF → AI extracts per-property balances + aging
+     buckets + status flags → operator reviews preview → approve → snapshots
+     persist → board portal property tile lights up with current balance.
+     Bridge to full accounting integration (project_owner_receivables.md).
+     ============================================================================= -->
+<div class="tab-content" id="tab-ownerar" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+  <div style="max-width: 980px; margin: 0 auto;">
+    <div style="margin-bottom: 18px;">
+      <h2 style="margin: 0; font-size: 22px; color: #1A3050;">💵 Owner Receivables</h2>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
+        Drop a Vantaca AR Aging PDF — the system extracts each property's balance, aging buckets, and status (at-legal, payment plan, etc.). Review the preview, then approve to publish the snapshot. Boards see the latest balance on their property tile <strong>labeled as-of [date]</strong>. Vantaca remains the live ledger; this is visibility infrastructure.
+      </p>
+    </div>
+
+    <!-- Upload area -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="margin: 0;">📥 Upload AR report</h3>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
+        <label style="font-size: 12px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Community</label>
+        <select id="ar-community-select" style="flex: 1; min-width: 220px; padding: 8px 10px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px;">
+          <option value="">Loading…</option>
+        </select>
+      </div>
+      <div id="ar-dropzone"
+           ondrop="arHandleDrop(event)"
+           ondragover="event.preventDefault(); this.style.borderColor='#1A3050'; this.style.background='#eef3f9';"
+           ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#fafafa';"
+           style="border: 2px dashed #d0d7de; border-radius: 8px; padding: 28px; text-align: center; background: #fafafa; cursor: pointer; transition: all 120ms;"
+           onclick="document.getElementById('ar-file-input').click();">
+        <div style="font-size: 26px;">📄</div>
+        <div style="font-size: 13.5px; font-weight: 600; color: #1A3050; margin-top: 6px;">Drag &amp; drop the Vantaca AR Aging PDF here</div>
+        <div style="font-size: 12px; color: #6B7280; margin-top: 4px;">or click to pick a file</div>
+        <input type="file" id="ar-file-input" accept="application/pdf" style="display:none;" onchange="arHandleFile(this.files[0])">
+      </div>
+      <div id="ar-upload-status" style="margin-top: 10px; font-size: 12.5px;"></div>
+    </div>
+
+    <!-- Preview panel: rendered after a successful /ingest -->
+    <div class="panel" id="ar-preview-panel" style="display:none; margin-bottom: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0;">Review extraction</h3>
+          <div id="ar-preview-summary" style="font-size:13px; color:#6B7280; margin-top:4px;"></div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label style="font-size:11px; color:#6B7280; font-weight:600; text-transform:uppercase; letter-spacing:0.06em;">Snapshot date</label>
+          <input type="date" id="ar-snapshot-date-override" style="padding:6px 8px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          <button class="secondary-btn" onclick="arDiscardBatch()">✕ Discard</button>
+          <button class="action-btn" onclick="arApproveBatch()">✓ Approve &amp; publish</button>
+        </div>
+      </div>
+      <div id="ar-preview-table-wrap" style="margin-top:12px; overflow-x:auto;"></div>
+    </div>
+
+    <!-- Ingest history -->
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">📋 Ingest history</h3>
+        <button class="secondary-btn" onclick="arLoadBatches()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+      <div id="ar-batches-list" style="font-size:13px; color:#6B7280;">Pick a community to see ingest history.</div>
+    </div>
+  </div>
+
+  <script>
+    let arCurrentBatchId = null;
+    let arCurrentCommunityId = null;
+
+    async function arLoadCommunities() {
+      try {
+        const r = await fetch('/api/board-portal/communities');
+        const j = await r.json();
+        const sel = document.getElementById('ar-community-select');
+        sel.innerHTML = '<option value="">— Select a community —</option>' +
+          (j.communities || []).map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        sel.onchange = (e) => {
+          arCurrentCommunityId = e.target.value || null;
+          arLoadBatches();
+        };
+      } catch (e) {
+        document.getElementById('ar-community-select').innerHTML = '<option value="">Failed to load</option>';
+      }
+    }
+
+    function arHandleDrop(e) {
+      e.preventDefault();
+      e.currentTarget.style.borderColor = '#d0d7de';
+      e.currentTarget.style.background = '#fafafa';
+      const f = e.dataTransfer.files && e.dataTransfer.files[0];
+      if (f) arHandleFile(f);
+    }
+
+    async function arHandleFile(file) {
+      if (!file) return;
+      if (file.type !== 'application/pdf' && !/\.pdf$/i.test(file.name)) {
+        alert('Only PDF files supported.');
+        return;
+      }
+      const sel = document.getElementById('ar-community-select');
+      const community_id = sel.value || null;
+      if (!community_id) {
+        alert('Pick a community above first — the system needs to scope address matching.');
+        return;
+      }
+      const status = document.getElementById('ar-upload-status');
+      status.innerHTML = '<div style="padding:8px 10px; background:#fef3c7; border-left:3px solid #d97706; border-radius:0 4px 4px 0;"><strong>⏳ Extracting…</strong> Reading the PDF, matching addresses to properties. Typically 15-45 seconds.</div>';
+      try {
+        const fd = new FormData();
+        fd.append('pdf', file);
+        fd.append('community_id', community_id);
+        const r = await fetch('/api/owner-ar/ingest', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        status.innerHTML = `<div style="padding:8px 10px; background:#dcfce7; border-left:3px solid #15803d; border-radius:0 4px 4px 0;"><strong>✓ Extracted.</strong> ${j.total_rows} rows · ${j.rows_matched_property} matched · ${j.rows_unmatched} unmatched. Review below.</div>`;
+        arRenderPreview(j);
+        arLoadBatches();
+      } catch (e) {
+        status.innerHTML = `<div style="padding:8px 10px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 4px 4px 0;"><strong>✕ Failed:</strong> ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function arFmtMoney(v) {
+      if (v == null || v === '' || Number.isNaN(Number(v))) return '—';
+      const n = Number(v);
+      const s = Math.abs(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+      return n < 0 ? `(${s})` : s;
+    }
+
+    function arRenderPreview(j) {
+      arCurrentBatchId = j.batch_id;
+      const panel = document.getElementById('ar-preview-panel');
+      const sum = document.getElementById('ar-preview-summary');
+      panel.style.display = 'block';
+      const dateInput = document.getElementById('ar-snapshot-date-override');
+      if (j.snapshot_date) dateInput.value = j.snapshot_date;
+      const totals = j.report_totals || {};
+      sum.innerHTML = `
+        ${j.snapshot_date ? `<strong>Snapshot date:</strong> ${escapeHtml(j.snapshot_date)} · ` : '<span style="color:#b45309;"><strong>⚠ No snapshot date detected — set above before approving.</strong></span> · '}
+        <strong>${j.total_rows}</strong> rows
+        · <strong style="color:#15803d;">${j.rows_matched_property} matched</strong>
+        ${j.rows_unmatched > 0 ? `· <strong style="color:#b45309;">${j.rows_unmatched} unmatched</strong>` : ''}
+        ${totals.total_ar != null ? ` · Total AR: <strong>${arFmtMoney(totals.total_ar)}</strong>` : ''}
+        ${j.preview_truncated ? ' · <em>preview truncated to first 50 rows; all will be approved</em>' : ''}
+      `;
+      const rows = j.preview_rows || [];
+      const html = `
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead>
+            <tr style="background:#eef2ff;">
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Match</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Address</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Owner</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Balance</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">31-60</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">61-90</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">90+</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((r) => {
+              const matched = !!r.property_id;
+              const status = [
+                r.at_legal ? '<span style="background:#fee2e2; color:#7f1d1d; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700;">AT LEGAL</span>' : '',
+                r.in_collections ? '<span style="background:#fee2e2; color:#7f1d1d; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700;">COLLECTIONS</span>' : '',
+                r.payment_plan_active ? '<span style="background:#dcfce7; color:#166534; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700;">PAY PLAN</span>' : '',
+                r.enforcement_stage ? `<span style="background:#fef3c7; color:#78350f; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700;">${escapeHtml(r.enforcement_stage.toUpperCase())}</span>` : '',
+              ].filter(Boolean).join(' ');
+              const overNinety = (Number(r.bucket_91_120) || 0) + (Number(r.bucket_over_120) || 0);
+              return `
+                <tr style="border-bottom:1px solid #f1f5f9;">
+                  <td style="padding:6px 10px;">${matched ? '<span style="color:#15803d;">✓</span>' : '<span style="color:#b45309;" title="No property match for this address — check spelling or that the address is in this community.">⚠</span>'}</td>
+                  <td style="padding:6px 10px; font-weight:500;">${escapeHtml(r.property_address || '—')}${r.unit ? ' #' + escapeHtml(r.unit) : ''}${matched && r.matched_address && r.matched_address !== r.property_address ? `<div style="font-size:10.5px; color:#6B7280; font-style:italic;">→ ${escapeHtml(r.matched_address)}</div>` : ''}</td>
+                  <td style="padding:6px 10px; color:#4a5568;">${escapeHtml(r.homeowner_name || '—')}</td>
+                  <td style="padding:6px 10px; text-align:right; font-variant-numeric:tabular-nums; font-weight:${Number(r.balance_total) > 0 ? '600' : '400'};">${arFmtMoney(r.balance_total)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-variant-numeric:tabular-nums;">${arFmtMoney(r.bucket_31_60)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-variant-numeric:tabular-nums;">${arFmtMoney(r.bucket_61_90)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-variant-numeric:tabular-nums; ${overNinety > 0 ? 'color:#b91c1c; font-weight:700;' : ''}">${arFmtMoney(overNinety > 0 ? overNinety : null)}</td>
+                  <td style="padding:6px 10px;">${status}</td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        ${j.rows_unmatched > 0 ? `<div style="margin-top:10px; padding:8px 10px; background:#fef3c7; border-left:3px solid #d97706; border-radius:0 4px 4px 0; font-size:12px;"><strong>${j.rows_unmatched} unmatched rows will be skipped on approve.</strong> Common causes: address typo on the report, property not yet Vantaca-synced into the properties table, or the row is for a different community. Approve to commit matched rows; unmatched can be fixed and re-uploaded.</div>` : ''}
+      `;
+      document.getElementById('ar-preview-table-wrap').innerHTML = html;
+      panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    async function arApproveBatch() {
+      if (!arCurrentBatchId) return;
+      const dateInput = document.getElementById('ar-snapshot-date-override');
+      const snapshotDate = dateInput.value;
+      if (!snapshotDate) {
+        alert('Snapshot date is required. Set it above before approving.');
+        return;
+      }
+      if (!confirm(`Approve and publish this AR snapshot dated ${snapshotDate}? Matched rows will write to the property records and show on the board portal.`)) return;
+      try {
+        const r = await fetch(`/api/owner-ar/ingest/${arCurrentBatchId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ snapshot_date: snapshotDate }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        alert(`Approved. ${j.snapshots_written} snapshots written${j.rows_skipped_unmatched > 0 ? ` · ${j.rows_skipped_unmatched} unmatched rows skipped` : ''}.`);
+        document.getElementById('ar-preview-panel').style.display = 'none';
+        arCurrentBatchId = null;
+        arLoadBatches();
+      } catch (e) {
+        alert('Approve failed: ' + e.message);
+      }
+    }
+
+    async function arDiscardBatch() {
+      if (!arCurrentBatchId) return;
+      if (!confirm('Discard this previewed batch? It will not be saved.')) return;
+      try {
+        await fetch(`/api/owner-ar/ingest/${arCurrentBatchId}/discard`, { method: 'POST' });
+        document.getElementById('ar-preview-panel').style.display = 'none';
+        arCurrentBatchId = null;
+        arLoadBatches();
+      } catch (e) { alert('Discard failed: ' + e.message); }
+    }
+
+    async function arLoadBatches() {
+      const wrap = document.getElementById('ar-batches-list');
+      wrap.innerHTML = '<div style="color:#6B7280;">Loading…</div>';
+      try {
+        const url = arCurrentCommunityId
+          ? `/api/owner-ar/batches?community_id=${encodeURIComponent(arCurrentCommunityId)}`
+          : '/api/owner-ar/batches';
+        const r = await fetch(url);
+        const j = await r.json();
+        const batches = j.batches || [];
+        if (!batches.length) {
+          wrap.innerHTML = '<div style="color:#6B7280; font-style:italic;">No ingests yet for this scope.</div>';
+          return;
+        }
+        wrap.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead>
+              <tr style="background:#f1f5fb;">
+                <th style="text-align:left; padding:6px 10px;">Uploaded</th>
+                <th style="text-align:left; padding:6px 10px;">As-of</th>
+                <th style="text-align:left; padding:6px 10px;">File</th>
+                <th style="text-align:right; padding:6px 10px;">Rows</th>
+                <th style="text-align:right; padding:6px 10px;">Matched</th>
+                <th style="text-align:left; padding:6px 10px;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${batches.map((b) => {
+                const statusBg = b.status === 'approved' ? '#dcfce7' : b.status === 'discarded' ? '#fee2e2' : '#fef3c7';
+                const statusFg = b.status === 'approved' ? '#166534' : b.status === 'discarded' ? '#7f1d1d' : '#78350f';
+                return `
+                  <tr style="border-bottom:1px solid #f1f5f9;">
+                    <td style="padding:6px 10px;">${new Date(b.uploaded_at).toLocaleString('en-US', { dateStyle: 'short', timeStyle: 'short' })}</td>
+                    <td style="padding:6px 10px;">${b.snapshot_date || '—'}</td>
+                    <td style="padding:6px 10px;">${escapeHtml(b.source_filename || '—')}</td>
+                    <td style="padding:6px 10px; text-align:right;">${b.total_rows || 0}</td>
+                    <td style="padding:6px 10px; text-align:right;">${b.rows_matched_property || 0}</td>
+                    <td style="padding:6px 10px;"><span style="background:${statusBg}; color:${statusFg}; padding:1px 8px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase;">${escapeHtml(b.status)}</span></td>
+                  </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        wrap.innerHTML = `<div style="color:#b91c1c;">Load failed: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    // Auto-load communities when the Owner AR tab opens
+    (function () {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'ownerar') {
+          arLoadCommunities();
+          arLoadBatches();
+        }
+        return r;
+      };
+    })();
+  </script>
+</div>
+
 <div class="tab-content" id="tab-inspect" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
   <div style="max-width: 720px; margin: 0 auto;">
 
