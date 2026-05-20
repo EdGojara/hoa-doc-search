@@ -10813,6 +10813,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
           ${confidence ? `<span style="color:${confColor}; font-weight:600;">AI confidence: ${escapeHtml(confidence)}</span>` : ''}
           ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#1A3050; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
+          <button onclick="inspDraftsRegenerateLetter('${d.violation && d.violation.id}', this)" style="background:none; border:1px solid #d0d7de; color:#1A3050; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
           <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
         </div>
       </div>
@@ -10884,6 +10885,31 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       await inspDraftsLoad();
     } catch (e) {
       alert('Reject failed: ' + e.message);
+    }
+  }
+
+  // Re-render the PDF for this draft using the current letter template. Used
+  // when the template gets a code update (new authority block, photo fix, cure
+  // window change, etc.) and a stored PDF would otherwise stay stale.
+  async function inspDraftsRegenerateLetter(violationId, btn) {
+    if (!violationId) return;
+    const originalLabel = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Regenerating…'; }
+    try {
+      const r = await fetch('/api/enforcement/generate-letter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Open the fresh PDF in a new tab; reload drafts so the card shows the new URL.
+      if (j.letter_url) window.open(j.letter_url, '_blank');
+      await inspDraftsLoad();
+    } catch (e) {
+      alert('Regenerate failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = originalLabel; }
     }
   }
 

@@ -420,18 +420,25 @@ router.post('/open-violation', express.json(), async (req, res) => {
 
 // ---------------------------------------------------------------------------
 // POST /api/enforcement/generate-letter
-// Body: { violation_id, sender_name?, sender_title? }
+// Body: { violation_id, sender_name?, sender_title?, force_regenerate? }
 //
 // Generates a Bedrock-branded PDF for an open violation, uploads to Supabase
 // storage, creates the corresponding interaction record (letter_courtesy_1 /
 // letter_courtesy_2 / letter_209), and returns a signed URL the UI can open
-// in a new tab. Idempotent-ish: if a letter for THIS violation at THIS stage
-// already exists, return the existing signed URL instead of generating a new one.
+// in a new tab.
+//
+// Caching: if a letter for THIS violation at THIS stage already exists,
+// returns the existing signed URL instead of generating a new one. Pass
+// force_regenerate: true to bypass the cache and re-render with current
+// code (used by the 'Regenerate' button when the letter template changes).
+// On force_regenerate, the prior interaction row is deleted so the audit
+// trail reflects only the latest letter.
 // ---------------------------------------------------------------------------
 router.post('/generate-letter', express.json(), async (req, res) => {
   try {
     const body = req.body || {};
     const violationId = body.violation_id;
+    const forceRegenerate = !!body.force_regenerate;
     if (!violationId) return res.status(400).json({ error: 'violation_id required' });
 
     // Fetch violation + property + community + category in one round trip
@@ -459,8 +466,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       return res.status(400).json({ error: `violation is in stage '${violation.current_stage}' — no letter applies` });
     }
 
-    // Check for an existing letter interaction at this stage — return its URL
-    // instead of regenerating.
+    // Check for an existing letter interaction at this stage.
     const { data: priorLetter } = await supabase
       .from('interactions')
       .select('id, subject, content, sent_at')
@@ -469,11 +475,24 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .order('sent_at', { ascending: false })
       .limit(1)
       .maybeSingle();
-    if (priorLetter && priorLetter.content) {
-      // content stores the storage path; create a signed URL
+
+    if (priorLetter && priorLetter.content && !forceRegenerate) {
+      // Cached path: return the existing signed URL.
       const { data: sd } = await supabase.storage.from(LETTERS_BUCKET).createSignedUrl(priorLetter.content, 60 * 60);
       if (sd && sd.signedUrl) {
         return res.json({ ok: true, regenerated: false, letter_url: sd.signedUrl, interaction_id: priorLetter.id });
+      }
+    }
+
+    // Force-regenerate path: delete the prior interaction so the audit trail
+    // reflects only the freshly-generated letter. Stale storage object stays
+    // (cheap, useful if anyone needs to compare versions); the interaction
+    // pointer is what matters for the Drafts queue + Mail queue lookups.
+    if (forceRegenerate && priorLetter) {
+      try {
+        await supabase.from('interactions').delete().eq('id', priorLetter.id);
+      } catch (e) {
+        console.warn('[enforcement.generate-letter] failed to delete prior interaction:', e.message);
       }
     }
 
