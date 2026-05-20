@@ -649,6 +649,108 @@ router.delete('/inspections/photos/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// DELETE /api/inspections/:id — discard an unfinalized inspection completely
+// ----------------------------------------------------------------------------
+// Hard-deletes the inspection and EVERY child row so it stops polluting
+// property tiles (observation counts, inspection counts, draft interactions).
+// This is the right behavior for test runs and abandoned walkthroughs.
+//
+// Refuses if:
+//   - inspection.status = 'closed' (finalized = audit-grade, must survive)
+//   - any property_observation here has spawned a violations row (audit trail)
+//
+// Cascade order (RESTRICT FKs from 050 require us to walk it manually):
+//   1. delete draft interactions tied to this inspection or its observations
+//   2. delete property_observations
+//   3. delete inspection_photos + their storage objects
+//   4. delete the inspection row (route_traces cascade automatically)
+// ---------------------------------------------------------------------------
+router.delete('/inspections/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: insp, error: inspErr } = await supabase
+      .from('inspections')
+      .select('id, status, community_id')
+      .eq('id', id)
+      .single();
+    if (inspErr || !insp) return res.status(404).json({ error: 'inspection not found' });
+    if (insp.status === 'closed') {
+      return res.status(409).json({ error: 'inspection is finalized (closed) — cannot delete. Use Discard to void instead.' });
+    }
+
+    // Audit guard: refuse if any observation here opened a violation
+    const { data: obsRows } = await supabase
+      .from('property_observations')
+      .select('id')
+      .eq('inspection_id', id);
+    const obsIds = (obsRows || []).map((o) => o.id);
+    if (obsIds.length > 0) {
+      const { data: openedVios } = await supabase
+        .from('violations')
+        .select('id')
+        .in('opened_from_observation_id', obsIds)
+        .limit(1);
+      if (openedVios && openedVios.length > 0) {
+        return res.status(409).json({
+          error: 'This inspection opened one or more violations — cannot delete. Resolve or void the violations first, then retry.',
+        });
+      }
+    }
+
+    // 1) Delete draft interactions tied to this inspection or its observations.
+    // Sent interactions (letters, emails) survive — their inspection_id/observation_id
+    // gets nulled by the ON DELETE SET NULL cascade in step 4.
+    try {
+      await supabase
+        .from('interactions')
+        .delete()
+        .or(`inspection_id.eq.${id}` + (obsIds.length ? `,observation_id.in.(${obsIds.join(',')})` : ''))
+        .eq('status', 'draft');
+    } catch (_) {}
+
+    // 2) Delete property_observations
+    if (obsIds.length > 0) {
+      const { error: obsDelErr } = await supabase
+        .from('property_observations')
+        .delete()
+        .eq('inspection_id', id);
+      if (obsDelErr) return res.status(500).json({ error: `observations: ${obsDelErr.message}` });
+    }
+
+    // 3) Delete photos + storage objects
+    const { data: photos } = await supabase
+      .from('inspection_photos')
+      .select('id, storage_path')
+      .eq('inspection_id', id);
+    const storagePaths = (photos || []).map((p) => p.storage_path).filter(Boolean);
+    if (storagePaths.length > 0) {
+      try { await supabase.storage.from('documents').remove(storagePaths); } catch (_) {}
+    }
+    if (photos && photos.length > 0) {
+      const { error: phDelErr } = await supabase
+        .from('inspection_photos')
+        .delete()
+        .eq('inspection_id', id);
+      if (phDelErr) return res.status(500).json({ error: `photos: ${phDelErr.message}` });
+    }
+
+    // 4) Delete the inspection row (route_traces cascade)
+    const { error: delErr } = await supabase.from('inspections').delete().eq('id', id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    res.json({
+      ok: true,
+      deleted_inspection_id: id,
+      deleted_observations: obsIds.length,
+      deleted_photos: (photos || []).length,
+    });
+  } catch (err) {
+    console.error('[inspections.delete]', err);
+    res.status(500).json({ error: err.message || 'failed to delete inspection' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/recent — list recent inspections (optional ?community_id=&limit=)
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
