@@ -541,16 +541,18 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     //   - governing_doc (community_enforcement_priorities row for this category)
     //   - prior_violations (history list rendered on §209 letters)
     let commLegalName = null;
+    let commAuthorityCitation = null;
     let senderName = body.sender_name || null;
     let senderTitle = body.sender_title || null;
     try {
       const { data: comm } = await supabase
         .from('communities')
-        .select('legal_name, letter_sender_name, letter_sender_title')
+        .select('legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
         .eq('id', violation.community_id)
         .maybeSingle();
       if (comm) {
         commLegalName = comm.legal_name || null;
+        commAuthorityCitation = comm.enforcement_authority_citation || null;
         if (!senderName)  senderName  = comm.letter_sender_name || null;
         if (!senderTitle) senderTitle = comm.letter_sender_title || null;
       }
@@ -616,6 +618,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       community: {
         name:       violation.communities && violation.communities.name,
         legal_name: commLegalName,
+        enforcement_authority_citation: commAuthorityCitation,
       },
       observation,
       governing_doc:    govDoc,
@@ -889,7 +892,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
             .select('property_id, street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
             .eq('property_id', propertyId).maybeSingle(),
           supabase.from('communities')
-            .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address')
+            .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
             .eq('id', communityIdForGroup).maybeSingle(),
         ]);
 
@@ -1361,7 +1364,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
       try {
         const r = await supabase
           .from('communities')
-          .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_payment_url, letter_pay_to_name, letter_pay_to_address, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, logo_storage_path, logo_mime_type')
+          .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_payment_url, letter_pay_to_name, letter_pay_to_address, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, logo_storage_path, logo_mime_type, enforcement_authority_citation')
           .eq('id', id)
           .maybeSingle();
         if (r.error) throw r.error;
@@ -2486,7 +2489,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         .select('label, description')
         .eq('id', violation.primary_category_id).maybeSingle(),
       supabase.from('communities')
-        .select('name, legal_name, letter_sender_name, letter_sender_title')
+        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
         .eq('id', communityId).maybeSingle(),
       supabase.from('community_enforcement_priorities')
         .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
@@ -2555,6 +2558,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
       community: {
         name:       commRow && commRow.name,
         legal_name: commRow && commRow.legal_name,
+        enforcement_authority_citation: commRow && commRow.enforcement_authority_citation,
       },
       observation: obsRow ? {
         ai_description: obsRow.ai_description,

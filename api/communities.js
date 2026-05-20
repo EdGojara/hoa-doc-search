@@ -166,7 +166,7 @@ router.get('/:communityId/full', async (req, res) => {
     async function loadCommunity() {
       try {
         const r = await supabase.from('communities')
-          .select('id, name, slug, legal_name, total_lots, vantaca_code, profile, active, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, logo_storage_path, logo_mime_type, logo_width, logo_height, logo_uploaded_at')
+          .select('id, name, slug, legal_name, total_lots, vantaca_code, profile, active, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation, logo_storage_path, logo_mime_type, logo_width, logo_height, logo_uploaded_at')
           .eq('id', communityId).single();
         if (r.error) throw r.error;
         return r;
@@ -323,6 +323,7 @@ router.patch('/:communityId/letter-config', express.json(), async (req, res) => 
       letter_cure_days_courtesy_1:       (v) => Math.max(1, Math.round(Number(v) || 20)),
       letter_cure_days_courtesy_2:       (v) => Math.max(1, Math.round(Number(v) || 20)),
       letter_cure_days_certified_209:    (v) => Math.max(1, Math.round(Number(v) || 30)),
+      enforcement_authority_citation:    (v) => String(v || '').trim() || null,
     };
 
     const patch = { updated_at: new Date().toISOString() };
@@ -338,7 +339,7 @@ router.patch('/:communityId/letter-config', express.json(), async (req, res) => 
       .from('communities')
       .update(patch)
       .eq('id', communityId)
-      .select('id, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address')
+      .select('id, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
       .single();
     if (setErr) throw setErr;
 

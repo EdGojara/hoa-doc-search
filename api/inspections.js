@@ -452,7 +452,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       .maybeSingle();
                     const { data: commRow } = await supabase
                       .from('communities')
-                      .select('name, legal_name, letter_sender_name, letter_sender_title')
+                      .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
                       .eq('id', insp.community_id)
                       .maybeSingle();
 
@@ -506,6 +506,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       community: {
                         name:       commRow && commRow.name,
                         legal_name: commRow && commRow.legal_name,
+                        enforcement_authority_citation: commRow && commRow.enforcement_authority_citation,
                       },
                       observation: {
                         ai_description: result.description,
