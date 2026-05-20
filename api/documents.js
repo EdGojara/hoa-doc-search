@@ -851,6 +851,56 @@ async function _indexWithTimeout(supabase, openai, doc, timeoutMs = 180000) {
   }
 }
 
+// Find library docs not yet indexed for askEd. Used by both the
+// reindex-all endpoint and the scheduled auto-reindex job.
+async function _findUnindexedDocs(supabase, { communityFilter = null, limit = null } = {}) {
+  const { data: docs, error } = await supabase
+    .from('library_documents')
+    .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .neq('status', 'missing')
+    .not('file_path', 'is', null)
+    .order('uploaded_at', { ascending: true });
+  if (error) throw error;
+
+  let queue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
+  if (communityFilter) {
+    const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
+    queue = queue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
+  }
+  if (queue.length > 0) {
+    const ids = queue.map((d) => d.id);
+    const { data: hits } = await supabase
+      .from('documents')
+      .select('metadata')
+      .filter('metadata->>library_document_id', 'in', `(${ids.map((id) => `"${id}"`).join(',')})`);
+    const haveIds = new Set((hits || []).map((h) => h.metadata && h.metadata.library_document_id).filter(Boolean));
+    queue = queue.filter((d) => !haveIds.has(d.id));
+  }
+  return limit ? queue.slice(0, limit) : queue;
+}
+
+// Background-job entry point: drain the unindexed queue for ALL communities
+// up to a budget. Time-boxed so it can't overlap with the next scheduler
+// tick (15 min). Returns a summary the scheduler logs to cron_runs.
+async function drainUnindexedQueue({ supabase, openai, maxDocs = 50, budgetMs = 10 * 60 * 1000 } = {}) {
+  const started = Date.now();
+  const queue = await _findUnindexedDocs(supabase, { limit: maxDocs });
+  const summary = { queue_size: queue.length, indexed: 0, skipped: 0, failed: 0, budget_hit: false, duration_ms: 0 };
+  for (const doc of queue) {
+    if (Date.now() - started > budgetMs) { summary.budget_hit = true; break; }
+    try {
+      const r = await _indexWithTimeout(supabase, openai, doc);
+      if (r && r.ok) summary.indexed += 1;
+      else summary.skipped += 1;
+    } catch (e) {
+      summary.failed += 1;
+    }
+  }
+  summary.duration_ms = Date.now() - started;
+  return summary;
+}
+
 router.post('/reindex-all', async (req, res) => {
   try {
     const communityFilter = (req.query.community || req.body?.community || '').trim();
@@ -1612,4 +1662,4 @@ router.get('/categories/list', async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, drainUnindexedQueue };
