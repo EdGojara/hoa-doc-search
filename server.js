@@ -658,6 +658,11 @@ app.use('/api/arc-history', arcHistoryRouter);
 const { router: boardPortalRouter } = require('./api/board_portal');
 app.use('/api/board-portal', boardPortalRouter);
 
+// Owner Receivables — Vantaca AR ingest + snapshot store + portfolio view
+// (project_owner_receivables.md). Bridge to full accounting integration.
+const { router: ownerArRouter } = require('./api/owner_ar');
+app.use('/api/owner-ar', ownerArRouter);
+
 // ACC applications — public submission + AI assessment + manager queue
 const { router: applicationsRouter } = require('./api/applications');
 app.use('/api/applications', applicationsRouter);
