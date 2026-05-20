@@ -9491,6 +9491,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (r.ok) propsResp = await r.json();
     } catch (_) { /* tolerate */ }
 
+    // Stash the property list globally so the Review queue's manual property
+    // picker (inspReviewRenderUnlinkedPhoto) has a dropdown source for
+    // photos that didn't get auto-linked at capture time.
+    window.inspProperties = propsResp.properties || [];
+
     // Re-center if we have data (community-specific view)
     if (propsResp.properties.length > 0) {
       const lngs = propsResp.properties.map((p) => Number(p.longitude));
@@ -10673,6 +10678,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // observation rows land here for review. Confirm opens a violation
   // + creates the draft letter (appears in the Drafts queue below).
   // ============================================================
+  // Track which inspection's unlinked-photos list to show.
+  let inspReviewActiveInspectionId = null;
+
   async function inspReviewLoad() {
     const wrap = document.getElementById('inspReviewList');
     if (!wrap) return;
@@ -10685,13 +10693,78 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const r = await fetch(url);
       const j = await r.json();
       const obs = j.observations || [];
-      if (!obs.length) {
-        wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0; font-style:italic;">No pending observations. Run analysis on a finished inspection to populate.</div>';
+
+      // Also load unlinked photos for the active inspection if we have one
+      let unlinkedHtml = '';
+      if (inspReviewActiveInspectionId) {
+        try {
+          const ru = await fetch(`/api/inspections/${inspReviewActiveInspectionId}/photos-needing-link`);
+          const ju = await ru.json();
+          const photos = ju.photos || [];
+          if (photos.length > 0) {
+            unlinkedHtml = `
+              <div style="background:#fffbeb; border-left:3px solid #b45309; border-radius:0 6px 6px 0; padding:10px 12px; margin-bottom:12px;">
+                <div style="font-weight:700; color:#78350f; margin-bottom:4px;">⚠ ${photos.length} photo${photos.length === 1 ? '' : 's'} need property assignment</div>
+                <div style="font-size:11.5px; color:#78350f; margin-bottom:8px;">These photos uploaded without a property tied (no map-tap, no polygon match). Pick a property below to run AI analysis + create the observation.</div>
+                ${photos.map(inspReviewRenderUnlinkedPhoto).join('')}
+              </div>`;
+          }
+        } catch (e) { console.warn('[inspReviewLoad] photos-needing-link failed:', e.message); }
+      }
+
+      if (!obs.length && !unlinkedHtml) {
+        wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0; font-style:italic;">No pending observations. Click ▶ Analyze on a Recent inspection to populate.</div>';
         return;
       }
-      wrap.innerHTML = obs.map(inspReviewRenderRow).join('');
+      wrap.innerHTML = unlinkedHtml + obs.map(inspReviewRenderRow).join('');
     } catch (e) {
       wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:10px;">Load failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspReviewRenderUnlinkedPhoto(p) {
+    const ts = p.captured_at ? new Date(p.captured_at).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+    // Use the cached inspProperties list (already loaded by the capture flow)
+    const propsList = (window.inspProperties || []);
+    return `
+      <div style="display:flex; gap:10px; padding:8px 0; border-bottom:1px solid #fde68a; align-items:flex-start;">
+        ${p.photo_url
+          ? `<img src="${escapeHtml(p.photo_url)}" style="width:64px; height:64px; object-fit:cover; border-radius:4px; border:1px solid #d6cf89; flex-shrink:0;" />`
+          : '<div style="width:64px; height:64px; background:#f1f5f9; border-radius:4px; flex-shrink:0;"></div>'}
+        <div style="flex:1; min-width:0;">
+          <div style="font-size:11.5px; color:#78350f; margin-bottom:4px;">${ts}${p.ai_detected_house_number ? ` · AI saw house #${escapeHtml(p.ai_detected_house_number)}` : ''}</div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+            <select id="unlinked-prop-${p.id}" style="flex:1; min-width:200px; padding:5px 8px; font-size:12px; border:1px solid #d6cf89; border-radius:4px; background:#fff;">
+              <option value="">— pick property —</option>
+              ${propsList.map((pp) => `<option value="${escapeHtml(pp.id)}">${escapeHtml(pp.street_address)}${pp.unit ? ' #' + escapeHtml(pp.unit) : ''}</option>`).join('')}
+            </select>
+            <button onclick="inspReviewLinkAndAnalyze('${p.id}', this)" style="background:#15803d; color:#fff; border:0; padding:5px 12px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;">▶ Link &amp; analyze</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function inspReviewLinkAndAnalyze(photoId, btn) {
+    const sel = document.getElementById('unlinked-prop-' + photoId);
+    const propertyId = sel && sel.value;
+    if (!propertyId) { alert('Pick a property first.'); return; }
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳…'; }
+    try {
+      const r = await fetch(`/api/inspections/photos/${photoId}/link-and-analyze`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ property_id: propertyId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!j.observation_id) {
+        alert(j.message || 'AI didn\'t see a violation. No observation created.');
+      }
+      await inspReviewLoad();
+    } catch (e) {
+      alert('Link failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
   }
 
@@ -10747,6 +10820,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function _inspRunAnalyze(inspectionId, btn) {
     const original = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analyzing…'; }
+    // Remember which inspection's unlinked-photos to surface in the Review queue.
+    inspReviewActiveInspectionId = inspectionId;
     try {
       const r = await fetch(`/api/inspections/${inspectionId}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
       const j = await r.json();
@@ -10754,7 +10829,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       let msg = `Analyzed ${j.analyzed} photo${j.analyzed === 1 ? '' : 's'} — ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`;
       if (j.photos_skipped_already_analyzed > 0) msg += ` (${j.photos_skipped_already_analyzed} skipped — already analyzed)`;
       if (j.failures && j.failures.length) {
-        msg += ` (${j.failures.length} couldn't link to a property — see browser console)`;
+        msg += `\n\n${j.failures.length} photo${j.failures.length === 1 ? '' : 's'} need manual property assignment — see the yellow panel in the Review queue below.`;
         console.log('[_inspRunAnalyze] skipped photos:', j.failures);
       }
       alert(msg);

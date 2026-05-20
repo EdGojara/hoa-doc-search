@@ -1466,6 +1466,174 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/inspections/:id/photos-needing-link
+// Returns the close-up / single inspection_photos in this inspection that
+// have no property linked yet AND no observation row. These are the photos
+// the operator needs to manually link to a property before they can be
+// turned into observations + drafts.
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/photos-needing-link', async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+
+    const { data: photos, error: pErr } = await supabase
+      .from('inspection_photos')
+      .select('id, storage_path, captured_at, gps_lat, gps_lng, compass_heading_deg, ai_detected_house_number, polygon_match_property_id, reviewer_confirmed_property_id, photo_role')
+      .eq('inspection_id', inspectionId)
+      .in('photo_role', ['close_up', 'single'])
+      .order('captured_at', { ascending: true });
+    if (pErr) return res.status(500).json({ error: pErr.message });
+
+    if (!photos || photos.length === 0) return res.json({ photos: [] });
+
+    // Filter out photos that ALREADY have a property OR an observation
+    const photoIds = photos.map((p) => p.id);
+    const { data: existingObs } = await supabase
+      .from('property_observations')
+      .select('inspection_photo_id')
+      .in('inspection_photo_id', photoIds);
+    const obsPhotoIds = new Set((existingObs || []).map((o) => o.inspection_photo_id));
+
+    const needsLink = photos.filter((p) =>
+      !p.reviewer_confirmed_property_id && !p.polygon_match_property_id && !obsPhotoIds.has(p.id)
+    );
+
+    // Sign photo URLs
+    const withUrls = await Promise.all(needsLink.map(async (p) => {
+      let photo_url = null;
+      try {
+        const { data: sd } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(p.storage_path, 60 * 60);
+        photo_url = sd && sd.signedUrl;
+      } catch (e) { /* no-op */ }
+      return { ...p, photo_url };
+    }));
+
+    res.json({ photos: withUrls });
+  } catch (err) {
+    console.error('[inspections.photos-needing-link]', err);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/inspections/photos/:id/link-and-analyze
+// Body: { property_id }
+//
+// Operator manually picks a property for an unlinked photo. We:
+//   1. Stamp the photo with reviewer_confirmed_property_id
+//   2. Run AI vision on the photo (categorize)
+//   3. Create the property_observations row tagged pending review
+//   4. Return the new observation_id so the reviewer queue can refresh
+// ---------------------------------------------------------------------------
+router.post('/inspections/photos/:id/link-and-analyze', express.json(), async (req, res) => {
+  try {
+    const photoId = req.params.id;
+    const propertyId = (req.body && req.body.property_id) || null;
+    if (!propertyId) return res.status(400).json({ error: 'property_id required' });
+
+    // Fetch the photo + its inspection's community
+    const { data: photo, error: phErr } = await supabase
+      .from('inspection_photos')
+      .select('id, storage_path, inspection_id, photo_role, inspections(community_id, communities(name))')
+      .eq('id', photoId)
+      .maybeSingle();
+    if (phErr || !photo) return res.status(404).json({ error: 'photo not found' });
+    if (photo.photo_role === 'wide') {
+      return res.status(400).json({ error: 'wide-shot photos are identifying-only; link their paired close-up instead' });
+    }
+
+    // Verify the property belongs to this inspection's community
+    const inspectionCommunityId = photo.inspections && photo.inspections.community_id;
+    const { data: propCheck } = await supabase
+      .from('properties')
+      .select('id, community_id, street_address, unit')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (!propCheck) return res.status(404).json({ error: 'property not found' });
+    if (propCheck.community_id !== inspectionCommunityId) {
+      return res.status(400).json({ error: 'property is in a different community than this inspection' });
+    }
+
+    // Update the photo with confirmed property
+    await supabase
+      .from('inspection_photos')
+      .update({
+        reviewer_confirmed_property_id: propertyId,
+        polygon_match_property_id: propertyId,    // ensure substrate consumers see it
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', photoId);
+
+    // Download photo bytes + run AI
+    let imageBuffer = null;
+    try {
+      const { data: blob, error: dlErr } = await supabase.storage.from('documents').download(photo.storage_path);
+      if (dlErr) throw dlErr;
+      imageBuffer = Buffer.from(await blob.arrayBuffer());
+    } catch (e) {
+      return res.status(500).json({ error: 'photo download failed: ' + e.message });
+    }
+
+    const { data: categories } = await supabase
+      .from('enforcement_categories')
+      .select('id, code, label, description')
+      .eq('is_active', true);
+    const result = await categorizePhoto({
+      image_buffer: imageBuffer,
+      image_media_type: 'image/jpeg',
+      categories: categories || [],
+      context: {
+        community_name: photo.inspections && photo.inspections.communities && photo.inspections.communities.name,
+        property_address: `${propCheck.street_address}${propCheck.unit ? ' #' + propCheck.unit : ''}`,
+      },
+    });
+
+    if (!result) {
+      return res.status(500).json({ error: 'AI analysis failed — try again or analyze the inspection in bulk' });
+    }
+    if (!result.is_violation) {
+      return res.json({
+        ok: true,
+        observation_id: null,
+        ai_result: result,
+        message: 'AI didn\'t see a violation in this photo. No observation created.',
+      });
+    }
+
+    const cat = result.category_slug && (categories || []).find((c) => c.code === result.category_slug);
+
+    const { data: obs, error: obsErr } = await supabase
+      .from('property_observations')
+      .insert({
+        inspection_id:         photo.inspection_id,
+        inspection_photo_id:   photoId,
+        property_id:           propertyId,
+        community_id:          inspectionCommunityId,
+        category_id:           cat ? cat.id : null,
+        severity:              result.severity || 'minor',
+        ai_description:        result.description || null,
+        ai_recommended_action: result.recommended_action || 'courtesy',
+        ai_confidence:         result.confidence || 'low',
+        reviewer_status:       'pending',
+      })
+      .select('id')
+      .single();
+    if (obsErr) return res.status(500).json({ error: 'observation insert failed: ' + obsErr.message });
+
+    res.json({
+      ok: true,
+      observation_id: obs.id,
+      ai_result: result,
+    });
+  } catch (err) {
+    console.error('[inspections.link-and-analyze]', err);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/observations/pending
 // Reviewer queue — observations awaiting confirm/reject. Filter by community.
 //
