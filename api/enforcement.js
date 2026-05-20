@@ -522,7 +522,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         if (obs.inspection_photos && obs.inspection_photos.storage_path) {
           try {
             const { data: dl } = await supabase.storage
-              .from('inspection-photos')
+              .from('documents')
               .download(obs.inspection_photos.storage_path);
             if (dl) {
               const ab = await dl.arrayBuffer();
@@ -923,7 +923,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
                 .from('inspection_photos').select('storage_path')
                 .eq('id', photo.paired_wide_photo_id).maybeSingle();
               if (wide && wide.storage_path) {
-                const { data: blob } = await supabase.storage.from('inspection-photos').download(wide.storage_path);
+                const { data: blob } = await supabase.storage.from('documents').download(wide.storage_path);
                 if (blob) widePhotoBuffer = Buffer.from(await blob.arrayBuffer());
                 break; // one wide shot per bundle is enough
               }
@@ -973,7 +973,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
           const photo = o && o.inspection_photos;
           if (photo && photo.storage_path) {
             try {
-              const { data: blob } = await supabase.storage.from('inspection-photos').download(photo.storage_path);
+              const { data: blob } = await supabase.storage.from('documents').download(photo.storage_path);
               if (blob) closeUpBuf = Buffer.from(await blob.arrayBuffer());
             } catch (_) {}
           }
@@ -1468,7 +1468,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             // Close-up photo
             if (obs.inspection_photos && obs.inspection_photos.storage_path) {
               try {
-                const { data: blob } = await supabase.storage.from('inspection-photos').download(obs.inspection_photos.storage_path);
+                const { data: blob } = await supabase.storage.from('documents').download(obs.inspection_photos.storage_path);
                 if (blob) closeUpBuffer = Buffer.from(await blob.arrayBuffer());
               } catch (_) {}
             }
@@ -1482,7 +1482,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
                   .eq('id', widePhotoId)
                   .maybeSingle();
                 if (wide && wide.storage_path) {
-                  const { data: wideBlob } = await supabase.storage.from('inspection-photos').download(wide.storage_path);
+                  const { data: wideBlob } = await supabase.storage.from('documents').download(wide.storage_path);
                   if (wideBlob) wideBuffer = Buffer.from(await wideBlob.arrayBuffer());
                 }
               } catch (_) {}
@@ -2525,7 +2525,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
     let photoBuffer = null;
     if (obsRow && obsRow.inspection_photos && obsRow.inspection_photos.storage_path) {
       try {
-        const { data: dl } = await supabase.storage.from('inspection-photos').download(obsRow.inspection_photos.storage_path);
+        const { data: dl } = await supabase.storage.from('documents').download(obsRow.inspection_photos.storage_path);
         if (dl) photoBuffer = Buffer.from(await dl.arrayBuffer());
       } catch (_) {}
     }

@@ -1277,7 +1277,7 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       if (photo && photo.storage_path) {
         try {
           const { data } = await supabase.storage
-            .from('inspection-photos')
+            .from('documents')
             .createSignedUrl(photo.storage_path, 60 * 60);
           signedUrl = data && data.signedUrl;
         } catch {}
@@ -1552,7 +1552,7 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
       let imageBuffer = null;
       try {
         const { data: blob, error: dlErr } = await supabase.storage
-          .from('inspection-photos')
+          .from('documents')
           .download(photo.storage_path);
         if (dlErr) throw dlErr;
         imageBuffer = Buffer.from(await blob.arrayBuffer());
@@ -1833,7 +1833,7 @@ router.get('/inspections/observations/pending', async (req, res) => {
       if (o.inspection_photos && o.inspection_photos.storage_path) {
         try {
           const { data: sd } = await supabase.storage
-            .from('inspection-photos')
+            .from('documents')
             .createSignedUrl(o.inspection_photos.storage_path, 60 * 60);
           photo_url = sd && sd.signedUrl;
         } catch (e) { /* no-op */ }
