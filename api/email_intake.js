@@ -42,6 +42,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
+const { resolveProperty, resolveContact } = require('../lib/entity_resolution');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 
@@ -126,6 +127,8 @@ async function upsertEmailIntoSubstrate(intake) {
         .update({
           title,
           community_id: intake.community_id || null,
+          property_id: intake.property_id || null,
+          contact_id: intake.contact_id || null,
           status,
           notes,
           chunk_count: 1,
@@ -140,6 +143,8 @@ async function upsertEmailIntoSubstrate(intake) {
           title,
           source_type: 'email',
           community_id: intake.community_id || null,
+          property_id: intake.property_id || null,
+          contact_id: intake.contact_id || null,
           source_record_id: intake.id,
           status,
           ingested_at: intake.ingested_at || new Date().toISOString(),
@@ -448,6 +453,32 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       extractionError = err.message;
     }
 
+    // Entity-graph resolution from the AI extraction. We look at common
+    // fields the extractor produces: sender_email + sender_name for the
+    // contact, mentioned property addresses for the property. Match-only
+    // — no createIfMissing on emails (sender names can be noisy).
+    let resolvedPropertyId = null;
+    let resolvedContactId = null;
+    if (extracted && !extractionError) {
+      const senderEmail = extracted.sender_email || extracted.from_email || extracted.email_from || null;
+      const senderName = extracted.sender_name || extracted.from_name || extracted.sender || sender_hint || null;
+      const propertyAddress = extracted.property_address || extracted.address || (Array.isArray(extracted.mentioned_addresses) && extracted.mentioned_addresses[0]) || null;
+
+      if (propertyAddress && community_id) {
+        const p = await resolveProperty(supabase, community_id, propertyAddress);
+        resolvedPropertyId = p && p.id ? p.id : null;
+      }
+      if (senderEmail || senderName) {
+        const c = await resolveContact(supabase, {
+          email: senderEmail,
+          name: senderName,
+          communityId: community_id,
+          propertyId: resolvedPropertyId,
+        });
+        resolvedContactId = c && c.id && !c.ambiguous ? c.id : null;
+      }
+    }
+
     const patch = extractionError
       ? {
           extraction_status: 'error',
@@ -462,6 +493,8 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
           extraction_confidence: extracted.extraction_confidence || null,
           board_relevant: !!extracted.board_relevant,
           urgency: extracted.urgency || null,
+          property_id: resolvedPropertyId,
+          contact_id: resolvedContactId,
           extracted_at: new Date().toISOString(),
           extraction_model: EXTRACTION_MODEL
         };

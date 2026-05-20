@@ -25,6 +25,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
+const { resolveProperty, resolveContact } = require('../lib/entity_resolution');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -98,6 +99,8 @@ async function upsertArcDecisionIntoSubstrate(decision) {
         .update({
           title,
           community_id: decision.community_id || null,
+          property_id: decision.property_id || null,
+          contact_id: decision.contact_id || null,
           effective_date: decision.decided_at || null,
           chunk_count: 1,
           updated_at: new Date().toISOString(),
@@ -111,6 +114,8 @@ async function upsertArcDecisionIntoSubstrate(decision) {
           title,
           source_type: 'arc_decision',
           community_id: decision.community_id || null,
+          property_id: decision.property_id || null,
+          contact_id: decision.contact_id || null,
           source_record_id: decision.id,
           status: 'active',
           ingested_at: decision.created_at || new Date().toISOString(),
@@ -303,6 +308,25 @@ router.post('/', upload.single('file'), async (req, res) => {
       }
     }
 
+    // Entity-graph resolution. Match address → properties.id; match
+    // homeowner_name (with property scope when we found one) → contacts.id.
+    // Match-only — we do NOT createIfMissing here. If a row arrives with an
+    // address that doesn't match a Vantaca-synced property, that's a flag
+    // for staff to investigate, not a reason to fabricate a property row.
+    let propertyRow = null;
+    let contactRow = null;
+    if (extracted.property_address) {
+      propertyRow = await resolveProperty(supabase, communityId, extracted.property_address);
+    }
+    if (extracted.homeowner_name) {
+      contactRow = await resolveContact(supabase, {
+        name: extracted.homeowner_name,
+        email: extracted.homeowner_email || null,
+        communityId,
+        propertyId: propertyRow && propertyRow.id,
+      });
+    }
+
     const insert = {
       management_company_id: BEDROCK_MGMT_CO_ID,
       community_id: communityId,
@@ -310,6 +334,8 @@ router.post('/', upload.single('file'), async (req, res) => {
       source_excerpt: req.body.source_excerpt || null,
       property_address: extracted.property_address || null,
       homeowner_name: extracted.homeowner_name || null,
+      property_id: propertyRow && propertyRow.id ? propertyRow.id : null,
+      contact_id: contactRow && contactRow.id && !contactRow.ambiguous ? contactRow.id : null,
       project_type: extracted.project_type || null,
       project_description: extracted.project_description || null,
       decision_type: extracted.decision_type || null,
@@ -449,6 +475,35 @@ router.patch('/:id', express.json({ limit: '1mb' }), async (req, res) => {
         merged.reasoning, merged.summary
       ].filter(Boolean).join(' — ').slice(0, 6000);
       patch.embedding = await embed(embedSource);
+    }
+
+    // Re-resolve property/contact when address or homeowner_name was edited.
+    // Edits often correct a misread address ('123 Forest Ln' → '123 Forest
+    // Lane'); re-running the resolver lets us catch a match that wasn't found
+    // before. Match-only — no createIfMissing on edits.
+    if ('property_address' in patch || 'homeowner_name' in patch) {
+      const { data: row } = await supabase
+        .from('arc_historical_decisions')
+        .select('community_id, property_address, homeowner_name')
+        .eq('id', req.params.id)
+        .single();
+      const merged = { ...row, ...patch };
+      if (merged.property_address) {
+        const p = await resolveProperty(supabase, merged.community_id, merged.property_address);
+        patch.property_id = p && p.id ? p.id : null;
+      } else {
+        patch.property_id = null;
+      }
+      if (merged.homeowner_name) {
+        const c = await resolveContact(supabase, {
+          name: merged.homeowner_name,
+          communityId: merged.community_id,
+          propertyId: patch.property_id || null,
+        });
+        patch.contact_id = c && c.id && !c.ambiguous ? c.id : null;
+      } else {
+        patch.contact_id = null;
+      }
     }
 
     const { data, error } = await supabase
