@@ -374,6 +374,8 @@
   <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
   <!-- Owner Receivables — Vantaca AR ingest + portfolio at-legal view. -->
   <div class="tab" onclick="switchTab('ownerar')">💵 Owner AR</div>
+  <!-- Portal Users — manage board + homeowner portal access. -->
+  <div class="tab" onclick="switchTab('portalusers')">🔐 Portal Users</div>
   <!-- Board Portal — opens the standalone board-facing surface in a new tab. -->
   <div class="tab" onclick="window.open('/board-portal.html', '_blank'); return false;">🏠 Board Portal</div>
   <!-- Bedrock University — how-to modules + role competency badges for operators. -->
@@ -7740,6 +7742,348 @@ If you have questions or want to discuss alternatives, just reply or give us a c
      V1: start a session, capture photos with GPS + heading, end session.
      Reviewer queue + AI analysis + letter generation ship in later builds.
      ============================================================================= -->
+
+<!-- =============================================================================
+     PORTAL USERS TAB
+     -----------------------------------------------------------------------------
+     Manage who has access to the board portal + homeowner portal. Generate
+     magic-link invites, grant/revoke scope, see usage signal. Auth enforcement
+     on the portals ships in a follow-up sprint (project_portal_release_gates.md);
+     this tab manages the input the auth layer will consume.
+     ============================================================================= -->
+<div class="tab-content" id="tab-portalusers" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+  <div style="max-width: 1100px; margin: 0 auto;">
+    <div style="margin-bottom: 18px;">
+      <h2 style="margin: 0; font-size: 22px; color: #1A3050;">🔐 Portal Users</h2>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
+        Manage who can access the board portal + homeowner portal. Invite by email, scope to specific communities (board) or properties (homeowner), generate magic-link invites. <strong>Auth enforcement on the portals ships next sprint</strong> — until then both portals stay behind the staff gate. This tab defines who CAN access; the auth layer will plug into these tables when it ships.
+      </p>
+    </div>
+
+    <!-- Quick links + counts -->
+    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px;">
+      <div class="panel" style="margin: 0; border-left: 3px solid #1A3050;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+          <div>
+            <h3 style="margin: 0; font-size: 16px;">🏠 Board Portal</h3>
+            <div id="pu-board-counts" style="font-size: 12px; color: #6B7280; margin-top: 4px;">— loading —</div>
+          </div>
+          <button class="secondary-btn" onclick="window.open('/board-portal.html', '_blank')" style="font-size: 11px; padding: 4px 10px;">Open ↗</button>
+        </div>
+        <div style="margin-top: 10px;">
+          <button class="action-btn" onclick="puShowAddForm('board_member')" style="font-size: 12px;">+ Invite board member</button>
+        </div>
+      </div>
+      <div class="panel" style="margin: 0; border-left: 3px solid #D4AF37;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+          <div>
+            <h3 style="margin: 0; font-size: 16px;">👥 Homeowner Portal</h3>
+            <div id="pu-homeowner-counts" style="font-size: 12px; color: #6B7280; margin-top: 4px;">— loading —</div>
+          </div>
+          <button class="secondary-btn" disabled title="Homeowner portal ships next sprint" style="font-size: 11px; padding: 4px 10px; opacity: 0.5;">Coming soon</button>
+        </div>
+        <div style="margin-top: 10px;">
+          <button class="action-btn" onclick="puShowAddForm('homeowner')" style="font-size: 12px;">+ Invite homeowner</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Add user form (shown when "Invite" is clicked) -->
+    <div class="panel" id="pu-add-form" style="display:none; margin-bottom: 16px; border-left: 3px solid #15803d;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px;">
+        <h3 id="pu-add-form-title" style="margin: 0;">Invite user</h3>
+        <button class="secondary-btn" onclick="puHideAddForm()" style="font-size: 11px; padding: 4px 10px;">Cancel</button>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px;">
+        <div>
+          <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Email <span style="color: #b91c1c;">*</span></label>
+          <input type="email" id="pu-add-email" placeholder="boardmember@example.com" style="width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 2px;">
+        </div>
+        <div>
+          <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Full name</label>
+          <input type="text" id="pu-add-name" placeholder="Jane Doe" style="width: 100%; padding: 8px 10px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px; margin-top: 2px;">
+        </div>
+      </div>
+      <div id="pu-add-scope-area" style="margin-bottom: 10px;">
+        <!-- Filled in dynamically based on role -->
+      </div>
+      <div style="display: flex; gap: 8px; align-items: center;">
+        <button class="action-btn" onclick="puSubmitAdd()" id="pu-add-submit-btn">✓ Create + generate magic link</button>
+        <span style="font-size: 11.5px; color: #6B7280;">The magic link will appear below — copy and email it to the user for now (auto-email ships next).</span>
+      </div>
+      <div id="pu-add-result" style="margin-top: 10px;"></div>
+    </div>
+
+    <!-- User list with role filter chips -->
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 10px; flex-wrap: wrap; gap: 8px;">
+        <h3 style="margin: 0;">👤 Portal users</h3>
+        <div style="display: flex; gap: 6px;">
+          <button class="secondary-btn pu-filter-btn pu-active" data-role="" onclick="puSetFilter('')" style="font-size: 11px; padding: 4px 10px;">All</button>
+          <button class="secondary-btn pu-filter-btn" data-role="board_member" onclick="puSetFilter('board_member')" style="font-size: 11px; padding: 4px 10px;">Board</button>
+          <button class="secondary-btn pu-filter-btn" data-role="homeowner" onclick="puSetFilter('homeowner')" style="font-size: 11px; padding: 4px 10px;">Homeowner</button>
+          <button class="secondary-btn pu-filter-btn" data-role="staff" onclick="puSetFilter('staff')" style="font-size: 11px; padding: 4px 10px;">Staff</button>
+          <button class="secondary-btn" onclick="puLoadUsers()" style="font-size: 11px; padding: 4px 10px;">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="pu-users-list" style="font-size: 12.5px;">Loading…</div>
+    </div>
+  </div>
+
+  <style>
+    .pu-filter-btn.pu-active { background: #1A3050; color: white; border-color: #1A3050; }
+    .pu-user-row { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
+    .pu-user-row:last-child { border-bottom: none; }
+    .pu-status-badge { padding: 1px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .pu-status-invited { background: #fef3c7; color: #78350f; }
+    .pu-status-active  { background: #dcfce7; color: #166534; }
+    .pu-status-revoked { background: #fee2e2; color: #7f1d1d; }
+    .pu-action-btn { background: white; border: 1px solid #d0d7de; padding: 3px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; color: #1A3050; }
+    .pu-action-btn:hover { border-color: #1A3050; background: #f1f5fb; }
+    .pu-action-btn.danger { color: #b91c1c; }
+    .pu-action-btn.danger:hover { background: #fef2f2; border-color: #b91c1c; }
+  </style>
+
+  <script>
+    let puCurrentRoleFilter = '';
+    let puAddRole = 'board_member';
+    let puCachedCommunities = [];
+
+    async function puLoadAll() {
+      await Promise.all([puLoadUsers(), puLoadCommunities()]);
+    }
+
+    async function puLoadCommunities() {
+      try {
+        const r = await fetch('/api/board-portal/communities');
+        const j = await r.json();
+        puCachedCommunities = j.communities || [];
+      } catch (_) { puCachedCommunities = []; }
+    }
+
+    async function puLoadUsers() {
+      try {
+        const url = '/api/portal-admin/users' + (puCurrentRoleFilter ? `?role=${encodeURIComponent(puCurrentRoleFilter)}` : '');
+        const r = await fetch(url);
+        const j = await r.json();
+        puRenderUsers(j.users || []);
+        puRenderCounts(j.users || []);
+      } catch (e) {
+        document.getElementById('pu-users-list').innerHTML = `<div style="color: #b91c1c;">Load failed: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function puRenderCounts(users) {
+      // Re-fetch unfiltered for accurate counts? Or just use what we have.
+      // For now show counts from the current filter.
+      const board = users.filter((u) => u.role === 'board_member');
+      const home  = users.filter((u) => u.role === 'homeowner');
+      const fmt = (rows) => {
+        if (rows.length === 0) return 'No users yet';
+        const active = rows.filter((r) => r.status === 'active').length;
+        const invited = rows.filter((r) => r.status === 'invited').length;
+        return `${rows.length} user${rows.length === 1 ? '' : 's'} · ${active} active · ${invited} pending invite`;
+      };
+      document.getElementById('pu-board-counts').textContent = fmt(board);
+      document.getElementById('pu-homeowner-counts').textContent = fmt(home);
+    }
+
+    function puRenderUsers(users) {
+      const wrap = document.getElementById('pu-users-list');
+      if (!users.length) {
+        wrap.innerHTML = `<div style="padding: 20px; text-align: center; color: #6B7280; font-style: italic;">No users yet. Click "+ Invite board member" or "+ Invite homeowner" above to add one.</div>`;
+        return;
+      }
+      wrap.innerHTML = users.map((u) => {
+        const statusBadge = `<span class="pu-status-badge pu-status-${u.status}">${escapeHtml(u.status)}</span>`;
+        const roleLabel = u.role === 'board_member' ? 'Board' : u.role === 'homeowner' ? 'Homeowner' : escapeHtml(u.role);
+        const scopeLabel = u.role === 'board_member'
+          ? `${u.active_communities || 0} ${u.active_communities === 1 ? 'community' : 'communities'}`
+          : `${u.active_properties || 0} ${u.active_properties === 1 ? 'property' : 'properties'}`;
+        const lastLogin = u.last_login_at
+          ? `Last login ${new Date(u.last_login_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}`
+          : (u.status === 'invited' ? 'Never logged in' : '');
+        return `
+          <div class="pu-user-row">
+            <div style="display: flex; justify-content: space-between; gap: 12px; align-items: center; flex-wrap: wrap;">
+              <div style="flex: 1; min-width: 240px;">
+                <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                  <strong>${escapeHtml(u.full_name || u.email)}</strong>
+                  ${statusBadge}
+                  <span style="font-size: 11px; color: #6B7280;">${roleLabel}</span>
+                </div>
+                <div style="font-size: 12px; color: #6B7280; margin-top: 2px;">
+                  ${escapeHtml(u.email)} · ${scopeLabel} ${lastLogin ? ' · ' + lastLogin : ''}
+                  ${u.pending_magic_links > 0 ? ` · <span style="color: #78350f;">⏳ ${u.pending_magic_links} pending invite${u.pending_magic_links === 1 ? '' : 's'}</span>` : ''}
+                </div>
+              </div>
+              <div style="display: flex; gap: 6px; flex-wrap: wrap;">
+                ${u.status !== 'revoked' ? `<button class="pu-action-btn" onclick="puGenerateLink('${u.id}', '${escapeHtml(u.email)}')">📧 Get magic link</button>` : ''}
+                <button class="pu-action-btn" onclick="puManageScope('${u.id}', '${u.role}', '${escapeHtml(u.email)}')">Scope</button>
+                ${u.status !== 'revoked' ? `<button class="pu-action-btn danger" onclick="puRevokeUser('${u.id}', '${escapeHtml(u.email)}')">Revoke</button>` : ''}
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+    }
+
+    function puSetFilter(role) {
+      puCurrentRoleFilter = role;
+      document.querySelectorAll('.pu-filter-btn').forEach((b) => {
+        b.classList.toggle('pu-active', b.dataset.role === role);
+      });
+      puLoadUsers();
+    }
+
+    function puShowAddForm(role) {
+      puAddRole = role;
+      document.getElementById('pu-add-form-title').textContent = role === 'board_member'
+        ? 'Invite a board member'
+        : 'Invite a homeowner';
+      const scopeArea = document.getElementById('pu-add-scope-area');
+      if (role === 'board_member') {
+        scopeArea.innerHTML = `
+          <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Communities they can see <span style="color: #b91c1c;">*</span></label>
+          <div id="pu-add-communities" style="margin-top: 6px; display: flex; flex-wrap: wrap; gap: 6px;">
+            ${puCachedCommunities.map((c) => `
+              <label style="display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border: 1px solid #d0d7de; border-radius: 99px; font-size: 12px; cursor: pointer; background: white;">
+                <input type="checkbox" value="${escapeHtml(c.id)}" style="margin: 0;"> ${escapeHtml(c.name)}
+              </label>
+            `).join('')}
+          </div>`;
+      } else {
+        scopeArea.innerHTML = `
+          <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Property they own</label>
+          <div style="font-size: 12px; color: #6B7280; margin-top: 4px; padding: 8px 10px; background: #f1f5fb; border-radius: 6px;">
+            Property scope is granted after the homeowner portal ships. For now, the invite creates the user record — they'll be auto-linked to their property via the contacts → property_ownerships join once the homeowner portal goes live.
+          </div>`;
+      }
+      document.getElementById('pu-add-form').style.display = 'block';
+      document.getElementById('pu-add-email').value = '';
+      document.getElementById('pu-add-name').value = '';
+      document.getElementById('pu-add-result').innerHTML = '';
+      document.getElementById('pu-add-form').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function puHideAddForm() {
+      document.getElementById('pu-add-form').style.display = 'none';
+    }
+
+    async function puSubmitAdd() {
+      const email = document.getElementById('pu-add-email').value.trim();
+      const fullName = document.getElementById('pu-add-name').value.trim();
+      if (!email) { alert('Email is required.'); return; }
+
+      let communityIds = [];
+      if (puAddRole === 'board_member') {
+        communityIds = Array.from(document.querySelectorAll('#pu-add-communities input[type=checkbox]:checked'))
+          .map((cb) => cb.value);
+        if (communityIds.length === 0) {
+          if (!confirm('No communities selected. Create the board user without scope (you can grant later)?')) return;
+        }
+      }
+
+      const btn = document.getElementById('pu-add-submit-btn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Creating…';
+      try {
+        const r = await fetch('/api/portal-admin/users', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email,
+            full_name: fullName || null,
+            role: puAddRole,
+            community_ids: communityIds,
+            send_invite: true,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        const link = j.magic_link || '';
+        document.getElementById('pu-add-result').innerHTML = `
+          <div style="padding: 12px 14px; background: #dcfce7; border-left: 3px solid #15803d; border-radius: 0 6px 6px 0;">
+            <strong>✓ User created.</strong> Magic link below (valid 7 days). Copy and email to the user.
+            ${link ? `<div style="margin-top: 8px; display: flex; gap: 6px; align-items: center;">
+              <input type="text" readonly value="${escapeHtml(link)}" style="flex: 1; padding: 6px 8px; font-size: 11.5px; border: 1px solid #d0d7de; border-radius: 4px; font-family: monospace;" onclick="this.select();">
+              <button class="action-btn" style="font-size: 11px; padding: 4px 10px;" onclick="navigator.clipboard.writeText('${link}'); this.textContent='✓ Copied';">Copy</button>
+            </div>` : ''}
+          </div>`;
+        await puLoadUsers();
+      } catch (e) {
+        document.getElementById('pu-add-result').innerHTML = `<div style="padding: 10px 12px; background: #fee2e2; border-left: 3px solid #b91c1c; border-radius: 0 6px 6px 0;"><strong>Failed:</strong> ${escapeHtml(e.message)}</div>`;
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '✓ Create + generate magic link';
+      }
+    }
+
+    async function puGenerateLink(userId, email) {
+      if (!confirm(`Generate a fresh magic link for ${email}? Any existing pending links for this user will be invalidated.`)) return;
+      try {
+        const r = await fetch(`/api/portal-admin/users/${userId}/magic-link`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ purpose: 'login' }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        // Use a prompt-style display so the operator can copy
+        const text = `Magic link for ${email} (valid 1 hour):\n\n${j.magic_link}`;
+        if (navigator.clipboard) {
+          await navigator.clipboard.writeText(j.magic_link);
+          alert(text + '\n\n(Copied to clipboard)');
+        } else {
+          prompt(text, j.magic_link);
+        }
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    async function puManageScope(userId, role, email) {
+      try {
+        const r = await fetch(`/api/portal-admin/users/${userId}/scope`);
+        const j = await r.json();
+        const comms = (j.communities || []).filter((c) => !c.revoked_at);
+        const props = (j.properties || []).filter((p) => !p.revoked_at);
+        const msg = role === 'board_member'
+          ? `Communities ${email} can see:\n\n${comms.length ? comms.map((c) => '• ' + (c.communities ? c.communities.name : c.community_id)).join('\n') : '(none granted yet)'}`
+          : `Properties ${email} can see:\n\n${props.length ? props.map((p) => '• ' + (p.properties ? p.properties.street_address : p.property_id)).join('\n') : '(none granted yet)'}`;
+        alert(msg + '\n\n(Full scope-edit UI ships in next portal-admin pass — for now, granular grants happen via the Add-user flow or API.)');
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    async function puRevokeUser(userId, email) {
+      if (!confirm(`Revoke portal access for ${email}? This marks them revoked + revokes all their community/property grants. Audit trail is preserved.`)) return;
+      try {
+        const r = await fetch(`/api/portal-admin/users/${userId}/revoke`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        await puLoadUsers();
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    }
+
+    // Auto-load when the tab opens
+    (function () {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'portalusers') puLoadAll();
+        return r;
+      };
+    })();
+  </script>
+</div>
 
 <!-- =============================================================================
      OWNER AR TAB
