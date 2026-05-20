@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="apple-touch-icon" href="/logos/bedrock_logo.png">
+  <title>Board Portal · Bedrock</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --navy:        #1A3050;
+      --navy-deep:   #0B1424;
+      --navy-soft:   #142847;
+      --navy-tint:   #EAF0F7;
+      --gold:        #D4AF37;
+      --gold-bright: #E8C96E;
+      --cream:       #F2F2F2;
+      --ink:         #1a1a1a;
+      --ink-soft:    #4a4a4a;
+      --ink-muted:   #6e7886;
+      --rule:        #E5E7EB;
+      --good:        #166534;
+      --good-tint:   #DCFCE7;
+      --warn:        #B47B00;
+      --warn-tint:   #FEF3C7;
+      --bad:         #B91C1C;
+      --bad-tint:    #FEE2E2;
+      --paper:       #ffffff;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; background: var(--cream); color: var(--ink); font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; line-height: 1.5; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+
+    /* ============ TOP BAR ============ */
+    .topbar { background: var(--navy); color: white; padding: 14px 18px; box-shadow: 0 2px 6px rgba(0,0,0,0.12); position: sticky; top: 0; z-index: 100; }
+    .topbar-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 14px; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-cs { width: 12px; height: 12px; background: var(--gold); border-radius: 2px; }
+    .brand-text { font-family: 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 500; line-height: 1; }
+    .brand-text em { color: var(--gold-bright); font-style: italic; font-weight: 500; font-size: 14px; margin-left: 4px; }
+    .topbar-title { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.65); margin-left: auto; }
+
+    /* ============ COMMUNITY PICKER ============ */
+    .picker-bar { background: var(--paper); border-bottom: 1px solid var(--rule); padding: 12px 18px; }
+    .picker-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+    .picker-label { font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase; font-weight: 600; color: var(--ink-muted); }
+    select.community-select {
+      flex: 1; min-width: 200px;
+      padding: 10px 12px; font-size: 14px; font-family: inherit;
+      border: 1px solid var(--rule); border-radius: 6px; background: var(--paper); color: var(--ink);
+    }
+    select.community-select:focus { outline: 2px solid var(--gold); outline-offset: 1px; }
+
+    /* ============ CONTAINER ============ */
+    .container { max-width: 1100px; margin: 0 auto; padding: 18px; }
+
+    /* ============ SUMMARY CARDS ============ */
+    .summary-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 22px; }
+    .summary-card { background: var(--paper); border: 1px solid var(--rule); border-radius: 10px; padding: 14px 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.03); }
+    .summary-card .label { font-size: 10px; font-weight: 700; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.08em; }
+    .summary-card .value { font-size: 26px; font-weight: 800; color: var(--navy); margin-top: 4px; font-variant-numeric: tabular-nums; line-height: 1.1; }
+    .summary-card .sub { font-size: 11px; color: var(--ink-muted); margin-top: 3px; }
+    .summary-card.warn { background: var(--warn-tint); border-color: #fde68a; }
+    .summary-card.warn .label { color: var(--warn); }
+    .summary-card.warn .value { color: var(--warn); }
+    .summary-card.bad { background: var(--bad-tint); border-color: #fecaca; }
+    .summary-card.bad .label { color: var(--bad); }
+    .summary-card.bad .value { color: var(--bad); }
+
+    /* ============ FILTER CHIPS ============ */
+    .filter-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+    .chip { padding: 6px 12px; font-size: 12px; font-weight: 600; border: 1px solid var(--rule); background: var(--paper); border-radius: 99px; cursor: pointer; color: var(--ink-soft); transition: all 120ms; }
+    .chip:hover { border-color: var(--navy); color: var(--navy); }
+    .chip.active { background: var(--navy); color: white; border-color: var(--navy); }
+
+    /* ============ PROPERTY LIST ============ */
+    .properties-header { font-size: 14px; font-weight: 700; color: var(--navy); margin: 14px 0 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+    .property-card {
+      background: var(--paper); border: 1px solid var(--rule); border-radius: 10px;
+      padding: 14px 16px; margin-bottom: 8px;
+      cursor: pointer; transition: all 120ms;
+      display: flex; align-items: center; gap: 14px;
+    }
+    .property-card:hover { border-color: var(--navy); box-shadow: 0 2px 8px rgba(0,0,0,0.06); }
+    .property-card .main { flex: 1; min-width: 0; }
+    .property-card .addr { font-weight: 600; color: var(--ink); font-size: 14px; }
+    .property-card .owner { font-size: 12px; color: var(--ink-muted); margin-top: 2px; }
+    .property-card .badges { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
+    .badge { padding: 2px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
+    .badge.good { background: var(--good-tint); color: var(--good); }
+    .badge.warn { background: var(--warn-tint); color: var(--warn); }
+    .badge.bad { background: var(--bad-tint); color: var(--bad); }
+    .badge.neutral { background: var(--navy-tint); color: var(--navy); }
+    .property-card .arrow { color: var(--ink-muted); font-size: 18px; line-height: 1; flex-shrink: 0; }
+    .property-card .arrow svg { width: 18px; height: 18px; stroke: currentColor; fill: none; stroke-width: 2; }
+
+    /* ============ EMPTY / LOADING ============ */
+    .empty {
+      background: var(--paper); border: 1px dashed var(--rule); border-radius: 10px;
+      padding: 30px 22px; text-align: center; color: var(--ink-muted); font-size: 14px;
+    }
+    .loading { color: var(--ink-muted); padding: 18px; text-align: center; font-size: 13px; }
+    .err { background: var(--bad-tint); color: var(--bad); border: 1px solid #fecaca; border-radius: 8px; padding: 10px 14px; font-size: 13px; margin: 10px 0; }
+
+    /* ============ PROPERTY DETAIL DRAWER ============ */
+    .drawer-backdrop {
+      position: fixed; inset: 0; background: rgba(11,20,36,0.5); z-index: 200;
+      opacity: 0; pointer-events: none; transition: opacity 200ms;
+    }
+    .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
+    .drawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: 90%; max-width: 540px;
+      background: var(--paper); z-index: 201; box-shadow: -4px 0 24px rgba(11,20,36,0.18);
+      transform: translateX(100%); transition: transform 220ms cubic-bezier(.2,.8,.3,1);
+      overflow-y: auto; overscroll-behavior: contain;
+    }
+    .drawer.open { transform: translateX(0); }
+    .drawer-head { padding: 18px 22px; border-bottom: 1px solid var(--rule); background: var(--navy); color: white; position: sticky; top: 0; }
+    .drawer-head .addr { font-size: 18px; font-weight: 700; }
+    .drawer-head .owner { font-size: 12px; color: rgba(255,255,255,0.75); margin-top: 3px; }
+    .drawer-close { position: absolute; top: 14px; right: 14px; background: rgba(255,255,255,0.15); color: white; border: 0; width: 32px; height: 32px; border-radius: 6px; cursor: pointer; font-size: 18px; line-height: 1; }
+    .drawer-body { padding: 18px 22px; }
+    .drawer-section { margin-bottom: 22px; }
+    .drawer-section-title { font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; font-weight: 700; color: var(--navy); margin-bottom: 8px; padding-bottom: 4px; border-bottom: 1px solid var(--rule); }
+    .kv { display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 13px; }
+    .kv dt { color: var(--ink-muted); font-weight: 500; }
+    .kv dd { margin: 0; color: var(--ink); }
+    .item { padding: 10px 0; border-bottom: 1px solid var(--rule); font-size: 13px; }
+    .item:last-child { border-bottom: none; }
+    .item .item-head { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+    .item .item-title { font-weight: 600; color: var(--ink); }
+    .item .item-date { font-size: 11px; color: var(--ink-muted); white-space: nowrap; }
+    .item .item-body { font-size: 12.5px; color: var(--ink-soft); margin-top: 4px; line-height: 1.55; }
+  </style>
+</head>
+<body>
+
+  <div class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">
+        <div class="brand-cs"></div>
+        <div class="brand-text">Bedrock<em>Association Management</em></div>
+      </div>
+      <div class="topbar-title">Board Portal</div>
+    </div>
+  </div>
+
+  <div class="picker-bar">
+    <div class="picker-inner">
+      <span class="picker-label">Community</span>
+      <select id="communitySelect" class="community-select" onchange="handleCommunityChange(this.value)">
+        <option value="">Loading…</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="container" id="container">
+    <div class="loading">Pick a community to see properties.</div>
+  </div>
+
+  <!-- Property detail drawer -->
+  <div class="drawer-backdrop" id="drawerBackdrop" onclick="closeDrawer()"></div>
+  <div class="drawer" id="drawer">
+    <div class="drawer-head">
+      <button class="drawer-close" onclick="closeDrawer()">×</button>
+      <div class="addr" id="drawerAddr">—</div>
+      <div class="owner" id="drawerOwner"></div>
+    </div>
+    <div class="drawer-body" id="drawerBody">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+
+<script>
+  let currentCommunityId = null;
+  let currentFilter = 'open_only'; // 'all' | 'open_only'
+
+  function esc(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function fmtDate(d) {
+    if (!d) return '—';
+    try {
+      const dt = new Date(d);
+      if (Number.isNaN(dt.getTime())) return String(d);
+      return dt.toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+    } catch (_) { return String(d); }
+  }
+  function stageLabel(s) {
+    return ({
+      courtesy_1: 'Courtesy 1',
+      courtesy_2: 'Courtesy 2',
+      certified_209: 'Certified §209',
+      fine_assessed: 'Fine assessed',
+      cured: 'Cured',
+      closed: 'Closed',
+      voided: 'Voided',
+    })[s] || s || '—';
+  }
+  function stageBadgeKind(s) {
+    if (!s) return 'neutral';
+    if (s === 'fine_assessed' || s === 'certified_209') return 'bad';
+    if (s === 'courtesy_2') return 'warn';
+    if (s === 'courtesy_1') return 'neutral';
+    return 'good';
+  }
+
+  async function fetchJSON(url) {
+    const r = await fetch(url);
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || (r.status + ' ' + r.statusText));
+    return j;
+  }
+
+  // ----- Communities --------------------------------------------------------
+
+  async function loadCommunities() {
+    try {
+      const j = await fetchJSON('/api/board-portal/communities');
+      const sel = document.getElementById('communitySelect');
+      sel.innerHTML = '<option value="">— Select a community —</option>' +
+        (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+    } catch (e) {
+      document.getElementById('communitySelect').innerHTML = '<option value="">Failed to load</option>';
+      document.getElementById('container').innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function handleCommunityChange(communityId) {
+    currentCommunityId = communityId || null;
+    if (!communityId) {
+      document.getElementById('container').innerHTML = '<div class="loading">Pick a community to see properties.</div>';
+      return;
+    }
+    renderCommunityView();
+  }
+
+  // ----- Community view: summary + filterable property list ----------------
+
+  async function renderCommunityView() {
+    const wrap = document.getElementById('container');
+    wrap.innerHTML = '<div class="loading">Loading…</div>';
+    try {
+      const [summary, props] = await Promise.all([
+        fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/summary`),
+        fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/properties?${currentFilter === 'open_only' ? 'open_only=1&' : ''}order_by=open_violations_desc&limit=500`),
+      ]);
+      wrap.innerHTML = `
+        ${renderSummary(summary)}
+        ${renderFilterBar()}
+        ${renderPropertyList(props.properties || [])}
+      `;
+    } catch (e) {
+      wrap.innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
+    }
+  }
+
+  function renderSummary(s) {
+    const c = s.counts || {};
+    return `
+      <div class="summary-cards">
+        <div class="summary-card">
+          <div class="label">Total properties</div>
+          <div class="value">${c.total_properties || 0}</div>
+          <div class="sub">${c.owner_occupied || 0} owner-occupied · ${c.renters || 0} renter${c.renters === 1 ? '' : 's'}${c.residency_unknown ? ` · ${c.residency_unknown} unknown` : ''}</div>
+        </div>
+        <div class="summary-card ${c.properties_with_open_violations > 0 ? 'warn' : ''}">
+          <div class="label">Open violations</div>
+          <div class="value">${c.properties_with_open_violations || 0}</div>
+          <div class="sub">properties with at least one open</div>
+        </div>
+        <div class="summary-card ${c.properties_at_certified_or_fine > 0 ? 'bad' : ''}">
+          <div class="label">At §209 / fine</div>
+          <div class="value">${c.properties_at_certified_or_fine || 0}</div>
+          <div class="sub">most-severe stage reached</div>
+        </div>
+        <div class="summary-card">
+          <div class="label">Historical ARC</div>
+          <div class="value">${c.arc_decisions_total || 0}</div>
+          <div class="sub">decisions on file</div>
+        </div>
+      </div>`;
+  }
+
+  function renderFilterBar() {
+    return `
+      <div class="filter-row">
+        <button class="chip ${currentFilter === 'all' ? 'active' : ''}" onclick="setFilter('all')">All properties</button>
+        <button class="chip ${currentFilter === 'open_only' ? 'active' : ''}" onclick="setFilter('open_only')">Open violations only</button>
+      </div>`;
+  }
+  function setFilter(f) {
+    currentFilter = f;
+    renderCommunityView();
+  }
+
+  function renderPropertyList(rows) {
+    if (!rows.length) {
+      const msg = currentFilter === 'open_only'
+        ? 'No properties with open violations in this community.'
+        : 'No properties found for this community.';
+      return `<div class="empty">${esc(msg)}</div>`;
+    }
+    const arrowSvg = '<svg viewBox="0 0 24 24"><polyline points="9 18 15 12 9 6"/></svg>';
+    return `
+      <div class="properties-header">Properties (${rows.length})</div>
+      ${rows.map((r) => `
+        <div class="property-card" onclick="openProperty('${esc(r.property_id)}')">
+          <div class="main">
+            <div class="addr">${esc(r.street_address)}${r.unit ? ' #' + esc(r.unit) : ''}</div>
+            <div class="owner">${esc(r.owner_name || '— no owner on record —')}${r.residency_type ? ' · ' + esc(r.residency_type.replace(/_/g, ' ')) : ''}</div>
+            <div class="badges">
+              ${r.open_violations > 0 ? `<span class="badge ${stageBadgeKind(r.worst_open_stage)}">${r.open_violations} open · ${esc(stageLabel(r.worst_open_stage))}</span>` : ''}
+              ${r.violations_last_12mo > 0 && r.open_violations === 0 ? `<span class="badge neutral">${r.violations_last_12mo} in 12mo</span>` : ''}
+              ${r.arc_decisions_count > 0 ? `<span class="badge neutral">${r.arc_decisions_count} ARC</span>` : ''}
+              ${r.last_inspected_at ? `<span class="badge good">Inspected ${esc(fmtDate(r.last_inspected_at))}</span>` : ''}
+            </div>
+          </div>
+          <div class="arrow">${arrowSvg}</div>
+        </div>
+      `).join('')}`;
+  }
+
+  // ----- Property detail drawer --------------------------------------------
+
+  async function openProperty(propertyId) {
+    const drawer = document.getElementById('drawer');
+    const backdrop = document.getElementById('drawerBackdrop');
+    document.getElementById('drawerAddr').textContent = '—';
+    document.getElementById('drawerOwner').textContent = '';
+    document.getElementById('drawerBody').innerHTML = '<div class="loading">Loading…</div>';
+    drawer.classList.add('open');
+    backdrop.classList.add('open');
+    try {
+      const j = await fetchJSON(`/api/board-portal/property/${encodeURIComponent(propertyId)}`);
+      renderDrawer(j);
+    } catch (e) {
+      document.getElementById('drawerBody').innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
+    }
+  }
+  function closeDrawer() {
+    document.getElementById('drawer').classList.remove('open');
+    document.getElementById('drawerBackdrop').classList.remove('open');
+  }
+
+  function renderDrawer(j) {
+    const s = j.summary || {};
+    document.getElementById('drawerAddr').textContent = (s.street_address || '—') + (s.unit ? ' #' + s.unit : '');
+    document.getElementById('drawerOwner').textContent = s.owner_name ? `Owner: ${s.owner_name}` : '— no owner on record —';
+
+    const body = document.getElementById('drawerBody');
+    body.innerHTML = `
+      ${renderOverview(s)}
+      ${renderOpenViolations(j.open_violations || [])}
+      ${renderArcDecisions(j.arc_decisions || [])}
+      ${renderInteractions(j.interactions || [])}
+      ${renderDocs(j.substrate_docs || [])}
+    `;
+  }
+
+  function renderOverview(s) {
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Snapshot</div>
+        <dl class="kv">
+          <dt>Residency</dt><dd>${esc(s.residency_type ? s.residency_type.replace(/_/g, ' ') : '— unknown —')}${s.lease_end_date ? ` · lease ends ${esc(fmtDate(s.lease_end_date))}` : ''}</dd>
+          <dt>Owner since</dt><dd>${esc(fmtDate(s.owned_since))}</dd>
+          <dt>Open violations</dt><dd>${s.open_violations || 0}${s.worst_open_stage ? ' · ' + esc(stageLabel(s.worst_open_stage)) : ''}</dd>
+          <dt>Lifetime violations</dt><dd>${s.lifetime_violations || 0} · ${s.violations_last_12mo || 0} in last 12mo</dd>
+          <dt>ARC decisions</dt><dd>${s.arc_decisions_count || 0} · ${s.arc_approved_count || 0} approved · ${s.arc_denied_count || 0} denied</dd>
+          <dt>Substrate docs</dt><dd>${s.substrate_doc_count || 0}</dd>
+          <dt>Last inspected</dt><dd>${esc(fmtDate(s.last_inspected_at))}</dd>
+        </dl>
+      </div>`;
+  }
+
+  function renderOpenViolations(rows) {
+    if (!rows.length) return '';
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Open violations (${rows.length})</div>
+        ${rows.map((r) => `
+          <div class="item">
+            <div class="item-head">
+              <span class="item-title">${esc((r.enforcement_categories && r.enforcement_categories.label) || 'Violation')}</span>
+              <span class="item-date">${esc(stageLabel(r.current_stage))}</span>
+            </div>
+            <div class="item-body">Opened ${esc(fmtDate(r.opened_at))}${r.cure_period_ends_at ? ` · cure window ends ${esc(fmtDate(r.cure_period_ends_at))}` : ''}</div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  function renderArcDecisions(rows) {
+    if (!rows.length) return '';
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">ARC decisions (${rows.length})</div>
+        ${rows.map((r) => `
+          <div class="item">
+            <div class="item-head">
+              <span class="item-title">${esc(r.project_type || 'Project')}${r.decision_type ? ' · ' + esc(r.decision_type) : ''}</span>
+              <span class="item-date">${esc(fmtDate(r.decided_at))}</span>
+            </div>
+            ${r.summary ? `<div class="item-body">${esc(r.summary)}</div>` : ''}
+            ${r.conditions ? `<div class="item-body"><em>Conditions:</em> ${esc(r.conditions)}</div>` : ''}
+          </div>`).join('')}
+      </div>`;
+  }
+
+  function renderInteractions(rows) {
+    if (!rows.length) {
+      return `
+        <div class="drawer-section">
+          <div class="drawer-section-title">Interactions</div>
+          <div class="empty" style="padding:16px; font-size:12.5px;">No interactions logged yet. As emails, letters, and notes flow into the system, they'll appear here.</div>
+        </div>`;
+    }
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Interactions (${rows.length})</div>
+        ${rows.map((r) => `
+          <div class="item">
+            <div class="item-head">
+              <span class="item-title">${esc(r.subject || (r.type ? r.type.replace(/_/g, ' ') : 'Interaction'))}</span>
+              <span class="item-date">${esc(fmtDate(r.created_at))}</span>
+            </div>
+            ${r.summary ? `<div class="item-body">${esc(r.summary)}</div>` : ''}
+          </div>`).join('')}
+      </div>`;
+  }
+
+  function renderDocs(rows) {
+    if (!rows.length) return '';
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Linked documents (${rows.length})</div>
+        ${rows.map((r) => `
+          <div class="item">
+            <div class="item-head">
+              <span class="item-title">${esc(r.title)}</span>
+              <span class="item-date">${esc(fmtDate(r.effective_date || r.ingested_at))}</span>
+            </div>
+            <div class="item-body">${esc((r.source_type || '').replace(/_/g, ' '))}</div>
+          </div>`).join('')}
+      </div>`;
+  }
+
+  // ----- Boot ---------------------------------------------------------------
+  loadCommunities();
+</script>
+</body>
+</html>

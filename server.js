@@ -652,6 +652,12 @@ app.use('/api/email-intelligence', emailIntakeRouter);
 const { router: arcHistoryRouter } = require('./api/arc_history');
 app.use('/api/arc-history', arcHistoryRouter);
 
+// Board portal — property tile + community summary surfaces
+// (project_board_portal.md). Today: staff-auth-gated v0 with full portfolio
+// visibility. Future: board-member auth, scoped to their community only.
+const { router: boardPortalRouter } = require('./api/board_portal');
+app.use('/api/board-portal', boardPortalRouter);
+
 // ACC applications — public submission + AI assessment + manager queue
 const { router: applicationsRouter } = require('./api/applications');
 app.use('/api/applications', applicationsRouter);
