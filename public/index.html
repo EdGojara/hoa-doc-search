@@ -10731,6 +10731,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       || prompt('Inspection ID to analyze (paste it from the recent inspections list):');
     if (!inspectionId) return;
     const btn = document.getElementById('inspReviewAnalyzeBtn');
+    await _inspRunAnalyze(inspectionId, btn);
+  }
+
+  // Triggered from the Recent inspections list — pre-bound to a specific
+  // inspection ID. Reuses the same engine, scrolls the operator to the
+  // Review queue after analysis lands.
+  async function inspAnalyzeFromList(inspectionId, btn) {
+    if (!inspectionId) return;
+    await _inspRunAnalyze(inspectionId, btn);
+    const wrap = document.getElementById('inspReviewSection');
+    if (wrap) wrap.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function _inspRunAnalyze(inspectionId, btn) {
     const original = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analyzing…'; }
     try {
@@ -10738,8 +10752,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       let msg = `Analyzed ${j.analyzed} photo${j.analyzed === 1 ? '' : 's'} — ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`;
-      if (j.failures && j.failures.length) msg += ` (${j.failures.length} skipped — see browser console)`;
-      if (j.failures && j.failures.length) console.log('[inspReviewAnalyze] skipped photos:', j.failures);
+      if (j.photos_skipped_already_analyzed > 0) msg += ` (${j.photos_skipped_already_analyzed} skipped — already analyzed)`;
+      if (j.failures && j.failures.length) {
+        msg += ` (${j.failures.length} couldn't link to a property — see browser console)`;
+        console.log('[_inspRunAnalyze] skipped photos:', j.failures);
+      }
       alert(msg);
       await inspReviewLoad();
     } catch (e) {
@@ -11755,8 +11772,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         // state (closed or voided). Closed inspections are permanent record;
         // voided ones are hidden by the API filter anyway.
         const isTerminal = (i.status === 'closed' || i.status === 'voided');
+        // Analyze action — only useful while there's pending capture or
+        // already-captured photos that haven't been turned into observations.
+        const canAnalyze = !isTerminal && (i.total_photos || 0) > 0;
+        const analyzeBtn = canAnalyze ? `
+          <button type="button" onclick="inspAnalyzeFromList('${i.id}', this)"
+                  style="background: #15803d; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Run AI vision on each photo in this inspection → create observation rows → populate the Review queue.">
+            ▶ Analyze
+          </button>
+        ` : '';
         const actions = isTerminal ? '' : `
-          <div style="display: flex; gap: 6px; flex-shrink: 0;">
+          <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+            ${analyzeBtn}
             <button type="button" onclick="inspFinalize('${i.id}')"
                     style="background: var(--navy, #1A3050); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Mark this inspection as the permanent record (status: closed). It will stay visible here as 🔒 Finalized and cannot be edited.">
