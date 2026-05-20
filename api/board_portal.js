@@ -208,12 +208,39 @@ router.get('/property/:id', async (req, res) => {
       .order('effective_date', { ascending: false, nullsFirst: false })
       .limit(50);
 
+    // Ownership history — boards expect 'this was the Smiths 2018-2024,
+    // sold to the Joneses 2024-present' context, not just current owner.
+    // Last 5 owners surface by default per the release-gate spec
+    // (project_portal_release_gates.md). Most recent first.
+    const { data: ownershipHistory } = await supabase
+      .from('property_ownerships')
+      .select(`
+        id, start_date, end_date, vesting, is_primary, source,
+        contact:contact_id ( id, full_name, primary_email )
+      `)
+      .eq('property_id', propertyId)
+      .order('start_date', { ascending: false, nullsFirst: false })
+      .limit(5);
+
+    // Residency history — same pattern, mainly to show rental flips
+    const { data: residencyHistory } = await supabase
+      .from('property_residencies')
+      .select(`
+        id, start_date, end_date, residency_type, lease_end_date,
+        contact:contact_id ( id, full_name )
+      `)
+      .eq('property_id', propertyId)
+      .order('start_date', { ascending: false, nullsFirst: false })
+      .limit(5);
+
     res.json({
       summary,
       arc_decisions: arc || [],
       interactions: interactions || [],
       open_violations: openViolations || [],
       substrate_docs: docs || [],
+      ownership_history: ownershipHistory || [],
+      residency_history: residencyHistory || [],
     });
   } catch (err) {
     console.error('[board_portal] property detail failed:', err.message);

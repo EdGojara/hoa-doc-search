@@ -355,11 +355,55 @@
     const body = document.getElementById('drawerBody');
     body.innerHTML = `
       ${renderOverview(s)}
+      ${renderOwnershipHistory(j.ownership_history || [], j.residency_history || [])}
       ${renderOpenViolations(j.open_violations || [])}
       ${renderArcDecisions(j.arc_decisions || [])}
       ${renderInteractions(j.interactions || [])}
       ${renderDocs(j.substrate_docs || [])}
     `;
+  }
+
+  function renderOwnershipHistory(owners, residencies) {
+    if (!owners.length && !residencies.length) return '';
+    // Merge owners + residencies into a timeline. Owners are the canonical
+    // 'who owned this' record; residencies add the 'who actually lived here'
+    // when different (e.g., rental periods). For boards, the owner timeline
+    // is the main signal — surface that prominently; residency annotates.
+    return `
+      <div class="drawer-section">
+        <div class="drawer-section-title">Ownership history (${owners.length})</div>
+        ${owners.length ? owners.map((o) => {
+          const span = o.end_date
+            ? `${esc(fmtDate(o.start_date))} – ${esc(fmtDate(o.end_date))}`
+            : `${esc(fmtDate(o.start_date))} – present`;
+          const contact = (o.contact && o.contact.full_name) || '— unknown owner —';
+          return `
+            <div class="item">
+              <div class="item-head">
+                <span class="item-title">${esc(contact)}${o.is_primary ? ' (primary)' : ''}</span>
+                <span class="item-date">${span}</span>
+              </div>
+              <div class="item-body">${esc(o.vesting || 'individual')}${o.source ? ` · sourced ${esc(o.source)}` : ''}</div>
+            </div>`;
+        }).join('') : '<div class="item-body">No ownership records on file.</div>'}
+        ${residencies.length ? `
+          <div style="margin-top:12px; padding-top:10px; border-top:1px dashed var(--rule); font-size:11px; color:var(--ink-muted); font-weight:600; letter-spacing:0.06em; text-transform:uppercase;">Residency notes</div>
+          ${residencies.slice(0, 3).map((r) => {
+            const span = r.end_date
+              ? `${esc(fmtDate(r.start_date))} – ${esc(fmtDate(r.end_date))}`
+              : `${esc(fmtDate(r.start_date))} – present`;
+            const who = (r.contact && r.contact.full_name) || (r.residency_type === 'vacant' ? '— vacant —' : '— unknown —');
+            return `
+              <div class="item">
+                <div class="item-head">
+                  <span class="item-title">${esc(r.residency_type ? r.residency_type.replace(/_/g, ' ') : 'residency')}</span>
+                  <span class="item-date">${span}</span>
+                </div>
+                <div class="item-body">${esc(who)}${r.lease_end_date ? ` · lease ends ${esc(fmtDate(r.lease_end_date))}` : ''}</div>
+              </div>`;
+          }).join('')}
+        ` : ''}
+      </div>`;
   }
 
   function renderOverview(s) {
