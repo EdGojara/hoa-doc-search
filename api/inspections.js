@@ -1981,18 +1981,176 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       })
       .eq('id', obsId);
 
-    // Kick off letter generation. The Drafts queue picks it up automatically
-    // because /generate-letter creates the interaction row.
-    let letterResult = null;
+    // Render the PDF + insert the DRAFT interaction so the Drafts queue
+    // actually has something to show. Without this, the photo flips to
+    // "✓ Confirmed" but the Drafts queue stays empty — exactly the bug
+    // Ed flagged. Mirrors the auto-draft path in POST /photos so the
+    // letter looks identical regardless of which entry point opened it.
+    let letterResult = { error: 'letter not generated' };
     try {
-      const fetch = global.fetch || require('node-fetch');
-      // Call our own endpoint via a relative path on the same process —
-      // simpler than refactoring the letter generation into a callable.
-      // Use server.js's port if available; fall back to direct supabase work.
-      // For simplicity, fire-and-forget: the operator can also click
-      // 'Regenerate' from the Drafts queue if needed.
-      letterResult = { queued: true, note: 'Open the Drafts queue — letter generates inline on first preview/regenerate.' };
-    } catch (_) { /* no-op */ }
+      const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+
+      const { data: pRow } = await supabase
+        .from('v_current_property_owners')
+        .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
+        .eq('property_id', obs.property_id)
+        .maybeSingle();
+      const { data: catRow } = await supabase
+        .from('enforcement_categories')
+        .select('label, description')
+        .eq('id', obs.category_id)
+        .maybeSingle();
+      const { data: commRow } = await supabase
+        .from('communities')
+        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
+        .eq('id', obs.community_id)
+        .maybeSingle();
+
+      // Governing doc — manual override wins, else semantic-search the CC&Rs
+      let govDocForConfirm = null;
+      try {
+        const { data: prioRow } = await supabase
+          .from('community_enforcement_priorities')
+          .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
+          .eq('community_id', obs.community_id)
+          .eq('category_id', obs.category_id)
+          .is('end_date', null)
+          .maybeSingle();
+        if (prioRow && (prioRow.governing_doc_reference || prioRow.governing_doc_section_title || prioRow.governing_doc_quote)) {
+          govDocForConfirm = {
+            reference:     prioRow.governing_doc_reference,
+            section_title: prioRow.governing_doc_section_title,
+            quote:         prioRow.governing_doc_quote,
+            page:          prioRow.governing_doc_page,
+          };
+        }
+      } catch (_) {}
+      if (!govDocForConfirm) {
+        try {
+          const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
+          const auto = await lookupGoverningDoc({
+            communityId:         obs.community_id,
+            categoryLabel:       catRow && catRow.label,
+            categoryDescription: catRow && catRow.description,
+            aiDescription:       obs.ai_description,
+          });
+          if (auto) {
+            govDocForConfirm = {
+              reference:     auto.reference,
+              section_title: auto.section_title,
+              quote:         auto.quote,
+              page:          auto.page,
+            };
+          }
+        } catch (_) {}
+      }
+
+      // Pull the close-up photo for the letter
+      let photoBuffer = null;
+      try {
+        const { data: phRow } = await supabase
+          .from('property_observations')
+          .select('inspection_photos(storage_path, captured_at)')
+          .eq('id', obs.id)
+          .maybeSingle();
+        const sp = phRow && phRow.inspection_photos && phRow.inspection_photos.storage_path;
+        if (sp) {
+          const { data: dl } = await supabase.storage.from('documents').download(sp);
+          if (dl) photoBuffer = Buffer.from(await dl.arrayBuffer());
+        }
+      } catch (_) {}
+
+      const yearAgo = new Date(); yearAgo.setMonth(yearAgo.getMonth() - 12);
+      const { data: pv } = await supabase
+        .from('violations')
+        .select('opened_at, current_stage')
+        .eq('property_id', obs.property_id)
+        .eq('primary_category_id', obs.category_id)
+        .neq('id', violation.id)
+        .gte('opened_at', yearAgo.toISOString())
+        .order('opened_at', { ascending: false })
+        .limit(10);
+
+      const pdfBuffer = await renderViolationLetterPdf({
+        violation: {
+          id: violation.id,
+          current_stage: decision.stage,
+          cure_period_ends_at: cureEndsAt,
+          opened_at: new Date().toISOString(),
+          category_label: catRow && catRow.label,
+          category_description: catRow && catRow.description,
+          board_priority_at_open: priorityRow ? priorityRow.priority_weight : 'standard',
+        },
+        property: pRow ? {
+          street_address: pRow.street_address,
+          unit:           pRow.unit,
+          city:           pRow.city,
+          state:          pRow.state,
+          zip:            pRow.zip,
+          lot_number:     pRow.lot_number,
+        } : {},
+        owner: pRow ? {
+          full_name:       pRow.owner_name,
+          mailing_address: pRow.owner_mailing_address,
+        } : {},
+        community: {
+          name:       commRow && commRow.name,
+          legal_name: commRow && commRow.legal_name,
+          enforcement_authority_citation: commRow && commRow.enforcement_authority_citation,
+        },
+        observation: {
+          ai_description: obs.ai_description,
+          severity:       obs.severity,
+          captured_at:    new Date().toISOString(),
+        },
+        governing_doc:    govDocForConfirm,
+        prior_violations: pv || [],
+        photo_buffer:     photoBuffer,
+        options: {
+          sender_name:  (commRow && commRow.letter_sender_name)  || null,
+          sender_title: (commRow && commRow.letter_sender_title) || null,
+        },
+      });
+
+      const LETTERS_BUCKET = 'violation-letters';
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const letterPath = `${violation.id}/${decision.stage}-${stamp}.pdf`;
+      const { error: upErr } = await supabase.storage
+        .from(LETTERS_BUCKET)
+        .upload(letterPath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+      if (upErr && !/already exists|duplicate/i.test(upErr.message)) {
+        try {
+          await supabase.storage.createBucket(LETTERS_BUCKET, { public: false });
+          await supabase.storage.from(LETTERS_BUCKET).upload(letterPath, pdfBuffer, { contentType: 'application/pdf' });
+        } catch (_) {}
+      }
+
+      const stageToType = {
+        courtesy_1: 'letter_courtesy_1',
+        courtesy_2: 'letter_courtesy_2',
+        certified_209: 'letter_209',
+        fine_assessed: 'letter_209',
+      };
+      const { data: inter } = await supabase.from('interactions').insert({
+        community_id:    obs.community_id,
+        property_id:     obs.property_id,
+        violation_id:    violation.id,
+        observation_id:  obs.id,
+        type:            stageToType[decision.stage] || 'ai_draft',
+        direction:       'outbound',
+        subject:         `Violation letter (${decision.stage})`,
+        content:         letterPath,
+        delivery_method: (decision.mail_type === 'certified_mail') ? 'certified_mail' : 'first_class_mail',
+        status:          'draft',
+        ai_drafted:      true,
+        ai_model:        'reviewer_confirm',
+      }).select('id').single();
+
+      letterResult = { interaction_id: inter && inter.id, letter_path: letterPath };
+    } catch (letterErr) {
+      console.warn('[inspections.confirm] letter draft failed:', letterErr.message);
+      letterResult = { error: letterErr.message };
+    }
 
     res.json({
       ok: true,
