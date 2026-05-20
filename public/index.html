@@ -11948,16 +11948,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         ` : '';
         const closedActions = isClosed ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
-            <button type="button" onclick="inspReopen('${i.id}')"
+            <button type="button" onclick="inspResume('${i.id}')"
                     style="background: #fff; color: #1a3a5c; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                    title="Reopen this inspection (status returns to in_progress) so photos and observations can be added or edited again.">
-              🔓 Reopen
+                    title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
+              🔓 Reopen &amp; resume
             </button>
           </div>
         ` : '';
         const activeActions = (!isTerminal) ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${analyzeBtn}
+            <button type="button" onclick="inspResume('${i.id}')"
+                    style="background: #fff; color: #1a3a5c; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                    title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze, then Finalize when done.">
+              📷 Resume
+            </button>
             <button type="button" onclick="inspFinalize('${i.id}')"
                     style="background: var(--navy, #1A3050); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Mark this inspection as the permanent record (status: closed). It will stay visible here as 🔒 Finalized — staff can still Reopen if a correction is needed.">
@@ -12013,6 +12018,95 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspLoadRecent();
     } catch (e) {
       alert('Could not discard: ' + e.message);
+    }
+  }
+
+  // Resume a non-finalized inspection — re-hydrates inspState from the server,
+  // pulls back all existing photos with signed URLs, and switches the Inspect
+  // tab from the Start card to the active capture panel. After this, the
+  // operator can add photos, delete bad ones (× on each tile), retry Analyze,
+  // then 🔒 Finalize when corrections are done.
+  //
+  // If the inspection is currently 'closed' (finalized), this first flips
+  // status back to 'in_progress' so capture endpoints accept new photos.
+  async function inspResume(id) {
+    if (!id) return;
+    // If we already have a different session active, warn before stomping it.
+    if (inspState.sessionId && inspState.sessionId !== id) {
+      if (!confirm('Another inspection is currently active in this tab. Resume the older one anyway?\n\nThe current session will be saved as-is (photos already uploaded stay safe).')) return;
+    }
+    try {
+      const r = await fetch(`/api/inspections/${encodeURIComponent(id)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const insp = j.inspection;
+      if (!insp) throw new Error('inspection not found');
+
+      // If closed/voided, flip back to in_progress so the upload endpoints stop
+      // rejecting writes (POST /photos refuses status='closed'|'voided').
+      if (insp.status === 'closed' || insp.status === 'voided') {
+        const pr = await fetch(`/api/inspections/${encodeURIComponent(id)}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status: 'in_progress' }),
+        });
+        if (!pr.ok) {
+          const pj = await pr.json().catch(() => ({}));
+          throw new Error(pj.error || 'could not reopen inspection');
+        }
+      }
+
+      // Hydrate inspState
+      inspState.sessionId      = insp.id;
+      inspState.communityId    = insp.community_id;
+      inspState.mode           = insp.mode || inspState.mode;
+      inspState.photoCount     = (j.photos || []).length;
+      inspState.photos         = (j.photos || []).map((p) => ({ ...p, _local_preview: null }));
+      inspState.stagedWidePhotoId        = null;
+      inspState.stagedWidePreviewUrl     = null;
+      inspState.stagedWidePropertyHint   = null;
+      inspState.listLoaded               = false;
+      inspState.listData                 = null;
+
+      // Pull the community name (Recent endpoint joins it but detail might not).
+      let communityName = (insp.communities && insp.communities.name) || '';
+      if (!communityName) {
+        try {
+          const cr = await fetch(`/api/communities/${encodeURIComponent(insp.community_id)}`);
+          const cj = await cr.json();
+          communityName = (cj.community && cj.community.name) || '';
+        } catch (_) {}
+      }
+      inspState.communityName = communityName;
+
+      // Swap panels: hide Start, show Active capture
+      const startCard = document.getElementById('inspStartCard');
+      const activePanel = document.getElementById('inspActivePanel');
+      if (startCard) startCard.style.display = 'none';
+      if (activePanel) activePanel.style.display = 'block';
+
+      const commLbl = document.getElementById('inspSessionCommunity');
+      if (commLbl) commLbl.textContent = inspState.communityName;
+      const metaLbl = document.getElementById('inspSessionMeta');
+      if (metaLbl) {
+        const modeLabel = { foot: 'Foot', drive_by: 'Drive-by', resale: 'Resale', mounted_camera: 'Mounted camera', spot_check: 'Spot check' }[inspState.mode] || inspState.mode;
+        metaLbl.textContent = `${modeLabel}${insp.route_label ? ' · ' + insp.route_label : ''}  ·  resumed`;
+      }
+      const cntLbl = document.getElementById('inspPhotoCount');
+      if (cntLbl) cntLbl.textContent = inspState.photoCount;
+
+      inspRenderPhotos();
+      if (typeof inspUpdateCaptureUi === 'function') inspUpdateCaptureUi();
+      inspStartLocationWatch();
+      if (typeof inspStartUploader === 'function') inspStartUploader();
+      if (typeof inspUpdateQueueBadge === 'function') inspUpdateQueueBadge();
+      if (typeof inspStartObservationsPoll === 'function') inspStartObservationsPoll();
+      if (typeof inspSetView === 'function') inspSetView('list');
+
+      const panel = document.getElementById('inspActivePanel');
+      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      alert('Could not resume: ' + e.message);
     }
   }
 
