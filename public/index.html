@@ -10405,8 +10405,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const r = await fetch(`/api/inspections/${encodeURIComponent(inspState.sessionId)}/observations`);
       if (!r.ok) return;
       const j = await r.json();
+      const prevDraftCount = inspState._lastDraftCount || 0;
       inspState.observations = j.observations || [];
       inspRenderPhotos();   // re-render to attach status badges
+
+      // When a new auto-draft lands (observation.letter_status flips to 'draft'),
+      // refresh the Drafts queue card so the operator sees the actual letter
+      // without having to manually tap Refresh. Without this, the photo tile
+      // says "✓ Draft ready" but the Drafts queue card stays empty.
+      const draftCount = inspState.observations.filter((o) => o.letter_status === 'draft').length;
+      inspState._lastDraftCount = draftCount;
+      if (draftCount > prevDraftCount && typeof inspDraftsLoad === 'function') {
+        try { inspDraftsLoad(); } catch (_) {}
+      }
     } catch (_) {}
   }
   function inspStartObservationsPoll() {
