@@ -663,6 +663,12 @@ app.use('/api/board-portal', boardPortalRouter);
 const { router: ownerArRouter } = require('./api/owner_ar');
 app.use('/api/owner-ar', ownerArRouter);
 
+// Portal Admin — manage who has access to the board + homeowner portals
+// (project_portal_release_gates.md). Auth enforcement on the portals comes
+// in a follow-up commit; this admin layer is the input the auth needs.
+const { router: portalAdminRouter } = require('./api/portal_admin');
+app.use('/api/portal-admin', portalAdminRouter);
+
 // ACC applications — public submission + AI assessment + manager queue
 const { router: applicationsRouter } = require('./api/applications');
 app.use('/api/applications', applicationsRouter);
