@@ -8539,11 +8539,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <button id="inspCaptureBtn" onclick="inspTriggerCapture()"
                 style="width: 100%; padding: 22px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px;">
           <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
-          <span id="inspCaptureLabel">Capture wide shot</span>
+          <span id="inspCaptureLabel">Take photo</span>
         </button>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:10px;">
           <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; flex:1;">Tap once to enable GPS + compass for accurate tagging</div>
-          <a href="#" onclick="event.preventDefault(); inspTriggerCapture('single')" style="font-size: 10.5px; color: #64748b; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">Single shot</a>
+          <a href="#" onclick="event.preventDefault(); inspTriggerCapture('pair')" title="Wide shot first (identifies the house), then close-up — pair travels onto the letter as wrong-house insurance. Useful for §209 certified letters." style="font-size: 10.5px; color: #64748b; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">Pair shot (advanced)</a>
         </div>
       </div>
 
@@ -10106,18 +10106,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
-  // Capture-mode state machine:
-  //   stagedWidePhotoId === null → next tap captures a wide shot
-  //   stagedWidePhotoId !== null → next tap captures a close-up paired to it
-  //   inspNextCaptureOverride === 'single' → next tap is unpaired (escape hatch)
-  // Wide-shot establishes which house (wrong-house insurance). Close-ups
-  // document the issue (the evidence). They travel together onto the
-  // violation letter so a homeowner challenging the citation has nothing
-  // to argue with.
-  let inspNextCaptureOverride = null;
+  // Capture-mode state machine (simplified per Ed's "this module is hard" ask):
+  //   DEFAULT: every tap captures a single photo (AI runs inline, auto-draft fires)
+  //   PAIR MODE (opt-in via the "Pair shot" link): captures a wide shot
+  //     identifying the house, then a close-up paired to it for defensive
+  //     §209 documentation. Wrong-house challenges become harder to win.
+  // Most operators want the simple model — one tap, one photo, one draft.
+  // Pair mode stays available for high-stakes certified §209 letters.
+  let inspNextCaptureOverride = null; // 'pair_wide' | 'pair_closeup' | null
 
   function inspTriggerCapture(modeOverride) {
-    if (modeOverride === 'single') inspNextCaptureOverride = 'single';
+    // 'pair' kicks off the wide → close-up sequence. Subsequent taps stay
+    // in pair mode until the close-up lands or the user resets.
+    if (modeOverride === 'pair') inspNextCaptureOverride = 'pair_wide';
     // First tap on iOS also triggers the orientation permission request
     if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -10130,14 +10131,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   function inspResolveCaptureRole() {
-    if (inspNextCaptureOverride === 'single') {
-      inspNextCaptureOverride = null;
-      return { role: 'single', paired: null };
+    // Pair flow: wide first, then close-up linked to it
+    if (inspNextCaptureOverride === 'pair_wide') {
+      inspNextCaptureOverride = 'pair_closeup';
+      return { role: 'wide', paired: null };
     }
     if (inspState.stagedWidePhotoId) {
+      // Closing the pair
+      inspNextCaptureOverride = null;
       return { role: 'close_up', paired: inspState.stagedWidePhotoId };
     }
-    return { role: 'wide', paired: null };
+    // Default: single shot — AI + auto-draft fire on this one photo
+    return { role: 'single', paired: null };
   }
 
   function inspEndPropertyPair() {
@@ -10175,7 +10180,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           : 'Wide shot for this property';
       }
     } else {
-      label.textContent = 'Capture wide shot';
+      label.textContent = 'Take photo';
       icon.textContent = '📸';
       chip.style.display = 'none';
     }
