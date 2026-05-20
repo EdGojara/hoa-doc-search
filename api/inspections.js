@@ -584,6 +584,71 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
 });
 
 // ---------------------------------------------------------------------------
+// DELETE /api/inspections/photos/:id — remove a wrongly-captured photo
+// Hard-deletes from inspection_photos + linked property_observations + storage.
+// Rejects if the parent inspection has been closed/voided (audit hygiene).
+// ---------------------------------------------------------------------------
+router.delete('/inspections/photos/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: photo, error: phErr } = await supabase
+      .from('inspection_photos')
+      .select('id, inspection_id, storage_path, paired_wide_photo_id')
+      .eq('id', id)
+      .single();
+    if (phErr || !photo) return res.status(404).json({ error: 'photo not found' });
+
+    const { data: insp, error: inspErr } = await supabase
+      .from('inspections')
+      .select('id, status, total_photos')
+      .eq('id', photo.inspection_id)
+      .single();
+    if (inspErr || !insp) return res.status(404).json({ error: 'inspection not found' });
+    if (insp.status === 'closed' || insp.status === 'voided') {
+      return res.status(409).json({ error: 'inspection is closed — cannot delete photos' });
+    }
+
+    // Any close-up paired to THIS photo (if this is a wide) needs the pair
+    // pointer cleared so the close-up doesn't dangle.
+    try {
+      await supabase
+        .from('inspection_photos')
+        .update({ paired_wide_photo_id: null })
+        .eq('paired_wide_photo_id', id);
+    } catch (_) {}
+
+    // Delete any property_observations rows tied to this photo. If a draft
+    // letter has already been generated, the underlying violations row stays
+    // (it has its own lifecycle); the observation evidence link drops.
+    try {
+      await supabase.from('property_observations').delete().eq('inspection_photo_id', id);
+    } catch (_) {}
+
+    // Delete the photo row
+    const { error: delErr } = await supabase.from('inspection_photos').delete().eq('id', id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    // Delete the storage object (best-effort — don't fail the request if storage
+    // delete trips; the row is already gone so the orphan is fine)
+    if (photo.storage_path) {
+      try { await supabase.storage.from('documents').remove([photo.storage_path]); } catch (_) {}
+    }
+
+    // Decrement counter (floor at 0)
+    const nextCount = Math.max(0, (insp.total_photos || 0) - 1);
+    await supabase
+      .from('inspections')
+      .update({ total_photos: nextCount, updated_at: new Date().toISOString() })
+      .eq('id', photo.inspection_id);
+
+    res.json({ ok: true, deleted_photo_id: id, total_photos: nextCount });
+  } catch (err) {
+    console.error('[inspections.delete-photo]', err);
+    res.status(500).json({ error: err.message || 'failed to delete photo' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/recent — list recent inspections (optional ?community_id=&limit=)
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------

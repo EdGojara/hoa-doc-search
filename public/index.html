@@ -10597,15 +10597,62 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#D4AF37; color:#1a3a5c; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🔍 ISSUE</div>`;
       }
       const pairedBorder = p.paired_wide_photo_id ? 'border: 2px solid #D4AF37;' : '';
+      const photoKey = String(p.id || '');
       return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9; ${pairedBorder}">
         ${imgHtml}
         ${roleChip}
-        <!-- Top-right time stamp -->
-        <div style="position:absolute; top:5px; right:6px; padding:2px 6px; background:rgba(15,23,42,0.65); color:#fff; font-size:10px; font-weight:600; border-radius:99px;">${time}</div>
+        <!-- Delete (×) — top-right corner, above the time chip -->
+        <button type="button"
+                onclick="inspDeletePhoto('${photoKey}')"
+                title="Delete this photo"
+                style="position:absolute; top:5px; right:6px; width:22px; height:22px; padding:0; line-height:1; border:none; border-radius:50%; background:rgba(220,38,38,0.92); color:#fff; font-size:14px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 1px 3px rgba(0,0,0,0.35);">×</button>
+        <!-- Time stamp — moved to top-left under the role chip (or top-left if no chip) -->
+        <div style="position:absolute; ${roleChip ? 'top:30px' : 'top:5px'}; left:6px; padding:2px 6px; background:rgba(15,23,42,0.65); color:#fff; font-size:10px; font-weight:600; border-radius:99px;">${time}</div>
         <!-- Bottom status overlay -->
         <div style="position:absolute; left:0; right:0; bottom:0; padding:5px 6px; background:${status.bg}; color:${status.color}; font-size:10.5px; font-weight:700; text-align:center; letter-spacing:0.02em;">${status.label}</div>
       </div>`;
     }).join('');
+  }
+
+  // Delete a photo from the current inspection (or from the local upload queue
+  // if it hasn't reached the server yet). Confirms before deleting.
+  async function inspDeletePhoto(photoId) {
+    if (!photoId) return;
+    if (!confirm('Delete this photo? This can\'t be undone.')) return;
+
+    const idx = inspState.photos.findIndex((p) => String(p.id) === String(photoId));
+    if (idx < 0) return;
+    const photo = inspState.photos[idx];
+
+    // Local-queue photo (not yet uploaded) — yank it from IndexedDB
+    if (typeof photoId === 'string' && photoId.startsWith('queue-')) {
+      const queueId = Number(photoId.slice(6));
+      try { await inspQueueRemove(queueId); } catch (_) {}
+      try { if (photo._local_preview) URL.revokeObjectURL(photo._local_preview); } catch (_) {}
+      inspState.photos.splice(idx, 1);
+      inspState.photoCount = Math.max(0, inspState.photoCount - 1);
+      const cnt = document.getElementById('inspPhotoCount'); if (cnt) cnt.textContent = inspState.photoCount;
+      inspRenderPhotos();
+      inspUpdateQueueBadge();
+      return;
+    }
+
+    // Server-side delete
+    try {
+      const r = await fetch(`/api/inspections/photos/${encodeURIComponent(photoId)}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Could not delete photo: ' + (j.error || ('HTTP ' + r.status)));
+        return;
+      }
+      try { if (photo._local_preview) URL.revokeObjectURL(photo._local_preview); } catch (_) {}
+      inspState.photos.splice(idx, 1);
+      inspState.photoCount = Math.max(0, inspState.photoCount - 1);
+      const cnt = document.getElementById('inspPhotoCount'); if (cnt) cnt.textContent = inspState.photoCount;
+      inspRenderPhotos();
+    } catch (e) {
+      alert('Delete failed: ' + (e.message || e));
+    }
   }
 
   async function inspEndSession() {
