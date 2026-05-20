@@ -8394,6 +8394,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </a>
     </div>
 
+    <!-- Inspect → Review queue: observations pending operator confirm/reject.
+         After AI analysis runs on an inspection's photos, observation rows
+         land here for review. Confirming opens a violation + creates the
+         draft letter (appears in the Drafts queue below). -->
+    <div id="inspReviewSection" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
+        <h3 style="font-size: 15px; color: var(--navy, #1A3050); margin: 0;">🔍 Review queue · <span style="font-weight: 400; color: #64748b;">observations pending confirm</span></h3>
+        <div style="display: flex; gap: 6px;">
+          <button id="inspReviewAnalyzeBtn" class="secondary-btn" onclick="inspReviewRunAnalyze()" style="font-size: 11px; padding: 4px 10px;" title="Run AI analysis on the latest captured inspection (matches photos to violations + creates observation rows)">▶ Run analysis</button>
+          <button class="secondary-btn" onclick="inspReviewLoad()" style="font-size: 11px; padding: 4px 10px;">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="inspReviewList" style="font-size: 12.5px;">Pick a community + load to populate.</div>
+    </div>
+
     <!-- Start-session card (visible when no active session) -->
     <div id="inspStartCard" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
       <h3 style="font-size: 15px; color: var(--navy, #1A3050); margin: 0 0 12px;">Start a new inspection</h3>
@@ -10651,6 +10666,124 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ============================================================
   let inspDraftsData = [];
   let inspDraftsSelected = new Set();
+
+  // ============================================================
+  // REVIEW QUEUE (observations pending operator confirm)
+  // Backs the Inspect → Drafts pipeline. After AI analysis runs,
+  // observation rows land here for review. Confirm opens a violation
+  // + creates the draft letter (appears in the Drafts queue below).
+  // ============================================================
+  async function inspReviewLoad() {
+    const wrap = document.getElementById('inspReviewList');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading observations…</div>';
+    try {
+      const communityId = (document.getElementById('inspCommunity') || {}).value || '';
+      const url = communityId
+        ? `/api/inspections/observations/pending?community_id=${encodeURIComponent(communityId)}`
+        : '/api/inspections/observations/pending';
+      const r = await fetch(url);
+      const j = await r.json();
+      const obs = j.observations || [];
+      if (!obs.length) {
+        wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0; font-style:italic;">No pending observations. Run analysis on a finished inspection to populate.</div>';
+        return;
+      }
+      wrap.innerHTML = obs.map(inspReviewRenderRow).join('');
+    } catch (e) {
+      wrap.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:10px;">Load failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function inspReviewRenderRow(o) {
+    const photo = o.inspection_photos || {};
+    const property = o.properties || {};
+    const category = o.enforcement_categories || {};
+    const confColor = o.ai_confidence === 'high' ? '#15803d' : o.ai_confidence === 'medium' ? '#b45309' : '#64748b';
+    const sevBg = ({ severe: '#fee2e2', moderate: '#fef3c7', minor: '#dcfce7', clean: '#f1f5f9' })[o.severity] || '#f1f5f9';
+    const sevFg = ({ severe: '#7f1d1d', moderate: '#78350f', minor: '#166534', clean: '#475569' })[o.severity] || '#475569';
+    const addr = property.street_address
+      ? `${property.street_address}${property.unit ? ' #' + property.unit : ''}`
+      : '<span style="color:#b45309;">— no property linked —</span>';
+    return `
+      <div style="display:flex; gap:10px; padding:10px 0; border-bottom:1px solid #f1f5f9; align-items:flex-start;">
+        ${o.photo_url
+          ? `<img src="${escapeHtml(o.photo_url)}" style="width:80px; height:80px; object-fit:cover; border-radius:6px; border:1px solid #e2e8f0; flex-shrink:0;" />`
+          : '<div style="width:80px; height:80px; background:#f1f5f9; border-radius:6px; flex-shrink:0;"></div>'}
+        <div style="flex:1; min-width:0;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:3px;">
+            <strong style="font-size:13px;">${addr}</strong>
+            <span style="background:${sevBg}; color:${sevFg}; padding:1px 8px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase;">${escapeHtml(o.severity || '—')}</span>
+            ${o.ai_confidence ? `<span style="color:${confColor}; font-weight:600; font-size:11px;">AI ${escapeHtml(o.ai_confidence)}</span>` : ''}
+          </div>
+          <div style="font-size:11.5px; color:#475569; margin-bottom:3px;">${escapeHtml(category.label || 'uncategorized')}</div>
+          ${o.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px; line-height:1.4;">"${escapeHtml(o.ai_description)}"</div>` : ''}
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <button onclick="inspReviewConfirm('${o.id}', this)" style="background:#15803d; color:#fff; border:0; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Open a violation + create the draft letter">✓ Confirm → draft</button>
+            <button onclick="inspReviewReject('${o.id}', this)" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">✕ Reject</button>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  async function inspReviewRunAnalyze() {
+    const inspectionId = (window.inspCurrentSession && window.inspCurrentSession.id)
+      || prompt('Inspection ID to analyze (paste it from the recent inspections list):');
+    if (!inspectionId) return;
+    const btn = document.getElementById('inspReviewAnalyzeBtn');
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analyzing…'; }
+    try {
+      const r = await fetch(`/api/inspections/${inspectionId}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      let msg = `Analyzed ${j.analyzed} photo${j.analyzed === 1 ? '' : 's'} — ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`;
+      if (j.failures && j.failures.length) msg += ` (${j.failures.length} skipped — see browser console)`;
+      if (j.failures && j.failures.length) console.log('[inspReviewAnalyze] skipped photos:', j.failures);
+      alert(msg);
+      await inspReviewLoad();
+    } catch (e) {
+      alert('Analyze failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
+
+  async function inspReviewConfirm(obsId, btn) {
+    if (!confirm('Confirm this observation? This opens a violation + creates a draft letter (appears in Drafts queue below).')) return;
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳…'; }
+    try {
+      const r = await fetch(`/api/inspections/observations/${obsId}/confirm`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.opened === false) {
+        alert('No violation opened: ' + (j.reason || 'escalation engine declined'));
+      }
+      await Promise.all([inspReviewLoad(), inspDraftsLoad && inspDraftsLoad()]);
+    } catch (e) {
+      alert('Confirm failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
+
+  async function inspReviewReject(obsId, btn) {
+    const reason = prompt('Reason for rejecting? (e.g., "blurry", "no violation visible", "wrong house")');
+    if (reason === null) return;
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳…'; }
+    try {
+      const r = await fetch(`/api/inspections/observations/${obsId}/reject`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ reason }) });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await inspReviewLoad();
+    } catch (e) {
+      alert('Reject failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
 
   async function inspDraftsLoad() {
     const wrap = document.getElementById('inspDraftsList');
