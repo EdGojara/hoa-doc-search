@@ -352,6 +352,11 @@
   <!-- Consolidated ACC tab — Review / Requests / History as sub-views, switched
        via the mode picker inside the active view. -->
   <div class="tab" onclick="setAccMode('review')" data-acc-tab="1">🏗️ ACC</div>
+  <!-- Inspect — mobile-first capture flow for community walkthroughs.
+       Positioned between ACC and Vendor: ACC and Inspect both feed the
+       enforcement workflow (covenant approvals + walkthrough findings),
+       so they sit adjacent. -->
+  <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
   <!-- Community-wide reference data — Profile, Homes & Owners, Board Roster.
@@ -370,8 +375,7 @@
   <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
        tabs. Both are now modes inside the consolidated 🏗️ ACC tab above.
        Order: Review → Requests → History (act, see queue, reference). -->
-  <!-- Inspect — mobile-first capture flow for community walkthroughs. -->
-  <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
+  <!-- Inspect tab moved up next to ACC (above) — both feed enforcement. -->
   <!-- Owner Receivables — Vantaca AR ingest + portfolio at-legal view. -->
   <div class="tab" onclick="switchTab('ownerar')">💵 Owner AR</div>
   <!-- Portal Users — manage board + homeowner portal access. The 'Open ↗'
