@@ -1665,6 +1665,16 @@ router.get('/inspections/:id/photos-needing-link', async (req, res) => {
   try {
     const inspectionId = req.params.id;
 
+    // Pull the inspection's community so the front-end can populate its
+    // property dropdown for the rescuer UI.
+    const { data: insp } = await supabase
+      .from('inspections')
+      .select('community_id, communities(name)')
+      .eq('id', inspectionId)
+      .maybeSingle();
+    const communityId = insp && insp.community_id;
+    const communityName = insp && insp.communities && insp.communities.name;
+
     const { data: photos, error: pErr } = await supabase
       .from('inspection_photos')
       .select('id, storage_path, captured_at, gps_lat, gps_lng, compass_heading_deg, ai_detected_house_number, polygon_match_property_id, reviewer_confirmed_property_id, photo_role')
@@ -1673,7 +1683,7 @@ router.get('/inspections/:id/photos-needing-link', async (req, res) => {
       .order('captured_at', { ascending: true });
     if (pErr) return res.status(500).json({ error: pErr.message });
 
-    if (!photos || photos.length === 0) return res.json({ photos: [] });
+    if (!photos || photos.length === 0) return res.json({ photos: [], community_id: communityId, community_name: communityName });
 
     // Filter out photos that ALREADY have a property OR an observation
     const photoIds = photos.map((p) => p.id);
@@ -1699,7 +1709,7 @@ router.get('/inspections/:id/photos-needing-link', async (req, res) => {
       return { ...p, photo_url };
     }));
 
-    res.json({ photos: withUrls });
+    res.json({ photos: withUrls, community_id: communityId, community_name: communityName });
   } catch (err) {
     console.error('[inspections.photos-needing-link]', err);
     res.status(500).json({ error: err.message || 'failed' });
