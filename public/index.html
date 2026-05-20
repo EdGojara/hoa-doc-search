@@ -4459,6 +4459,21 @@
       <div id="docs-reindex-status" style="margin-top:10px; font-size:12.5px;"></div>
     </div>
 
+    <!-- One-shot admin: connect historical knowledge silos to property/contact spine.
+         Runs the entity-resolution backfill against arc_historical_decisions
+         and email_intake. Idempotent — safe to re-run after Vantaca sync
+         adds new properties/contacts. -->
+    <div class="panel" style="margin-bottom: 16px; border-left: 3px solid #d4af37;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h3 style="margin:0;">🔗 Connect history to property + homeowner records</h3>
+        <button class="action-btn" id="entityBackfillBtn" onclick="runEntityBackfill()" style="font-size:12px; padding:6px 14px;">▶ Run backfill</button>
+      </div>
+      <p style="font-size:12.5px; color:#666; margin:0 0 8px 0;">
+        Walks every ARC decision and ingested email, matches the address + homeowner name to the property/contact spine. After this runs, the system can answer "show me everything about 123 Forest Lane" — across decisions, emails, future inspections — in one query. Idempotent. Re-run after Vantaca syncs new properties.
+      </p>
+      <div id="entity-backfill-status" style="margin-top:8px; font-size:12.5px;"></div>
+    </div>
+
     <!-- Natural language search -->
     <div class="panel" style="margin-bottom: 16px;">
       <h3 style="margin-top:0;">🔍 Find a document</h3>
@@ -16587,6 +16602,87 @@ ${questionsPage}
   // Render's 100s timeout); we keep calling with rising offset until done.
   // Status line ticks up live so Ed can see real progress instead of staring
   // at "Working..." for 10 minutes.
+  // Entity-graph backfill — walks every ARC decision + email_intake row,
+  // resolves the text address/name fields to properties.id + contacts.id,
+  // mirrors the FKs onto the substrate parent. Idempotent — safe to
+  // re-run after Vantaca sync adds new properties/contacts.
+  async function runEntityBackfill() {
+    const btn = document.getElementById('entityBackfillBtn');
+    const status = document.getElementById('entity-backfill-status');
+    if (!confirm('Run the entity-graph backfill? Walks every ARC decision + email through the address/name resolver and links them to your properties + contacts. Takes 1-5 minutes depending on how much history you have. Idempotent.')) return;
+    btn.disabled = true;
+    btn.textContent = '⏳ Running…';
+
+    const totals = {
+      arc:  { processed: 0, matched_property: 0, matched_contact: 0, unmatched_property: 0, unmatched_contact: 0, ambiguous: 0, total: 0 },
+      email:{ processed: 0, matched_property: 0, matched_contact: 0, unmatched_property: 0, unmatched_contact: 0, ambiguous: 0, total: 0 },
+    };
+
+    function render(stage) {
+      status.innerHTML = `
+        <div style="padding:10px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; line-height:1.6;">
+          <div><strong>${escapeHtml(stage)}</strong></div>
+          <div style="margin-top:6px;">ARC decisions: ${totals.arc.processed} / ${totals.arc.total || '?'} processed
+            · ${totals.arc.matched_property} property-matched
+            · ${totals.arc.matched_contact} contact-matched
+            ${totals.arc.unmatched_property + totals.arc.unmatched_contact > 0 ? `· ${totals.arc.unmatched_property + totals.arc.unmatched_contact} unmatched` : ''}
+          </div>
+          <div>Emails: ${totals.email.processed} / ${totals.email.total || '?'} processed
+            · ${totals.email.matched_property} property-matched
+            · ${totals.email.matched_contact} contact-matched
+            ${totals.email.unmatched_property + totals.email.unmatched_contact > 0 ? `· ${totals.email.unmatched_property + totals.email.unmatched_contact} unmatched` : ''}
+          </div>
+        </div>`;
+    }
+
+    async function drainEndpoint(url, t) {
+      let offset = 0;
+      while (true) {
+        let res, j;
+        try {
+          res = await fetch(`${url}?offset=${offset}&limit=50`, { method: 'POST' });
+          j = await res.json();
+        } catch (e) {
+          throw new Error('network error at offset=' + offset + ': ' + e.message);
+        }
+        if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+        t.total = j.queue_total || t.total;
+        t.processed         += j.processed_this_batch || 0;
+        t.matched_property  += j.indexed_property      || 0;
+        t.matched_contact   += j.indexed_contact       || 0;
+        t.unmatched_property+= j.unmatched_property    || 0;
+        t.unmatched_contact += j.unmatched_contact     || 0;
+        t.ambiguous         += j.ambiguous_contact     || 0;
+        render(j.done ? 'Finalizing…' : 'Running…');
+        if (j.done) break;
+        offset = j.next_offset;
+        await new Promise((r) => setTimeout(r, 200));
+      }
+    }
+
+    try {
+      render('Starting ARC decisions…');
+      await drainEndpoint('/api/arc-history/backfill-entities', totals.arc);
+      render('Starting emails…');
+      await drainEndpoint('/api/email-intelligence/backfill-entities', totals.email);
+      const summary = `
+        <strong>Done.</strong>
+        ARC: ${totals.arc.matched_property + totals.arc.matched_contact} matches across ${totals.arc.processed} rows.
+        Emails: ${totals.email.matched_property + totals.email.matched_contact} matches across ${totals.email.processed} rows.
+        ${(totals.arc.unmatched_property + totals.arc.unmatched_contact + totals.email.unmatched_property + totals.email.unmatched_contact) > 0
+          ? `<br><span style="font-size:11.5px; color:#6B7280;">Unmatched rows are normal — they're addresses/names that don't appear in your properties/contacts tables yet. They'll resolve on the next run after Vantaca sync adds them.</span>` : ''}`;
+      status.innerHTML = `
+        <div style="padding:10px 12px; background:#dcfce7; border-left:3px solid #15803d; border-radius:0 6px 6px 0; line-height:1.6;">
+          ${summary}
+        </div>`;
+    } catch (e) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; line-height:1.5;"><strong>Backfill stopped:</strong> ${escapeHtml(e.message)}<br><span style="font-size:11.5px; color:#6B7280;">Click the button again to resume — the endpoint is idempotent.</span></div>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '▶ Run backfill';
+    }
+  }
+
   async function docsReindexAll() {
     const btn = document.getElementById('docsReindexBtn');
     const status = document.getElementById('docs-reindex-status');
