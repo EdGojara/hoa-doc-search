@@ -107,13 +107,13 @@
 
     /* ============ PROPERTY DETAIL DRAWER ============ */
     .drawer-backdrop {
-      position: fixed; inset: 0; background: rgba(11,20,36,0.5); z-index: 200;
+      position: fixed; inset: 0; background: rgba(11,20,36,0.5); z-index: 1000;
       opacity: 0; pointer-events: none; transition: opacity 200ms;
     }
     .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
     .drawer {
       position: fixed; top: 0; right: 0; bottom: 0; width: 90%; max-width: 540px;
-      background: var(--paper); z-index: 201; box-shadow: -4px 0 24px rgba(11,20,36,0.18);
+      background: var(--paper); z-index: 1001; box-shadow: -4px 0 24px rgba(11,20,36,0.18);
       transform: translateX(100%); transition: transform 220ms cubic-bezier(.2,.8,.3,1);
       overflow-y: auto; overscroll-behavior: contain;
     }
@@ -247,7 +247,7 @@
     try {
       const [summary, props] = await Promise.all([
         fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/summary`),
-        fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/properties?${currentFilter === 'open_only' ? 'open_only=1&' : ''}order_by=open_violations_desc&limit=500`),
+        fetchJSON(`/api/board-portal/community/${encodeURIComponent(currentCommunityId)}/properties?${currentFilter === 'open_only' ? 'open_only=1&' : ''}order_by=open_violations_desc&limit=2000`),
       ]);
       wrap.innerHTML = `
         ${renderSummary(summary)}
