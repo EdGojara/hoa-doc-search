@@ -87,6 +87,111 @@ const RECAP_MODEL = 'claude-sonnet-4-6';
 const router = express.Router();
 
 // ============================================================================
+// UNIFIED SUBSTRATE WRITES — keep emails askEd-visible alongside library docs.
+// Per project_unified_architecture.md / feedback_no_new_silos.md, every email
+// that gets a usable embedding lands in knowledge_documents + knowledge_chunks
+// with source_type='email'. The email_intake table stays — its embedding
+// continues to power dedup (legitimate feature-local exception). This helper
+// writes the SAME content into the substrate so match_knowledge_chunks finds
+// it. Idempotent: re-writes update the existing parent on re-extract.
+// Access default is staff_internal — the board portal will not surface
+// emails unless an explicit operator action re-tags them.
+// ============================================================================
+async function upsertEmailIntoSubstrate(intake) {
+  if (!intake || !intake.id) return null;
+  // Skip rows that have no useful retrieval signal
+  if (!intake.embedding || !intake.raw_content) return null;
+  if (intake.extraction_status === 'error') return null;
+
+  const title = (intake.subject && intake.subject.trim())
+    || String(intake.raw_content).replace(/\s+/g, ' ').slice(0, 80).trim()
+    || 'Email (no subject)';
+
+  const notes = [intake.sender_hint, intake.source].filter((x) => x && String(x).trim()).join(' · ') || null;
+  const status = intake.extraction_status === 'superseded' ? 'superseded' : 'active';
+
+  try {
+    // Look up existing parent — idempotency for re-extract / re-edit flows.
+    const { data: existing } = await supabase
+      .from('knowledge_documents')
+      .select('id')
+      .eq('source_type', 'email')
+      .eq('source_record_id', intake.id)
+      .maybeSingle();
+
+    let parentId = existing && existing.id;
+    if (parentId) {
+      await supabase
+        .from('knowledge_documents')
+        .update({
+          title,
+          community_id: intake.community_id || null,
+          status,
+          notes,
+          chunk_count: 1,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', parentId);
+    } else {
+      const { data: newParent, error: parentErr } = await supabase
+        .from('knowledge_documents')
+        .insert({
+          management_company_id: intake.management_company_id || BEDROCK_MGMT_CO_ID,
+          title,
+          source_type: 'email',
+          community_id: intake.community_id || null,
+          source_record_id: intake.id,
+          status,
+          ingested_at: intake.ingested_at || new Date().toISOString(),
+          model_version: 'text-embedding-ada-002@v1',
+          access_level: 'staff_internal',
+          notes,
+          chunk_count: 1,
+        })
+        .select('id')
+        .single();
+      if (parentErr) throw parentErr;
+      parentId = newParent.id;
+    }
+
+    // Wipe + reinsert the single chunk so text/embedding stay in sync with
+    // the email_intake row through edits.
+    await supabase.from('knowledge_chunks').delete().eq('document_id', parentId);
+    const { error: chunkErr } = await supabase.from('knowledge_chunks').insert({
+      document_id:   parentId,
+      chunk_index:   0,
+      text:          intake.raw_content,
+      embedding:     intake.embedding,
+      model_version: 'text-embedding-ada-002@v1',
+    });
+    if (chunkErr) throw chunkErr;
+
+    return parentId;
+  } catch (e) {
+    console.warn('[email-intake] substrate upsert failed (non-fatal):', e.message);
+    return null;
+  }
+}
+
+// When a new email supersedes an old one, mark the old substrate parent
+// 'superseded' so askEd stops returning it as a live result.
+async function markEmailSupersededInSubstrate(supersededIntakeId, supersedingIntakeId) {
+  try {
+    await supabase
+      .from('knowledge_documents')
+      .update({ status: 'superseded', superseded_by_id: null /* see note */, updated_at: new Date().toISOString() })
+      .eq('source_type', 'email')
+      .eq('source_record_id', supersededIntakeId);
+    // Note: superseded_by_id on knowledge_documents takes a knowledge_documents.id.
+    // We could look up the superseding email's parent and link it, but that
+    // adds a query for a non-critical audit field. Skipping for now —
+    // status='superseded' is the load-bearing part for retrieval filtering.
+  } catch (e) {
+    console.warn('[email-intake] substrate supersede mark failed (non-fatal):', e.message);
+  }
+}
+
+// ============================================================================
 // EXTRACTION — the AI prompt + response parsing
 // ============================================================================
 
@@ -368,6 +473,14 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       .select()
       .single();
 
+    // Dual-write into the unified knowledge substrate so askEd can retrieve
+    // this email alongside library docs. Non-fatal if it fails — the
+    // email_intake row is the source of truth; substrate is a derived index.
+    await upsertEmailIntoSubstrate(updated || intake);
+    if (supersedesId) {
+      await markEmailSupersededInSubstrate(supersedesId, intake.id);
+    }
+
     res.status(201).json({
       intake: updated,
       supersedes: supersedesId ? { id: supersedesId } : null
@@ -409,6 +522,10 @@ router.post('/:id/re-extract', async (req, res) => {
       .eq('id', id)
       .select()
       .single();
+
+    // Keep the unified substrate in sync after re-extract (title may have
+    // changed, status may have flipped from error → extracted, etc.).
+    await upsertEmailIntoSubstrate(updated || intake);
 
     res.json({ intake: updated });
   } catch (err) {
