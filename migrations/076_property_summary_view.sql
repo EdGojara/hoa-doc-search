@@ -97,13 +97,16 @@ WITH
       AND status = 'active'
     GROUP BY property_id
   ),
-  -- Most recent inspection per property
+  -- Most recent inspection observation per property. NB: inspections is the
+  -- route/session record (community-scoped, no property_id). The per-property
+  -- inspection findings live in property_observations — that's where the
+  -- "when was this house last observed" signal actually lives.
   inspection_rollup AS (
     SELECT
       property_id,
       COUNT(*)::int                                            AS inspections_count,
-      MAX(inspected_at)                                        AS last_inspected_at
-    FROM inspections
+      MAX(created_at)                                          AS last_inspected_at
+    FROM property_observations
     WHERE property_id IS NOT NULL
     GROUP BY property_id
   )
