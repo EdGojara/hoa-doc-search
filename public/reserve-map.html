@@ -855,11 +855,15 @@ async function onCommunityChange() {
 // Map render
 // =============================================================================
 function renderMap(data) {
-  // Pick center
+  // Pick center — API now cascades boundary → amenity → component centroid.
+  // Only fall back to first-component-with-coords or Houston if API returned nothing.
+  const firstPinned = allComponents.find(c => c.lat != null && c.lng != null);
   const center = data.center
-    || (allComponents.find(c => c.lat && c.lng)
-        ? { lat: Number(allComponents.find(c => c.lat && c.lng).lat), lng: Number(allComponents.find(c => c.lat && c.lng).lng) }
-        : { lat: 29.7604, lng: -95.3698 });
+    || (firstPinned ? { lat: Number(firstPinned.lat), lng: Number(firstPinned.lng) } : null)
+    || { lat: 29.7604, lng: -95.3698 };
+  const initialZoom = data.center
+    ? (data.center_source === 'boundary' ? 16 : 17)   // tighter when we have an amenity anchor
+    : (firstPinned ? 17 : 11);                          // wider when we have no real signal
 
   // Initialize or reset map
   if (map) {
@@ -869,7 +873,7 @@ function renderMap(data) {
   mapMarkers = [];
 
   map = L.map('mapEl', { zoomControl: true, attributionControl: true })
-    .setView([center.lat, center.lng], 16);
+    .setView([center.lat, center.lng], initialZoom);
 
   // Build base layers and apply the current mode (default: hybrid satellite + labels)
   tileLayers = buildTileLayers();

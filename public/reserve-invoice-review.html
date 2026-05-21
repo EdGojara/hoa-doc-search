@@ -226,7 +226,7 @@
 
   <div class="new-invoice">
     <h2>Log a reserve <em>invoice</em></h2>
-    <p class="lede">Drop in a vendor invoice. We'll suggest the reserve component it belongs to. Confirm with one click → the expenditure gets recorded and the component rolls forward.</p>
+    <p class="lede">Only stage <strong>reserve-eligible</strong> invoices here — pool replasters, asphalt sealcoat, fence replacements, roof work, etc. Operating maintenance (pool chemicals, monthly landscaping, routine HVAC service) stays in AP. We'll suggest the matching reserve component; confirm with one click and the expenditure logs + rolls the component forward.</p>
 
     <div class="grid">
       <div class="field">
@@ -442,7 +442,7 @@ function renderQueue() {
           <option value="other">Other</option>
         </select>
         <button class="btn-confirm" data-intake="${intake.id}">Confirm match</button>
-        <button class="btn-dismiss" data-intake="${intake.id}">Dismiss</button>
+        <button class="btn-dismiss" data-intake="${intake.id}">Not a reserve item</button>
       </div>
     `;
     q.appendChild(card);
@@ -510,20 +510,68 @@ async function confirmMatch(intakeId, card) {
 }
 
 async function dismissIntake(intakeId) {
-  if (!confirm('Dismiss this invoice? It won\'t appear in the queue again.')) return;
+  // Categorized reason — not all invoices are reserve expenses; some are
+  // operating maintenance. Capturing why keeps an audit trail.
+  const reason = await pickDismissReason();
+  if (!reason) return; // user cancelled
   try {
     const r = await fetch(`/api/reserve-studies/invoices/${intakeId}/dismiss`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ reason: 'not_a_reserve_item' }),
+      body: JSON.stringify({ reason }),
     });
     const result = await r.json();
     if (!result.ok) { toast(result.error || 'Dismiss failed', 'error'); return; }
-    toast('Dismissed.', 'success');
+    toast('Removed from reserve queue (' + reason.replace(/_/g, ' ') + ').', 'success');
     await loadQueue();
   } catch (err) {
     toast('Dismiss failed: ' + err.message, 'error');
   }
+}
+
+// Small custom prompt — pick from canned reasons; "other" opens a free-text input
+function pickDismissReason() {
+  return new Promise(resolve => {
+    const backdrop = document.createElement('div');
+    backdrop.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; display:flex; align-items:center; justify-content:center;';
+    backdrop.innerHTML = `
+      <div style="background:var(--navy-soft); border:1px solid var(--rule-strong); border-radius:10px; padding:24px 26px; max-width:420px; width:90%;">
+        <h3 style="margin:0 0 6px; font-family:var(--font-serif); color:var(--ink); font-size:18px;">Why remove from reserve queue?</h3>
+        <p style="font-size:12.5px; color:var(--ink-faint); margin:0 0 16px;">Pick the most accurate reason so we have an audit trail of what stays in operating vs. reserve.</p>
+        <div style="display:flex; flex-direction:column; gap:8px;">
+          <button data-r="operating_maintenance" style="text-align:left; padding:11px 14px; background:var(--navy-deep); border:1px solid var(--rule-strong); border-radius:6px; color:var(--ink); cursor:pointer; font-family:var(--font-sans); font-size:13.5px;">Operating maintenance (not a reserve item)</button>
+          <button data-r="duplicate" style="text-align:left; padding:11px 14px; background:var(--navy-deep); border:1px solid var(--rule-strong); border-radius:6px; color:var(--ink); cursor:pointer; font-family:var(--font-sans); font-size:13.5px;">Duplicate of an already-matched invoice</button>
+          <button data-r="wrong_community" style="text-align:left; padding:11px 14px; background:var(--navy-deep); border:1px solid var(--rule-strong); border-radius:6px; color:var(--ink); cursor:pointer; font-family:var(--font-sans); font-size:13.5px;">Wrong community on the invoice</button>
+          <button data-r="other" style="text-align:left; padding:11px 14px; background:var(--navy-deep); border:1px solid var(--rule-strong); border-radius:6px; color:var(--ink); cursor:pointer; font-family:var(--font-sans); font-size:13.5px;">Other / free text…</button>
+        </div>
+        <div style="display:flex; justify-content:flex-end; margin-top:16px;">
+          <button data-cancel style="background:transparent; border:none; color:var(--ink-faint); cursor:pointer; font-size:12.5px;">Cancel</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(backdrop);
+    backdrop.querySelectorAll('button[data-r]').forEach(b => {
+      b.addEventListener('mouseover', () => b.style.borderColor = 'var(--gold)');
+      b.addEventListener('mouseout',  () => b.style.borderColor = 'var(--rule-strong)');
+      b.addEventListener('click', () => {
+        const r = b.dataset.r;
+        document.body.removeChild(backdrop);
+        if (r === 'other') {
+          const free = prompt('Reason for removing this invoice:');
+          resolve(free ? 'other: ' + free : null);
+        } else {
+          resolve(r);
+        }
+      });
+    });
+    backdrop.querySelector('[data-cancel]').addEventListener('click', () => {
+      document.body.removeChild(backdrop);
+      resolve(null);
+    });
+    backdrop.addEventListener('click', (e) => {
+      if (e.target === backdrop) { document.body.removeChild(backdrop); resolve(null); }
+    });
+  });
 }
 </script>
 

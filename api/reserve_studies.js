@@ -281,6 +281,59 @@ router.get('/community/:community_id/summary', async (req, res) => {
   }
 });
 
+// Cascade through the most useful map-center signals for a community.
+// Order: boundary centroid → clubhouse amenity → any amenity → first component
+// with coords. Returns { center, center_source } or { center: null, center_source: null }.
+async function resolveCommunityMapCenter(communityId, components, communityName) {
+  // 1) Try boundary
+  try {
+    const { data: bData } = await supabase
+      .rpc('community_boundary_geojson', { p_community_id: communityId });
+    if (bData && bData.boundary) {
+      const coords = bData.boundary.coordinates?.[0] || [];
+      if (coords.length) {
+        const center = {
+          lat: coords.reduce((s, c) => s + c[1], 0) / coords.length,
+          lng: coords.reduce((s, c) => s + c[0], 0) / coords.length,
+        };
+        const boundary = { type: 'Feature', geometry: bData.boundary, properties: { name: communityName } };
+        return { center, center_source: 'boundary', boundary };
+      }
+    }
+  } catch (_) { /* boundary not critical */ }
+
+  // 2) Try amenities — clubhouse first, then any with coords
+  try {
+    const { data: ams } = await supabase
+      .from('amenities')
+      .select('id, name, amenity_type, lat, lng')
+      .eq('community_id', communityId)
+      .eq('status', 'active')
+      .not('lat', 'is', null)
+      .not('lng', 'is', null);
+    if (Array.isArray(ams) && ams.length) {
+      const clubhouse = ams.find(a => a.amenity_type === 'clubhouse') || ams[0];
+      return {
+        center: { lat: Number(clubhouse.lat), lng: Number(clubhouse.lng) },
+        center_source: 'amenity:' + (clubhouse.amenity_type || 'unknown'),
+        boundary: null,
+      };
+    }
+  } catch (_) { /* amenities optional */ }
+
+  // 3) Fall back to first component with coords (use the average of all pinned components for stability)
+  const pinned = (components || []).filter(c => c.lat != null && c.lng != null);
+  if (pinned.length) {
+    const center = {
+      lat: pinned.reduce((s, c) => s + Number(c.lat), 0) / pinned.length,
+      lng: pinned.reduce((s, c) => s + Number(c.lng), 0) / pinned.length,
+    };
+    return { center, center_source: 'component_centroid', boundary: null };
+  }
+
+  return { center: null, center_source: null, boundary: null };
+}
+
 router.get('/community/:community_id/map', async (req, res) => {
   try {
     // Pull components for the board reserve map
@@ -292,34 +345,25 @@ router.get('/community/:community_id/map', async (req, res) => {
       .order('display_order');
     if (cErr) throw cErr;
 
-    // Get community + boundary
+    // Get community
     const { data: community } = await supabase
       .from('communities')
       .select('id, name, slug')
       .eq('id', req.params.community_id)
       .maybeSingle();
 
-    let boundary = null;
-    let center = null;
-    try {
-      const { data: bData } = await supabase
-        .rpc('community_boundary_geojson', { p_community_id: req.params.community_id });
-      if (bData && bData.boundary) {
-        boundary = { type: 'Feature', geometry: bData.boundary, properties: { name: community?.name } };
-        const coords = bData.boundary.coordinates?.[0] || [];
-        if (coords.length) {
-          center = {
-            lat: coords.reduce((s, c) => s + c[1], 0) / coords.length,
-            lng: coords.reduce((s, c) => s + c[0], 0) / coords.length,
-          };
-        }
-      }
-    } catch (_) { /* boundary not critical */ }
+    // Smart center cascade — boundary → clubhouse → any amenity → component centroid
+    const { center, center_source, boundary } = await resolveCommunityMapCenter(
+      req.params.community_id,
+      comps,
+      community?.name
+    );
 
     res.json({
       community,
       boundary,
       center,
+      center_source,    // e.g., 'boundary', 'amenity:clubhouse', 'component_centroid'
       components: comps || [],
     });
   } catch (err) {
