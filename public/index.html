@@ -370,13 +370,10 @@
   <div class="tab" data-group="board" onclick="openTabGroup('board')">🏛️ Board</div>
   <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
-  <div class="tab" onclick="switchTab('help')">📚 Help</div>
-  <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
   <!-- Removed standalone 'profile' tab — now a child of the 🏘️ Community
        Profile group (Profile · Homes & Owners · Board Roster). -->
   <div class="tab" onclick="switchTab('events')">🎉 Events</div>
-  <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
   <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
        tabs. Both are now modes inside the consolidated 🏗️ ACC tab above.
        Order: Review → Requests → History (act, see queue, reference). -->
@@ -389,8 +386,14 @@
   <!-- Portal Users — manage board + homeowner portal access. The 'Open ↗'
        buttons inside this tab launch the actual portals; no separate tab needed. -->
   <div class="tab" onclick="switchTab('portalusers')">🔐 Portal Users</div>
-  <!-- Bedrock University — how-to modules + role competency badges for operators. -->
+  <!-- Bedrock University — how-to modules + role competency badges for operators.
+       Help / Documents / Intake are reference surfaces that sit after University
+       per Ed's nav order — operator does work in the front-of-nav tabs, looks
+       things up in the tail. -->
   <div class="tab" onclick="switchTab('training')">🎓 University</div>
+  <div class="tab" onclick="switchTab('help')">📚 Help</div>
+  <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
+  <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
 </div>
 <div class="tab-subbar" id="tabSubbar"
      style="display:none; gap:6px; padding:8px 12px; background:#f1f5fb; border-bottom:1px solid #d9dfea; flex-wrap:wrap;"></div>
