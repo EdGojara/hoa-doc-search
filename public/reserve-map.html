@@ -251,30 +251,35 @@
     color: var(--ink-faint);
   }
 
-  /* ---- Map markers ---- */
+  /* ---- Map markers ----
+     NOTE: do NOT add a CSS `transform: translate(...)` here. Leaflet's
+     iconAnchor (set in the L.divIcon call) already positions the marker so
+     its tip lands on the lat/lng. A CSS transform would double-offset the
+     pin and it would drift off-coordinate as you zoom.
+     The pixel sizes here MUST match MARKER_SIZE / MARKER_ANCHOR in the JS
+     below — they're paired. */
   .reserve-marker {
-    width: 32px; height: 40px;
-    transform: translate(-16px, -40px);
+    width: 36px; height: 44px;
     cursor: pointer;
     position: relative;
   }
   .reserve-marker .pin {
-    width: 32px; height: 32px;
+    width: 36px; height: 36px;
     border: 3px solid white;
     border-radius: 50%;
     box-shadow: 0 3px 10px rgba(0,0,0,0.3);
     display: flex; align-items: center; justify-content: center;
-    color: white; font-size: 16px;
+    color: white; font-size: 17px;
     position: relative; z-index: 2;
   }
   .reserve-marker::after {
     content: '';
     position: absolute; bottom: 0; left: 50%;
     width: 0; height: 0;
-    margin-left: -6px;
-    border-left: 6px solid transparent;
-    border-right: 6px solid transparent;
-    border-top: 9px solid var(--navy);
+    margin-left: -7px;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid var(--navy);
     z-index: 1;
   }
   .reserve-marker:hover .pin { transform: scale(1.12); }
@@ -554,14 +559,10 @@
   }
 
   /* Bigger touch targets for pins on any touch device */
-  @media (pointer: coarse) {
-    .reserve-marker { width: 38px; height: 46px; transform: translate(-19px, -46px); }
-    .reserve-marker .pin { width: 38px; height: 38px; font-size: 18px; }
-    .reserve-marker::after {
-      margin-left: -7px;
-      border-left-width: 7px; border-right-width: 7px; border-top-width: 10px;
-    }
-  }
+  /* Touch-device marker sizing is handled by the unified MARKER_SIZE in JS
+     so the CSS box and Leaflet's iconAnchor stay in sync. No CSS overrides
+     of width/height/transform here — they would desync the pin from its
+     coordinate. */
 </style>
 </head>
 <body>
@@ -922,8 +923,9 @@ function renderMarkers() {
     const icon = L.divIcon({
       className: '',
       html: `<div class="reserve-marker ${band}"><div class="pin">${CATEGORY_ICONS[c.category] || '📍'}</div></div>`,
-      iconSize: [32, 40],
-      iconAnchor: [16, 40],
+      // Must match the .reserve-marker CSS box (36 wide, 44 tall, tip at bottom-center)
+      iconSize: [36, 44],
+      iconAnchor: [18, 44],
     });
     const marker = L.marker([Number(c.lat), Number(c.lng)], { icon }).addTo(map);
     marker.on('click', () => openDetail(c));
