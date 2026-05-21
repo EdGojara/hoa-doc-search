@@ -470,8 +470,12 @@
     <label for="ackTerms">I have read and agree to the rental agreement above, including the cancellation policy, indemnification, and rules of use.</label>
   </div>
   <div class="ack-row">
+    <input type="checkbox" id="ackCurrent" required>
+    <label for="ackCurrent">I am a homeowner at this community and confirm I am <strong>current on my assessments</strong>. I understand the reservation will be cancelled and refunded (minus non-refundable fees) if Bedrock finds my account is past due.</label>
+  </div>
+  <div class="ack-row">
     <input type="checkbox" id="ackResponsible" required>
-    <label for="ackResponsible">I am a homeowner in good standing at this community, current on assessments, and personally responsible for the conduct of my guests during the rental.</label>
+    <label for="ackResponsible">I am personally responsible for the conduct of my guests during the rental and for any damage to the clubhouse or community property.</label>
   </div>
 </section>
 
@@ -797,7 +801,8 @@ async function onSubmit(e) {
     attendee_count:     form.attendee_count.value ? Number(form.attendee_count.value) : null,
     optional_addons:    { av_equipment: !!form.addon_av_equipment?.checked },
     intake_method:      'online_portal',
-    agreement_acknowledged: $('ackTerms').checked && $('ackResponsible').checked,
+    agreement_acknowledged: $('ackTerms').checked && $('ackResponsible').checked && $('ackCurrent').checked,
+    attested_current:    $('ackCurrent').checked,
     agreement_text_hash: agreementHash,
   };
 
@@ -819,7 +824,7 @@ async function onSubmit(e) {
     return;
   }
   if (!data.agreement_acknowledged) {
-    toast('Please acknowledge the rental agreement.', 'error');
+    toast('Please check all three acknowledgments before reserving.', 'error');
     return;
   }
 
