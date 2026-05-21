@@ -43,7 +43,7 @@ RETURNS TABLE (
   normalized_address    TEXT,
   survivor_id           UUID,
   merged_ids            UUID[],
-  group_size            INT,
+  group_size            BIGINT,
   fk_relinks_summary    JSONB,
   action                TEXT
 )
