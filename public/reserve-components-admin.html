@@ -278,7 +278,8 @@
     </select>
     <div id="summaryCard"></div>
     <button class="add-btn" id="addBtn">+ Add component</button>
-    <a href="/reserve-study-import.html" style="display:block; text-align:center; padding: 8px 12px; margin-bottom: 16px; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); text-decoration: none; font-size: 12.5px; transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';">📥 Import reserve study Excel</a>
+    <a href="/reserve-study-import.html" style="display:block; text-align:center; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); text-decoration: none; font-size: 12.5px; transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';">📥 Import reserve study Excel</a>
+    <button id="autoPlaceBtn" style="width:100%; padding: 8px 12px; margin-bottom: 16px; background: transparent; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); cursor: pointer; font-size: 12.5px; font-family: var(--font-sans); transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';" title="Drop pins on unpinned components using nearby amenities as anchors. Idempotent — only touches components without coords.">📍 Auto-place pins from amenities</button>
     <div id="componentList"></div>
   </aside>
 
@@ -856,6 +857,32 @@ $('communitySelect').addEventListener('change', async (e) => {
   renderEditor();
 });
 $('addBtn').addEventListener('click', newComponent);
+
+$('autoPlaceBtn').addEventListener('click', async () => {
+  if (!state.selectedCommunityId) { toast('Pick a community first.', 'error'); return; }
+  const btn = $('autoPlaceBtn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Placing pins…';
+  try {
+    const r = await fetch(`/api/reserve-studies/community/${state.selectedCommunityId}/auto-place-pins`, { method: 'POST' });
+    const result = await r.json();
+    if (!result.ok) { toast(result.error || 'Auto-placement failed', 'error'); return; }
+    if (result.no_amenities) {
+      toast('No amenities pinned for this community yet — go to 🏊 Amenities first.', 'error');
+    } else if (result.placed === 0) {
+      toast('All components already have pins. Nothing to place.', 'success');
+    } else {
+      toast(`Placed ${result.placed} pin${result.placed === 1 ? '' : 's'} near amenities. Drag any pin to fine-tune.`, 'success');
+      await loadComponentsAndSummary();  // refresh list with new coords
+    }
+  } catch (err) {
+    toast('Auto-placement failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
 
 (async () => { await loadCommunities(); })();
 </script>

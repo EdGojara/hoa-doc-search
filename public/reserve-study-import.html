@@ -570,13 +570,25 @@ $('commitBtn').addEventListener('click', async () => {
       $('commitBtn').textContent = 'Commit to database →';
       return;
     }
+    // Build placement message
+    let placementHtml = '';
+    if (result.auto_placement) {
+      const ap = result.auto_placement;
+      if (ap.placed > 0) {
+        placementHtml = `<br><br><strong>Auto-placed ${ap.placed} of ${ap.total_unpinned} pins</strong> from your amenity locations. Drag any pin in Reserves admin to fine-tune. ${ap.skipped > 0 ? `(${ap.skipped} couldn't be placed — no matching amenity.)` : ''}`;
+      } else if (ap.no_amenities) {
+        placementHtml = `<br><br><strong>No pins placed yet.</strong> This community doesn't have any amenities pinned in the system. Go to <a href="/amenities-admin.html" style="color: var(--gold);">🏊 Amenities</a> first, drop the clubhouse + pool, then run "Auto-place pins" from the Reserves admin.`;
+      }
+    }
+
     $('doneSummary').innerHTML = `
       Successfully imported the <strong>${escapeHtml(parseResult.metadata.association_name)}</strong> reserve study.
       <br><br>
       Created <strong>${result.components_inserted}</strong> reserve components and <strong>${result.funding_plan_years_inserted}</strong> years of funding plan, linked to the new study version <code>${result.study.id.slice(0, 8)}…</code>.
       ${result.replaced_prior_study_id ? '<br><br>The prior active study was archived; this is now the active baseline.' : ''}
+      ${placementHtml}
       <br><br>
-      <strong>Next steps</strong>: open Reserves admin to drop map pins on each component, or jump straight to the board reserve map.
+      <strong>Next steps</strong>: open Reserves admin to fine-tune pin positions, or jump straight to the board reserve map.
     `;
     setStep(3);
   } catch (err) {

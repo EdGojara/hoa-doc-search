@@ -281,6 +281,121 @@ router.get('/community/:community_id/summary', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// Auto-place pins from amenities
+// ----------------------------------------------------------------------------
+// Reserve study spreadsheets don't include lat/lng — every component lands
+// with null coords. Asking staff to drop 50 pins per community per import is
+// not realistic. Instead, when we know where the community's amenities are,
+// we anchor each component near the most-relevant amenity with a small
+// random offset so pins don't stack. Staff fine-tunes by dragging in the
+// Reserves admin.
+const CATEGORY_TO_AMENITY_TYPES = {
+  pool:        ['pool'],
+  playground:  ['playground'],
+  mailroom:    ['mailroom'],
+  common_area: ['clubhouse', 'pavilion'],
+  roof:        ['clubhouse', 'pavilion'],
+  mechanical:  ['pool', 'clubhouse'],
+  // The "perimeter" categories below default to clubhouse but get a larger
+  // offset so they spread out (fences, paving, lighting, signage, irrigation,
+  // landscape are usually distributed across the property, not at the
+  // clubhouse itself).
+  paving:      ['clubhouse'],
+  lighting:    ['clubhouse'],
+  landscape:   ['clubhouse'],
+  irrigation:  ['clubhouse'],
+  fence:       ['clubhouse'],
+  signage:     ['clubhouse'],
+  other:       ['clubhouse'],
+};
+const PERIMETER_CATEGORIES = new Set(['fence', 'paving', 'lighting', 'signage', 'irrigation', 'landscape']);
+
+async function autoPlaceComponentPins(communityId) {
+  // Unpinned active components only
+  const { data: components, error: cErr } = await supabase
+    .from('reserve_components')
+    .select('id, component_name, category')
+    .eq('community_id', communityId)
+    .eq('status', 'active')
+    .is('lat', null);
+  if (cErr) throw cErr;
+  if (!components || !components.length) return { placed: 0, skipped: 0, total_unpinned: 0 };
+
+  // Active amenities with coords
+  const { data: amenities } = await supabase
+    .from('amenities')
+    .select('id, name, amenity_type, lat, lng')
+    .eq('community_id', communityId)
+    .eq('status', 'active')
+    .not('lat', 'is', null)
+    .not('lng', 'is', null);
+  if (!amenities || !amenities.length) {
+    return { placed: 0, skipped: components.length, total_unpinned: components.length, no_amenities: true };
+  }
+
+  const clubhouse = amenities.find(a => a.amenity_type === 'clubhouse') || amenities[0];
+
+  function pickAnchor(category, componentName) {
+    const types = CATEGORY_TO_AMENITY_TYPES[category] || ['clubhouse'];
+    const nameLower = (componentName || '').toLowerCase();
+    // Name-match first — e.g., if there are multiple playgrounds, "Playground
+    // Equipment, Splash Pad" → splash-pad playground amenity (by name).
+    for (const t of types) {
+      const namedMatch = amenities.find(a =>
+        a.amenity_type === t && a.name
+        && nameLower.includes(a.name.toLowerCase().split(/[, ]/)[0])  // first word of amenity name
+      );
+      if (namedMatch) return namedMatch;
+    }
+    for (const t of types) {
+      const anyOfType = amenities.find(a => a.amenity_type === t);
+      if (anyOfType) return anyOfType;
+    }
+    return clubhouse;
+  }
+
+  function offsetRadius(category) {
+    return PERIMETER_CATEGORIES.has(category) ? 0.0011 : 0.00035; // ~120m vs ~38m
+  }
+
+  // Build update list with deterministic-ish offsets so re-running doesn't
+  // shuffle pins around. Seed offsets from a hash of the component id so
+  // each component lands in a stable spot relative to its anchor.
+  function hashOffset(id) {
+    let h = 0;
+    for (let i = 0; i < id.length; i++) h = (h * 31 + id.charCodeAt(i)) | 0;
+    return (Math.abs(h) % 100000) / 100000; // 0..1
+  }
+
+  const updates = components.map(c => {
+    const anchor = pickAnchor(c.category, c.component_name);
+    if (!anchor) return null;
+    const r = offsetRadius(c.category);
+    const seed = hashOffset(c.id);
+    const angle = seed * 2 * Math.PI;
+    const dist = r * (0.4 + (hashOffset(c.id + 'r') * 0.6)); // 40-100% of radius
+    const lat = Number(anchor.lat) + dist * Math.cos(angle);
+    const lngScale = Math.cos(Number(anchor.lat) * Math.PI / 180) || 1;
+    const lng = Number(anchor.lng) + (dist * Math.sin(angle)) / lngScale;
+    return { id: c.id, lat: Number(lat.toFixed(7)), lng: Number(lng.toFixed(7)) };
+  }).filter(Boolean);
+
+  // Apply updates (one per row — small N, no need to batch)
+  for (const u of updates) {
+    await supabase.from('reserve_components')
+      .update({ lat: u.lat, lng: u.lng })
+      .eq('id', u.id);
+  }
+
+  return {
+    placed: updates.length,
+    skipped: components.length - updates.length,
+    total_unpinned: components.length,
+    anchor_count: amenities.length,
+  };
+}
+
 // Cascade through the most useful map-center signals for a community.
 // Order: boundary centroid → clubhouse amenity → any amenity → first component
 // with coords. Returns { center, center_source } or { center: null, center_source: null }.
@@ -375,6 +490,18 @@ router.get('/community/:community_id/map', async (req, res) => {
 // ----------------------------------------------------------------------------
 // Reserve study versions + funding plan
 // ----------------------------------------------------------------------------
+
+// POST /community/:community_id/auto-place-pins — anchor unpinned components
+// to nearby amenities. Idempotent: only touches components without coords.
+router.post('/community/:community_id/auto-place-pins', async (req, res) => {
+  try {
+    const result = await autoPlaceComponentPins(req.params.community_id);
+    res.json({ ok: true, ...result });
+  } catch (err) {
+    console.error('[reserve-studies] auto-place failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
 
 // GET /community/:community_id/study — active study metadata + version history
 router.get('/community/:community_id/study', async (req, res) => {
@@ -581,12 +708,22 @@ router.post('/import/commit', express.json({ limit: '8mb' }), async (req, res) =
       fundingInserted = fpData?.length || 0;
     }
 
+    // 6) Auto-place pins from amenities (best-effort — does nothing if no
+    //    amenities pinned yet; staff can re-run from the admin UI later)
+    let autoPlacement = null;
+    try {
+      autoPlacement = await autoPlaceComponentPins(body.community_id);
+    } catch (e) {
+      console.warn('[reserve-studies] auto-placement skipped:', e.message);
+    }
+
     res.json({
       ok: true,
       study: newStudy,
       replaced_prior_study_id: priorStudyId,
       components_inserted: inserted.length,
       funding_plan_years_inserted: fundingInserted,
+      auto_placement: autoPlacement,
     });
   } catch (err) {
     console.error('[reserve-studies] import commit failed:', err.message);
