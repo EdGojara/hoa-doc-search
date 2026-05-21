@@ -668,6 +668,13 @@ function renderForm() {
   $('app').innerHTML = '';
   $('app').appendChild(tpl.content.cloneNode(true));
 
+  // Carry demo flag through back links so a sales-pitch flow stays self-contained
+  if (isDemo) {
+    const back = `/portal?demo=1&community=${encodeURIComponent(community.slug)}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+  }
+
   // Hero
   $('heroEyebrow').innerHTML = `${escapeHtml(community.name)} ${isDemo ? '<span class="demo-ribbon">Demo</span>' : ''}`;
   $('heroTitle').innerHTML = `Reserve the <em>${escapeHtml(amenity.name.replace(community.name, '').replace(/^\s*[-·]\s*/, '').trim() || 'Clubhouse')}</em>`;

@@ -750,10 +750,19 @@ function renderTiles(ctx) {
 
     const isLive = modCfg.status === 'live';
     const isMaint = modCfg.status === 'maintenance';
-    const link = isLive ? (modCfg.link || mod.buildLink({
+    let link = isLive ? (modCfg.link || mod.buildLink({
       communitySlug: ctx.community.slug,
       payment_portal_url: cfg.payments?.link,
     })) : null;
+
+    // Carry the demo flag through to downstream forms that support it.
+    // This keeps the pitch demo coherent — clicking Clubhouse from a demo
+    // portal lands on a demo clubhouse form, not a 404 because no real
+    // amenity exists yet.
+    if (link && ctx.demo && (link.startsWith('/clubhouse/') || link.startsWith('/portal/map'))) {
+      const sep = link.includes('?') ? '&' : '?';
+      link += `${sep}demo=1`;
+    }
 
     const tile = document.createElement(isLive ? 'a' : 'div');
     tile.className = `tile ${modCfg.status}`;
