@@ -1042,6 +1042,115 @@ router.get('/balance', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/portal/meetings
+// Returns upcoming meetings (from events table where event_type contains
+// 'meeting') + past meeting minutes (library_documents with meeting categories).
+// ============================================================================
+router.get('/meetings', async (req, res) => {
+  try {
+    const cookieValue = readCookie(req, COOKIE_NAME);
+    const portalUserId = verifyCookie(cookieValue);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select(`property_id, properties:property_id (
+        community_id,
+        communities:community_id (id, name, slug, hoa_legal_name)
+      )`)
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null)
+      .limit(1);
+    const prop = (scopes && scopes[0]?.properties) || null;
+    if (!prop) return res.json({ community: null, upcoming: [], past: [] });
+
+    const community = prop.communities || {};
+
+    // Upcoming meetings — events table, future-dated, meeting-type
+    const today = new Date().toISOString();
+    let upcoming = [];
+    try {
+      const { data: events } = await supabase
+        .from('events')
+        .select('id, name, event_type, description, location, scheduled_start_at, status')
+        .eq('community_id', community.id)
+        .in('event_type', ['annual_meeting', 'board_meeting', 'special_meeting', 'meeting'])
+        .gte('scheduled_start_at', today)
+        .order('scheduled_start_at', { ascending: true })
+        .limit(6);
+      upcoming = (events || []).map((e) => ({
+        id: e.id,
+        name: e.name,
+        type: e.event_type,
+        type_label: meetingTypeLabel(e.event_type),
+        description: e.description,
+        location: e.location,
+        scheduled_start_at: e.scheduled_start_at,
+        status: e.status,
+      }));
+    } catch (_) { /* skip */ }
+
+    // Past meeting minutes — library_documents in meeting categories
+    let past = [];
+    try {
+      const { data: docs } = await supabase
+        .from('library_documents')
+        .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, created_at')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('community_id', community.id)
+        .eq('status', 'current')
+        .in('category', ['annual_board_meeting_minutes', 'regular_meeting_minutes'])
+        .order('effective_date', { ascending: false, nullsFirst: false })
+        .limit(12);
+
+      for (const d of docs || []) {
+        let url = null;
+        if (d.file_path) {
+          try {
+            const { data: signed } = await supabase.storage
+              .from('documents')
+              .createSignedUrl(d.file_path, 60 * 60 * 24);
+            url = signed?.signedUrl || null;
+          } catch (_) { /* skip */ }
+        }
+        past.push({
+          id: d.id,
+          type: d.category,
+          type_label: d.category === 'annual_board_meeting_minutes' ? 'Annual Meeting' : 'Board Meeting',
+          title: d.title || d.file_name_normalized,
+          period_label: d.period_label,
+          effective_date: d.effective_date,
+          minutes_url: url,
+        });
+      }
+    } catch (_) { /* skip */ }
+
+    res.json({
+      community: {
+        id: community.id,
+        name: community.name,
+        slug: community.slug,
+        hoa_legal_name: community.hoa_legal_name,
+      },
+      upcoming,
+      past,
+    });
+  } catch (err) {
+    console.error('[portal] meetings failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+function meetingTypeLabel(t) {
+  return ({
+    annual_meeting: 'Annual Meeting',
+    board_meeting: 'Board Meeting',
+    special_meeting: 'Special Meeting',
+    meeting: 'Meeting',
+  })[t] || 'Meeting';
+}
+
+// ============================================================================
 // POST /api/portal/logout
 // ============================================================================
 router.post('/logout', async (req, res) => {

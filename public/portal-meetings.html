@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meetings & Notices · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --green: #4A9A6A;
+    --green-faint: rgba(80, 200, 120, 0.10);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  header.top {
+    background: white; border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .back-link {
+    font-size: 13px; color: var(--navy); text-decoration: none;
+    padding: 8px 14px; border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-left: 10px;
+  }
+
+  main { max-width: 820px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  /* ---- Hero ---- */
+  .hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    color: var(--cream);
+    border-radius: var(--radius);
+    padding: 30px 32px;
+    margin-bottom: 22px;
+    position: relative; overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .hero::after {
+    content: ''; position: absolute; top: -40px; right: -50px;
+    width: 240px; height: 240px;
+    background: radial-gradient(circle, rgba(212,175,55,0.18) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero .eyebrow {
+    font-size: 12px; color: rgba(255,255,255,0.7);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 28px; font-weight: 500;
+    margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1.1;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; }
+  .hero p { margin: 0; color: rgba(255,255,255,0.85); font-size: 14px; line-height: 1.55; }
+
+  /* ---- Section labels ---- */
+  .section-label {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    margin: 24px 0 12px; font-weight: 500;
+  }
+
+  /* ---- Upcoming meeting card ---- */
+  .upcoming-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    border-left: 4px solid var(--gold);
+    padding: 22px 26px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-soft);
+    display: flex; gap: 22px; align-items: flex-start;
+  }
+  @media (max-width: 600px) {
+    .upcoming-card { flex-direction: column; gap: 14px; }
+  }
+  .date-block {
+    background: var(--gold-faint);
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    border-radius: 8px;
+    padding: 12px 16px;
+    text-align: center;
+    flex-shrink: 0; min-width: 88px;
+  }
+  .date-block .month {
+    font-size: 10.5px; color: var(--gold);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 600; margin-bottom: 2px;
+  }
+  .date-block .day {
+    font-family: var(--font-serif); font-size: 30px; font-weight: 500;
+    color: var(--navy); line-height: 1;
+  }
+  .date-block .year { font-size: 11px; color: var(--ink-faint); margin-top: 4px; }
+  .meeting-body { flex: 1; }
+  .meeting-body .type-chip {
+    display: inline-block;
+    font-size: 10.5px; color: var(--gold);
+    background: var(--gold-faint);
+    padding: 3px 9px; border-radius: 999px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    margin-bottom: 8px; font-weight: 600;
+  }
+  .meeting-body h3 {
+    font-family: var(--font-serif); font-size: 19px; font-weight: 500;
+    margin: 0 0 6px; color: var(--navy);
+    letter-spacing: -0.005em;
+  }
+  .meeting-body .time-location {
+    font-size: 13.5px; color: var(--ink-soft); margin-bottom: 10px;
+  }
+  .meeting-body .time-location .ic { color: var(--gold); margin-right: 4px; }
+  .meeting-body .desc {
+    font-size: 13.5px; color: var(--ink-soft); line-height: 1.55;
+  }
+  .meeting-body .ics-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    margin-top: 12px;
+    background: white; border: 1px solid var(--rule);
+    color: var(--navy); padding: 7px 14px; border-radius: 6px;
+    font-size: 12.5px; font-weight: 500; cursor: pointer;
+    text-decoration: none;
+    transition: all 0.15s ease;
+  }
+  .meeting-body .ics-link:hover { border-color: var(--gold); color: var(--gold); }
+
+  /* ---- Past meeting row ---- */
+  .past-list {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-soft);
+    overflow: hidden;
+  }
+  .past-list ul { list-style: none; margin: 0; padding: 0; }
+  .past-list li {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 22px;
+    border-bottom: 1px solid var(--rule);
+    transition: background 0.1s ease;
+  }
+  .past-list li:last-child { border-bottom: none; }
+  .past-list li:hover { background: var(--cream-soft); }
+  .past-list .ic {
+    width: 32px; height: 32px; border-radius: 6px;
+    background: var(--cream-soft); color: var(--navy);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+  .past-list .info { flex: 1; min-width: 0; }
+  .past-list .title {
+    font-size: 14px; color: var(--ink); font-weight: 500;
+  }
+  .past-list .sub {
+    font-size: 12.5px; color: var(--ink-faint); margin-top: 2px;
+  }
+  .past-list .download {
+    background: white; border: 1px solid var(--rule);
+    color: var(--navy); padding: 6px 12px;
+    border-radius: 6px; font-size: 12px; font-weight: 500;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    flex-shrink: 0;
+  }
+  .past-list .download:hover { border-color: var(--gold); color: var(--gold); }
+  .past-list .download.disabled {
+    color: var(--ink-faint); cursor: not-allowed; pointer-events: none;
+  }
+
+  /* ---- Empty state ---- */
+  .empty-state {
+    background: white; border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 40px 30px;
+    text-align: center;
+    box-shadow: var(--shadow-soft);
+  }
+  .empty-state h3 {
+    font-family: var(--font-serif); font-size: 18px;
+    color: var(--navy); margin: 0 0 6px;
+  }
+  .empty-state p { color: var(--ink-soft); font-size: 13.5px; margin: 4px 0; }
+  .empty-state a { color: var(--navy); text-decoration: none; }
+
+  /* ---- Info footer ---- */
+  .info-card {
+    background: var(--gold-faint);
+    border: 1px solid rgba(212, 175, 55, 0.25);
+    border-radius: var(--radius);
+    padding: 18px 22px;
+    margin-top: 30px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+  .info-card strong { color: var(--navy); }
+  .info-card a { color: var(--navy); text-decoration: none; }
+
+  /* ---- States ---- */
+  .full-loader {
+    min-height: 60vh; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    margin-top: 36px; text-align: center;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading your community's meetings…</div>
+</div>
+
+<template id="pageTemplate">
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+  <a class="back-link" href="/portal" id="backLink">← Portal</a>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="eyebrow" id="heroEyebrow">Meetings & notices</div>
+    <h1>Board <em>Meetings</em></h1>
+    <p>Upcoming meeting dates, locations, and past meeting minutes for your community. Homeowners are welcome to attend.</p>
+  </div>
+
+  <div id="upcomingSlot"></div>
+  <div id="pastSlot"></div>
+
+  <div class="info-card">
+    <strong>About board meetings.</strong> Most board meetings are open to homeowners and include time for owner comment. Annual meetings include director elections, financial review, and quorum-dependent voting. Notice of meetings is provided in compliance with Texas Property Code Chapter 209. Questions about agenda items or how to participate? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a>.
+  </div>
+</main>
+
+<footer>
+  <div class="tag">Community. Simplified.</div>
+  <div style="margin-top:6px;">Bedrock Association Management · (832) 588-2485</div>
+</footer>
+</template>
+
+<script>
+'use strict';
+
+let isDemo = false;
+let demoCommunitySlug = '';
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtDateLong(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+function fmtMonthShort(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short' }).toUpperCase();
+}
+function fmtDay(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.getDate();
+}
+function fmtYear(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.getFullYear();
+}
+function fmtTime(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit', hour12: true });
+}
+function fmtPeriodSub(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return { demo: u.searchParams.get('demo') === '1', community: u.searchParams.get('community') || '' };
+}
+
+(async function init() {
+  const q = getQueryParams();
+  isDemo = q.demo;
+  demoCommunitySlug = q.community;
+
+  if (isDemo) return renderPage(buildDemoData(demoCommunitySlug || 'waterview'));
+
+  try {
+    const r = await fetch('/api/portal/meetings', { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderPage(data);
+  } catch (err) {
+    $('app').innerHTML = `<div class="full-loader">Couldn't load: ${escapeHtml(err.message)}</div>`;
+  }
+})();
+
+function buildDemoData(slug) {
+  const names = {
+    'waterview':            'Waterview Estates',
+    'canyon-gate':          'Canyon Gate at Cinco Ranch',
+    'august-meadows':       'August Meadows',
+    'still-creek-ranch':    'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge':          'Quail Ridge',
+  };
+  const today = new Date();
+  const future = (days, hour = 19) => {
+    const d = new Date(today.getTime() + days * 86400000);
+    d.setHours(hour, 0, 0, 0);
+    return d.toISOString();
+  };
+  const past = (days) => {
+    const d = new Date(today.getTime() - days * 86400000);
+    return d.toISOString().slice(0, 10);
+  };
+
+  return {
+    demo: true,
+    community: {
+      name: names[slug] || 'Your Community',
+      slug,
+      hoa_legal_name: `${names[slug] || 'Your Community'} Owners Association, Inc.`,
+    },
+    upcoming: [
+      {
+        id: 'demo-u1',
+        name: 'Regular Board Meeting — June',
+        type: 'board_meeting',
+        type_label: 'Board Meeting',
+        description: 'Regular monthly meeting. Agenda includes treasurer\'s report, ARC committee update, and the FY26 budget vote. Homeowner comment period precedes the formal agenda.',
+        location: 'Community Clubhouse · 5110 Sample Trail',
+        scheduled_start_at: future(18, 19),
+        status: 'scheduled',
+      },
+      {
+        id: 'demo-u2',
+        name: 'Annual Meeting & Election',
+        type: 'annual_meeting',
+        type_label: 'Annual Meeting',
+        description: 'Annual homeowner meeting includes director elections, quorum verification, and the FY26 year-in-review. Proxy and absentee ballots accepted up to 24 hours before the meeting.',
+        location: 'Community Clubhouse · 5110 Sample Trail',
+        scheduled_start_at: future(74, 19),
+        status: 'scheduled',
+      },
+    ],
+    past: [
+      { id: 'p1', type: 'regular_meeting_minutes', type_label: 'Board Meeting', title: 'May 2026 — Regular Board Meeting Minutes',  period_label: 'May 2026', effective_date: past(8), minutes_url: '#' },
+      { id: 'p2', type: 'regular_meeting_minutes', type_label: 'Board Meeting', title: 'April 2026 — Regular Board Meeting Minutes', period_label: 'April 2026', effective_date: past(38), minutes_url: '#' },
+      { id: 'p3', type: 'regular_meeting_minutes', type_label: 'Board Meeting', title: 'March 2026 — Regular Board Meeting Minutes', period_label: 'March 2026', effective_date: past(68), minutes_url: '#' },
+      { id: 'p4', type: 'regular_meeting_minutes', type_label: 'Board Meeting', title: 'February 2026 — Regular Board Meeting Minutes', period_label: 'February 2026', effective_date: past(98), minutes_url: '#' },
+      { id: 'p5', type: 'annual_board_meeting_minutes', type_label: 'Annual Meeting', title: '2025 Annual Meeting Minutes', period_label: '2025', effective_date: past(290), minutes_url: '#' },
+    ],
+  };
+}
+
+function renderPage(ctx) {
+  const tpl = $('pageTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  if (isDemo) {
+    const back = `/portal?demo=1&community=${encodeURIComponent(ctx.community?.slug || demoCommunitySlug || 'waterview')}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+  }
+
+  $('heroEyebrow').innerHTML = `${escapeHtml(ctx.community?.name || 'Your community')}${isDemo ? '<span class="demo-ribbon">Demo</span>' : ''}`;
+
+  // Upcoming
+  const upcoming = ctx.upcoming || [];
+  if (upcoming.length) {
+    $('upcomingSlot').innerHTML = `
+      <div class="section-label">Upcoming meetings</div>
+      ${upcoming.map(renderUpcomingCard).join('')}
+    `;
+  } else {
+    $('upcomingSlot').innerHTML = `
+      <div class="section-label">Upcoming meetings</div>
+      <div class="empty-state">
+        <h3>No upcoming meetings scheduled</h3>
+        <p>Once your community's next meeting is on the calendar, it'll appear here. For status, email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a>.</p>
+      </div>`;
+  }
+
+  // Past minutes
+  const past = ctx.past || [];
+  if (past.length) {
+    $('pastSlot').innerHTML = `
+      <div class="section-label">Past meeting minutes</div>
+      <div class="past-list"><ul>${past.map(renderPastRow).join('')}</ul></div>
+    `;
+  } else {
+    $('pastSlot').innerHTML = `
+      <div class="section-label">Past meeting minutes</div>
+      <div class="empty-state">
+        <h3>No past minutes published yet</h3>
+        <p>Approved meeting minutes will appear here once published. Earlier minutes may be available on request — email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a>.</p>
+      </div>`;
+  }
+}
+
+function renderUpcomingCard(m) {
+  const iso = m.scheduled_start_at;
+  const time = fmtTime(iso);
+  return `
+    <div class="upcoming-card">
+      <div class="date-block">
+        <div class="month">${escapeHtml(fmtMonthShort(iso))}</div>
+        <div class="day">${escapeHtml(String(fmtDay(iso)))}</div>
+        <div class="year">${escapeHtml(String(fmtYear(iso)))}</div>
+      </div>
+      <div class="meeting-body">
+        <span class="type-chip">${escapeHtml(m.type_label || 'Meeting')}</span>
+        <h3>${escapeHtml(m.name)}</h3>
+        <div class="time-location">
+          <span class="ic">🕒</span>${escapeHtml(fmtDateLong(iso))} at ${escapeHtml(time)}
+          ${m.location ? ` <span class="ic" style="margin-left:10px;">📍</span>${escapeHtml(m.location)}` : ''}
+        </div>
+        ${m.description ? `<div class="desc">${escapeHtml(m.description)}</div>` : ''}
+        <button class="ics-link" onclick='window.__addToCalendar(${JSON.stringify(m).replace(/'/g, "\\'")})'>📅 Add to calendar</button>
+      </div>
+    </div>`;
+}
+
+function renderPastRow(p) {
+  const icon = p.type === 'annual_board_meeting_minutes' ? '⭐' : '📄';
+  const sub = p.period_label || (p.effective_date ? fmtPeriodSub(p.effective_date) : '');
+  return `
+    <li>
+      <div class="ic">${icon}</div>
+      <div class="info">
+        <div class="title">${escapeHtml(p.title || p.type_label)}</div>
+        <div class="sub">${escapeHtml(p.type_label || '')}${sub ? ` · ${escapeHtml(sub)}` : ''}</div>
+      </div>
+      ${p.minutes_url
+        ? `<a class="download" href="${escapeHtml(p.minutes_url)}" target="_blank" rel="noopener" download>↓ Minutes</a>`
+        : `<span class="download disabled">Not yet posted</span>`}
+    </li>`;
+}
+
+window.__addToCalendar = function (meeting) {
+  if (!meeting || !meeting.scheduled_start_at) return;
+  const start = new Date(meeting.scheduled_start_at);
+  const end = new Date(start.getTime() + 2 * 60 * 60 * 1000); // 2-hour default
+  const toIcsDt = (d) => d.toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15) + 'Z';
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Bedrock Association Management//Meeting//EN',
+    'BEGIN:VEVENT',
+    `UID:${meeting.id}@bedrocktx.com`,
+    `DTSTAMP:${toIcsDt(new Date())}`,
+    `DTSTART:${toIcsDt(start)}`,
+    `DTEND:${toIcsDt(end)}`,
+    `SUMMARY:${(meeting.name || 'Community Meeting').replace(/\n/g, ' ')}`,
+    `LOCATION:${(meeting.location || '').replace(/\n/g, ' ')}`,
+    `DESCRIPTION:${(meeting.description || '').replace(/\n/g, ' ')}`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${(meeting.name || 'meeting').replace(/[^\w]+/g, '-')}.ics`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+</script>
+</body>
+</html>
