@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Governing Documents · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  header.top {
+    background: white; border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .back-link {
+    font-size: 13px; color: var(--navy); text-decoration: none;
+    padding: 8px 14px; border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-left: 10px;
+  }
+
+  main { max-width: 880px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  /* ---- Hero ---- */
+  .hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    color: var(--cream);
+    border-radius: var(--radius);
+    padding: 30px 32px;
+    margin-bottom: 26px;
+    position: relative; overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .hero::after {
+    content: ''; position: absolute; top: -40px; right: -50px;
+    width: 240px; height: 240px;
+    background: radial-gradient(circle, rgba(212,175,55,0.18) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero .eyebrow {
+    font-size: 12px; color: rgba(255,255,255,0.7);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 28px; font-weight: 500;
+    margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1.1;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; }
+  .hero p { margin: 0; color: rgba(255,255,255,0.85); font-size: 14px; line-height: 1.55; }
+
+  /* ---- Search ---- */
+  .search-bar {
+    background: white; border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 14px 16px;
+    margin-bottom: 22px;
+    display: flex; align-items: center; gap: 10px;
+    box-shadow: var(--shadow-soft);
+  }
+  .search-bar input {
+    flex: 1; border: none; outline: none;
+    font-family: var(--font-sans); font-size: 14.5px;
+    color: var(--ink); background: transparent;
+  }
+  .search-bar .icon { color: var(--ink-faint); font-size: 16px; }
+  .search-bar .clear-btn {
+    background: transparent; border: none;
+    color: var(--ink-faint); font-size: 13px; cursor: pointer;
+    padding: 2px 8px; display: none;
+  }
+  .search-bar .clear-btn.show { display: inline; }
+  .search-bar .clear-btn:hover { color: var(--gold); }
+
+  /* ---- Groups ---- */
+  .group {
+    background: white; border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .group-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .group-header .icon {
+    width: 38px; height: 38px;
+    border-radius: 9px;
+    background: var(--gold-faint); color: var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; flex-shrink: 0;
+  }
+  .group-header h2 {
+    font-family: var(--font-serif); font-size: 19px; font-weight: 500;
+    margin: 0; color: var(--navy);
+    letter-spacing: -0.005em;
+  }
+  .group-header .count {
+    margin-left: auto;
+    font-size: 12px; color: var(--ink-faint);
+    font-family: var(--font-mono);
+  }
+  .group-list {
+    list-style: none; margin: 0; padding: 0;
+  }
+  .group-list li {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--rule);
+    transition: background 0.1s ease;
+  }
+  .group-list li:last-child { border-bottom: none; }
+  .group-list li:hover { background: var(--cream-soft); }
+  .group-list .doc-icon {
+    width: 32px; height: 32px;
+    border-radius: 6px;
+    background: var(--cream-soft);
+    color: var(--navy);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+  .group-list .doc-meta { flex: 1; min-width: 0; }
+  .group-list .doc-title {
+    font-size: 14px; color: var(--ink); font-weight: 500;
+    margin-bottom: 2px;
+  }
+  .group-list .doc-sub {
+    font-size: 12.5px; color: var(--ink-faint);
+  }
+  .group-list .doc-sub .dot { margin: 0 6px; opacity: 0.4; }
+  .group-list .download-btn {
+    background: white; border: 1px solid var(--rule);
+    color: var(--navy); padding: 7px 14px;
+    font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
+    border-radius: 6px; cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+  }
+  .group-list .download-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .group-list .download-btn.disabled {
+    color: var(--ink-faint); border-color: var(--rule);
+    cursor: not-allowed; pointer-events: none;
+  }
+
+  /* ---- Empty state ---- */
+  .empty-state {
+    background: white; border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 60px 30px;
+    text-align: center;
+    box-shadow: var(--shadow-soft);
+  }
+  .empty-state h2 {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--navy); margin: 0 0 8px;
+  }
+  .empty-state p { color: var(--ink-soft); margin: 6px 0; }
+  .empty-state a { color: var(--navy); text-decoration: none; }
+
+  .info-footer {
+    background: var(--gold-faint);
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-top: 30px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.55;
+  }
+  .info-footer strong { color: var(--navy); }
+  .info-footer a { color: var(--navy); text-decoration: none; }
+
+  /* ---- States ---- */
+  .full-loader {
+    min-height: 60vh; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    margin-top: 36px; text-align: center;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading your community's documents…</div>
+</div>
+
+<template id="pageTemplate">
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+  <a class="back-link" href="/portal" id="backLink">← Portal</a>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="eyebrow" id="heroEyebrow">Community documents</div>
+    <h1>Governing <em>Documents</em></h1>
+    <p>Recorded covenants, financial reports, meeting minutes, and resident forms — the canonical record of how your community is governed and operated.</p>
+  </div>
+
+  <div class="search-bar">
+    <span class="icon">🔍</span>
+    <input type="search" id="searchInput" placeholder="Search by name or category…">
+    <button class="clear-btn" id="clearSearch">Clear</button>
+  </div>
+
+  <div id="groupsContainer"></div>
+
+  <div class="info-footer">
+    <strong>Need a document not listed?</strong> Some documents (insurance certificates, vendor agreements, executive-session minutes) are kept on file but aren't published in the homeowner portal. Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> if you need access to a specific record.
+  </div>
+</main>
+
+<footer>
+  <div class="tag">Community. Simplified.</div>
+  <div style="margin-top:6px;">Bedrock Association Management · (832) 588-2485</div>
+</footer>
+</template>
+
+<script>
+'use strict';
+
+let isDemo = false;
+let demoCommunitySlug = '';
+let allGroups = {};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return { demo: u.searchParams.get('demo') === '1', community: u.searchParams.get('community') || '' };
+}
+
+(async function init() {
+  const q = getQueryParams();
+  isDemo = q.demo;
+  demoCommunitySlug = q.community;
+
+  if (isDemo) return renderPage(buildDemoData(demoCommunitySlug || 'waterview'));
+
+  try {
+    const r = await fetch('/api/portal/documents', { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderPage(data);
+  } catch (err) {
+    $('app').innerHTML = `<div class="full-loader">Couldn't load: ${escapeHtml(err.message)}</div>`;
+  }
+})();
+
+function buildDemoData(slug) {
+  const names = {
+    'waterview':            'Waterview Estates',
+    'canyon-gate':          'Canyon Gate at Cinco Ranch',
+    'august-meadows':       'August Meadows',
+    'still-creek-ranch':    'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge':          'Quail Ridge',
+  };
+  const name = names[slug] || 'Your Community';
+  const mkDoc = (label, sub, downloadable) => ({
+    id: Math.random().toString(36).slice(2, 8),
+    category_label: label,
+    title: `${name} — ${label}`,
+    period_label: sub,
+    effective_date: null,
+    download_url: downloadable ? '#' : null,
+  });
+  return {
+    community: { name, slug },
+    demo: true,
+    groups: {
+      governing: {
+        label: 'Governing Documents', icon: '📜',
+        items: [
+          mkDoc('Declaration (CC&Rs)', 'Recorded', true),
+          mkDoc('Bylaws', 'Adopted', true),
+          mkDoc('Articles of Incorporation', '', true),
+          mkDoc('Rules & Regulations', 'Current', true),
+          mkDoc('Architectural Guidelines', 'Current', true),
+        ],
+      },
+      financial: {
+        label: 'Financials', icon: '💵',
+        items: [
+          mkDoc('Annual Budget', '2026', true),
+          mkDoc('Annual Financial Statements', 'FY2024–2025', true),
+          mkDoc('Recent Financials (Unaudited)', 'Q1 2026', true),
+        ],
+      },
+      meetings: {
+        label: 'Meeting Minutes', icon: '📅',
+        items: [
+          mkDoc('Annual Meeting Minutes', '2025', true),
+          mkDoc('Board Meeting Minutes', 'April 2026', true),
+          mkDoc('Board Meeting Minutes', 'March 2026', true),
+          mkDoc('Board Meeting Minutes', 'February 2026', true),
+        ],
+      },
+      reserves: {
+        label: 'Reserves', icon: '🏦',
+        items: [mkDoc('Reserve Study', '2024 Update', true)],
+      },
+      forms: {
+        label: 'Forms', icon: '📋',
+        items: [
+          mkDoc('ARC Application Form', 'Blank template', true),
+          mkDoc('Pool & Gate Access Form', 'Blank template', true),
+        ],
+      },
+      welcome: {
+        label: 'Welcome', icon: '👋',
+        items: [mkDoc('Welcome Package', 'New homeowner orientation', true)],
+      },
+    },
+  };
+}
+
+function renderPage(ctx) {
+  const tpl = $('pageTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  if (isDemo) {
+    const back = `/portal?demo=1&community=${encodeURIComponent(ctx.community?.slug || demoCommunitySlug || 'waterview')}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+  }
+
+  $('heroEyebrow').innerHTML = `${escapeHtml(ctx.community?.name || 'Your community')}${isDemo ? '<span class="demo-ribbon">Demo</span>' : ''}`;
+
+  allGroups = ctx.groups || {};
+  renderGroups(allGroups);
+
+  $('searchInput').addEventListener('input', (e) => {
+    const q = e.target.value.trim().toLowerCase();
+    $('clearSearch').classList.toggle('show', q.length > 0);
+    if (!q) return renderGroups(allGroups);
+    const filtered = {};
+    for (const [key, group] of Object.entries(allGroups)) {
+      const items = group.items.filter((d) =>
+        (d.title || '').toLowerCase().includes(q)
+        || (d.category_label || '').toLowerCase().includes(q)
+        || (d.period_label || '').toLowerCase().includes(q)
+      );
+      if (items.length) filtered[key] = { ...group, items };
+    }
+    renderGroups(filtered);
+  });
+  $('clearSearch').addEventListener('click', () => {
+    $('searchInput').value = '';
+    $('clearSearch').classList.remove('show');
+    renderGroups(allGroups);
+  });
+}
+
+function renderGroups(groups) {
+  const container = $('groupsContainer');
+  const keys = Object.keys(groups);
+  if (!keys.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <h2>Nothing matches your search.</h2>
+        <p>Try a different term, or <a href="#" onclick="document.getElementById('searchInput').value='';document.getElementById('clearSearch').click();return false;">clear the search</a>.</p>
+      </div>`;
+    return;
+  }
+
+  // Detect if ALL groups are empty (no docs loaded for community at all)
+  const totalItems = keys.reduce((s, k) => s + groups[k].items.length, 0);
+  if (totalItems === 0) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <h2>Documents being prepared</h2>
+        <p>Your community's documents are being onboarded to the portal. In the meantime, email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> for specific records.</p>
+      </div>`;
+    return;
+  }
+
+  container.innerHTML = keys.map((key) => {
+    const g = groups[key];
+    return `
+      <div class="group">
+        <div class="group-header">
+          <div class="icon">${g.icon}</div>
+          <h2>${escapeHtml(g.label)}</h2>
+          <span class="count">${g.items.length} document${g.items.length === 1 ? '' : 's'}</span>
+        </div>
+        <ul class="group-list">
+          ${g.items.map((d) => `
+            <li>
+              <div class="doc-icon">📄</div>
+              <div class="doc-meta">
+                <div class="doc-title">${escapeHtml(d.category_label || d.title)}</div>
+                <div class="doc-sub">
+                  ${d.period_label ? escapeHtml(d.period_label) : ''}
+                  ${d.period_label && d.effective_date ? '<span class="dot">·</span>' : ''}
+                  ${d.effective_date ? `Effective ${fmtDate(d.effective_date)}` : ''}
+                  ${!d.period_label && !d.effective_date ? '<em style="color:var(--ink-faint);">Latest version on file</em>' : ''}
+                </div>
+              </div>
+              ${d.download_url
+                ? `<a class="download-btn" href="${escapeHtml(d.download_url)}" target="_blank" rel="noopener" download>↓ Download</a>`
+                : `<button class="download-btn disabled" disabled>Unavailable</button>`}
+            </li>
+          `).join('')}
+        </ul>
+      </div>`;
+  }).join('');
+}
+</script>
+</body>
+</html>

@@ -661,6 +661,154 @@ router.get('/compliance', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/portal/documents
+// Returns the auth'd homeowner's community's documents that are appropriate
+// for homeowner viewing. Filters by category (no insurance, W9, litigation,
+// management agreement, unit ledgers, etc.) and status='current'.
+// Each doc gets a 24-hour signed URL for download.
+// ============================================================================
+const HOMEOWNER_DOC_CATEGORIES = [
+  // Governing
+  'declaration_ccrs', 'bylaws', 'rules_and_regulations',
+  'resolutions_and_policies', 'design_document', 'articles_of_incorporation',
+  // Financial
+  'annual_budget', 'annual_financial_statements', 'current_unaudited_financials',
+  // Meetings
+  'annual_board_meeting_minutes', 'regular_meeting_minutes',
+  // Reserves
+  'reserve_study', 'reserve_report',
+  // Forms
+  'arc_application', 'key_fob_form', 'forms_and_applications',
+  // Welcome
+  'welcome_package',
+];
+
+const HOMEOWNER_DOC_GROUPS = {
+  governing: {
+    label: 'Governing Documents',
+    icon: '📜',
+    categories: ['declaration_ccrs', 'bylaws', 'articles_of_incorporation',
+                 'rules_and_regulations', 'resolutions_and_policies', 'design_document'],
+  },
+  financial: {
+    label: 'Financials',
+    icon: '💵',
+    categories: ['annual_budget', 'annual_financial_statements', 'current_unaudited_financials'],
+  },
+  meetings: {
+    label: 'Meeting Minutes',
+    icon: '📅',
+    categories: ['annual_board_meeting_minutes', 'regular_meeting_minutes'],
+  },
+  reserves: {
+    label: 'Reserves',
+    icon: '🏦',
+    categories: ['reserve_study', 'reserve_report'],
+  },
+  forms: {
+    label: 'Forms',
+    icon: '📋',
+    categories: ['arc_application', 'key_fob_form', 'forms_and_applications'],
+  },
+  welcome: {
+    label: 'Welcome',
+    icon: '👋',
+    categories: ['welcome_package'],
+  },
+};
+
+const CATEGORY_LABELS = {
+  declaration_ccrs: 'Declaration (CC&Rs)',
+  bylaws: 'Bylaws',
+  articles_of_incorporation: 'Articles of Incorporation',
+  rules_and_regulations: 'Rules & Regulations',
+  resolutions_and_policies: 'Resolutions & Policies',
+  design_document: 'Architectural Guidelines',
+  annual_budget: 'Annual Budget',
+  annual_financial_statements: 'Annual Financial Statements',
+  current_unaudited_financials: 'Recent Financials (Unaudited)',
+  annual_board_meeting_minutes: 'Annual Meeting Minutes',
+  regular_meeting_minutes: 'Board Meeting Minutes',
+  reserve_study: 'Reserve Study',
+  reserve_report: 'Reserve Report',
+  arc_application: 'ARC Application Form',
+  key_fob_form: 'Pool & Gate Access Form',
+  forms_and_applications: 'Other Forms',
+  welcome_package: 'Welcome Package',
+};
+
+router.get('/documents', async (req, res) => {
+  try {
+    const cookieValue = readCookie(req, COOKIE_NAME);
+    const portalUserId = verifyCookie(cookieValue);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select(`property_id, properties:property_id (community_id, communities:community_id (id, name, slug))`)
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null)
+      .limit(1);
+    const prop = (scopes && scopes[0]?.properties) || null;
+    if (!prop) return res.json({ community: null, groups: {} });
+
+    const community = prop.communities || {};
+
+    // Pull homeowner-appropriate library_documents for this community
+    const { data: docs, error } = await supabase
+      .from('library_documents')
+      .select('id, category, title, period_label, effective_date, file_path, file_name_normalized, status, approval_status, created_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('community_id', community.id)
+      .eq('status', 'current')
+      .in('category', HOMEOWNER_DOC_CATEGORIES)
+      .order('effective_date', { ascending: false, nullsFirst: false });
+    if (error) throw error;
+
+    // Generate signed URLs (24h)
+    const enriched = [];
+    for (const d of docs || []) {
+      let signedUrl = null;
+      if (d.file_path) {
+        try {
+          const { data: signed } = await supabase.storage
+            .from('documents')
+            .createSignedUrl(d.file_path, 60 * 60 * 24);
+          signedUrl = signed?.signedUrl || null;
+        } catch (_) { /* skip */ }
+      }
+      enriched.push({
+        id: d.id,
+        category: d.category,
+        category_label: CATEGORY_LABELS[d.category] || d.category,
+        title: d.title || d.file_name_normalized || CATEGORY_LABELS[d.category],
+        period_label: d.period_label,
+        effective_date: d.effective_date,
+        download_url: signedUrl,
+      });
+    }
+
+    // Group by section
+    const groups = {};
+    for (const [key, group] of Object.entries(HOMEOWNER_DOC_GROUPS)) {
+      const items = enriched.filter((d) => group.categories.includes(d.category));
+      if (items.length) {
+        groups[key] = { label: group.label, icon: group.icon, items };
+      }
+    }
+
+    res.json({
+      community: { id: community.id, name: community.name, slug: community.slug },
+      groups,
+      total: enriched.length,
+    });
+  } catch (err) {
+    console.error('[portal] documents failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/portal/logout
 // ============================================================================
 router.post('/logout', async (req, res) => {

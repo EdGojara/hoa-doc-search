@@ -418,6 +418,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/logout$/,                   // POST clear cookie
   /^\/api\/portal\/map\/[^/]+$/,               // public map data (boundary + amenities)
   /^\/api\/portal\/compliance$/,               // GET homeowner's compliance state (cookie-gated)
+  /^\/api\/portal\/documents$/,                // GET homeowner-visible governing docs (cookie-gated)
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   /^\/api\/payments\/create-checkout-session$/, // public form posts here before Stripe redirect
   /^\/api\/payments\/by-session\/[^/]+$/,      // success page lookup post-Stripe-redirect
@@ -736,7 +737,7 @@ app.get('/portal', (req, res) => {
 app.get('/portal/property',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 app.get('/portal/balance',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-compliance.html')));
-app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-documents.html')));
 app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
