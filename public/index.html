@@ -11366,12 +11366,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const dmChip = L.delivery_method === 'certified_mail'
           ? '<span style="background:#fecaca; color:#7f1d1d; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:700;">CERTIFIED</span>'
           : '<span style="background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:700;">FIRST-CLASS</span>';
+        const previewBtn = L.letter_url
+          ? `<a href="${escapeHtml(L.letter_url)}" target="_blank" rel="noopener" title="Open the letter PDF in a new tab" style="background:#fff; color:#1A3050; border:1px solid #cbd5e1; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; flex-shrink:0; text-decoration:none;">📄 Preview</a>`
+          : `<span style="color:#94a3b8; font-size:11px; padding:4px 8px;">PDF unavailable</span>`;
         return `
-          <div style="display:flex; gap:10px; align-items:flex-start; padding:8px; border-bottom:1px solid #f1f5f9;">
+          <div style="display:flex; gap:8px; align-items:flex-start; padding:8px; border-bottom:1px solid #f1f5f9;">
             <div style="flex:1; min-width:0;">
               <div style="font-size:12.5px; color:#1A3050; font-weight:600;">${escapeHtml(L.property_address || '—')}${L.owner_name ? ' · ' + escapeHtml(L.owner_name) : ''}</div>
               <div style="font-size:11px; color:#64748b; margin-top:2px;">${escapeHtml(typeLabel[L.type] || L.type)} ${dmChip} · ${escapeHtml(L.community_name || '—')} · approved ${ageStr}</div>
             </div>
+            ${previewBtn}
             <button onclick="inspMailQueueCancel('${L.id}', this)"
                     title="Return this letter to Drafts queue (it was approved by mistake or belongs to a discarded inspection)."
                     style="background:#fff; color:#991b1b; border:1px solid #fecaca; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; flex-shrink:0;">

@@ -1257,8 +1257,29 @@ router.get('/mail-queue/letters', async (req, res) => {
       : { data: [] };
     const propById = new Map((props || []).map((p) => [p.property_id, p]));
 
-    const enriched = letters.map((l) => {
+    // Sign a 1-hour URL for each letter PDF so the Mail Queue UI can preview
+    // before deciding whether to cancel an approval. interactions.content
+    // holds the storage path for letter types.
+    const enriched = await Promise.all(letters.map(async (l) => {
       const p = propById.get(l.property_id);
+      let letter_url = null;
+      // For letters, interactions.content stores the PDF storage path.
+      // Skip postcard-reminder if content is not a path-like string.
+      const candidatePath = l.subject && typeof l === 'object' && l.id ? null : null; // noop placeholder
+      const { data: full } = await supabase
+        .from('interactions')
+        .select('content')
+        .eq('id', l.id)
+        .maybeSingle();
+      const storagePath = full && full.content;
+      if (storagePath && /\.pdf$/i.test(String(storagePath))) {
+        try {
+          const { data: sd } = await supabase.storage
+            .from('violation-letters')
+            .createSignedUrl(storagePath, 60 * 60);
+          letter_url = sd && sd.signedUrl;
+        } catch (_) {}
+      }
       return {
         id:               l.id,
         type:             l.type,
@@ -1272,8 +1293,9 @@ router.get('/mail-queue/letters', async (req, res) => {
         owner_name:       p ? p.owner_name : null,
         violation_id:     l.violation_id,
         bundle_id:        l.bundle_id,
+        letter_url,
       };
-    });
+    }));
 
     res.json({ letters: enriched });
   } catch (err) {
