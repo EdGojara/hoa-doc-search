@@ -242,36 +242,56 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
       }
     }
 
-    // --- OWNERSHIP CHANGES (close old, open new) ---------------------------
+    // --- OWNERSHIP CHANGES (route to review queue, do NOT auto-apply) --------
+    // Per project_property_data_architecture + Ed's 2026-05-21 requirement:
+    // ownership transitions need explicit human approval. Vantaca can be wrong
+    // (typos, premature recording before deed transfer, mistaken updates).
+    // Auto-applying creates audit-trail problems if Bedrock has to back out.
+    //
+    // Instead of closing/opening ownerships here, we INSERT proposals into
+    // ownership_change_proposals (status='pending'). Staff reviews + approves
+    // from the queue UI; the approve_ownership_proposal() function then does
+    // the transition atomically.
+    //
+    // applied.ownership_proposals_created replaces the old
+    // ownerships_ended/created counts for this category.
     const wantOwnerChanges = apply.ownership_changes === 'all' || Array.isArray(apply.ownership_changes);
+    applied.ownership_proposals_created = 0;
     if (wantOwnerChanges && diff.ownership_changes) {
       const select = apply.ownership_changes === 'all' ? null : new Set(apply.ownership_changes);
       for (const item of diff.ownership_changes) {
         if (select && !select.has(item.property_id)) continue;
-        // End all current ownerships on this property.
-        const { data: ended } = await supabase
+        // Find the current contact (for snapshot) — best effort
+        const { data: currentOwnership } = await supabase
           .from('property_ownerships')
-          .update({ end_date: today, updated_at: new Date().toISOString() })
+          .select('contact_id, contacts(id, full_name, primary_email, primary_phone)')
           .eq('property_id', item.property_id)
           .is('end_date', null)
-          .select();
-        if (ended) applied.ownerships_ended += ended.length;
-        // Open new ownership.
-        const contact = await findOrCreateContact({
-          full_name: item.new_owner,
-          primary_email: item.new_email,
-          primary_phone: item.new_phone,
-        });
-        if (contact) {
-          await supabase.from('property_ownerships').insert({
+          .order('is_primary', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+        const { error: propErr } = await supabase
+          .from('ownership_change_proposals')
+          .insert({
             property_id: item.property_id,
-            contact_id: contact.id,
-            start_date: today,
-            is_primary: true,
-            source: 'vantaca_import',
+            community_id: communityId,
+            current_contact_id:    currentOwnership?.contact_id || null,
+            current_owner_name:    currentOwnership?.contacts?.full_name || item.prior_owner || null,
+            current_owner_email:   currentOwnership?.contacts?.primary_email || null,
+            current_owner_phone:   currentOwnership?.contacts?.primary_phone || null,
+            proposed_owner_name:   item.new_owner,
+            proposed_owner_email:  item.new_email,
+            proposed_owner_phone:  item.new_phone,
+            proposed_mailing_address: item.new_mailing_address || null,
+            proposed_homeowner_id: item.new_homeowner_id || null,
+            source:                'vantaca_import',
+            source_filename:       sync.source_filename || null,
+            source_batch_id:       syncId,
+            vantaca_account_id:    item.vantaca_account_id || null,
+            status:                'pending',
           });
-          applied.ownerships_created += 1;
-        }
+        if (!propErr) applied.ownership_proposals_created += 1;
       }
     }
 
