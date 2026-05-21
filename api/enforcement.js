@@ -507,9 +507,15 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       .maybeSingle();
     if (pErr || !pRow) return res.status(404).json({ error: 'property not found' });
 
-    // Latest confirmed observation for evidence photo
+    // Latest confirmed observation for evidence photo.
+    // Photo download has TWO fallback paths:
+    //   1. violation.opened_from_observation_id (the canonical path)
+    //   2. Most recent inspection_photo at this property — used when (1)
+    //      got nulled by ON DELETE SET NULL (i.e., earlier inspection
+    //      was discarded but the violation/letter survived).
     let observation = null;
     let photoBuffer = null;
+    let photoStoragePath = null;
     if (violation.opened_from_observation_id) {
       const { data: obs } = await supabase
         .from('property_observations')
@@ -523,18 +529,42 @@ router.post('/generate-letter', express.json(), async (req, res) => {
           captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at,
         };
         if (obs.inspection_photos && obs.inspection_photos.storage_path) {
-          try {
-            const { data: dl } = await supabase.storage
-              .from('documents')
-              .download(obs.inspection_photos.storage_path);
-            if (dl) {
-              const ab = await dl.arrayBuffer();
-              photoBuffer = Buffer.from(ab);
-            }
-          } catch (e) {
-            console.warn('[letter] photo download failed:', e.message);
+          photoStoragePath = obs.inspection_photos.storage_path;
+        }
+      }
+    }
+    // Fallback: pull the most recent close-up/single inspection_photo
+    // confirmed at this property for this category. Saves the letter from
+    // going photo-less when the original observation was deleted.
+    if (!photoStoragePath) {
+      try {
+        const { data: latestPhoto } = await supabase
+          .from('inspection_photos')
+          .select('storage_path, captured_at')
+          .eq('reviewer_confirmed_property_id', violation.property_id)
+          .in('photo_role', ['close_up', 'single'])
+          .order('captured_at', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+        if (latestPhoto && latestPhoto.storage_path) {
+          photoStoragePath = latestPhoto.storage_path;
+          if (!observation) {
+            observation = { captured_at: latestPhoto.captured_at };
           }
         }
+      } catch (_) {}
+    }
+    if (photoStoragePath) {
+      try {
+        const { data: dl } = await supabase.storage
+          .from('documents')
+          .download(photoStoragePath);
+        if (dl) {
+          const ab = await dl.arrayBuffer();
+          photoBuffer = Buffer.from(ab);
+        }
+      } catch (e) {
+        console.warn('[letter] photo download failed:', e.message);
       }
     }
 
