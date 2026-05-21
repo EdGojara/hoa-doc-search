@@ -744,7 +744,12 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     });
   } catch (err) {
     console.error('[enforcement.generate-letter]', err);
-    res.status(500).json({ error: err.message });
+    console.error('[enforcement.generate-letter] stack:', err.stack);
+    res.status(500).json({
+      error: err.message,
+      stage: 'letter_render',
+      hint: 'Letter render failed. The prior letter (if any) is preserved in its original queue. Check server logs for the stack trace.',
+    });
   }
 });
 
