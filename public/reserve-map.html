@@ -112,11 +112,12 @@
     height: calc(100vh - 64px - 56px);
     overflow: hidden;
     transition: grid-template-columns 0.2s ease;
+    position: relative;
   }
   .shell.detail-open { grid-template-columns: 1fr 420px; }
   @media (max-width: 720px) {
-    .shell.detail-open { grid-template-columns: 1fr; }
-    .shell.detail-open #mapEl { display: none; }
+    /* On mobile, side panel becomes a bottom sheet — map stays visible above */
+    .shell, .shell.detail-open { grid-template-columns: 1fr; }
   }
 
   #mapEl { width: 100%; height: 100%; }
@@ -364,6 +365,153 @@
     font-size: 13.5px; font-weight: 500;
     text-decoration: none;
   }
+
+  /* ===========================================================================
+     MOBILE — boards will view this on phones during walkthroughs
+     =========================================================================== */
+  /* Filter-panel collapse trigger (button shown on mobile, panel hidden by default) */
+  .filter-fab {
+    display: none;
+    position: absolute; top: 16px; left: 16px;
+    background: white; border: 1px solid var(--rule);
+    border-radius: 999px; padding: 9px 14px;
+    box-shadow: var(--shadow-soft);
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    color: var(--navy); cursor: pointer;
+    z-index: 500;
+    align-items: center; gap: 6px;
+  }
+  .filter-fab.active { background: var(--navy); color: white; border-color: var(--navy); }
+  .filter-fab .badge {
+    background: var(--gold); color: var(--navy-deep);
+    border-radius: 999px; padding: 1px 7px;
+    font-size: 11px; font-family: var(--font-mono); font-weight: 600;
+    margin-left: 2px;
+  }
+  .filter-fab.active .badge { background: var(--gold-bright); }
+
+  @media (max-width: 720px) {
+    /* Header: shrink, drop module subtitle, drop "Manage components" link */
+    header.top {
+      padding: 10px 14px; height: 56px;
+    }
+    .brand svg { width: 22px; height: 28px; }
+    .brand .wm { font-size: 14.5px; }
+    .brand .label { display: none; }
+    .top-center {
+      position: absolute; left: 14px; right: 14px; top: 56px;
+      background: white; padding: 8px 14px;
+      border-bottom: 1px solid var(--rule);
+      gap: 8px; z-index: 700;
+    }
+    .top-center label { display: none; }
+    .top-center select {
+      flex: 1; min-width: 0; font-size: 14px; padding: 9px 12px;
+    }
+    .back-link.mobile-hide { display: none; }
+    .top-right { gap: 6px; }
+    .back-link {
+      padding: 7px 10px; font-size: 12.5px;
+    }
+
+    /* Summary strip — leave room for the dropped community-selector row above it */
+    .summary-strip {
+      margin-top: 46px;
+      padding: 8px 14px; gap: 18px; height: 48px;
+    }
+    .stat .label { font-size: 9.5px; }
+    .stat .value { font-size: 13px; }
+
+    /* Shell height = full viewport minus (header 56 + community-row 46 + strip 48) */
+    .shell {
+      height: calc(100vh - 56px - 46px - 48px);
+    }
+
+    /* Layer toggle: shrink + emoji-only on mobile */
+    .layer-toggle {
+      top: 12px; right: 12px;
+      padding: 3px;
+    }
+    .layer-toggle button {
+      padding: 8px 11px; font-size: 0;
+      min-width: 40px; min-height: 40px;
+      justify-content: center;
+    }
+    .layer-toggle button::before {
+      font-size: 17px;
+    }
+    .layer-toggle button[data-layer="hybrid"]::before    { content: '🛰️'; }
+    .layer-toggle button[data-layer="satellite"]::before { content: '📷'; }
+    .layer-toggle button[data-layer="street"]::before    { content: '🗺️'; }
+
+    /* Hide filter panel by default; show via fab toggle */
+    .filter-panel {
+      display: none;
+      top: 64px; left: 12px; right: 12px;
+      max-width: none;
+      max-height: 60vh; overflow-y: auto;
+    }
+    .filter-panel.open { display: block; }
+    .filter-fab { display: inline-flex; }
+
+    /* Bigger tap targets in filter rows */
+    .filter-panel .urgency-row,
+    .filter-panel .category-row {
+      padding: 10px 0;
+      min-height: 36px;
+    }
+    .filter-panel .urgency-row input,
+    .filter-panel .category-row input {
+      width: 18px; height: 18px;
+    }
+
+    /* Detail panel becomes bottom sheet — map stays visible above */
+    aside.detail {
+      position: fixed;
+      left: 0; right: 0; bottom: 0;
+      height: 60vh; max-height: 60vh;
+      border-left: none; border-top: 1px solid var(--rule);
+      border-radius: 16px 16px 0 0;
+      box-shadow: 0 -8px 28px rgba(0,0,0,0.18);
+      z-index: 700;
+      transform: translateY(100%);
+      transition: transform 0.25s ease;
+    }
+    .shell.detail-open aside.detail {
+      transform: translateY(0);
+    }
+    /* Grab handle on top of bottom sheet */
+    aside.detail::before {
+      content: '';
+      position: absolute; top: 8px; left: 50%;
+      width: 40px; height: 4px;
+      margin-left: -20px;
+      background: var(--rule-strong);
+      border-radius: 999px;
+      z-index: 10;
+    }
+    .detail-hero { padding-top: 26px; padding-bottom: 16px; }
+    .detail-hero h2 { font-size: 19px; }
+    .detail-hero .kv-grid { gap: 8px; }
+    .detail-hero .kv .v { font-size: 13px; }
+    .detail-body { padding: 14px 20px 30px; }
+    .detail-body section { margin-bottom: 16px; padding-bottom: 12px; }
+  }
+
+  @media (max-width: 720px) and (orientation: landscape) {
+    /* Landscape phones: bottom sheet takes more of the screen */
+    aside.detail { height: 75vh; max-height: 75vh; }
+  }
+
+  /* Bigger touch targets for pins on any touch device */
+  @media (pointer: coarse) {
+    .reserve-marker { width: 38px; height: 46px; transform: translate(-19px, -46px); }
+    .reserve-marker .pin { width: 38px; height: 38px; font-size: 18px; }
+    .reserve-marker::after {
+      margin-left: -7px;
+      border-left-width: 7px; border-right-width: 7px; border-top-width: 10px;
+    }
+  }
 </style>
 </head>
 <body>
@@ -387,7 +535,7 @@
     </select>
   </div>
   <div class="top-right">
-    <a class="back-link" href="/reserve-components-admin.html">Manage components ↗</a>
+    <a class="back-link mobile-hide" href="/reserve-components-admin.html">Manage components ↗</a>
     <a class="back-link" href="/">← Platform</a>
   </div>
 </header>
@@ -409,6 +557,9 @@
       <button data-layer="satellite">📷 Satellite</button>
       <button data-layer="street">🗺️ Street</button>
     </div>
+    <button class="filter-fab" id="filterFab" type="button" aria-label="Toggle filters">
+      <span>Filters</span><span class="badge" id="filterBadge">—</span>
+    </button>
     <div class="filter-panel" id="filterPanel" style="display:none;">
       <h3>Urgency</h3>
       <div id="urgencyFilters"></div>
@@ -534,6 +685,27 @@ function fmtDate(d) {
 // =============================================================================
 // Boot
 // =============================================================================
+// Filter FAB toggle (mobile) — opens the filter panel as a dropdown sheet
+(function wireFilterFab() {
+  document.addEventListener('click', (e) => {
+    const fab = e.target.closest('#filterFab');
+    if (fab) {
+      const panel = document.getElementById('filterPanel');
+      const isOpen = panel.classList.toggle('open');
+      fab.classList.toggle('active', isOpen);
+      return;
+    }
+    // Tap outside the panel closes it on mobile
+    const panel = document.getElementById('filterPanel');
+    if (panel && panel.classList.contains('open')
+        && !e.target.closest('#filterPanel')
+        && !e.target.closest('#filterFab')) {
+      panel.classList.remove('open');
+      document.getElementById('filterFab').classList.remove('active');
+    }
+  });
+})();
+
 (async function init() {
   try {
     const r = await fetch('/api/communities');
@@ -755,6 +927,16 @@ function updateFilterCounts() {
     const el = document.getElementById(`catCount-${cat}`);
     if (el) el.textContent = n;
   });
+
+  // Mobile fab badge: "X of Y" where X = currently-visible markers, Y = total with coords
+  const total = allComponents.filter(c => c.lat != null && c.lng != null).length;
+  const shown = allComponents.filter(c =>
+    c.lat != null && c.lng != null
+    && urgencyFilter[c.urgency_band || 'far']
+    && categoryFilter[c.category]
+  ).length;
+  const badge = document.getElementById('filterBadge');
+  if (badge) badge.textContent = (shown === total) ? `${total}` : `${shown}/${total}`;
 }
 
 // =============================================================================
