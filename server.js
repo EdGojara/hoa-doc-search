@@ -398,6 +398,10 @@ const _STAFF_GATE_PUBLIC = [
   /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
   /^\/builders\/[^/]+$/,                    // /builders/:slug — builder submission form (DRB, etc.)
   /^\/builders\/status\/[^/]+$/,            // /builders/status/:reference — builder submission status lookup
+  /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
+  /^\/portal-login\.html$/,                 // magic-link entry page
+  /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)
+  /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   // Public API endpoints these pages call. Each verified against the
   // actual fetch() calls in the homeowner-facing HTML files.
   /^\/api\/nominations\/public\b/,
@@ -408,6 +412,19 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/builder-applications\/public\b/,    // builders/:slug — community lookup + status check
   /^\/api\/builder-applications$/,             // POST intake (kill-switched per community)
   /^\/api\/builder-applications\/[0-9a-f-]+\/attachments$/, // file uploads tied to a submission id
+  /^\/api\/portal\/request-link$/,             // POST magic-link send (anti-enumeration)
+  /^\/api\/portal\/consume$/,                  // POST magic-link consume + cookie set
+  /^\/api\/portal\/me$/,                       // GET portal context (gated by cookie, not staff)
+  /^\/api\/portal\/logout$/,                   // POST clear cookie
+  /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
+  /^\/api\/payments\/create-checkout-session$/, // public form posts here before Stripe redirect
+  /^\/api\/payments\/by-session\/[^/]+$/,      // success page lookup post-Stripe-redirect
+  /^\/api\/amenities\/community\/[^/]+$/,      // clubhouse form bootstrap
+  /^\/api\/amenities\/[0-9a-f-]+$/,            // amenity detail (fees + agreement text)
+  /^\/api\/amenities\/[0-9a-f-]+\/availability$/, // busy-slot check
+  /^\/api\/amenities\/[0-9a-f-]+\/rentals$/,   // POST create draft rental
+  /^\/api\/amenities\/rentals\/[0-9a-f-]+$/,   // GET rental status for success page
+  /^\/clubhouse\/[^/]+(\/success)?$/,          // /clubhouse/:slug and /clubhouse/:slug/success
 ];
 
 function _gateIsPublicPath(p) { return _STAFF_GATE_PUBLIC.some((re) => re.test(p)); }
@@ -682,6 +699,45 @@ app.use('/api/applications', applicationsRouter);
 // Separate intake (portal + email ingest), shared review backend, isolated precedent storage.
 const { router: builderApplicationsRouter } = require('./api/builder_applications');
 app.use('/api/builder-applications', builderApplicationsRouter);
+
+// Universal Stripe Connect payments — used by amenity rentals today, future
+// ARC fees + key fobs + builder review fees tomorrow. Per project_payment_rails.md
+// anti-commingling rule: HOA-side fees route to per-HOA connected accounts;
+// Bedrock platform fees stay on the platform. Webhook handler uses raw body.
+const { router: paymentsRouter } = require('./api/payments');
+app.use('/api/payments', paymentsRouter);
+
+// Homeowner portal — the customer-UX showcase. Magic-link auth (no passwords),
+// scoped to one property, tile grid renders live / coming-soon modules per
+// community config. ?demo=1 mode lets Ed pitch prospective communities with a
+// realistic mockup before they have real homeowner data.
+const { router: portalRouter } = require('./api/portal');
+app.use('/api/portal', portalRouter);
+
+// Amenities + amenity rentals — public form intake, admin queue, calendar
+// availability. Used by /clubhouse/:slug form and future amenity map.
+const { router: amenitiesRouter } = require('./api/amenities');
+app.use('/api/amenities', amenitiesRouter);
+
+// Public clubhouse rental form + post-Stripe success page
+app.get('/clubhouse/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));
+});
+app.get('/clubhouse/:slug/success', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'clubhouse-success.html'));
+});
+
+// Homeowner portal dynamic routes — /portal (landing) and /portal/* (sub-pages)
+app.get('/portal', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'portal.html'));
+});
+app.get('/portal/property',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/balance',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 
 // Public builder submission form — /builders/:slug serves builder-submit.html.
 // The form reads :slug from the path and calls /api/builder-applications/public/community/:slug

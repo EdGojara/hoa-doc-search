@@ -1,0 +1,370 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reservation Confirmed · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --gold: #D4AF37;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+  }
+
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+
+  main { max-width: 640px; margin: 0 auto; padding: 50px 22px 80px; }
+
+  .card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 44px 36px;
+    text-align: center;
+    box-shadow: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+  }
+  .check-circle {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    background: rgba(80, 200, 120, 0.12);
+    color: #4A9A6A;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 22px;
+    font-size: 38px;
+    line-height: 1;
+  }
+  .processing-circle {
+    width: 72px; height: 72px;
+    border-radius: 50%;
+    border: 3px solid var(--rule);
+    border-top-color: var(--gold);
+    margin: 0 auto 22px;
+    animation: spin 0.9s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  h1 {
+    font-family: var(--font-serif); font-size: 28px; font-weight: 500;
+    color: var(--navy); margin: 0 0 8px;
+    letter-spacing: -0.01em;
+  }
+  h1 em { color: var(--gold); font-style: italic; }
+  .subhead {
+    color: var(--ink-soft); font-size: 15px;
+    margin-bottom: 28px;
+  }
+
+  .ref-block {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 18px 22px;
+    margin: 22px 0;
+    text-align: left;
+  }
+  .ref-block .label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .ref-block .ref-number {
+    font-family: var(--font-mono); font-size: 18px;
+    color: var(--navy); font-weight: 500;
+  }
+
+  .detail-list {
+    text-align: left;
+    margin: 24px 0;
+    border-top: 1px solid var(--rule);
+  }
+  .detail-row {
+    display: flex; justify-content: space-between;
+    padding: 12px 0;
+    border-bottom: 1px solid var(--rule);
+    font-size: 14px;
+  }
+  .detail-row .label { color: var(--ink-faint); }
+  .detail-row .value { color: var(--ink); font-weight: 500; text-align: right; }
+
+  .info-box {
+    background: rgba(212, 175, 55, 0.06);
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin: 22px 0;
+    text-align: left;
+    font-size: 13.5px;
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  .info-box strong { color: var(--navy); }
+
+  .actions {
+    display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;
+    margin-top: 28px;
+  }
+  .btn {
+    padding: 12px 22px; border-radius: 7px;
+    font-family: var(--font-sans); font-size: 14px; font-weight: 500;
+    cursor: pointer; text-decoration: none;
+    transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid transparent;
+  }
+  .btn-primary {
+    background: var(--navy); color: white;
+  }
+  .btn-primary:hover { background: #2A4870; }
+  .btn-secondary {
+    background: transparent; color: var(--navy);
+    border-color: var(--rule);
+  }
+  .btn-secondary:hover { border-color: var(--gold); color: var(--gold); }
+
+  .help-line {
+    margin-top: 28px; padding-top: 22px;
+    border-top: 1px solid var(--rule);
+    font-size: 12.5px; color: var(--ink-faint);
+  }
+  .help-line a { color: var(--navy); text-decoration: none; }
+  .help-line a:hover { color: var(--gold); }
+
+  footer {
+    text-align: center; margin-top: 36px;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+
+  .error-state h1 { color: #962a2a; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+</header>
+
+<main id="app">
+  <div class="card">
+    <div class="processing-circle"></div>
+    <h1>Confirming your reservation…</h1>
+    <div class="subhead">We're verifying your payment with the bank. This usually takes just a moment.</div>
+  </div>
+</main>
+
+<footer>
+  <div class="tag">Community. Simplified.</div>
+  <div style="margin-top:6px;">Bedrock Association Management · (832) 588-2485</div>
+</footer>
+
+<script>
+'use strict';
+
+const params = new URL(window.location.href).searchParams;
+const sessionId = params.get('session_id');
+const slugMatch = window.location.pathname.match(/^\/clubhouse\/([^/?#]+)/);
+const slug = slugMatch ? slugMatch[1] : '';
+
+if (!sessionId) {
+  renderError('Missing session reference. If you completed a payment, your reservation is still recorded — check your email for the confirmation, or contact Bedrock at (832) 588-2485.');
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function dollars(cents) {
+  if (cents == null) return '—';
+  return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+function fmtTime(t) {
+  if (!t) return '—';
+  const [h, m] = t.split(':').map(Number);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  const h12 = h % 12 || 12;
+  return `${h12}:${String(m).padStart(2, '0')} ${ampm}`;
+}
+
+async function init() {
+  if (!sessionId) return;
+  try {
+    // Stripe webhook may take a few seconds to land — poll twice if pending
+    let data = await pollSession(sessionId, 0);
+    if (data.session_status === 'pending') {
+      await new Promise((r) => setTimeout(r, 1800));
+      data = await pollSession(sessionId, 1);
+    }
+    renderConfirmation(data);
+  } catch (err) {
+    renderError(err.message || 'Could not verify your reservation. Check your email for the confirmation; if it doesn\'t arrive, contact Bedrock.');
+  }
+}
+
+async function pollSession(sid, attempt) {
+  const r = await fetch(`/api/payments/by-session/${encodeURIComponent(sid)}`);
+  if (!r.ok) throw new Error('Could not look up reservation.');
+  return await r.json();
+}
+
+function renderConfirmation(data) {
+  const isConfirmed = data.session_status === 'succeeded';
+  const ref = data.reference_number || '—';
+
+  document.getElementById('app').innerHTML = `
+    <div class="card">
+      <div class="check-circle">✓</div>
+      <h1>Reservation <em>${isConfirmed ? 'Confirmed' : 'Received'}</em></h1>
+      <div class="subhead">
+        ${isConfirmed
+          ? 'Your payment was successful and the clubhouse is reserved for your date.'
+          : 'Your payment is processing. We\'ll send a final confirmation once it clears (usually within a few minutes).'}
+      </div>
+
+      <div class="ref-block">
+        <div class="label">Reference number</div>
+        <div class="ref-number">${escapeHtml(ref)}</div>
+      </div>
+
+      <div class="detail-list">
+        <div class="detail-row">
+          <span class="label">Community</span>
+          <span class="value">${escapeHtml(data.community || '—')}</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Date</span>
+          <span class="value">${fmtDate(data.event_date)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Time</span>
+          <span class="value">${fmtTime(data.arrival_time)} – ${fmtTime(data.departure_time)}</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Renter</span>
+          <span class="value">${escapeHtml(data.renter_name || '—')}</span>
+        </div>
+        <div class="detail-row">
+          <span class="label">Total paid</span>
+          <span class="value">${dollars(data.total_amount_cents)}</span>
+        </div>
+      </div>
+
+      <div class="info-box">
+        <strong>What's next.</strong> A confirmation email with the full payment breakdown and rental agreement is on its way.
+        Refundable deposits are returned after a successful post-event walkthrough — typically within 30 days.
+        ${data.event_date ? 'A reminder will go out the day before your event.' : ''}
+      </div>
+
+      <div class="actions">
+        <button class="btn btn-primary" onclick="downloadIcs()">📅 Add to calendar</button>
+        <a class="btn btn-secondary" href="/portal">Back to portal</a>
+      </div>
+
+      <div class="help-line">
+        Need to change something or cancel? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or call (832) 588-2485.
+        Cancellations made less than 48 hours before the event forfeit non-refundable fees.
+      </div>
+    </div>
+  `;
+
+  // Cache for the .ics download
+  window.__rentalData = data;
+}
+
+function renderError(msg) {
+  document.getElementById('app').innerHTML = `
+    <div class="card error-state">
+      <h1>We couldn't confirm your reservation</h1>
+      <div class="subhead">${escapeHtml(msg)}</div>
+      <div class="actions">
+        <a class="btn btn-primary" href="/clubhouse/${escapeHtml(slug)}">Try again</a>
+        <a class="btn btn-secondary" href="/portal">Back to portal</a>
+      </div>
+      <div class="help-line">
+        If you were charged but don't receive a confirmation email within 30 minutes,
+        reach out to Bedrock at (832) 588-2485 with your card statement reference.
+      </div>
+    </div>
+  `;
+}
+
+function downloadIcs() {
+  const d = window.__rentalData;
+  if (!d || !d.event_date) return;
+  const [y, m, day] = d.event_date.split('-');
+  const [ah, am] = (d.arrival_time || '00:00').split(':');
+  const [dh, dm] = (d.departure_time || '00:00').split(':');
+  const startUtc = `${y}${m}${day}T${ah}${am}00`;
+  const endUtc   = `${y}${m}${day}T${dh}${dm}00`;
+  const ics = [
+    'BEGIN:VCALENDAR',
+    'VERSION:2.0',
+    'PRODID:-//Bedrock Association Management//Clubhouse Rental//EN',
+    'BEGIN:VEVENT',
+    `UID:${d.reference_number}@bedrocktx.com`,
+    `DTSTAMP:${new Date().toISOString().replace(/[-:]|\.\d{3}/g, '').slice(0, 15)}Z`,
+    `DTSTART:${startUtc}`,
+    `DTEND:${endUtc}`,
+    `SUMMARY:Clubhouse Reservation - ${d.community || 'Bedrock'}`,
+    `DESCRIPTION:Reference: ${d.reference_number}. Reserved through Bedrock Association Management.`,
+    'END:VEVENT',
+    'END:VCALENDAR',
+  ].join('\r\n');
+  const blob = new Blob([ics], { type: 'text/calendar' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${d.reference_number || 'reservation'}.ics`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+init();
+</script>
+</body>
+</html>

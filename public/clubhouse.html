@@ -1,0 +1,884 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reserve the Clubhouse · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --paper: #FFFFFF;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Top bar (consistent with /portal) ---- */
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .back-link {
+    font-size: 13px; color: var(--navy);
+    text-decoration: none; padding: 8px 14px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+
+  /* ---- Main ---- */
+  main { max-width: 760px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  /* ---- Hero ---- */
+  .hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    color: var(--cream);
+    border-radius: var(--radius);
+    padding: 32px 36px;
+    margin-bottom: 28px;
+    position: relative; overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .hero::after {
+    content: ''; position: absolute; top: -50px; right: -60px;
+    width: 280px; height: 280px;
+    background: radial-gradient(circle, rgba(212,175,55,0.18) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero .eyebrow {
+    font-size: 12px; color: rgba(255,255,255,0.7);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 30px; font-weight: 500;
+    margin: 0 0 10px; letter-spacing: -0.01em; line-height: 1.1;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; }
+  .hero .subhead { color: rgba(255,255,255,0.85); font-size: 15px; margin-bottom: 18px; }
+  .hero .facts {
+    display: flex; gap: 28px; flex-wrap: wrap;
+    padding-top: 16px; border-top: 1px solid rgba(255,255,255,0.12);
+  }
+  .hero .fact { font-size: 13px; }
+  .hero .fact .label {
+    display: block; font-size: 10.5px;
+    color: rgba(255,255,255,0.55);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-bottom: 3px;
+  }
+
+  /* ---- Sections ---- */
+  section.step {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+  }
+  section.step h2 {
+    font-family: var(--font-serif); font-size: 20px; font-weight: 500;
+    color: var(--navy); margin: 0 0 4px;
+    letter-spacing: -0.005em;
+  }
+  section.step .step-hint {
+    font-size: 13px; color: var(--ink-faint);
+    margin: 0 0 18px;
+  }
+  section.step h2 .num {
+    display: inline-block; width: 26px; height: 26px;
+    background: var(--gold-faint); color: var(--gold);
+    border-radius: 50%; text-align: center; line-height: 26px;
+    font-size: 14px; font-weight: 600;
+    margin-right: 10px; vertical-align: -2px;
+    font-family: var(--font-sans);
+  }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+  @media (max-width: 640px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+  .field label {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .field label .req { color: var(--gold); margin-left: 2px; }
+  .field input, .field select, .field textarea {
+    background: white;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: var(--font-sans); font-size: 14.5px;
+    padding: 10px 12px;
+    border-radius: 7px;
+    transition: border-color 0.15s ease;
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-color: var(--gold);
+  }
+  .field textarea { min-height: 72px; resize: vertical; }
+  .field.error input, .field.error select, .field.error textarea { border-color: #C77A7A; }
+  .field .helper {
+    font-size: 12px; color: var(--ink-faint); margin-top: 2px;
+  }
+  .field .helper.error { color: #C77A7A; }
+
+  /* ---- Busy slots note ---- */
+  .busy-list {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--gold);
+    padding: 10px 14px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-top: 10px;
+    color: var(--ink-soft);
+  }
+  .busy-list strong { color: var(--navy); }
+  .busy-list .empty { color: #4A9A6A; }
+
+  /* ---- Addon row ---- */
+  .addon {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 14px;
+    border: 1px solid var(--rule); border-radius: 8px;
+    margin-top: 8px;
+    background: var(--cream-soft);
+    cursor: pointer;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .addon input { margin-top: 3px; accent-color: var(--gold); flex-shrink: 0; }
+  .addon:hover { border-color: var(--gold); background: var(--gold-faint); }
+  .addon .title { font-weight: 500; color: var(--ink); margin-bottom: 2px; font-size: 14px; }
+  .addon .desc { font-size: 12.5px; color: var(--ink-faint); }
+  .addon .price {
+    font-family: var(--font-mono); color: var(--navy);
+    font-size: 13px; margin-left: auto; white-space: nowrap;
+  }
+
+  /* ---- Fee summary ---- */
+  .fee-card {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 16px 18px;
+  }
+  .fee-card .row {
+    display: flex; justify-content: space-between;
+    padding: 5px 0;
+    font-size: 13.5px;
+  }
+  .fee-card .row.refundable .label::after {
+    content: ' · refundable';
+    color: var(--ink-faint); font-size: 11.5px;
+  }
+  .fee-card .total {
+    display: flex; justify-content: space-between;
+    padding: 10px 0 4px;
+    margin-top: 6px;
+    border-top: 1px solid var(--rule);
+    font-weight: 600;
+    font-family: var(--font-serif);
+    font-size: 17px;
+    color: var(--navy);
+  }
+  .fee-card .refund-note {
+    font-size: 11.5px; color: var(--ink-faint);
+    margin-top: 6px;
+    font-style: italic;
+  }
+
+  /* ---- Agreement ---- */
+  .agreement-text {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 16px 20px;
+    max-height: 320px; overflow-y: auto;
+    font-family: 'Times New Roman', Georgia, serif;
+    font-size: 13.5px; line-height: 1.5;
+    color: var(--ink-soft);
+    margin-bottom: 12px;
+    white-space: pre-wrap;
+  }
+  .ack-row {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 10px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .ack-row:last-of-type { border-bottom: none; }
+  .ack-row input {
+    width: 18px; height: 18px; margin-top: 2px; flex-shrink: 0;
+    accent-color: var(--gold);
+  }
+  .ack-row label { font-size: 13.5px; color: var(--ink); line-height: 1.5; cursor: pointer; }
+
+  /* ---- CTA ---- */
+  .cta-bar {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 18px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap;
+    box-shadow: var(--shadow-soft);
+  }
+  .cta-bar .total-line { font-size: 14px; color: var(--ink-soft); }
+  .cta-bar .total-line strong {
+    font-family: var(--font-serif); font-size: 22px; color: var(--navy);
+    margin-left: 10px;
+  }
+  .cta-bar .reserve-btn {
+    background: var(--navy); color: white;
+    border: none; padding: 14px 26px;
+    font-family: var(--font-sans); font-size: 15px; font-weight: 500;
+    border-radius: 7px; cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: all 0.15s ease;
+  }
+  .cta-bar .reserve-btn:hover { background: #2A4870; }
+  .cta-bar .reserve-btn:disabled {
+    background: var(--ink-faint); cursor: not-allowed; opacity: 0.6;
+  }
+
+  /* ---- States ---- */
+  .full-loader {
+    min-height: 70vh; display: flex;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .closed-state {
+    max-width: 480px; margin: 80px auto; text-align: center;
+    background: white; padding: 40px 32px;
+    border-radius: var(--radius); border: 1px solid var(--rule);
+  }
+  .closed-state h2 {
+    font-family: var(--font-serif); color: var(--navy);
+    font-size: 22px; margin: 0 0 10px;
+  }
+  .closed-state p { color: var(--ink-soft); font-size: 14px; }
+  .closed-state a { color: var(--navy); text-decoration: none; }
+
+  /* ---- Toast ---- */
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--navy); color: var(--cream);
+    padding: 12px 20px; border-radius: 8px;
+    font-size: 13px;
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 100; max-width: 92vw;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.25);
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #962a2a; }
+
+  /* ---- Demo ribbon ---- */
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 12px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    display: inline-block; margin-left: 10px;
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading…</div>
+</div>
+
+<template id="formTemplate">
+
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Association Management</em></div>
+    </div>
+  </a>
+  <a class="back-link" href="/portal" id="backLink">← Portal</a>
+</header>
+
+<main>
+
+<div class="hero">
+  <div class="eyebrow" id="heroEyebrow">—</div>
+  <h1 id="heroTitle">Reserve the <em>Clubhouse</em></h1>
+  <div class="subhead" id="heroSubhead">—</div>
+  <div class="facts">
+    <div class="fact">
+      <span class="label">Capacity</span>
+      <span id="factCapacity">—</span>
+    </div>
+    <div class="fact">
+      <span class="label">Lead time</span>
+      <span id="factLead">—</span>
+    </div>
+    <div class="fact">
+      <span class="label">Cancellation</span>
+      <span id="factCancel">—</span>
+    </div>
+    <div class="fact">
+      <span class="label">Address</span>
+      <span id="factAddress">—</span>
+    </div>
+  </div>
+</div>
+
+<form id="reserveForm" novalidate>
+
+<!-- Step 1: When -->
+<section class="step">
+  <h2><span class="num">1</span>When</h2>
+  <p class="step-hint">Pick your date and time window. We'll show you any conflicting reservations below.</p>
+  <div class="grid-3">
+    <div class="field" id="fldDate">
+      <label>Date<span class="req">*</span></label>
+      <input type="date" name="event_date" required>
+    </div>
+    <div class="field" id="fldArrival">
+      <label>Arrival<span class="req">*</span></label>
+      <input type="time" name="arrival_time" required>
+    </div>
+    <div class="field" id="fldDeparture">
+      <label>Departure<span class="req">*</span></label>
+      <input type="time" name="departure_time" required>
+    </div>
+  </div>
+  <div class="busy-list" id="busyList">Checking availability…</div>
+</section>
+
+<!-- Step 2: Who -->
+<section class="step">
+  <h2><span class="num">2</span>Your information</h2>
+  <p class="step-hint">Bedrock will email confirmation to this address.</p>
+  <div class="grid-2">
+    <div class="field" id="fldName">
+      <label>Your name<span class="req">*</span></label>
+      <input type="text" name="renter_name" required>
+    </div>
+    <div class="field" id="fldEmail">
+      <label>Email<span class="req">*</span></label>
+      <input type="email" name="renter_email" required>
+    </div>
+    <div class="field">
+      <label>Cell phone</label>
+      <input type="tel" name="renter_phone_cell">
+    </div>
+    <div class="field">
+      <label>Property address</label>
+      <input type="text" name="renter_address" placeholder="Your home address in the community">
+    </div>
+  </div>
+</section>
+
+<!-- Step 3: Event -->
+<section class="step">
+  <h2><span class="num">3</span>Event details</h2>
+  <p class="step-hint">A brief description helps the team prepare. Conservative estimate on attendees is fine.</p>
+  <div class="grid-2">
+    <div class="field">
+      <label>What kind of event?</label>
+      <input type="text" name="event_description" placeholder="e.g. Birthday party, family gathering, book club">
+    </div>
+    <div class="field" id="fldAttendees">
+      <label>Approx. attendees</label>
+      <input type="number" name="attendee_count" min="1">
+      <div class="helper" id="capacityHelper"></div>
+    </div>
+  </div>
+</section>
+
+<!-- Step 4: Add-ons -->
+<section class="step" id="addonsStep" style="display:none;">
+  <h2><span class="num">4</span>Optional add-ons</h2>
+  <p class="step-hint">Skip any you don't need.</p>
+  <label class="addon" id="addonAv" style="display:none;">
+    <input type="checkbox" name="addon_av_equipment">
+    <div style="display: flex; flex: 1; gap: 12px; align-items: flex-start;">
+      <div style="flex: 1;">
+        <div class="title">Audio/video equipment</div>
+        <div class="desc">Refundable deposit covering use of the clubhouse AV system.</div>
+      </div>
+      <div class="price" id="addonAvPrice">—</div>
+    </div>
+  </label>
+</section>
+
+<!-- Step 5: Fees -->
+<section class="step">
+  <h2><span class="num">5</span>Fees</h2>
+  <p class="step-hint">All required charges below. Refundable items are returned after a successful post-event inspection.</p>
+  <div class="fee-card" id="feeCard">
+    <div class="row" style="opacity:0.5;">Loading fees…</div>
+  </div>
+</section>
+
+<!-- Step 6: Agreement -->
+<section class="step">
+  <h2><span class="num">6</span>Agreement</h2>
+  <p class="step-hint">Please read the rental agreement below before reserving.</p>
+  <div class="agreement-text" id="agreementText">Loading agreement…</div>
+  <div class="ack-row">
+    <input type="checkbox" id="ackTerms" required>
+    <label for="ackTerms">I have read and agree to the rental agreement above, including the cancellation policy, indemnification, and rules of use.</label>
+  </div>
+  <div class="ack-row">
+    <input type="checkbox" id="ackResponsible" required>
+    <label for="ackResponsible">I am a homeowner in good standing at this community, current on assessments, and personally responsible for the conduct of my guests during the rental.</label>
+  </div>
+</section>
+
+<!-- Reserve & Pay CTA -->
+<div class="cta-bar">
+  <div class="total-line">Total today <strong id="ctaTotal">—</strong></div>
+  <button type="submit" class="reserve-btn" id="reserveBtn">Reserve &amp; Pay →</button>
+</div>
+
+</form>
+
+</main>
+
+</template>
+
+<template id="closedTemplate">
+<header class="top">
+  <a class="brand" href="/">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+</header>
+<div class="closed-state">
+  <h2 id="closedTitle">Not currently accepting reservations</h2>
+  <p id="closedMessage">Online clubhouse reservations are not yet available for this community. To reserve, please contact Bedrock at <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or (832) 588-2485.</p>
+</div>
+</template>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+let ctx = null;
+let community = null;
+let amenity = null;
+let fees = [];
+let agreementHash = null;
+let busySlots = [];
+let isDemo = false;
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function dollars(cents) {
+  if (cents == null) return '$0.00';
+  return (cents / 100).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+function toast(msg, kind) {
+  const t = $('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  setTimeout(() => { t.className = 'toast'; }, 4500);
+}
+
+function getCommunitySlug() {
+  const m = window.location.pathname.match(/^\/clubhouse\/([^/?#]+)/);
+  return m ? m[1] : '';
+}
+
+function getQueryParams() {
+  const url = new URL(window.location.href);
+  return {
+    demo: url.searchParams.get('demo') === '1',
+    session_id: url.searchParams.get('session_id'),
+    cancelled: url.searchParams.get('cancelled') === '1',
+  };
+}
+
+// ---- Bootstrap ----
+(async function init() {
+  const slug = getCommunitySlug();
+  const q = getQueryParams();
+  isDemo = q.demo;
+
+  if (q.session_id) {
+    // Returning from Stripe success → redirect to success page
+    window.location.href = `/clubhouse/${slug}/success?session_id=${encodeURIComponent(q.session_id)}`;
+    return;
+  }
+
+  if (q.cancelled) {
+    toast('Reservation cancelled — no charges made. You can resubmit anytime.', 'error');
+  }
+
+  if (isDemo) {
+    return renderDemo(slug);
+  }
+
+  try {
+    const r = await fetch(`/api/amenities/community/${slug}`);
+    if (r.status === 404) return renderClosed({ title: 'Community not found', message: 'This URL doesn\'t match an active community. Check the link.' });
+    if (r.status === 403) {
+      const data = await r.json().catch(() => ({}));
+      return renderClosed({
+        title: 'Not currently accepting reservations',
+        message: data.hint || 'Online clubhouse reservations are not yet available for this community.',
+      });
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    community = data.community;
+    const rentables = data.amenities || [];
+
+    if (!rentables.length) {
+      return renderClosed({
+        title: 'No amenities available yet',
+        message: `${community.name} is being set up. Please contact Bedrock for reservations in the meantime.`,
+      });
+    }
+
+    if (!community.stripe_ready && !isDemo) {
+      return renderClosed({
+        title: 'Online payments coming soon',
+        message: `Online reservations for ${community.name} will be available once payment setup is complete. To reserve in the meantime, contact Bedrock at (832) 588-2485 or info@bedrocktx.com.`,
+      });
+    }
+
+    // For v0: load the first rentable amenity (typically the clubhouse).
+    // Multi-amenity selection is a follow-on.
+    const amenityResp = await fetch(`/api/amenities/${rentables[0].id}`);
+    if (!amenityResp.ok) throw new Error('Could not load amenity details');
+    const amenityData = await amenityResp.json();
+    amenity = amenityData.amenity;
+    fees = amenityData.fees || [];
+    agreementHash = amenityData.agreement_text_hash;
+
+    renderForm();
+    await loadAvailability();
+  } catch (err) {
+    renderClosed({ title: 'Couldn\'t load the reservation form', message: err.message });
+  }
+})();
+
+// ---- Demo mode (mock for sales pitches) ----
+function renderDemo(slug) {
+  const names = {
+    'waterview': 'Waterview Estates',
+    'canyon-gate': 'Canyon Gate at Cinco Ranch',
+    'august-meadows': 'August Meadows',
+    'still-creek-ranch': 'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge': 'Quail Ridge',
+  };
+  const name = names[slug] || 'Your Community';
+  community = {
+    id: 'demo', slug, name,
+    hoa_legal_name: `${name} Owners Association, Inc.`,
+    bookings_active: true, stripe_ready: true,
+  };
+  amenity = {
+    id: 'demo-amenity',
+    amenity_type: 'clubhouse',
+    name: `${name} Clubhouse`,
+    description: 'Community gathering space available to residents in good standing.',
+    street_address: '5110 Sample Trail, Houston, TX',
+    capacity: 50,
+    rental_max_attendees: 50,
+    rental_min_lead_time_days: 14,
+    rental_max_lead_time_days: 90,
+    rental_cancellation_window_hours: 48,
+    rental_agreement_version: '2025-01',
+    rental_agreement_text: 'This is a demonstration of the rental agreement. The full contract for your community will appear here once your community is fully configured, including capacity rules, hours, deposit policies, and indemnification language.\n\nDemo data is for illustration only. No actual charges will be made.',
+  };
+  fees = [
+    { id: 'demo-1', fee_type: 'rental', label: 'Clubhouse rental fee', amount_cents: 15000, refundable: false, required: true, payee: 'community_association', payee_display_name: `${name} OA`, display_order: 1 },
+    { id: 'demo-2', fee_type: 'cleaning', label: 'Cleaning fee', amount_cents: 7000, refundable: false, required: true, payee: 'management_company', payee_display_name: 'Bedrock', display_order: 2 },
+    { id: 'demo-3', fee_type: 'processing', label: 'Management processing fee', amount_cents: 2500, refundable: false, required: true, payee: 'management_company', payee_display_name: 'Bedrock', display_order: 3 },
+    { id: 'demo-4', fee_type: 'security_deposit', label: 'Refundable security deposit', amount_cents: 40000, refundable: true, required: true, payee: 'community_association', payee_display_name: `${name} OA`, display_order: 4 },
+    { id: 'demo-5', fee_type: 'av_equipment_deposit', label: 'AV equipment deposit', amount_cents: 5000, refundable: true, required: false, payee: 'community_association', payee_display_name: `${name} OA`, display_order: 5 },
+  ];
+  agreementHash = 'demo';
+  renderForm();
+  $('busyList').innerHTML = '<strong>Demo mode.</strong> In live mode, conflicting reservations would appear here.';
+}
+
+// ---- Closed / error state ----
+function renderClosed(info) {
+  const tpl = $('closedTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+  if (info?.title) $('closedTitle').textContent = info.title;
+  if (info?.message) $('closedMessage').innerHTML = info.message;
+}
+
+// ---- Form rendering ----
+function renderForm() {
+  const tpl = $('formTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  // Hero
+  $('heroEyebrow').innerHTML = `${escapeHtml(community.name)} ${isDemo ? '<span class="demo-ribbon">Demo</span>' : ''}`;
+  $('heroTitle').innerHTML = `Reserve the <em>${escapeHtml(amenity.name.replace(community.name, '').replace(/^\s*[-·]\s*/, '').trim() || 'Clubhouse')}</em>`;
+  $('heroSubhead').textContent = amenity.description
+    || 'Members in good standing may reserve the community clubhouse for private events.';
+  $('factCapacity').textContent = amenity.rental_max_attendees ? `${amenity.rental_max_attendees} people` : '—';
+  $('factLead').textContent = amenity.rental_min_lead_time_days
+    ? `${amenity.rental_min_lead_time_days}–${amenity.rental_max_lead_time_days || '90'} days`
+    : '—';
+  $('factCancel').textContent = amenity.rental_cancellation_window_hours
+    ? `${amenity.rental_cancellation_window_hours}h before`
+    : '—';
+  $('factAddress').textContent = amenity.street_address || '—';
+
+  // Date input min/max
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const minDays = amenity.rental_min_lead_time_days || 0;
+  const maxDays = amenity.rental_max_lead_time_days || 180;
+  const minDate = new Date(today.getTime() + minDays * 86400000);
+  const maxDate = new Date(today.getTime() + maxDays * 86400000);
+  $('reserveForm').event_date.min = minDate.toISOString().slice(0, 10);
+  $('reserveForm').event_date.max = maxDate.toISOString().slice(0, 10);
+
+  // Capacity helper
+  if (amenity.rental_max_attendees) {
+    $('capacityHelper').textContent = `Maximum ${amenity.rental_max_attendees}.`;
+  }
+
+  // Addons
+  const avFee = fees.find((f) => f.fee_type === 'av_equipment_deposit' && !f.required);
+  if (avFee) {
+    $('addonsStep').style.display = '';
+    $('addonAv').style.display = '';
+    $('addonAvPrice').textContent = dollars(avFee.amount_cents) + (avFee.refundable ? ' refundable' : '');
+  }
+
+  // Agreement
+  $('agreementText').textContent = amenity.rental_agreement_text || 'Rental agreement not yet configured. Please contact Bedrock.';
+
+  // Form wiring
+  const form = $('reserveForm');
+  form.addEventListener('change', recomputeFees);
+  form.addEventListener('input', recomputeFees);
+  form.event_date.addEventListener('change', () => {
+    loadAvailability().catch(() => {});
+  });
+  form.addEventListener('submit', onSubmit);
+
+  recomputeFees();
+}
+
+// ---- Availability ----
+async function loadAvailability() {
+  if (isDemo) return;
+  const slot = $('busyList');
+  slot.innerHTML = 'Checking availability…';
+  try {
+    const r = await fetch(`/api/amenities/${amenity.id}/availability`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    busySlots = data.busy_slots || [];
+
+    if (!busySlots.length) {
+      slot.innerHTML = `<span class="empty">✓ Calendar is open through ${data.to}.</span>`;
+      return;
+    }
+    const upcoming = busySlots.slice(0, 6);
+    slot.innerHTML = `<strong>Already reserved:</strong> ${upcoming.map((b) => {
+      const d = new Date(b.date + 'T00:00:00');
+      const dStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+      return `${dStr} ${b.from.slice(0,5)}–${b.to.slice(0,5)}`;
+    }).join(' · ')}${busySlots.length > 6 ? ` <span style="color:var(--ink-faint);">and ${busySlots.length - 6} more</span>` : ''}.`;
+  } catch (err) {
+    slot.innerHTML = '<span style="color:var(--ink-faint);">Could not load existing reservations. Slot conflicts will be re-checked on submit.</span>';
+  }
+}
+
+// ---- Fee recompute ----
+function recomputeFees() {
+  const form = $('reserveForm');
+  const wantsAv = !!form.addon_av_equipment?.checked;
+
+  const applicable = fees.filter((f) => f.required || (f.fee_type === 'av_equipment_deposit' && wantsAv));
+  const total = applicable.reduce((s, f) => s + f.amount_cents, 0);
+  const refundable = applicable.filter((f) => f.refundable).reduce((s, f) => s + f.amount_cents, 0);
+
+  const card = $('feeCard');
+  card.innerHTML = applicable.map((f) => `
+    <div class="row ${f.refundable ? 'refundable' : ''}">
+      <span class="label">${escapeHtml(f.label)}</span>
+      <span class="amount">${dollars(f.amount_cents)}</span>
+    </div>
+  `).join('') + `
+    <div class="total">
+      <span>Total</span>
+      <span>${dollars(total)}</span>
+    </div>
+    ${refundable ? `<div class="refund-note">${dollars(refundable)} refunded after successful post-event inspection.</div>` : ''}
+  `;
+
+  $('ctaTotal').textContent = dollars(total);
+}
+
+// ---- Submit ----
+async function onSubmit(e) {
+  e.preventDefault();
+  document.querySelectorAll('.field.error').forEach((f) => f.classList.remove('error'));
+
+  const form = $('reserveForm');
+  const data = {
+    renter_name:        form.renter_name.value.trim(),
+    renter_email:       form.renter_email.value.trim().toLowerCase(),
+    renter_phone_cell:  form.renter_phone_cell.value.trim(),
+    renter_address:     form.renter_address.value.trim(),
+    event_date:         form.event_date.value,
+    arrival_time:       form.arrival_time.value,
+    departure_time:     form.departure_time.value,
+    event_description:  form.event_description.value.trim(),
+    attendee_count:     form.attendee_count.value ? Number(form.attendee_count.value) : null,
+    optional_addons:    { av_equipment: !!form.addon_av_equipment?.checked },
+    intake_method:      'online_portal',
+    agreement_acknowledged: $('ackTerms').checked && $('ackResponsible').checked,
+    agreement_text_hash: agreementHash,
+  };
+
+  // Validate
+  const required = [
+    ['renter_name','fldName'], ['renter_email','fldEmail'],
+    ['event_date','fldDate'], ['arrival_time','fldArrival'], ['departure_time','fldDeparture'],
+  ];
+  for (const [field, anchor] of required) {
+    if (!data[field]) {
+      $(anchor)?.classList.add('error');
+      toast(`Please fill in ${field.replace(/_/g, ' ')}.`, 'error');
+      return;
+    }
+  }
+  if (data.arrival_time >= data.departure_time) {
+    $('fldDeparture').classList.add('error');
+    toast('Departure time must be after arrival time.', 'error');
+    return;
+  }
+  if (!data.agreement_acknowledged) {
+    toast('Please acknowledge the rental agreement.', 'error');
+    return;
+  }
+
+  if (isDemo) {
+    toast('Demo mode — submission paused so no test charges are made. Live communities will redirect to checkout here.', 'error');
+    return;
+  }
+
+  const btn = $('reserveBtn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px;margin-right:8px;"></span> Creating reservation…`;
+
+  try {
+    // 1) Create draft rental
+    const rentalResp = await fetch(`/api/amenities/${amenity.id}/rentals`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    });
+    const rentalData = await rentalResp.json();
+    if (!rentalResp.ok) {
+      throw new Error(humanizeError(rentalData.error) || `Reservation failed (${rentalResp.status})`);
+    }
+
+    btn.innerHTML = `<span class="spinner" style="display:inline-block;vertical-align:-3px;margin-right:8px;"></span> Redirecting to secure checkout…`;
+
+    // 2) Create Stripe Checkout session
+    const slug = community.slug;
+    const checkoutResp = await fetch('/api/payments/create-checkout-session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        product_type: 'amenity_rental',
+        product_id: rentalData.rental_id,
+        selected_addons: data.optional_addons,
+        success_url: `${window.location.origin}/clubhouse/${slug}/success?session_id={CHECKOUT_SESSION_ID}`,
+        cancel_url: `${window.location.origin}/clubhouse/${slug}?cancelled=1`,
+      }),
+    });
+    const checkoutData = await checkoutResp.json();
+    if (!checkoutResp.ok) {
+      throw new Error(humanizeError(checkoutData.error) || `Checkout setup failed (${checkoutResp.status})`);
+    }
+
+    // 3) Redirect to Stripe
+    window.location.href = checkoutData.checkout_url;
+  } catch (err) {
+    toast(err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Reserve & Pay →';
+  }
+}
+
+function humanizeError(code) {
+  const map = {
+    'slot_conflict':                  'That time slot has just been taken. Please pick a different time or date.',
+    'lead_time_too_short':             'This date is too soon. Reservations require a minimum lead time.',
+    'lead_time_too_far':               'This date is beyond the booking window.',
+    'over_capacity':                   'The attendee count exceeds the clubhouse capacity.',
+    'agreement_must_be_acknowledged':  'Please acknowledge the rental agreement.',
+    'amenity_not_rentable':            'This amenity is not currently available for online reservations.',
+    'community_stripe_not_onboarded':  'Online payments are not yet enabled for this community. Please contact Bedrock.',
+    'payment_not_configured':          'Online payments are not yet configured. Please contact Bedrock.',
+  };
+  return map[code] || code;
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign In · Homeowner Portal · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+  .wrap {
+    display: flex; flex-direction: column;
+    min-height: 100vh; align-items: center; justify-content: center;
+    padding: 40px 24px;
+  }
+  .card {
+    width: 100%; max-width: 440px;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 12px;
+    padding: 36px 32px;
+    box-shadow: 0 4px 24px rgba(26, 48, 80, 0.06);
+  }
+  .brand {
+    display: flex; flex-direction: column; align-items: center;
+    gap: 10px; margin-bottom: 28px;
+  }
+  .brand svg { width: 36px; height: 45px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; text-align: center;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .sub {
+    font-family: var(--font-mono); font-size: 9.5px;
+    color: var(--ink-faint); letter-spacing: 0.16em; text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  h1 {
+    font-family: var(--font-serif);
+    font-size: 22px; font-weight: 500;
+    color: var(--navy); margin: 0 0 6px;
+    text-align: center; letter-spacing: -0.005em;
+  }
+  .subtitle {
+    color: var(--ink-soft);
+    text-align: center; font-size: 14px;
+    margin-bottom: 22px;
+  }
+
+  label {
+    display: block;
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 6px;
+  }
+  input[type=email] {
+    width: 100%;
+    background: white;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    font-family: var(--font-sans); font-size: 15px;
+    padding: 12px 14px;
+    border-radius: 7px;
+    transition: border-color 0.15s ease;
+    margin-bottom: 18px;
+  }
+  input[type=email]:focus { outline: none; border-color: var(--gold); }
+
+  button.primary {
+    width: 100%;
+    background: var(--navy); color: white;
+    border: none; padding: 13px;
+    font-family: var(--font-sans); font-size: 14.5px; font-weight: 500;
+    border-radius: 7px; cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: all 0.15s ease;
+  }
+  button.primary:hover { background: #2A4870; }
+  button.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  .helper {
+    text-align: center; font-size: 13px; color: var(--ink-soft);
+    margin-top: 18px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    line-height: 1.6;
+  }
+  .helper a { color: var(--navy); text-decoration: none; }
+  .helper a:hover { color: var(--gold); }
+  .helper .small {
+    font-size: 11.5px; color: var(--ink-faint); margin-top: 6px;
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--navy); color: var(--cream);
+    padding: 12px 20px; border-radius: 8px;
+    font-size: 13px;
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 100; max-width: 92vw;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #962a2a; }
+
+  .success-state h2 {
+    font-family: var(--font-serif); font-size: 20px; font-weight: 500;
+    color: var(--navy); margin: 0 0 10px; text-align: center;
+  }
+  .success-state p { color: var(--ink-soft); text-align: center; font-size: 14px; line-height: 1.6; }
+  .success-state .check {
+    width: 56px; height: 56px; border-radius: 50%;
+    background: rgba(80, 200, 120, 0.12);
+    color: #4A9A6A; font-size: 28px;
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 16px;
+  }
+
+  .loader {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid rgba(255,255,255,0.3);
+    border-top-color: white;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    margin-top: 32px; text-align: center;
+    font-size: 11px; color: var(--ink-faint);
+    line-height: 1.6;
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  footer a { color: var(--navy); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+  <div class="card" id="card">
+    <div class="brand">
+      <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+        <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+        <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+        <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+      </svg>
+      <div>
+        <div class="wm">Bedrock <em>Association Management</em></div>
+        <div class="sub">Community. Simplified.</div>
+      </div>
+    </div>
+
+    <div id="loginForm">
+      <h1>Homeowner Portal</h1>
+      <div class="subtitle">Enter your email and we'll send you a sign-in link.</div>
+
+      <form id="emailForm" novalidate>
+        <label for="email">Email address</label>
+        <input type="email" id="email" name="email" placeholder="name@example.com" required>
+        <button type="submit" class="primary" id="submitBtn">Send sign-in link</button>
+      </form>
+
+      <div class="helper">
+        Don't have access yet? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or call (832) 588-2485 and we'll set you up.
+        <div class="small">If you're a board member looking for the board portal, that's at <a href="/board-portal.html">board-portal.html</a>.</div>
+      </div>
+    </div>
+
+    <div id="successState" style="display:none;" class="success-state">
+      <div class="check">✓</div>
+      <h2>Check your email</h2>
+      <p>If <strong id="sentEmail">that email</strong> is registered, a sign-in link is on its way. The link is valid for 1 hour.</p>
+      <div class="helper" style="border-top:none; padding-top: 0;">
+        Didn't get the email? Check spam, or <a href="#" onclick="window.location.reload();">try again</a>.
+      </div>
+    </div>
+  </div>
+
+  <footer>
+    <div class="tag">Community. Simplified.</div>
+    <div style="margin-top:6px;">
+      Bedrock Association Management · <a href="https://bedrocktx.com" target="_blank" rel="noopener">bedrocktx.com</a>
+    </div>
+  </footer>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+function toast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+// Handle ?token=xxx from email — auto-consume and redirect to /portal
+(async function autoConsume() {
+  const url = new URL(window.location.href);
+  const token = url.searchParams.get('token');
+  if (!token) return;
+  try {
+    const r = await fetch(`/api/portal/consume?token=${encodeURIComponent(token)}`, {
+      method: 'POST',
+      credentials: 'same-origin',
+    });
+    if (r.ok) {
+      window.location.href = '/portal';
+    } else {
+      const data = await r.json().catch(() => ({}));
+      toast(data.error || 'Sign-in link has expired or is invalid. Try requesting a new one.', 'error');
+    }
+  } catch (err) {
+    toast('Could not sign you in. Please try requesting a new link.', 'error');
+  }
+})();
+
+document.getElementById('emailForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const emailInput = document.getElementById('email');
+  const email = emailInput.value.trim();
+  if (!email) {
+    toast('Please enter your email address.', 'error');
+    return;
+  }
+  const btn = document.getElementById('submitBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader"></span> Sending…';
+
+  try {
+    const r = await fetch('/api/portal/request-link', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email }),
+    });
+    // Per security best practice we don't reveal whether the email is registered.
+    // Always show success.
+    document.getElementById('loginForm').style.display = 'none';
+    document.getElementById('successState').style.display = '';
+    document.getElementById('sentEmail').textContent = email;
+  } catch (err) {
+    toast('Something went wrong. Please try again or call (832) 588-2485.', 'error');
+    btn.disabled = false;
+    btn.textContent = 'Send sign-in link';
+  }
+});
+</script>
+</body>
+</html>

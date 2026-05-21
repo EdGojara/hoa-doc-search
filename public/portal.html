@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Homeowner Portal · Bedrock Association Management</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* =============================================================================
+     Homeowner Portal — Bedrock Association Management
+     ----------------------------------------------------------------------------
+     The customer-UX showcase. Amazon-grade simple. Mobile-first.
+     Tile grid renders all modules — live or "coming soon" — based on
+     community.portal_module_config. Never broken, never 404.
+
+     Two modes:
+       Auth mode (real):  cookie set by /api/portal/consume, data via /api/portal/me
+       Demo mode (sales): ?demo=1&community=<slug> — injects realistic mock data
+                          so prospective boards see THEIR future portal in a pitch
+     ============================================================================= */
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --paper: #FFFFFF;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --shadow-hover: 0 4px 12px rgba(26, 48, 80, 0.1), 0 12px 32px rgba(26, 48, 80, 0.08);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Top bar ---- */
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 16px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand svg { width: 28px; height: 35px; flex-shrink: 0; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 17px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .sub {
+    font-family: var(--font-mono); font-size: 9.5px;
+    color: var(--ink-faint); letter-spacing: 0.16em; text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .top-right { display: flex; align-items: center; gap: 14px; }
+  .top-right .user-name {
+    font-size: 13.5px; color: var(--ink); font-weight: 500;
+  }
+  .top-right .user-meta { font-size: 12px; color: var(--ink-faint); }
+  .top-right button {
+    background: transparent; border: 1px solid var(--rule);
+    padding: 8px 14px; border-radius: 6px;
+    font-family: var(--font-sans); font-size: 12.5px; color: var(--ink-soft);
+    cursor: pointer; transition: all 0.15s ease;
+  }
+  .top-right button:hover { color: var(--gold); border-color: var(--gold); }
+  .demo-badge {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600; letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+
+  /* ---- Hero / property card ---- */
+  main { max-width: 1180px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  .hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    border-radius: var(--radius);
+    padding: 32px 36px;
+    color: var(--cream);
+    margin-bottom: 28px;
+    position: relative; overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .hero::after {
+    content: ''; position: absolute; top: -40px; right: -40px;
+    width: 240px; height: 240px;
+    background: radial-gradient(circle, rgba(212,175,55,0.18) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero .greeting {
+    font-size: 13px; color: rgba(255,255,255,0.7);
+    letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 6px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 32px; font-weight: 500;
+    margin: 0 0 8px; letter-spacing: -0.01em;
+    line-height: 1.1;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; }
+  .hero .property-line {
+    font-size: 16px; color: rgba(255,255,255,0.85);
+    margin-bottom: 18px;
+  }
+  .hero .stats {
+    display: flex; gap: 36px; flex-wrap: wrap;
+    padding-top: 18px; border-top: 1px solid rgba(255,255,255,0.12);
+  }
+  .hero .stat .label {
+    display: block;
+    font-size: 11px; color: rgba(255,255,255,0.55);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .hero .stat .value {
+    font-family: var(--font-serif); font-size: 22px; color: var(--cream);
+    font-weight: 500;
+  }
+  .hero .stat .value.good   { color: #93E5A8; }
+  .hero .stat .value.warn   { color: var(--gold-bright); }
+  .hero .stat .value.bad    { color: #E48A8A; }
+  .hero .stat .sub {
+    font-size: 11.5px; color: rgba(255,255,255,0.6); margin-top: 2px;
+  }
+
+  .welcome-banner {
+    background: var(--gold-faint); border: 1px solid rgba(212, 175, 55, 0.3);
+    color: var(--ink);
+    padding: 12px 18px;
+    border-radius: 8px;
+    margin-bottom: 22px;
+    font-size: 13.5px;
+  }
+  .welcome-banner strong { color: var(--navy); }
+
+  /* ---- Tile grid ---- */
+  .section-label {
+    font-family: var(--font-sans);
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    margin: 0 0 14px;
+    font-weight: 500;
+  }
+  .tile-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 16px;
+    margin-bottom: 32px;
+  }
+  .tile {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px;
+    position: relative;
+    transition: all 0.18s ease;
+    box-shadow: var(--shadow-soft);
+    text-decoration: none;
+    color: inherit;
+    display: flex; flex-direction: column;
+    min-height: 180px;
+  }
+  .tile.live { cursor: pointer; }
+  .tile.live:hover {
+    border-color: var(--gold);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+  }
+  .tile.coming_soon, .tile.maintenance {
+    cursor: default;
+    background: var(--cream);
+  }
+  .tile.coming_soon .icon, .tile.coming_soon h3,
+  .tile.coming_soon p, .tile.maintenance .icon { opacity: 0.6; }
+  .tile .ribbon {
+    position: absolute; top: 14px; right: 14px;
+    font-size: 10px; padding: 3px 9px;
+    border-radius: 999px;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    font-weight: 500;
+  }
+  .tile.coming_soon .ribbon {
+    background: var(--cream-soft); color: var(--ink-faint);
+    border: 1px solid var(--rule);
+  }
+  .tile.maintenance .ribbon {
+    background: rgba(231, 195, 78, 0.15);
+    color: #966C00;
+    border: 1px solid rgba(231, 195, 78, 0.4);
+  }
+  .tile.live .ribbon {
+    background: rgba(80, 200, 120, 0.12); color: #4A9A6A;
+    border: 1px solid rgba(80, 200, 120, 0.3);
+  }
+  .tile.live.has-action .ribbon { display: none; }
+
+  .tile .icon {
+    width: 42px; height: 42px;
+    border-radius: 10px;
+    background: var(--gold-faint);
+    color: var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    margin-bottom: 14px;
+    font-size: 22px;
+  }
+  .tile h3 {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--navy); margin: 0 0 5px;
+    letter-spacing: -0.005em;
+  }
+  .tile p {
+    font-size: 13px; color: var(--ink-soft); margin: 0 0 14px;
+    line-height: 1.5;
+  }
+  .tile .meta {
+    margin-top: auto;
+    font-size: 12.5px; color: var(--ink-faint);
+    padding-top: 12px; border-top: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  .tile .meta .value { color: var(--ink); font-weight: 500; }
+  .tile .meta .arrow {
+    color: var(--gold); font-size: 14px; transition: transform 0.15s ease;
+  }
+  .tile.live:hover .meta .arrow { transform: translateX(3px); }
+  .tile .meta-warn { color: #C77E2C; }
+  .tile .meta-good { color: #4A9A6A; }
+
+  /* ---- Footer ---- */
+  footer.bottom {
+    border-top: 1px solid var(--rule);
+    padding: 22px 24px;
+    background: white;
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+  }
+  footer.bottom a { color: var(--navy); text-decoration: none; margin: 0 8px; }
+  footer.bottom a:hover { color: var(--gold); }
+  footer.bottom .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    margin-bottom: 6px;
+    color: var(--ink-soft);
+  }
+
+  /* ---- Loading state ---- */
+  .full-loader {
+    display: flex; align-items: center; justify-content: center;
+    min-height: 60vh; flex-direction: column; gap: 14px;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- Inactive portal state ---- */
+  .inactive-state {
+    max-width: 480px; margin: 80px auto; text-align: center;
+    background: white; padding: 40px 32px;
+    border-radius: var(--radius); border: 1px solid var(--rule);
+  }
+  .inactive-state h2 {
+    font-family: var(--font-serif); color: var(--navy);
+    font-size: 22px; margin: 0 0 10px;
+  }
+  .inactive-state p { color: var(--ink-soft); font-size: 14px; }
+
+  /* ---- Responsive ---- */
+  @media (max-width: 640px) {
+    main { padding: 18px 14px 60px; }
+    .hero { padding: 24px 20px; }
+    .hero h1 { font-size: 26px; }
+    .hero .stats { gap: 20px; }
+    .tile-grid { grid-template-columns: 1fr; }
+    header.top { padding: 12px 14px; }
+    .top-right .user-meta { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading your portal…</div>
+</div>
+
+<template id="portalTemplate">
+
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Association Management</em></div>
+      <div class="sub">Community. Simplified.</div>
+    </div>
+  </div>
+  <div class="top-right">
+    <div id="demoBadge" class="demo-badge" style="display:none;">Demo</div>
+    <div>
+      <div class="user-name" id="userName">—</div>
+      <div class="user-meta" id="userMeta">—</div>
+    </div>
+    <button id="logoutBtn">Sign out</button>
+  </div>
+</header>
+
+<main>
+
+<!-- Hero / property card -->
+<div class="hero">
+  <div class="greeting" id="greeting">Good morning</div>
+  <h1><span id="welcomeName">Welcome</span> <em id="welcomeCommunity">—</em></h1>
+  <div class="property-line" id="propertyLine">—</div>
+  <div class="stats">
+    <div class="stat">
+      <span class="label">Account balance</span>
+      <span class="value" id="balanceValue">—</span>
+      <span class="sub" id="balanceAsOf">—</span>
+    </div>
+    <div class="stat">
+      <span class="label">Compliance status</span>
+      <span class="value" id="complianceValue">—</span>
+      <span class="sub" id="complianceSub">—</span>
+    </div>
+    <div class="stat">
+      <span class="label">Open requests</span>
+      <span class="value" id="requestsValue">—</span>
+      <span class="sub" id="requestsSub">—</span>
+    </div>
+  </div>
+</div>
+
+<!-- Welcome banner (optional, community-controlled) -->
+<div id="welcomeBanner" class="welcome-banner" style="display:none;"></div>
+
+<!-- Tile grid -->
+<div class="section-label" id="tileSectionLabel">Your community</div>
+<div class="tile-grid" id="tileGrid"></div>
+
+</main>
+
+<footer class="bottom">
+  <div class="tag" id="footerTagline">Community. Simplified.</div>
+  <div id="footerHoa">—</div>
+  <div style="margin-top:6px;">
+    <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> ·
+    <a href="tel:8325882485">(832) 588-2485</a> ·
+    <a href="https://bedrocktx.com" target="_blank" rel="noopener">bedrocktx.com</a>
+  </div>
+</footer>
+
+</template>
+
+<template id="inactiveTemplate">
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Association Management</em></div>
+      <div class="sub">Community. Simplified.</div>
+    </div>
+  </div>
+</header>
+<div class="inactive-state">
+  <h2 id="inactiveTitle">Portal not yet available</h2>
+  <p id="inactiveMessage">Your community's portal is being prepared. Until it goes live, please contact Bedrock at <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or (832) 588-2485 for assistance.</p>
+</div>
+</template>
+
+<script>
+'use strict';
+
+// =============================================================================
+// Module catalog — the full set of tiles. Order is the display order.
+// =============================================================================
+const MODULES = [
+  {
+    key: 'property_summary',
+    title: 'Property Summary',
+    description: 'Lot details, ownership, and key dates for your home.',
+    icon: '🏠',
+    section: 'home',
+    cta: 'View details',
+    buildLink: (ctx) => `/portal/property`,
+  },
+  {
+    key: 'balance',
+    title: 'Account Balance',
+    description: 'Current assessment balance, due dates, and recent payments.',
+    icon: '💵',
+    section: 'home',
+    cta: 'View balance',
+    buildLink: (ctx) => `/portal/balance`,
+  },
+  {
+    key: 'arc',
+    title: 'Architectural Review',
+    description: 'Submit a request for paint, fence, addition, or landscape changes.',
+    icon: '🏗️',
+    section: 'requests',
+    cta: 'Submit a request',
+    buildLink: (ctx) => `/apply/${ctx.communitySlug}`,
+  },
+  {
+    key: 'compliance',
+    title: 'Property Compliance',
+    description: 'Recent inspections, courtesy notices, and cure timelines.',
+    icon: '✅',
+    section: 'requests',
+    cta: 'View status',
+    buildLink: (ctx) => `/portal/compliance`,
+  },
+  {
+    key: 'key_fob',
+    title: 'Pool & Gate Access',
+    description: 'Request a new key fob, replacement, or update access for new residents.',
+    icon: '🔑',
+    section: 'requests',
+    cta: 'Request a fob',
+    buildLink: (ctx) => `/fob/${ctx.communitySlug}`,
+  },
+  {
+    key: 'clubhouse',
+    title: 'Reserve the Clubhouse',
+    description: 'Check availability, pay online, and download your rental confirmation.',
+    icon: '🎉',
+    section: 'amenities',
+    cta: 'Reserve a date',
+    buildLink: (ctx) => `/clubhouse/${ctx.communitySlug}`,
+  },
+  {
+    key: 'payments',
+    title: 'Pay Assessments',
+    description: 'Pay your dues, view payment history, and set up auto-pay.',
+    icon: '💳',
+    section: 'amenities',
+    cta: 'Make a payment',
+    buildLink: (ctx) => ctx.payment_portal_url || `/portal/payments`,
+  },
+  {
+    key: 'documents',
+    title: 'Governing Documents',
+    description: 'CC&Rs, Bylaws, Architectural Guidelines, financial statements.',
+    icon: '📄',
+    section: 'community',
+    cta: 'Browse documents',
+    buildLink: (ctx) => `/portal/documents`,
+  },
+  {
+    key: 'meetings',
+    title: 'Meetings & Notices',
+    description: 'Board meeting agendas, minutes, and notices for your community.',
+    icon: '📅',
+    section: 'community',
+    cta: 'View meetings',
+    buildLink: (ctx) => `/portal/meetings`,
+  },
+  {
+    key: 'map',
+    title: 'Community Map',
+    description: 'See your home, amenities, pool hours, and points of contact.',
+    icon: '🗺️',
+    section: 'community',
+    cta: 'Open the map',
+    buildLink: (ctx) => `/portal/map`,
+  },
+];
+
+const SECTION_LABELS = {
+  home: 'Your account',
+  requests: 'Make a request',
+  amenities: 'Reservations & payments',
+  community: 'Your community',
+};
+
+// =============================================================================
+// Boot
+// =============================================================================
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function dollars(cents) {
+  if (cents == null || cents === '') return '—';
+  const n = Number(cents) / 100;
+  return n.toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+function greetingForTime() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
+function fmtAsOf(iso) {
+  if (!iso) return 'No recent snapshot';
+  const d = new Date(iso);
+  return 'As of ' + d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+
+function getQueryParams() {
+  const url = new URL(window.location.href);
+  return {
+    demo: url.searchParams.get('demo') === '1',
+    community: url.searchParams.get('community') || '',
+  };
+}
+
+// =============================================================================
+// Data loaders
+// =============================================================================
+async function loadPortal() {
+  const { demo, community } = getQueryParams();
+
+  // Demo mode — inject realistic mock data so Ed can pitch any community
+  if (demo) {
+    return buildDemoContext(community || 'waterview');
+  }
+
+  // Real auth mode
+  try {
+    const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+    if (r.status === 401) {
+      window.location.href = '/portal-login.html';
+      return null;
+    }
+    if (!r.ok) throw new Error('Could not load portal');
+    return await r.json();
+  } catch (err) {
+    return { error: err.message };
+  }
+}
+
+function buildDemoContext(communitySlug) {
+  const communityNames = {
+    'waterview':         'Waterview Estates',
+    'canyon-gate':       'Canyon Gate at Cinco Ranch',
+    'august-meadows':    'August Meadows',
+    'still-creek-ranch': 'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge':       'Quail Ridge',
+  };
+  const name = communityNames[communitySlug] || 'Your Community';
+  const today = new Date();
+  const lastSnapshot = new Date(today.getTime() - 36 * 60 * 60 * 1000).toISOString();
+
+  return {
+    user: { name: 'Sample Homeowner', email: 'sample@example.com' },
+    property: {
+      address: '1234 Sample Drive',
+      lot_block_section: 'Lot 12, Block 4, Section 1',
+      community_slug: communitySlug,
+      community_name: name,
+    },
+    community: {
+      slug: communitySlug,
+      name,
+      hoa_legal_name: `${name} Owners Association, Inc.`,
+      welcome_message: '',
+      portal_active: true,
+      portal_module_config: defaultDemoModuleConfig(communitySlug),
+    },
+    balance: { amount_cents: 0, status: 'current', as_of: lastSnapshot },
+    compliance: { open_count: 0, status: 'good' },
+    open_requests: { count: 1, label: '1 ARC application under review' },
+    demo: true,
+  };
+}
+
+function defaultDemoModuleConfig(slug) {
+  // Demo: tiles are live where Bedrock has functional backends, coming-soon otherwise.
+  return {
+    property_summary: { status: 'live' },
+    balance:          { status: 'live' },
+    arc:              { status: 'live' },
+    compliance:       { status: 'coming_soon' },
+    key_fob:          { status: 'live' },
+    clubhouse:        { status: slug === 'waterview' || slug === 'canyon-gate' ? 'live' : 'coming_soon' },
+    payments:         { status: 'coming_soon' },
+    documents:        { status: 'coming_soon' },
+    meetings:         { status: 'coming_soon' },
+    map:              { status: 'coming_soon' },
+  };
+}
+
+// =============================================================================
+// Rendering
+// =============================================================================
+function renderInactive(reason) {
+  const tpl = $('inactiveTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+  if (reason) {
+    $('inactiveTitle').textContent = reason.title || 'Portal not yet available';
+    $('inactiveMessage').innerHTML = reason.message || $('inactiveMessage').innerHTML;
+  }
+}
+
+function renderPortal(ctx) {
+  if (ctx?.error) {
+    renderInactive({ title: 'Couldn\'t load portal', message: escapeHtml(ctx.error) });
+    return;
+  }
+  if (!ctx) return;
+  if (!ctx.community?.portal_active && !ctx.demo) {
+    renderInactive({
+      title: 'Portal not yet available for your community',
+      message: `Your community's portal is being prepared. In the meantime, contact Bedrock at <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or (832) 588-2485.`,
+    });
+    return;
+  }
+
+  const tpl = $('portalTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  // Top bar
+  $('userName').textContent = ctx.user.name || ctx.user.email;
+  $('userMeta').textContent = ctx.property?.address || '';
+  if (ctx.demo) $('demoBadge').style.display = '';
+
+  // Hero
+  $('greeting').textContent = greetingForTime();
+  $('welcomeName').textContent = (ctx.user.name || '').split(' ')[0] || 'Welcome';
+  $('welcomeCommunity').textContent = ctx.community.name;
+  $('propertyLine').textContent = [ctx.property.address, ctx.property.lot_block_section]
+    .filter(Boolean).join(' · ');
+
+  // Stats
+  const bal = ctx.balance || {};
+  const balVal = $('balanceValue');
+  if (bal.status === 'current' || (bal.amount_cents === 0)) {
+    balVal.textContent = 'Current';
+    balVal.classList.add('good');
+    $('balanceAsOf').textContent = fmtAsOf(bal.as_of);
+  } else if (bal.amount_cents > 0) {
+    balVal.textContent = dollars(bal.amount_cents);
+    balVal.classList.add(bal.status === 'past_due' ? 'bad' : 'warn');
+    $('balanceAsOf').textContent = `Due · ${fmtAsOf(bal.as_of)}`;
+  } else {
+    balVal.textContent = 'Not available';
+    $('balanceAsOf').textContent = '';
+  }
+
+  const compVal = $('complianceValue');
+  const comp = ctx.compliance || {};
+  if (comp.status === 'good') {
+    compVal.textContent = 'In good standing';
+    compVal.classList.add('good');
+    $('complianceSub').textContent = 'No open notices';
+  } else if (comp.open_count) {
+    compVal.textContent = `${comp.open_count} open`;
+    compVal.classList.add('warn');
+    $('complianceSub').textContent = 'Tap "Property Compliance" for details';
+  } else {
+    compVal.textContent = '—';
+    $('complianceSub').textContent = '';
+  }
+
+  const reqVal = $('requestsValue');
+  const req = ctx.open_requests || {};
+  if (req.count) {
+    reqVal.textContent = req.count;
+    $('requestsSub').textContent = req.label || `${req.count} item${req.count===1?'':'s'} in progress`;
+  } else {
+    reqVal.textContent = 'None';
+    $('requestsSub').textContent = 'No active requests';
+  }
+
+  // Welcome banner
+  if (ctx.community.welcome_message) {
+    $('welcomeBanner').style.display = '';
+    $('welcomeBanner').innerHTML = ctx.community.welcome_message;
+  }
+
+  // Tiles
+  renderTiles(ctx);
+
+  // Footer
+  $('footerHoa').textContent = `${ctx.community.hoa_legal_name || ctx.community.name} · administered by Bedrock Association Management`;
+
+  // Wire logout
+  $('logoutBtn').addEventListener('click', async () => {
+    if (ctx.demo) {
+      window.location.href = '/';
+      return;
+    }
+    try { await fetch('/api/portal/logout', { method: 'POST', credentials: 'same-origin' }); }
+    finally { window.location.href = '/portal-login.html'; }
+  });
+}
+
+function renderTiles(ctx) {
+  const cfg = ctx.community.portal_module_config || {};
+  const grid = $('tileGrid');
+  grid.innerHTML = '';
+
+  // Group by section to provide light visual structure on long lists
+  let lastSection = null;
+  let currentGrid = null;
+
+  for (const mod of MODULES) {
+    const modCfg = cfg[mod.key] || { status: 'coming_soon' };
+    if (modCfg.status === 'hidden') continue;
+
+    // Section break — render a new label + new grid container
+    if (mod.section !== lastSection) {
+      if (lastSection !== null) {
+        // wrap previous and add spacing
+      }
+      const label = document.createElement('div');
+      label.className = 'section-label';
+      label.textContent = SECTION_LABELS[mod.section] || '';
+      grid.parentElement.appendChild(label);
+      currentGrid = document.createElement('div');
+      currentGrid.className = 'tile-grid';
+      grid.parentElement.appendChild(currentGrid);
+      lastSection = mod.section;
+    }
+
+    const isLive = modCfg.status === 'live';
+    const isMaint = modCfg.status === 'maintenance';
+    const link = isLive ? (modCfg.link || mod.buildLink({
+      communitySlug: ctx.community.slug,
+      payment_portal_url: cfg.payments?.link,
+    })) : null;
+
+    const tile = document.createElement(isLive ? 'a' : 'div');
+    tile.className = `tile ${modCfg.status}`;
+    if (isLive) {
+      tile.href = link;
+      tile.classList.add('has-action');
+    }
+
+    tile.innerHTML = `
+      ${!isLive ? `<span class="ribbon">${isMaint ? 'Maintenance' : 'Coming soon'}</span>` : ''}
+      <div class="icon">${mod.icon}</div>
+      <h3>${escapeHtml(mod.title)}</h3>
+      <p>${escapeHtml(mod.description)}</p>
+      ${isLive ? `
+        <div class="meta">
+          <span class="value">${escapeHtml(mod.cta)}</span>
+          <span class="arrow">→</span>
+        </div>` : ''}
+      ${modCfg.notes ? `<div class="meta"><span style="font-size:11.5px;color:var(--ink-faint);">${escapeHtml(modCfg.notes)}</span></div>` : ''}
+    `;
+
+    currentGrid.appendChild(tile);
+  }
+
+  // Remove the initial empty grid container created by the template
+  grid.remove();
+}
+
+// =============================================================================
+// Run
+// =============================================================================
+(async () => {
+  const ctx = await loadPortal();
+  renderPortal(ctx);
+})();
+</script>
+</body>
+</html>
