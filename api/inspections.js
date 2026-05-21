@@ -490,10 +490,11 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                         });
                         if (auto) {
                           govDocForAuto = {
-                            reference:     auto.reference,
-                            section_title: auto.section_title,
-                            quote:         auto.quote,
-                            page:          auto.page,
+                            reference:      auto.reference,
+                            section_title:  auto.section_title,
+                            quote:          auto.quote,
+                            page:           auto.page,
+                            document_title: auto.document_title,
                           };
                         }
                       } catch (_) {}
@@ -2058,10 +2059,11 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           });
           if (auto) {
             govDocForConfirm = {
-              reference:     auto.reference,
-              section_title: auto.section_title,
-              quote:         auto.quote,
-              page:          auto.page,
+              reference:      auto.reference,
+              section_title:  auto.section_title,
+              quote:          auto.quote,
+              page:           auto.page,
+              document_title: auto.document_title,
             };
           }
         } catch (_) {}

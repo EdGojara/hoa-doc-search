@@ -624,10 +624,11 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         });
         if (auto) {
           govDoc = {
-            reference:     auto.reference,
-            section_title: auto.section_title,
-            quote:         auto.quote,
-            page:          auto.page,
+            reference:      auto.reference,
+            section_title:  auto.section_title,
+            quote:          auto.quote,
+            page:           auto.page,
+            document_title: auto.document_title,
           };
         }
       } catch (_) {}
@@ -1024,10 +1025,11 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
               });
               if (auto) {
                 govDoc = {
-                  reference: auto.reference,
-                  section_title: auto.section_title,
-                  quote: auto.quote,
-                  page: auto.page,
+                  reference:      auto.reference,
+                  section_title:  auto.section_title,
+                  quote:          auto.quote,
+                  page:           auto.page,
+                  document_title: auto.document_title,
                 };
               }
             } catch (_) {}
@@ -2757,10 +2759,11 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         });
         if (auto) {
           govDoc = {
-            reference:     auto.reference,
-            section_title: auto.section_title,
-            quote:         auto.quote,
-            page:          auto.page,
+            reference:      auto.reference,
+            section_title:  auto.section_title,
+            quote:          auto.quote,
+            page:           auto.page,
+            document_title: auto.document_title,
           };
         }
       } catch (_) {}
