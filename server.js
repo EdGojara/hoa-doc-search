@@ -396,6 +396,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/fob\/[^/]+$/,                         // /fob/:slug — pool/key-fob request
   /^\/event\/[^/]+$/,                       // /event/:slug — public event page
   /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
+  /^\/builders\/[^/]+$/,                    // /builders/:slug — builder submission form (DRB, etc.)
+  /^\/builders\/status\/[^/]+$/,            // /builders/status/:reference — builder submission status lookup
   // Public API endpoints these pages call. Each verified against the
   // actual fetch() calls in the homeowner-facing HTML files.
   /^\/api\/nominations\/public\b/,
@@ -403,6 +405,9 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/applications\/community-landing\b/, // community_landing.html
   /^\/api\/events\/public\b/,                  // event.html: details, sign, walkup, checkin auth/feed
   /^\/api\/events\/communities\/[^/]+\/roster-match$/, // event_checkin.html (page-gated by 6-digit code)
+  /^\/api\/builder-applications\/public\b/,    // builders/:slug — community lookup + status check
+  /^\/api\/builder-applications$/,             // POST intake (kill-switched per community)
+  /^\/api\/builder-applications\/[0-9a-f-]+\/attachments$/, // file uploads tied to a submission id
 ];
 
 function _gateIsPublicPath(p) { return _STAFF_GATE_PUBLIC.some((re) => re.test(p)); }
@@ -677,6 +682,16 @@ app.use('/api/applications', applicationsRouter);
 // Separate intake (portal + email ingest), shared review backend, isolated precedent storage.
 const { router: builderApplicationsRouter } = require('./api/builder_applications');
 app.use('/api/builder-applications', builderApplicationsRouter);
+
+// Public builder submission form — /builders/:slug serves builder-submit.html.
+// The form reads :slug from the path and calls /api/builder-applications/public/community/:slug
+// to populate community-specific copy + the design guidelines link.
+app.get('/builders/:slug', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'builder-submit.html'));
+});
+app.get('/builders/status/:reference', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'builder-submit-status.html'));
+});
 
 // Public homeowner-facing pages (no auth)
 app.get('/apply/status/:reference', (req, res) => {

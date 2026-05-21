@@ -674,6 +674,10 @@ function renderDetail(data) {
   const builder = a.builder_company || {};
   const community = a.community || {};
 
+  const isApproval = latestResp && (latestResp.response_type === 'approved' || latestResp.response_type === 'approved_with_conditions');
+  const masterPlanLinked = !!a.master_plan_id;
+  const canPromote = isApproval && !masterPlanLinked;
+
   const postDecisionHtml = latestResp ? `
     <section>
       <h3>Decision</h3>
@@ -693,6 +697,36 @@ function renderDetail(data) {
           <button class="primary-btn" id="sendBtn">Send to builder</button>
         </div>` : ''}
     </section>
+    ${canPromote ? `
+      <section>
+        <h3>Master Plan Library</h3>
+        <div class="post-decision">
+          <div class="heading">Promote to fast-track</div>
+          <p style="margin: 0 0 12px; font-size: 13px;">
+            This is the first approval of <strong>Plan ${escapeHtml(a.plan_number)} Elevation ${escapeHtml(a.elevation)}</strong>
+            for ${escapeHtml(community.name)}. Add to the master plan library so future submissions
+            of this plan auto-fast-track at this community (2-day SLA instead of 5).
+          </p>
+          <div class="button-row">
+            <button class="primary-btn" id="promoteBtn">Add to master library</button>
+            <button class="secondary-btn" id="skipPromoteBtn">Not this one</button>
+          </div>
+        </div>
+      </section>
+    ` : ''}
+    ${masterPlanLinked ? `
+      <section>
+        <h3>Master Plan</h3>
+        <div class="post-decision">
+          <div class="heading">Linked to master library</div>
+          <p style="margin: 0; font-size: 13px;">
+            Future submissions of Plan ${escapeHtml(a.plan_number)} Elevation ${escapeHtml(a.elevation)}
+            from ${escapeHtml((a.builder_company || {}).company_name || 'this builder')} at ${escapeHtml(community.name)}
+            will auto-fast-track.
+          </p>
+        </div>
+      </section>
+    ` : ''}
   ` : `
     <section>
       <h3>Finalize</h3>
@@ -762,6 +796,15 @@ function renderDetail(data) {
     const sb = $('sendBtn');
     if (sb) sb.addEventListener('click', () => doSend(a.id));
   }
+  // Master plan promotion buttons
+  const pb = $('promoteBtn');
+  if (pb) pb.addEventListener('click', () => doPromote(a.id, latestResp.decided_by || a.decided_by));
+  const skip = $('skipPromoteBtn');
+  if (skip) skip.addEventListener('click', () => {
+    document.querySelectorAll('aside.detail section h3').forEach((h) => {
+      if (h.textContent.trim() === 'Master Plan Library') h.closest('section').style.display = 'none';
+    });
+  });
 }
 window.__closeDetail = closeDetail;  // expose for inline onclick
 
@@ -844,6 +887,24 @@ async function doFinalize(applicationId) {
     toast(`Finalize failed: ${err.message}`, 'error');
     btn.disabled = false;
     btn.textContent = 'Render letter';
+  }
+}
+
+async function doPromote(applicationId, decidedBy) {
+  const btn = $('promoteBtn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="loader"></span> Promoting…`;
+  try {
+    const res = await api('POST', `/api/builder-applications/${applicationId}/promote-to-master`, {
+      promoted_by: decidedBy || 'reviewer',
+    });
+    toast(`Added to master library · ${res.communities_approved} community approval${res.communities_approved === 1 ? '' : 's'}.`, 'success');
+    await loadDetail(applicationId);  // reload to show "Linked" state
+    await loadQueue();
+  } catch (err) {
+    toast(`Promote failed: ${err.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Add to master library';
   }
 }
 

@@ -188,6 +188,34 @@ function plaintextFromHtml(html) {
     .trim();
 }
 
+// Check whether an application matches an existing approved master plan
+// (same builder + same plan/elevation + community in the approval list).
+// Returns the master_plan_id if matched, null otherwise. Called after intake.
+async function tryMatchMasterPlan({ communityId, builderCompanyId, planNumber, elevation }) {
+  if (!builderCompanyId || !planNumber || !elevation) return null;
+  try {
+    const { data, error } = await supabase
+      .from('master_plans')
+      .select('id, master_plan_community_approvals!inner(community_id, retired_at)')
+      .eq('builder_company_id', builderCompanyId)
+      .eq('plan_number', planNumber)
+      .eq('elevation', elevation)
+      .eq('status', 'approved')
+      .eq('master_plan_community_approvals.community_id', communityId)
+      .is('master_plan_community_approvals.retired_at', null)
+      .limit(1)
+      .maybeSingle();
+    if (error) {
+      console.warn('[builder_applications] master plan match query failed:', error.message);
+      return null;
+    }
+    return data?.id || null;
+  } catch (err) {
+    console.warn('[builder_applications] master plan match threw:', err.message);
+    return null;
+  }
+}
+
 async function fetchCommunity(communityIdOrSlug) {
   const query = supabase
     .from('communities')
@@ -310,11 +338,36 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       .single();
     if (aErr) throw aErr;
 
+    // Auto-match against the master plan library. If this builder + plan + elevation
+    // is already approved at this community, flip the fast-track flag immediately
+    // so the reviewer sees it on the queue without manual work.
+    let matchedMasterPlanId = null;
+    if (!body.master_plan_id) {
+      matchedMasterPlanId = await tryMatchMasterPlan({
+        communityId: community.id,
+        builderCompanyId: builderCompanyId,
+        planNumber: app.plan_number,
+        elevation: app.elevation,
+      });
+      if (matchedMasterPlanId) {
+        await supabase
+          .from('builder_applications')
+          .update({
+            master_plan_id: matchedMasterPlanId,
+            fast_track: true,
+            fast_track_reason: 'Matched approved master plan for this community',
+          })
+          .eq('id', app.id);
+      }
+    }
+
     res.json({
       ok: true,
       application_id: app.id,
       reference_number: app.reference_number,
       status: app.status,
+      fast_track: !!matchedMasterPlanId,
+      master_plan_id: matchedMasterPlanId,
       community: { id: community.id, name: community.name, slug: community.slug },
     });
   } catch (err) {
@@ -840,6 +893,229 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
     });
   } catch (err) {
     console.error('[builder_applications] send failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/:id/promote-to-master
+// Body: { promoted_by: string, notes?: string, also_approve_other_communities?: UUID[] }
+//
+// Promotes the application's plan + elevation + materials into the master plan
+// library, then approves it at the application's community. Idempotent: if a
+// master plan already exists for (builder, plan, elevation), we attach the
+// community to the existing master plan rather than creating a duplicate.
+//
+// Side effects:
+//   - master_plans row (or reuse)
+//   - master_plan_community_approvals row
+//   - builder_applications.master_plan_id linked
+// ============================================================================
+router.post('/:id/promote-to-master', express.json({ limit: '128kb' }), async (req, res) => {
+  try {
+    const { promoted_by, notes, also_approve_other_communities } = req.body || {};
+    if (!promoted_by) return res.status(400).json({ error: 'promoted_by is required' });
+
+    const { data: app, error: aErr } = await supabase
+      .from('builder_applications')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (aErr) throw aErr;
+    if (!app) return res.status(404).json({ error: 'application not found' });
+    if (!['approved', 'approved_with_conditions'].includes(app.status)) {
+      return res.status(400).json({ error: 'application must be approved before promotion to master plan library' });
+    }
+
+    // Look up or create the master plan
+    let masterPlanId;
+    const { data: existing } = await supabase
+      .from('master_plans')
+      .select('id')
+      .eq('builder_company_id', app.builder_company_id)
+      .eq('plan_number', app.plan_number)
+      .eq('elevation', app.elevation)
+      .eq('elevation_orientation', app.elevation_orientation || 'standard')
+      .maybeSingle();
+
+    if (existing) {
+      masterPlanId = existing.id;
+      // Make sure it's marked approved (it may have been a draft)
+      await supabase
+        .from('master_plans')
+        .update({
+          status: 'approved',
+          default_materials: app.application_data || {},
+          square_footage: app.square_footage || null,
+          stories: app.stories || null,
+        })
+        .eq('id', masterPlanId);
+    } else {
+      const { data: newPlan, error: mpErr } = await supabase
+        .from('master_plans')
+        .insert({
+          builder_company_id: app.builder_company_id,
+          plan_number: app.plan_number,
+          plan_name: app.plan_name,
+          elevation: app.elevation,
+          elevation_orientation: app.elevation_orientation || 'standard',
+          square_footage: app.square_footage,
+          stories: app.stories,
+          default_materials: app.application_data || {},
+          status: 'approved',
+          first_approval_application_id: app.id,
+          notes: notes || null,
+        })
+        .select('id')
+        .single();
+      if (mpErr) throw mpErr;
+      masterPlanId = newPlan.id;
+    }
+
+    // Approve at the application's community
+    await supabase
+      .from('master_plan_community_approvals')
+      .upsert({
+        master_plan_id: masterPlanId,
+        community_id: app.community_id,
+        approved_by: promoted_by,
+        approval_notes: notes || null,
+      }, { onConflict: 'master_plan_id,community_id' });
+
+    // Optionally approve at other communities at the same time
+    const extraCommunities = Array.isArray(also_approve_other_communities)
+      ? also_approve_other_communities.filter(Boolean)
+      : [];
+    for (const cid of extraCommunities) {
+      if (cid === app.community_id) continue;
+      await supabase
+        .from('master_plan_community_approvals')
+        .upsert({
+          master_plan_id: masterPlanId,
+          community_id: cid,
+          approved_by: promoted_by,
+          approval_notes: 'Approved alongside primary promotion',
+        }, { onConflict: 'master_plan_id,community_id' });
+    }
+
+    // Link the application to the master plan
+    await supabase
+      .from('builder_applications')
+      .update({ master_plan_id: masterPlanId })
+      .eq('id', app.id);
+
+    res.json({
+      ok: true,
+      master_plan_id: masterPlanId,
+      communities_approved: 1 + extraCommunities.length,
+    });
+  } catch (err) {
+    console.error('[builder_applications] promote-to-master failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GET /api/builder-applications/master-plans
+// Query: builder_company_id?, community_id?, status? (draft|approved|retired)
+// Returns master plans + their community approvals.
+// ============================================================================
+router.get('/master-plans', async (req, res) => {
+  try {
+    let q = supabase
+      .from('master_plans')
+      .select(`
+        *,
+        builder_company:builder_companies(id, company_name),
+        community_approvals:master_plan_community_approvals(community_id, approved_at, approved_by, retired_at)
+      `)
+      .order('plan_number');
+
+    if (req.query.builder_company_id) q = q.eq('builder_company_id', req.query.builder_company_id);
+    if (req.query.status) q = q.eq('status', req.query.status);
+
+    const { data, error } = await q;
+    if (error) throw error;
+
+    let plans = data || [];
+    if (req.query.community_id) {
+      plans = plans.filter((p) => (p.community_approvals || [])
+        .some((a) => a.community_id === req.query.community_id && !a.retired_at));
+    }
+
+    res.json({ master_plans: plans, total: plans.length });
+  } catch (err) {
+    console.error('[builder_applications] master plans list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/master-plans/:id/retire
+// Body: { retired_by, retired_reason, community_id? }
+// If community_id given, retire ONLY that community approval (leaves the master
+// plan active for other communities). Without it, retire the master plan globally.
+// ============================================================================
+router.post('/master-plans/:id/retire', express.json({ limit: '128kb' }), async (req, res) => {
+  try {
+    const { retired_by, retired_reason, community_id } = req.body || {};
+    if (!retired_by) return res.status(400).json({ error: 'retired_by is required' });
+
+    if (community_id) {
+      await supabase
+        .from('master_plan_community_approvals')
+        .update({
+          retired_at: new Date().toISOString(),
+          retired_by,
+          retired_reason: retired_reason || null,
+        })
+        .eq('master_plan_id', req.params.id)
+        .eq('community_id', community_id);
+    } else {
+      await supabase
+        .from('master_plans')
+        .update({ status: 'retired' })
+        .eq('id', req.params.id);
+    }
+
+    res.json({ ok: true, scope: community_id ? 'community' : 'global' });
+  } catch (err) {
+    console.error('[builder_applications] master plan retire failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GET /api/builder-applications/public/community/:slug
+// Public endpoint — returns the community's builder-ARC config so the
+// /builders/:slug submission form can render the right copy + guidelines link.
+// Returns 404 if the community doesn't exist OR has builder ARC turned off
+// (kill switch: builder_arc_active=FALSE), preventing form-submission attempts
+// against a non-enabled community.
+// ============================================================================
+router.get('/public/community/:slug', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('communities')
+      .select('id, name, slug, builder_arc_active, builder_arc_fee_cents, builder_arc_sla_business_days, builder_arc_fast_track_business_days, builder_arc_design_guidelines_url')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('slug', req.params.slug)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data || !data.builder_arc_active) return res.status(404).json({ error: 'community not accepting builder submissions' });
+    res.json({
+      community: {
+        id: data.id,
+        name: data.name,
+        slug: data.slug,
+        fee_cents: data.builder_arc_fee_cents,
+        sla_business_days: data.builder_arc_sla_business_days,
+        fast_track_business_days: data.builder_arc_fast_track_business_days,
+        design_guidelines_url: data.builder_arc_design_guidelines_url,
+      },
+    });
+  } catch (err) {
+    console.error('[builder_applications] community lookup failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

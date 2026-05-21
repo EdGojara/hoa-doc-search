@@ -1,0 +1,1028 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>New Construction Submission · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--navy-deep);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14.5px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ---- Page chrome ---- */
+  header.page {
+    background: linear-gradient(180deg, #0B1424 0%, #142847 100%);
+    padding: 36px 0 48px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .container { max-width: 920px; margin: 0 auto; padding: 0 32px; }
+
+  .brand-lockup { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
+  .brand-lockup svg { width: 32px; height: 40px; }
+  .brand-lockup .wm {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--ink); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand-lockup .wm em { font-style: italic; color: var(--gold); }
+  .brand-lockup .sub {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px;
+  }
+
+  h1 {
+    font-family: var(--font-serif);
+    font-size: 32px; font-weight: 500;
+    margin: 0 0 8px;
+    color: var(--ink); letter-spacing: -0.01em;
+  }
+  h1 em { color: var(--gold); font-style: italic; }
+  .subtitle {
+    font-size: 15px; color: var(--ink-soft);
+    margin: 0 0 20px;
+  }
+  .community-meta {
+    display: flex; gap: 22px; flex-wrap: wrap;
+    padding-top: 18px; margin-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 13px;
+  }
+  .community-meta .meta-item .label {
+    display: block;
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .community-meta .meta-item .value { color: var(--ink); }
+  .community-meta a { color: var(--gold); text-decoration: none; }
+  .community-meta a:hover { text-decoration: underline; }
+
+  /* ---- Form ---- */
+  main { padding: 40px 0 80px; }
+  section.section {
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    border-radius: 8px;
+    padding: 26px 30px;
+    margin-bottom: 22px;
+  }
+  section.section .header {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 18px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section.section h2 {
+    font-family: var(--font-serif);
+    font-size: 19px; font-weight: 500;
+    margin: 0;
+    color: var(--ink);
+  }
+  section.section .hint {
+    font-size: 12px; color: var(--ink-faint);
+    font-style: italic;
+  }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 18px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  @media (max-width: 680px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+  }
+
+  .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
+  .field label {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .field label .req { color: var(--gold); margin-left: 2px; }
+  .field label .opt {
+    color: var(--ink-faint); font-size: 10px;
+    text-transform: none; letter-spacing: 0;
+    margin-left: 4px; font-style: italic;
+  }
+  .field input,
+  .field select,
+  .field textarea {
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink);
+    padding: 10px 12px;
+    font-family: var(--font-sans); font-size: 14px;
+    border-radius: 4px;
+    transition: border-color 0.15s ease;
+  }
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--gold);
+  }
+  .field textarea { resize: vertical; min-height: 80px; }
+  .field .helper {
+    font-size: 11.5px; color: var(--ink-faint); margin-top: 2px;
+  }
+  .field.error input,
+  .field.error select,
+  .field.error textarea { border-color: #E48A8A; }
+  .field.error .helper { color: #E48A8A; }
+
+  /* ---- Attachments ---- */
+  .att-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 16px; }
+  @media (max-width: 680px) { .att-grid { grid-template-columns: 1fr; } }
+  .att-slot {
+    border: 1px dashed var(--rule-strong);
+    border-radius: 6px;
+    padding: 18px;
+    background: rgba(255,255,255,0.015);
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .att-slot.dragover { border-color: var(--gold); background: rgba(212,175,55,0.06); }
+  .att-slot .att-label {
+    font-size: 12px; color: var(--ink); font-weight: 500;
+    margin-bottom: 2px;
+  }
+  .att-slot .att-label .req { color: var(--gold); margin-left: 2px; }
+  .att-slot .att-hint {
+    font-size: 11px; color: var(--ink-faint); margin-bottom: 10px;
+  }
+  .att-slot input[type=file] { display: none; }
+  .att-slot .pick-btn {
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink-soft);
+    padding: 7px 12px;
+    border-radius: 4px; cursor: pointer;
+    font-size: 12.5px;
+  }
+  .att-slot .pick-btn:hover { color: var(--gold); border-color: var(--gold); }
+  .att-slot.has-file {
+    border-style: solid;
+    border-color: rgba(80,200,120,0.4);
+    background: rgba(80,200,120,0.04);
+  }
+  .att-slot .file-name {
+    font-size: 12px; color: var(--ink); margin-top: 8px;
+    word-break: break-all;
+  }
+  .att-slot .file-meta {
+    font-size: 11px; color: var(--ink-faint); margin-top: 2px;
+  }
+  .att-slot .clear-btn {
+    background: transparent; border: none; color: var(--ink-faint);
+    font-size: 11px; cursor: pointer; text-decoration: underline;
+    margin-top: 4px; padding: 0;
+  }
+  .att-slot .clear-btn:hover { color: #E48A8A; }
+
+  /* ---- Acknowledgments ---- */
+  .ack-row {
+    display: flex; gap: 12px; align-items: flex-start;
+    padding: 14px 0; border-bottom: 1px solid var(--rule);
+  }
+  .ack-row:last-child { border-bottom: none; }
+  .ack-row input[type=checkbox] {
+    width: 18px; height: 18px; margin-top: 2px; flex-shrink: 0;
+    accent-color: var(--gold);
+  }
+  .ack-row label { font-size: 13.5px; color: var(--ink); line-height: 1.5; cursor: pointer; }
+
+  /* ---- Submit / footer ---- */
+  .submit-row {
+    display: flex; gap: 14px; align-items: center; justify-content: space-between;
+    padding: 24px 0 0;
+  }
+  .submit-row .left {
+    color: var(--ink-faint); font-size: 12.5px;
+  }
+  .primary-btn {
+    background: var(--gold); color: var(--navy-deep);
+    border: 1px solid var(--gold);
+    padding: 13px 26px;
+    font-family: var(--font-sans); font-size: 14.5px; font-weight: 600;
+    border-radius: 4px; cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: all 0.15s ease;
+  }
+  .primary-btn:hover { background: var(--gold-bright); border-color: var(--gold-bright); }
+  .primary-btn:disabled {
+    background: var(--ink-faint); border-color: var(--ink-faint);
+    color: var(--navy-deep); cursor: not-allowed; opacity: 0.6;
+  }
+
+  /* ---- States ---- */
+  .center-message {
+    max-width: 540px; margin: 100px auto; text-align: center; padding: 40px 24px;
+    background: var(--navy-soft); border-radius: 8px;
+    border: 1px solid var(--rule-strong);
+  }
+  .center-message h2 {
+    font-family: var(--font-serif); font-size: 24px; margin: 0 0 12px;
+    color: var(--ink);
+  }
+  .center-message p { color: var(--ink-soft); }
+  .center-message .ref {
+    display: inline-block;
+    font-family: var(--font-mono); font-size: 17px;
+    color: var(--gold);
+    padding: 10px 18px;
+    background: var(--navy-deep);
+    border: 1px solid var(--gold);
+    border-radius: 4px;
+    margin: 18px 0 8px;
+  }
+
+  .progress {
+    margin: 14px 0;
+    font-size: 12.5px; color: var(--ink-soft);
+  }
+  .progress .step { padding: 4px 0; }
+  .progress .step.done { color: #6BD194; }
+  .progress .step.active { color: var(--gold); }
+  .progress .step.pending { color: var(--ink-faint); }
+
+  .loader {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--ink-faint);
+    border-top-color: var(--gold);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 32px;
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink);
+    padding: 12px 18px;
+    border-radius: 6px;
+    font-size: 13px;
+    z-index: 100;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 380px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.error { border-color: rgba(231,90,90,0.4); }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="center-message">
+    <div class="loader"></div> Loading community…
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<template id="formTemplate">
+<header class="page">
+  <div class="container">
+    <div class="brand-lockup">
+      <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" aria-label="Bedrock cornerstone">
+        <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+        <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+        <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+      </svg>
+      <div>
+        <div class="wm">Bedrock <em>Intelligence</em></div>
+        <div class="sub">trustEd · operations platform</div>
+      </div>
+    </div>
+    <h1>New Construction <em>Submission</em></h1>
+    <p class="subtitle" id="communityName">—</p>
+    <div class="community-meta">
+      <div class="meta-item">
+        <span class="label">Standard SLA</span>
+        <span class="value" id="metaSla">5 business days</span>
+      </div>
+      <div class="meta-item">
+        <span class="label">Fast-track SLA</span>
+        <span class="value" id="metaFast">2 business days (master-plan match)</span>
+      </div>
+      <div class="meta-item">
+        <span class="label">Review fee</span>
+        <span class="value" id="metaFee">—</span>
+      </div>
+      <div class="meta-item" id="metaGuidelinesWrap" style="display:none;">
+        <span class="label">Design Guidelines</span>
+        <span class="value"><a id="metaGuidelines" href="#" target="_blank" rel="noopener">View document →</a></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+<div class="container">
+<form id="submitForm" novalidate>
+
+<!-- Section: Builder + Submitter -->
+<section class="section">
+  <div class="header">
+    <h2>Builder &amp; Submitter</h2>
+    <span class="hint">Who is filing this submission</span>
+  </div>
+  <div class="grid-2">
+    <div class="field">
+      <label>Builder company<span class="req">*</span></label>
+      <input type="text" name="builder_company_name" placeholder="e.g. DRB Group" required>
+    </div>
+    <div class="field">
+      <label>Submitter name<span class="opt">— purchasing coordinator</span></label>
+      <input type="text" name="submitter_name">
+    </div>
+    <div class="field">
+      <label>Submitter email<span class="req">*</span></label>
+      <input type="email" name="submitter_email" required>
+    </div>
+    <div class="field">
+      <label>Submitter phone</label>
+      <input type="tel" name="submitter_phone">
+    </div>
+  </div>
+</section>
+
+<!-- Section: Property -->
+<section class="section">
+  <div class="header">
+    <h2>Property</h2>
+    <span class="hint">Where the home will be built</span>
+  </div>
+  <div class="grid-4">
+    <div class="field">
+      <label>Lot<span class="req">*</span></label>
+      <input type="text" name="lot_number" required>
+    </div>
+    <div class="field">
+      <label>Block</label>
+      <input type="text" name="block_number">
+    </div>
+    <div class="field">
+      <label>Section</label>
+      <input type="text" name="section_number">
+    </div>
+    <div class="field">
+      <label>Lot type</label>
+      <select name="lot_type">
+        <option value="">—</option>
+        <option value="interior">Interior</option>
+        <option value="corner">Corner</option>
+        <option value="cul_de_sac">Cul-de-sac</option>
+        <option value="backs_to_common_area">Backs to common area</option>
+        <option value="backs_to_thoroughfare">Backs to thoroughfare</option>
+        <option value="flag_lot">Flag lot</option>
+      </select>
+    </div>
+  </div>
+  <div class="field">
+    <label>Street address<span class="req">*</span></label>
+    <input type="text" name="street_address" placeholder="e.g. 502 Meadow Knoll Drive" required>
+  </div>
+</section>
+
+<!-- Section: Plan -->
+<section class="section">
+  <div class="header">
+    <h2>Plan</h2>
+    <span class="hint">Plan number drives master-plan fast-track matching</span>
+  </div>
+  <div class="grid-4">
+    <div class="field">
+      <label>Plan number<span class="req">*</span></label>
+      <input type="text" name="plan_number" placeholder="e.g. 6512" required>
+    </div>
+    <div class="field">
+      <label>Plan name<span class="opt">— optional</span></label>
+      <input type="text" name="plan_name" placeholder="e.g. The Magnolia">
+    </div>
+    <div class="field">
+      <label>Elevation<span class="req">*</span></label>
+      <input type="text" name="elevation" placeholder="e.g. A" required>
+    </div>
+    <div class="field">
+      <label>Orientation</label>
+      <select name="elevation_orientation">
+        <option value="">—</option>
+        <option value="standard">Standard</option>
+        <option value="left">Left-hand</option>
+        <option value="right">Right-hand</option>
+      </select>
+    </div>
+  </div>
+  <div class="grid-3">
+    <div class="field">
+      <label>Square footage</label>
+      <input type="number" name="square_footage" min="0">
+    </div>
+    <div class="field">
+      <label>Stories</label>
+      <select name="stories">
+        <option value="">—</option>
+        <option value="1">1</option>
+        <option value="1.5">1.5</option>
+        <option value="2">2</option>
+        <option value="3">3</option>
+      </select>
+    </div>
+  </div>
+</section>
+
+<!-- Section: Exterior materials -->
+<section class="section">
+  <div class="header">
+    <h2>Exterior Materials</h2>
+    <span class="hint">Spec these once now; the approval letter inherits every value</span>
+  </div>
+  <h3 style="font-size:11.5px; color:var(--ink-faint); letter-spacing:0.07em; text-transform:uppercase; margin:6px 0 12px;">Masonry</h3>
+  <div class="grid-3">
+    <div class="field">
+      <label>Brick color</label>
+      <input type="text" name="brick_color" placeholder="e.g. Sonoran Desert">
+    </div>
+    <div class="field">
+      <label>Brick manufacturer</label>
+      <input type="text" name="brick_manufacturer">
+    </div>
+    <div class="field">
+      <label>Stone color / type</label>
+      <input type="text" name="stone_color" placeholder="e.g. Austin Stone Limestone Veneer">
+    </div>
+  </div>
+  <div class="grid-4">
+    <div class="field">
+      <label>Masonry % front</label>
+      <input type="number" name="masonry_percentage_front" min="0" max="100">
+    </div>
+    <div class="field">
+      <label>Masonry % sides</label>
+      <input type="number" name="masonry_percentage_sides" min="0" max="100">
+    </div>
+    <div class="field">
+      <label>Masonry % rear</label>
+      <input type="number" name="masonry_percentage_rear" min="0" max="100">
+    </div>
+    <div class="field">
+      <label>Wrap distance (ft)</label>
+      <input type="number" name="masonry_wrap_distance_sides" min="0" step="0.5">
+    </div>
+  </div>
+
+  <h3 style="font-size:11.5px; color:var(--ink-faint); letter-spacing:0.07em; text-transform:uppercase; margin:18px 0 12px;">Siding &amp; paint</h3>
+  <div class="grid-3">
+    <div class="field">
+      <label>Siding material</label>
+      <select name="siding_material">
+        <option value="">—</option>
+        <option value="hardie">Hardie</option>
+        <option value="vinyl">Vinyl</option>
+        <option value="wood">Wood</option>
+        <option value="stucco">Stucco</option>
+        <option value="composite">Composite</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Siding color</label>
+      <input type="text" name="siding_color" placeholder="e.g. Alabaster">
+    </div>
+    <div class="field">
+      <label>Trim color</label>
+      <input type="text" name="trim_color" placeholder="e.g. Loggia">
+    </div>
+  </div>
+  <div class="grid-3">
+    <div class="field">
+      <label>Front door color</label>
+      <input type="text" name="front_door_color" placeholder="e.g. Iron Ore">
+    </div>
+    <div class="field">
+      <label>Garage door color</label>
+      <input type="text" name="garage_door_color">
+    </div>
+    <div class="field">
+      <label>Garage door style</label>
+      <input type="text" name="garage_door_style" placeholder="e.g. carriage, panel">
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="field">
+      <label>Shutter color<span class="opt">— if present</span></label>
+      <input type="text" name="shutter_color">
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <div style="display:flex; gap:8px; align-items:center; padding-top:8px;">
+        <input type="checkbox" name="shutters_present" id="shuttersPresent" style="width:16px; height:16px; accent-color: var(--gold);">
+        <label for="shuttersPresent" style="cursor:pointer; font-size:13px; color:var(--ink); text-transform:none; letter-spacing:0;">Shutters present on submitted plan</label>
+      </div>
+    </div>
+  </div>
+
+  <h3 style="font-size:11.5px; color:var(--ink-faint); letter-spacing:0.07em; text-transform:uppercase; margin:18px 0 12px;">Roof</h3>
+  <div class="grid-3">
+    <div class="field">
+      <label>Roof material</label>
+      <select name="roof_material">
+        <option value="">—</option>
+        <option value="composition_shingle">Composition shingle</option>
+        <option value="metal">Metal</option>
+        <option value="tile">Tile</option>
+        <option value="slate">Slate</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Roof color</label>
+      <input type="text" name="roof_color" placeholder="e.g. Weathered Wood">
+    </div>
+    <div class="field">
+      <label>Roof manufacturer</label>
+      <input type="text" name="roof_manufacturer">
+    </div>
+  </div>
+</section>
+
+<!-- Section: Site & structure -->
+<section class="section">
+  <div class="header">
+    <h2>Site &amp; Structure</h2>
+    <span class="hint">Fence, driveway, setbacks — what affects the streetscape</span>
+  </div>
+
+  <div class="grid-3">
+    <div class="field">
+      <label>Driveway material</label>
+      <select name="driveway_material">
+        <option value="">—</option>
+        <option value="concrete">Concrete</option>
+        <option value="pavers">Pavers</option>
+        <option value="stamped_concrete">Stamped concrete</option>
+        <option value="other">Other</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Irrigation included</label>
+      <select name="irrigation_included">
+        <option value="">—</option>
+        <option value="true">Yes</option>
+        <option value="false">No</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>&nbsp;</label>
+      <div style="display:flex; gap:8px; align-items:center; padding-top:8px;">
+        <input type="checkbox" name="fence_present" id="fencePresent" style="width:16px; height:16px; accent-color: var(--gold);">
+        <label for="fencePresent" style="cursor:pointer; font-size:13px; color:var(--ink); text-transform:none; letter-spacing:0;">Fence included</label>
+      </div>
+    </div>
+  </div>
+  <div class="grid-3" id="fenceFields" style="display:none;">
+    <div class="field">
+      <label>Fence material</label>
+      <select name="fence_material">
+        <option value="">—</option>
+        <option value="wood">Wood</option>
+        <option value="wrought_iron">Wrought iron</option>
+        <option value="vinyl">Vinyl</option>
+        <option value="masonry">Masonry</option>
+        <option value="chain_link">Chain link</option>
+      </select>
+    </div>
+    <div class="field">
+      <label>Fence height (ft)</label>
+      <input type="number" name="fence_height_feet" min="0" step="0.5">
+    </div>
+    <div class="field">
+      <label>Orientation</label>
+      <select name="fence_orientation">
+        <option value="">—</option>
+        <option value="interior_only">Interior only</option>
+        <option value="street_facing">Street-facing</option>
+        <option value="mixed">Mixed</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="grid-2">
+    <div class="field">
+      <label>Target construction start</label>
+      <input type="date" name="target_construction_start_date">
+    </div>
+    <div class="field">
+      <label>Estimated completion</label>
+      <input type="date" name="estimated_completion_date">
+    </div>
+  </div>
+</section>
+
+<!-- Section: Attachments -->
+<section class="section">
+  <div class="header">
+    <h2>Attachments</h2>
+    <span class="hint">Site plan, elevations, floor plan, color board · PDF or image · 25MB max each</span>
+  </div>
+  <div class="att-grid" id="attGrid">
+    <!-- rendered by JS so each slot has consistent behavior -->
+  </div>
+</section>
+
+<!-- Section: Acknowledgments -->
+<section class="section">
+  <div class="header">
+    <h2>Acknowledgments</h2>
+    <span class="hint">Required to submit</span>
+  </div>
+  <div class="ack-row">
+    <input type="checkbox" id="ackCompliance" required>
+    <label for="ackCompliance">Builder acknowledges responsibility to construct in accordance with the approved plans, applicable Design Guidelines, and all county/state permits.</label>
+  </div>
+  <div class="ack-row">
+    <input type="checkbox" id="ackChangeControl" required>
+    <label for="ackChangeControl">Builder acknowledges that any deviation from the approved plans — including substitutions of color, material, masonry coverage, fence type, or elevation — requires written re-approval prior to installation.</label>
+  </div>
+</section>
+
+<div class="submit-row">
+  <div class="left">Submissions are reviewed in the order received. You'll receive an email confirmation with your reference number.</div>
+  <button type="submit" class="primary-btn" id="submitBtn">Submit for review →</button>
+</div>
+
+</form>
+</div>
+</main>
+</template>
+
+<template id="successTemplate">
+<header class="page">
+  <div class="container">
+    <div class="brand-lockup">
+      <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" aria-label="Bedrock cornerstone">
+        <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+        <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+        <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+      </svg>
+      <div>
+        <div class="wm">Bedrock <em>Intelligence</em></div>
+        <div class="sub">trustEd · operations platform</div>
+      </div>
+    </div>
+  </div>
+</header>
+<main>
+  <div class="center-message">
+    <h2>Submission received</h2>
+    <p>Thank you for filing this submission. Your reference number:</p>
+    <div class="ref" id="successRef">—</div>
+    <p style="margin-top:18px;" id="successCommunity">—</p>
+    <p style="margin-top:8px;" id="successProgress"></p>
+    <p style="margin-top:24px; font-size:12.5px;">A confirmation email is on the way. Questions: <a style="color:var(--gold); text-decoration:none;" href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a></p>
+  </div>
+</main>
+</template>
+
+<script>
+'use strict';
+
+const ATTACHMENT_SLOTS = [
+  { kind: 'site_plan',           label: 'Site plan',           required: true,  hint: 'Plat with footprint, setbacks, driveway' },
+  { kind: 'front_elevation',     label: 'Front elevation',     required: true,  hint: '' },
+  { kind: 'rear_elevation',      label: 'Rear elevation',      required: true,  hint: '' },
+  { kind: 'left_side_elevation', label: 'Left elevation',      required: false, hint: '' },
+  { kind: 'right_side_elevation',label: 'Right elevation',     required: false, hint: '' },
+  { kind: 'floor_plan',          label: 'Floor plan',          required: true,  hint: 'All floors if multi-story' },
+  { kind: 'color_board',         label: 'Color board / spec',  required: false, hint: 'Photo of physical board or vendor spec sheet' },
+];
+
+let community = null;
+const attachments = {}; // kind → File
+
+function $(id) { return document.getElementById(id); }
+function toast(msg, kind) {
+  const t = $('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  setTimeout(() => { t.className = 'toast'; }, 4200);
+}
+
+function getCommunitySlug() {
+  // Path is /builders/:slug — strip the prefix
+  const m = window.location.pathname.match(/^\/builders\/([^/?#]+)/);
+  return m ? m[1] : '';
+}
+
+function fmtFee(cents) {
+  if (cents == null) return '—';
+  const dollars = Number(cents) / 100;
+  return '$' + dollars.toLocaleString('en-US', { minimumFractionDigits: dollars % 1 ? 2 : 0, maximumFractionDigits: 2 });
+}
+function fmtFileSize(bytes) {
+  if (!bytes) return '';
+  if (bytes < 1024) return bytes + 'B';
+  if (bytes < 1024 * 1024) return Math.round(bytes / 1024) + 'kb';
+  return (bytes / (1024 * 1024)).toFixed(1) + 'MB';
+}
+
+async function loadCommunity() {
+  const slug = getCommunitySlug();
+  if (!slug) {
+    renderError('No community in URL. Expected /builders/{community-slug}.');
+    return;
+  }
+  try {
+    const r = await fetch(`/api/builder-applications/public/community/${slug}`);
+    if (r.status === 404) {
+      renderError('This community is not currently accepting builder submissions. Contact Bedrock Association Management at builders@bedrocktx.com.');
+      return;
+    }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    community = data.community;
+    renderForm();
+  } catch (err) {
+    renderError(`Couldn't load community: ${err.message}`);
+  }
+}
+
+function renderError(msg) {
+  $('app').innerHTML = `
+    <div class="center-message">
+      <h2>Unable to load</h2>
+      <p>${msg.replace(/</g, '&lt;')}</p>
+    </div>`;
+}
+
+function renderForm() {
+  const tpl = $('formTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  // Header copy
+  $('communityName').textContent = `${community.name} · Submit a new home plan for ARC review`;
+  $('metaSla').textContent = `${community.sla_business_days || 5} business days`;
+  $('metaFast').textContent = `${community.fast_track_business_days || 2} business days (master-plan match)`;
+  $('metaFee').textContent = fmtFee(community.fee_cents);
+  if (community.design_guidelines_url) {
+    $('metaGuidelinesWrap').style.display = '';
+    $('metaGuidelines').href = community.design_guidelines_url;
+  }
+
+  // Fence conditional
+  const fp = document.querySelector('input[name="fence_present"]');
+  fp.addEventListener('change', () => {
+    document.getElementById('fenceFields').style.display = fp.checked ? '' : 'none';
+  });
+
+  // Attachment slots
+  renderAttachmentSlots();
+
+  // Submit handler
+  $('submitForm').addEventListener('submit', onSubmit);
+}
+
+function renderAttachmentSlots() {
+  const grid = $('attGrid');
+  grid.innerHTML = ATTACHMENT_SLOTS.map((slot) => `
+    <div class="att-slot" data-kind="${slot.kind}">
+      <div class="att-label">${slot.label}${slot.required ? '<span class="req">*</span>' : ''}</div>
+      <div class="att-hint">${slot.hint || '&nbsp;'}</div>
+      <input type="file" id="file_${slot.kind}" accept=".pdf,image/*">
+      <label for="file_${slot.kind}" class="pick-btn">Choose file…</label>
+      <div class="file-name" style="display:none;"></div>
+      <div class="file-meta" style="display:none;"></div>
+      <button type="button" class="clear-btn" style="display:none;">Remove</button>
+    </div>
+  `).join('');
+
+  document.querySelectorAll('.att-slot').forEach((slot) => {
+    const kind = slot.dataset.kind;
+    const input = slot.querySelector('input[type=file]');
+    const nameDiv = slot.querySelector('.file-name');
+    const metaDiv = slot.querySelector('.file-meta');
+    const clearBtn = slot.querySelector('.clear-btn');
+
+    function applyFile(file) {
+      attachments[kind] = file;
+      slot.classList.add('has-file');
+      nameDiv.textContent = file.name;
+      nameDiv.style.display = '';
+      metaDiv.textContent = `${fmtFileSize(file.size)} · ${file.type || 'unknown'}`;
+      metaDiv.style.display = '';
+      clearBtn.style.display = '';
+    }
+    function clearFile() {
+      delete attachments[kind];
+      input.value = '';
+      slot.classList.remove('has-file');
+      nameDiv.style.display = 'none';
+      metaDiv.style.display = 'none';
+      clearBtn.style.display = 'none';
+    }
+
+    input.addEventListener('change', (e) => {
+      const f = e.target.files[0];
+      if (f) applyFile(f);
+    });
+    clearBtn.addEventListener('click', clearFile);
+
+    // Drag-drop
+    ['dragenter', 'dragover'].forEach((ev) => slot.addEventListener(ev, (e) => {
+      e.preventDefault(); slot.classList.add('dragover');
+    }));
+    ['dragleave', 'drop'].forEach((ev) => slot.addEventListener(ev, (e) => {
+      e.preventDefault(); slot.classList.remove('dragover');
+    }));
+    slot.addEventListener('drop', (e) => {
+      const f = e.dataTransfer.files[0];
+      if (f) applyFile(f);
+    });
+  });
+}
+
+function gatherFormData() {
+  const form = $('submitForm');
+  const fd = new FormData(form);
+
+  const get = (k) => (fd.get(k) || '').toString().trim();
+  const getNum = (k) => {
+    const v = get(k);
+    return v === '' ? null : Number(v);
+  };
+  const getBool = (k) => {
+    const v = get(k);
+    if (v === 'true' || v === 'on') return true;
+    if (v === 'false') return false;
+    return null;
+  };
+
+  // Materials/options live in application_data JSONB
+  const materials = {
+    brick_color:                 get('brick_color')    || undefined,
+    brick_manufacturer:          get('brick_manufacturer') || undefined,
+    stone_color:                 get('stone_color')    || undefined,
+    masonry_percentage_front:    getNum('masonry_percentage_front'),
+    masonry_percentage_sides:    getNum('masonry_percentage_sides'),
+    masonry_percentage_rear:     getNum('masonry_percentage_rear'),
+    masonry_wrap_distance_sides: getNum('masonry_wrap_distance_sides'),
+    siding_material:             get('siding_material') || undefined,
+    siding_color:                get('siding_color')    || undefined,
+    trim_color:                  get('trim_color')      || undefined,
+    front_door_color:            get('front_door_color') || undefined,
+    garage_door_color:           get('garage_door_color') || undefined,
+    garage_door_style:           get('garage_door_style') || undefined,
+    shutters_present:            !!document.querySelector('input[name="shutters_present"]').checked,
+    shutter_color:               get('shutter_color')   || undefined,
+    roof_material:               get('roof_material')   || undefined,
+    roof_color:                  get('roof_color')      || undefined,
+    roof_manufacturer:           get('roof_manufacturer') || undefined,
+    driveway_material:           get('driveway_material') || undefined,
+    irrigation_included:         getBool('irrigation_included'),
+    fence_present:               !!document.querySelector('input[name="fence_present"]').checked,
+    fence_material:              get('fence_material')  || undefined,
+    fence_height_feet:           getNum('fence_height_feet'),
+    fence_orientation:           get('fence_orientation') || undefined,
+  };
+
+  // Strip null/undefined to keep the JSONB clean
+  Object.keys(materials).forEach((k) => {
+    if (materials[k] === null || materials[k] === undefined) delete materials[k];
+  });
+
+  return {
+    community_slug: community.slug,
+    builder_company_name: get('builder_company_name'),
+    submitter_email:   get('submitter_email'),
+    submitter_name:    get('submitter_name'),
+    submitter_phone:   get('submitter_phone'),
+    source: 'portal',
+    lot_number:        get('lot_number'),
+    block_number:      get('block_number') || undefined,
+    section_number:    get('section_number') || undefined,
+    street_address:    get('street_address'),
+    lot_type:          get('lot_type') || undefined,
+    plan_number:       get('plan_number'),
+    plan_name:         get('plan_name') || undefined,
+    elevation:         get('elevation'),
+    elevation_orientation: get('elevation_orientation') || undefined,
+    square_footage:    getNum('square_footage'),
+    stories:           getNum('stories'),
+    materials,
+    target_construction_start_date: get('target_construction_start_date') || undefined,
+    estimated_completion_date:      get('estimated_completion_date') || undefined,
+    builder_acknowledgments: {
+      compliance:     !!$('ackCompliance').checked,
+      change_control: !!$('ackChangeControl').checked,
+      acknowledged_at: new Date().toISOString(),
+    },
+  };
+}
+
+function validate(payload) {
+  const required = ['builder_company_name', 'submitter_email', 'lot_number', 'street_address', 'plan_number', 'elevation'];
+  for (const k of required) {
+    if (!payload[k]) {
+      const el = document.querySelector(`[name="${k}"]`);
+      if (el) {
+        el.closest('.field')?.classList.add('error');
+        el.focus();
+      }
+      return `${k.replace(/_/g, ' ')} is required.`;
+    }
+  }
+  if (!payload.builder_acknowledgments.compliance || !payload.builder_acknowledgments.change_control) {
+    return 'Both acknowledgments must be checked.';
+  }
+  // Required attachments
+  const required_atts = ATTACHMENT_SLOTS.filter((s) => s.required);
+  for (const slot of required_atts) {
+    if (!attachments[slot.kind]) {
+      return `${slot.label} is required.`;
+    }
+  }
+  return null;
+}
+
+async function onSubmit(e) {
+  e.preventDefault();
+  document.querySelectorAll('.field.error').forEach((f) => f.classList.remove('error'));
+
+  const payload = gatherFormData();
+  const err = validate(payload);
+  if (err) {
+    toast(err, 'error');
+    return;
+  }
+
+  const btn = $('submitBtn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="loader"></span> Submitting…`;
+
+  try {
+    // Step 1: create the submission
+    const r = await fetch('/api/builder-applications', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const data = await r.json();
+    if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+
+    const applicationId = data.application_id;
+    const referenceNumber = data.reference_number;
+
+    // Step 2: upload attachments
+    let uploaded = 0;
+    const total = Object.keys(attachments).length;
+    for (const [kind, file] of Object.entries(attachments)) {
+      btn.innerHTML = `<span class="loader"></span> Uploading ${uploaded + 1} of ${total}…`;
+      const fd = new FormData();
+      fd.append('files', file);
+      fd.append('kinds', kind);
+      const ar = await fetch(`/api/builder-applications/${applicationId}/attachments`, {
+        method: 'POST',
+        body: fd,
+      });
+      if (!ar.ok) {
+        const errData = await ar.json().catch(() => ({}));
+        console.warn(`Attachment ${kind} failed: ${errData.error || ar.status}`);
+        // Continue with remaining files — partial upload is better than total failure
+      }
+      uploaded++;
+    }
+
+    renderSuccess(referenceNumber, total);
+  } catch (err) {
+    toast(`Submission failed: ${err.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Submit for review →';
+  }
+}
+
+function renderSuccess(referenceNumber, uploadedCount) {
+  const tpl = $('successTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+  $('successRef').textContent = referenceNumber;
+  $('successCommunity').textContent = `${community.name} · Standard review ${community.sla_business_days || 5} business days from receipt`;
+  $('successProgress').textContent = uploadedCount
+    ? `${uploadedCount} attachment${uploadedCount === 1 ? '' : 's'} uploaded with this submission.`
+    : '';
+}
+
+// Boot
+loadCommunity();
+</script>
+</body>
+</html>

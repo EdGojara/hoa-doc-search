@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>August Meadows — Builder Onboarding · Bedrock Association Management</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* =============================================================================
+     Builder onboarding packet — printable HTML.
+     Bedrock Association Management letterhead (service brand, navy + gold).
+     Designed to render cleanly on screen AND when printed/saved to PDF.
+     Parameters via URL: ?community=August%20Meadows&builder=DRB%20Group&contact=Karla
+     ============================================================================= */
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --cream: #FAFAF6;
+    --rule: #d8d6cd;
+    --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: #ECECE6;
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 11.5pt;
+    line-height: 1.55;
+  }
+
+  /* Page chrome — viewport view */
+  .toolbar {
+    background: var(--navy);
+    color: var(--cream);
+    padding: 10px 24px;
+    display: flex; gap: 14px; align-items: center;
+    font-size: 12px;
+    border-bottom: 2px solid var(--gold);
+    position: sticky; top: 0; z-index: 50;
+  }
+  .toolbar .meta { color: rgba(255,255,255,0.7); font-family: var(--font-mono); }
+  .toolbar button {
+    background: var(--gold); color: var(--navy);
+    border: none; padding: 6px 14px;
+    font-family: var(--font-sans); font-weight: 600; font-size: 12px;
+    border-radius: 3px; cursor: pointer;
+    letter-spacing: 0.03em;
+    margin-left: auto;
+  }
+  .toolbar button:hover { background: var(--gold-bright); }
+  .toolbar a {
+    color: var(--cream);
+    text-decoration: none; opacity: 0.7;
+    margin-left: 16px;
+  }
+  .toolbar a:hover { opacity: 1; }
+
+  /* The packet itself — letter-sized "page" with paper feel on screen */
+  .packet-wrap {
+    max-width: 8.5in;
+    margin: 24px auto;
+    background: white;
+    box-shadow: 0 6px 28px rgba(0,0,0,0.18);
+    padding: 0.85in 0.95in 1in;
+  }
+
+  /* ---- Letterhead ---- */
+  .letterhead {
+    display: flex; align-items: center; gap: 18px;
+    padding-bottom: 14px; margin-bottom: 22px;
+    border-bottom: 2px solid var(--gold);
+  }
+  .letterhead svg { width: 44px; height: 55px; flex-shrink: 0; }
+  .letterhead .lockup .name {
+    font-family: var(--font-serif); font-size: 22px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em;
+  }
+  .letterhead .lockup .name em {
+    font-style: italic; color: var(--gold); font-weight: 500;
+  }
+  .letterhead .lockup .tagline {
+    font-family: var(--font-mono); font-size: 9pt;
+    color: var(--ink-faint); letter-spacing: 0.18em; text-transform: uppercase;
+    margin-top: 3px;
+  }
+  .letterhead .return {
+    margin-left: auto; text-align: right;
+    font-size: 10pt; color: var(--ink-soft); line-height: 1.4;
+  }
+
+  /* ---- Headline ---- */
+  h1 {
+    font-family: var(--font-serif);
+    font-size: 26pt; font-weight: 500;
+    color: var(--navy);
+    margin: 6px 0 4px;
+    line-height: 1.15; letter-spacing: -0.01em;
+  }
+  h1 em { font-style: italic; color: var(--gold); font-weight: 500; }
+  .subhead {
+    font-size: 11.5pt; color: var(--ink-soft);
+    margin-bottom: 22px;
+  }
+  .date-line {
+    font-size: 10.5pt; color: var(--ink-faint);
+    margin-top: 18px; margin-bottom: 22px;
+    font-family: var(--font-mono); letter-spacing: 0.04em;
+  }
+  .recipient-block {
+    margin-bottom: 22px; font-size: 11.5pt; line-height: 1.5;
+  }
+  .recipient-block .to-line { color: var(--ink-faint); font-size: 9.5pt; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 4px; }
+
+  /* ---- Body ---- */
+  p { margin: 0 0 12px; }
+  .body p { font-size: 11.5pt; line-height: 1.6; color: var(--ink); }
+  .body .lede {
+    font-size: 12pt; color: var(--navy);
+    font-family: var(--font-serif); font-style: italic;
+    margin: 0 0 22px;
+  }
+
+  /* ---- Section heading ---- */
+  h2 {
+    font-family: var(--font-serif);
+    font-size: 15pt; font-weight: 500;
+    color: var(--navy);
+    margin: 30px 0 12px;
+    padding-bottom: 6px;
+    border-bottom: 1px solid var(--rule);
+    letter-spacing: -0.005em;
+  }
+  h2 .num {
+    display: inline-block; min-width: 22px;
+    color: var(--gold); font-weight: 600;
+    font-family: var(--font-sans); font-size: 11pt;
+    margin-right: 4px;
+  }
+  h3 {
+    font-size: 10.5pt; font-weight: 600;
+    color: var(--navy); margin: 18px 0 8px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+
+  /* ---- Callouts ---- */
+  .callout {
+    background: #FAFAF6;
+    border-left: 3px solid var(--gold);
+    padding: 14px 18px;
+    margin: 14px 0 16px;
+    font-size: 10.5pt; line-height: 1.55;
+  }
+  .callout .heading {
+    font-weight: 600; color: var(--navy);
+    font-size: 10pt; letter-spacing: 0.04em;
+    text-transform: uppercase; margin-bottom: 6px;
+  }
+  .callout strong { color: var(--navy); }
+
+  /* ---- Lists ---- */
+  ul, ol { margin: 6px 0 14px; padding-left: 22px; }
+  li { margin-bottom: 5px; line-height: 1.55; }
+
+  /* ---- SLA / fee grid ---- */
+  .specs-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 16px;
+    margin: 14px 0 18px;
+  }
+  .specs-card {
+    background: #FAFAF6;
+    border: 1px solid var(--rule);
+    padding: 14px 16px;
+    border-radius: 4px;
+  }
+  .specs-card .label {
+    font-size: 9.5pt; color: var(--ink-faint);
+    letter-spacing: 0.07em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .specs-card .value {
+    font-family: var(--font-serif); font-size: 16pt;
+    color: var(--navy); font-weight: 500;
+    margin-bottom: 2px;
+  }
+  .specs-card .note {
+    font-size: 10pt; color: var(--ink-soft);
+  }
+
+  /* ---- Portal URL block ---- */
+  .url-block {
+    background: var(--navy);
+    color: white;
+    padding: 14px 18px;
+    border-radius: 4px;
+    font-family: var(--font-mono);
+    font-size: 12pt;
+    text-align: center;
+    margin: 14px 0 16px;
+    letter-spacing: 0.02em;
+  }
+  .url-block .label {
+    font-family: var(--font-sans); font-size: 9pt;
+    color: var(--gold); letter-spacing: 0.1em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .url-block .url { color: white; }
+
+  /* ---- Signature ---- */
+  .signature-block {
+    margin-top: 36px; padding-top: 18px;
+    border-top: 1px solid var(--rule);
+  }
+  .signature-block .closing { margin-bottom: 36px; }
+  .signature-block .name { font-weight: 600; color: var(--navy); }
+  .signature-block .title { font-size: 10.5pt; color: var(--ink-soft); }
+  .signature-block .contact {
+    margin-top: 8px;
+    font-size: 10pt; color: var(--ink-soft);
+    font-family: var(--font-mono);
+  }
+  .signature-block .contact a { color: var(--navy); text-decoration: none; }
+
+  /* ---- Footer ---- */
+  .footer {
+    margin-top: 38px; padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    text-align: center;
+    font-size: 9pt; color: var(--ink-faint);
+    line-height: 1.5;
+  }
+  .footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft); font-size: 8.5pt;
+    margin-bottom: 4px;
+  }
+
+  /* ---- Print rules ---- */
+  @page { size: Letter; margin: 0; }
+  @media print {
+    body { background: white; }
+    .toolbar { display: none; }
+    .packet-wrap {
+      margin: 0; box-shadow: none;
+      padding: 0.85in 0.95in 1in;
+      max-width: none; width: 100%;
+    }
+    h2 { page-break-after: avoid; }
+    .callout, .specs-grid, .url-block, .signature-block { page-break-inside: avoid; }
+    .section-block { page-break-inside: avoid; }
+  }
+</style>
+</head>
+<body>
+
+<div class="toolbar">
+  <strong>Builder Onboarding Packet</strong>
+  <span class="meta" id="metaLine">—</span>
+  <a href="/">← Platform</a>
+  <button onclick="window.print()">Save as PDF / Print</button>
+</div>
+
+<div class="packet-wrap" id="packet">
+
+<div class="letterhead">
+  <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" aria-label="Bedrock cornerstone">
+    <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+    <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+    <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+  </svg>
+  <div class="lockup">
+    <div class="name">Bedrock <em>Association Management</em></div>
+    <div class="tagline">Community. Simplified.</div>
+  </div>
+  <div class="return">
+    12808 W Airport Blvd, Ste 253<br>
+    Sugar Land, TX 77478<br>
+    (832) 588-2485 · bedrocktx.com
+  </div>
+</div>
+
+<div class="date-line" id="dateLine">—</div>
+
+<div class="recipient-block">
+  <div class="to-line">Delivered to</div>
+  <div id="recipientName">—</div>
+  <div id="recipientCompany">—</div>
+</div>
+
+<h1>Welcome to the <em id="communityHeadline">community</em> ARC review process</h1>
+<div class="subhead" id="welcomeSubhead">—</div>
+
+<div class="body">
+
+<p class="lede" id="lede">—</p>
+
+<p>This packet covers everything <span class="builder-name">your team</span> needs to file architectural submissions cleanly: the submission portal, the review process, our service-level commitments, the master plan library that fast-tracks repeat plans, fees, and points of contact. We've kept it short on purpose. Builders move fast, and the system is built so we can too.</p>
+
+<!-- =============================================================
+     1. The portal
+     ============================================================= -->
+<h2 class="section-block"><span class="num">1.</span> The submission portal</h2>
+<p>All architectural submissions for <span class="community-name">this community</span> flow through a dedicated builder portal. Each submission is structured (lot, plan, elevation, materials, attachments), receives a unique reference number on intake, and tracks status in real time so you don't have to email asking "did you get my submission?"</p>
+
+<div class="url-block">
+  <div class="label">Builder portal</div>
+  <div class="url" id="portalUrl">—</div>
+</div>
+
+<p>Submissions land in our review queue automatically. The reviewing manager works through them in order received. As your team grows beyond one coordinator, additional coordinators at <span class="builder-name">your company</span> can be added to the portal with email-based access — just send the list to the contact below.</p>
+
+<!-- =============================================================
+     2. The review process
+     ============================================================= -->
+<h2 class="section-block"><span class="num">2.</span> How submissions are reviewed</h2>
+<p>Every submission is reviewed against three layers:</p>
+<ul>
+  <li><strong>Design Guidelines</strong> for <span class="community-name">this community</span> — masonry coverage, exterior materials, fence specifications, height restrictions, setbacks, and elevation standards</li>
+  <li><strong>Site-specific conditions</strong> applicable to the particular lot — corner-lot rules, common-area-facing requirements, easement constraints, thoroughfare setbacks</li>
+  <li><strong>Master plan match</strong> — if the proposed plan and elevation are already in the master library for <span class="community-name">this community</span>, the submission fast-tracks (see Section 4)</li>
+</ul>
+<p>The reviewer issues one of four decisions on each submission:</p>
+<ul>
+  <li><strong>Approved.</strong> The submission proceeds to construction as proposed.</li>
+  <li><strong>Approved with conditions.</strong> The submission may proceed subject to the listed conditions (e.g., color substitution, fence material constraint). The conditions appear in the approval letter and bind the construction.</li>
+  <li><strong>Denied.</strong> Specific items require revision. The denial letter lists the items so a revised submission can be filed.</li>
+  <li><strong>Additional information requested.</strong> The reviewer asks for clarifying information before the decision clock continues.</li>
+</ul>
+
+<!-- =============================================================
+     3. Service-level commitments
+     ============================================================= -->
+<h2 class="section-block"><span class="num">3.</span> Service-level commitments</h2>
+<p>We commit to the following turnaround on every submission received through the portal:</p>
+
+<div class="specs-grid">
+  <div class="specs-card">
+    <div class="label">Standard review</div>
+    <div class="value" id="slaStandard">5 business days</div>
+    <div class="note">First-time plan + elevation combinations and unique projects</div>
+  </div>
+  <div class="specs-card">
+    <div class="label">Master-plan fast-track</div>
+    <div class="value" id="slaFast">2 business days</div>
+    <div class="note">Subsequent submissions of plans already approved at this community</div>
+  </div>
+</div>
+
+<p>The clock starts when the submission is complete (all required attachments uploaded). If the reviewer requests additional information, the clock pauses until the response is received. Submissions filed Friday after 12:00 PM Central are treated as received the following business day.</p>
+
+<!-- =============================================================
+     4. Master plan library
+     ============================================================= -->
+<h2 class="section-block"><span class="num">4.</span> The master plan library</h2>
+<p><span class="builder-name">Your team</span> likely builds a finite catalog of plans across each elevation — perhaps eight to twelve plans, each available in three to four elevations. The master plan library exists to compress review time for this structural repetition.</p>
+
+<p>The first submission of each plan-and-elevation combination at <span class="community-name">this community</span> runs the standard 5-business-day review. Once approved, the plan goes into the master library for this community with its full material specification preserved. Every subsequent submission of the same plan and elevation — for a different lot — auto-matches the master, fast-tracks to 2 business days, and is reviewed only for site-specific items (orientation, neighbor adjacency, lot-type conditions).</p>
+
+<div class="callout">
+  <div class="heading">Practical implication</div>
+  At 100 submissions per year with twelve approved master plans, roughly 88 of those submissions fast-track. That's the difference between an architectural-review process that bottlenecks construction starts and one that doesn't. The master library scales — every approval makes the next one faster.
+</div>
+
+<p>To populate the library quickly: <span class="builder-name">your team</span> can submit each elevation-and-plan combination once as soon as the offering is finalized, well in advance of breaking ground. We review them on the standard SLA. Once approved, the library is ready for the lot-by-lot submissions that follow.</p>
+
+<!-- =============================================================
+     5. What to submit with each application
+     ============================================================= -->
+<h2 class="section-block"><span class="num">5.</span> What to attach with each submission</h2>
+
+<h3>Required</h3>
+<ul>
+  <li><strong>Site plan</strong> — plat with footprint, driveway, and setbacks</li>
+  <li><strong>Front elevation</strong></li>
+  <li><strong>Rear elevation</strong></li>
+  <li><strong>Floor plan</strong> — all floors if multi-story</li>
+</ul>
+
+<h3>Recommended</h3>
+<ul>
+  <li><strong>Left and right side elevations</strong> — required if the lot is corner, common-area-facing, or has any side-yard adjacency conditions</li>
+  <li><strong>Color board or material specification sheet</strong> — a photo of the physical color board or a vendor spec sheet</li>
+</ul>
+
+<p>The portal captures the full material specification in structured fields — brick color, stone, masonry coverage percentages, siding, trim, shutters, doors, roof, fence material. The approval letter reprints those exact specifications, so submitting accurate values matters: the approved values are what your superintendent builds against.</p>
+
+<!-- =============================================================
+     6. Fees
+     ============================================================= -->
+<h2 class="section-block"><span class="num">6.</span> ARC review fee</h2>
+<p>The new-construction architectural review fee at <span class="community-name">this community</span> is <strong id="reviewFee">—</strong> per submission. The fee compensates the reviewer's time and covers structured documentation, letter generation, archive, and the lifetime master-library benefit.</p>
+<p>Fees are billed monthly to <span class="builder-name">your company</span> against submissions filed during the period. Master plan library submissions and lot-by-lot submissions are each treated as individual review submissions.</p>
+
+<!-- =============================================================
+     7. Contact
+     ============================================================= -->
+<h2 class="section-block"><span class="num">7.</span> Points of contact</h2>
+
+<div class="specs-grid">
+  <div class="specs-card">
+    <div class="label">Submissions</div>
+    <div class="value" style="font-size:13pt; font-family: var(--font-mono);" id="portalUrlShort">—</div>
+    <div class="note">Drag-drop file upload, real-time status tracking</div>
+  </div>
+  <div class="specs-card">
+    <div class="label">Email backstop</div>
+    <div class="value" style="font-size:13pt; font-family: var(--font-mono);">builders@bedrocktx.com</div>
+    <div class="note">For questions, revision discussions, or follow-up on existing submissions</div>
+  </div>
+</div>
+
+<p>The designated account contact at Bedrock Association Management for <span class="builder-name">your company</span> at <span class="community-name">this community</span> is:</p>
+<ul>
+  <li><strong>Ed Gojara</strong>, Principal · ed@bedrocktx.com · (832) 588-2485</li>
+</ul>
+<p>For account-level questions (additional coordinator access, fee structure, multi-community arrangements), email or call directly. For per-submission questions, the portal and <code>builders@bedrocktx.com</code> are the right channels — they capture the audit trail.</p>
+
+<!-- =============================================================
+     8. Acknowledgments
+     ============================================================= -->
+<h2 class="section-block"><span class="num">8.</span> What you acknowledge on each submission</h2>
+<p>The submission form captures two builder acknowledgments at intake. These appear on the approval letter and bind the construction. They are not boilerplate — they are how we maintain consistent enforcement of the recorded Design Guidelines across the community, which is both a fair-housing requirement and a value-protection mechanism for the homeowners who will own these homes.</p>
+<ol>
+  <li><strong>Compliance acknowledgment.</strong> Builder constructs in accordance with the approved plans, applicable Design Guidelines, and all county and state permits.</li>
+  <li><strong>Change-control acknowledgment.</strong> Any deviation from the approved plans during construction — including substitutions of color, material, masonry coverage, fence type, or elevation — requires written re-approval prior to installation. Material substitution requests typically turn in 24–48 hours through the portal.</li>
+</ol>
+
+<!-- =============================================================
+     Closing
+     ============================================================= -->
+<h2 class="section-block">Getting started</h2>
+<p>The portal is live and ready. The fastest path to operating capacity:</p>
+<ol>
+  <li>Walk the portal once with a coordinator on your team — file a test submission of one plan to see the flow end-to-end.</li>
+  <li>Submit your full plan library for master approval. We'll work through them on the standard SLA so the library is populated before lot-by-lot construction starts.</li>
+  <li>Once the library is in place, route lot-by-lot submissions through the portal as construction is scheduled.</li>
+</ol>
+<p>We're set up to handle the volume <span class="builder-name">your team</span> projects, and the system gets faster as the library grows. If anything in this packet needs clarification or adjustment for the specifics of <span class="builder-name">your operation</span>, please reply and we'll work it out.</p>
+
+</div><!-- /body -->
+
+<div class="signature-block">
+  <div class="closing">Sincerely,</div>
+  <div class="name">Ed Gojara</div>
+  <div class="title">Principal · Bedrock Association Management</div>
+  <div class="contact">
+    ed@bedrocktx.com &nbsp;·&nbsp; (832) 588-2485 &nbsp;·&nbsp; bedrocktx.com
+  </div>
+</div>
+
+<div class="footer">
+  <div class="tag">Community. Simplified.</div>
+  Bedrock Association Management, LLC · 12808 W Airport Blvd, Ste 253 · Sugar Land, TX 77478
+</div>
+
+</div><!-- /packet-wrap -->
+
+<script>
+(function () {
+  'use strict';
+  function param(name, fallback) {
+    const url = new URL(window.location.href);
+    return url.searchParams.get(name) || fallback;
+  }
+
+  const community = param('community', 'August Meadows');
+  const builder = param('builder', 'DRB Group');
+  const contact = param('contact', 'Karla');
+  const slug = (param('slug', '') || community.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
+  const portal = `builders.bedrocktxai.com/${slug}`;
+  const fee = param('fee', '$350');
+  const slaStandard = param('sla', '5 business days');
+  const slaFast = param('sla_fast', '2 business days');
+
+  const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+
+  document.getElementById('metaLine').textContent = `${community} · ${builder} · ${dateStr}`;
+  document.getElementById('dateLine').textContent = dateStr;
+  document.getElementById('recipientName').textContent = contact;
+  document.getElementById('recipientCompany').textContent = builder;
+  document.getElementById('communityHeadline').textContent = community;
+  document.getElementById('welcomeSubhead').textContent =
+    `A working brief for ${builder} from Bedrock Association Management`;
+  document.getElementById('lede').textContent =
+    `${contact}, ahead of ${builder}'s start at ${community}, this is a brief on how new-construction architectural review will work between us. Our intent is simple: predictable turnaround, clear documentation, no surprises, no email loops.`;
+  document.getElementById('portalUrl').textContent = `https://${portal}`;
+  document.getElementById('portalUrlShort').textContent = portal;
+  document.getElementById('slaStandard').textContent = slaStandard;
+  document.getElementById('slaFast').textContent = slaFast;
+  document.getElementById('reviewFee').textContent = fee;
+
+  // Inline replacement: any element with class .community-name or .builder-name
+  document.querySelectorAll('.community-name').forEach((el) => { el.textContent = community; });
+  document.querySelectorAll('.builder-name').forEach((el) => {
+    // Swap to builder name unless the surrounding text suggests a possessive/pronoun fit
+    const t = el.textContent.trim().toLowerCase();
+    if (t === 'your team' || t === 'your company' || t === 'your operation') {
+      // Keep "your" pronouns intact — they read better in body copy
+      el.textContent = t;
+    } else {
+      el.textContent = builder;
+    }
+  });
+
+  // Page title
+  document.title = `${community} — Builder Onboarding · ${builder}`;
+})();
+</script>
+</body>
+</html>
