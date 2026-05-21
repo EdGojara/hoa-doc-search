@@ -419,6 +419,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/map\/[^/]+$/,               // public map data (boundary + amenities)
   /^\/api\/portal\/compliance$/,               // GET homeowner's compliance state (cookie-gated)
   /^\/api\/portal\/documents$/,                // GET homeowner-visible governing docs (cookie-gated)
+  /^\/api\/portal\/property$/,                 // GET property details + owners + activity (cookie-gated)
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   /^\/api\/payments\/create-checkout-session$/, // public form posts here before Stripe redirect
   /^\/api\/payments\/by-session\/[^/]+$/,      // success page lookup post-Stripe-redirect
@@ -734,7 +735,7 @@ app.get('/clubhouse/:slug/success', (req, res) => {
 app.get('/portal', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'portal.html'));
 });
-app.get('/portal/property',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/property',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-property.html')));
 app.get('/portal/balance',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-compliance.html')));
 app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-documents.html')));

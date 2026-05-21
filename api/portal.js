@@ -809,6 +809,147 @@ router.get('/documents', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/portal/property
+// Returns property details + owner-of-record contacts + unified recent activity
+// timeline (last 10 items across ARC apps, compliance, clubhouse rentals).
+// ============================================================================
+router.get('/property', async (req, res) => {
+  try {
+    const cookieValue = readCookie(req, COOKIE_NAME);
+    const portalUserId = verifyCookie(cookieValue);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select(`property_id, properties:property_id (
+        id, street_address, unit, city, state, zip, property_type, lot_number,
+        community_id, vantaca_account_id, notes, created_at,
+        communities:community_id (id, name, slug, hoa_legal_name)
+      )`)
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null)
+      .limit(1);
+    const prop = (scopes && scopes[0]?.properties) || null;
+    if (!prop) return res.json({ property: null });
+
+    // Owners of record (current — end_date IS NULL)
+    const { data: ownerships } = await supabase
+      .from('property_ownerships')
+      .select(`
+        id, start_date, end_date, vesting, is_primary, source,
+        contacts:contact_id (id, primary_email, primary_phone, full_name)
+      `)
+      .eq('property_id', prop.id)
+      .is('end_date', null)
+      .order('is_primary', { ascending: false });
+
+    const owners = (ownerships || []).map((o) => ({
+      name: o.contacts?.full_name || '—',
+      email: o.contacts?.primary_email || null,
+      phone: o.contacts?.primary_phone || null,
+      is_primary: o.is_primary,
+      start_date: o.start_date,
+      vesting: o.vesting,
+    }));
+
+    // Unified activity timeline (best-effort across modules)
+    const activity = [];
+    try {
+      const { data: arc } = await supabase
+        .from('community_applications')
+        .select('id, reference_number, final_status, final_decided_at, created_at, application_data')
+        .eq('community_id', prop.community_id)
+        .ilike('property_address', `%${prop.street_address.split(',')[0]}%`)
+        .order('created_at', { ascending: false })
+        .limit(4);
+      for (const a of arc || []) {
+        activity.push({
+          type: 'arc',
+          icon: '🏗️',
+          date: a.final_decided_at || a.created_at,
+          summary: a.final_status === 'approved'
+            ? `ARC request approved · ${a.reference_number}`
+            : a.final_status === 'denied'
+              ? `ARC request denied · ${a.reference_number}`
+              : `ARC request filed · ${a.reference_number}`,
+        });
+      }
+    } catch (_) { /* skip */ }
+
+    try {
+      const { data: viols } = await supabase
+        .from('violations')
+        .select('id, current_stage, opened_at, resolved_at')
+        .eq('property_id', prop.id)
+        .order('opened_at', { ascending: false })
+        .limit(4);
+      for (const v of viols || []) {
+        if (v.resolved_at) {
+          activity.push({
+            type: 'compliance',
+            icon: '✅',
+            date: v.resolved_at,
+            summary: 'Compliance notice resolved',
+          });
+        } else if (['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'].includes(v.current_stage)) {
+          activity.push({
+            type: 'compliance',
+            icon: '⚠️',
+            date: v.opened_at,
+            summary: 'Active compliance notice opened',
+          });
+        }
+      }
+    } catch (_) { /* skip */ }
+
+    try {
+      const { data: rentals } = await supabase
+        .from('amenity_rentals')
+        .select('id, reference_number, event_date, status, amenity:amenities(name)')
+        .eq('property_id', prop.id)
+        .order('event_date', { ascending: false })
+        .limit(4);
+      for (const r of rentals || []) {
+        activity.push({
+          type: 'rental',
+          icon: '🎉',
+          date: r.event_date,
+          summary: `${r.amenity?.name || 'Clubhouse'} reservation · ${r.reference_number} (${r.status.replace(/_/g, ' ')})`,
+        });
+      }
+    } catch (_) { /* skip */ }
+
+    activity.sort((a, b) => (b.date || '').localeCompare(a.date || ''));
+
+    res.json({
+      property: {
+        id: prop.id,
+        street_address: prop.street_address,
+        unit: prop.unit,
+        city: prop.city,
+        state: prop.state,
+        zip: prop.zip,
+        property_type: prop.property_type,
+        lot_number: prop.lot_number,
+        vantaca_account_id: prop.vantaca_account_id,
+        on_record_since: prop.created_at,
+      },
+      community: {
+        id: prop.communities?.id,
+        name: prop.communities?.name,
+        slug: prop.communities?.slug,
+        hoa_legal_name: prop.communities?.hoa_legal_name,
+      },
+      owners,
+      activity: activity.slice(0, 10),
+    });
+  } catch (err) {
+    console.error('[portal] property failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/portal/logout
 // ============================================================================
 router.post('/logout', async (req, res) => {
