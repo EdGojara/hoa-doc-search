@@ -759,6 +759,131 @@ router.post('/admin/rentals/:id/resolve-eligibility', express.json({ limit: '16k
   }
 });
 
+// ============================================================================
+// ADMIN: CRUD for amenities themselves (not rentals).
+//   POST   /admin/amenities                 create a new amenity
+//   PATCH  /admin/amenities/:id             update an existing amenity
+//   DELETE /admin/amenities/:id             delete (cascades fee schedule + rentals)
+//   GET    /admin/amenities                 list all amenities across communities
+// ============================================================================
+
+router.get('/admin/amenities', async (req, res) => {
+  try {
+    let q = supabase
+      .from('amenities')
+      .select('*, community:communities(id, name, slug)')
+      .order('display_order')
+      .order('name');
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ amenities: data || [] });
+  } catch (err) {
+    console.error('[amenities] admin list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/admin/amenities', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!body.amenity_type) return res.status(400).json({ error: 'amenity_type_required' });
+    if (!body.name) return res.status(400).json({ error: 'name_required' });
+
+    const insertRow = {
+      community_id: body.community_id,
+      amenity_type: body.amenity_type,
+      name: body.name.trim(),
+      description: body.description || null,
+      street_address: body.street_address || null,
+      capacity: body.capacity || null,
+      hours_text: body.hours_text || null,
+      hours_structured: body.hours_structured || null,
+      contact_name: body.contact_name || null,
+      contact_phone: body.contact_phone || null,
+      contact_email: body.contact_email || null,
+      rules_url: body.rules_url || null,
+      photo_storage_path: body.photo_storage_path || null,
+      lat: body.lat || null,
+      lng: body.lng || null,
+      seasonal_open_month: body.seasonal_open_month || null,
+      seasonal_close_month: body.seasonal_close_month || null,
+      is_rentable: !!body.is_rentable,
+      rental_eligibility: body.rental_eligibility || null,
+      rental_requires_assessments_current: body.rental_requires_assessments_current !== false,
+      rental_min_lead_time_days: body.rental_min_lead_time_days || null,
+      rental_max_lead_time_days: body.rental_max_lead_time_days || null,
+      rental_max_attendees: body.rental_max_attendees || null,
+      rental_end_time_weekday: body.rental_end_time_weekday || null,
+      rental_end_time_weekend: body.rental_end_time_weekend || null,
+      rental_cancellation_window_hours: body.rental_cancellation_window_hours || 48,
+      rental_annual_cap_per_member: body.rental_annual_cap_per_member || null,
+      rental_agreement_text: body.rental_agreement_text || null,
+      rental_agreement_version: body.rental_agreement_version || null,
+      status: body.status || 'active',
+      display_order: body.display_order || 100,
+    };
+    const { data, error } = await supabase
+      .from('amenities')
+      .insert(insertRow)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, amenity: data });
+  } catch (err) {
+    console.error('[amenities] admin create failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.patch('/admin/amenities/:id', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const allowedFields = [
+      'amenity_type', 'name', 'description', 'street_address', 'capacity',
+      'hours_text', 'hours_structured', 'contact_name', 'contact_phone', 'contact_email',
+      'rules_url', 'photo_storage_path', 'lat', 'lng',
+      'seasonal_open_month', 'seasonal_close_month',
+      'is_rentable', 'rental_eligibility', 'rental_requires_assessments_current',
+      'rental_min_lead_time_days', 'rental_max_lead_time_days', 'rental_max_attendees',
+      'rental_end_time_weekday', 'rental_end_time_weekend',
+      'rental_cancellation_window_hours', 'rental_annual_cap_per_member',
+      'rental_agreement_text', 'rental_agreement_version',
+      'status', 'display_order',
+    ];
+    const patch = {};
+    for (const k of allowedFields) {
+      if (k in (req.body || {})) patch[k] = req.body[k];
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'no_fields_to_update' });
+    const { data, error } = await supabase
+      .from('amenities')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, amenity: data });
+  } catch (err) {
+    console.error('[amenities] admin update failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.delete('/admin/amenities/:id', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('amenities')
+      .delete()
+      .eq('id', req.params.id);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[amenities] admin delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/admin/rentals/:id/cancel', express.json({ limit: '16kb' }), async (req, res) => {
   try {
     const { cancelled_by, reason } = req.body || {};

@@ -433,6 +433,12 @@ const _STAFF_GATE_PUBLIC = [
   /^\/clubhouse\/[^/]+(\/success)?$/,          // /clubhouse/:slug and /clubhouse/:slug/success
 ];
 
+// Communities query is needed by amenity admin pages. Reuse existing route
+// pattern — these calls are coming from staff-gated admin pages, so the
+// staff cookie is already required, but communities listing is OK to expose
+// even on public surfaces (we surface community names in homeowner-facing
+// pages already via portal-map and clubhouse forms).
+
 function _gateIsPublicPath(p) { return _STAFF_GATE_PUBLIC.some((re) => re.test(p)); }
 function _gateSign(secret) {
   const ts = String(Date.now());

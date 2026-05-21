@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Amenities Admin · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--navy-deep);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px; line-height: 1.45;
+  }
+  header.app {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--navy-deep);
+  }
+  .brand-lockup { display: flex; align-items: center; gap: 14px; }
+  .brand-lockup svg { width: 32px; height: 40px; }
+  .brand-lockup .wm {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--ink); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand-lockup .wm em { font-style: italic; color: var(--gold); }
+  .brand-lockup .sub {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px;
+  }
+  header .module-name {
+    font-family: var(--font-serif); font-size: 22px; font-weight: 500; color: var(--ink);
+  }
+  header .module-name em { color: var(--gold); font-style: italic; }
+  header .util a {
+    color: var(--ink-soft); text-decoration: none; font-size: 13px; margin-left: 18px;
+  }
+  header .util a:hover { color: var(--gold); }
+
+  .shell {
+    display: grid;
+    grid-template-columns: 320px 1fr;
+    height: calc(100vh - 73px);
+  }
+  aside.list-pane {
+    background: var(--navy-soft);
+    border-right: 1px solid var(--rule-strong);
+    overflow-y: auto;
+    padding: 18px;
+  }
+  main.editor {
+    overflow-y: auto;
+    padding: 20px 32px 60px;
+  }
+
+  /* Community selector */
+  .community-select {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 10px 12px;
+    font-family: var(--font-sans); font-size: 14px;
+    border-radius: 6px; width: 100%;
+    margin-bottom: 14px;
+  }
+
+  .add-btn {
+    width: 100%;
+    background: var(--gold); color: var(--navy-deep); border: none;
+    padding: 10px 14px; font-weight: 500; font-size: 13px;
+    border-radius: 6px; cursor: pointer;
+    margin-bottom: 16px;
+    transition: background 0.15s ease;
+  }
+  .add-btn:hover { background: var(--gold-bright); }
+
+  .amenity-list-item {
+    display: flex; align-items: center; gap: 12px;
+    padding: 12px 14px;
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    border-radius: 7px;
+    cursor: pointer;
+    margin-bottom: 8px;
+    transition: all 0.15s ease;
+  }
+  .amenity-list-item:hover {
+    border-color: var(--gold);
+  }
+  .amenity-list-item.active {
+    border-color: var(--gold);
+    background: rgba(212,175,55,0.07);
+  }
+  .amenity-list-item .icon {
+    width: 32px; height: 32px;
+    border-radius: 7px;
+    background: var(--navy-soft); color: var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .amenity-list-item .info { flex: 1; min-width: 0; }
+  .amenity-list-item .name {
+    font-weight: 500; color: var(--ink); font-size: 14px;
+  }
+  .amenity-list-item .sub {
+    font-size: 11.5px; color: var(--ink-faint); margin-top: 2px;
+  }
+  .amenity-list-item.has-coords .name::after {
+    content: ' 📍'; font-size: 10px;
+  }
+
+  /* Editor */
+  .editor h2 {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--ink); margin: 0 0 6px;
+  }
+  .editor h2 em { color: var(--gold); font-style: italic; }
+  .editor .subhead {
+    color: var(--ink-faint); font-size: 13px;
+    margin-bottom: 18px;
+  }
+  .panel {
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    border-radius: 8px;
+    padding: 22px 26px;
+    margin-bottom: 16px;
+  }
+  .panel h3 {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin: 0 0 14px; font-weight: 500;
+  }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 900px) { .grid-2, .grid-3 { grid-template-columns: 1fr; } }
+
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .field label .req { color: var(--gold); margin-left: 2px; }
+  .field input, .field select, .field textarea {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 8px 11px; font-size: 13.5px;
+    border-radius: 5px; font-family: var(--font-sans);
+  }
+  .field input:focus, .field select:focus, .field textarea:focus {
+    outline: none; border-color: var(--gold);
+  }
+  .field textarea { min-height: 70px; resize: vertical; }
+  .field .helper { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; }
+
+  .checkbox-row {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 0;
+  }
+  .checkbox-row input { width: 16px; height: 16px; accent-color: var(--gold); }
+  .checkbox-row label {
+    font-size: 13.5px; color: var(--ink); cursor: pointer;
+  }
+
+  /* Mini map */
+  .map-section { display: flex; gap: 16px; }
+  @media (max-width: 900px) { .map-section { flex-direction: column; } }
+  .map-section .coords { flex: 0 0 240px; }
+  .map-section .map-wrap {
+    flex: 1; height: 320px;
+    border-radius: 7px; overflow: hidden;
+    border: 1px solid var(--rule-strong);
+    position: relative;
+  }
+  #editorMap { width: 100%; height: 100%; }
+  .map-hint {
+    position: absolute; bottom: 10px; left: 10px;
+    background: rgba(11, 20, 36, 0.92);
+    color: var(--cream); padding: 6px 11px;
+    border-radius: 5px; font-size: 12px;
+    pointer-events: none; z-index: 500;
+  }
+  .geocode-btn {
+    background: transparent; border: 1px solid var(--gold);
+    color: var(--gold); padding: 7px 13px;
+    border-radius: 5px; font-size: 12.5px; cursor: pointer;
+    margin-top: 4px;
+    transition: all 0.15s ease;
+  }
+  .geocode-btn:hover { background: var(--gold-faint); }
+
+  /* Action buttons */
+  .action-row {
+    display: flex; gap: 10px; align-items: center;
+    margin-top: 14px;
+  }
+  .primary-btn {
+    background: var(--gold); color: var(--navy-deep); border: 1px solid var(--gold);
+    padding: 11px 22px; border-radius: 6px;
+    font-size: 14px; font-weight: 500; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .primary-btn:hover { background: var(--gold-bright); }
+  .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .secondary-btn {
+    background: transparent; color: var(--ink-soft);
+    border: 1px solid var(--rule-strong);
+    padding: 11px 22px; border-radius: 6px;
+    font-size: 14px; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .secondary-btn:hover { color: var(--gold); border-color: var(--gold); }
+  .danger-btn {
+    background: transparent; color: #E48A8A; border: 1px solid rgba(231,90,90,0.4);
+    padding: 11px 22px; border-radius: 6px;
+    font-size: 14px; cursor: pointer;
+    transition: all 0.15s ease;
+    margin-left: auto;
+  }
+  .danger-btn:hover { background: rgba(231,90,90,0.08); }
+
+  .rental-section {
+    border-top: 1px solid var(--rule);
+    padding-top: 18px;
+    margin-top: 18px;
+  }
+
+  .empty-state {
+    padding: 80px 30px; text-align: center;
+    color: var(--ink-faint);
+    background: var(--navy-soft);
+    border-radius: 8px;
+  }
+  .empty-state h3 {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--ink-soft); margin: 0 0 8px;
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 32px;
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 12px 18px; border-radius: 6px;
+    font-size: 13px; z-index: 1000;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 380px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: rgba(80,200,120,0.4); }
+  .toast.error   { border-color: rgba(231,90,90,0.4); }
+
+  .loader {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--ink-faint); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="brand-lockup">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="sub">trustEd · operations platform</div>
+    </div>
+  </div>
+  <div class="module-name">Amenities <em>Admin</em></div>
+  <div class="util">
+    <a href="/">← Platform</a>
+    <a href="#" id="openMapBtn">View on map ↗</a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="list-pane">
+    <select class="community-select" id="communitySelect">
+      <option value="">— Select community —</option>
+    </select>
+    <button class="add-btn" id="addBtn">+ Add new amenity</button>
+    <div id="amenityList"></div>
+  </aside>
+
+  <main class="editor" id="editorPane">
+    <div class="empty-state">
+      <h3>Pick a community</h3>
+      <p>Choose a community on the left, then add or edit its amenities. Each amenity gets a name, type, hours, contact info, and a pin on the community map.</p>
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<template id="editorTemplate">
+  <h2 id="editorTitle">New <em>amenity</em></h2>
+  <div class="subhead" id="editorSubhead">—</div>
+
+  <div class="panel">
+    <h3>Basics</h3>
+    <div class="grid-2">
+      <div class="field">
+        <label>Type<span class="req">*</span></label>
+        <select id="fld-amenity_type">
+          <option value="clubhouse">🎉 Clubhouse</option>
+          <option value="pool">🏊 Pool</option>
+          <option value="park">🌳 Park</option>
+          <option value="playground">🛝 Playground</option>
+          <option value="sport_court">🎾 Sport court</option>
+          <option value="fitness">🏋️ Fitness center</option>
+          <option value="dog_park">🐕 Dog park</option>
+          <option value="walking_trail">🚶 Walking trail</option>
+          <option value="gate">🚪 Gate</option>
+          <option value="mailroom">📬 Mailroom</option>
+          <option value="other">📍 Other</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Name<span class="req">*</span></label>
+        <input type="text" id="fld-name" placeholder="e.g., Waterview Clubhouse">
+      </div>
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea id="fld-description" placeholder="Short description shown to homeowners on the map and reservation pages."></textarea>
+    </div>
+    <div class="grid-2">
+      <div class="field">
+        <label>Street address</label>
+        <input type="text" id="fld-street_address" placeholder="e.g., 5110 Waterview Estates Trail, Richmond, TX 77407">
+      </div>
+      <div class="field">
+        <label>Capacity</label>
+        <input type="number" id="fld-capacity" min="0">
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Location on map</h3>
+    <div class="map-section">
+      <div class="coords">
+        <div class="field">
+          <label>Latitude</label>
+          <input type="number" id="fld-lat" step="0.0000001" placeholder="29.6428">
+        </div>
+        <div class="field">
+          <label>Longitude</label>
+          <input type="number" id="fld-lng" step="0.0000001" placeholder="-95.7820">
+        </div>
+        <button type="button" class="geocode-btn" id="geocodeBtn">📍 Geocode from address</button>
+        <div class="helper" style="margin-top: 8px;">Or click the map → drops the pin where you click. Drag the pin to refine.</div>
+      </div>
+      <div class="map-wrap">
+        <div id="editorMap"></div>
+        <div class="map-hint" id="mapHint">Click the map to set the pin</div>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Public info (shown on amenity card)</h3>
+    <div class="field">
+      <label>Hours (free-form)</label>
+      <input type="text" id="fld-hours_text" placeholder="e.g., Daily 6am – 10pm (May–September)">
+    </div>
+    <div class="grid-3">
+      <div class="field">
+        <label>Contact name</label>
+        <input type="text" id="fld-contact_name" placeholder="e.g., Sweetwater Pool Management">
+      </div>
+      <div class="field">
+        <label>Contact phone</label>
+        <input type="tel" id="fld-contact_phone">
+      </div>
+      <div class="field">
+        <label>Contact email</label>
+        <input type="email" id="fld-contact_email">
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="field">
+        <label>Rules / info URL</label>
+        <input type="url" id="fld-rules_url" placeholder="https://…">
+      </div>
+      <div class="field">
+        <label>Status</label>
+        <select id="fld-status">
+          <option value="active">Active</option>
+          <option value="seasonal_closed">Closed for season</option>
+          <option value="maintenance">Under maintenance</option>
+          <option value="inactive">Inactive</option>
+        </select>
+      </div>
+    </div>
+    <div class="grid-2">
+      <div class="field">
+        <label>Seasonal open month</label>
+        <select id="fld-seasonal_open_month">
+          <option value="">—</option>
+          <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+          <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+          <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Seasonal close month</label>
+        <select id="fld-seasonal_close_month">
+          <option value="">—</option>
+          <option value="1">January</option><option value="2">February</option><option value="3">March</option>
+          <option value="4">April</option><option value="5">May</option><option value="6">June</option>
+          <option value="7">July</option><option value="8">August</option><option value="9">September</option>
+          <option value="10">October</option><option value="11">November</option><option value="12">December</option>
+        </select>
+      </div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h3>Rental config</h3>
+    <div class="checkbox-row">
+      <input type="checkbox" id="fld-is_rentable">
+      <label for="fld-is_rentable">This amenity can be reserved by homeowners</label>
+    </div>
+
+    <div id="rentalSection" class="rental-section" style="display:none;">
+      <div class="grid-3">
+        <div class="field">
+          <label>Min lead time (days)</label>
+          <input type="number" id="fld-rental_min_lead_time_days" min="0" placeholder="14">
+        </div>
+        <div class="field">
+          <label>Max lead time (days)</label>
+          <input type="number" id="fld-rental_max_lead_time_days" min="0" placeholder="90">
+        </div>
+        <div class="field">
+          <label>Max attendees</label>
+          <input type="number" id="fld-rental_max_attendees" min="0" placeholder="50">
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>End time weekdays (Sun-Thu)</label>
+          <input type="time" id="fld-rental_end_time_weekday">
+        </div>
+        <div class="field">
+          <label>End time weekends (Fri-Sat)</label>
+          <input type="time" id="fld-rental_end_time_weekend">
+        </div>
+      </div>
+      <div class="grid-2">
+        <div class="field">
+          <label>Cancellation window (hours)</label>
+          <input type="number" id="fld-rental_cancellation_window_hours" min="0" placeholder="48">
+        </div>
+        <div class="field">
+          <label>Annual cap per member</label>
+          <input type="number" id="fld-rental_annual_cap_per_member" min="0" placeholder="4">
+        </div>
+      </div>
+      <div class="field">
+        <label>Rental agreement text (shown inline on rental form)</label>
+        <textarea id="fld-rental_agreement_text" placeholder="Paste the full rental agreement language here."></textarea>
+      </div>
+      <div class="field">
+        <label>Agreement version</label>
+        <input type="text" id="fld-rental_agreement_version" placeholder="e.g., 2025-01">
+      </div>
+    </div>
+  </div>
+
+  <div class="action-row">
+    <button class="primary-btn" id="saveBtn">Save</button>
+    <button class="secondary-btn" id="cancelBtn">Cancel</button>
+    <button class="danger-btn" id="deleteBtn" style="display:none;">Delete</button>
+  </div>
+</template>
+
+<script>
+'use strict';
+const state = {
+  communities: [],
+  selectedCommunityId: '',
+  amenities: [],
+  selectedAmenityId: null,
+  editing: null,    // current form data
+  map: null,
+  marker: null,
+};
+
+const TYPE_ICONS = {
+  clubhouse: '🎉', pool: '🏊', park: '🌳', playground: '🛝',
+  sport_court: '🎾', fitness: '🏋️', dog_park: '🐕',
+  walking_trail: '🚶', gate: '🚪', mailroom: '📬', other: '📍',
+};
+const TYPE_LABELS = {
+  clubhouse: 'Clubhouse', pool: 'Pool', park: 'Park', playground: 'Playground',
+  sport_court: 'Sport court', fitness: 'Fitness', dog_park: 'Dog park',
+  walking_trail: 'Walking trail', gate: 'Gate', mailroom: 'Mailroom', other: 'Other',
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function toast(msg, kind) {
+  const t = $('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+async function api(method, path, body) {
+  const opts = { method, headers: {} };
+  if (body) { opts.headers['Content-Type'] = 'application/json'; opts.body = JSON.stringify(body); }
+  const r = await fetch(path, opts);
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+  return data;
+}
+
+async function loadCommunities() {
+  const r = await fetch('/api/communities');
+  if (!r.ok) return;
+  const data = await r.json();
+  const list = Array.isArray(data) ? data : (data.communities || data.items || []);
+  state.communities = list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  const sel = $('communitySelect');
+  sel.innerHTML = '<option value="">— Select community —</option>';
+  for (const c of state.communities) {
+    const opt = document.createElement('option');
+    opt.value = c.id;
+    opt.textContent = c.name;
+    sel.appendChild(opt);
+  }
+}
+
+async function loadAmenities() {
+  if (!state.selectedCommunityId) { state.amenities = []; renderList(); return; }
+  const data = await api('GET', `/api/amenities/admin/amenities?community_id=${state.selectedCommunityId}`);
+  state.amenities = data.amenities || [];
+  renderList();
+}
+
+function renderList() {
+  const list = $('amenityList');
+  if (!state.selectedCommunityId) {
+    list.innerHTML = '<div style="padding: 14px; text-align: center; color: var(--ink-faint); font-size: 12.5px;">Pick a community to manage its amenities.</div>';
+    return;
+  }
+  if (!state.amenities.length) {
+    list.innerHTML = '<div style="padding: 14px; text-align: center; color: var(--ink-faint); font-size: 12.5px; font-style: italic;">No amenities yet. Click + Add to start.</div>';
+    return;
+  }
+  list.innerHTML = state.amenities.map((a) => `
+    <div class="amenity-list-item ${state.selectedAmenityId === a.id ? 'active' : ''} ${a.lat ? 'has-coords' : ''}"
+         data-id="${a.id}" onclick="window.__selectAmenity('${a.id}')">
+      <div class="icon">${TYPE_ICONS[a.amenity_type] || '📍'}</div>
+      <div class="info">
+        <div class="name">${escapeHtml(a.name)}</div>
+        <div class="sub">${escapeHtml(TYPE_LABELS[a.amenity_type] || '')}${a.is_rentable ? ' · Reservable' : ''}${a.status !== 'active' ? ' · ' + a.status : ''}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+window.__selectAmenity = function (id) {
+  state.selectedAmenityId = id;
+  const a = state.amenities.find((x) => x.id === id);
+  if (!a) return;
+  state.editing = { ...a };
+  renderEditor();
+  renderList();
+};
+
+function newAmenity() {
+  if (!state.selectedCommunityId) {
+    toast('Pick a community first.', 'error');
+    return;
+  }
+  state.selectedAmenityId = null;
+  state.editing = {
+    community_id: state.selectedCommunityId,
+    amenity_type: 'clubhouse',
+    name: '',
+    status: 'active',
+    rental_cancellation_window_hours: 48,
+    is_rentable: false,
+  };
+  renderEditor();
+  renderList();
+}
+
+function renderEditor() {
+  if (!state.editing) {
+    $('editorPane').innerHTML = `
+      <div class="empty-state">
+        <h3>Pick a community</h3>
+        <p>Choose a community on the left, then add or edit its amenities.</p>
+      </div>`;
+    return;
+  }
+  const tpl = $('editorTemplate');
+  $('editorPane').innerHTML = '';
+  $('editorPane').appendChild(tpl.content.cloneNode(true));
+
+  const e = state.editing;
+  const isNew = !e.id;
+  const community = state.communities.find((c) => c.id === e.community_id);
+
+  $('editorTitle').innerHTML = isNew
+    ? `New <em>${TYPE_LABELS[e.amenity_type] || 'amenity'}</em>`
+    : `Edit <em>${escapeHtml(e.name)}</em>`;
+  $('editorSubhead').textContent = community ? community.name : '';
+
+  // Populate fields
+  $('fld-amenity_type').value = e.amenity_type || 'clubhouse';
+  $('fld-name').value = e.name || '';
+  $('fld-description').value = e.description || '';
+  $('fld-street_address').value = e.street_address || '';
+  $('fld-capacity').value = e.capacity || '';
+  $('fld-lat').value = e.lat || '';
+  $('fld-lng').value = e.lng || '';
+  $('fld-hours_text').value = e.hours_text || '';
+  $('fld-contact_name').value = e.contact_name || '';
+  $('fld-contact_phone').value = e.contact_phone || '';
+  $('fld-contact_email').value = e.contact_email || '';
+  $('fld-rules_url').value = e.rules_url || '';
+  $('fld-status').value = e.status || 'active';
+  $('fld-seasonal_open_month').value = e.seasonal_open_month || '';
+  $('fld-seasonal_close_month').value = e.seasonal_close_month || '';
+  $('fld-is_rentable').checked = !!e.is_rentable;
+  $('fld-rental_min_lead_time_days').value = e.rental_min_lead_time_days || '';
+  $('fld-rental_max_lead_time_days').value = e.rental_max_lead_time_days || '';
+  $('fld-rental_max_attendees').value = e.rental_max_attendees || '';
+  $('fld-rental_end_time_weekday').value = e.rental_end_time_weekday || '';
+  $('fld-rental_end_time_weekend').value = e.rental_end_time_weekend || '';
+  $('fld-rental_cancellation_window_hours').value = e.rental_cancellation_window_hours || 48;
+  $('fld-rental_annual_cap_per_member').value = e.rental_annual_cap_per_member || '';
+  $('fld-rental_agreement_text').value = e.rental_agreement_text || '';
+  $('fld-rental_agreement_version').value = e.rental_agreement_version || '';
+
+  $('rentalSection').style.display = $('fld-is_rentable').checked ? '' : 'none';
+  $('fld-is_rentable').addEventListener('change', (ev) => {
+    $('rentalSection').style.display = ev.target.checked ? '' : 'none';
+  });
+  $('saveBtn').addEventListener('click', save);
+  $('cancelBtn').addEventListener('click', () => {
+    state.editing = null; state.selectedAmenityId = null;
+    renderEditor(); renderList();
+  });
+  $('geocodeBtn').addEventListener('click', geocodeAddress);
+
+  if (!isNew) {
+    $('deleteBtn').style.display = '';
+    $('deleteBtn').addEventListener('click', deleteAmenity);
+  }
+
+  setTimeout(() => initMap(), 50);
+}
+
+function initMap() {
+  const mapEl = $('editorMap');
+  if (!mapEl) return;
+  if (state.map) { try { state.map.remove(); } catch (_) {} state.map = null; state.marker = null; }
+
+  const lat = parseFloat($('fld-lat').value);
+  const lng = parseFloat($('fld-lng').value);
+  const hasCoords = !isNaN(lat) && !isNaN(lng);
+  const center = hasCoords ? [lat, lng] : [29.6428, -95.7820];  // default: Richmond TX area
+
+  state.map = L.map(mapEl, { center, zoom: hasCoords ? 17 : 12, zoomControl: true });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap',
+  }).addTo(state.map);
+
+  if (hasCoords) addOrMoveMarker(lat, lng);
+
+  state.map.on('click', (ev) => {
+    addOrMoveMarker(ev.latlng.lat, ev.latlng.lng);
+    $('fld-lat').value = ev.latlng.lat.toFixed(7);
+    $('fld-lng').value = ev.latlng.lng.toFixed(7);
+    $('mapHint').textContent = 'Drag to refine';
+  });
+
+  // Sync map when lat/lng inputs change
+  ['fld-lat', 'fld-lng'].forEach((id) => {
+    $(id).addEventListener('change', () => {
+      const la = parseFloat($('fld-lat').value);
+      const ln = parseFloat($('fld-lng').value);
+      if (!isNaN(la) && !isNaN(ln)) {
+        state.map.setView([la, ln], 17);
+        addOrMoveMarker(la, ln);
+      }
+    });
+  });
+}
+
+function addOrMoveMarker(lat, lng) {
+  if (!state.map) return;
+  if (state.marker) {
+    state.marker.setLatLng([lat, lng]);
+  } else {
+    state.marker = L.marker([lat, lng], { draggable: true }).addTo(state.map);
+    state.marker.on('dragend', (ev) => {
+      const ll = ev.target.getLatLng();
+      $('fld-lat').value = ll.lat.toFixed(7);
+      $('fld-lng').value = ll.lng.toFixed(7);
+    });
+  }
+}
+
+async function geocodeAddress() {
+  const addr = $('fld-street_address').value.trim();
+  if (!addr) { toast('Enter a street address first.', 'error'); return; }
+  const btn = $('geocodeBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader"></span> Looking up…';
+  try {
+    const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(addr)}&limit=1`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'en-US' } });
+    const j = await r.json();
+    if (!j.length) throw new Error('Address not found.');
+    const lat = parseFloat(j[0].lat);
+    const lng = parseFloat(j[0].lon);
+    $('fld-lat').value = lat.toFixed(7);
+    $('fld-lng').value = lng.toFixed(7);
+    state.map.setView([lat, lng], 17);
+    addOrMoveMarker(lat, lng);
+    toast('Geocoded.', 'success');
+  } catch (err) {
+    toast(`Geocode failed: ${err.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = '📍 Geocode from address';
+  }
+}
+
+function collectForm() {
+  return {
+    community_id: state.editing.community_id,
+    amenity_type: $('fld-amenity_type').value,
+    name: $('fld-name').value.trim(),
+    description: $('fld-description').value.trim() || null,
+    street_address: $('fld-street_address').value.trim() || null,
+    capacity: $('fld-capacity').value ? parseInt($('fld-capacity').value, 10) : null,
+    lat: $('fld-lat').value ? parseFloat($('fld-lat').value) : null,
+    lng: $('fld-lng').value ? parseFloat($('fld-lng').value) : null,
+    hours_text: $('fld-hours_text').value.trim() || null,
+    contact_name: $('fld-contact_name').value.trim() || null,
+    contact_phone: $('fld-contact_phone').value.trim() || null,
+    contact_email: $('fld-contact_email').value.trim() || null,
+    rules_url: $('fld-rules_url').value.trim() || null,
+    status: $('fld-status').value,
+    seasonal_open_month: $('fld-seasonal_open_month').value ? parseInt($('fld-seasonal_open_month').value, 10) : null,
+    seasonal_close_month: $('fld-seasonal_close_month').value ? parseInt($('fld-seasonal_close_month').value, 10) : null,
+    is_rentable: $('fld-is_rentable').checked,
+    rental_min_lead_time_days: $('fld-rental_min_lead_time_days').value ? parseInt($('fld-rental_min_lead_time_days').value, 10) : null,
+    rental_max_lead_time_days: $('fld-rental_max_lead_time_days').value ? parseInt($('fld-rental_max_lead_time_days').value, 10) : null,
+    rental_max_attendees: $('fld-rental_max_attendees').value ? parseInt($('fld-rental_max_attendees').value, 10) : null,
+    rental_end_time_weekday: $('fld-rental_end_time_weekday').value || null,
+    rental_end_time_weekend: $('fld-rental_end_time_weekend').value || null,
+    rental_cancellation_window_hours: $('fld-rental_cancellation_window_hours').value ? parseInt($('fld-rental_cancellation_window_hours').value, 10) : 48,
+    rental_annual_cap_per_member: $('fld-rental_annual_cap_per_member').value ? parseInt($('fld-rental_annual_cap_per_member').value, 10) : null,
+    rental_agreement_text: $('fld-rental_agreement_text').value.trim() || null,
+    rental_agreement_version: $('fld-rental_agreement_version').value.trim() || null,
+  };
+}
+
+async function save() {
+  const data = collectForm();
+  if (!data.name) { toast('Name is required.', 'error'); return; }
+  const btn = $('saveBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader"></span> Saving…';
+  try {
+    let result;
+    if (state.editing.id) {
+      result = await api('PATCH', `/api/amenities/admin/amenities/${state.editing.id}`, data);
+    } else {
+      result = await api('POST', '/api/amenities/admin/amenities', data);
+    }
+    toast('Saved.', 'success');
+    await loadAmenities();
+    state.selectedAmenityId = result.amenity.id;
+    state.editing = result.amenity;
+    renderEditor(); renderList();
+  } catch (err) {
+    toast(`Save failed: ${err.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
+}
+
+async function deleteAmenity() {
+  if (!confirm('Delete this amenity? This will cascade to its fee schedule and any existing rentals. Cannot be undone.')) return;
+  try {
+    await api('DELETE', `/api/amenities/admin/amenities/${state.editing.id}`);
+    toast('Deleted.', 'success');
+    state.editing = null;
+    state.selectedAmenityId = null;
+    await loadAmenities();
+    renderEditor();
+  } catch (err) {
+    toast(`Delete failed: ${err.message}`, 'error');
+  }
+}
+
+// ---- Wire ----
+$('communitySelect').addEventListener('change', async (e) => {
+  state.selectedCommunityId = e.target.value;
+  state.selectedAmenityId = null;
+  state.editing = null;
+  await loadAmenities();
+  renderEditor();
+});
+$('addBtn').addEventListener('click', newAmenity);
+$('openMapBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  if (!state.selectedCommunityId) { toast('Pick a community first.', 'error'); return; }
+  const c = state.communities.find((x) => x.id === state.selectedCommunityId);
+  if (c?.slug) window.open(`/portal/map?community=${encodeURIComponent(c.slug)}`, '_blank');
+});
+
+(async () => { await loadCommunities(); })();
+</script>
+</body>
+</html>
