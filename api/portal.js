@@ -477,6 +477,190 @@ router.get('/map/:slug', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/portal/compliance
+// Returns the auth'd homeowner's compliance state for their property:
+//   - status (good | has_open_notices)
+//   - open notices (active violations) with observation summary + cure date +
+//     letter PDFs (signed URLs) + governing-doc citation
+//   - past notices (resolved/cured in last 18 months)
+//   - never includes community-aggregated data
+//
+// Vocabulary is staff-internal here (violation, courtesy, cure) — the page
+// translates to homeowner-facing vocabulary at render time per the
+// feedback_compliance_facing_tone memory.
+// ============================================================================
+router.get('/compliance', async (req, res) => {
+  try {
+    const cookieValue = readCookie(req, COOKIE_NAME);
+    const portalUserId = verifyCookie(cookieValue);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+
+    // Resolve property scope (first property for v0; multi-property in follow-on)
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select(`
+        property_id,
+        properties:property_id (
+          id, street_address, lot_number, block_number, section_number,
+          community_id,
+          communities:community_id (id, name, slug, hoa_legal_name)
+        )
+      `)
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null)
+      .limit(1);
+
+    const prop = (scopes && scopes[0]?.properties) || null;
+    if (!prop) {
+      return res.json({
+        status: 'unscoped',
+        property: null,
+        community: null,
+        open: [],
+        resolved: [],
+      });
+    }
+
+    // Load violations for this property
+    const { data: violations, error: vErr } = await supabase
+      .from('violations')
+      .select(`
+        id, current_stage, cure_period_ends_at, opened_at, resolved_at, voided_at,
+        severity, opened_from_observation_id, governing_doc_reference_id
+      `)
+      .eq('property_id', prop.id)
+      .order('opened_at', { ascending: false })
+      .limit(50);
+    if (vErr) throw vErr;
+
+    const openStages = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
+    const open = (violations || []).filter((v) => openStages.includes(v.current_stage) && !v.voided_at);
+    const resolved = (violations || []).filter((v) => !openStages.includes(v.current_stage));
+
+    // Load related observations + letters in parallel
+    const observationIds = (violations || []).map((v) => v.opened_from_observation_id).filter(Boolean);
+    const violationIds = (violations || []).map((v) => v.id);
+
+    const [obsResp, lettersResp, photosResp] = await Promise.all([
+      observationIds.length
+        ? supabase.from('property_observations')
+            .select('id, ai_description, reviewer_description, category_id, ai_confidence, reviewer_status, created_at')
+            .in('id', observationIds)
+        : Promise.resolve({ data: [] }),
+      violationIds.length
+        ? supabase.from('interactions')
+            .select('id, violation_id, type, subject, sent_at, attachments, content')
+            .in('violation_id', violationIds)
+            .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_other'])
+            .eq('direction', 'outbound')
+            .order('sent_at', { ascending: false })
+        : Promise.resolve({ data: [] }),
+      observationIds.length
+        ? supabase.from('inspection_photos')
+            .select('id, observation_id, storage_path, captured_at')
+            .in('observation_id', observationIds)
+        : Promise.resolve({ data: [] }),
+    ]);
+
+    const obsById = Object.fromEntries((obsResp.data || []).map((o) => [o.id, o]));
+    const lettersByViolation = (lettersResp.data || []).reduce((m, l) => {
+      (m[l.violation_id] = m[l.violation_id] || []).push(l);
+      return m;
+    }, {});
+    const photosByObs = (photosResp.data || []).reduce((m, p) => {
+      (m[p.observation_id] = m[p.observation_id] || []).push(p);
+      return m;
+    }, {});
+
+    const enrich = async (v) => {
+      const obs = v.opened_from_observation_id ? obsById[v.opened_from_observation_id] : null;
+      const letters = lettersByViolation[v.id] || [];
+      const photos = obs ? (photosByObs[obs.id] || []) : [];
+
+      // Generate signed URLs for letter PDFs (best-effort)
+      const letterLinks = [];
+      for (const l of letters) {
+        const att = Array.isArray(l.attachments) ? l.attachments : [];
+        for (const a of att) {
+          if (a.type === 'pdf' && a.storage_path) {
+            try {
+              const { data: signed } = await supabase.storage
+                .from(a.bucket || 'violation-letters')
+                .createSignedUrl(a.storage_path, 60 * 60 * 24 * 7);
+              if (signed?.signedUrl) {
+                letterLinks.push({
+                  type: l.type,
+                  subject: l.subject,
+                  sent_at: l.sent_at,
+                  url: signed.signedUrl,
+                });
+              }
+            } catch (_) { /* skip */ }
+          }
+        }
+      }
+
+      // Photo signed URLs (only first photo to keep payload light; viewer can request more)
+      const photoLinks = [];
+      for (const p of photos.slice(0, 3)) {
+        try {
+          const { data: signed } = await supabase.storage
+            .from('documents')
+            .createSignedUrl(p.storage_path, 60 * 60 * 24 * 7);
+          if (signed?.signedUrl) photoLinks.push({ url: signed.signedUrl, captured_at: p.captured_at });
+        } catch (_) { /* skip */ }
+      }
+
+      // Compute days until cure
+      let daysUntilCure = null;
+      if (v.cure_period_ends_at) {
+        const ms = new Date(v.cure_period_ends_at).getTime() - Date.now();
+        daysUntilCure = Math.ceil(ms / 86400000);
+      }
+
+      return {
+        id: v.id,
+        stage: v.current_stage,
+        severity: v.severity,
+        opened_at: v.opened_at,
+        resolved_at: v.resolved_at,
+        cure_period_ends_at: v.cure_period_ends_at,
+        days_until_cure: daysUntilCure,
+        observation_summary: (obs?.reviewer_description || obs?.ai_description || '').trim() || null,
+        letters: letterLinks,
+        photos: photoLinks,
+      };
+    };
+
+    const enrichedOpen = await Promise.all(open.map(enrich));
+    const enrichedResolved = await Promise.all(resolved.slice(0, 12).map(enrich));
+
+    res.json({
+      status: enrichedOpen.length ? 'has_open_notices' : 'in_good_standing',
+      property: {
+        id: prop.id,
+        street_address: prop.street_address,
+        lot_block_section: [
+          prop.lot_number && `Lot ${prop.lot_number}`,
+          prop.block_number && `Block ${prop.block_number}`,
+          prop.section_number && `Section ${prop.section_number}`,
+        ].filter(Boolean).join(', '),
+      },
+      community: {
+        name: prop.communities?.name,
+        slug: prop.communities?.slug,
+        hoa_legal_name: prop.communities?.hoa_legal_name,
+      },
+      open: enrichedOpen,
+      resolved: enrichedResolved,
+    });
+  } catch (err) {
+    console.error('[portal] compliance failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/portal/logout
 // ============================================================================
 router.post('/logout', async (req, res) => {

@@ -1,0 +1,645 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Property Compliance · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --green: #4A9A6A;
+    --green-faint: rgba(80, 200, 120, 0.08);
+    --warn: #C77E2C;
+    --warn-faint: rgba(212, 175, 55, 0.12);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* ---- Top bar ---- */
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .back-link {
+    font-size: 13px; color: var(--navy);
+    text-decoration: none; padding: 8px 14px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-left: 10px;
+  }
+
+  main { max-width: 820px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  /* ---- Hero status card ---- */
+  .hero {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 28px 32px;
+    margin-bottom: 22px;
+    box-shadow: var(--shadow-soft);
+  }
+  .hero.good { border-left: 6px solid var(--green); }
+  .hero.attention { border-left: 6px solid var(--warn); }
+  .hero .eyebrow {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.07em; text-transform: uppercase;
+    margin-bottom: 8px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 28px; font-weight: 500;
+    color: var(--navy); margin: 0 0 6px;
+    letter-spacing: -0.01em;
+    display: flex; align-items: center; gap: 12px;
+  }
+  .hero h1 .status-dot {
+    width: 14px; height: 14px; border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .hero.good h1 .status-dot { background: var(--green); box-shadow: 0 0 0 5px var(--green-faint); }
+  .hero.attention h1 .status-dot { background: var(--warn); box-shadow: 0 0 0 5px var(--warn-faint); }
+  .hero p.lede {
+    font-size: 15px; color: var(--ink-soft); margin: 4px 0 0;
+    line-height: 1.55;
+  }
+  .hero .property-line {
+    margin-top: 14px; padding-top: 14px;
+    border-top: 1px solid var(--rule);
+    font-size: 13px; color: var(--ink-faint);
+  }
+  .hero .property-line strong { color: var(--navy); }
+
+  /* ---- Section labels ---- */
+  .section-label {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.1em; text-transform: uppercase;
+    margin: 8px 0 14px;
+    font-weight: 500;
+  }
+
+  /* ---- Notice card ---- */
+  .notice-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px 26px;
+    margin-bottom: 14px;
+    box-shadow: var(--shadow-soft);
+    transition: border-color 0.15s ease;
+  }
+  .notice-card.active { border-left: 4px solid var(--warn); }
+  .notice-card.resolved { border-left: 4px solid var(--green); }
+  .notice-card h3 {
+    font-family: var(--font-serif); font-size: 19px; font-weight: 500;
+    color: var(--navy); margin: 0 0 6px;
+    letter-spacing: -0.005em;
+  }
+  .notice-card .stage-chip {
+    display: inline-block;
+    font-size: 11px; color: var(--warn);
+    background: var(--warn-faint);
+    padding: 3px 9px; border-radius: 999px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    margin-bottom: 12px;
+  }
+  .notice-card.resolved .stage-chip {
+    color: var(--green); background: var(--green-faint);
+    border-color: rgba(80, 200, 120, 0.3);
+  }
+  .notice-card p { margin: 0 0 12px; color: var(--ink-soft); font-size: 14px; line-height: 1.55; }
+  .notice-card .observation {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin: 14px 0 16px;
+    font-size: 13.5px;
+    color: var(--ink);
+    font-style: italic;
+    line-height: 1.55;
+  }
+  .notice-card .observation .label {
+    display: block; font-style: normal;
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+
+  /* ---- Cure-by clock ---- */
+  .cure-clock {
+    display: flex; align-items: center; gap: 16px;
+    padding: 14px 18px;
+    background: var(--warn-faint);
+    border-radius: 8px;
+    border: 1px solid rgba(212, 175, 55, 0.3);
+    margin: 14px 0 16px;
+  }
+  .cure-clock .countdown {
+    font-family: var(--font-serif); font-size: 26px; font-weight: 500;
+    color: var(--warn);
+    line-height: 1;
+  }
+  .cure-clock .countdown .unit { font-size: 13px; color: var(--ink-faint); font-family: var(--font-sans); }
+  .cure-clock .label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .cure-clock .date {
+    font-size: 14px; color: var(--ink); font-weight: 500;
+  }
+  .cure-clock.overdue {
+    background: rgba(231, 90, 90, 0.08);
+    border-color: rgba(231, 90, 90, 0.3);
+  }
+  .cure-clock.overdue .countdown { color: #C56767; }
+
+  /* ---- What to do ---- */
+  .what-to-do {
+    background: var(--green-faint);
+    border-left: 3px solid var(--green);
+    padding: 12px 16px;
+    border-radius: 0 6px 6px 0;
+    margin: 14px 0;
+    font-size: 13.5px;
+    color: var(--ink);
+    line-height: 1.55;
+  }
+  .what-to-do strong { color: var(--green); font-weight: 600; }
+
+  /* ---- Photo + letter actions ---- */
+  .meta-actions {
+    display: flex; gap: 10px; flex-wrap: wrap;
+    margin-top: 14px;
+    padding-top: 14px;
+    border-top: 1px solid var(--rule);
+  }
+  .meta-actions .btn {
+    padding: 9px 16px; border-radius: 6px;
+    font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
+    text-decoration: none; cursor: pointer;
+    border: 1px solid var(--rule);
+    background: white; color: var(--navy);
+    transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .meta-actions .btn:hover { border-color: var(--gold); color: var(--gold); }
+  .meta-actions .btn.primary {
+    background: var(--navy); color: white; border-color: var(--navy);
+  }
+  .meta-actions .btn.primary:hover { background: #2A4870; }
+
+  /* ---- Photo viewer ---- */
+  .photo-grid {
+    display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+    gap: 10px; margin-top: 12px;
+  }
+  .photo-grid img {
+    width: 100%; height: 160px; object-fit: cover;
+    border-radius: 6px; border: 1px solid var(--rule);
+    cursor: pointer;
+  }
+
+  /* ---- Resolved disclosure ---- */
+  details.resolved-disclosure {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 16px 22px;
+    margin-top: 12px;
+    box-shadow: var(--shadow-soft);
+  }
+  details.resolved-disclosure summary {
+    cursor: pointer; list-style: none;
+    font-weight: 500; color: var(--navy);
+    font-size: 14.5px;
+    display: flex; align-items: center; justify-content: space-between;
+  }
+  details.resolved-disclosure summary::-webkit-details-marker { display: none; }
+  details.resolved-disclosure summary::after {
+    content: '▾'; color: var(--ink-faint); transition: transform 0.15s ease;
+  }
+  details.resolved-disclosure[open] summary::after { transform: rotate(180deg); }
+  details.resolved-disclosure summary .count {
+    font-size: 12px; color: var(--ink-faint); font-weight: 400;
+    margin-left: 8px;
+  }
+  details.resolved-disclosure[open] { padding-bottom: 24px; }
+  details.resolved-disclosure .resolved-list { margin-top: 14px; }
+
+  /* ---- Info panel (about the system) ---- */
+  .system-note {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 18px 22px;
+    margin-top: 30px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+  .system-note strong { color: var(--navy); }
+
+  /* ---- Footer ---- */
+  footer {
+    margin-top: 36px; text-align: center;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+  footer a { color: var(--navy); text-decoration: none; }
+
+  /* ---- States ---- */
+  .full-loader {
+    min-height: 60vh; display: flex;
+    align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading your compliance status…</div>
+</div>
+
+<template id="pageTemplate">
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+  <a class="back-link" href="/portal" id="backLink">← Portal</a>
+</header>
+
+<main>
+
+<div id="heroSlot"></div>
+<div id="openSlot"></div>
+<div id="resolvedSlot"></div>
+
+<div class="system-note">
+  <strong>About community standards.</strong> Bedrock applies the recorded covenants and architectural standards consistently across every property in every community we manage — not selectively. If you think we got something wrong on your property, the dispute link on each notice opens an email to <a href="mailto:violations@bedrocktx.com">violations@bedrocktx.com</a> with your reference pre-filled. Real review by a human, not a form. We aim to resolve disputes within two business days.
+</div>
+
+</main>
+
+<footer>
+  <div class="tag">Community. Simplified.</div>
+  <div style="margin-top:6px;">Bedrock Association Management · (832) 588-2485 · <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a></div>
+</footer>
+</template>
+
+<script>
+'use strict';
+
+let isDemo = false;
+let demoCommunitySlug = '';
+
+const STAGE_LABELS = {
+  courtesy_1: 'Friendly reminder',
+  courtesy_2: 'Second notice',
+  certified_209: 'Formal notice',
+  fine_assessed: 'Citation issued',
+  cured: 'Resolved',
+  closed: 'Resolved',
+  voided: 'Withdrawn',
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtDateLong(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' });
+}
+function fmtDateShort(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return {
+    demo: u.searchParams.get('demo') === '1',
+    community: u.searchParams.get('community') || '',
+  };
+}
+
+// =============================================================================
+// Boot
+// =============================================================================
+(async function init() {
+  const q = getQueryParams();
+  isDemo = q.demo;
+  demoCommunitySlug = q.community;
+
+  if (isDemo) {
+    return renderPage(buildDemoData(demoCommunitySlug || 'waterview'));
+  }
+
+  try {
+    const r = await fetch('/api/portal/compliance', { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderPage(data);
+  } catch (err) {
+    $('app').innerHTML = `<div class="full-loader">Couldn't load: ${escapeHtml(err.message)}</div>`;
+  }
+})();
+
+// =============================================================================
+// Demo data
+// =============================================================================
+function buildDemoData(slug) {
+  const names = {
+    'waterview': 'Waterview Estates',
+    'canyon-gate': 'Canyon Gate at Cinco Ranch',
+    'august-meadows': 'August Meadows',
+    'still-creek-ranch': 'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge': 'Quail Ridge',
+  };
+  const today = new Date();
+  const cureBy = new Date(today.getTime() + 12 * 86400000);
+  const past1 = new Date(today.getTime() - 90 * 86400000);
+  const past2 = new Date(today.getTime() - 210 * 86400000);
+
+  return {
+    demo: true,
+    status: 'has_open_notices',
+    property: {
+      street_address: '1234 Sample Drive',
+      lot_block_section: 'Lot 12, Block 4, Section 1',
+    },
+    community: {
+      name: names[slug] || 'Your Community',
+      slug,
+      hoa_legal_name: `${names[slug] || 'Your Community'} Owners Association, Inc.`,
+    },
+    open: [
+      {
+        id: 'demo-1',
+        stage: 'courtesy_1',
+        opened_at: new Date(today.getTime() - 3 * 86400000).toISOString(),
+        cure_period_ends_at: cureBy.toISOString(),
+        days_until_cure: 12,
+        observation_summary: 'Trash bins were left at the curb after collection day. Article VII, Section 7.3 of the recorded Declaration covers trash storage.',
+        letters: [
+          { type: 'letter_courtesy_1', subject: 'Compliance reminder — 1234 Sample Drive', sent_at: new Date(today.getTime() - 2 * 86400000).toISOString(), url: '#' },
+        ],
+        photos: [],
+      },
+    ],
+    resolved: [
+      {
+        id: 'demo-r1',
+        stage: 'cured',
+        opened_at: past1.toISOString(),
+        resolved_at: new Date(past1.getTime() + 18 * 86400000).toISOString(),
+        observation_summary: 'Holiday decorations were still up past January 31. Section 4.1 of the Architectural Guidelines covers seasonal decoration timing.',
+        letters: [{ type: 'letter_courtesy_1', subject: 'Compliance reminder', sent_at: past1.toISOString(), url: '#' }],
+        photos: [],
+      },
+      {
+        id: 'demo-r2',
+        stage: 'cured',
+        opened_at: past2.toISOString(),
+        resolved_at: new Date(past2.getTime() + 6 * 86400000).toISOString(),
+        observation_summary: 'Lawn was not maintained per community standard (height exceeded 6 inches). Article V Section 5.2 covers lawn maintenance.',
+        letters: [{ type: 'letter_courtesy_1', subject: 'Compliance reminder', sent_at: past2.toISOString(), url: '#' }],
+        photos: [],
+      },
+    ],
+  };
+}
+
+// =============================================================================
+// Render
+// =============================================================================
+function renderPage(ctx) {
+  const tpl = $('pageTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  if (isDemo) {
+    const back = `/portal?demo=1&community=${encodeURIComponent(ctx.community?.slug || 'waterview')}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+  }
+
+  // Hero
+  $('heroSlot').innerHTML = renderHero(ctx);
+
+  // Open notices
+  if (ctx.open && ctx.open.length) {
+    $('openSlot').innerHTML = `
+      <div class="section-label">Active compliance notices</div>
+      ${ctx.open.map((v) => renderNoticeCard(v, ctx, true)).join('')}
+    `;
+  }
+
+  // Resolved (collapsed disclosure)
+  if (ctx.resolved && ctx.resolved.length) {
+    $('resolvedSlot').innerHTML = `
+      <details class="resolved-disclosure">
+        <summary>
+          <span>Past notices <span class="count">· ${ctx.resolved.length} resolved</span></span>
+        </summary>
+        <div class="resolved-list">
+          ${ctx.resolved.map((v) => renderNoticeCard(v, ctx, false)).join('')}
+        </div>
+      </details>`;
+  }
+}
+
+function renderHero(ctx) {
+  const isGood = ctx.status === 'in_good_standing' || !(ctx.open && ctx.open.length);
+  const property = ctx.property || {};
+  const community = ctx.community || {};
+  const propertyLine = [property.street_address, property.lot_block_section].filter(Boolean).join(' · ');
+  const openCount = (ctx.open || []).length;
+  const demoChip = isDemo ? `<span class="demo-ribbon">Demo</span>` : '';
+
+  if (isGood) {
+    return `
+      <div class="hero good">
+        <div class="eyebrow">Property compliance ${demoChip}</div>
+        <h1><span class="status-dot"></span>You're in good standing</h1>
+        <p class="lede">No active compliance notices for your property. Bedrock applies covenants and standards consistently across the community.</p>
+        ${propertyLine ? `<div class="property-line"><strong>${escapeHtml(community.name || '')}</strong> · ${escapeHtml(propertyLine)}</div>` : ''}
+      </div>`;
+  }
+
+  const earliestCure = ctx.open
+    .map((v) => v.cure_period_ends_at).filter(Boolean)
+    .sort()[0];
+  const cureLine = earliestCure ? ` Resolve by ${fmtDateLong(earliestCure)}.` : '';
+  const subject = openCount === 1 ? '1 active compliance notice' : `${openCount} active compliance notices`;
+
+  return `
+    <div class="hero attention">
+      <div class="eyebrow">Property compliance ${demoChip}</div>
+      <h1><span class="status-dot"></span>${escapeHtml(subject)}</h1>
+      <p class="lede">A community standards issue was noted on your property.${cureLine} Each notice below shows what was observed and how to resolve it.</p>
+      ${propertyLine ? `<div class="property-line"><strong>${escapeHtml(community.name || '')}</strong> · ${escapeHtml(propertyLine)}</div>` : ''}
+    </div>`;
+}
+
+function renderNoticeCard(v, ctx, isActive) {
+  const stageLabel = STAGE_LABELS[v.stage] || v.stage;
+  const dispute = buildDisputeMailto(v, ctx);
+  const photos = v.photos || [];
+  const letters = v.letters || [];
+
+  const cureBlock = (isActive && v.cure_period_ends_at) ? renderCureClock(v) : '';
+  const whatToDo = isActive ? renderWhatToDo(v) : '';
+  const resolvedLine = !isActive && v.resolved_at
+    ? `<p style="font-size:12.5px;color:var(--ink-faint);margin-top:6px;">Resolved ${fmtDateShort(v.resolved_at)}.</p>` : '';
+
+  return `
+    <div class="notice-card ${isActive ? 'active' : 'resolved'}">
+      <span class="stage-chip">${escapeHtml(stageLabel)}</span>
+      <h3>${escapeHtml(isActive ? `Notice from ${fmtDateShort(v.opened_at)}` : `Resolved · originally ${fmtDateShort(v.opened_at)}`)}</h3>
+
+      ${v.observation_summary ? `
+        <div class="observation">
+          <span class="label">What was observed</span>
+          ${escapeHtml(v.observation_summary)}
+        </div>` : ''}
+
+      ${cureBlock}
+      ${whatToDo}
+      ${resolvedLine}
+
+      <div class="meta-actions">
+        ${letters.length ? letters.map((l) => `
+          <a class="btn" href="${escapeHtml(l.url)}" target="_blank" rel="noopener" download>📄 Download the letter you received</a>
+        `).join('') : ''}
+        ${photos.length ? `
+          <button class="btn" onclick="window.__togglePhotos('${v.id}')">📷 View inspection photo${photos.length > 1 ? 's' : ''}</button>
+        ` : ''}
+        ${isActive ? `<a class="btn primary" href="${dispute}">Question or disagree?</a>` : ''}
+      </div>
+
+      ${photos.length ? `
+        <div class="photo-grid" id="photos-${escapeHtml(v.id)}" style="display:none;">
+          ${photos.map((p) => `<img src="${escapeHtml(p.url)}" alt="Inspection photo" loading="lazy">`).join('')}
+        </div>` : ''}
+    </div>`;
+}
+
+function renderCureClock(v) {
+  const days = v.days_until_cure;
+  const isOverdue = days !== null && days < 0;
+  const display = days === null ? '—'
+    : isOverdue ? Math.abs(days)
+    : days;
+  const unitLabel = days === null ? ''
+    : isOverdue ? (Math.abs(days) === 1 ? ' day overdue' : ' days overdue')
+    : (days === 1 ? ' day to address' : ' days to address');
+
+  return `
+    <div class="cure-clock ${isOverdue ? 'overdue' : ''}">
+      <div>
+        <div class="label">Resolve by</div>
+        <div class="date">${fmtDateLong(v.cure_period_ends_at)}</div>
+      </div>
+      <div style="margin-left:auto; text-align:right;">
+        <div class="countdown">${display}<span class="unit">${unitLabel}</span></div>
+      </div>
+    </div>`;
+}
+
+function renderWhatToDo(v) {
+  // For v0: generic empathetic instruction. Future: per-category hints from observation category.
+  return `
+    <div class="what-to-do">
+      <strong>What to do:</strong> Address the item described above, then no further action is needed — the system will close the notice when our next inspection confirms it. If it's already resolved, you can reply to <a href="mailto:violations@bedrocktx.com">violations@bedrocktx.com</a> with the reference below and we'll re-inspect within two business days.
+    </div>`;
+}
+
+function buildDisputeMailto(v, ctx) {
+  const subject = `Question about compliance notice — ${v.id}`;
+  const body = [
+    `Hi Bedrock,`,
+    ``,
+    `I have a question or disagreement about the compliance notice on my property:`,
+    `Property: ${ctx.property?.street_address || '—'}`,
+    `Notice opened: ${fmtDateShort(v.opened_at)}`,
+    `Reference: ${v.id}`,
+    ``,
+    `My response:`,
+    `[Add your comments here.]`,
+    ``,
+    `Thank you,`,
+  ].join('\n');
+  return `mailto:violations@bedrocktx.com?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+}
+
+window.__togglePhotos = function (id) {
+  const el = document.getElementById('photos-' + id);
+  if (el) el.style.display = el.style.display === 'none' ? '' : 'none';
+};
+</script>
+</body>
+</html>

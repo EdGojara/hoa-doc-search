@@ -603,7 +603,7 @@ function defaultDemoModuleConfig(slug) {
     property_summary: { status: 'live' },
     balance:          { status: 'live' },
     arc:              { status: 'live' },
-    compliance:       { status: 'coming_soon' },
+    compliance:       { status: 'live' },  // demo mode: shows mock open + resolved notices
     key_fob:          { status: 'live' },
     clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow
     payments:         { status: 'coming_soon' },
@@ -759,10 +759,11 @@ function renderTiles(ctx) {
     // This keeps the pitch demo coherent — clicking Clubhouse from a demo
     // portal lands on a demo clubhouse form, not a 404 because no real
     // amenity exists yet.
-    if (link && ctx.demo && (link.startsWith('/clubhouse/') || link.startsWith('/portal/map'))) {
+    if (link && ctx.demo && (link.startsWith('/clubhouse/') || link.startsWith('/portal/'))) {
       const sep = link.includes('?') ? '&' : '?';
-      // The map needs community= explicitly since it doesn't parse the path
-      link += `${sep}demo=1${link.startsWith('/portal/map') ? `&community=${encodeURIComponent(ctx.community.slug)}` : ''}`;
+      // Portal sub-pages (/portal/map, /portal/compliance, etc.) need community= explicitly
+      const needsCommunity = link.startsWith('/portal/');
+      link += `${sep}demo=1${needsCommunity ? `&community=${encodeURIComponent(ctx.community.slug)}` : ''}`;
     }
 
     const tile = document.createElement(isLive ? 'a' : 'div');
