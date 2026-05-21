@@ -1221,6 +1221,107 @@ router.get('/mail-queue/summary', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/mail-queue/letters
+//   Lists each approved-but-not-printed letter individually so staff can see
+//   WHICH letters are queued up to mail (rather than just counts) and revert
+//   ones that shouldn't be there — e.g., letters approved during testing,
+//   letters belonging to inspections that were later discarded.
+// ---------------------------------------------------------------------------
+router.get('/mail-queue/letters', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_postcard_reminder'];
+    let q = supabase
+      .from('interactions')
+      .select(`
+        id, type, delivery_method, status, sent_at, postmark_date, subject, created_at,
+        community_id, property_id, violation_id, inspection_id, bundle_id,
+        communities:community_id(name)
+      `)
+      .in('type', letterTypes)
+      .in('status', ['approved', 'sent'])
+      .is('printed_at', null)
+      .order('created_at', { ascending: false })
+      .limit(500);
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: letters, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+    if (!letters || letters.length === 0) return res.json({ letters: [] });
+
+    const propertyIds = [...new Set(letters.map((l) => l.property_id).filter(Boolean))];
+    const { data: props } = propertyIds.length
+      ? await supabase.from('v_current_property_owners')
+          .select('property_id, street_address, unit, owner_name')
+          .in('property_id', propertyIds)
+      : { data: [] };
+    const propById = new Map((props || []).map((p) => [p.property_id, p]));
+
+    const enriched = letters.map((l) => {
+      const p = propById.get(l.property_id);
+      return {
+        id:               l.id,
+        type:             l.type,
+        delivery_method:  l.delivery_method,
+        status:           l.status,
+        subject:          l.subject,
+        created_at:       l.created_at,
+        sent_at:          l.sent_at,
+        community_name:   (l.communities && l.communities.name) || null,
+        property_address: p ? `${p.street_address}${p.unit ? ' #' + p.unit : ''}` : null,
+        owner_name:       p ? p.owner_name : null,
+        violation_id:     l.violation_id,
+        bundle_id:        l.bundle_id,
+      };
+    });
+
+    res.json({ letters: enriched });
+  } catch (err) {
+    console.error('[mail-queue.letters]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/mail-queue/cancel
+//   Body: { interaction_id }
+//   Reverts an approved letter back to draft status so it disappears from
+//   Mail Queue and reappears in the Drafts queue for further review. Used
+//   when a letter was approved by mistake or belongs to a discarded
+//   inspection. Refuses if the letter has already been sent (postmark_date
+//   set) — those are audit-grade and must be cancelled via a separate
+//   void-letter workflow.
+// ---------------------------------------------------------------------------
+router.post('/mail-queue/cancel', express.json(), async (req, res) => {
+  try {
+    const interactionId = req.body && req.body.interaction_id;
+    if (!interactionId) return res.status(400).json({ error: 'interaction_id required' });
+
+    const { data: inter, error: getErr } = await supabase
+      .from('interactions')
+      .select('id, status, postmark_date, printed_at')
+      .eq('id', interactionId)
+      .maybeSingle();
+    if (getErr || !inter) return res.status(404).json({ error: 'interaction not found' });
+    if (inter.printed_at) return res.status(409).json({ error: 'letter already printed — cannot cancel' });
+    if (inter.postmark_date) return res.status(409).json({ error: 'letter already postmarked — cannot cancel' });
+    if (!['approved', 'sent'].includes(inter.status)) {
+      return res.status(409).json({ error: `letter is ${inter.status}, not approved — nothing to cancel` });
+    }
+
+    const { error: updErr } = await supabase
+      .from('interactions')
+      .update({ status: 'draft', sent_at: null })
+      .eq('id', interactionId);
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    res.json({ ok: true, interaction_id: interactionId, new_status: 'draft' });
+  } catch (err) {
+    console.error('[mail-queue.cancel]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/mail-queue/batch-pdf', express.json(), async (req, res) => {
   try {
     const body = req.body || {};
