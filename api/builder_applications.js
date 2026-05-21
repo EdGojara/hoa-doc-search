@@ -490,7 +490,7 @@ router.get('/:id', async (req, res) => {
           *,
           community:communities(id, name, slug, builder_arc_design_guidelines_url, builder_arc_fee_cents, enforcement_authority_citation),
           builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address),
-          master_plan:master_plans(id, plan_number, plan_name, elevation, status)
+          master_plan:master_plans!master_plan_id(id, plan_number, plan_name, elevation, status)
         `)
         .eq('id', req.params.id)
         .maybeSingle(),
