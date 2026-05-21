@@ -34,6 +34,10 @@
 --   -- the index creation will succeed once duplicates are gone.
 -- ============================================================================
 
+-- Drop any prior signature first — Postgres won't let CREATE OR REPLACE change
+-- a RETURNS TABLE column type even with identical (uuid, boolean) args.
+DROP FUNCTION IF EXISTS dedup_community_properties(UUID, BOOLEAN);
+
 CREATE OR REPLACE FUNCTION dedup_community_properties(
   p_community_id UUID DEFAULT NULL,
   p_dry_run      BOOLEAN DEFAULT TRUE
