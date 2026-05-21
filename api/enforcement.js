@@ -484,19 +484,16 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       }
     }
 
-    // Force-regenerate path: delete the prior interaction AND its rendered
-    // PDF in storage so a year of testing doesn't accumulate GB of orphan
-    // draft PDFs. The freshly-generated letter writes its own storage object
-    // below.
+    // Force-regenerate path: schedule deletion of prior interaction + PDF,
+    // but only EXECUTE the deletion after the new letter has been successfully
+    // rendered + uploaded + inserted (see end of handler). Without this
+    // atomic guarantee, a render error mid-way leaves the violation with no
+    // interaction at all — the letter disappears from BOTH Drafts queue and
+    // Mail Queue and the operator can't recover. (Ed hit this on 2026-05-20:
+    // regenerated a letter, render threw, letter vanished from both queues.)
+    let priorToDelete = null;
     if (forceRegenerate && priorLetter) {
-      if (priorLetter.content && /\.pdf$/i.test(String(priorLetter.content))) {
-        try { await supabase.storage.from('violation-letters').remove([priorLetter.content]); } catch (_) {}
-      }
-      try {
-        await supabase.from('interactions').delete().eq('id', priorLetter.id);
-      } catch (e) {
-        console.warn('[enforcement.generate-letter] failed to delete prior interaction:', e.message);
-      }
+      priorToDelete = priorLetter;
     }
 
     // Fetch property + owner from the view
@@ -710,11 +707,27 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         subject:         `Violation letter (${violation.current_stage})`,
         content:         storagePath,         // canonical storage location; signed URLs derived on demand
         delivery_method: isCertified ? 'certified_mail' : 'first_class_mail',
-        sent_at:     new Date().toISOString(),
+        status:          'draft',             // explicit — regenerated letters always go to the Drafts queue
+        // sent_at stays NULL — only stamped at lock-and-batch (postmark time)
       })
       .select()
       .single();
     if (iErr) return res.status(500).json({ error: 'interaction insert failed: ' + iErr.message });
+
+    // ATOMIC REGENERATE: only NOW that the new interaction is safely in the
+    // database do we delete the prior one (and its storage PDF). If anything
+    // above this point threw, the prior letter survives — operator can find
+    // it back in Drafts queue or Mail Queue.
+    if (priorToDelete) {
+      if (priorToDelete.content && /\.pdf$/i.test(String(priorToDelete.content))) {
+        try { await supabase.storage.from('violation-letters').remove([priorToDelete.content]); } catch (_) {}
+      }
+      try {
+        await supabase.from('interactions').delete().eq('id', priorToDelete.id);
+      } catch (e) {
+        console.warn('[enforcement.generate-letter] post-insert delete of prior interaction failed:', e.message);
+      }
+    }
 
     // Signed URL for immediate download
     const { data: sd } = await supabase.storage.from(LETTERS_BUCKET).createSignedUrl(storagePath, 60 * 60);

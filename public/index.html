@@ -11232,11 +11232,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      // Open the fresh PDF in a new tab; reload drafts so the card shows the new URL.
-      if (j.letter_url) window.open(j.letter_url, '_blank');
-      await inspDraftsLoad();
+      // Stash the fresh URL so the new Drafts queue card opens it from the
+      // existing Preview link — avoids popup-blocker on window.open.
+      window._lastRegeneratedLetterUrl = j.letter_url || null;
+      // Refresh BOTH queues so the regenerated letter shows up wherever it
+      // lives now (always Drafts queue after regenerate). Mail Queue
+      // refresh also matters because regenerate moves an approved letter
+      // back to draft, removing it from Mail Queue.
+      await Promise.all([
+        typeof inspDraftsLoad === 'function' ? inspDraftsLoad() : Promise.resolve(),
+        typeof inspMailQueueLoad === 'function' ? inspMailQueueLoad() : Promise.resolve(),
+      ]);
+      // Scroll the Drafts queue into view so the operator can see + approve
+      const draftsCard = document.getElementById('inspDraftsList');
+      if (draftsCard) draftsCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // If the regenerate was on a previously-approved letter, tell the user
+      // explicitly so they understand it's now back in Drafts (status='draft')
+      // and needs to be re-approved before mailing.
+      alert('✓ Letter regenerated. It\'s now in the Drafts queue — review and re-approve to send.');
     } catch (e) {
-      alert('Regenerate failed: ' + e.message);
+      alert('Regenerate failed: ' + e.message + '\n\nNo letter was lost — the original is still in its prior queue.');
     } finally {
       if (btn) { btn.disabled = false; btn.innerHTML = originalLabel; }
     }
