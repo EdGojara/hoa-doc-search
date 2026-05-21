@@ -3797,6 +3797,21 @@
     }
   }
 
+  // "Current Resident" is a placeholder name used when the Vantaca import
+  // didn't have a real owner — surfaces as "Owner not on file" so staff
+  // can see at a glance what needs cleanup vs. a real homeowner.
+  function isPlaceholderOwnerName(name) {
+    if (!name) return true;
+    const n = String(name).trim().toLowerCase();
+    return n === '' || n === 'current resident' || n === 'unknown' || n === 'unknown owner' || n === 'occupant';
+  }
+  function renderOwnerCell(name) {
+    if (isPlaceholderOwnerName(name)) {
+      return '<em style="color:#94A3B8;">Owner not on file</em>';
+    }
+    return escapeHtml(name);
+  }
+
   function homesRenderProperties() {
     const list = document.getElementById('homesPropertyList');
     const countEl = document.getElementById('homesListCount');
@@ -3825,7 +3840,7 @@
         ${filtered.map((p) => `
           <tr style="border-bottom:1px solid #e2e8f0; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">
             <td style="padding:5px 6px; font-weight:600; color:#1E2761;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
-            <td style="padding:5px 6px;">${escapeHtml(p.owner_name || '—')}</td>
+            <td style="padding:5px 6px;">${renderOwnerCell(p.owner_name)}</td>
             <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_email || '')}</td>
             <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_phone || '')}</td>
             <td style="padding:5px 6px; color:#94A3B8;">${escapeHtml(p.owned_since || '')}</td>
@@ -3860,7 +3875,7 @@
             ${isResidency ? '<th style="text-align:left; padding:4px 6px;">Type</th><th style="text-align:left; padding:4px 6px;">Lease end</th>' : '<th style="text-align:left; padding:4px 6px;">Vesting</th>'}
           </tr></thead><tbody>
             ${rels.map((rel) => `<tr style="border-bottom:1px solid #e2e8f0; ${!rel.end_date ? 'background:#eef2ff;' : ''}">
-              <td style="padding:4px 6px;">${escapeHtml((rel.contacts && rel.contacts.full_name) || '—')}${!rel.end_date ? ' <span style="background:#dcfce7; color:#15803d; font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px;">CURRENT</span>' : ''}</td>
+              <td style="padding:4px 6px;">${renderOwnerCell((rel.contacts && rel.contacts.full_name))}${!rel.end_date ? ' <span style="background:#dcfce7; color:#15803d; font-size:10px; font-weight:700; padding:1px 6px; border-radius:8px; margin-left:4px;">CURRENT</span>' : ''}</td>
               <td style="padding:4px 6px; color:#475569;">${escapeHtml((rel.contacts && rel.contacts.primary_email) || '')}</td>
               <td style="padding:4px 6px;">${escapeHtml(rel.start_date || '')}</td>
               <td style="padding:4px 6px;">${escapeHtml(rel.end_date || '—')}</td>
