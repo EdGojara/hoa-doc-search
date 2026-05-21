@@ -725,6 +725,11 @@ app.use('/api/portal', portalRouter);
 const { router: amenitiesRouter } = require('./api/amenities');
 app.use('/api/amenities', amenitiesRouter);
 
+// Ownership change proposals — review queue for ownership transitions
+// from Vantaca imports. Staff approves/rejects from the admin tab.
+const { router: ownershipProposalsRouter } = require('./api/ownership_proposals');
+app.use('/api/ownership-proposals', ownershipProposalsRouter);
+
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));
