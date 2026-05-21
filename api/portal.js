@@ -312,16 +312,19 @@ router.get('/me', async (req, res) => {
     try {
       const { data: snap } = await supabase
         .from('owner_ar_snapshots')
-        .select('balance_cents, snapshot_at, ar_status')
+        .select('balance_total, snapshot_date, enforcement_stage, at_legal, in_collections, payment_plan_active')
         .eq('property_id', prop.id)
-        .order('snapshot_at', { ascending: false })
+        .order('snapshot_date', { ascending: false })
         .limit(1)
         .maybeSingle();
       if (snap) {
+        const cents = snap.balance_total != null ? Math.round(Number(snap.balance_total) * 100) : null;
+        const isPastDue = snap.at_legal || snap.in_collections
+          || ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed'].includes(snap.enforcement_stage || '');
         balance = {
-          amount_cents: snap.balance_cents,
-          as_of: snap.snapshot_at,
-          status: snap.ar_status || (snap.balance_cents <= 0 ? 'current' : 'past_due'),
+          amount_cents: cents,
+          as_of: snap.snapshot_date,
+          status: (cents == null || cents <= 0) ? 'current' : (isPastDue ? 'past_due' : 'open_balance'),
         };
       }
     } catch (_) { /* gracefully degrade */ }
@@ -945,6 +948,95 @@ router.get('/property', async (req, res) => {
     });
   } catch (err) {
     console.error('[portal] property failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GET /api/portal/balance
+// Returns current balance + last 12 snapshots + payment plan info if active.
+// Driven by owner_ar_snapshots which is fed by drag-drop Vantaca AR PDFs.
+// Real-time balance lives in Vantaca; we mirror for visibility per single-
+// source-of-truth discipline (Vantaca is the GL of record).
+// ============================================================================
+router.get('/balance', async (req, res) => {
+  try {
+    const cookieValue = readCookie(req, COOKIE_NAME);
+    const portalUserId = verifyCookie(cookieValue);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select(`property_id, properties:property_id (
+        id, street_address, community_id,
+        communities:community_id (id, name, slug, hoa_legal_name)
+      )`)
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null)
+      .limit(1);
+    const prop = (scopes && scopes[0]?.properties) || null;
+    if (!prop) return res.json({ property: null });
+
+    const community = prop.communities || {};
+
+    const { data: snaps } = await supabase
+      .from('owner_ar_snapshots')
+      .select(`
+        id, snapshot_date, balance_total,
+        bucket_0_30, bucket_31_60, bucket_61_90, bucket_91_120, bucket_over_120,
+        at_legal, in_collections, payment_plan_active, payment_plan_terms_text,
+        enforcement_stage
+      `)
+      .eq('property_id', prop.id)
+      .order('snapshot_date', { ascending: false })
+      .limit(12);
+
+    const current = (snaps || [])[0] || null;
+    let statusKey = 'no_snapshot';
+    if (current) {
+      const cents = current.balance_total != null ? Math.round(Number(current.balance_total) * 100) : null;
+      const isPastDue = current.at_legal || current.in_collections
+        || ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed']
+            .includes(String(current.enforcement_stage || '').toLowerCase());
+      statusKey = cents == null ? 'unknown'
+                : cents <= 0 ? 'current'
+                : isPastDue ? 'past_due'
+                : 'open_balance';
+    }
+
+    res.json({
+      property: {
+        id: prop.id,
+        street_address: prop.street_address,
+      },
+      community: {
+        name: community.name,
+        slug: community.slug,
+        hoa_legal_name: community.hoa_legal_name,
+      },
+      status: statusKey,
+      current: current ? {
+        snapshot_date: current.snapshot_date,
+        balance_total: Number(current.balance_total) || 0,
+        bucket_0_30: Number(current.bucket_0_30) || 0,
+        bucket_31_60: Number(current.bucket_31_60) || 0,
+        bucket_61_90: Number(current.bucket_61_90) || 0,
+        bucket_91_120: Number(current.bucket_91_120) || 0,
+        bucket_over_120: Number(current.bucket_over_120) || 0,
+        at_legal: current.at_legal,
+        in_collections: current.in_collections,
+        payment_plan_active: current.payment_plan_active,
+        payment_plan_terms_text: current.payment_plan_terms_text,
+        enforcement_stage: current.enforcement_stage,
+      } : null,
+      history: (snaps || []).slice(1).map((s) => ({
+        snapshot_date: s.snapshot_date,
+        balance_total: Number(s.balance_total) || 0,
+        enforcement_stage: s.enforcement_stage,
+      })),
+    });
+  } catch (err) {
+    console.error('[portal] balance failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

@@ -168,9 +168,9 @@ async function checkEligibility({ communityId, renterAddress, renterEmail }) {
     // Look up the most recent owner_ar_snapshot for that property
     const { data: snap } = await supabase
       .from('owner_ar_snapshots')
-      .select('balance_cents, ar_status, snapshot_at')
+      .select('balance_total, enforcement_stage, at_legal, in_collections, snapshot_date')
       .eq('property_id', matched.id)
-      .order('snapshot_at', { ascending: false })
+      .order('snapshot_date', { ascending: false })
       .limit(1)
       .maybeSingle();
 
@@ -181,18 +181,22 @@ async function checkEligibility({ communityId, renterAddress, renterEmail }) {
       };
     }
 
-    const pastDueStatuses = ['past_due', 'delinquent', 'at_legal', 'pre_legal', 'collections'];
-    const isPastDue = (snap.balance_cents && snap.balance_cents > 0)
-                      && pastDueStatuses.includes(String(snap.ar_status || '').toLowerCase());
+    const balanceCents = snap.balance_total != null ? Math.round(Number(snap.balance_total) * 100) : null;
+    const pastDueStages = ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed'];
+    const isPastDue = (balanceCents && balanceCents > 0)
+                      && (snap.at_legal || snap.in_collections
+                          || pastDueStages.includes(String(snap.enforcement_stage || '').toLowerCase()));
 
     return {
       flag: isPastDue ? 'past_due_at_intake' : 'clean',
       data: {
         property_id: matched.id,
         property_address: matched.street_address,
-        balance_cents: snap.balance_cents,
-        ar_status: snap.ar_status,
-        snapshot_at: snap.snapshot_at,
+        balance_cents: balanceCents,
+        enforcement_stage: snap.enforcement_stage,
+        at_legal: snap.at_legal,
+        in_collections: snap.in_collections,
+        snapshot_date: snap.snapshot_date,
       },
     };
   } catch (err) {

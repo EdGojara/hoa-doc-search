@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Account Balance · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --green: #4A9A6A;
+    --green-faint: rgba(80, 200, 120, 0.10);
+    --warn: #C77E2C;
+    --warn-faint: rgba(199, 126, 44, 0.10);
+    --red: #B8483A;
+    --red-faint: rgba(184, 72, 58, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  header.top {
+    background: white; border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .back-link {
+    font-size: 13px; color: var(--navy); text-decoration: none;
+    padding: 8px 14px; border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-left: 10px;
+  }
+
+  main { max-width: 760px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  /* ---- Hero ---- */
+  .hero {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 32px 36px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+    text-align: center;
+  }
+  .hero.current      { border-top: 5px solid var(--green); }
+  .hero.open_balance { border-top: 5px solid var(--gold); }
+  .hero.past_due     { border-top: 5px solid var(--warn); }
+  .hero.no_snapshot, .hero.unknown { border-top: 5px solid var(--rule); }
+
+  .hero .eyebrow {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 12px;
+  }
+  .hero .amount {
+    font-family: var(--font-serif); font-size: 44px; font-weight: 500;
+    color: var(--navy); margin: 6px 0 4px;
+    letter-spacing: -0.015em;
+    line-height: 1;
+  }
+  .hero.current .amount { color: var(--green); }
+  .hero.past_due .amount { color: var(--warn); }
+  .hero.open_balance .amount { color: var(--navy); }
+  .hero h1 {
+    font-family: var(--font-serif);
+    font-size: 22px; font-weight: 500;
+    color: var(--navy); margin: 8px 0 4px;
+    letter-spacing: -0.005em;
+  }
+  .hero .lede {
+    color: var(--ink-soft); font-size: 14px;
+    margin: 8px auto 0; max-width: 460px; line-height: 1.55;
+  }
+  .hero .as-of {
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px solid var(--rule);
+    font-size: 12px; color: var(--ink-faint);
+  }
+  .hero .as-of strong { color: var(--ink); }
+
+  /* ---- Pay button ---- */
+  .pay-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 24px 28px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+  }
+  .pay-card h2 {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    margin: 0 0 14px;
+    color: var(--navy);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .pay-card h2 .ic {
+    width: 30px; height: 30px;
+    border-radius: 8px;
+    background: var(--gold-faint); color: var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 15px;
+  }
+  .pay-card p { font-size: 14px; color: var(--ink-soft); margin: 0 0 14px; line-height: 1.6; }
+  .pay-btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--navy); color: white;
+    padding: 12px 22px; border-radius: 7px;
+    font-family: var(--font-sans); font-size: 14px; font-weight: 500;
+    text-decoration: none; letter-spacing: 0.02em;
+    transition: all 0.15s ease;
+  }
+  .pay-btn:hover { background: #2A4870; }
+
+  /* ---- Aging buckets ---- */
+  .aging {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px 26px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+  }
+  .aging h3 {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    margin: 0 0 14px;
+    color: var(--navy);
+  }
+  .bucket-grid {
+    display: grid; grid-template-columns: repeat(5, 1fr);
+    gap: 10px;
+  }
+  @media (max-width: 600px) { .bucket-grid { grid-template-columns: repeat(2, 1fr); } }
+  .bucket {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-radius: 7px;
+    padding: 12px 14px;
+    text-align: left;
+  }
+  .bucket.has-value { border-color: var(--gold); }
+  .bucket.aged { border-color: var(--warn); background: var(--warn-faint); }
+  .bucket .label {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .bucket .val {
+    font-family: var(--font-serif); font-size: 17px; font-weight: 500;
+    color: var(--ink);
+  }
+  .bucket.aged .val { color: var(--warn); }
+
+  /* ---- Payment plan ---- */
+  .plan-card {
+    background: var(--green-faint);
+    border: 1px solid rgba(80, 200, 120, 0.25);
+    border-left: 4px solid var(--green);
+    border-radius: var(--radius);
+    padding: 18px 22px;
+    margin-bottom: 18px;
+  }
+  .plan-card h3 {
+    font-size: 11.5px; color: var(--green);
+    letter-spacing: 0.07em; text-transform: uppercase;
+    margin: 0 0 6px; font-weight: 600;
+  }
+  .plan-card .terms {
+    font-size: 14px; color: var(--ink); line-height: 1.55;
+  }
+
+  /* ---- History ---- */
+  .history-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px 26px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+  }
+  .history-card h3 {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    margin: 0 0 14px;
+    color: var(--navy);
+  }
+  .history-list {
+    list-style: none; padding: 0; margin: 0; font-size: 13.5px;
+  }
+  .history-list li {
+    display: flex; justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid var(--rule);
+  }
+  .history-list li:last-child { border-bottom: none; }
+  .history-list .date { color: var(--ink-faint); }
+  .history-list .bal { color: var(--ink); font-family: var(--font-mono); font-size: 13px; }
+  .history-list .bal.zero { color: var(--green); }
+  .history-list .bal.due { color: var(--warn); }
+
+  /* ---- Info footer ---- */
+  .info-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 20px 24px;
+    font-size: 13.5px;
+    color: var(--ink-soft);
+    line-height: 1.6;
+  }
+  .info-card h3 {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.07em; text-transform: uppercase;
+    margin: 0 0 10px; font-weight: 500;
+  }
+  .info-card p { margin: 0 0 8px; }
+  .info-card a { color: var(--navy); text-decoration: none; }
+  .info-card a:hover { color: var(--gold); }
+  .info-card strong { color: var(--navy); }
+
+  /* ---- States ---- */
+  .full-loader {
+    min-height: 60vh; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    margin-top: 36px; text-align: center;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading your balance…</div>
+</div>
+
+<template id="pageTemplate">
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+  <a class="back-link" href="/portal" id="backLink">← Portal</a>
+</header>
+
+<main>
+  <div id="heroSlot"></div>
+  <div id="planSlot"></div>
+  <div id="paySlot"></div>
+  <div id="agingSlot"></div>
+  <div id="historySlot"></div>
+
+  <div class="info-card">
+    <h3>How payments work at <span id="hoaName">your community</span></h3>
+    <p>Assessments are processed through your association's accounting system, not the Bedrock portal directly. The portal mirrors what your association's ledger shows, refreshed regularly so you can check your standing at any time.</p>
+    <p><strong>Questions about a charge or payment?</strong> Email <a href="mailto:accounting@bedrocktx.com">accounting@bedrocktx.com</a> or call (832) 588-2485 and we'll reconcile in one business day. If you've recently paid and the portal still shows a balance, that's typically just lag in the snapshot — your actual ledger updates in real time.</p>
+  </div>
+</main>
+
+<footer>
+  <div class="tag">Community. Simplified.</div>
+  <div style="margin-top:6px;">Bedrock Association Management · (832) 588-2485</div>
+</footer>
+</template>
+
+<script>
+'use strict';
+
+let isDemo = false;
+let demoCommunitySlug = '';
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function dollars(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('en-US', { style: 'currency', currency: 'USD' });
+}
+function fmtDateLong(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+}
+function fmtDateShort(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return { demo: u.searchParams.get('demo') === '1', community: u.searchParams.get('community') || '' };
+}
+
+(async function init() {
+  const q = getQueryParams();
+  isDemo = q.demo;
+  demoCommunitySlug = q.community;
+
+  if (isDemo) return renderPage(buildDemoData(demoCommunitySlug || 'waterview'));
+
+  try {
+    const r = await fetch('/api/portal/balance', { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderPage(data);
+  } catch (err) {
+    $('app').innerHTML = `<div class="full-loader">Couldn't load: ${escapeHtml(err.message)}</div>`;
+  }
+})();
+
+function buildDemoData(slug) {
+  const names = {
+    'waterview': 'Waterview Estates',
+    'canyon-gate': 'Canyon Gate at Cinco Ranch',
+    'august-meadows': 'August Meadows',
+    'still-creek-ranch': 'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge': 'Quail Ridge',
+  };
+  const today = new Date();
+  const histDate = (monthsAgo) => {
+    const d = new Date(today.getTime());
+    d.setMonth(d.getMonth() - monthsAgo);
+    return d.toISOString().slice(0, 10);
+  };
+
+  return {
+    demo: true,
+    status: 'current',
+    property: { street_address: '1234 Sample Drive' },
+    community: {
+      name: names[slug] || 'Your Community',
+      slug,
+      hoa_legal_name: `${names[slug] || 'Your Community'} Owners Association, Inc.`,
+    },
+    current: {
+      snapshot_date: histDate(0),
+      balance_total: 0,
+      bucket_0_30: 0, bucket_31_60: 0, bucket_61_90: 0, bucket_91_120: 0, bucket_over_120: 0,
+      at_legal: false, in_collections: false,
+      payment_plan_active: false, payment_plan_terms_text: null,
+      enforcement_stage: null,
+    },
+    history: [
+      { snapshot_date: histDate(1), balance_total: 0, enforcement_stage: null },
+      { snapshot_date: histDate(2), balance_total: 0, enforcement_stage: null },
+      { snapshot_date: histDate(3), balance_total: 0, enforcement_stage: null },
+      { snapshot_date: histDate(4), balance_total: 0, enforcement_stage: null },
+      { snapshot_date: histDate(5), balance_total: 0, enforcement_stage: null },
+    ],
+  };
+}
+
+function renderPage(ctx) {
+  const tpl = $('pageTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  if (isDemo) {
+    const back = `/portal?demo=1&community=${encodeURIComponent(ctx.community?.slug || demoCommunitySlug || 'waterview')}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+  }
+
+  const community = ctx.community || {};
+  $('hoaName').textContent = community.name || 'your community';
+
+  // Hero
+  $('heroSlot').innerHTML = renderHero(ctx);
+
+  // Payment plan (if active)
+  if (ctx.current?.payment_plan_active) {
+    $('planSlot').innerHTML = `
+      <div class="plan-card">
+        <h3>✓ Payment plan active</h3>
+        <div class="terms">${escapeHtml(ctx.current.payment_plan_terms_text || 'Plan details on file with the management office.')}</div>
+      </div>`;
+  }
+
+  // Pay button (always — homeowner may want to prepay even when current)
+  $('paySlot').innerHTML = renderPayCard(ctx);
+
+  // Aging buckets (only when there's a non-zero balance)
+  const c = ctx.current;
+  if (c && c.balance_total > 0) {
+    $('agingSlot').innerHTML = `
+      <div class="aging">
+        <h3>Balance breakdown — by age</h3>
+        <div class="bucket-grid">
+          ${bucketHtml('Current', c.bucket_0_30)}
+          ${bucketHtml('31–60 days', c.bucket_31_60)}
+          ${bucketHtml('61–90 days', c.bucket_61_90, true)}
+          ${bucketHtml('91–120 days', c.bucket_91_120, true)}
+          ${bucketHtml('Over 120 days', c.bucket_over_120, true)}
+        </div>
+      </div>`;
+  }
+
+  // History
+  if (ctx.history && ctx.history.length) {
+    $('historySlot').innerHTML = `
+      <div class="history-card">
+        <h3>Balance history (last ${ctx.history.length} snapshots)</h3>
+        <ul class="history-list">
+          ${ctx.history.map((s) => {
+            const cls = s.balance_total === 0 ? 'zero' : s.balance_total > 0 ? 'due' : '';
+            return `<li>
+              <span class="date">${fmtDateLong(s.snapshot_date)}</span>
+              <span class="bal ${cls}">${dollars(s.balance_total)}</span>
+            </li>`;
+          }).join('')}
+        </ul>
+      </div>`;
+  }
+}
+
+function renderHero(ctx) {
+  const c = ctx.current;
+  const status = ctx.status || 'no_snapshot';
+  const demoChip = isDemo ? `<span class="demo-ribbon">Demo</span>` : '';
+
+  if (status === 'no_snapshot' || !c) {
+    return `
+      <div class="hero no_snapshot">
+        <div class="eyebrow">Account balance ${demoChip}</div>
+        <div class="amount">—</div>
+        <h1>Balance not yet on file</h1>
+        <p class="lede">Your community's assessment balance hasn't been mirrored to the portal yet. Contact <a href="mailto:accounting@bedrocktx.com" style="color:var(--navy);">accounting@bedrocktx.com</a> for your real-time balance.</p>
+      </div>`;
+  }
+
+  const bal = c.balance_total || 0;
+  const asOf = `<div class="as-of">Balance as of <strong>${fmtDateLong(c.snapshot_date)}</strong></div>`;
+
+  if (status === 'current') {
+    return `
+      <div class="hero current">
+        <div class="eyebrow">Account balance ${demoChip}</div>
+        <div class="amount">${dollars(bal)}</div>
+        <h1>Your account is current</h1>
+        <p class="lede">No outstanding balance. Thank you for keeping your assessments current.</p>
+        ${asOf}
+      </div>`;
+  }
+
+  if (status === 'past_due') {
+    return `
+      <div class="hero past_due">
+        <div class="eyebrow">Account balance ${demoChip}</div>
+        <div class="amount">${dollars(bal)}</div>
+        <h1>Balance past due</h1>
+        <p class="lede">Your account has charges that have aged beyond the standard cure window. Resolving this brings your account back to good standing and avoids further collection steps.</p>
+        ${asOf}
+      </div>`;
+  }
+
+  return `
+    <div class="hero open_balance">
+      <div class="eyebrow">Account balance ${demoChip}</div>
+      <div class="amount">${dollars(bal)}</div>
+      <h1>Balance due</h1>
+      <p class="lede">An open balance on your account. Paying it through your association's portal keeps your account current.</p>
+      ${asOf}
+    </div>`;
+}
+
+function renderPayCard(ctx) {
+  // For v0, point at a generic placeholder OR a community-specific payment_portal_url if added later.
+  // Most associations have Vantaca portal access — link is typically community-specific.
+  const portalUrl = ctx.community?.payment_portal_url
+                 || `mailto:accounting@bedrocktx.com?subject=${encodeURIComponent('Payment link for ' + (ctx.community?.name || 'my account'))}`;
+  const usesEmailFallback = !ctx.community?.payment_portal_url;
+
+  return `
+    <div class="pay-card">
+      <h2><span class="ic">💳</span>Pay your assessment</h2>
+      <p>Assessments are processed through your association's accounting system. Bedrock can email you a direct payment link, or you can mail a check to the address below.</p>
+      <a class="pay-btn" href="${escapeHtml(portalUrl)}" target="_blank" rel="noopener">
+        ${usesEmailFallback ? '✉️ Request a payment link' : '💳 Pay online →'}
+      </a>
+      <p style="margin-top:14px; font-size:12.5px; color: var(--ink-faint);">
+        Mail check to: <strong style="color: var(--ink);">${escapeHtml(ctx.community?.hoa_legal_name || 'Your association')}</strong>, c/o Bedrock Association Management, 12808 W Airport Blvd Ste 253, Sugar Land, TX 77478.
+      </p>
+    </div>`;
+}
+
+function bucketHtml(label, value, agedFlag) {
+  const v = Number(value) || 0;
+  const cls = v > 0 ? (agedFlag ? 'aged' : 'has-value') : '';
+  return `
+    <div class="bucket ${cls}">
+      <div class="label">${escapeHtml(label)}</div>
+      <div class="val">${v > 0 ? dollars(v) : '—'}</div>
+    </div>`;
+}
+</script>
+</body>
+</html>
