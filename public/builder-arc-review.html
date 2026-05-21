@@ -1,0 +1,896 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Builder ARC Review · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--navy-deep);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.45;
+  }
+
+  /* ---- Header ---- */
+  header.app {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--navy-deep);
+  }
+  .brand-lockup { display: flex; align-items: center; gap: 14px; }
+  .brand-lockup svg { width: 32px; height: 40px; }
+  .brand-lockup .wm {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--ink); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand-lockup .wm em { font-style: italic; color: var(--gold); }
+  .brand-lockup .sub {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px;
+  }
+  header .module-name {
+    font-family: var(--font-serif); font-size: 22px; font-weight: 500;
+    color: var(--ink);
+  }
+  header .module-name em { color: var(--gold); font-style: italic; }
+  header .util a {
+    color: var(--ink-soft); text-decoration: none; font-size: 13px;
+    margin-left: 18px;
+  }
+  header .util a:hover { color: var(--gold); }
+
+  /* ---- Layout ---- */
+  .shell {
+    display: grid; grid-template-columns: 1fr 0;
+    transition: grid-template-columns 0.18s ease;
+    height: calc(100vh - 73px);
+    overflow: hidden;
+  }
+  .shell.detail-open { grid-template-columns: 1fr 540px; }
+
+  main.queue {
+    overflow-y: auto; padding: 20px 32px 40px;
+  }
+  aside.detail {
+    background: var(--navy-soft);
+    border-left: 1px solid var(--rule-strong);
+    overflow-y: auto;
+    padding: 22px 24px 60px;
+  }
+
+  /* ---- Filters ---- */
+  .filter-bar {
+    display: flex; gap: 14px; align-items: center;
+    margin-bottom: 18px; flex-wrap: wrap;
+  }
+  .filter-bar label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    display: flex; flex-direction: column; gap: 4px;
+  }
+  .filter-bar select,
+  .filter-bar input {
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink);
+    padding: 7px 10px;
+    font-family: var(--font-sans); font-size: 13px;
+    border-radius: 4px;
+    min-width: 160px;
+  }
+  .filter-bar input[type="search"] { min-width: 240px; }
+  .filter-bar .pill {
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink-soft);
+    padding: 6px 12px;
+    border-radius: 999px;
+    cursor: pointer; font-size: 12.5px;
+    user-select: none;
+  }
+  .filter-bar .pill.active {
+    background: rgba(212,175,55,0.12);
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+  .filter-bar .count {
+    margin-left: auto;
+    color: var(--ink-faint); font-size: 12px;
+    font-family: var(--font-mono);
+  }
+
+  /* ---- Queue table ---- */
+  table.queue {
+    width: 100%; border-collapse: collapse;
+    background: var(--navy-soft);
+    border-radius: 6px; overflow: hidden;
+  }
+  table.queue thead th {
+    text-align: left;
+    padding: 11px 14px;
+    border-bottom: 1px solid var(--rule-strong);
+    font-weight: 500;
+    color: var(--ink-faint);
+    font-size: 11px;
+    letter-spacing: 0.07em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  table.queue tbody tr {
+    cursor: pointer;
+    border-bottom: 1px solid var(--rule);
+    transition: background 0.1s ease;
+  }
+  table.queue tbody tr:hover { background: rgba(255,255,255,0.025); }
+  table.queue tbody tr.active { background: rgba(212,175,55,0.07); }
+  table.queue tbody td {
+    padding: 11px 14px;
+    color: var(--ink);
+    font-size: 13px;
+    vertical-align: top;
+  }
+  table.queue tbody td .sub {
+    display: block; color: var(--ink-faint); font-size: 11.5px; margin-top: 2px;
+  }
+  table.queue tbody td.num {
+    font-family: var(--font-mono); color: var(--ink-soft); font-size: 12.5px;
+  }
+
+  /* ---- Status badges ---- */
+  .badge {
+    display: inline-block; padding: 2px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 500;
+    text-transform: capitalize; letter-spacing: 0.02em;
+    border: 1px solid transparent;
+  }
+  .badge.received           { background: rgba(168,178,196,0.12); color: var(--ink-soft); border-color: rgba(168,178,196,0.25); }
+  .badge.under_review       { background: rgba(212,175,55,0.12); color: var(--gold); border-color: rgba(212,175,55,0.3); }
+  .badge.info_requested     { background: rgba(212,175,55,0.12); color: var(--gold-bright); border-color: rgba(212,175,55,0.4); }
+  .badge.approved           { background: rgba(80,200,120,0.12); color: #6BD194; border-color: rgba(80,200,120,0.3); }
+  .badge.approved_with_conditions { background: rgba(80,200,120,0.12); color: #6BD194; border-color: rgba(80,200,120,0.3); }
+  .badge.denied             { background: rgba(231,90,90,0.12); color: #E48A8A; border-color: rgba(231,90,90,0.3); }
+  .badge.withdrawn          { background: rgba(168,178,196,0.08); color: var(--ink-faint); border-color: rgba(168,178,196,0.15); }
+  .badge.fast-track {
+    background: rgba(212,175,55,0.18);
+    color: var(--gold-bright);
+    border-color: var(--gold);
+    margin-left: 6px;
+  }
+
+  /* ---- Empty state ---- */
+  .empty-state {
+    padding: 80px 20px;
+    text-align: center;
+    color: var(--ink-faint);
+    background: var(--navy-soft);
+    border-radius: 6px;
+  }
+  .empty-state h2 {
+    font-family: var(--font-serif);
+    font-size: 22px;
+    color: var(--ink-soft);
+    margin: 0 0 8px;
+  }
+  .empty-state p { margin: 6px 0; font-size: 13.5px; }
+  .empty-state code {
+    background: var(--navy-deep); padding: 2px 6px; border-radius: 3px;
+    color: var(--gold); font-family: var(--font-mono); font-size: 12px;
+  }
+
+  /* ---- Detail panel ---- */
+  aside.detail h2 {
+    font-family: var(--font-serif);
+    font-size: 20px; color: var(--ink);
+    margin: 0 0 4px;
+  }
+  aside.detail .ref {
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--gold); margin-bottom: 14px;
+  }
+  aside.detail .close-detail {
+    float: right; background: transparent; border: none;
+    color: var(--ink-faint); font-size: 20px; cursor: pointer;
+    margin-top: -4px;
+  }
+  aside.detail .close-detail:hover { color: var(--gold); }
+  aside.detail section {
+    margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  aside.detail section:last-of-type { border-bottom: none; }
+  aside.detail section h3 {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin: 0 0 10px; font-weight: 500;
+  }
+  aside.detail dl {
+    display: grid; grid-template-columns: 130px 1fr;
+    gap: 4px 12px;
+    margin: 0; font-size: 13px;
+  }
+  aside.detail dt { color: var(--ink-faint); font-size: 12.5px; }
+  aside.detail dd { margin: 0; color: var(--ink); }
+  aside.detail .att-list {
+    list-style: none; padding: 0; margin: 0;
+  }
+  aside.detail .att-list li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px dashed var(--rule);
+    font-size: 12.5px;
+  }
+  aside.detail .att-list li:last-child { border-bottom: none; }
+  aside.detail .att-list .kind {
+    color: var(--gold); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em;
+  }
+
+  /* ---- Finalize form ---- */
+  .finalize-form label {
+    display: block; font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin: 12px 0 4px;
+  }
+  .finalize-form .actions {
+    display: grid; grid-template-columns: 1fr 1fr;
+    gap: 8px; margin: 10px 0 16px;
+  }
+  .finalize-form .actions button {
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink-soft);
+    padding: 10px 12px;
+    font-family: var(--font-sans); font-size: 13px;
+    text-align: left;
+    cursor: pointer;
+    border-radius: 4px;
+    transition: all 0.15s ease;
+  }
+  .finalize-form .actions button .label {
+    display: block; font-weight: 500; color: var(--ink);
+    margin-bottom: 2px;
+  }
+  .finalize-form .actions button .desc {
+    display: block; font-size: 11px; color: var(--ink-faint);
+  }
+  .finalize-form .actions button:hover {
+    border-color: var(--gold);
+    color: var(--gold);
+  }
+  .finalize-form .actions button.selected {
+    border-color: var(--gold);
+    background: rgba(212,175,55,0.08);
+  }
+  .finalize-form .actions button.selected .label { color: var(--gold); }
+
+  .finalize-form input,
+  .finalize-form textarea {
+    width: 100%;
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 13px;
+    padding: 8px 10px;
+    border-radius: 4px;
+    resize: vertical;
+  }
+  .finalize-form textarea { min-height: 80px; }
+
+  .primary-btn, .secondary-btn {
+    padding: 10px 18px;
+    border-radius: 4px;
+    font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    font-family: var(--font-sans);
+    transition: all 0.15s ease;
+  }
+  .primary-btn {
+    background: var(--gold); color: var(--navy-deep); border: 1px solid var(--gold);
+  }
+  .primary-btn:hover { background: var(--gold-bright); border-color: var(--gold-bright); }
+  .primary-btn:disabled {
+    background: var(--ink-faint); border-color: var(--ink-faint);
+    color: var(--navy-deep); cursor: not-allowed; opacity: 0.6;
+  }
+  .secondary-btn {
+    background: transparent; color: var(--ink-soft);
+    border: 1px solid var(--rule-strong);
+  }
+  .secondary-btn:hover { color: var(--gold); border-color: var(--gold); }
+  .button-row {
+    display: flex; gap: 10px; margin-top: 16px;
+  }
+
+  /* ---- Toast ---- */
+  .toast {
+    position: fixed; bottom: 24px; right: 32px;
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    color: var(--ink);
+    padding: 12px 18px;
+    border-radius: 6px;
+    font-size: 13px;
+    z-index: 100;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 380px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: rgba(80,200,120,0.4); }
+  .toast.error   { border-color: rgba(231,90,90,0.4); }
+
+  /* ---- Material spec table inside detail panel ---- */
+  .spec-rows { font-size: 12.5px; }
+  .spec-rows .row {
+    display: flex; justify-content: space-between;
+    padding: 3px 0; border-bottom: 1px dotted var(--rule);
+  }
+  .spec-rows .row:last-child { border-bottom: none; }
+  .spec-rows .label { color: var(--ink-faint); }
+  .spec-rows .val { color: var(--ink); text-align: right; }
+
+  .post-decision {
+    background: rgba(212,175,55,0.06);
+    border: 1px solid rgba(212,175,55,0.2);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-top: 8px;
+  }
+  .post-decision .heading {
+    font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 8px;
+  }
+  .post-decision a {
+    color: var(--gold); text-decoration: none; font-family: var(--font-mono); font-size: 12px;
+  }
+  .post-decision a:hover { text-decoration: underline; }
+
+  .loader {
+    display: inline-block;
+    width: 14px; height: 14px;
+    border: 2px solid var(--ink-faint);
+    border-top-color: var(--gold);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    vertical-align: -2px;
+    margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="brand-lockup">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" aria-label="Bedrock cornerstone">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="sub">trustEd · operations platform</div>
+    </div>
+  </div>
+  <div class="module-name">Builder <em>ARC Review</em></div>
+  <div class="util">
+    <a href="/">← Platform</a>
+    <a href="#" id="refreshBtn">Refresh</a>
+  </div>
+</header>
+
+<div class="shell" id="shell">
+  <main class="queue">
+    <div class="filter-bar">
+      <label>Community
+        <select id="filterCommunity">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label>Status
+        <select id="filterStatus">
+          <option value="">All</option>
+          <option value="received">Received</option>
+          <option value="under_review">Under review</option>
+          <option value="info_requested">Info requested</option>
+          <option value="approved">Approved</option>
+          <option value="approved_with_conditions">Approved w/ conditions</option>
+          <option value="denied">Denied</option>
+          <option value="withdrawn">Withdrawn</option>
+        </select>
+      </label>
+      <label>&nbsp;
+        <span class="pill" id="filterFastTrack" data-active="0">⚡ Fast-track only</span>
+      </label>
+      <label>Search
+        <input type="search" id="filterSearch" placeholder="reference, address, submitter…">
+      </label>
+      <div class="count" id="resultCount">—</div>
+    </div>
+
+    <div id="queueBody">
+      <div class="empty-state">
+        <div class="loader"></div> Loading queue…
+      </div>
+    </div>
+  </main>
+
+  <aside class="detail" id="detailPanel" style="display:none;">
+    <!-- detail rendered by JS -->
+  </aside>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// ----------------------------------------------------------------------------
+// State
+// ----------------------------------------------------------------------------
+const state = {
+  items: [],
+  total: 0,
+  selectedId: null,
+  selectedAction: null,
+  detail: null,
+  loading: false,
+};
+
+const filters = {
+  community_id: '',
+  status: '',
+  fast_track: false,
+  q: '',
+};
+
+// ----------------------------------------------------------------------------
+// Utils
+// ----------------------------------------------------------------------------
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtAge(days) {
+  if (days == null) return '—';
+  const d = Number(days);
+  if (d < 1) return `${Math.round(d * 24)}h`;
+  if (d < 14) return `${Math.round(d)}d`;
+  return `${Math.round(d / 7)}w`;
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function toast(msg, kind) {
+  const t = $('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  setTimeout(() => { t.className = 'toast'; }, 4200);
+}
+async function api(method, path, body, isMultipart) {
+  const opts = { method, headers: {} };
+  if (body && !isMultipart) {
+    opts.headers['Content-Type'] = 'application/json';
+    opts.body = JSON.stringify(body);
+  } else if (body && isMultipart) {
+    opts.body = body;  // FormData; let browser set Content-Type with boundary
+  }
+  const r = await fetch(path, opts);
+  const ct = r.headers.get('content-type') || '';
+  const data = ct.includes('application/json') ? await r.json() : await r.text();
+  if (!r.ok) throw new Error(data.error || data.message || `HTTP ${r.status}`);
+  return data;
+}
+
+// ----------------------------------------------------------------------------
+// Load communities for the filter dropdown
+// ----------------------------------------------------------------------------
+async function loadCommunities() {
+  try {
+    const r = await fetch('/api/communities');
+    if (!r.ok) return;
+    const data = await r.json();
+    const list = Array.isArray(data) ? data : (data.communities || data.items || []);
+    const sel = $('filterCommunity');
+    list
+      .filter((c) => c.builder_arc_active !== false)  // hide communities that turned the module off
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+      .forEach((c) => {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+      });
+  } catch (_) {
+    // non-fatal — filter still works without the dropdown
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Queue
+// ----------------------------------------------------------------------------
+function rowHtml(item) {
+  const fastTrack = item.fast_track
+    ? `<span class="badge fast-track">⚡ Fast-track</span>` : '';
+  return `
+    <tr data-id="${item.application_id}" class="${state.selectedId === item.application_id ? 'active' : ''}">
+      <td class="num">${escapeHtml(item.reference_number || '—')}</td>
+      <td>
+        <strong>${escapeHtml(item.street_address || '—')}</strong>
+        <span class="sub">Lot ${escapeHtml(item.lot_number || '—')} · ${escapeHtml(item.community_name || '')}</span>
+      </td>
+      <td>
+        ${escapeHtml(item.builder_company_name || '—')}
+        <span class="sub">${escapeHtml(item.submitter_name || item.submitter_email || '')}</span>
+      </td>
+      <td>
+        Plan ${escapeHtml(item.plan_number || '—')} / ${escapeHtml(item.elevation || '—')}
+        ${item.master_plan_status === 'approved' ? '<span class="sub" style="color: var(--gold);">Master-matched</span>' : ''}
+      </td>
+      <td>${fmtAge(item.age_days)}</td>
+      <td>
+        <span class="badge ${item.status}">${escapeHtml((item.status || '').replace(/_/g, ' '))}</span>
+        ${fastTrack}
+      </td>
+    </tr>
+  `;
+}
+
+async function loadQueue() {
+  if (state.loading) return;
+  state.loading = true;
+  const body = $('queueBody');
+  body.innerHTML = `<div class="empty-state"><div class="loader"></div> Loading queue…</div>`;
+
+  const params = new URLSearchParams();
+  if (filters.community_id) params.set('community_id', filters.community_id);
+  if (filters.status) params.set('status', filters.status);
+  if (filters.fast_track) params.set('fast_track', '1');
+  if (filters.q) params.set('q', filters.q);
+  params.set('limit', '100');
+
+  try {
+    const data = await api('GET', `/api/builder-applications?${params.toString()}`);
+    state.items = data.items || [];
+    state.total = data.total || 0;
+    $('resultCount').textContent = `${state.total} submission${state.total === 1 ? '' : 's'}`;
+
+    if (!state.items.length) {
+      body.innerHTML = `
+        <div class="empty-state">
+          <h2>No submissions yet</h2>
+          <p>Builder submissions land here as DRB and other builders file new construction.</p>
+          <p>Test manually via Supabase Table Editor: insert a row into <code>builder_applications</code>, or POST to <code>/api/builder-applications</code>.</p>
+        </div>`;
+      return;
+    }
+
+    body.innerHTML = `
+      <table class="queue">
+        <thead><tr>
+          <th>Reference</th>
+          <th>Property</th>
+          <th>Builder · Submitter</th>
+          <th>Plan / Elevation</th>
+          <th>Age</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody>${state.items.map(rowHtml).join('')}</tbody>
+      </table>`;
+
+    body.querySelectorAll('tbody tr').forEach((tr) => {
+      tr.addEventListener('click', () => loadDetail(tr.dataset.id));
+    });
+  } catch (err) {
+    body.innerHTML = `<div class="empty-state"><h2>Couldn't load queue</h2><p>${escapeHtml(err.message)}</p></div>`;
+  } finally {
+    state.loading = false;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Detail panel
+// ----------------------------------------------------------------------------
+async function loadDetail(id) {
+  state.selectedId = id;
+  state.selectedAction = null;
+  // mark active row
+  document.querySelectorAll('table.queue tbody tr').forEach((tr) => {
+    tr.classList.toggle('active', tr.dataset.id === id);
+  });
+  $('shell').classList.add('detail-open');
+  const panel = $('detailPanel');
+  panel.style.display = 'block';
+  panel.innerHTML = `<div style="padding: 80px 0; text-align: center; color: var(--ink-faint);"><div class="loader"></div> Loading…</div>`;
+
+  try {
+    const data = await api('GET', `/api/builder-applications/${id}`);
+    state.detail = data;
+    renderDetail(data);
+  } catch (err) {
+    panel.innerHTML = `<div class="empty-state">Couldn't load: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function closeDetail() {
+  state.selectedId = null;
+  state.detail = null;
+  $('shell').classList.remove('detail-open');
+  $('detailPanel').style.display = 'none';
+  document.querySelectorAll('table.queue tbody tr').forEach((tr) => tr.classList.remove('active'));
+}
+
+function renderMaterialsRows(materials) {
+  const m = materials || {};
+  const rows = [];
+  const push = (label, val) => { if (val !== null && val !== undefined && val !== '') rows.push([label, val]); };
+
+  push('Brick', m.brick_color);
+  push('Stone', m.stone_color || m.stone_type);
+  if (m.masonry_percentage_front != null || m.masonry_percentage_sides != null || m.masonry_percentage_rear != null) {
+    const parts = [];
+    if (m.masonry_percentage_front != null) parts.push(`${m.masonry_percentage_front}% F`);
+    if (m.masonry_percentage_sides != null) parts.push(`${m.masonry_percentage_sides}% S`);
+    if (m.masonry_percentage_rear  != null) parts.push(`${m.masonry_percentage_rear}% R`);
+    push('Masonry', parts.join(' / '));
+  }
+  if (m.siding_material || m.siding_color) {
+    push('Siding', [m.siding_material, m.siding_color && `in ${m.siding_color}`].filter(Boolean).join(' '));
+  }
+  push('Trim', m.trim_color);
+  if (m.shutters_present && m.shutter_color) push('Shutters', m.shutter_color);
+  push('Front door', m.front_door_color);
+  push('Garage', m.garage_door_color);
+  push('Roof', m.roof_color);
+  if (m.fence_present) push('Fence', [m.fence_material, m.fence_height_feet && `${m.fence_height_feet}ft`].filter(Boolean).join(', '));
+
+  if (!rows.length) {
+    return `<div style="color: var(--ink-faint); font-size: 12.5px;">No materials captured on submission.</div>`;
+  }
+  return `<div class="spec-rows">${rows.map(([l, v]) => `
+    <div class="row"><span class="label">${escapeHtml(l)}</span><span class="val">${escapeHtml(v)}</span></div>
+  `).join('')}</div>`;
+}
+
+function renderDetail(data) {
+  const a = data.application;
+  const atts = data.attachments || [];
+  const resps = data.responses || [];
+  const latestResp = resps[0] || null;
+
+  const builder = a.builder_company || {};
+  const community = a.community || {};
+
+  const postDecisionHtml = latestResp ? `
+    <section>
+      <h3>Decision</h3>
+      <dl>
+        <dt>Status</dt>           <dd><span class="badge ${a.status}">${escapeHtml((a.status || '').replace(/_/g, ' '))}</span></dd>
+        <dt>Decided by</dt>       <dd>${escapeHtml(a.decided_by || latestResp.decided_by || '—')}</dd>
+        <dt>Decided</dt>          <dd>${fmtDate(latestResp.decided_at)}</dd>
+        ${latestResp.email_sent_at ? `<dt>Emailed</dt><dd>${fmtDate(latestResp.email_sent_at)}</dd>` : ''}
+      </dl>
+      ${latestResp.letter_signed_url ? `
+        <div class="post-decision">
+          <div class="heading">Letter PDF</div>
+          <a href="${escapeHtml(latestResp.letter_signed_url)}" target="_blank" rel="noopener">📄 Preview ${escapeHtml(a.reference_number)}.pdf →</a>
+        </div>` : ''}
+      ${!latestResp.email_sent_at && latestResp.letter_pdf_path ? `
+        <div class="button-row">
+          <button class="primary-btn" id="sendBtn">Send to builder</button>
+        </div>` : ''}
+    </section>
+  ` : `
+    <section>
+      <h3>Finalize</h3>
+      <div class="finalize-form">
+        <div class="actions">
+          <button data-action="approve"><span class="label">✓ Approve</span><span class="desc">Clean approval, no conditions</span></button>
+          <button data-action="approve_with_conditions"><span class="label">⚠ Conditional</span><span class="desc">Approved subject to listed conditions</span></button>
+          <button data-action="deny"><span class="label">✗ Deny</span><span class="desc">Items requiring revision</span></button>
+          <button data-action="request_more_info"><span class="label">? Info</span><span class="desc">Request additional information</span></button>
+        </div>
+        <div id="actionFields" style="display: none;"></div>
+        <div class="button-row">
+          <button class="primary-btn" id="finalizeBtn" disabled>Render letter</button>
+          <button class="secondary-btn" id="closeBtn">Cancel</button>
+        </div>
+      </div>
+    </section>
+  `;
+
+  const panel = $('detailPanel');
+  panel.innerHTML = `
+    <button class="close-detail" onclick="window.__closeDetail()">×</button>
+    <h2>${escapeHtml(a.street_address || '—')}</h2>
+    <div class="ref">${escapeHtml(a.reference_number || '—')} ${a.fast_track ? ' · ⚡ Fast-track' : ''}</div>
+
+    <section>
+      <h3>Submission</h3>
+      <dl>
+        <dt>Community</dt>        <dd>${escapeHtml(community.name || '—')}</dd>
+        <dt>Builder</dt>          <dd>${escapeHtml(builder.company_name || '—')}</dd>
+        <dt>Submitter</dt>        <dd>${escapeHtml(a.submitter_name || '—')}<br>
+                                       <span style="color: var(--ink-faint); font-size: 12px;">${escapeHtml(a.submitter_email || '')}</span></dd>
+        <dt>Lot</dt>              <dd>${escapeHtml([a.lot_number && `Lot ${a.lot_number}`, a.block_number && `Block ${a.block_number}`, a.section_number && `Section ${a.section_number}`].filter(Boolean).join(', ') || '—')}</dd>
+        <dt>Plan</dt>             <dd>${escapeHtml(a.plan_number || '—')} ${a.plan_name ? '· ' + escapeHtml(a.plan_name) : ''}, Elevation ${escapeHtml(a.elevation || '—')}${a.elevation_orientation && a.elevation_orientation !== 'standard' ? ` (${escapeHtml(a.elevation_orientation)}-hand)` : ''}</dd>
+        ${a.square_footage ? `<dt>Size</dt><dd>${a.square_footage.toLocaleString()} sq ft${a.stories ? ` · ${a.stories} stories` : ''}</dd>` : ''}
+        <dt>Submitted</dt>        <dd>${fmtDate(a.submitted_at)}</dd>
+      </dl>
+    </section>
+
+    <section>
+      <h3>Materials</h3>
+      ${renderMaterialsRows(a.application_data)}
+    </section>
+
+    <section>
+      <h3>Attachments (${atts.length})</h3>
+      ${atts.length ? `
+        <ul class="att-list">${atts.map((f) => `
+          <li>
+            <span><span class="kind">${escapeHtml(f.kind.replace(/_/g, ' '))}</span> · ${escapeHtml(f.original_filename || '')}</span>
+            <span style="color: var(--ink-faint); font-size: 11px;">${f.size_bytes ? Math.round(f.size_bytes / 1024) + 'kb' : ''}</span>
+          </li>`).join('')}
+        </ul>` : `<div style="color: var(--ink-faint); font-size: 12.5px;">No attachments uploaded.</div>`}
+    </section>
+
+    ${postDecisionHtml}
+  `;
+
+  // wire action buttons
+  if (!latestResp) {
+    panel.querySelectorAll('.actions button').forEach((btn) => {
+      btn.addEventListener('click', () => selectAction(btn.dataset.action, panel));
+    });
+    $('finalizeBtn').addEventListener('click', () => doFinalize(a.id));
+    $('closeBtn').addEventListener('click', closeDetail);
+  } else if (!latestResp.email_sent_at && latestResp.letter_pdf_path) {
+    const sb = $('sendBtn');
+    if (sb) sb.addEventListener('click', () => doSend(a.id));
+  }
+}
+window.__closeDetail = closeDetail;  // expose for inline onclick
+
+function selectAction(action, panel) {
+  state.selectedAction = action;
+  panel.querySelectorAll('.actions button').forEach((b) => {
+    b.classList.toggle('selected', b.dataset.action === action);
+  });
+
+  const fields = $('actionFields');
+  const requiresConditions = action === 'approve_with_conditions';
+  const requiresDenial     = action === 'deny';
+  const requiresInfo       = action === 'request_more_info';
+
+  fields.innerHTML = `
+    <label for="decidedBy">Decided by</label>
+    <input type="text" id="decidedBy" placeholder="Your name (appears on letter signature)">
+    ${requiresConditions ? `
+      <label for="conditions">Conditions (one per line)</label>
+      <textarea id="conditions" placeholder="e.g.&#10;Front door color to be approved separately&#10;Fence material limited to cedar per Design Guidelines §4.2"></textarea>
+    ` : ''}
+    ${requiresDenial ? `
+      <label for="denialReasons">Items requiring revision (one per line)</label>
+      <textarea id="denialReasons" placeholder="e.g.&#10;Masonry coverage on side elevations does not meet 50% minimum per Design Guidelines §3.1&#10;Proposed garage door style is not on the approved palette"></textarea>
+    ` : ''}
+    <label for="messageToBuilder">Message to builder (optional — appears in letter body)</label>
+    <textarea id="messageToBuilder" placeholder="${requiresInfo ? 'What additional information is needed?' : 'Optional context, e.g. a note about the plan match or a courtesy reminder.'}"></textarea>
+  `;
+  fields.style.display = 'block';
+
+  const finBtn = $('finalizeBtn');
+  finBtn.disabled = false;
+  finBtn.textContent = action === 'deny' ? 'Render denial letter'
+                     : action === 'request_more_info' ? 'Record info request'
+                     : action === 'approve_with_conditions' ? 'Render conditional approval'
+                     : 'Render approval letter';
+}
+
+async function doFinalize(applicationId) {
+  const action = state.selectedAction;
+  if (!action) return;
+
+  const decidedBy = ($('decidedBy') || {}).value || '';
+  if (!decidedBy.trim()) {
+    toast('Decided-by name is required.', 'error');
+    return;
+  }
+  const conditionsRaw     = ($('conditions') || {}).value || '';
+  const denialReasonsRaw  = ($('denialReasons') || {}).value || '';
+  const messageToBuilder  = ($('messageToBuilder') || {}).value || '';
+
+  if (action === 'approve_with_conditions' && !conditionsRaw.trim()) {
+    toast('Conditions are required for a conditional approval.', 'error');
+    return;
+  }
+  if (action === 'deny' && !denialReasonsRaw.trim()) {
+    toast('At least one revision item is required for a denial.', 'error');
+    return;
+  }
+
+  const conditions     = conditionsRaw.split('\n').map((s) => s.trim()).filter(Boolean);
+  const denial_reasons = denialReasonsRaw.split('\n').map((s) => s.trim()).filter(Boolean);
+
+  const btn = $('finalizeBtn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="loader"></span> Rendering…`;
+
+  try {
+    const res = await api('POST', `/api/builder-applications/${applicationId}/finalize`, {
+      action,
+      conditions: conditions.length ? conditions : undefined,
+      denial_reasons: denial_reasons.length ? denial_reasons : undefined,
+      message_to_builder: messageToBuilder.trim() || undefined,
+      decided_by: decidedBy.trim(),
+    });
+    toast(`Decision recorded · ${res.application.status.replace(/_/g, ' ')}.`, 'success');
+    await loadQueue();
+    await loadDetail(applicationId);
+  } catch (err) {
+    toast(`Finalize failed: ${err.message}`, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Render letter';
+  }
+}
+
+async function doSend(applicationId) {
+  const btn = $('sendBtn');
+  btn.disabled = true;
+  btn.innerHTML = `<span class="loader"></span> Sending…`;
+  try {
+    const res = await api('POST', `/api/builder-applications/${applicationId}/send`, {});
+    toast(`Sent to ${res.sent_to}.`, 'success');
+    await loadDetail(applicationId);
+  } catch (err) {
+    const msg = err.message.includes('not_configured')
+      ? 'Email skipped: set RESEND_API_KEY + RESEND_FROM_EMAIL in Render env.'
+      : `Send failed: ${err.message}`;
+    toast(msg, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Send to builder';
+  }
+}
+
+// ----------------------------------------------------------------------------
+// Filter wiring
+// ----------------------------------------------------------------------------
+function debounce(fn, ms) {
+  let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
+}
+
+$('filterCommunity').addEventListener('change', (e) => { filters.community_id = e.target.value; loadQueue(); });
+$('filterStatus').addEventListener('change',    (e) => { filters.status = e.target.value; loadQueue(); });
+$('filterSearch').addEventListener('input', debounce((e) => { filters.q = e.target.value; loadQueue(); }, 250));
+$('filterFastTrack').addEventListener('click', (e) => {
+  const on = e.target.dataset.active === '1';
+  e.target.dataset.active = on ? '0' : '1';
+  e.target.classList.toggle('active', !on);
+  filters.fast_track = !on;
+  loadQueue();
+});
+$('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); loadQueue(); });
+
+// ----------------------------------------------------------------------------
+// Boot
+// ----------------------------------------------------------------------------
+(async function init() {
+  await loadCommunities();
+  await loadQueue();
+})();
+</script>
+</body>
+</html>

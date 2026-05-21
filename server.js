@@ -673,6 +673,11 @@ app.use('/api/portal-admin', portalAdminRouter);
 const { router: applicationsRouter } = require('./api/applications');
 app.use('/api/applications', applicationsRouter);
 
+// Builder ARC — new-construction submissions from builders (DRB at August Meadows, etc.)
+// Separate intake (portal + email ingest), shared review backend, isolated precedent storage.
+const { router: builderApplicationsRouter } = require('./api/builder_applications');
+app.use('/api/builder-applications', builderApplicationsRouter);
+
 // Public homeowner-facing pages (no auth)
 app.get('/apply/status/:reference', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'apply_status.html'));

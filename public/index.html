@@ -352,6 +352,11 @@
   <!-- Consolidated ACC tab — Review / Requests / History as sub-views, switched
        via the mode picker inside the active view. -->
   <div class="tab" onclick="setAccMode('review')" data-acc-tab="1">🏗️ ACC</div>
+  <!-- Builder ARC — new-construction submissions from developer-community
+       builders (DRB at August Meadows, etc). Separate module from resident ACC
+       because builder volume is structurally repetitive and rewards templated
+       review. Sits in its own standalone page (/builder-arc-review.html). -->
+  <div class="tab" onclick="location.href='/builder-arc-review.html'">🧱 Builder ARC</div>
   <!-- Inspect — mobile-first capture flow for community walkthroughs.
        Positioned between ACC and Vendor: ACC and Inspect both feed the
        enforcement workflow (covenant approvals + walkthrough findings),
