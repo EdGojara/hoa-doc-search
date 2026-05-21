@@ -1,0 +1,791 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Map · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --shadow-hover: 0 4px 12px rgba(26, 48, 80, 0.1), 0 12px 32px rgba(26, 48, 80, 0.08);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0; height: 100vh;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ---- Top bar ---- */
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: relative; z-index: 800;
+    height: 64px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; flex-shrink: 0; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .label { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .top-right { display: flex; align-items: center; gap: 14px; }
+  .back-link {
+    font-size: 13px; color: var(--navy);
+    text-decoration: none; padding: 8px 14px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+
+  /* ---- Layout ---- */
+  .shell {
+    display: grid;
+    grid-template-columns: 1fr 0;
+    height: calc(100vh - 64px);
+    overflow: hidden;
+    transition: grid-template-columns 0.2s ease;
+  }
+  .shell.detail-open { grid-template-columns: 1fr 380px; }
+  @media (max-width: 720px) {
+    .shell.detail-open { grid-template-columns: 1fr; }
+    .shell.detail-open #mapEl { display: none; }
+  }
+
+  #mapEl { width: 100%; height: 100%; }
+  .leaflet-container { background: #e8edf0; font-family: var(--font-sans); }
+
+  /* ---- Side panel ---- */
+  aside.detail {
+    background: white;
+    border-left: 1px solid var(--rule);
+    overflow-y: auto;
+    padding: 0;
+    box-shadow: -8px 0 24px rgba(26, 48, 80, 0.04);
+  }
+  .detail-hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    color: var(--cream);
+    padding: 24px 26px 22px;
+    position: relative;
+  }
+  .detail-hero .close-x {
+    position: absolute; top: 14px; right: 16px;
+    background: rgba(255,255,255,0.15); border: none;
+    width: 30px; height: 30px; border-radius: 50%;
+    color: white; font-size: 18px; cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .detail-hero .close-x:hover { background: rgba(255,255,255,0.28); }
+  .detail-hero .type-chip {
+    display: inline-block;
+    font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    color: var(--gold-bright);
+    background: rgba(212,175,55,0.15);
+    padding: 3px 9px; border-radius: 999px;
+    margin-bottom: 10px;
+  }
+  .detail-hero h2 {
+    font-family: var(--font-serif); font-size: 24px; font-weight: 500;
+    margin: 0 0 6px; letter-spacing: -0.005em;
+  }
+  .detail-hero .addr {
+    font-size: 13px; color: rgba(255,255,255,0.78);
+    margin-bottom: 14px;
+  }
+  .detail-hero .status-pill {
+    display: inline-flex; align-items: center; gap: 7px;
+    background: rgba(255,255,255,0.1);
+    padding: 6px 12px; border-radius: 999px;
+    font-size: 12.5px;
+  }
+  .detail-hero .status-pill .dot {
+    width: 8px; height: 8px; border-radius: 50%;
+  }
+  .status-pill.open .dot { background: #6BD194; box-shadow: 0 0 0 3px rgba(107, 209, 148, 0.2); }
+  .status-pill.closed .dot { background: #E48A8A; }
+  .status-pill.season .dot { background: #E8C96E; }
+
+  .detail-body { padding: 22px 26px 40px; }
+  .detail-body section {
+    margin-bottom: 22px; padding-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .detail-body section:last-of-type { border-bottom: none; margin-bottom: 0; }
+  .detail-body h3 {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin: 0 0 10px; font-weight: 500;
+  }
+  .detail-body p { font-size: 14px; color: var(--ink-soft); margin: 0 0 10px; }
+  .detail-body .hours-list { list-style: none; padding: 0; margin: 0; font-size: 13.5px; }
+  .detail-body .hours-list li {
+    display: flex; justify-content: space-between;
+    padding: 5px 0;
+    border-bottom: 1px dashed var(--rule);
+  }
+  .detail-body .hours-list li:last-child { border-bottom: none; }
+  .detail-body .hours-list .day { color: var(--ink-faint); }
+  .detail-body .hours-list .hrs { color: var(--ink); font-family: var(--font-mono); font-size: 12.5px; }
+  .detail-body .hours-list .today {
+    background: var(--gold-faint); padding: 2px 8px; border-radius: 5px;
+    margin: 0 -8px;
+  }
+  .detail-body .contact-list { margin: 0; padding: 0; list-style: none; }
+  .detail-body .contact-list li {
+    padding: 6px 0; font-size: 13.5px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .detail-body .contact-list .ic { color: var(--gold); width: 18px; text-align: center; }
+  .detail-body .contact-list a { color: var(--navy); text-decoration: none; }
+  .detail-body .contact-list a:hover { color: var(--gold); }
+
+  .cta-row {
+    display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px;
+  }
+  .btn {
+    padding: 11px 18px; border-radius: 7px;
+    font-family: var(--font-sans); font-size: 13.5px; font-weight: 500;
+    text-decoration: none; cursor: pointer;
+    border: 1px solid transparent;
+    transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .btn-primary { background: var(--navy); color: white; }
+  .btn-primary:hover { background: #2A4870; }
+  .btn-secondary {
+    background: transparent; color: var(--navy); border-color: var(--rule);
+  }
+  .btn-secondary:hover { border-color: var(--gold); color: var(--gold); }
+
+  /* ---- Map markers ---- */
+  .amenity-marker {
+    width: 38px; height: 46px;
+    transform: translate(-19px, -46px);
+    cursor: pointer;
+  }
+  .amenity-marker .pin {
+    width: 38px; height: 38px;
+    background: var(--navy);
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.25);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 20px;
+    position: relative; z-index: 2;
+  }
+  .amenity-marker.rentable .pin { background: var(--gold); color: var(--navy); }
+  .amenity-marker::after {
+    content: '';
+    position: absolute; bottom: 0; left: 50%;
+    width: 0; height: 0;
+    margin-left: -7px;
+    border-left: 7px solid transparent;
+    border-right: 7px solid transparent;
+    border-top: 10px solid var(--navy);
+    z-index: 1;
+  }
+  .amenity-marker.rentable::after { border-top-color: var(--gold); }
+  .amenity-marker:hover .pin { transform: scale(1.1); }
+
+  .home-marker {
+    width: 30px; height: 30px;
+    transform: translate(-15px, -15px);
+    background: #4A9A6A;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 14px;
+  }
+
+  /* Floating legend */
+  .map-legend {
+    position: absolute; bottom: 20px; left: 20px;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 10px 14px;
+    box-shadow: var(--shadow-soft);
+    font-size: 12px;
+    z-index: 500;
+    color: var(--ink-soft);
+  }
+  .map-legend .row { display: flex; align-items: center; gap: 8px; padding: 3px 0; }
+  .map-legend .swatch {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid white; flex-shrink: 0;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  .map-legend .swatch.amenity   { background: var(--navy); }
+  .map-legend .swatch.rentable  { background: var(--gold); }
+  .map-legend .swatch.home      { background: #4A9A6A; }
+
+  /* Floating community summary on the map */
+  .map-floater {
+    position: absolute; top: 16px; left: 16px;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 18px;
+    box-shadow: var(--shadow-soft);
+    font-size: 13px;
+    z-index: 500;
+    max-width: 280px;
+  }
+  .map-floater h2 {
+    font-family: var(--font-serif); font-size: 17px; font-weight: 500;
+    color: var(--navy); margin: 0 0 4px;
+  }
+  .map-floater .count {
+    color: var(--ink-faint); font-size: 12px;
+  }
+
+  /* States */
+  .full-loader {
+    display: flex; align-items: center; justify-content: center;
+    height: calc(100vh - 64px); flex-direction: column; gap: 14px;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-amenities {
+    background: white; padding: 60px 30px; max-width: 480px;
+    margin: 80px auto; text-align: center;
+    border: 1px solid var(--rule); border-radius: 10px;
+  }
+  .empty-amenities h2 { font-family: var(--font-serif); color: var(--navy); margin: 0 0 8px; }
+  .empty-amenities p { color: var(--ink-soft); font-size: 14px; }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Association Management</em></div>
+      <div class="label" id="topLabel">Community Map</div>
+    </div>
+  </a>
+  <div class="top-right">
+    <div id="demoBadge" class="demo-ribbon" style="display:none;">Demo</div>
+    <a class="back-link" href="/portal" id="backLink">← Portal</a>
+  </div>
+</header>
+
+<div class="shell" id="shell">
+  <div id="mapWrap" style="position: relative; height: 100%;">
+    <div id="mapEl"></div>
+    <div class="map-floater" id="mapFloater" style="display:none;">
+      <h2 id="floaterName">—</h2>
+      <div class="count" id="floaterCount">—</div>
+    </div>
+    <div class="map-legend" id="mapLegend" style="display:none;">
+      <div class="row"><div class="swatch rentable"></div> Reservable amenity</div>
+      <div class="row"><div class="swatch amenity"></div> Community amenity</div>
+      <div class="row" id="legendHome" style="display:none;"><div class="swatch home"></div> Your home</div>
+    </div>
+  </div>
+  <aside class="detail" id="detailPanel" style="display:none;"></aside>
+</div>
+
+<script>
+'use strict';
+
+let map = null;
+let amenities = [];
+let community = null;
+let isDemo = false;
+let homeMarker = null;
+let userProperty = null;
+
+const AMENITY_ICONS = {
+  clubhouse:    '🎉',
+  pool:         '🏊',
+  park:         '🌳',
+  playground:   '🛝',
+  sport_court:  '🎾',
+  fitness:      '🏋️',
+  dog_park:     '🐕',
+  walking_trail:'🚶',
+  gate:         '🚪',
+  mailroom:     '📬',
+  other:        '📍',
+};
+const AMENITY_TYPE_LABELS = {
+  clubhouse: 'Clubhouse', pool: 'Pool', park: 'Park', playground: 'Playground',
+  sport_court: 'Sport court', fitness: 'Fitness center', dog_park: 'Dog park',
+  walking_trail: 'Walking trail', gate: 'Gate', mailroom: 'Mailroom', other: 'Amenity',
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return {
+    demo: u.searchParams.get('demo') === '1',
+    community: u.searchParams.get('community') || '',
+  };
+}
+
+// =============================================================================
+// Boot
+// =============================================================================
+(async function init() {
+  const q = getQueryParams();
+  isDemo = q.demo;
+
+  let slug = q.community;
+  if (!slug && !isDemo) {
+    // Auth mode: figure out community from /api/portal/me
+    try {
+      const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+      if (r.status === 401) {
+        window.location.href = '/portal-login.html';
+        return;
+      }
+      if (r.ok) {
+        const data = await r.json();
+        slug = data?.community?.slug;
+        userProperty = data?.property || null;
+      }
+    } catch (_) { /* fall through */ }
+  }
+
+  if (!slug) {
+    slug = 'waterview';  // demo default
+    isDemo = true;
+  }
+
+  if (isDemo) {
+    $('demoBadge').style.display = '';
+    const back = `/portal?demo=1&community=${encodeURIComponent(slug)}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+    renderMap(buildDemoData(slug));
+    return;
+  }
+
+  // Real data
+  try {
+    const r = await fetch(`/api/portal/map/${encodeURIComponent(slug)}`);
+    if (!r.ok) throw new Error('Could not load map data');
+    const data = await r.json();
+    renderMap(data);
+  } catch (err) {
+    $('shell').innerHTML = `
+      <div class="empty-amenities">
+        <h2>Couldn't load the map</h2>
+        <p>${escapeHtml(err.message)}</p>
+      </div>`;
+  }
+})();
+
+// =============================================================================
+// Demo data
+// =============================================================================
+function buildDemoData(slug) {
+  // Approx coords for known Bedrock-area communities
+  const centers = {
+    'waterview':            { lat: 29.6428, lng: -95.7820, name: 'Waterview Estates' },
+    'canyon-gate':          { lat: 29.6884, lng: -95.7619, name: 'Canyon Gate at Cinco Ranch' },
+    'august-meadows':       { lat: 29.5635, lng: -95.7894, name: 'August Meadows' },
+    'still-creek-ranch':    { lat: 30.6280, lng: -96.3370, name: 'Still Creek Ranch' },
+    'lakes-of-pine-forest': { lat: 29.5970, lng: -95.5400, name: 'Lakes of Pine Forest' },
+    'quail-ridge':          { lat: 29.6580, lng: -95.6420, name: 'Quail Ridge' },
+  };
+  const c = centers[slug] || { lat: 29.6428, lng: -95.7820, name: 'Your Community' };
+  const off = (n) => n * 0.0015;
+
+  return {
+    community: { name: c.name, slug, center: { lat: c.lat, lng: c.lng } },
+    boundary: {
+      type: 'Feature',
+      geometry: {
+        type: 'Polygon',
+        coordinates: [[
+          [c.lng - off(2.5), c.lat - off(2)],
+          [c.lng + off(2.5), c.lat - off(2)],
+          [c.lng + off(2.5), c.lat + off(2)],
+          [c.lng - off(2.5), c.lat + off(2)],
+          [c.lng - off(2.5), c.lat - off(2)],
+        ]],
+      },
+      properties: { name: c.name },
+    },
+    amenities: [
+      {
+        id: 'demo-1', amenity_type: 'clubhouse',
+        name: `${c.name} Clubhouse`,
+        description: 'Reservable for private events; capacity 50.',
+        street_address: `${5100} ${c.name.split(' ')[0]} Trail`,
+        capacity: 50,
+        hours_text: 'Reservable Sun-Thu until 10pm, Fri-Sat until midnight',
+        hours_structured: weeklyHours({ mon: ['09:00','22:00'], tue: ['09:00','22:00'], wed: ['09:00','22:00'], thu: ['09:00','22:00'], fri: ['09:00','24:00'], sat: ['09:00','24:00'], sun: ['09:00','22:00'] }),
+        contact_phone: '(832) 588-2485',
+        contact_email: 'info@bedrocktx.com',
+        is_rentable: true,
+        lat: c.lat + off(0.4), lng: c.lng + off(0.6),
+        status: 'active',
+      },
+      {
+        id: 'demo-2', amenity_type: 'pool',
+        name: 'Community Pool',
+        description: 'Outdoor swimming pool. Key fob access required.',
+        hours_text: 'Daily 6am – 10pm (May–September)',
+        hours_structured: weeklyHours({ mon: ['06:00','22:00'], tue: ['06:00','22:00'], wed: ['06:00','22:00'], thu: ['06:00','22:00'], fri: ['06:00','22:00'], sat: ['06:00','22:00'], sun: ['06:00','22:00'] }),
+        contact_name: 'Sweetwater Pool Management',
+        contact_phone: '(281) 555-0142',
+        seasonal_open_month: 5, seasonal_close_month: 9,
+        is_rentable: false,
+        lat: c.lat + off(0.6), lng: c.lng + off(0.4),
+        status: 'active',
+      },
+      {
+        id: 'demo-3', amenity_type: 'playground',
+        name: 'Children\'s Playground',
+        description: 'Mulched play area with slides, swings, and climbing structure for ages 2–10.',
+        hours_text: 'Dawn to dusk',
+        hours_structured: weeklyHours({ mon: ['dawn','dusk'], tue: ['dawn','dusk'], wed: ['dawn','dusk'], thu: ['dawn','dusk'], fri: ['dawn','dusk'], sat: ['dawn','dusk'], sun: ['dawn','dusk'] }),
+        is_rentable: false,
+        lat: c.lat - off(0.5), lng: c.lng + off(0.3),
+        status: 'active',
+      },
+      {
+        id: 'demo-4', amenity_type: 'park',
+        name: 'Community Park',
+        description: 'Open green space with walking path. Maintained by the Association.',
+        hours_text: 'Dawn to dusk',
+        hours_structured: weeklyHours({ mon: ['dawn','dusk'], tue: ['dawn','dusk'], wed: ['dawn','dusk'], thu: ['dawn','dusk'], fri: ['dawn','dusk'], sat: ['dawn','dusk'], sun: ['dawn','dusk'] }),
+        is_rentable: false,
+        lat: c.lat - off(0.3), lng: c.lng - off(0.7),
+        status: 'active',
+      },
+      {
+        id: 'demo-5', amenity_type: 'sport_court',
+        name: 'Tennis & Pickleball Court',
+        description: 'Two courts with lights for evening play.',
+        hours_text: 'Daily 6am – 10pm',
+        hours_structured: weeklyHours({ mon: ['06:00','22:00'], tue: ['06:00','22:00'], wed: ['06:00','22:00'], thu: ['06:00','22:00'], fri: ['06:00','22:00'], sat: ['06:00','22:00'], sun: ['06:00','22:00'] }),
+        is_rentable: false,
+        lat: c.lat + off(0.2), lng: c.lng - off(0.9),
+        status: 'active',
+      },
+    ],
+  };
+}
+function weeklyHours(map) {
+  return Object.entries(map).map(([day, hrs]) => ({ day, open: hrs[0], close: hrs[1] }));
+}
+
+// =============================================================================
+// Map render
+// =============================================================================
+function renderMap(data) {
+  community = data.community;
+  amenities = data.amenities || [];
+
+  $('topLabel').textContent = `${community.name} · Community Map`;
+  $('floaterName').textContent = community.name;
+  const rentableCount = amenities.filter((a) => a.is_rentable).length;
+  $('floaterCount').textContent = `${amenities.length} amenities · ${rentableCount} reservable`;
+  $('mapFloater').style.display = '';
+  $('mapLegend').style.display = '';
+
+  const center = community.center || (amenities[0] && amenities[0].lat
+    ? { lat: Number(amenities[0].lat), lng: Number(amenities[0].lng) }
+    : { lat: 29.6428, lng: -95.7820 });
+
+  map = L.map('mapEl', {
+    center: [center.lat, center.lng],
+    zoom: 16,
+    zoomControl: true,
+    attributionControl: true,
+  });
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© OpenStreetMap contributors',
+  }).addTo(map);
+
+  // Boundary polygon
+  if (data.boundary && data.boundary.geometry) {
+    const bdy = L.geoJSON(data.boundary, {
+      style: {
+        color: '#1A3050', weight: 2,
+        fillColor: '#D4AF37', fillOpacity: 0.05,
+        dashArray: '6 5',
+      },
+    }).addTo(map);
+    try {
+      const b = bdy.getBounds();
+      if (b.isValid()) map.fitBounds(b, { padding: [40, 40] });
+    } catch (_) {}
+  }
+
+  // Amenity markers
+  const amenityBounds = [];
+  amenities.forEach((a) => {
+    if (a.lat == null || a.lng == null) return;
+    const lat = Number(a.lat);
+    const lng = Number(a.lng);
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="amenity-marker ${a.is_rentable ? 'rentable' : ''}">
+               <div class="pin">${AMENITY_ICONS[a.amenity_type] || AMENITY_ICONS.other}</div>
+             </div>`,
+      iconSize: [38, 46],
+      iconAnchor: [19, 46],
+    });
+    const m = L.marker([lat, lng], { icon }).addTo(map);
+    m.on('click', () => openDetail(a));
+    amenityBounds.push([lat, lng]);
+  });
+
+  // Home marker (auth'd user with property lat/lng — placeholder for now)
+  if (userProperty && userProperty.lat && userProperty.lng) {
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="home-marker" title="Your home">🏠</div>`,
+      iconSize: [30, 30],
+      iconAnchor: [15, 15],
+    });
+    homeMarker = L.marker([userProperty.lat, userProperty.lng], { icon }).addTo(map);
+    homeMarker.bindTooltip('Your home', { permanent: false });
+    $('legendHome').style.display = '';
+  }
+
+  // If we have no boundary, fit to amenity bounds
+  if (!data.boundary && amenityBounds.length) {
+    map.fitBounds(amenityBounds, { padding: [60, 60] });
+  }
+
+  // If demo + 0 amenities returned, show empty state
+  if (!amenities.length) {
+    $('mapEl').innerHTML = '';
+    $('shell').innerHTML += `
+      <div class="empty-amenities">
+        <h2>${escapeHtml(community.name)}</h2>
+        <p>No amenities mapped yet for this community. Once amenities are added, they'll appear here.</p>
+      </div>`;
+  }
+}
+
+// =============================================================================
+// Detail panel
+// =============================================================================
+function openDetail(amenity) {
+  $('shell').classList.add('detail-open');
+  const panel = $('detailPanel');
+  panel.style.display = '';
+
+  const status = computeAmenityStatus(amenity);
+  const typeLabel = AMENITY_TYPE_LABELS[amenity.amenity_type] || 'Amenity';
+
+  panel.innerHTML = `
+    <div class="detail-hero">
+      <button class="close-x" onclick="window.__closeDetail()">×</button>
+      <div class="type-chip">${escapeHtml(typeLabel)}${amenity.is_rentable ? ' · Reservable' : ''}</div>
+      <h2>${escapeHtml(amenity.name)}</h2>
+      ${amenity.street_address ? `<div class="addr">${escapeHtml(amenity.street_address)}</div>` : ''}
+      <div class="status-pill ${status.tone}">
+        <div class="dot"></div>
+        ${escapeHtml(status.label)}
+      </div>
+    </div>
+
+    <div class="detail-body">
+
+      ${amenity.description ? `
+      <section>
+        <h3>About</h3>
+        <p>${escapeHtml(amenity.description)}</p>
+      </section>` : ''}
+
+      ${amenity.hours_structured && amenity.hours_structured.length ? `
+      <section>
+        <h3>Hours</h3>
+        ${renderHoursList(amenity.hours_structured)}
+        ${amenity.hours_text ? `<p style="margin-top:10px; font-size: 12.5px; color: var(--ink-faint);">${escapeHtml(amenity.hours_text)}</p>` : ''}
+      </section>` : amenity.hours_text ? `
+      <section>
+        <h3>Hours</h3>
+        <p>${escapeHtml(amenity.hours_text)}</p>
+      </section>` : ''}
+
+      ${(amenity.contact_phone || amenity.contact_email || amenity.contact_name) ? `
+      <section>
+        <h3>Contact</h3>
+        <ul class="contact-list">
+          ${amenity.contact_name ? `<li><span class="ic">👤</span>${escapeHtml(amenity.contact_name)}</li>` : ''}
+          ${amenity.contact_phone ? `<li><span class="ic">📞</span><a href="tel:${escapeHtml(amenity.contact_phone)}">${escapeHtml(amenity.contact_phone)}</a></li>` : ''}
+          ${amenity.contact_email ? `<li><span class="ic">✉️</span><a href="mailto:${escapeHtml(amenity.contact_email)}">${escapeHtml(amenity.contact_email)}</a></li>` : ''}
+        </ul>
+      </section>` : ''}
+
+      ${amenity.capacity || amenity.rental_max_attendees ? `
+      <section>
+        <h3>Capacity</h3>
+        <p>${escapeHtml(String(amenity.rental_max_attendees || amenity.capacity))} people max</p>
+      </section>` : ''}
+
+      ${amenity.rules_url ? `
+      <section>
+        <h3>Rules &amp; guidelines</h3>
+        <a href="${escapeHtml(amenity.rules_url)}" target="_blank" rel="noopener" class="btn btn-secondary">View rules →</a>
+      </section>` : ''}
+
+      <div class="cta-row">
+        ${amenity.is_rentable && community.slug ? `
+          <a class="btn btn-primary" href="/clubhouse/${escapeHtml(community.slug)}${isDemo ? '?demo=1' : ''}">Reserve this amenity →</a>
+        ` : ''}
+        <button class="btn btn-secondary" onclick="window.__closeDetail()">Close</button>
+      </div>
+    </div>
+  `;
+}
+
+window.__closeDetail = function () {
+  $('shell').classList.remove('detail-open');
+  $('detailPanel').style.display = 'none';
+};
+
+// =============================================================================
+// Hours rendering + open/closed computation
+// =============================================================================
+const DAY_INDEX = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+const DAY_LABEL = { sun: 'Sunday', mon: 'Monday', tue: 'Tuesday', wed: 'Wednesday', thu: 'Thursday', fri: 'Friday', sat: 'Saturday' };
+
+function renderHoursList(hours) {
+  const today = new Date().getDay();  // 0 = Sunday
+  const ordered = ['sun','mon','tue','wed','thu','fri','sat'].map((day) => {
+    const entry = hours.find((h) => h.day === day);
+    return { day, label: DAY_LABEL[day], hrs: entry ? formatHourRange(entry.open, entry.close) : 'Closed', isToday: DAY_INDEX[day] === today };
+  });
+  return `<ul class="hours-list">
+    ${ordered.map((row) => `
+      <li class="${row.isToday ? 'today' : ''}">
+        <span class="day">${row.label}${row.isToday ? ' · today' : ''}</span>
+        <span class="hrs">${row.hrs}</span>
+      </li>
+    `).join('')}
+  </ul>`;
+}
+
+function formatHourRange(open, close) {
+  if (!open) return 'Closed';
+  if (open === 'dawn' && close === 'dusk') return 'Dawn – dusk';
+  const fmt = (t) => {
+    if (!t) return '';
+    if (t === 'dawn') return 'Dawn';
+    if (t === 'dusk') return 'Dusk';
+    const [h, m] = t.split(':').map(Number);
+    const ampm = h >= 12 && h < 24 ? 'PM' : 'AM';
+    const h12 = h === 0 ? 12 : (h > 12 ? h - 12 : h);
+    if (h === 24) return 'Midnight';
+    return m === 0 ? `${h12}${ampm}` : `${h12}:${String(m).padStart(2,'0')}${ampm}`;
+  };
+  return `${fmt(open)} – ${fmt(close)}`;
+}
+
+function computeAmenityStatus(amenity) {
+  // Seasonal closure check
+  if (amenity.seasonal_open_month && amenity.seasonal_close_month) {
+    const currentMonth = new Date().getMonth() + 1;
+    const open = amenity.seasonal_open_month;
+    const close = amenity.seasonal_close_month;
+    const inSeason = open <= close
+      ? (currentMonth >= open && currentMonth <= close)
+      : (currentMonth >= open || currentMonth <= close);
+    if (!inSeason) {
+      const monthName = (m) => new Date(2000, m - 1, 1).toLocaleString('default', { month: 'long' });
+      return { tone: 'season', label: `Seasonal · opens ${monthName(open)}` };
+    }
+  }
+  if (amenity.status === 'maintenance') {
+    return { tone: 'closed', label: 'Closed for maintenance' };
+  }
+  if (amenity.status === 'seasonal_closed') {
+    return { tone: 'season', label: 'Closed for the season' };
+  }
+  // Today's hours
+  if (!amenity.hours_structured || !amenity.hours_structured.length) {
+    return { tone: 'open', label: 'See hours' };
+  }
+  const now = new Date();
+  const dayKey = ['sun','mon','tue','wed','thu','fri','sat'][now.getDay()];
+  const today = amenity.hours_structured.find((h) => h.day === dayKey);
+  if (!today || !today.open) return { tone: 'closed', label: 'Closed today' };
+
+  if (today.open === 'dawn' && today.close === 'dusk') {
+    // Approximate: open 7am–7pm
+    const h = now.getHours();
+    return (h >= 6 && h < 20)
+      ? { tone: 'open', label: 'Open now · daylight hours' }
+      : { tone: 'closed', label: 'Closed · opens at dawn' };
+  }
+
+  const [openH, openM] = today.open.split(':').map(Number);
+  const [closeH, closeM] = today.close.split(':').map(Number);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+  const openMin = openH * 60 + (openM || 0);
+  let closeMin = closeH * 60 + (closeM || 0);
+  if (closeMin === 0) closeMin = 24 * 60;  // midnight = end of day
+
+  if (nowMin < openMin) {
+    return { tone: 'closed', label: `Opens at ${formatHourRange(today.open, today.close).split(' – ')[0]}` };
+  }
+  if (nowMin >= closeMin) {
+    return { tone: 'closed', label: 'Closed for the day' };
+  }
+  return { tone: 'open', label: `Open now · closes ${formatHourRange(today.open, today.close).split(' – ')[1]}` };
+}
+</script>
+</body>
+</html>

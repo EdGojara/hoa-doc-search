@@ -416,6 +416,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/consume$/,                  // POST magic-link consume + cookie set
   /^\/api\/portal\/me$/,                       // GET portal context (gated by cookie, not staff)
   /^\/api\/portal\/logout$/,                   // POST clear cookie
+  /^\/api\/portal\/map\/[^/]+$/,               // public map data (boundary + amenities)
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
   /^\/api\/payments\/create-checkout-session$/, // public form posts here before Stripe redirect
   /^\/api\/payments\/by-session\/[^/]+$/,      // success page lookup post-Stripe-redirect
@@ -736,7 +737,7 @@ app.get('/portal/balance',   (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
-app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
+app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 
 // Public builder submission form — /builders/:slug serves builder-submit.html.

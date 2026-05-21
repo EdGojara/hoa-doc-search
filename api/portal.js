@@ -384,6 +384,99 @@ router.get('/me', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/portal/map/:community-slug
+// Returns map data for the amenity map: community center + boundary +
+// rentable + non-rentable amenities. PUBLIC (no auth) so it can be embedded
+// in a community-landing page or shared via the portal map tile equally.
+//
+// Returns:
+//   {
+//     community: { name, slug, center: { lat, lng } },
+//     boundary: GeoJSON Feature OR null,
+//     amenities: [{ id, name, type, lat, lng, hours_structured, hours_text,
+//                   contact_phone, contact_email, photo_url, rentable,
+//                   street_address, description, rules_url }]
+//   }
+// ============================================================================
+router.get('/map/:slug', async (req, res) => {
+  try {
+    const { data: community, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name, slug, hoa_legal_name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('slug', req.params.slug)
+      .maybeSingle();
+    if (cErr) throw cErr;
+    if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+    // Boundary via RPC (GeoJSON)
+    let boundary = null;
+    let center = null;
+    try {
+      const { data: bData } = await supabase
+        .rpc('community_boundary_geojson', { p_community_id: community.id });
+      if (bData && bData.boundary) {
+        boundary = {
+          type: 'Feature',
+          geometry: bData.boundary,
+          properties: { name: community.name },
+        };
+        // Compute centroid from ring 0 (rough average — good enough for map centering)
+        try {
+          const coords = bData.boundary.coordinates?.[0] || [];
+          if (coords.length) {
+            const sumLng = coords.reduce((s, c) => s + c[0], 0);
+            const sumLat = coords.reduce((s, c) => s + c[1], 0);
+            center = { lat: sumLat / coords.length, lng: sumLng / coords.length };
+          }
+        } catch (_) { /* fall through */ }
+      }
+    } catch (_) { /* boundary RPC not critical */ }
+
+    // Amenities (everything visible, rentable or not — the map shows all)
+    const { data: amenities, error: aErr } = await supabase
+      .from('amenities')
+      .select(`
+        id, amenity_type, name, description, street_address, capacity,
+        hours_text, hours_structured, contact_name, contact_phone, contact_email,
+        rules_url, photo_storage_path, lat, lng,
+        is_rentable, rental_max_attendees, rental_min_lead_time_days, rental_max_lead_time_days,
+        status, seasonal_open_month, seasonal_close_month
+      `)
+      .eq('community_id', community.id)
+      .in('status', ['active', 'seasonal_closed', 'maintenance'])
+      .order('display_order');
+    if (aErr) throw aErr;
+
+    // If no boundary-derived center, use average of amenity coords; if neither, null
+    if (!center && amenities && amenities.length) {
+      const withCoords = amenities.filter((a) => a.lat != null && a.lng != null);
+      if (withCoords.length) {
+        center = {
+          lat: withCoords.reduce((s, a) => s + Number(a.lat), 0) / withCoords.length,
+          lng: withCoords.reduce((s, a) => s + Number(a.lng), 0) / withCoords.length,
+        };
+      }
+    }
+
+    res.json({
+      community: {
+        id: community.id,
+        name: community.name,
+        slug: community.slug,
+        hoa_legal_name: community.hoa_legal_name || community.name,
+        center,
+      },
+      boundary,
+      amenities: amenities || [],
+    });
+  } catch (err) {
+    console.error('[portal] map lookup failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/portal/logout
 // ============================================================================
 router.post('/logout', async (req, res) => {

@@ -605,11 +605,11 @@ function defaultDemoModuleConfig(slug) {
     arc:              { status: 'live' },
     compliance:       { status: 'coming_soon' },
     key_fob:          { status: 'live' },
-    clubhouse:        { status: slug === 'waterview' || slug === 'canyon-gate' ? 'live' : 'coming_soon' },
+    clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow
     payments:         { status: 'coming_soon' },
     documents:        { status: 'coming_soon' },
     meetings:         { status: 'coming_soon' },
-    map:              { status: 'coming_soon' },
+    map:              { status: 'live' },  // demo mode: map renders mock amenities
   };
 }
 
@@ -761,7 +761,8 @@ function renderTiles(ctx) {
     // amenity exists yet.
     if (link && ctx.demo && (link.startsWith('/clubhouse/') || link.startsWith('/portal/map'))) {
       const sep = link.includes('?') ? '&' : '?';
-      link += `${sep}demo=1`;
+      // The map needs community= explicitly since it doesn't parse the path
+      link += `${sep}demo=1${link.startsWith('/portal/map') ? `&community=${encodeURIComponent(ctx.community.slug)}` : ''}`;
     }
 
     const tile = document.createElement(isLive ? 'a' : 'div');
