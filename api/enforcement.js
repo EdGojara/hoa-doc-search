@@ -484,11 +484,14 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       }
     }
 
-    // Force-regenerate path: delete the prior interaction so the audit trail
-    // reflects only the freshly-generated letter. Stale storage object stays
-    // (cheap, useful if anyone needs to compare versions); the interaction
-    // pointer is what matters for the Drafts queue + Mail queue lookups.
+    // Force-regenerate path: delete the prior interaction AND its rendered
+    // PDF in storage so a year of testing doesn't accumulate GB of orphan
+    // draft PDFs. The freshly-generated letter writes its own storage object
+    // below.
     if (forceRegenerate && priorLetter) {
+      if (priorLetter.content && /\.pdf$/i.test(String(priorLetter.content))) {
+        try { await supabase.storage.from('violation-letters').remove([priorLetter.content]); } catch (_) {}
+      }
       try {
         await supabase.from('interactions').delete().eq('id', priorLetter.id);
       } catch (e) {
@@ -1097,9 +1100,10 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
 
 // POST /api/enforcement/drafts/approve
 // Body: { interaction_ids: [uuid, ...] }
-// Flips status from 'draft' to 'approved' + sets sent_at to NOW. From this
-// point forward the interaction represents an actual sent letter. Mail Queue
-// picks them up via status='approved' AND printed_at IS NULL.
+// Flips status from 'draft' to 'approved'. The letter is now ready for the
+// Mail Queue to pick up (filter: status='approved' AND printed_at IS NULL).
+// sent_at stays NULL until lock-and-batch actually postmarks the letter —
+// before that, "sent" would be a lie in property-timeline queries.
 // ---------------------------------------------------------------------------
 router.post('/drafts/approve', express.json(), async (req, res) => {
   try {
@@ -1107,10 +1111,9 @@ router.post('/drafts/approve', express.json(), async (req, res) => {
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'interaction_ids (array) required' });
     }
-    const now = new Date().toISOString();
     const { error: upErr, count } = await supabase
       .from('interactions')
-      .update({ status: 'approved', sent_at: now }, { count: 'exact' })
+      .update({ status: 'approved' }, { count: 'exact' })
       .in('id', ids)
       .eq('status', 'draft');
     if (upErr) return res.status(500).json({ error: upErr.message });
@@ -1134,10 +1137,18 @@ router.post('/drafts/reject', express.json(), async (req, res) => {
     if (!interactionId) return res.status(400).json({ error: 'interaction_id required' });
     const { data: inter } = await supabase
       .from('interactions')
-      .select('id, violation_id, observation_id')
+      .select('id, violation_id, observation_id, content')
       .eq('id', interactionId)
       .maybeSingle();
     if (!inter) return res.status(404).json({ error: 'draft not found' });
+
+    // Best-effort: delete the rendered PDF from storage. Rejected drafts
+    // have no audit value (the violation gets voided, the observation
+    // marked rejected — nothing points at the PDF anymore). Without this,
+    // every rejection during testing leaves a stale PDF behind.
+    if (inter.content && /\.pdf$/i.test(String(inter.content))) {
+      try { await supabase.storage.from('violation-letters').remove([inter.content]); } catch (_) {}
+    }
 
     // Void the violation
     if (inter.violation_id) {
@@ -1746,7 +1757,7 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
             to_address:     pRow.owner_mailing_address || pRow.street_address || '',
             status:         'sent',
             vendor:         'usps',
-            vendor_message_id: opts && opts.certified_tracking_number || null,
+            vendor_message_id: null, // certified tracking number is stamped post-mailing via a separate workflow
             sent_at:        nowIso,
             notes:          'Postmarked ' + postmarkIso,
           });

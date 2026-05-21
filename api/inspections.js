@@ -719,15 +719,35 @@ router.delete('/inspections/:id', async (req, res) => {
       }
     }
 
-    // 1) Delete draft interactions tied to this inspection or its observations.
-    // Sent interactions (letters, emails) survive — their inspection_id/observation_id
-    // gets nulled by the ON DELETE SET NULL cascade in step 4.
+    // 1) Delete draft AND approved-but-not-printed interactions tied to this
+    // inspection or its observations. Without this, an approved letter from
+    // a discarded inspection stays stranded in Mail Queue with no
+    // underlying inspection / observation / photo to support it (Ed found
+    // 2 such orphans during the 2026-05-20 pipeline audit).
+    //
+    // Truly-mailed interactions (printed_at NOT NULL) are audit-grade and
+    // survive — their inspection_id/observation_id gets nulled by
+    // ON DELETE SET NULL in step 4.
     try {
+      const interactionFilter = `inspection_id.eq.${id}` + (obsIds.length ? `,observation_id.in.(${obsIds.join(',')})` : '');
+      // Pull stale interactions so we can also delete their storage PDFs
+      const { data: staleInter } = await supabase
+        .from('interactions')
+        .select('id, content, status, printed_at')
+        .or(interactionFilter)
+        .in('status', ['draft', 'approved']);
+      const stalePdfPaths = (staleInter || [])
+        .filter((i) => !i.printed_at && i.content && /\.pdf$/i.test(String(i.content)))
+        .map((i) => i.content);
+      if (stalePdfPaths.length > 0) {
+        try { await supabase.storage.from('violation-letters').remove(stalePdfPaths); } catch (_) {}
+      }
       await supabase
         .from('interactions')
         .delete()
-        .or(`inspection_id.eq.${id}` + (obsIds.length ? `,observation_id.in.(${obsIds.join(',')})` : ''))
-        .eq('status', 'draft');
+        .or(interactionFilter)
+        .in('status', ['draft', 'approved'])
+        .is('printed_at', null);
     } catch (_) {}
 
     // 2) Delete property_observations
@@ -1406,12 +1426,14 @@ router.get('/inspections/:id/observations', async (req, res) => {
 
     // Also pull any drafted-letter interactions tied to this inspection so the UI
     // can show "✓ Draft letter created" per photo even before the draft queue
-    // surfaces them.
+    // surfaces them. Exclude rejected/voided rows — without this the photo
+    // tile keeps showing "✓ Draft ready" after a draft is rejected (stale UI).
     const { data: interactions } = await supabase
       .from('interactions')
       .select('id, observation_id, status, type')
       .eq('inspection_id', inspectionId)
-      .in('type', ['letter_courtesy_1','letter_courtesy_2','letter_209']);
+      .in('type', ['letter_courtesy_1','letter_courtesy_2','letter_209'])
+      .not('status', 'in', '("rejected","voided")');
     const byObs = new Map();
     (interactions || []).forEach((i) => {
       if (!i.observation_id) return;
@@ -1935,15 +1957,15 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       .eq('category_id', obs.category_id)
       .maybeSingle();
 
-    // Decide stage via the escalation engine
-    const { decideOpenStage } = require('../lib/enforcement/escalation');
-    const decision = decideOpenStage({
-      severity:              obs.severity,
-      priority_weight:       priorityRow ? priorityRow.priority_weight : 'standard',
-      prior_violations:      priorViolations || [],
-      community_fines_enabled: communityRow ? !!communityRow.fines_enabled : false,
-      category_fines_enabled:  priorityRow ? !!priorityRow.fines_enabled : false,
-      fine_amount: priorityRow && priorityRow.fine_amount_cents ? priorityRow.fine_amount_cents / 100 : 0,
+    // Decide stage via the escalation engine. The library exports
+    // decideEscalation, not decideOpenStage (the latter never existed —
+    // earlier code imported a phantom name and threw silently in the
+    // outer catch, which is why Confirm-button users got "✓ Confirmed"
+    // badges but no drafts. Caught in Ed's pipeline audit 2026-05-20.).
+    const { decideEscalation } = require('../lib/enforcement/escalation');
+    const decision = decideEscalation({
+      prior_violations: priorViolations || [],
+      priority_weight:  priorityRow ? priorityRow.priority_weight : 'standard',
     });
 
     if (!decision.should_open) {
