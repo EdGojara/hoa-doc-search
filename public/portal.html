@@ -459,15 +459,9 @@ const MODULES = [
     cta: 'Reserve a date',
     buildLink: (ctx) => `/clubhouse/${ctx.communitySlug}`,
   },
-  {
-    key: 'payments',
-    title: 'Pay Assessments',
-    description: 'Pay your dues, view payment history, and set up auto-pay.',
-    icon: '💳',
-    section: 'amenities',
-    cta: 'Make a payment',
-    buildLink: (ctx) => ctx.payment_portal_url || `/portal/payments`,
-  },
+  // Pay Assessments tile removed 2026-05-21 — redundant with Account Balance tile
+  // which has the prominent pay-your-assessment CTA. Keeping a separate "Pay"
+  // tile created two paths to the same action without adding value.
   {
     key: 'documents',
     title: 'Governing Documents',
@@ -606,7 +600,6 @@ function defaultDemoModuleConfig(slug) {
     compliance:       { status: 'live' },  // demo mode: shows mock open + resolved notices
     key_fob:          { status: 'live' },
     clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow
-    payments:         { status: 'coming_soon' },
     documents:        { status: 'live' },  // demo mode: renders mock governing docs library
     meetings:         { status: 'live' },  // demo mode: 2 upcoming + 5 past meeting minutes
     map:              { status: 'live' },  // demo mode: map renders mock amenities
