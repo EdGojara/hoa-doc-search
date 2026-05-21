@@ -239,6 +239,17 @@
     border: none; border-top: 1px solid var(--rule);
     margin: 10px 0;
   }
+  .filter-panel .topn-row { display: flex; flex-direction: column; gap: 6px; }
+  .filter-panel .topn-row select {
+    background: white; border: 1px solid var(--rule);
+    color: var(--ink); padding: 7px 10px;
+    font-family: var(--font-sans); font-size: 13px;
+    border-radius: 5px;
+  }
+  .filter-panel .topn-help {
+    font-size: 11px; color: var(--ink-faint);
+    font-style: italic;
+  }
   .filter-panel .category-row {
     display: flex; align-items: center; gap: 8px;
     padding: 3px 0; cursor: pointer; user-select: none;
@@ -613,6 +624,17 @@
     </button>
     <div id="unpinnedBanner" style="display:none; position:absolute; bottom: 16px; left: 50%; transform: translateX(-50%); background: white; border: 1px solid var(--rule); border-radius: 999px; padding: 8px 18px; box-shadow: var(--shadow-soft); font-size: 12.5px; color: var(--ink-soft); z-index: 500; max-width: 90%;"></div>
     <div class="filter-panel" id="filterPanel" style="display:none;">
+      <h3>Show on map</h3>
+      <div class="topn-row">
+        <select id="topNSelect">
+          <option value="10">Top 10 priorities</option>
+          <option value="20" selected>Top 20 priorities</option>
+          <option value="50">Top 50</option>
+          <option value="all">All components</option>
+        </select>
+        <div class="topn-help" id="topNHelp">Ranked by urgency × cost</div>
+      </div>
+      <hr/>
       <h3>Urgency</h3>
       <div id="urgencyFilters"></div>
       <hr/>
@@ -653,6 +675,18 @@ let community = null;
 let selectedComponent = null;
 let urgencyFilter = { critical: true, imminent: true, soon: true, medium: true, far: true };
 let categoryFilter = {};
+let topN = 20;  // curated view by default — boards see what matters, not everything
+
+// Priority score = urgency-band weight × log(future cost). A $300K critical
+// item outranks a $5K critical item; a $5K critical item still outranks a
+// $50K item due in 10 years. Tunable if boards prefer pure-urgency.
+const URGENCY_WEIGHT = { critical: 50, imminent: 25, soon: 12, medium: 4, far: 1 };
+function priorityScore(c) {
+  const w = URGENCY_WEIGHT[c.urgency_band] || 1;
+  const futureCents = c.future_cost_estimate_cents || c.current_cost_estimate_cents || 100;
+  const costFactor = 1 + Math.log10(Math.max(1, futureCents / 100));
+  return w * costFactor;
+}
 
 // Base tile layers — instantiated once per map init, swapped on toggle
 let activeBaseLayers = []; // array of currently-on-map layers (for satellite + labels combo)
@@ -907,18 +941,31 @@ function renderMarkers() {
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
 
+  // Compute the curated set: apply urgency + category filters, then rank
+  // by priority score and take top N. This is the "curated > comprehensive"
+  // principle applied to the map — boards see the items that matter most
+  // for this meeting, not every component.
+  const filtered = allComponents
+    .filter(c => c.lat != null && c.lng != null)
+    .filter(c => urgencyFilter[c.urgency_band || 'far'])
+    .filter(c => categoryFilter[c.category]);
+  const ranked = filtered.slice().sort((a, b) => priorityScore(b) - priorityScore(a));
+  const shownSet = topN === 'all'
+    ? new Set(ranked.map(c => c.id))
+    : new Set(ranked.slice(0, Number(topN)).map(c => c.id));
+
   let placed = 0;
-  let withCoords = 0;
+  let withCoords = filtered.length;
   const unpinnedCount = allComponents.filter(c => c.lat == null || c.lng == null).length;
-  showUnpinnedBanner(unpinnedCount, allComponents.length);
+  showUnpinnedBanner(unpinnedCount, allComponents.length, shownSet.size, ranked.length);
   const bounds = boundaryLayer ? null : L.latLngBounds([]);
 
   allComponents.forEach(c => {
     if (c.lat == null || c.lng == null) return;
-    withCoords++;
     const band = c.urgency_band || 'far';
     if (!urgencyFilter[band]) return;
     if (!categoryFilter[c.category]) return;
+    if (!shownSet.has(c.id)) return;
 
     const icon = L.divIcon({
       className: '',
@@ -943,6 +990,17 @@ function renderMarkers() {
 }
 
 function renderFilterPanel() {
+  // Wire the top-N selector (idempotent — re-binding is fine)
+  const topNSel = $('topNSelect');
+  if (topNSel) {
+    topNSel.value = String(topN);
+    topNSel.onchange = (e) => {
+      const v = e.target.value;
+      topN = v === 'all' ? 'all' : Number(v);
+      renderMarkers();
+    };
+  }
+
   const urgencyEl = $('urgencyFilters');
   urgencyEl.innerHTML = '';
   Object.keys(URGENCY_META).forEach(band => {
@@ -1136,18 +1194,44 @@ function closeDetail() {
   selectedComponent = null;
 }
 
-// Banner that explains why the map looks empty when components exist but
-// don't have pins yet. Surfaces the fix path (Reserves admin / Auto-place).
-function showUnpinnedBanner(unpinnedCount, totalCount) {
+// Banner that explains the curation of what's on the map + flags unpinned
+// components. Surfaces "showing N of M" so boards know there's a longer
+// list behind the curated view.
+function showUnpinnedBanner(unpinnedCount, totalCount, shownCount, eligibleCount) {
   const el = $('unpinnedBanner');
-  if (!unpinnedCount) { el.style.display = 'none'; return; }
   const pinned = totalCount - unpinnedCount;
-  if (pinned === 0) {
-    el.innerHTML = `⚠️ <strong>${unpinnedCount}</strong> components have no map pins yet. <a href="/reserve-components-admin.html" style="color: var(--gold); margin-left: 6px;">Open Reserves admin → click "📍 Auto-place pins from amenities"</a>`;
-  } else {
-    el.innerHTML = `<strong>${pinned}</strong> of <strong>${totalCount}</strong> components pinned · <strong>${unpinnedCount}</strong> still need placement · <a href="/reserve-components-admin.html" style="color: var(--gold); margin-left: 6px;">Fix in Reserves admin →</a>`;
+
+  // Case 1: nothing pinned at all
+  if (pinned === 0 && unpinnedCount > 0) {
+    el.innerHTML = `⚠️ <strong>${unpinnedCount}</strong> components have no map pins yet. <a href="/reserve-components-admin.html" style="color: var(--gold); margin-left: 6px;">Open Reserves admin → "📍 Auto-place pins from amenities"</a>`;
+    el.style.display = '';
+    return;
   }
-  el.style.display = '';
+
+  // Case 2: showing curated subset
+  if (shownCount < eligibleCount) {
+    el.innerHTML = `Showing <strong>top ${shownCount}</strong> of ${eligibleCount} priorities${unpinnedCount > 0 ? ` · ${unpinnedCount} still need pins` : ''} · <a href="#" id="bannerShowAll" style="color: var(--gold); margin-left: 6px;">Show all →</a>`;
+    el.style.display = '';
+    setTimeout(() => {
+      const link = document.getElementById('bannerShowAll');
+      if (link) link.addEventListener('click', (e) => {
+        e.preventDefault();
+        topN = 'all';
+        $('topNSelect').value = 'all';
+        renderMarkers();
+      });
+    }, 0);
+    return;
+  }
+
+  // Case 3: some unpinned but all shown
+  if (unpinnedCount > 0) {
+    el.innerHTML = `<strong>${pinned}</strong> of <strong>${totalCount}</strong> components pinned · <strong>${unpinnedCount}</strong> still need placement · <a href="/reserve-components-admin.html" style="color: var(--gold); margin-left: 6px;">Fix in Reserves admin →</a>`;
+    el.style.display = '';
+    return;
+  }
+
+  el.style.display = 'none';
 }
 
 // =============================================================================
