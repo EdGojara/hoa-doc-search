@@ -736,6 +736,11 @@ app.use('/api/amenities', amenitiesRouter);
 const { router: ownershipProposalsRouter } = require('./api/ownership_proposals');
 app.use('/api/ownership-proposals', ownershipProposalsRouter);
 
+// Reserve studies — components, expenditures, board-facing map data.
+// Powers the reserve study map and admin UI per project_reserve_study_map memory.
+const { router: reserveStudiesRouter } = require('./api/reserve_studies');
+app.use('/api/reserve-studies', reserveStudiesRouter);
+
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));
