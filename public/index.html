@@ -7766,7 +7766,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <div style="margin-bottom: 18px;">
       <h2 style="margin: 0; font-size: 22px; color: #1A3050;">🔐 Portal Users</h2>
       <p style="margin: 4px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
-        Manage who can access the board portal + homeowner portal. Invite by email, scope to specific communities (board) or properties (homeowner), generate magic-link invites. <strong>Auth enforcement on the portals ships next sprint</strong> — until then both portals stay behind the staff gate. This tab defines who CAN access; the auth layer will plug into these tables when it ships.
+        Manage who can access the board portal + homeowner portal. Invite by email, scope to specific communities (board) or properties (homeowner), generate magic-link invites. Magic-link auth is now live on both portals — click <strong>Open ↗</strong> next to either portal to launch the showcase in demo mode. To enable a real community, flip <code>communities.portal_active = TRUE</code> + populate <code>portal_module_config</code> per the homeowner portal showcase memory.
       </p>
     </div>
 
@@ -7790,7 +7790,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <h3 style="margin: 0; font-size: 16px;">👥 Homeowner Portal</h3>
             <div id="pu-homeowner-counts" style="font-size: 12px; color: #6B7280; margin-top: 4px;">— loading —</div>
           </div>
-          <button class="secondary-btn" disabled title="Homeowner portal ships next sprint" style="font-size: 11px; padding: 4px 10px; opacity: 0.5;">Coming soon</button>
+          <button class="secondary-btn" onclick="window.open('/portal?demo=1&community=waterview', '_blank')" title="Open the homeowner portal showcase in demo mode" style="font-size: 11px; padding: 4px 10px;">Open ↗</button>
         </div>
         <div style="margin-top: 10px;">
           <button class="action-btn" onclick="puShowAddForm('homeowner')" style="font-size: 12px;">+ Invite homeowner</button>
