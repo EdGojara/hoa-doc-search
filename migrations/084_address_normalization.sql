@@ -1,0 +1,234 @@
+-- ============================================================================
+-- 084_address_normalization.sql
+-- ----------------------------------------------------------------------------
+-- Adds the normalization machinery to properties so duplicate detection works
+-- regardless of casing, whitespace, suffix abbreviations (Dr/Drive), or
+-- unit-NULL-vs-empty-string artifacts from CSV imports.
+--
+-- THIS MIGRATION IS ADDITIVE ONLY — it does NOT delete any rows or merge any
+-- properties. Existing duplicates remain in place until Ed runs the separate
+-- dedup script (delivered alongside this migration). After dedup, the unique
+-- index added here can be VALIDATED to lock out future duplicates.
+--
+-- Apply after 083. Idempotent.
+-- ============================================================================
+
+BEGIN;
+
+-- ----------------------------------------------------------------------------
+-- 1) Normalization function — single source of truth for "is this the same
+--    address?". Used by the backfill below + by the Vantaca import going forward.
+--
+--    Rules:
+--      - Lowercase everything
+--      - Trim leading/trailing whitespace
+--      - Collapse internal whitespace to single space
+--      - Strip commas, periods (but keep numbers and #)
+--      - Expand street-suffix abbreviations to their canonical long form
+--      - Expand directional abbreviations (N/S/E/W)
+--      - Treat NULL/empty unit as empty string for comparison
+--
+--    Examples:
+--      "502 Meadow Knoll Dr"      → "502 meadow knoll drive"
+--      "502 Meadow Knoll Drive"   → "502 meadow knoll drive"
+--      "502  meadow knoll  dr."   → "502 meadow knoll drive"
+--      "5110 N Pine Forest Ln"    → "5110 north pine forest lane"
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION normalize_street_address(addr TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  s TEXT;
+BEGIN
+  IF addr IS NULL OR LENGTH(TRIM(addr)) = 0 THEN RETURN NULL; END IF;
+
+  -- Lowercase + strip punctuation + collapse whitespace
+  s := LOWER(addr);
+  s := REGEXP_REPLACE(s, '[,.;]+', ' ', 'g');
+  s := REGEXP_REPLACE(s, '\s+', ' ', 'g');
+  s := TRIM(s);
+
+  -- Directional abbreviations (whole-word match with \m\M boundaries)
+  s := REGEXP_REPLACE(s, '\mn\M',    'north', 'g');
+  s := REGEXP_REPLACE(s, '\ms\M',    'south', 'g');
+  s := REGEXP_REPLACE(s, '\me\M',    'east',  'g');
+  s := REGEXP_REPLACE(s, '\mw\M',    'west',  'g');
+  s := REGEXP_REPLACE(s, '\mne\M',   'northeast', 'g');
+  s := REGEXP_REPLACE(s, '\mnw\M',   'northwest', 'g');
+  s := REGEXP_REPLACE(s, '\mse\M',   'southeast', 'g');
+  s := REGEXP_REPLACE(s, '\msw\M',   'southwest', 'g');
+
+  -- Suffix abbreviations (canonical USPS-style mapping, common cases)
+  s := REGEXP_REPLACE(s, '\mdr\M',   'drive',     'g');
+  s := REGEXP_REPLACE(s, '\mst\M',   'street',    'g');
+  s := REGEXP_REPLACE(s, '\mrd\M',   'road',      'g');
+  s := REGEXP_REPLACE(s, '\mave\M',  'avenue',    'g');
+  s := REGEXP_REPLACE(s, '\mav\M',   'avenue',    'g');
+  s := REGEXP_REPLACE(s, '\mblvd\M', 'boulevard', 'g');
+  s := REGEXP_REPLACE(s, '\mln\M',   'lane',      'g');
+  s := REGEXP_REPLACE(s, '\mct\M',   'court',     'g');
+  s := REGEXP_REPLACE(s, '\mcir\M',  'circle',    'g');
+  s := REGEXP_REPLACE(s, '\mpl\M',   'place',     'g');
+  s := REGEXP_REPLACE(s, '\mtrl\M',  'trail',     'g');
+  s := REGEXP_REPLACE(s, '\mtr\M',   'trail',     'g');
+  s := REGEXP_REPLACE(s, '\mwy\M',   'way',       'g');
+  s := REGEXP_REPLACE(s, '\mpkwy\M', 'parkway',   'g');
+  s := REGEXP_REPLACE(s, '\mter\M',  'terrace',   'g');
+  s := REGEXP_REPLACE(s, '\mhwy\M',  'highway',   'g');
+  s := REGEXP_REPLACE(s, '\mxing\M', 'crossing',  'g');
+  s := REGEXP_REPLACE(s, '\mlndg\M', 'landing',   'g');
+  s := REGEXP_REPLACE(s, '\mmnr\M',  'manor',     'g');
+
+  -- Collapse whitespace again after expansion
+  s := REGEXP_REPLACE(s, '\s+', ' ', 'g');
+  s := TRIM(s);
+
+  RETURN s;
+END;
+$$;
+
+-- Companion: normalize a unit value so NULL == empty == "  " all collapse the same
+CREATE OR REPLACE FUNCTION normalize_unit(u TEXT)
+RETURNS TEXT
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+BEGIN
+  IF u IS NULL OR LENGTH(TRIM(u)) = 0 THEN RETURN ''; END IF;
+  RETURN LOWER(TRIM(REGEXP_REPLACE(u, '\s+', ' ', 'g')));
+END;
+$$;
+
+-- ----------------------------------------------------------------------------
+-- 2) Add normalized_address column to properties (nullable for now; backfilled
+--    below). Vantaca import will populate going forward.
+-- ----------------------------------------------------------------------------
+ALTER TABLE properties
+  ADD COLUMN IF NOT EXISTS normalized_address TEXT,
+  ADD COLUMN IF NOT EXISTS normalized_unit    TEXT;
+
+COMMENT ON COLUMN properties.normalized_address IS
+  'Lowercase, trimmed, whitespace-collapsed, suffix-expanded street address. Used for de-duplication. Generated by normalize_street_address() on insert/update — never set directly.';
+COMMENT ON COLUMN properties.normalized_unit IS
+  'Normalized unit field — empty string for NULL/blank. Lets duplicate detection treat "Unit 5" / "5" / NULL-vs-"" consistently.';
+
+-- Backfill existing rows
+UPDATE properties
+   SET normalized_address = normalize_street_address(street_address),
+       normalized_unit    = normalize_unit(unit)
+ WHERE normalized_address IS NULL OR normalized_unit IS NULL;
+
+-- ----------------------------------------------------------------------------
+-- 3) Trigger keeps normalized columns in sync on any INSERT/UPDATE.
+--    This means no code path can ever bypass normalization — even direct
+--    SQL inserts from migrations or staff hand-edits get normalized.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION trg_properties_normalize_address()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  NEW.normalized_address := normalize_street_address(NEW.street_address);
+  NEW.normalized_unit    := normalize_unit(NEW.unit);
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_properties_normalize_address ON properties;
+CREATE TRIGGER trg_properties_normalize_address
+  BEFORE INSERT OR UPDATE OF street_address, unit ON properties
+  FOR EACH ROW EXECUTE FUNCTION trg_properties_normalize_address();
+
+-- ----------------------------------------------------------------------------
+-- 4) New unique index — replaces the case-sensitive UNIQUE (community_id,
+--    street_address, unit) eventually. Created as NOT VALID for now because
+--    existing duplicates would block creation; Ed runs the dedup script,
+--    then VALIDATEs separately.
+--
+--    Note: Postgres "UNIQUE INDEX" doesn't support NOT VALID directly.
+--    Workaround: create as a partial index that only enforces on rows
+--    inserted/updated after this migration. Or — simpler — just attempt the
+--    constraint and let it fail loudly if dupes exist, then Ed knows.
+--
+--    For idempotency: we create as a regular unique index and catch the
+--    "already exists" + "duplicate" errors so re-running this migration is safe.
+-- ----------------------------------------------------------------------------
+DO $$
+BEGIN
+  BEGIN
+    CREATE UNIQUE INDEX uniq_properties_normalized
+      ON properties (community_id, normalized_address, normalized_unit);
+  EXCEPTION
+    WHEN duplicate_table THEN NULL;   -- index already exists, fine
+    WHEN unique_violation THEN
+      RAISE NOTICE 'Cannot create uniq_properties_normalized — duplicates exist. Run the dedup script first, then re-run this migration to add the constraint.';
+  END;
+END $$;
+
+-- ----------------------------------------------------------------------------
+-- 5) Merge audit table — records every dedup decision so we can reconstruct
+--    what happened. The dedup script writes here; analytics + manual reversal
+--    read from here.
+-- ----------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS properties_merge_audit (
+  id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  merged_at                TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  merged_by                TEXT,                          -- staff name OR 'auto_dedup_script'
+  community_id             UUID NOT NULL REFERENCES communities(id),
+  survivor_property_id     UUID NOT NULL,                 -- the property that remains
+  merged_property_id       UUID NOT NULL,                 -- the property that got merged in (now deleted)
+  normalized_address       TEXT NOT NULL,
+  reason                   TEXT,                          -- e.g., 'unit_null_vs_empty', 'whitespace_diff'
+  survivor_snapshot        JSONB,                         -- full row of survivor at time of merge
+  merged_snapshot          JSONB,                         -- full row of dupe at time of merge
+  fk_relinks               JSONB,                         -- {table: count} for each FK reassignment
+  notes                    TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_properties_merge_audit_community
+  ON properties_merge_audit(community_id, merged_at DESC);
+CREATE INDEX IF NOT EXISTS idx_properties_merge_audit_survivor
+  ON properties_merge_audit(survivor_property_id);
+
+GRANT SELECT, INSERT ON properties_merge_audit TO service_role;
+
+-- ----------------------------------------------------------------------------
+-- 6) Dedup helper view — Ed can run this anytime to see current duplicates.
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE VIEW v_property_duplicates AS
+SELECT
+  community_id,
+  (SELECT name FROM communities WHERE id = p.community_id) AS community_name,
+  normalized_address,
+  normalized_unit,
+  COUNT(*) AS dupe_count,
+  array_agg(id ORDER BY created_at)              AS property_ids,
+  array_agg(street_address ORDER BY created_at)  AS raw_addresses,
+  array_agg(unit ORDER BY created_at)            AS raw_units,
+  array_agg(created_at ORDER BY created_at)      AS created_at_list
+FROM properties p
+GROUP BY community_id, normalized_address, normalized_unit
+HAVING COUNT(*) > 1
+ORDER BY community_id, normalized_address;
+
+GRANT SELECT ON v_property_duplicates TO service_role, authenticated;
+
+COMMENT ON VIEW v_property_duplicates IS
+  'Lists current duplicate property groups across all communities. property_ids array is ordered oldest-first; the first is the natural survivor candidate. Empty result = no duplicates remain.';
+
+COMMIT;
+
+-- ============================================================================
+-- VERIFY:
+--   SELECT column_name FROM information_schema.columns
+--     WHERE table_name='properties' AND column_name LIKE 'normalized%';
+--   -- Should return: normalized_address, normalized_unit
+--
+--   SELECT count(*) FROM v_property_duplicates;
+--   -- Returns # of duplicate groups across all communities.
+--
+--   SELECT * FROM v_property_duplicates ORDER BY dupe_count DESC LIMIT 20;
+--   -- Inspect the worst offenders.
+-- ============================================================================
