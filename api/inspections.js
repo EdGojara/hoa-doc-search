@@ -452,7 +452,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       .maybeSingle();
                     const { data: commRow } = await supabase
                       .from('communities')
-                      .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
+                      .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
                       .eq('id', insp.community_id)
                       .maybeSingle();
 
@@ -529,6 +529,13 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                         name:       commRow && commRow.name,
                         legal_name: commRow && commRow.legal_name,
                         enforcement_authority_citation: commRow && commRow.enforcement_authority_citation,
+                        letter_fee_courtesy_1_cents:    commRow && commRow.letter_fee_courtesy_1_cents,
+                        letter_fee_courtesy_2_cents:    commRow && commRow.letter_fee_courtesy_2_cents,
+                        letter_fee_certified_209_cents: commRow && commRow.letter_fee_certified_209_cents,
+                        letter_fee_fine_assessed_cents: commRow && commRow.letter_fee_fine_assessed_cents,
+                        letter_cure_days_courtesy_1:    commRow && commRow.letter_cure_days_courtesy_1,
+                        letter_cure_days_courtesy_2:    commRow && commRow.letter_cure_days_courtesy_2,
+                        letter_cure_days_certified_209: commRow && commRow.letter_cure_days_certified_209,
                       },
                       observation: {
                         ai_description: result.description,
@@ -2025,7 +2032,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         .maybeSingle();
       const { data: commRow } = await supabase
         .from('communities')
-        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
+        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
         .eq('id', obs.community_id)
         .maybeSingle();
 
@@ -2121,6 +2128,13 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           name:       commRow && commRow.name,
           legal_name: commRow && commRow.legal_name,
           enforcement_authority_citation: commRow && commRow.enforcement_authority_citation,
+          letter_fee_courtesy_1_cents:    commRow && commRow.letter_fee_courtesy_1_cents,
+          letter_fee_courtesy_2_cents:    commRow && commRow.letter_fee_courtesy_2_cents,
+          letter_fee_certified_209_cents: commRow && commRow.letter_fee_certified_209_cents,
+          letter_fee_fine_assessed_cents: commRow && commRow.letter_fee_fine_assessed_cents,
+          letter_cure_days_courtesy_1:    commRow && commRow.letter_cure_days_courtesy_1,
+          letter_cure_days_courtesy_2:    commRow && commRow.letter_cure_days_courtesy_2,
+          letter_cure_days_certified_209: commRow && commRow.letter_cure_days_certified_209,
         },
         observation: {
           ai_description: obs.ai_description,

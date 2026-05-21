@@ -572,17 +572,25 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     //   - prior_violations (history list rendered on §209 letters)
     let commLegalName = null;
     let commAuthorityCitation = null;
+    const commLetterFees = { c1: null, c2: null, c209: null, fine: null, curec1: null, curec2: null, curec209: null };
     let senderName = body.sender_name || null;
     let senderTitle = body.sender_title || null;
     try {
       const { data: comm } = await supabase
         .from('communities')
-        .select('legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
+        .select('legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
         .eq('id', violation.community_id)
         .maybeSingle();
       if (comm) {
         commLegalName = comm.legal_name || null;
         commAuthorityCitation = comm.enforcement_authority_citation || null;
+        commLetterFees.c1       = comm.letter_fee_courtesy_1_cents;
+        commLetterFees.c2       = comm.letter_fee_courtesy_2_cents;
+        commLetterFees.c209     = comm.letter_fee_certified_209_cents;
+        commLetterFees.fine     = comm.letter_fee_fine_assessed_cents;
+        commLetterFees.curec1   = comm.letter_cure_days_courtesy_1;
+        commLetterFees.curec2   = comm.letter_cure_days_courtesy_2;
+        commLetterFees.curec209 = comm.letter_cure_days_certified_209;
         if (!senderName)  senderName  = comm.letter_sender_name || null;
         if (!senderTitle) senderTitle = comm.letter_sender_title || null;
       }
@@ -673,6 +681,13 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         name:       violation.communities && violation.communities.name,
         legal_name: commLegalName,
         enforcement_authority_citation: commAuthorityCitation,
+        letter_fee_courtesy_1_cents:    commLetterFees.c1,
+        letter_fee_courtesy_2_cents:    commLetterFees.c2,
+        letter_fee_certified_209_cents: commLetterFees.c209,
+        letter_fee_fine_assessed_cents: commLetterFees.fine,
+        letter_cure_days_courtesy_1:    commLetterFees.curec1,
+        letter_cure_days_courtesy_2:    commLetterFees.curec2,
+        letter_cure_days_certified_209: commLetterFees.curec209,
       },
       observation,
       governing_doc:    govDoc,
@@ -2716,7 +2731,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         .select('label, description')
         .eq('id', violation.primary_category_id).maybeSingle(),
       supabase.from('communities')
-        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation')
+        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
         .eq('id', communityId).maybeSingle(),
       supabase.from('community_enforcement_priorities')
         .select('governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
@@ -2807,6 +2822,13 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         name:       commRow && commRow.name,
         legal_name: commRow && commRow.legal_name,
         enforcement_authority_citation: commRow && commRow.enforcement_authority_citation,
+        letter_fee_courtesy_1_cents:    commRow && commRow.letter_fee_courtesy_1_cents,
+        letter_fee_courtesy_2_cents:    commRow && commRow.letter_fee_courtesy_2_cents,
+        letter_fee_certified_209_cents: commRow && commRow.letter_fee_certified_209_cents,
+        letter_fee_fine_assessed_cents: commRow && commRow.letter_fee_fine_assessed_cents,
+        letter_cure_days_courtesy_1:    commRow && commRow.letter_cure_days_courtesy_1,
+        letter_cure_days_courtesy_2:    commRow && commRow.letter_cure_days_courtesy_2,
+        letter_cure_days_certified_209: commRow && commRow.letter_cure_days_certified_209,
       },
       observation: obsRow ? {
         ai_description: obsRow.ai_description,
