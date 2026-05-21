@@ -1,0 +1,794 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reserve Study Map · Bedrock Board Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --rule-strong: #d0cebf;
+    --critical: #C9514B;
+    --imminent: #D97A2D;
+    --soon: #C9A53A;
+    --medium: #4FA37A;
+    --far: #6B7B92;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --shadow-hover: 0 4px 12px rgba(26, 48, 80, 0.1), 0 12px 32px rgba(26, 48, 80, 0.08);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0; height: 100vh;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+
+  /* ---- Top bar ---- */
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 12px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: relative; z-index: 800;
+    height: 64px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; flex-shrink: 0; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .label { font-size: 12.5px; color: var(--ink-soft); margin-top: 2px; }
+  .top-center {
+    display: flex; align-items: center; gap: 12px;
+  }
+  .top-center label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .top-center select {
+    background: white; border: 1px solid var(--rule);
+    color: var(--ink); padding: 8px 12px;
+    font-family: var(--font-sans); font-size: 13.5px;
+    border-radius: 6px; min-width: 240px;
+  }
+  .top-right { display: flex; align-items: center; gap: 12px; }
+  .back-link {
+    font-size: 13px; color: var(--navy);
+    text-decoration: none; padding: 8px 14px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+
+  /* ---- Summary strip ---- */
+  .summary-strip {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 10px 22px;
+    display: flex; gap: 28px; align-items: center;
+    overflow-x: auto; white-space: nowrap;
+    height: 56px;
+  }
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat .label {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.07em; text-transform: uppercase;
+  }
+  .stat .value {
+    font-family: var(--font-mono); font-size: 15px;
+    color: var(--navy); font-weight: 600;
+  }
+  .stat.urgent .value { color: var(--critical); }
+
+  /* ---- Layout ---- */
+  .shell {
+    display: grid;
+    grid-template-columns: 1fr 0;
+    height: calc(100vh - 64px - 56px);
+    overflow: hidden;
+    transition: grid-template-columns 0.2s ease;
+  }
+  .shell.detail-open { grid-template-columns: 1fr 420px; }
+  @media (max-width: 720px) {
+    .shell.detail-open { grid-template-columns: 1fr; }
+    .shell.detail-open #mapEl { display: none; }
+  }
+
+  #mapEl { width: 100%; height: 100%; }
+  .leaflet-container { background: #e8edf0; font-family: var(--font-sans); }
+
+  /* ---- Floating filters (top-left) ---- */
+  .filter-panel {
+    position: absolute; top: 16px; left: 16px;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow-soft);
+    font-size: 13px;
+    z-index: 500;
+    max-width: 280px;
+  }
+  .filter-panel h3 {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin: 0 0 8px; font-weight: 500;
+  }
+  .filter-panel .urgency-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 4px 0; cursor: pointer;
+    user-select: none;
+  }
+  .filter-panel .urgency-row input { margin: 0; }
+  .filter-panel .urgency-row .swatch {
+    width: 14px; height: 14px; border-radius: 50%;
+    border: 2px solid white;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.15);
+  }
+  .filter-panel .urgency-row .label-text {
+    flex: 1; font-size: 13px; color: var(--ink-soft);
+  }
+  .filter-panel .urgency-row .count {
+    font-family: var(--font-mono); font-size: 11.5px;
+    color: var(--ink-faint);
+  }
+  .filter-panel hr {
+    border: none; border-top: 1px solid var(--rule);
+    margin: 10px 0;
+  }
+  .filter-panel .category-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 3px 0; cursor: pointer; user-select: none;
+    font-size: 12.5px; color: var(--ink-soft);
+  }
+  .filter-panel .category-row input { margin: 0; }
+  .filter-panel .category-row .cat-count {
+    margin-left: auto;
+    font-family: var(--font-mono); font-size: 11px;
+    color: var(--ink-faint);
+  }
+
+  /* ---- Map markers ---- */
+  .reserve-marker {
+    width: 32px; height: 40px;
+    transform: translate(-16px, -40px);
+    cursor: pointer;
+    position: relative;
+  }
+  .reserve-marker .pin {
+    width: 32px; height: 32px;
+    border: 3px solid white;
+    border-radius: 50%;
+    box-shadow: 0 3px 10px rgba(0,0,0,0.3);
+    display: flex; align-items: center; justify-content: center;
+    color: white; font-size: 16px;
+    position: relative; z-index: 2;
+  }
+  .reserve-marker::after {
+    content: '';
+    position: absolute; bottom: 0; left: 50%;
+    width: 0; height: 0;
+    margin-left: -6px;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 9px solid var(--navy);
+    z-index: 1;
+  }
+  .reserve-marker:hover .pin { transform: scale(1.12); }
+  .reserve-marker.critical .pin { background: var(--critical); }
+  .reserve-marker.critical::after { border-top-color: var(--critical); }
+  .reserve-marker.imminent .pin { background: var(--imminent); }
+  .reserve-marker.imminent::after { border-top-color: var(--imminent); }
+  .reserve-marker.soon .pin { background: var(--soon); color: var(--navy-deep); }
+  .reserve-marker.soon::after { border-top-color: var(--soon); }
+  .reserve-marker.medium .pin { background: var(--medium); }
+  .reserve-marker.medium::after { border-top-color: var(--medium); }
+  .reserve-marker.far .pin { background: var(--far); }
+  .reserve-marker.far::after { border-top-color: var(--far); }
+
+  /* ---- Side panel ---- */
+  aside.detail {
+    background: white;
+    border-left: 1px solid var(--rule);
+    overflow-y: auto;
+    padding: 0;
+    box-shadow: -8px 0 24px rgba(26, 48, 80, 0.04);
+  }
+  .detail-hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    color: var(--cream);
+    padding: 22px 24px 20px;
+    position: relative;
+  }
+  .detail-hero .close-x {
+    position: absolute; top: 12px; right: 14px;
+    background: rgba(255,255,255,0.15); border: none;
+    width: 30px; height: 30px; border-radius: 50%;
+    color: white; font-size: 18px; cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .detail-hero .close-x:hover { background: rgba(255,255,255,0.28); }
+  .detail-hero .urgency-chip {
+    display: inline-block;
+    font-size: 10.5px; letter-spacing: 0.08em; text-transform: uppercase;
+    padding: 3px 9px; border-radius: 999px;
+    margin-bottom: 10px;
+    font-weight: 600;
+  }
+  .urgency-chip.critical { background: var(--critical); color: white; }
+  .urgency-chip.imminent { background: var(--imminent); color: white; }
+  .urgency-chip.soon     { background: var(--soon); color: var(--navy-deep); }
+  .urgency-chip.medium   { background: var(--medium); color: white; }
+  .urgency-chip.far      { background: rgba(255,255,255,0.18); color: white; }
+  .detail-hero h2 {
+    font-family: var(--font-serif); font-size: 22px; font-weight: 500;
+    margin: 0 0 4px; letter-spacing: -0.005em;
+  }
+  .detail-hero .category-line {
+    font-size: 13px; color: rgba(255,255,255,0.78);
+    margin-bottom: 12px;
+  }
+  .detail-hero .kv-grid {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px;
+    margin-top: 4px;
+  }
+  .detail-hero .kv .k {
+    font-size: 10.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; color: rgba(255,255,255,0.6);
+    margin-bottom: 2px;
+  }
+  .detail-hero .kv .v {
+    font-family: var(--font-mono); font-size: 14px; color: var(--cream);
+  }
+  .detail-hero .kv .v.warn { color: #F9D87A; }
+
+  .detail-body { padding: 18px 24px 40px; }
+  .detail-body section {
+    margin-bottom: 20px; padding-bottom: 16px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .detail-body section:last-of-type { border-bottom: none; margin-bottom: 0; }
+  .detail-body h3 {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin: 0 0 10px; font-weight: 500;
+  }
+  .detail-body p { font-size: 13.5px; color: var(--ink-soft); margin: 0 0 8px; }
+  .kv-row {
+    display: flex; justify-content: space-between;
+    padding: 4px 0; font-size: 13px;
+  }
+  .kv-row .k { color: var(--ink-faint); }
+  .kv-row .v { font-family: var(--font-mono); color: var(--ink); }
+
+  /* Expenditures table */
+  .exp-table {
+    width: 100%; border-collapse: collapse; font-size: 12.5px;
+    margin-top: 4px;
+  }
+  .exp-table thead th {
+    text-align: left; padding: 6px 8px;
+    border-bottom: 1px solid var(--rule);
+    color: var(--ink-faint); font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500;
+  }
+  .exp-table tbody td {
+    padding: 6px 8px; border-bottom: 1px solid var(--rule);
+    color: var(--ink);
+  }
+  .exp-table tbody tr:last-child td { border-bottom: none; }
+  .exp-table .amount { font-family: var(--font-mono); text-align: right; }
+  .exp-table .date { font-family: var(--font-mono); color: var(--ink-soft); }
+
+  .empty-state {
+    text-align: center; padding: 16px 8px;
+    color: var(--ink-faint); font-size: 13px;
+  }
+
+  /* Loaders + empty community */
+  .full-loader {
+    display: flex; align-items: center; justify-content: center;
+    height: calc(100vh - 64px - 56px); flex-direction: column; gap: 14px;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .empty-card {
+    background: white; padding: 50px 30px; max-width: 480px;
+    margin: 60px auto; text-align: center;
+    border: 1px solid var(--rule); border-radius: 10px;
+  }
+  .empty-card h2 { font-family: var(--font-serif); color: var(--navy); margin: 0 0 8px; }
+  .empty-card p { color: var(--ink-soft); font-size: 14px; }
+  .empty-card a {
+    display: inline-block; margin-top: 14px;
+    background: var(--gold); color: var(--navy-deep);
+    padding: 9px 18px; border-radius: 6px;
+    font-size: 13.5px; font-weight: 500;
+    text-decoration: none;
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="/" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="label">Reserve Study Map · Board View</div>
+    </div>
+  </a>
+  <div class="top-center">
+    <label for="communitySelect">Community</label>
+    <select id="communitySelect">
+      <option value="">— Select community —</option>
+    </select>
+  </div>
+  <div class="top-right">
+    <a class="back-link" href="/reserve-components-admin.html">Manage components ↗</a>
+    <a class="back-link" href="/">← Platform</a>
+  </div>
+</header>
+
+<div class="summary-strip" id="summaryStrip" style="display:none;">
+  <div class="stat"><div class="label">Active components</div><div class="value" id="statActive">—</div></div>
+  <div class="stat"><div class="label">Current cost (today)</div><div class="value" id="statCurrent">—</div></div>
+  <div class="stat"><div class="label">Future cost (inflated)</div><div class="value" id="statFuture">—</div></div>
+  <div class="stat urgent"><div class="label">Critical · 2yr</div><div class="value" id="statCritical">—</div></div>
+  <div class="stat"><div class="label">Soon · 5yr</div><div class="value" id="statSoon">—</div></div>
+  <div class="stat"><div class="label">Spent last 12mo</div><div class="value" id="stat12mo">—</div></div>
+</div>
+
+<div class="shell" id="shell">
+  <div id="mapWrap" style="position: relative; height: 100%;">
+    <div id="mapEl"></div>
+    <div class="filter-panel" id="filterPanel" style="display:none;">
+      <h3>Urgency</h3>
+      <div id="urgencyFilters"></div>
+      <hr/>
+      <h3>Category</h3>
+      <div id="categoryFilters"></div>
+    </div>
+  </div>
+  <aside class="detail" id="detailPanel" style="display:none;"></aside>
+</div>
+
+<div id="bootPane">
+  <div class="empty-card">
+    <h2>Pick a community</h2>
+    <p>Choose a community above to view its reserve study map. Pins are colored by urgency — failing or near-end-of-life components show red and orange. Click any pin to see remaining life, replacement cost, and spending history.</p>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+let map = null;
+let mapMarkers = [];
+let boundaryLayer = null;
+let allComponents = [];
+let community = null;
+let selectedComponent = null;
+let urgencyFilter = { critical: true, imminent: true, soon: true, medium: true, far: true };
+let categoryFilter = {};
+
+const CATEGORY_ICONS = {
+  pool: '🏊', roof: '🏠', paving: '🛣️', fence: '🪵', mechanical: '⚙️',
+  landscape: '🌳', common_area: '🏛️', playground: '🛝', signage: '🪧',
+  lighting: '💡', irrigation: '💧', mailroom: '📬', other: '📍',
+};
+const CATEGORY_LABELS = {
+  pool: 'Pool', roof: 'Roof', paving: 'Paving', fence: 'Fence', mechanical: 'Mechanical',
+  landscape: 'Landscape', common_area: 'Common area', playground: 'Playground',
+  signage: 'Signage', lighting: 'Lighting', irrigation: 'Irrigation',
+  mailroom: 'Mailroom', other: 'Other',
+};
+const URGENCY_META = {
+  critical: { label: 'Critical', color: '#C9514B', desc: 'Failing or due now' },
+  imminent: { label: 'Imminent', color: '#D97A2D', desc: '1-2 years' },
+  soon:     { label: 'Soon',     color: '#C9A53A', desc: '3-5 years' },
+  medium:   { label: 'Medium',   color: '#4FA37A', desc: '6-10 years' },
+  far:      { label: 'Far out',  color: '#6B7B92', desc: '10+ years or unscheduled' },
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtMoney(cents) {
+  if (cents == null) return '—';
+  const dollars = Number(cents) / 100;
+  if (dollars >= 1_000_000) return '$' + (dollars / 1_000_000).toFixed(1) + 'M';
+  if (dollars >= 1000)      return '$' + Math.round(dollars / 1000) + 'K';
+  return '$' + dollars.toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+function fmtMoneyFull(cents) {
+  if (cents == null) return '—';
+  return '$' + (Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDate(d) {
+  if (!d) return '—';
+  return new Date(d).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+}
+
+// =============================================================================
+// Boot
+// =============================================================================
+(async function init() {
+  try {
+    const r = await fetch('/api/communities');
+    if (!r.ok) throw new Error('Could not load communities');
+    const { communities } = await r.json();
+    const sel = $('communitySelect');
+    (communities || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.dataset.slug = c.slug || '';
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+    // Auto-select via ?community=slug or ?id=uuid
+    const u = new URL(window.location.href);
+    const slug = u.searchParams.get('community');
+    const id = u.searchParams.get('id');
+    if (id) {
+      sel.value = id;
+    } else if (slug) {
+      const match = (communities || []).find(c => c.slug === slug);
+      if (match) sel.value = match.id;
+    }
+    sel.addEventListener('change', onCommunityChange);
+    if (sel.value) onCommunityChange();
+  } catch (err) {
+    $('bootPane').innerHTML = `
+      <div class="empty-card">
+        <h2>Couldn't load communities</h2>
+        <p>${escapeHtml(err.message)}</p>
+      </div>`;
+  }
+})();
+
+async function onCommunityChange() {
+  const sel = $('communitySelect');
+  const communityId = sel.value;
+  if (!communityId) return;
+
+  // Hide boot pane, show summary + map
+  $('bootPane').style.display = 'none';
+  closeDetail();
+
+  // Show loading skeleton
+  $('summaryStrip').style.display = '';
+  ['statActive','statCurrent','statFuture','statCritical','statSoon','stat12mo'].forEach(id => $(id).textContent = '…');
+
+  try {
+    const [mapData, summary] = await Promise.all([
+      fetch(`/api/reserve-studies/community/${communityId}/map`).then(r => r.json()),
+      fetch(`/api/reserve-studies/community/${communityId}/summary`).then(r => r.json()),
+    ]);
+    community = mapData.community;
+    allComponents = mapData.components || [];
+
+    // Render summary stats
+    $('statActive').textContent   = summary.active_components ?? '0';
+    $('statCurrent').textContent  = fmtMoney(summary.total_current_cost_cents);
+    $('statFuture').textContent   = fmtMoney(summary.total_future_cost_cents);
+    $('statCritical').textContent = summary.critical_2yr_count ?? '0';
+    $('statSoon').textContent     = summary.soon_5yr_count ?? '0';
+    $('stat12mo').textContent     = fmtMoney(summary.spent_last_12mo_cents);
+
+    // Build category filter (only categories present in this community)
+    const cats = new Set(allComponents.map(c => c.category).filter(Boolean));
+    categoryFilter = {};
+    cats.forEach(c => { categoryFilter[c] = true; });
+
+    renderFilterPanel();
+    renderMap(mapData);
+  } catch (err) {
+    $('bootPane').style.display = '';
+    $('bootPane').innerHTML = `
+      <div class="empty-card">
+        <h2>Couldn't load the map</h2>
+        <p>${escapeHtml(err.message || 'Unknown error')}</p>
+      </div>`;
+  }
+}
+
+// =============================================================================
+// Map render
+// =============================================================================
+function renderMap(data) {
+  // Pick center
+  const center = data.center
+    || (allComponents.find(c => c.lat && c.lng)
+        ? { lat: Number(allComponents.find(c => c.lat && c.lng).lat), lng: Number(allComponents.find(c => c.lat && c.lng).lng) }
+        : { lat: 29.7604, lng: -95.3698 });
+
+  // Initialize or reset map
+  if (map) {
+    map.remove();
+    map = null;
+  }
+  mapMarkers = [];
+
+  map = L.map('mapEl', { zoomControl: true, attributionControl: true })
+    .setView([center.lat, center.lng], 16);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+  }).addTo(map);
+
+  // Boundary
+  if (data.boundary && data.boundary.geometry) {
+    boundaryLayer = L.geoJSON(data.boundary, {
+      style: {
+        color: '#1A3050', weight: 2, fillColor: '#1A3050',
+        fillOpacity: 0.05, dashArray: '6,6',
+      },
+    }).addTo(map);
+    try { map.fitBounds(boundaryLayer.getBounds(), { padding: [40, 40] }); } catch (_) {}
+  }
+
+  renderMarkers();
+  $('filterPanel').style.display = '';
+}
+
+function renderMarkers() {
+  // Clear existing markers
+  mapMarkers.forEach(m => map.removeLayer(m));
+  mapMarkers = [];
+
+  let placed = 0;
+  let withCoords = 0;
+  const bounds = boundaryLayer ? null : L.latLngBounds([]);
+
+  allComponents.forEach(c => {
+    if (c.lat == null || c.lng == null) return;
+    withCoords++;
+    const band = c.urgency_band || 'far';
+    if (!urgencyFilter[band]) return;
+    if (!categoryFilter[c.category]) return;
+
+    const icon = L.divIcon({
+      className: '',
+      html: `<div class="reserve-marker ${band}"><div class="pin">${CATEGORY_ICONS[c.category] || '📍'}</div></div>`,
+      iconSize: [32, 40],
+      iconAnchor: [16, 40],
+    });
+    const marker = L.marker([Number(c.lat), Number(c.lng)], { icon }).addTo(map);
+    marker.on('click', () => openDetail(c));
+    mapMarkers.push(marker);
+    placed++;
+    if (bounds) bounds.extend([Number(c.lat), Number(c.lng)]);
+  });
+
+  if (!boundaryLayer && placed > 0 && bounds && bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 17 });
+  }
+
+  // Update filter counts
+  updateFilterCounts();
+}
+
+function renderFilterPanel() {
+  const urgencyEl = $('urgencyFilters');
+  urgencyEl.innerHTML = '';
+  Object.keys(URGENCY_META).forEach(band => {
+    const meta = URGENCY_META[band];
+    const row = document.createElement('label');
+    row.className = 'urgency-row';
+    row.innerHTML = `
+      <input type="checkbox" data-band="${band}" ${urgencyFilter[band] ? 'checked' : ''}>
+      <span class="swatch" style="background:${meta.color}"></span>
+      <span class="label-text">${meta.label}</span>
+      <span class="count" id="urgCount-${band}">—</span>
+    `;
+    row.querySelector('input').addEventListener('change', (e) => {
+      urgencyFilter[band] = e.target.checked;
+      renderMarkers();
+    });
+    urgencyEl.appendChild(row);
+  });
+
+  const catEl = $('categoryFilters');
+  catEl.innerHTML = '';
+  Object.keys(categoryFilter).sort((a, b) => (CATEGORY_LABELS[a] || a).localeCompare(CATEGORY_LABELS[b] || b)).forEach(cat => {
+    const row = document.createElement('label');
+    row.className = 'category-row';
+    row.innerHTML = `
+      <input type="checkbox" data-cat="${cat}" ${categoryFilter[cat] ? 'checked' : ''}>
+      <span>${CATEGORY_ICONS[cat] || '📍'} ${CATEGORY_LABELS[cat] || cat}</span>
+      <span class="cat-count" id="catCount-${cat}">—</span>
+    `;
+    row.querySelector('input').addEventListener('change', (e) => {
+      categoryFilter[cat] = e.target.checked;
+      renderMarkers();
+    });
+    catEl.appendChild(row);
+  });
+
+  updateFilterCounts();
+}
+
+function updateFilterCounts() {
+  // Urgency counts (over ALL components in community, not filtered)
+  const urgCounts = {};
+  Object.keys(URGENCY_META).forEach(b => { urgCounts[b] = 0; });
+  allComponents.forEach(c => {
+    const b = c.urgency_band || 'far';
+    if (b in urgCounts) urgCounts[b]++;
+  });
+  Object.entries(urgCounts).forEach(([b, n]) => {
+    const el = document.getElementById(`urgCount-${b}`);
+    if (el) el.textContent = n;
+  });
+
+  // Category counts
+  Object.keys(categoryFilter).forEach(cat => {
+    const n = allComponents.filter(c => c.category === cat).length;
+    const el = document.getElementById(`catCount-${cat}`);
+    if (el) el.textContent = n;
+  });
+}
+
+// =============================================================================
+// Detail panel
+// =============================================================================
+async function openDetail(component) {
+  selectedComponent = component;
+  $('shell').classList.add('detail-open');
+
+  const band = component.urgency_band || 'far';
+  const bandMeta = URGENCY_META[band];
+  const yearsUntil = component.years_until_replacement;
+  const yearsLabel = yearsUntil == null
+    ? 'Unscheduled'
+    : (yearsUntil <= 0 ? 'Due now' : `${yearsUntil}yr`);
+
+  const html = `
+    <div class="detail-hero">
+      <button class="close-x" id="closeDetailBtn" aria-label="Close">×</button>
+      <div class="urgency-chip ${band}">${bandMeta.label} · ${escapeHtml(bandMeta.desc)}</div>
+      <h2>${escapeHtml(component.component_name)}</h2>
+      <div class="category-line">${CATEGORY_ICONS[component.category] || '📍'} ${escapeHtml(CATEGORY_LABELS[component.category] || component.category)}${component.linked_amenity_name ? ' · linked to ' + escapeHtml(component.linked_amenity_name) : ''}</div>
+      <div class="kv-grid">
+        <div class="kv">
+          <div class="k">Years until replacement</div>
+          <div class="v ${band === 'critical' || band === 'imminent' ? 'warn' : ''}">${escapeHtml(yearsLabel)}</div>
+        </div>
+        <div class="kv">
+          <div class="k">Replacement year</div>
+          <div class="v">${component.next_scheduled_replacement_year || (component.remaining_useful_life_years != null ? new Date().getFullYear() + component.remaining_useful_life_years : '—')}</div>
+        </div>
+        <div class="kv">
+          <div class="k">Current cost</div>
+          <div class="v">${fmtMoney(component.current_cost_estimate_cents)}</div>
+        </div>
+        <div class="kv">
+          <div class="k">Future cost (inflated)</div>
+          <div class="v">${fmtMoney(component.future_cost_estimate_cents)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-body">
+      ${component.description ? `<section><p>${escapeHtml(component.description)}</p></section>` : ''}
+
+      <section>
+        <h3>Specs</h3>
+        <div class="kv-row"><span class="k">Installed / built</span><span class="v">${component.installed_or_built_year || '—'}</span></div>
+        <div class="kv-row"><span class="k">Useful life</span><span class="v">${component.useful_life_years != null ? component.useful_life_years + ' yrs' : '—'}</span></div>
+        <div class="kv-row"><span class="k">Remaining life</span><span class="v">${component.remaining_useful_life_years != null ? component.remaining_useful_life_years + ' yrs' : '—'}</span></div>
+        <div class="kv-row"><span class="k">Condition</span><span class="v">${component.condition ? component.condition.replace(/_/g, ' ') : '—'}</span></div>
+        <div class="kv-row"><span class="k">Last inspection</span><span class="v">${fmtDate(component.last_inspection_date)}</span></div>
+        <div class="kv-row"><span class="k">Inflation factor</span><span class="v">${component.inflation_factor != null ? component.inflation_factor : '—'}</span></div>
+      </section>
+
+      <section>
+        <h3>Lifetime spending</h3>
+        <div class="kv-row"><span class="k">Total spent to date</span><span class="v">${fmtMoneyFull(component.lifetime_spent_cents)}</span></div>
+        <div class="kv-row"><span class="k">Expenditure count</span><span class="v">${component.expenditure_count || 0}</span></div>
+        <div class="kv-row"><span class="k">Last expenditure</span><span class="v">${fmtDate(component.last_expenditure_date)}</span></div>
+        ${component.last_vendor ? `<div class="kv-row"><span class="k">Last vendor</span><span class="v">${escapeHtml(component.last_vendor)}</span></div>` : ''}
+      </section>
+
+      <section>
+        <h3>Recent expenditures</h3>
+        <div id="expBlock"><div class="empty-state">Loading…</div></div>
+      </section>
+
+      ${component.source_section ? `<section>
+        <h3>Source</h3>
+        <p>${escapeHtml(component.source_section)}</p>
+      </section>` : ''}
+
+      ${component.notes ? `<section>
+        <h3>Notes</h3>
+        <p>${escapeHtml(component.notes)}</p>
+      </section>` : ''}
+    </div>
+  `;
+  const panel = $('detailPanel');
+  panel.innerHTML = html;
+  panel.style.display = '';
+  $('closeDetailBtn').addEventListener('click', closeDetail);
+
+  // Pan to the marker
+  if (component.lat && component.lng) {
+    map.panTo([Number(component.lat), Number(component.lng)], { animate: true });
+  }
+
+  // Load expenditures
+  try {
+    const r = await fetch(`/api/reserve-studies/components/${component.id}/expenditures`);
+    const { expenditures } = await r.json();
+    renderExpenditures(expenditures || []);
+  } catch (err) {
+    $('expBlock').innerHTML = `<div class="empty-state">Could not load expenditures.</div>`;
+  }
+}
+
+function renderExpenditures(items) {
+  if (!items.length) {
+    $('expBlock').innerHTML = `<div class="empty-state">No expenditures recorded for this component yet.</div>`;
+    return;
+  }
+  const rows = items.slice(0, 12).map(e => `
+    <tr>
+      <td class="date">${fmtDate(e.expenditure_date)}</td>
+      <td>${escapeHtml(e.vendor_name || '—')}<br><span style="font-size:11px; color:var(--ink-faint);">${escapeHtml((e.type || '').replace(/_/g, ' '))}${e.invoice_number ? ' · #' + escapeHtml(e.invoice_number) : ''}</span></td>
+      <td class="amount">${fmtMoneyFull(e.amount_cents)}</td>
+    </tr>
+  `).join('');
+  $('expBlock').innerHTML = `
+    <table class="exp-table">
+      <thead><tr><th style="width:22%;">Date</th><th>Vendor / type</th><th style="width:25%; text-align:right;">Amount</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${items.length > 12 ? `<div style="font-size:11.5px; color:var(--ink-faint); margin-top:8px; text-align:right;">+ ${items.length - 12} more — manage in Reserves admin.</div>` : ''}
+  `;
+}
+
+function closeDetail() {
+  $('shell').classList.remove('detail-open');
+  $('detailPanel').style.display = 'none';
+  selectedComponent = null;
+}
+</script>
+
+</body>
+</html>
