@@ -24,6 +24,10 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { parseReserveAdvisorsWorkbook } = require('../lib/reserve_advisors_parser');
+const {
+  suggestComponentMatches,
+  classifyExpenditureType,
+} = require('../lib/reserve_invoice_matcher');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const router = express.Router();
@@ -542,6 +546,224 @@ router.post('/import/commit', express.json({ limit: '8mb' }), async (req, res) =
     });
   } catch (err) {
     console.error('[reserve-studies] import commit failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// Invoice intake — stage, suggest match, confirm, roll component forward
+// ----------------------------------------------------------------------------
+
+// Helper — load active components + recent expenditure history for matcher
+async function loadCommunityMatchContext(communityId) {
+  const [{ data: components }, { data: history }] = await Promise.all([
+    supabase
+      .from('reserve_components')
+      .select('id, component_name, category, line_item_number, current_cost_estimate_cents, unit_cost_cents, quantity_per_phase, status')
+      .eq('community_id', communityId),
+    supabase
+      .from('reserve_expenditures')
+      .select('component_id, vendor_name, expenditure_date')
+      .eq('community_id', communityId)
+      .order('expenditure_date', { ascending: false })
+      .limit(500),
+  ]);
+  return { components: components || [], expenditureHistory: history || [] };
+}
+
+// POST /invoices/intake — accepts manual fields OR a file (PDF stored,
+// fields filled by staff). Computes suggestion. Inserts intake row.
+router.post('/invoices/intake', express.json({ limit: '1mb' }), async (req, res) => {
+  try {
+    const body = req.body || {};
+    if (!body.community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!body.amount_cents)  return res.status(400).json({ error: 'amount_cents_required' });
+
+    const { components, expenditureHistory } = await loadCommunityMatchContext(body.community_id);
+    const matches = suggestComponentMatches({
+      components,
+      expenditureHistory,
+      vendorName: body.vendor_name,
+      description: body.description,
+      amountCents: body.amount_cents,
+    });
+    const top = matches[0] || null;
+    const alternates = matches.slice(1, 4);
+
+    const row = {
+      community_id:           body.community_id,
+      vendor_name:            body.vendor_name || null,
+      invoice_number:         body.invoice_number || null,
+      invoice_date:           body.invoice_date || null,
+      amount_cents:           body.amount_cents,
+      description:            body.description || null,
+      raw_text:               body.raw_text || null,
+      file_storage_path:      body.file_storage_path || null,
+      file_name:              body.file_name || null,
+      suggested_component_id: top?.component_id || null,
+      suggested_confidence:   top?.confidence ?? null,
+      suggested_reason:       top?.reason || null,
+      alternate_suggestions:  alternates,
+      source:                 body.source || 'manual_upload',
+      status:                 'pending',
+    };
+
+    const { data, error } = await supabase
+      .from('reserve_invoice_intake')
+      .insert(row)
+      .select('*')
+      .single();
+    if (error) throw error;
+
+    res.json({ ok: true, intake: data, suggestion: top, alternates });
+  } catch (err) {
+    console.error('[reserve-studies] invoice intake failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /invoices/pending — pending queue for a community (or portfolio-wide if none)
+router.get('/invoices/pending', async (req, res) => {
+  try {
+    let q = supabase
+      .from('reserve_invoice_intake')
+      .select('*, suggested_component:suggested_component_id(id, component_name, category, line_item_number, next_scheduled_replacement_year, useful_life_years), community:community_id(id, name)')
+      .eq('status', 'pending')
+      .order('created_at', { ascending: false });
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ intakes: data || [] });
+  } catch (err) {
+    console.error('[reserve-studies] pending invoices failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /invoices/:id/match — confirm match, create expenditure, optionally roll component forward
+router.post('/invoices/:id/match', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const intakeId = req.params.id;
+    const body = req.body || {};
+    if (!body.component_id) return res.status(400).json({ error: 'component_id_required' });
+
+    // Load the intake row
+    const { data: intake, error: iErr } = await supabase
+      .from('reserve_invoice_intake')
+      .select('*')
+      .eq('id', intakeId)
+      .single();
+    if (iErr) throw iErr;
+    if (intake.status !== 'pending') return res.status(409).json({ error: 'already_resolved', status: intake.status });
+
+    const expDate = body.expenditure_date || intake.invoice_date || new Date().toISOString().slice(0, 10);
+    const expType = body.type || classifyExpenditureType((intake.vendor_name || '') + ' ' + (intake.description || ''));
+
+    // Create the expenditure
+    const expRow = {
+      component_id:       body.component_id,
+      community_id:       intake.community_id,
+      amount_cents:       intake.amount_cents,
+      expenditure_date:   expDate,
+      type:               expType,
+      description:        intake.description || null,
+      vendor_name:        intake.vendor_name || null,
+      invoice_number:     intake.invoice_number || null,
+      funded_from:        body.funded_from || 'reserves',
+      notes:              body.notes || 'Matched from invoice intake',
+      recorded_by:        body.matched_by || null,
+    };
+    const { data: exp, error: eErr } = await supabase
+      .from('reserve_expenditures')
+      .insert(expRow)
+      .select('*')
+      .single();
+    if (eErr) throw eErr;
+
+    // Roll component forward for replacements
+    let updatedComponent = null;
+    if (expType === 'full_replacement' || expType === 'partial_replacement') {
+      const replacedYear = new Date(expDate).getFullYear();
+      const { data: rolled, error: rErr } = await supabase
+        .rpc('apply_reserve_component_rollforward', {
+          p_component_id: body.component_id,
+          p_replaced_year: replacedYear,
+        });
+      if (rErr) {
+        console.warn('[reserve-studies] rollforward warning:', rErr.message);
+      } else {
+        updatedComponent = rolled;
+      }
+    }
+
+    // Mark intake matched
+    const { data: updIntake } = await supabase
+      .from('reserve_invoice_intake')
+      .update({
+        status:                 'matched',
+        matched_component_id:   body.component_id,
+        matched_expenditure_id: exp.id,
+        matched_at:             new Date().toISOString(),
+        matched_by:             body.matched_by || null,
+      })
+      .eq('id', intakeId)
+      .select('*')
+      .single();
+
+    res.json({
+      ok: true,
+      intake: updIntake,
+      expenditure: exp,
+      rolled_forward_component: updatedComponent,
+    });
+  } catch (err) {
+    console.error('[reserve-studies] invoice match failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /invoices/:id/dismiss — staff says this isn't a reserve item
+router.post('/invoices/:id/dismiss', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('reserve_invoice_intake')
+      .update({
+        status: 'dismissed',
+        dismissed_reason: (req.body && req.body.reason) || null,
+        matched_at: new Date().toISOString(),
+        matched_by: (req.body && req.body.matched_by) || null,
+      })
+      .eq('id', req.params.id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, intake: data });
+  } catch (err) {
+    console.error('[reserve-studies] invoice dismiss failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /invoices/:id/rematch — recompute suggestions (useful if components changed)
+router.get('/invoices/:id/rematch', async (req, res) => {
+  try {
+    const { data: intake, error: iErr } = await supabase
+      .from('reserve_invoice_intake')
+      .select('*')
+      .eq('id', req.params.id)
+      .single();
+    if (iErr) throw iErr;
+    const { components, expenditureHistory } = await loadCommunityMatchContext(intake.community_id);
+    const matches = suggestComponentMatches({
+      components,
+      expenditureHistory,
+      vendorName: intake.vendor_name,
+      description: intake.description,
+      amountCents: intake.amount_cents,
+    });
+    res.json({ matches });
+  } catch (err) {
+    console.error('[reserve-studies] invoice rematch failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

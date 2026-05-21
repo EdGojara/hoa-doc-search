@@ -1,0 +1,531 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reserve Invoice Review · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--navy-deep); color: var(--ink);
+    font-family: var(--font-sans); font-size: 14px; line-height: 1.45;
+  }
+  header.app {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--navy-deep);
+  }
+  .brand-lockup { display: flex; align-items: center; gap: 14px; }
+  .brand-lockup svg { width: 32px; height: 40px; }
+  .brand-lockup .wm { font-family: var(--font-serif); font-size: 18px; color: var(--ink); }
+  .brand-lockup .wm em { font-style: italic; color: var(--gold); }
+  .brand-lockup .sub { font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+  header .module-name { font-family: var(--font-serif); font-size: 22px; color: var(--ink); }
+  header .module-name em { color: var(--gold); font-style: italic; }
+  header .util a { color: var(--ink-soft); text-decoration: none; font-size: 13px; margin-left: 18px; }
+  header .util a:hover { color: var(--gold); }
+
+  main { max-width: 1140px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  /* New invoice card */
+  .new-invoice {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    border-radius: 10px; padding: 22px 26px; margin-bottom: 22px;
+  }
+  .new-invoice h2 {
+    font-family: var(--font-serif); font-size: 20px; color: var(--ink); margin: 0 0 4px;
+  }
+  .new-invoice h2 em { color: var(--gold); font-style: italic; }
+  .new-invoice .lede { color: var(--ink-faint); font-size: 13px; margin-bottom: 16px; }
+
+  .field { display: flex; flex-direction: column; gap: 5px; }
+  .field label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .field label .req { color: var(--gold); margin-left: 2px; }
+  .field input, .field select, .field textarea {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 9px 12px; font-size: 13.5px;
+    border-radius: 5px; font-family: var(--font-sans);
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--gold); }
+  .field textarea { min-height: 60px; resize: vertical; }
+  .grid { display: grid; grid-template-columns: 2fr 1fr 1fr 1fr; gap: 14px; }
+  .grid.wide { grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .grid, .grid.wide { grid-template-columns: 1fr; } }
+
+  .actions { display: flex; gap: 10px; margin-top: 14px; align-items: center; }
+  .primary-btn {
+    background: var(--gold); color: var(--navy-deep); border: none;
+    padding: 11px 22px; border-radius: 6px;
+    font-size: 14px; font-weight: 500; cursor: pointer;
+  }
+  .primary-btn:hover { background: var(--gold-bright); }
+  .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .secondary-btn {
+    background: transparent; color: var(--ink-soft);
+    border: 1px solid var(--rule-strong);
+    padding: 11px 18px; border-radius: 6px;
+    font-size: 13.5px; cursor: pointer;
+  }
+  .secondary-btn:hover { color: var(--gold); border-color: var(--gold); }
+
+  /* Pending queue */
+  h2.queue-title {
+    font-family: var(--font-serif); font-size: 22px; color: var(--ink);
+    margin: 28px 0 12px;
+  }
+  h2.queue-title em { color: var(--gold); font-style: italic; }
+
+  .filter-row {
+    display: flex; gap: 12px; align-items: center; margin-bottom: 14px;
+  }
+  .filter-row select {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 8px 12px; font-size: 13px;
+    border-radius: 5px;
+  }
+  .filter-row .count {
+    margin-left: auto; font-size: 12px; color: var(--ink-faint);
+    font-family: var(--font-mono);
+  }
+
+  .intake-card {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 12px;
+    display: grid; grid-template-columns: 1.5fr 2fr 1fr; gap: 18px;
+    align-items: start;
+  }
+  @media (max-width: 800px) { .intake-card { grid-template-columns: 1fr; } }
+  .intake-card .vendor {
+    font-size: 15px; color: var(--ink); font-weight: 500;
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 4px;
+  }
+  .intake-card .amount {
+    font-family: var(--font-mono); font-size: 18px; color: var(--gold);
+    margin-bottom: 4px;
+  }
+  .intake-card .meta { font-size: 12px; color: var(--ink-faint); }
+  .intake-card .desc { font-size: 13px; color: var(--ink-soft); margin-top: 6px; }
+
+  .suggestion {
+    background: var(--navy-deep); border-left: 3px solid var(--gold);
+    border-radius: 4px; padding: 10px 14px;
+  }
+  .suggestion .label {
+    font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.07em;
+    text-transform: uppercase; margin-bottom: 4px;
+  }
+  .suggestion .name { font-size: 13.5px; color: var(--ink); font-weight: 500; margin-bottom: 3px; }
+  .suggestion .conf {
+    font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-faint);
+    margin-bottom: 4px;
+  }
+  .suggestion .conf .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    margin-right: 6px; font-weight: 600;
+  }
+  .suggestion .conf .pill.high { background: rgba(80,200,120,0.15); color: rgba(140,210,160,1); }
+  .suggestion .conf .pill.med  { background: rgba(212,175,55,0.18); color: var(--gold); }
+  .suggestion .conf .pill.low  { background: rgba(231,90,90,0.12); color: #E48A8A; }
+  .suggestion .reason { font-size: 11.5px; color: var(--ink-faint); line-height: 1.45; }
+
+  .intake-actions { display: flex; flex-direction: column; gap: 8px; }
+  .intake-actions select {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 8px 10px; font-size: 12.5px;
+    border-radius: 5px; font-family: var(--font-sans);
+  }
+  .btn-confirm {
+    background: var(--gold); color: var(--navy-deep); border: none;
+    padding: 9px 14px; border-radius: 5px; font-weight: 500; font-size: 13px;
+    cursor: pointer;
+  }
+  .btn-confirm:hover { background: var(--gold-bright); }
+  .btn-confirm:disabled { opacity: 0.5; cursor: not-allowed; }
+  .btn-dismiss {
+    background: transparent; color: #E48A8A;
+    border: 1px solid rgba(231,90,90,0.4);
+    padding: 8px 14px; border-radius: 5px; font-size: 12px;
+    cursor: pointer;
+  }
+  .btn-dismiss:hover { background: rgba(231,90,90,0.08); }
+
+  .alternates {
+    margin-top: 8px; font-size: 11.5px; color: var(--ink-faint);
+  }
+  .alternates summary { cursor: pointer; padding: 4px 0; }
+  .alternates summary:hover { color: var(--gold); }
+  .alt-list { margin-top: 6px; }
+  .alt-list .alt {
+    padding: 6px 10px; background: rgba(255,255,255,0.02);
+    border-radius: 4px; margin-bottom: 4px; cursor: pointer;
+    transition: background 0.15s ease;
+  }
+  .alt-list .alt:hover { background: rgba(212,175,55,0.06); color: var(--gold); }
+
+  .empty {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    border-radius: 8px; padding: 40px 30px; text-align: center;
+    color: var(--ink-faint); font-size: 13.5px;
+  }
+  .empty h3 { font-family: var(--font-serif); color: var(--ink-soft); margin: 0 0 6px; font-size: 18px; }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 32px;
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 12px 18px; border-radius: 6px;
+    font-size: 13px; z-index: 1000;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 420px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: rgba(80,200,120,0.5); }
+  .toast.error { border-color: rgba(231,90,90,0.5); }
+
+  .loader {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--ink-faint); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="brand-lockup">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="sub">trustEd · operations platform</div>
+    </div>
+  </div>
+  <div class="module-name">Invoice <em>Review</em></div>
+  <div class="util">
+    <a href="/reserve-components-admin.html">← Reserves</a>
+    <a href="/reserve-map.html">Map</a>
+    <a href="/">Platform</a>
+  </div>
+</header>
+
+<main>
+
+  <div class="new-invoice">
+    <h2>Log a reserve <em>invoice</em></h2>
+    <p class="lede">Drop in a vendor invoice. We'll suggest the reserve component it belongs to. Confirm with one click → the expenditure gets recorded and the component rolls forward.</p>
+
+    <div class="grid">
+      <div class="field">
+        <label>Vendor name<span class="req">*</span></label>
+        <input id="vendorName" placeholder="Sweetwater Pool Management" />
+      </div>
+      <div class="field">
+        <label>Invoice date<span class="req">*</span></label>
+        <input id="invoiceDate" type="date" />
+      </div>
+      <div class="field">
+        <label>Amount ($)<span class="req">*</span></label>
+        <input id="amount" type="number" step="0.01" placeholder="42000" />
+      </div>
+      <div class="field">
+        <label>Community<span class="req">*</span></label>
+        <select id="commSelect"><option value="">— Select —</option></select>
+      </div>
+    </div>
+
+    <div class="grid wide" style="margin-top: 14px;">
+      <div class="field">
+        <label>Invoice number</label>
+        <input id="invoiceNumber" placeholder="INV-2026-1542" />
+      </div>
+      <div class="field" style="grid-column: 2 / -1;">
+        <label>Description (helps the matcher — e.g., "Pool plaster replacement")</label>
+        <input id="description" placeholder="Pool plaster replacement, drain repair, new tile band" />
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="primary-btn" id="stageBtn">Stage for review →</button>
+      <span style="font-size: 12px; color: var(--ink-faint);">Suggestion is computed at intake; you can edit before confirming below.</span>
+    </div>
+  </div>
+
+  <h2 class="queue-title">Pending <em>queue</em></h2>
+
+  <div class="filter-row">
+    <select id="commFilter">
+      <option value="">All communities</option>
+    </select>
+    <div class="count" id="countLabel">—</div>
+  </div>
+
+  <div id="queue"></div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+let communities = [];
+let currentList = [];
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function fmtMoney(cents) {
+  if (cents == null) return '—';
+  return '$' + (Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+function fmtDate(d) { return d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—'; }
+function pctTier(c) { return c >= 0.6 ? 'high' : c >= 0.3 ? 'med' : 'low'; }
+
+function toast(msg, type) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+// =============================================================================
+// Boot
+// =============================================================================
+(async function init() {
+  // Default invoice date = today
+  $('invoiceDate').valueAsDate = new Date();
+
+  try {
+    const r = await fetch('/api/communities');
+    const data = await r.json();
+    communities = data.communities || [];
+    [$('commSelect'), $('commFilter')].forEach(sel => {
+      communities.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = c.id; opt.textContent = c.name;
+        sel.appendChild(opt);
+      });
+    });
+  } catch (err) {
+    toast('Could not load communities: ' + err.message, 'error');
+  }
+
+  $('commFilter').addEventListener('change', loadQueue);
+  $('stageBtn').addEventListener('click', stageInvoice);
+
+  await loadQueue();
+})();
+
+async function stageInvoice() {
+  const vendor = $('vendorName').value.trim();
+  const date = $('invoiceDate').value;
+  const amt = parseFloat($('amount').value || '0');
+  const commId = $('commSelect').value;
+  const desc = $('description').value.trim();
+  const invNum = $('invoiceNumber').value.trim();
+
+  if (!vendor || !date || !amt || !commId) {
+    toast('Vendor, date, amount, and community are required.', 'error');
+    return;
+  }
+  $('stageBtn').disabled = true;
+  $('stageBtn').innerHTML = '<span class="loader"></span> Staging…';
+
+  try {
+    const body = {
+      community_id: commId,
+      vendor_name: vendor,
+      invoice_date: date,
+      invoice_number: invNum || null,
+      amount_cents: Math.round(amt * 100),
+      description: desc || null,
+      source: 'manual_upload',
+    };
+    const r = await fetch('/api/reserve-studies/invoices/intake', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await r.json();
+    if (!result.ok) { toast(result.error || 'Stage failed', 'error'); return; }
+    toast('Staged. Suggested: ' + (result.suggestion?.component_name || 'no match — pick manually'), 'success');
+
+    // Clear inputs
+    $('vendorName').value = '';
+    $('amount').value = '';
+    $('description').value = '';
+    $('invoiceNumber').value = '';
+
+    await loadQueue();
+  } catch (err) {
+    toast('Stage failed: ' + err.message, 'error');
+  } finally {
+    $('stageBtn').disabled = false;
+    $('stageBtn').textContent = 'Stage for review →';
+  }
+}
+
+async function loadQueue() {
+  const commId = $('commFilter').value;
+  const url = '/api/reserve-studies/invoices/pending' + (commId ? '?community_id=' + commId : '');
+  try {
+    const r = await fetch(url);
+    const data = await r.json();
+    currentList = data.intakes || [];
+    renderQueue();
+  } catch (err) {
+    $('queue').innerHTML = `<div class="empty"><h3>Couldn't load queue</h3><p>${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
+function renderQueue() {
+  $('countLabel').textContent = currentList.length + ' pending';
+  const q = $('queue');
+  if (!currentList.length) {
+    q.innerHTML = `<div class="empty"><h3>Queue is empty</h3><p>Stage a vendor invoice above. We'll suggest the matching reserve component and you confirm with one click.</p></div>`;
+    return;
+  }
+  q.innerHTML = '';
+  currentList.forEach(intake => {
+    const suggCmp = intake.suggested_component;
+    const conf = intake.suggested_confidence != null ? intake.suggested_confidence : 0;
+    const card = document.createElement('div');
+    card.className = 'intake-card';
+    card.innerHTML = `
+      <div>
+        <div class="vendor">${escapeHtml(intake.vendor_name || '—')}</div>
+        <div class="amount">${fmtMoney(intake.amount_cents)}</div>
+        <div class="meta">${fmtDate(intake.invoice_date)}${intake.invoice_number ? ' · #' + escapeHtml(intake.invoice_number) : ''}${intake.community ? ' · ' + escapeHtml(intake.community.name) : ''}</div>
+        ${intake.description ? `<div class="desc">${escapeHtml(intake.description)}</div>` : ''}
+      </div>
+      <div class="suggestion">
+        ${suggCmp ? `
+          <div class="label">Suggested match</div>
+          <div class="name">${escapeHtml(suggCmp.component_name)}${suggCmp.line_item_number ? ' <span style="color:var(--ink-faint); font-family:var(--font-mono); font-size:11px;">(' + escapeHtml(suggCmp.line_item_number) + ')</span>' : ''}</div>
+          <div class="conf"><span class="pill ${pctTier(conf)}">${Math.round(conf * 100)}%</span> confidence</div>
+          <div class="reason">${escapeHtml(intake.suggested_reason || '—')}</div>
+          ${Array.isArray(intake.alternate_suggestions) && intake.alternate_suggestions.length ? `
+            <details class="alternates">
+              <summary>${intake.alternate_suggestions.length} other candidate(s)</summary>
+              <div class="alt-list">
+                ${intake.alternate_suggestions.map(a => `<div class="alt" data-id="${a.component_id}" data-name="${escapeHtml(a.component_name)}">${escapeHtml(a.component_name)} · <span style="font-family:var(--font-mono); font-size:11px;">${Math.round(a.confidence * 100)}%</span></div>`).join('')}
+              </div>
+            </details>` : ''}
+        ` : `
+          <div class="label">No suggestion</div>
+          <div class="reason">No reserve component matched this invoice. Use the dropdown to pick manually, or dismiss.</div>
+        `}
+      </div>
+      <div class="intake-actions">
+        <select class="component-pick" data-intake="${intake.id}">
+          ${suggCmp ? `<option value="${suggCmp.id}" selected>${escapeHtml(suggCmp.component_name)}</option>` : '<option value="">— Pick component —</option>'}
+        </select>
+        <select class="type-pick" data-intake="${intake.id}">
+          <option value="full_replacement">Full replacement (rolls forward)</option>
+          <option value="partial_replacement">Partial replacement (rolls forward)</option>
+          <option value="repair">Repair</option>
+          <option value="maintenance">Maintenance</option>
+          <option value="inspection">Inspection</option>
+          <option value="consulting">Consulting / study</option>
+          <option value="other">Other</option>
+        </select>
+        <button class="btn-confirm" data-intake="${intake.id}">Confirm match</button>
+        <button class="btn-dismiss" data-intake="${intake.id}">Dismiss</button>
+      </div>
+    `;
+    q.appendChild(card);
+
+    // Populate full component list lazily (when user opens dropdown)
+    const sel = card.querySelector('.component-pick');
+    sel.addEventListener('focus', async () => {
+      if (sel.dataset.loaded) return;
+      try {
+        const r = await fetch('/api/reserve-studies/components?community_id=' + intake.community_id);
+        const { components } = await r.json();
+        const currentVal = sel.value;
+        sel.innerHTML = '<option value="">— Pick component —</option>' + (components || [])
+          .filter(c => c.status === 'active')
+          .map(c => `<option value="${c.id}" ${c.id === currentVal ? 'selected' : ''}>${escapeHtml(c.component_name)}${c.line_item_number ? ' (' + escapeHtml(c.line_item_number) + ')' : ''}</option>`)
+          .join('');
+        sel.dataset.loaded = '1';
+      } catch (_) { /* swallow */ }
+    });
+
+    // Alt-list click → set as selection
+    card.querySelectorAll('.alt-list .alt').forEach(el => {
+      el.addEventListener('click', () => {
+        const id = el.dataset.id;
+        // Make sure option exists
+        if (!sel.querySelector(`option[value="${id}"]`)) {
+          const opt = document.createElement('option');
+          opt.value = id; opt.textContent = el.dataset.name;
+          sel.appendChild(opt);
+        }
+        sel.value = id;
+      });
+    });
+
+    // Confirm + dismiss
+    card.querySelector('.btn-confirm').addEventListener('click', () => confirmMatch(intake.id, card));
+    card.querySelector('.btn-dismiss').addEventListener('click', () => dismissIntake(intake.id));
+  });
+}
+
+async function confirmMatch(intakeId, card) {
+  const compId = card.querySelector('.component-pick').value;
+  const expType = card.querySelector('.type-pick').value;
+  if (!compId) { toast('Pick a component first.', 'error'); return; }
+  const btn = card.querySelector('.btn-confirm');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="loader"></span> Matching…';
+  try {
+    const r = await fetch(`/api/reserve-studies/invoices/${intakeId}/match`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ component_id: compId, type: expType }),
+    });
+    const result = await r.json();
+    if (!result.ok) { toast(result.error || 'Match failed', 'error'); btn.disabled = false; btn.textContent = 'Confirm match'; return; }
+    const msg = result.rolled_forward_component
+      ? `Matched and rolled forward — next replacement now ${result.rolled_forward_component.next_scheduled_replacement_year || '?'}.`
+      : `Matched — expenditure recorded.`;
+    toast(msg, 'success');
+    await loadQueue();
+  } catch (err) {
+    toast('Match failed: ' + err.message, 'error');
+    btn.disabled = false; btn.textContent = 'Confirm match';
+  }
+}
+
+async function dismissIntake(intakeId) {
+  if (!confirm('Dismiss this invoice? It won\'t appear in the queue again.')) return;
+  try {
+    const r = await fetch(`/api/reserve-studies/invoices/${intakeId}/dismiss`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'not_a_reserve_item' }),
+    });
+    const result = await r.json();
+    if (!result.ok) { toast(result.error || 'Dismiss failed', 'error'); return; }
+    toast('Dismissed.', 'success');
+    await loadQueue();
+  } catch (err) {
+    toast('Dismiss failed: ' + err.message, 'error');
+  }
+}
+</script>
+
+</body>
+</html>
