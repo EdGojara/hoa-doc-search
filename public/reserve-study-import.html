@@ -1,0 +1,591 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Import Reserve Study · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--navy-deep);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px; line-height: 1.45;
+  }
+  header.app {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--navy-deep);
+  }
+  .brand-lockup { display: flex; align-items: center; gap: 14px; }
+  .brand-lockup svg { width: 32px; height: 40px; }
+  .brand-lockup .wm {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--ink);
+  }
+  .brand-lockup .wm em { font-style: italic; color: var(--gold); }
+  .brand-lockup .sub {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px;
+  }
+  header .module-name {
+    font-family: var(--font-serif); font-size: 22px; font-weight: 500; color: var(--ink);
+  }
+  header .module-name em { color: var(--gold); font-style: italic; }
+  header .util a { color: var(--ink-soft); text-decoration: none; font-size: 13px; margin-left: 18px; }
+  header .util a:hover { color: var(--gold); }
+
+  main {
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 32px 28px 80px;
+  }
+
+  /* Step indicator */
+  .steps { display: flex; gap: 16px; margin-bottom: 28px; }
+  .step {
+    flex: 1;
+    background: var(--navy-soft);
+    border: 1px solid var(--rule-strong);
+    padding: 12px 16px; border-radius: 8px;
+    font-size: 13px; color: var(--ink-faint);
+    display: flex; align-items: center; gap: 10px;
+  }
+  .step.active { border-color: var(--gold); color: var(--ink); }
+  .step.done { border-color: rgba(80,200,120,0.4); color: rgba(140,210,160,1); }
+  .step .num {
+    width: 24px; height: 24px; border-radius: 50%;
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    display: flex; align-items: center; justify-content: center;
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .step.active .num { background: var(--gold); color: var(--navy-deep); border-color: var(--gold); }
+  .step.done .num { background: rgba(80,200,120,0.18); border-color: rgba(80,200,120,0.5); color: rgba(140,210,160,1); }
+
+  .panel {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    border-radius: 10px; padding: 26px 30px; margin-bottom: 18px;
+  }
+  .panel h2 {
+    font-family: var(--font-serif); font-size: 24px; font-weight: 500;
+    color: var(--ink); margin: 0 0 6px;
+  }
+  .panel h2 em { color: var(--gold); font-style: italic; }
+  .panel .lede { color: var(--ink-faint); font-size: 13.5px; margin-bottom: 18px; }
+  .panel h3 {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    margin: 18px 0 10px; font-weight: 500;
+  }
+
+  /* Upload zone */
+  .drop {
+    border: 2px dashed var(--rule-strong);
+    border-radius: 12px; padding: 40px 30px;
+    text-align: center; color: var(--ink-faint);
+    transition: all 0.15s ease; cursor: pointer;
+  }
+  .drop:hover, .drop.drag { border-color: var(--gold); background: rgba(212,175,55,0.04); color: var(--ink); }
+  .drop strong { color: var(--ink); font-size: 16px; display: block; margin-bottom: 6px; }
+  .drop input[type=file] { display: none; }
+
+  /* Fields */
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .field select, .field input {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 9px 12px; font-size: 13.5px;
+    border-radius: 5px; font-family: var(--font-sans);
+  }
+  .field select:focus, .field input:focus { outline: none; border-color: var(--gold); }
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-4 { display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 800px) { .grid-2, .grid-4 { grid-template-columns: 1fr; } }
+
+  /* Summary cards */
+  .meta-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .meta-card {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    border-radius: 8px; padding: 12px 14px;
+  }
+  .meta-card .k { font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 3px; }
+  .meta-card .v { font-family: var(--font-mono); font-size: 14.5px; color: var(--ink); }
+  @media (max-width: 800px) { .meta-grid { grid-template-columns: 1fr 1fr; } }
+
+  /* Component table */
+  table.components {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+    margin-top: 10px;
+  }
+  table.components thead th {
+    text-align: left; padding: 9px 10px;
+    border-bottom: 1px solid var(--rule-strong);
+    color: var(--ink-faint); font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500;
+    position: sticky; top: 0;
+    background: var(--navy-soft); z-index: 5;
+  }
+  table.components tbody td {
+    padding: 9px 10px; border-bottom: 1px solid var(--rule);
+    color: var(--ink); vertical-align: top;
+  }
+  table.components tbody tr:hover { background: rgba(212,175,55,0.04); }
+  table.components .line-item { font-family: var(--font-mono); font-size: 11.5px; color: var(--ink-faint); }
+  table.components .amount { font-family: var(--font-mono); text-align: right; white-space: nowrap; }
+  table.components .name input,
+  table.components .cat select {
+    background: var(--navy-deep); border: 1px solid var(--rule);
+    color: var(--ink); padding: 6px 8px; font-size: 13px;
+    border-radius: 4px; width: 100%; font-family: var(--font-sans);
+  }
+  table.components .cat select { font-size: 12.5px; }
+  table.components .section-header td {
+    background: var(--navy-deep); color: var(--gold);
+    font-family: var(--font-serif); font-size: 14px;
+    padding: 12px 10px; border-top: 2px solid var(--gold);
+  }
+  table.components .section-header .name {
+    font-style: italic;
+  }
+
+  /* Buttons */
+  .actions {
+    display: flex; gap: 12px; justify-content: flex-end;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+  }
+  .primary-btn {
+    background: var(--gold); color: var(--navy-deep); border: 1px solid var(--gold);
+    padding: 12px 26px; border-radius: 7px;
+    font-size: 14px; font-weight: 500; cursor: pointer;
+    display: inline-flex; align-items: center; gap: 8px;
+  }
+  .primary-btn:hover { background: var(--gold-bright); }
+  .primary-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .secondary-btn {
+    background: transparent; color: var(--ink-soft);
+    border: 1px solid var(--rule-strong);
+    padding: 12px 22px; border-radius: 7px;
+    font-size: 14px; cursor: pointer;
+  }
+  .secondary-btn:hover { color: var(--gold); border-color: var(--gold); }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 32px;
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 14px 20px; border-radius: 8px;
+    font-size: 13px; z-index: 1000;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 420px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: rgba(80,200,120,0.5); }
+  .toast.error   { border-color: rgba(231,90,90,0.5); }
+
+  .loader {
+    display: inline-block; width: 14px; height: 14px;
+    border: 2px solid var(--ink-faint); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .filename-pill {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: var(--navy-deep); border: 1px solid var(--gold);
+    color: var(--ink); padding: 8px 14px; border-radius: 999px;
+    font-size: 13px; font-family: var(--font-mono);
+  }
+  .filename-pill .x {
+    background: transparent; border: none; color: var(--ink-faint);
+    cursor: pointer; padding: 0; font-size: 16px; line-height: 1;
+  }
+  .filename-pill .x:hover { color: var(--gold); }
+
+  .summary-text {
+    background: var(--navy-deep); border-left: 3px solid var(--gold);
+    padding: 12px 16px; border-radius: 0 7px 7px 0;
+    margin-bottom: 16px;
+    font-size: 13.5px; color: var(--ink-soft); line-height: 1.55;
+  }
+  .summary-text strong { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="brand-lockup">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="sub">trustEd · operations platform</div>
+    </div>
+  </div>
+  <div class="module-name">Import <em>Reserve Study</em></div>
+  <div class="util">
+    <a href="/reserve-components-admin.html">← Reserves</a>
+    <a href="/">Platform</a>
+  </div>
+</header>
+
+<main>
+
+  <!-- Steps -->
+  <div class="steps">
+    <div class="step active" id="step-1"><div class="num">1</div> Upload</div>
+    <div class="step" id="step-2"><div class="num">2</div> Review</div>
+    <div class="step" id="step-3"><div class="num">3</div> Commit</div>
+  </div>
+
+  <!-- Step 1: Upload -->
+  <div class="panel" id="panel-upload">
+    <h2>Upload reserve <em>study</em></h2>
+    <p class="lede">Drop the Reserve Advisors LLC v7.0 Excel here. The PDF report is optional — if you've already uploaded it through Documents, you can link it on the next step.</p>
+
+    <div class="field">
+      <label for="commSelect">Community<span style="color:var(--gold)">*</span></label>
+      <select id="commSelect"><option value="">— Select community —</option></select>
+    </div>
+
+    <h3>Excel spreadsheet</h3>
+    <div class="drop" id="drop">
+      <input type="file" id="fileInput" accept=".xlsx,.xls">
+      <strong>Drop the Reserve Advisors Excel here</strong>
+      <div>or <span style="color:var(--gold); text-decoration:underline; cursor:pointer;">click to browse</span></div>
+      <div style="margin-top:8px; font-size:11.5px;">Looks for "Property Info", "Expenditures", and "Funding Plan" sheets.</div>
+    </div>
+    <div id="filePill" style="display:none; margin-top:14px;"></div>
+
+    <div class="actions">
+      <button class="primary-btn" id="parseBtn" disabled>Parse spreadsheet →</button>
+    </div>
+  </div>
+
+  <!-- Step 2: Review -->
+  <div class="panel" id="panel-review" style="display:none;">
+    <h2>Review extracted <em>study</em></h2>
+    <p class="lede">Edit any component name or category before commit. Pin placement happens later in the Reserves admin — components can be saved without pins and placed on the map after.</p>
+
+    <div class="summary-text" id="summaryText">—</div>
+
+    <h3>Study metadata</h3>
+    <div class="meta-grid" id="metaGrid"></div>
+
+    <div class="grid-2" style="margin-top:18px;">
+      <div class="field">
+        <label>Source PDF (library document)</label>
+        <select id="sourceDocSelect">
+          <option value="">— None / link later —</option>
+        </select>
+      </div>
+      <div class="field" style="align-self:flex-end;">
+        <label>Component count</label>
+        <div style="font-family:var(--font-mono); font-size:18px; color:var(--ink); padding: 9px 0;"><span id="compCount">0</span> components</div>
+      </div>
+    </div>
+
+    <h3>Components</h3>
+    <div style="overflow-x:auto; max-height:580px; overflow-y:auto; border:1px solid var(--rule); border-radius:8px;">
+      <table class="components" id="compTable">
+        <thead>
+          <tr>
+            <th style="width: 70px;">Line</th>
+            <th>Name</th>
+            <th style="width: 140px;">Category</th>
+            <th style="width: 80px;">Next yr</th>
+            <th style="width: 60px;">UL</th>
+            <th class="amount" style="width: 110px;">Current $</th>
+            <th class="amount" style="width: 110px;">Future $</th>
+          </tr>
+        </thead>
+        <tbody id="compTbody"></tbody>
+      </table>
+    </div>
+
+    <div class="actions">
+      <button class="secondary-btn" id="backBtn">← Back</button>
+      <button class="primary-btn" id="commitBtn">Commit to database →</button>
+    </div>
+  </div>
+
+  <!-- Step 3: Done -->
+  <div class="panel" id="panel-done" style="display:none;">
+    <h2><em>Study</em> imported</h2>
+    <div class="summary-text" id="doneSummary">—</div>
+    <div class="actions">
+      <button class="secondary-btn" onclick="location.href='/reserve-components-admin.html'">Manage components</button>
+      <button class="primary-btn" onclick="location.href='/reserve-map.html'">View on map →</button>
+    </div>
+  </div>
+
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const CATEGORIES = ['pool','roof','paving','fence','mechanical','landscape','common_area','playground','signage','lighting','irrigation','mailroom','other'];
+
+let selectedFile = null;
+let communityId = null;
+let parseResult = null;
+let editedComponents = []; // mirror of parseResult.components with user edits
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function fmtMoney(cents) {
+  if (cents == null) return '—';
+  return '$' + (Number(cents) / 100).toLocaleString('en-US', { maximumFractionDigits: 0 });
+}
+function fmtPercent(v) { return v == null ? '—' : (v * 100).toFixed(2) + '%'; }
+
+function toast(msg, type) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => { t.className = 'toast'; }, 4500);
+}
+
+function setStep(n) {
+  [1,2,3].forEach(i => {
+    const el = $('step-' + i);
+    el.classList.toggle('active', i === n);
+    el.classList.toggle('done', i < n);
+  });
+  $('panel-upload').style.display = n === 1 ? '' : 'none';
+  $('panel-review').style.display = n === 2 ? '' : 'none';
+  $('panel-done').style.display   = n === 3 ? '' : 'none';
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// =============================================================================
+// Step 1: communities + file pick
+// =============================================================================
+(async function init() {
+  try {
+    const r = await fetch('/api/communities');
+    const { communities } = await r.json();
+    const sel = $('commSelect');
+    (communities || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id; opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', () => {
+      communityId = sel.value || null;
+      updateParseBtn();
+    });
+  } catch (err) {
+    toast('Could not load communities: ' + err.message, 'error');
+  }
+})();
+
+// Drop + file picker
+const dropZone = $('drop');
+const fileInput = $('fileInput');
+dropZone.addEventListener('click', () => fileInput.click());
+dropZone.addEventListener('dragover', e => { e.preventDefault(); dropZone.classList.add('drag'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('drag'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('drag');
+  if (e.dataTransfer.files.length) handleFile(e.dataTransfer.files[0]);
+});
+fileInput.addEventListener('change', e => {
+  if (e.target.files.length) handleFile(e.target.files[0]);
+});
+
+function handleFile(file) {
+  selectedFile = file;
+  $('filePill').style.display = '';
+  $('filePill').innerHTML = `<div class="filename-pill">📊 ${escapeHtml(file.name)} <button class="x" id="clearFile" aria-label="Remove">✕</button></div>`;
+  $('clearFile').addEventListener('click', () => {
+    selectedFile = null;
+    fileInput.value = '';
+    $('filePill').style.display = 'none';
+    updateParseBtn();
+  });
+  updateParseBtn();
+}
+
+function updateParseBtn() {
+  $('parseBtn').disabled = !(selectedFile && communityId);
+}
+
+// =============================================================================
+// Step 2: parse + preview
+// =============================================================================
+$('parseBtn').addEventListener('click', async () => {
+  if (!selectedFile || !communityId) return;
+  $('parseBtn').disabled = true;
+  $('parseBtn').innerHTML = '<span class="loader"></span> Parsing…';
+  const fd = new FormData();
+  fd.append('file', selectedFile);
+  try {
+    const r = await fetch('/api/reserve-studies/import/preview', { method: 'POST', body: fd });
+    const result = await r.json();
+    if (!result.ok) {
+      toast(result.message || result.error || 'Parse failed', 'error');
+      $('parseBtn').disabled = false;
+      $('parseBtn').textContent = 'Parse spreadsheet →';
+      return;
+    }
+    parseResult = result;
+    editedComponents = result.components.map(c => ({ ...c, category: c.suggested_category }));
+    renderReview();
+    setStep(2);
+  } catch (err) {
+    toast('Parse failed: ' + err.message, 'error');
+  } finally {
+    $('parseBtn').disabled = false;
+    $('parseBtn').textContent = 'Parse spreadsheet →';
+  }
+});
+
+function renderReview() {
+  const meta = parseResult.metadata;
+  const stats = parseResult.stats;
+
+  $('summaryText').innerHTML = `
+    Parsed <strong>${stats.component_count}</strong> components across <strong>${stats.sections.length}</strong> sections
+    (${stats.sections.map(s => escapeHtml(s)).join(' · ')}) plus <strong>${stats.funding_plan_years}</strong> years of funding plan.
+    Source: ${escapeHtml(meta.association_name || '—')} (${escapeHtml(meta.city || '')}, ${escapeHtml(meta.state || '')})
+    inspected <strong>${escapeHtml(meta.inspection_date || '—')}</strong>.
+  `;
+
+  $('metaGrid').innerHTML = [
+    { k: 'Format',         v: meta.format + ' ' + (meta.version || '') },
+    { k: 'Fiscal year',    v: meta.fiscal_year },
+    { k: 'Inspection',     v: meta.inspection_date || '—' },
+    { k: 'Units',          v: meta.units_count?.toLocaleString() || '—' },
+    { k: 'Begin balance',  v: fmtMoney(meta.beginning_balance_cents) },
+    { k: 'Inflation',      v: fmtPercent(meta.near_term_inflation) },
+    { k: 'Interest rate',  v: fmtPercent(meta.interest_rate) },
+    { k: 'Length',         v: (meta.length_years || '—') + ' yrs' },
+  ].map(({ k, v }) => `<div class="meta-card"><div class="k">${k}</div><div class="v">${escapeHtml(String(v))}</div></div>`).join('');
+
+  $('compCount').textContent = editedComponents.length;
+
+  // Build component table grouped by section
+  const tbody = $('compTbody');
+  tbody.innerHTML = '';
+  let lastSection = null;
+  editedComponents.forEach((c, idx) => {
+    if (c.section_title !== lastSection) {
+      const sh = document.createElement('tr');
+      sh.className = 'section-header';
+      sh.innerHTML = `<td colspan="7"><span class="name">${escapeHtml(c.section_title || '—')}</span></td>`;
+      tbody.appendChild(sh);
+      lastSection = c.section_title;
+    }
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td class="line-item">${escapeHtml(c.line_item || '')}</td>
+      <td class="name"><input type="text" data-idx="${idx}" data-field="component_name" value="${escapeHtml(c.component_name || '')}"></td>
+      <td class="cat">
+        <select data-idx="${idx}" data-field="category">
+          ${CATEGORIES.map(cat => `<option value="${cat}" ${c.category === cat ? 'selected' : ''}>${cat.replace(/_/g, ' ')}</option>`).join('')}
+        </select>
+      </td>
+      <td class="amount">${c.next_scheduled_replacement_year || '—'}</td>
+      <td class="amount">${c.useful_life_years != null ? c.useful_life_years : '—'}</td>
+      <td class="amount">${fmtMoney(c.current_cost_estimate_cents)}</td>
+      <td class="amount">${fmtMoney(c.future_cost_estimate_cents)}</td>
+    `;
+    tbody.appendChild(tr);
+  });
+
+  // Wire field edits
+  tbody.querySelectorAll('input, select').forEach(el => {
+    el.addEventListener('change', e => {
+      const idx = parseInt(e.target.dataset.idx, 10);
+      const field = e.target.dataset.field;
+      editedComponents[idx][field] = e.target.value;
+    });
+  });
+
+  // Fetch source-doc candidates for the dropdown (reserve study category, this community)
+  loadSourceDocs();
+}
+
+async function loadSourceDocs() {
+  try {
+    const r = await fetch(`/api/documents?community_id=${communityId}&category=reserve_study&limit=20`);
+    if (!r.ok) return; // best-effort — endpoint may not exist or return errors
+    const data = await r.json();
+    const docs = data.documents || data.data || [];
+    const sel = $('sourceDocSelect');
+    docs.forEach(d => {
+      const opt = document.createElement('option');
+      opt.value = d.id;
+      opt.textContent = `${d.title || d.file_name_normalized || d.id} ${d.effective_date ? '(' + d.effective_date + ')' : ''}`;
+      sel.appendChild(opt);
+    });
+  } catch (_) { /* swallow — staff can link later */ }
+}
+
+$('backBtn').addEventListener('click', () => setStep(1));
+
+// =============================================================================
+// Step 3: commit
+// =============================================================================
+$('commitBtn').addEventListener('click', async () => {
+  if (!parseResult) return;
+  $('commitBtn').disabled = true;
+  $('commitBtn').innerHTML = '<span class="loader"></span> Committing…';
+  try {
+    const body = {
+      community_id: communityId,
+      source_document_id: $('sourceDocSelect').value || null,
+      study_firm: 'Reserve Advisors LLC',
+      metadata: parseResult.metadata,
+      components: editedComponents,
+      funding_plan: parseResult.funding_plan,
+      deactivate_existing: true,
+    };
+    const r = await fetch('/api/reserve-studies/import/commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const result = await r.json();
+    if (!result.ok) {
+      toast(result.error || 'Commit failed', 'error');
+      $('commitBtn').disabled = false;
+      $('commitBtn').textContent = 'Commit to database →';
+      return;
+    }
+    $('doneSummary').innerHTML = `
+      Successfully imported the <strong>${escapeHtml(parseResult.metadata.association_name)}</strong> reserve study.
+      <br><br>
+      Created <strong>${result.components_inserted}</strong> reserve components and <strong>${result.funding_plan_years_inserted}</strong> years of funding plan, linked to the new study version <code>${result.study.id.slice(0, 8)}…</code>.
+      ${result.replaced_prior_study_id ? '<br><br>The prior active study was archived; this is now the active baseline.' : ''}
+      <br><br>
+      <strong>Next steps</strong>: open Reserves admin to drop map pins on each component, or jump straight to the board reserve map.
+    `;
+    setStep(3);
+  } catch (err) {
+    toast('Commit failed: ' + err.message, 'error');
+    $('commitBtn').disabled = false;
+    $('commitBtn').textContent = 'Commit to database →';
+  }
+});
+</script>
+
+</body>
+</html>

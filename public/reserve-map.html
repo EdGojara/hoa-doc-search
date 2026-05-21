@@ -123,6 +123,56 @@
   #mapEl { width: 100%; height: 100%; }
   .leaflet-container { background: #e8edf0; font-family: var(--font-sans); }
 
+  /* ---- Reserve Health card (bottom-right of map) ---- */
+  .health-card {
+    position: absolute; bottom: 16px; right: 16px;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 16px;
+    box-shadow: var(--shadow-soft);
+    z-index: 500;
+    min-width: 280px; max-width: 320px;
+    font-size: 13px;
+  }
+  .health-card .health-head {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .health-card .health-title {
+    font-family: var(--font-serif); font-size: 15px; color: var(--navy); font-weight: 500;
+  }
+  .health-card .health-status {
+    font-size: 10.5px; letter-spacing: 0.06em;
+    text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+    font-weight: 600;
+  }
+  .health-card .health-status.outperforming { background: rgba(79,163,122,0.15); color: #2D7956; }
+  .health-card .health-status.on-track     { background: rgba(212,175,55,0.18); color: #8A6C0F; }
+  .health-card .health-status.behind       { background: rgba(201,81,75,0.15); color: #A03A33; }
+  .health-card .health-status.no-study     { background: var(--cream-soft); color: var(--ink-faint); }
+  .health-card .health-row {
+    display: flex; justify-content: space-between;
+    padding: 3px 0; font-size: 12.5px;
+  }
+  .health-card .health-row.variance {
+    margin-top: 8px; padding-top: 8px;
+    border-top: 1px solid var(--rule);
+    font-weight: 600;
+  }
+  .health-card .health-row .k { color: var(--ink-faint); }
+  .health-card .health-row .v { font-family: var(--font-mono); color: var(--ink); }
+  .health-card .health-row.variance .v.good { color: #2D7956; }
+  .health-card .health-row.variance .v.bad  { color: #A03A33; }
+  @media (max-width: 720px) {
+    .health-card {
+      position: static; margin: 12px;
+      max-width: none; width: calc(100% - 24px);
+    }
+  }
+
   /* ---- Map base-layer toggle (top-right of map) ---- */
   .layer-toggle {
     position: absolute; top: 16px; right: 16px;
@@ -567,6 +617,18 @@
       <h3>Category</h3>
       <div id="categoryFilters"></div>
     </div>
+    <div class="health-card" id="healthCard" style="display:none;">
+      <div class="health-head">
+        <span class="health-title">Reserve Health</span>
+        <span class="health-status" id="healthStatus">—</span>
+      </div>
+      <div class="health-row"><span class="k">Active study</span><span class="v" id="healthStudy">—</span></div>
+      <div class="health-row"><span class="k">Beginning balance</span><span class="v" id="healthBalance">—</span></div>
+      <div class="health-row"><span class="k">Projected FY contribution</span><span class="v" id="healthContrib">—</span></div>
+      <div class="health-row"><span class="k">Projected FY spend</span><span class="v" id="healthProjSpend">—</span></div>
+      <div class="health-row"><span class="k">Actual FY spend</span><span class="v" id="healthActSpend">—</span></div>
+      <div class="health-row variance"><span class="k">FY variance</span><span class="v" id="healthVariance">—</span></div>
+    </div>
   </div>
   <aside class="detail" id="detailPanel" style="display:none;"></aside>
 </div>
@@ -768,6 +830,9 @@ async function onCommunityChange() {
     $('statCritical').textContent = summary.critical_2yr_count ?? '0';
     $('statSoon').textContent     = summary.soon_5yr_count ?? '0';
     $('stat12mo').textContent     = fmtMoney(summary.spent_last_12mo_cents);
+
+    // Reserve Health (active study + funding plan vs actuals for current FY)
+    loadReserveHealth(communityId);
 
     // Build category filter (only categories present in this community)
     const cats = new Set(allComponents.map(c => c.category).filter(Boolean));
@@ -1060,6 +1125,83 @@ function closeDetail() {
   $('shell').classList.remove('detail-open');
   $('detailPanel').style.display = 'none';
   selectedComponent = null;
+}
+
+// =============================================================================
+// Reserve Health — projected vs actual for current fiscal year
+// =============================================================================
+async function loadReserveHealth(communityId) {
+  const card = $('healthCard');
+  card.style.display = '';
+  // Reset to neutral while loading
+  $('healthStatus').textContent = 'Loading…';
+  $('healthStatus').className = 'health-status no-study';
+  $('healthStudy').textContent      = '—';
+  $('healthBalance').textContent    = '—';
+  $('healthContrib').textContent    = '—';
+  $('healthProjSpend').textContent  = '—';
+  $('healthActSpend').textContent   = '—';
+  $('healthVariance').textContent   = '—';
+
+  try {
+    const r = await fetch(`/api/reserve-studies/community/${communityId}/funding-plan`);
+    if (!r.ok) throw new Error('not ok');
+    const data = await r.json();
+    if (!data.active_study) {
+      $('healthStatus').textContent = 'No active study';
+      $('healthStatus').className = 'health-status no-study';
+      $('healthStudy').textContent = 'Import a study to enable';
+      return;
+    }
+    const study = data.active_study;
+    $('healthStudy').textContent = `${study.fiscal_year ? 'FY' + study.fiscal_year : ''} · ${study.inspection_date || '—'}`;
+
+    // Find the current fiscal year row
+    const currentYear = new Date().getFullYear();
+    const yearRow = (data.years || []).find(y => y.fiscal_year === currentYear)
+                  || (data.years || []).find(y => y.fiscal_year === currentYear - 1)
+                  || (data.years || [])[0];
+    if (!yearRow) {
+      $('healthStatus').textContent = 'No funding plan';
+      $('healthStatus').className = 'health-status no-study';
+      return;
+    }
+
+    $('healthBalance').textContent   = fmtMoney(yearRow.beginning_balance_cents);
+    $('healthContrib').textContent   = fmtMoney(yearRow.projected_contribution_cents);
+    $('healthProjSpend').textContent = fmtMoney(yearRow.projected_expenditures_cents);
+    $('healthActSpend').textContent  = fmtMoney(yearRow.actual_expenditures_cents);
+
+    // Variance: positive cents = under budget (good)
+    const variance = yearRow.variance_cents || 0;
+    const absVar = Math.abs(variance);
+    let label, status;
+    if (variance > 1000_00) {                           // > $1K under
+      label = '+' + fmtMoney(absVar) + ' (under)';
+      status = 'outperforming';
+      $('healthStatus').textContent = 'Outperforming';
+    } else if (variance < -1000_00) {                  // > $1K over
+      label = '−' + fmtMoney(absVar) + ' (over)';
+      status = 'behind';
+      $('healthStatus').textContent = 'Over budget';
+    } else {
+      label = '±' + fmtMoney(absVar);
+      status = 'on-track';
+      $('healthStatus').textContent = 'On track';
+    }
+    $('healthVariance').textContent = label;
+    $('healthVariance').classList.toggle('good', status === 'outperforming');
+    $('healthVariance').classList.toggle('bad',  status === 'behind');
+    const v = document.querySelector('#healthCard .health-row.variance .v');
+    if (v) {
+      v.classList.toggle('good', status === 'outperforming');
+      v.classList.toggle('bad',  status === 'behind');
+    }
+    $('healthStatus').className = 'health-status ' + status;
+  } catch (err) {
+    $('healthStatus').textContent = 'Unavailable';
+    $('healthStatus').className = 'health-status no-study';
+  }
 }
 </script>
 
