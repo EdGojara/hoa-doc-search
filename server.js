@@ -2054,34 +2054,130 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
 // POST /ask-ed-chat-stream — multi-turn chat version of /ask-ed-stream
 // ----------------------------------------------------------------------------
 // Accepts a conversation history so follow-up questions retain prior context.
-// Same system prompt + same RAG retrieval as /ask-ed-stream, but:
-//   - body.messages: [{ role: 'user'|'assistant', content: string }, ...]
-//     The FINAL message in the array must be role:'user' — that's the new
-//     turn to answer.
-//   - body.community: optional community context (drives RAG + community
-//     profile, exactly like /ask-ed-stream).
+// V1.1 upgrades over the original chat endpoint:
+//   - Query rewrite via haiku: ambiguous follow-ups ("what about X?")
+//     get rewritten into standalone search queries using conversation
+//     history BEFORE RAG embedding fires. Fixes the "stateless RAG"
+//     problem identified in the v1 honest assessment.
+//   - Tool calls in streaming: lookup_community_vendor and friends now
+//     work mid-stream. The model can ask "let me check the vendor
+//     directory" and the answer comes back precise rather than from
+//     RAG memory.
+//   - File attachments via multer: PDFs + images attached to the latest
+//     user turn (parity with /ask-ed-stream).
+//   - Community context caching: per-community profile cached for 5
+//     minutes per process so multi-turn threads don't re-query the
+//     same data every turn.
+//   - "Reading: …" badge: emit a context_loaded SSE event with counts
+//     so the UI can show what Ed is consulting.
 //
-// RAG retrieval is performed on the latest user message only (keeps the
-// pulled context fresh per turn — stale RAG attached to earlier turns
-// would just pollute the conversation). Earlier turns flow through as
-// plain user/assistant pairs.
-//
-// Same SSE event shape as /ask-ed-stream: meta / delta / done / error.
+// SSE events:
+//   {type:'meta', model, mode}            once at start
+//   {type:'context_loaded', playbook_count, doc_count, community,
+//    rewritten_query?}                   once after RAG
+//   {type:'tool_status', name, message}   per tool invocation
+//   {type:'delta', text}                  per text delta
+//   {type:'done'}                         terminal
+//   {type:'error', message}               failure
 // ============================================================================
-app.post('/ask-ed-chat-stream', express.json({ limit: '256kb' }), async (req, res) => {
+
+// In-memory community-profile cache. 5-minute TTL — long enough to span a
+// multi-turn thread, short enough that profile updates land within a few
+// minutes. Per-process; that's fine because the profile is cheap to rebuild.
+const _communityProfileCache = new Map();
+const COMMUNITY_PROFILE_TTL_MS = 5 * 60 * 1000;
+async function getCachedCommunityContext(community) {
+  const key = String(community || '').trim().toLowerCase() || '__all__';
+  const cached = _communityProfileCache.get(key);
+  const now = Date.now();
+  if (cached && cached.expires > now) return cached.value;
+  const value = await buildCommunityContextBlock(community).catch((e) => {
+    console.warn('[community-ctx]', e.message);
+    return '';
+  });
+  _communityProfileCache.set(key, { value, expires: now + COMMUNITY_PROFILE_TTL_MS });
+  return value;
+}
+
+// Query rewrite for follow-up turns. If the user's latest message is
+// ambiguous on its own ("what about X?", "and the cure period?", "is that
+// right?"), the embedding-based RAG search has no idea what topic we're
+// on. We use a cheap haiku call to rewrite the latest turn as a
+// standalone query using the conversation history. The model has been
+// instructed to leave already-standalone queries unchanged.
+async function rewriteQueryForRag(history, latestQuery) {
+  // No history = nothing to disambiguate against.
+  if (history.length <= 1) return { rewritten: latestQuery, changed: false };
+  try {
+    const priorTurns = history.slice(-7, -1) // last 6 turns excluding the current user message
+      .map((m) => `${m.role === 'assistant' ? 'Ed' : 'User'}: ${m.content.slice(0, 600)}`)
+      .join('\n');
+    const resp = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 200,
+      system: `You rewrite ambiguous follow-up questions into standalone search queries that an embedding model can use to retrieve relevant HOA management documents and past examples.
+
+Rules:
+- Output ONLY the rewritten query. No commentary, no quotes, no explanation.
+- If the latest question is already standalone (mentions specific topics, communities, dates, statutes, etc.), return it EXACTLY unchanged.
+- If the question is ambiguous (uses "it", "that", "they", "what about", "and X?"), rewrite using the topic established earlier in the conversation. Preserve entity names, statute numbers (§209.X), vendor names, and specific facts.
+- Keep the rewritten query under 200 characters.
+- Never invent topics that weren't in the conversation.`,
+      messages: [{
+        role: 'user',
+        content: `Conversation so far:\n${priorTurns}\n\nLatest user question:\n"${latestQuery}"\n\nRewritten standalone query:`
+      }],
+    });
+    const rewritten = ((resp.content[0]?.text) || latestQuery).trim();
+    // Sanity: if the rewrite is obviously suspicious, fall back.
+    if (!rewritten || rewritten.length < 3 || rewritten.length > 500) {
+      return { rewritten: latestQuery, changed: false };
+    }
+    const changed = rewritten.toLowerCase().trim() !== latestQuery.toLowerCase().trim();
+    return { rewritten, changed };
+  } catch (err) {
+    console.warn('[query-rewrite] failed, falling back to raw query:', err.message);
+    return { rewritten: latestQuery, changed: false };
+  }
+}
+
+// Helpers to surface chunk counts back to the UI as part of the "Reading…"
+// badge. getRelevantChunks returns a joined string — we count separators.
+function countDocChunks(joined) {
+  if (!joined || typeof joined !== 'string') return 0;
+  return joined.split('\n\n---\n\n').filter((s) => s.trim().length > 0).length;
+}
+
+// Friendly label for a tool name — shown in the "tool_status" SSE event.
+function toolFriendlyLabel(name) {
+  if (name === 'lookup_community_vendor') return 'Looking up vendor directory…';
+  return `Running ${name}…`;
+}
+
+app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res) => {
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders?.();
 
-  const send = (obj) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+  const send = (obj) => { try { res.write(`data: ${JSON.stringify(obj)}\n\n`); } catch (_) {} };
 
   let aborted = false;
   res.on('close', () => { aborted = true; });
 
   try {
-    const { messages: rawMessages, community } = req.body || {};
+    // multer leaves req.body as fields. messages comes as a JSON string when
+    // the request is multipart (because FormData stringifies).
+    const community = (req.body.community || '').toString();
+    let rawMessages = req.body.messages;
+    if (typeof rawMessages === 'string') {
+      try { rawMessages = JSON.parse(rawMessages); }
+      catch (_) {
+        send({ type: 'error', message: 'messages must be a JSON array' });
+        return res.end();
+      }
+    }
     if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
       send({ type: 'error', message: 'messages array required' });
       return res.end();
@@ -2099,31 +2195,69 @@ app.post('/ask-ed-chat-stream', express.json({ limit: '256kb' }), async (req, re
     }
     // Cap context to last 20 turns to keep token usage bounded.
     const trimmed = history.slice(-20);
-    const latestUser = trimmed[trimmed.length - 1].content;
+    const latestUserRaw = trimmed[trimmed.length - 1].content;
 
-    // Pull retrieval context for the latest user turn — same pipeline as
-    // /ask-ed-stream's full mode.
+    // Build attachment blocks from any uploaded files.
+    const attachmentContents = [];
+    let attachmentNote = '';
+    const incomingFiles = Array.isArray(req.files) ? req.files : [];
+    for (const f of incomingFiles) {
+      const mimeType = f.mimetype || '';
+      if (mimeType === 'application/pdf') {
+        attachmentContents.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: f.buffer.toString('base64') } });
+      } else if (mimeType.startsWith('image/')) {
+        const shrunk = await shrinkImageForAnthropic(f.buffer, mimeType);
+        attachmentContents.push({ type: 'image', source: { type: 'base64', media_type: shrunk.mimetype, data: shrunk.buffer.toString('base64') } });
+      } else {
+        send({ type: 'error', message: `Unsupported file type: ${f.originalname || mimeType}. PDFs and images only.` });
+        return res.end();
+      }
+    }
+    if (attachmentContents.length > 0) {
+      const pdfs = attachmentContents.filter((c) => c.type === 'document').length;
+      const imgs = attachmentContents.filter((c) => c.type === 'image').length;
+      const parts = [];
+      if (pdfs > 0) parts.push(`${pdfs} PDF${pdfs === 1 ? '' : 's'}`);
+      if (imgs > 0) parts.push(`${imgs} image${imgs === 1 ? '' : 's'}`);
+      attachmentNote = `\n\nNote: ${parts.join(' and ')} attached above. Examine each carefully (screenshots, letters, photos of property conditions, etc.) and factor them into your guidance.`;
+    }
+
+    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: 'chat' });
+
+    // STEP 1 — query rewrite to disambiguate follow-ups before RAG.
+    const { rewritten: ragQuery, changed: queryWasRewritten } =
+      await rewriteQueryForRag(trimmed, latestUserRaw);
+
+    // STEP 2 — parallel RAG: playbook + docs + cached community profile.
     const [playbookEntries, docContext, communityContext] = await Promise.all([
-      getRelevantPlaybook(latestUser || 'general guidance', { matchCount: 10 }),
-      getRelevantChunks(latestUser || 'general guidance', community),
-      buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; }),
+      getRelevantPlaybook(ragQuery || 'general guidance', { matchCount: 10 }),
+      getRelevantChunks(ragQuery || 'general guidance', community),
+      getCachedCommunityContext(community),
     ]);
     const playbookContext = formatPlaybookContext(playbookEntries, {
       heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
     }) || 'No relevant playbook examples for this question.';
 
-    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: 'chat' });
+    // Surface what we just loaded back to the UI as the "Reading…" badge.
+    send({
+      type: 'context_loaded',
+      playbook_count: Array.isArray(playbookEntries) ? playbookEntries.length : 0,
+      doc_count: countDocChunks(docContext),
+      community: community || null,
+      has_community_profile: !!communityContext,
+      rewritten_query: queryWasRewritten ? ragQuery : null,
+    });
 
-    // Build the final user message: rich RAG-augmented form (same shape
-    // buildAskEdUserMessage uses). Prior turns stay plain text.
+    // STEP 3 — build the final user message: rich RAG-augmented form,
+    // optionally with attachments. Prior turns stay plain text.
     const lastUserAugmented = buildAskEdUserMessage({
-      situation: latestUser,
+      situation: latestUserRaw,
       community,
       communityContext,
       playbookContext,
       docContext,
-      attachmentContents: [],
-      attachmentNote: '',
+      attachmentContents,
+      attachmentNote,
     });
 
     const messagesForModel = trimmed.slice(0, -1).map((m) => ({
@@ -2132,10 +2266,7 @@ app.post('/ask-ed-chat-stream', express.json({ limit: '256kb' }), async (req, re
     }));
     messagesForModel.push({ role: 'user', content: lastUserAugmented });
 
-    // Lightly nudge the chat tone — same Ed voice but explicitly conversational.
-    // The base askEdSystem() prompt assumes one-shot "Provide RECOMMENDED ACTION /
-    // HOW TO RESPOND / REASONING / WATCH OUTS." In chat that 4-part template
-    // gets repetitive turn after turn — soften it for follow-ups.
+    // System prompt — same Ed voice as one-shot askEd, plus a chat-tone addendum.
     const systemPrompt = askEdSystem() + `
 
 CHAT MODE — CONVERSATIONAL DEFAULT:
@@ -2144,27 +2275,103 @@ You are in a multi-turn chat with a Bedrock staff member or board member. They c
 - The 4-part template (RECOMMENDED ACTION / HOW TO RESPOND / REASONING / WATCH OUTS) is appropriate for the FIRST substantive question on a new topic, or when the user explicitly asks for a recommendation or a draft. For "what about X?", "explain that more," or "is that right?" — just answer.
 - Track what the conversation has already established. Don't re-explain context the user already gave you.
 - If a follow-up shifts to a clearly different topic, you can return to the structured template.
-- Keep paragraphs tight. Use bullets when a list helps. Never wall-of-text on a clarifying question.`;
+- Keep paragraphs tight. Use bullets when a list helps. Never wall-of-text on a clarifying question.
 
-    const streamResp = await anthropic.messages.create({
-      model: 'claude-sonnet-4-6',
-      max_tokens: 3000,
-      system: systemPrompt,
-      messages: messagesForModel,
-      stream: true,
-    });
+TOOL USE: You have a lookup_community_vendor tool that returns active vendor contacts (vendor name, contact person, phone, email, last-updated date) for a community + service category. Whenever the user asks for a phone number, email, or vendor contact for a specific community, ALWAYS call this tool — never recite phone numbers or emails from memory or the community profile summary. The tool's response is the source of truth.`;
 
+    // STEP 4 — run the model with tools enabled, in a streaming tool loop.
+    // Each iteration streams to the client; if the model stops with
+    // 'tool_use', we execute the tools, push results back, and run again.
+    const MAX_TOOL_HOPS = 5;
+    const messagesAccum = [...messagesForModel];
     let deltaCount = 0;
-    let eventCount = 0;
-    for await (const event of streamResp) {
-      if (aborted) break;
-      eventCount++;
-      if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
-        deltaCount++;
-        send({ type: 'delta', text: event.delta.text });
+    let toolCount = 0;
+    let finalStopReason = null;
+
+    for (let hop = 0; hop < MAX_TOOL_HOPS && !aborted; hop++) {
+      const streamResp = await anthropic.messages.create({
+        model: 'claude-sonnet-4-6',
+        max_tokens: 3000,
+        system: systemPrompt,
+        tools: askEdTools.TOOLS,
+        messages: messagesAccum,
+        stream: true,
+      });
+
+      // Accumulate the assistant turn's content blocks so we can push it
+      // back into messagesAccum for the next hop.
+      const assistantBlocks = [];
+      let currentToolUse = null; // { id, name, input_json_acc }
+      let currentText = '';
+      let stopReason = null;
+
+      for await (const event of streamResp) {
+        if (aborted) break;
+        if (event.type === 'content_block_start') {
+          if (event.content_block.type === 'tool_use') {
+            currentToolUse = {
+              id: event.content_block.id,
+              name: event.content_block.name,
+              input_json_acc: '',
+            };
+            send({ type: 'tool_status', name: currentToolUse.name, message: toolFriendlyLabel(currentToolUse.name) });
+          } else if (event.content_block.type === 'text') {
+            currentText = '';
+          }
+        } else if (event.type === 'content_block_delta') {
+          if (event.delta.type === 'text_delta') {
+            deltaCount++;
+            currentText += event.delta.text;
+            send({ type: 'delta', text: event.delta.text });
+          } else if (event.delta.type === 'input_json_delta' && currentToolUse) {
+            currentToolUse.input_json_acc += event.delta.partial_json || '';
+          }
+        } else if (event.type === 'content_block_stop') {
+          if (currentToolUse) {
+            let parsedInput = {};
+            try { parsedInput = JSON.parse(currentToolUse.input_json_acc || '{}'); }
+            catch (_) { parsedInput = {}; }
+            assistantBlocks.push({
+              type: 'tool_use',
+              id: currentToolUse.id,
+              name: currentToolUse.name,
+              input: parsedInput,
+            });
+            currentToolUse = null;
+          } else if (currentText) {
+            assistantBlocks.push({ type: 'text', text: currentText });
+            currentText = '';
+          }
+        } else if (event.type === 'message_delta') {
+          if (event.delta && event.delta.stop_reason) stopReason = event.delta.stop_reason;
+        }
       }
+      if (aborted) break;
+      finalStopReason = stopReason;
+
+      if (stopReason !== 'tool_use') {
+        // Done — final assistant turn was pure text.
+        break;
+      }
+
+      // Execute the tools, push results back into the conversation.
+      messagesAccum.push({ role: 'assistant', content: assistantBlocks });
+      const toolResults = [];
+      for (const block of assistantBlocks) {
+        if (block.type !== 'tool_use') continue;
+        toolCount++;
+        const result = await askEdTools.executeAskEdTool(block.name, block.input);
+        toolResults.push({
+          type: 'tool_result',
+          tool_use_id: block.id,
+          content: JSON.stringify(result),
+        });
+      }
+      messagesAccum.push({ role: 'user', content: toolResults });
+      // Next iteration of the for-loop will stream the post-tool answer.
     }
-    console.log(`[ask-ed-chat-stream] complete events=${eventCount} deltas=${deltaCount} turns=${trimmed.length}`);
+
+    console.log(`[ask-ed-chat-stream] complete deltas=${deltaCount} tools=${toolCount} turns=${trimmed.length} rewritten=${queryWasRewritten}`);
     if (!aborted) send({ type: 'done' });
     res.end();
   } catch (err) {
