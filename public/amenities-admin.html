@@ -943,14 +943,25 @@ async function processContractFile(file) {
     onSeasonRuleChange();
     onOffseasonStatusChange();
 
-    // Build a confirmation message summarizing what was extracted
-    const filled = [];
-    if (f.management_vendor_name)        filled.push('vendor');
-    if (f.management_annual_cost_cents != null) filled.push('annual cost');
-    if (f.management_contract_end_date)  filled.push('end date');
-    if (f.season_open_md)                filled.push('season dates');
-    if (f.management_contract_doc_id)    filled.push('PDF archived');
-    statusEl.textContent = `✓ Extracted ${filled.length ? filled.join(', ') : 'partial data'} from ${data.file_name} (${data.pdf_pages} pages). Review and click Save Amenity.`;
+    // Confirmation message — explicitly show the VALUES that landed in the
+    // form so staff can verify before clicking Save Amenity. Helps catch
+    // partial-extraction bugs at glance instead of after-the-fact.
+    const parts = [];
+    if (f.management_vendor_name) parts.push(`<strong>vendor</strong> ${escapeHtml(f.management_vendor_name)}`);
+    if (f.management_annual_cost_cents != null) {
+      const dollars = (f.management_annual_cost_cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+      parts.push(`<strong>annual</strong> $${dollars}`);
+    }
+    if (f.management_contract_start_date && f.management_contract_end_date) {
+      parts.push(`<strong>term</strong> ${escapeHtml(f.management_contract_start_date)} → ${escapeHtml(f.management_contract_end_date)}`);
+    } else if (f.management_contract_end_date) {
+      parts.push(`<strong>ends</strong> ${escapeHtml(f.management_contract_end_date)}`);
+    }
+    if (f.season_open_md && f.season_close_md) {
+      parts.push(`<strong>season</strong> ${escapeHtml(f.season_open_md)} → ${escapeHtml(f.season_close_md)}`);
+    }
+    if (f.management_contract_doc_id) parts.push('PDF archived');
+    statusEl.innerHTML = `✓ ${parts.length ? parts.join(' · ') : 'partial extraction'} (${data.file_name}, ${data.pdf_pages}pp). <strong style="color:var(--gold);">Review and click Save Amenity.</strong>`;
     if (data.document_error) {
       console.warn('Contract PDF archival error:', data.document_error);
     }
