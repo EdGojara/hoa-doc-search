@@ -357,6 +357,13 @@
       </div>
     </div>
     <div class="field">
+      <label>Linked amenity</label>
+      <select id="fld-amenity_id">
+        <option value="">— Not linked to an amenity —</option>
+      </select>
+      <div class="helper">Linking to an amenity (pool, clubhouse, etc.) lets the board map show that amenity's operating-contract context. Optional for fences, signage, paving.</div>
+    </div>
+    <div class="field">
       <label>Description</label>
       <textarea id="fld-description" placeholder="What this component covers, condition notes, etc."></textarea>
     </div>
@@ -678,6 +685,40 @@ window.__selectComponent = function (id) {
   loadExpenditures(id);
 };
 
+// Load the community's amenities into the picker and set the current value.
+// Cached per community-id so repeated edits don't re-fetch.
+const _amenityCache = {};
+async function populateAmenityPicker(communityId, selectedId) {
+  const sel = $('fld-amenity_id');
+  if (!sel) return;
+  // Reset to placeholder
+  sel.innerHTML = '<option value="">— Not linked to an amenity —</option>';
+  if (!communityId) return;
+  try {
+    let amenities = _amenityCache[communityId];
+    if (!amenities) {
+      const r = await fetch(`/api/amenities/admin/amenities?community_id=${communityId}`);
+      const data = await r.json();
+      amenities = (data.amenities || []).filter(a => a.status === 'active');
+      _amenityCache[communityId] = amenities;
+    }
+    const typeLabels = {
+      clubhouse: 'Clubhouse', pool: 'Pool', park: 'Park', playground: 'Playground',
+      sport_court: 'Sport court', fitness: 'Fitness', dog_park: 'Dog park',
+      walking_trail: 'Walking trail', gate: 'Gate', mailroom: 'Mailroom', other: 'Other',
+    };
+    amenities.forEach(a => {
+      const opt = document.createElement('option');
+      opt.value = a.id;
+      opt.textContent = `${typeLabels[a.amenity_type] || a.amenity_type} · ${a.name}`;
+      if (a.id === selectedId) opt.selected = true;
+      sel.appendChild(opt);
+    });
+  } catch (err) {
+    console.warn('Could not load amenities for picker:', err.message);
+  }
+}
+
 function newComponent() {
   if (!state.selectedCommunityId) { toast('Pick a community first.', 'error'); return; }
   state.selectedId = null;
@@ -716,6 +757,8 @@ function renderEditor() {
   // Populate
   $('fld-category').value = e.category || 'pool';
   $('fld-component_name').value = e.component_name || '';
+  // Populate the amenity dropdown with this community's amenities, then set value
+  populateAmenityPicker(e.community_id, e.amenity_id);
   $('fld-description').value = e.description || '';
   $('fld-status').value = e.status || 'active';
   $('fld-condition').value = e.condition || '';
@@ -861,6 +904,7 @@ function collectForm() {
     community_id: state.editing.community_id,
     category: $('fld-category').value,
     component_name: $('fld-component_name').value.trim(),
+    amenity_id: $('fld-amenity_id').value || null,
     description: $('fld-description').value.trim() || null,
     status: $('fld-status').value,
     condition: $('fld-condition').value || null,
