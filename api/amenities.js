@@ -807,7 +807,8 @@ router.post('/admin/amenities/extract-contract', uploadPdf.single('file'), async
 
     const communityId = (req.body?.community_id || '').trim() || null;
 
-    // 1) Extract text from the PDF (used by both LLM extraction + page count)
+    // 1) Page count for diagnostics (text extraction is still useful for
+    //    regex fallbacks even though we send the PDF directly to Claude)
     let text = '';
     let pageCount = 0;
     try {
@@ -815,16 +816,15 @@ router.post('/admin/amenities/extract-contract', uploadPdf.single('file'), async
       text = parsed.text || '';
       pageCount = parsed.numpages || 0;
     } catch (e) {
-      return res.status(400).json({ error: 'pdf_parse_failed', message: e.message });
+      console.warn('[amenities/extract-contract] pdf-parse failed (continuing with PDF-direct):', e.message);
     }
-    if (!text.trim()) return res.status(400).json({ error: 'pdf_empty_or_image_only' });
-
-    // Cap text for the LLM call — typical pool contract is ~10-15 pages.
-    // Keep first ~60K chars which comfortably covers the vendor + pricing
-    // schedules and stays well under context limits.
     const trimmed = text.slice(0, 60000);
 
-    // 2) Ask the model to extract structured fields
+    // 2) Send the PDF DIRECTLY to Claude. pdf-parse only reads base PDF text,
+    //    which on interactive forms is just the underscores. Adobe form-field
+    //    overlays (where the actual values live) require Claude's native PDF
+    //    reading to see. This handles signed contracts where staff filled in
+    //    the form fields without re-flattening the PDF.
     const prompt = `You are extracting structured fields from a signed vendor management contract for an HOA amenity (typically a pool or clubhouse). PDF text extraction often introduces extra whitespace around fill-in-the-blank values — read carefully and reconstruct the original numbers.
 
 Return ONLY a JSON object (no prose, no markdown) with these fields:
@@ -882,15 +882,30 @@ NOTES FIELD — One or two sentences. Mention scope (lifeguards + chemicals
 + maintenance vs. maintenance-only), renewal clause if present, and any
 notable special terms (late-fee rate, hourly lifeguard rate, etc.).
 
-Contract text:
----
-${trimmed}
----`;
+The PDF is attached to this message. Read the form-field values as they appear visually, not just the underlying underscores.`;
 
+    // Send the PDF binary directly + the prompt as text. Claude reads the
+    // PDF including form-field overlays, tables, and visual layout — not
+    // just the base text the way pdf-parse does. This is the only reliable
+    // way to read interactive Adobe PDF forms where the values sit on top
+    // of the underlying underscores.
     const response = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: req.file.buffer.toString('base64'),
+            },
+          },
+          { type: 'text', text: prompt },
+        ],
+      }],
     });
 
     // Extract JSON from response — be lenient about markdown fences
