@@ -2050,6 +2050,130 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
   }
 });
 
+// ============================================================================
+// POST /ask-ed-chat-stream — multi-turn chat version of /ask-ed-stream
+// ----------------------------------------------------------------------------
+// Accepts a conversation history so follow-up questions retain prior context.
+// Same system prompt + same RAG retrieval as /ask-ed-stream, but:
+//   - body.messages: [{ role: 'user'|'assistant', content: string }, ...]
+//     The FINAL message in the array must be role:'user' — that's the new
+//     turn to answer.
+//   - body.community: optional community context (drives RAG + community
+//     profile, exactly like /ask-ed-stream).
+//
+// RAG retrieval is performed on the latest user message only (keeps the
+// pulled context fresh per turn — stale RAG attached to earlier turns
+// would just pollute the conversation). Earlier turns flow through as
+// plain user/assistant pairs.
+//
+// Same SSE event shape as /ask-ed-stream: meta / delta / done / error.
+// ============================================================================
+app.post('/ask-ed-chat-stream', express.json({ limit: '256kb' }), async (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders?.();
+
+  const send = (obj) => { res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+
+  let aborted = false;
+  res.on('close', () => { aborted = true; });
+
+  try {
+    const { messages: rawMessages, community } = req.body || {};
+    if (!Array.isArray(rawMessages) || rawMessages.length === 0) {
+      send({ type: 'error', message: 'messages array required' });
+      return res.end();
+    }
+    // Sanitize: keep only role + string content, drop empties.
+    const history = rawMessages
+      .filter((m) => m && typeof m.content === 'string' && m.content.trim().length > 0)
+      .map((m) => ({
+        role: m.role === 'assistant' ? 'assistant' : 'user',
+        content: m.content.trim(),
+      }));
+    if (history.length === 0 || history[history.length - 1].role !== 'user') {
+      send({ type: 'error', message: 'last message must be from user' });
+      return res.end();
+    }
+    // Cap context to last 20 turns to keep token usage bounded.
+    const trimmed = history.slice(-20);
+    const latestUser = trimmed[trimmed.length - 1].content;
+
+    // Pull retrieval context for the latest user turn — same pipeline as
+    // /ask-ed-stream's full mode.
+    const [playbookEntries, docContext, communityContext] = await Promise.all([
+      getRelevantPlaybook(latestUser || 'general guidance', { matchCount: 10 }),
+      getRelevantChunks(latestUser || 'general guidance', community),
+      buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; }),
+    ]);
+    const playbookContext = formatPlaybookContext(playbookEntries, {
+      heading: 'INSTITUTIONAL GUIDELINES FROM PAST SITUATIONS'
+    }) || 'No relevant playbook examples for this question.';
+
+    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: 'chat' });
+
+    // Build the final user message: rich RAG-augmented form (same shape
+    // buildAskEdUserMessage uses). Prior turns stay plain text.
+    const lastUserAugmented = buildAskEdUserMessage({
+      situation: latestUser,
+      community,
+      communityContext,
+      playbookContext,
+      docContext,
+      attachmentContents: [],
+      attachmentNote: '',
+    });
+
+    const messagesForModel = trimmed.slice(0, -1).map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+    messagesForModel.push({ role: 'user', content: lastUserAugmented });
+
+    // Lightly nudge the chat tone — same Ed voice but explicitly conversational.
+    // The base askEdSystem() prompt assumes one-shot "Provide RECOMMENDED ACTION /
+    // HOW TO RESPOND / REASONING / WATCH OUTS." In chat that 4-part template
+    // gets repetitive turn after turn — soften it for follow-ups.
+    const systemPrompt = askEdSystem() + `
+
+CHAT MODE — CONVERSATIONAL DEFAULT:
+You are in a multi-turn chat with a Bedrock staff member or board member. They can ask follow-up questions in the same thread. Stay in Ed's voice but:
+- For follow-up questions that build on a prior answer, respond conversationally — no need to reprint the full 4-section template every turn.
+- The 4-part template (RECOMMENDED ACTION / HOW TO RESPOND / REASONING / WATCH OUTS) is appropriate for the FIRST substantive question on a new topic, or when the user explicitly asks for a recommendation or a draft. For "what about X?", "explain that more," or "is that right?" — just answer.
+- Track what the conversation has already established. Don't re-explain context the user already gave you.
+- If a follow-up shifts to a clearly different topic, you can return to the structured template.
+- Keep paragraphs tight. Use bullets when a list helps. Never wall-of-text on a clarifying question.`;
+
+    const streamResp = await anthropic.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 3000,
+      system: systemPrompt,
+      messages: messagesForModel,
+      stream: true,
+    });
+
+    let deltaCount = 0;
+    let eventCount = 0;
+    for await (const event of streamResp) {
+      if (aborted) break;
+      eventCount++;
+      if (event.type === 'content_block_delta' && event.delta && event.delta.type === 'text_delta') {
+        deltaCount++;
+        send({ type: 'delta', text: event.delta.text });
+      }
+    }
+    console.log(`[ask-ed-chat-stream] complete events=${eventCount} deltas=${deltaCount} turns=${trimmed.length}`);
+    if (!aborted) send({ type: 'done' });
+    res.end();
+  } catch (err) {
+    console.error('[ask-ed-chat-stream] failed:', err.stack || err.message);
+    try { send({ type: 'error', message: safeErrorMessage(err) }); } catch (_) {}
+    res.end();
+  }
+});
+
 app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
   try {
     const { situation, community, mode } = req.body;

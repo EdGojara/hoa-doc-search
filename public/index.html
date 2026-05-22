@@ -307,6 +307,9 @@
     </div>
     <button onclick="authSignOut()" title="Sign out" style="background:none; border:0; color:#fff; cursor:pointer; padding:2px 6px; border-radius:4px; font-size:11px; opacity:0.85;">↪ Sign out</button>
   </div>
+  <a class="header-voice-link" href="/ask-ed-chat.html" title="Multi-turn chat with askEd — follow-up questions, same Ed voice">
+    💬 Chat with Ed
+  </a>
   <a class="header-voice-link" href="/voice.html" title="Open voice askEd — install to your phone's home screen for one-tap field access">
     🎙️ Voice askEd
   </a>
@@ -743,10 +746,16 @@
     <div class="ask-ed-left">
       <h3>🧠 askEd</h3>
       <p id="edModeDescription" style="font-size:13px; color:#666;">One place to ask anything. Pick a mode below.</p>
-      <a href="#" onclick="event.preventDefault(); switchTab('training'); setTimeout(() => trainingOpenModule('asked-foundations'), 50);"
-         style="display: inline-flex; align-items: center; gap: 5px; margin: 2px 0 6px; padding: 3px 9px; background: #f1f5fb; border: 1px solid #d8e2ed; border-radius: 14px; font-size: 11px; color: #1a3a5c; text-decoration: none; font-weight: 600;">
-        📚 University · askEd Foundations
-      </a>
+      <div style="display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 6px;">
+        <a href="#" onclick="event.preventDefault(); switchTab('training'); setTimeout(() => trainingOpenModule('asked-foundations'), 50);"
+           style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #f1f5fb; border: 1px solid #d8e2ed; border-radius: 14px; font-size: 11px; color: #1a3a5c; text-decoration: none; font-weight: 600;">
+          📚 University · askEd Foundations
+        </a>
+        <a href="/ask-ed-chat.html" title="Open the multi-turn chat — ask follow-up questions"
+           style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #FFFBEF; border: 1px solid #D4AF37; border-radius: 14px; font-size: 11px; color: #1A3050; text-decoration: none; font-weight: 600;">
+          💬 Need follow-ups? Open Chat
+        </a>
+      </div>
 
       <!-- Mode picker — four task presets share the same input/output area. -->
       <div class="ed-mode-picker" style="display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; margin-bottom:4px;">

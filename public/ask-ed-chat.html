@@ -1,0 +1,618 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chat with askEd · Bedrock Intelligence</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    /* Light surface tokens — match homeowner portal aesthetic */
+    --paper: #ffffff;
+    --cream-soft: #F5F4ED;
+    --ink-dark: #1a1a1a;
+    --ink-mid: #4a4a4a;
+    --ink-light: #7a7a7a;
+    --rule-light: #E5E3DA;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink-dark);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    height: 100vh; overflow: hidden;
+  }
+
+  /* ----- Top bar ----- */
+  .topbar {
+    background: var(--paper);
+    border-bottom: 1px solid var(--rule-light);
+    padding: 12px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 16px;
+    flex-shrink: 0;
+  }
+  .brand-block { display: flex; align-items: center; gap: 12px; }
+  .brand-block svg { width: 28px; height: 35px; }
+  .brand-block .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: #1A3050; line-height: 1.1;
+  }
+  .brand-block .wm em { color: #D4AF37; font-style: italic; }
+  .brand-block .sub {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--ink-light); letter-spacing: 0.18em; text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .topbar-right { display: flex; align-items: center; gap: 10px; }
+  .pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--paper); border: 1px solid var(--rule-light);
+    color: var(--ink-mid); border-radius: 999px;
+    padding: 6px 12px; font-size: 13px;
+    cursor: pointer; text-decoration: none;
+    transition: all 0.15s ease;
+  }
+  .pill:hover { border-color: #D4AF37; color: #1A3050; }
+  .pill select {
+    border: none; background: transparent;
+    font-family: inherit; font-size: 13px; color: inherit;
+    outline: none; cursor: pointer;
+    appearance: none; padding-right: 4px;
+  }
+  .pill .danger { color: #962a2a; }
+
+  /* ----- Main area ----- */
+  .chat-shell {
+    flex: 1;
+    display: flex; flex-direction: column;
+    height: calc(100vh - 60px);
+    max-width: 900px; margin: 0 auto;
+    width: 100%;
+  }
+
+  .messages {
+    flex: 1; overflow-y: auto;
+    padding: 24px 24px 8px;
+    scroll-behavior: smooth;
+  }
+
+  .empty-state {
+    text-align: center;
+    padding: 40px 24px;
+    color: var(--ink-mid);
+  }
+  .empty-state h1 {
+    font-family: var(--font-serif);
+    font-size: 28px; font-weight: 500;
+    color: #1A3050;
+    margin: 0 0 8px;
+  }
+  .empty-state h1 em { color: #D4AF37; font-style: italic; }
+  .empty-state p { font-size: 14px; color: var(--ink-mid); margin-bottom: 24px; }
+  .quickstart {
+    display: flex; flex-wrap: wrap; gap: 8px;
+    justify-content: center; max-width: 640px; margin: 0 auto;
+  }
+  .quickstart button {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 18px; padding: 8px 14px;
+    font-family: var(--font-sans); font-size: 13px;
+    color: var(--ink-mid); cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .quickstart button:hover {
+    border-color: #D4AF37; color: #1A3050;
+    background: #FFFBEF;
+  }
+
+  /* ----- Bubbles ----- */
+  .turn { margin-bottom: 18px; max-width: 100%; }
+  .turn.user { display: flex; justify-content: flex-end; }
+  .turn.assistant { display: flex; justify-content: flex-start; }
+
+  .bubble {
+    max-width: 78%;
+    padding: 12px 16px;
+    border-radius: 14px;
+    line-height: 1.55;
+    font-size: 14.5px;
+    word-wrap: break-word;
+  }
+  .bubble.user {
+    background: #1A3050; color: white;
+    border-bottom-right-radius: 4px;
+  }
+  .bubble.assistant {
+    background: var(--paper);
+    border: 1px solid var(--rule-light);
+    color: var(--ink-dark);
+    border-bottom-left-radius: 4px;
+    box-shadow: 0 1px 2px rgba(26, 48, 80, 0.04);
+  }
+  .bubble.assistant.thinking {
+    color: var(--ink-light); font-style: italic;
+  }
+  .bubble.assistant strong { color: #1A3050; }
+  .bubble.assistant em { color: var(--ink-mid); }
+  .bubble.assistant code {
+    background: #F5F4ED;
+    padding: 1px 5px; border-radius: 4px;
+    font-family: var(--font-mono); font-size: 13px;
+  }
+  .bubble.assistant pre {
+    background: #F5F4ED;
+    padding: 10px 12px; border-radius: 6px;
+    overflow-x: auto; font-size: 13px;
+    font-family: var(--font-mono);
+  }
+  .bubble.assistant ul, .bubble.assistant ol { padding-left: 22px; margin: 8px 0; }
+  .bubble.assistant li { margin-bottom: 4px; }
+  .bubble.assistant p { margin: 0 0 10px; }
+  .bubble.assistant p:last-child { margin-bottom: 0; }
+  .bubble.assistant h2, .bubble.assistant h3 {
+    font-family: var(--font-serif);
+    color: #1A3050;
+    font-size: 17px; font-weight: 500;
+    margin: 14px 0 8px;
+  }
+
+  .bubble-actions {
+    display: flex; gap: 6px; margin-top: 8px;
+    opacity: 0; transition: opacity 0.15s ease;
+  }
+  .turn.assistant:hover .bubble-actions,
+  .bubble-actions:focus-within { opacity: 1; }
+  .bubble-action {
+    background: transparent;
+    border: 1px solid var(--rule-light);
+    color: var(--ink-light); font-size: 11px;
+    padding: 3px 8px; border-radius: 12px;
+    cursor: pointer; font-family: var(--font-mono);
+    letter-spacing: 0.04em;
+    transition: all 0.12s ease;
+  }
+  .bubble-action:hover { border-color: #D4AF37; color: #1A3050; }
+
+  /* ----- Composer ----- */
+  .composer-wrap {
+    background: linear-gradient(180deg, rgba(245,244,237,0) 0%, var(--cream-soft) 30%);
+    padding: 8px 24px 16px;
+    flex-shrink: 0;
+  }
+  .composer {
+    background: var(--paper);
+    border: 1px solid var(--rule-light);
+    border-radius: 14px;
+    padding: 8px 8px 8px 14px;
+    display: flex; align-items: flex-end; gap: 8px;
+    box-shadow: 0 2px 10px rgba(26, 48, 80, 0.04);
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .composer:focus-within {
+    border-color: #D4AF37;
+    box-shadow: 0 2px 14px rgba(212, 175, 55, 0.12);
+  }
+  .composer textarea {
+    flex: 1; border: none; outline: none; resize: none;
+    font-family: var(--font-sans); font-size: 15px; line-height: 1.5;
+    background: transparent; color: var(--ink-dark);
+    max-height: 220px; min-height: 24px;
+    padding: 8px 4px;
+  }
+  .send-btn {
+    background: #1A3050; color: white;
+    border: none; border-radius: 10px;
+    width: 38px; height: 38px;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; flex-shrink: 0;
+    transition: background 0.12s ease, transform 0.08s ease;
+  }
+  .send-btn:hover { background: #2A4870; }
+  .send-btn:active { transform: scale(0.96); }
+  .send-btn:disabled { background: #C0C5CE; cursor: not-allowed; }
+  .send-btn svg { width: 18px; height: 18px; fill: white; }
+
+  .composer-hint {
+    font-size: 11px; color: var(--ink-light); text-align: center;
+    margin-top: 6px;
+    font-family: var(--font-mono); letter-spacing: 0.04em;
+  }
+
+  /* ----- Streaming caret ----- */
+  .caret {
+    display: inline-block; width: 6px; height: 14px;
+    background: #1A3050; vertical-align: -2px;
+    animation: blink 1s steps(2) infinite;
+    margin-left: 2px;
+  }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* ----- Toast ----- */
+  .toast {
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: #1A3050; color: white;
+    padding: 10px 18px; border-radius: 8px;
+    font-size: 13px; opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #962a2a; }
+
+  /* ----- Responsive ----- */
+  @media (max-width: 640px) {
+    .topbar { padding: 10px 14px; flex-wrap: wrap; }
+    .messages { padding: 16px 14px 8px; }
+    .composer-wrap { padding: 8px 14px 14px; }
+    .bubble { max-width: 88%; font-size: 14px; }
+    .topbar-right { gap: 6px; flex-wrap: wrap; }
+    .pill { padding: 5px 10px; font-size: 12px; }
+    .brand-block .sub { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand-block">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">🧠 Chat with <em>askEd</em></div>
+      <div class="sub">Multi-turn · Ed Voice · Community-aware</div>
+    </div>
+  </div>
+  <div class="topbar-right">
+    <div class="pill" title="Which community's docs to consult">
+      <span aria-hidden="true">🏘️</span>
+      <select id="communitySelect" aria-label="Community">
+        <option value="">All communities</option>
+      </select>
+    </div>
+    <button class="pill" id="newChatBtn" title="Start a new conversation">
+      <span aria-hidden="true">+</span> New chat
+    </button>
+    <a href="/" class="pill" title="Back to trustEd">← App</a>
+  </div>
+</div>
+
+<div class="chat-shell">
+  <div class="messages" id="messages">
+    <div class="empty-state" id="emptyState">
+      <h1>Chat with <em>Ed</em></h1>
+      <p>Ask anything. Follow up. Drill in. Same Ed-voice as askEd — now in a thread.</p>
+      <div class="quickstart">
+        <button onclick="quickstart(this)">What's our standard violation cure period?</button>
+        <button onclick="quickstart(this)">Draft an email to a board declining a non-bid renewal</button>
+        <button onclick="quickstart(this)">A homeowner says my staff was rude. How do I handle it?</button>
+        <button onclick="quickstart(this)">Explain reserve fund vehicles for a board that wants equities</button>
+        <button onclick="quickstart(this)">What's the §209 notice requirement again?</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="composer-wrap">
+    <div class="composer">
+      <textarea id="input" placeholder="Ask Ed anything…  (Enter = send · Shift+Enter = new line)" rows="1"></textarea>
+      <button class="send-btn" id="sendBtn" disabled title="Send">
+        <svg viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
+      </button>
+    </div>
+    <div class="composer-hint">Ed-voice synthesis · community docs + playbook in context</div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const messagesEl = document.getElementById('messages');
+const emptyEl    = document.getElementById('emptyState');
+const inputEl    = document.getElementById('input');
+const sendBtn    = document.getElementById('sendBtn');
+const commSel    = document.getElementById('communitySelect');
+const newBtn     = document.getElementById('newChatBtn');
+const toastEl    = document.getElementById('toast');
+
+// In-memory conversation. Each turn: { role: 'user'|'assistant', content: '...' }
+let history = [];
+let inFlight = false;
+
+// ---------- Toast ----------
+function toast(msg, kind) {
+  toastEl.className = 'toast show ' + (kind || '');
+  toastEl.textContent = msg;
+  clearTimeout(window._tt);
+  window._tt = setTimeout(() => { toastEl.className = 'toast'; }, 3500);
+}
+
+// ---------- Minimal markdown renderer (same style as voice.html) ----------
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+function renderMarkdown(text) {
+  if (!text) return '';
+  // Code blocks first
+  const codeBlocks = [];
+  text = text.replace(/```([\s\S]*?)```/g, (m, code) => {
+    codeBlocks.push(code);
+    return ` CODE${codeBlocks.length - 1} `;
+  });
+  // Escape
+  let html = escapeHtml(text);
+  // Headers
+  html = html.replace(/^### (.+)$/gm, '<h3>$1</h3>');
+  html = html.replace(/^## (.+)$/gm, '<h2>$1</h2>');
+  // Bold
+  html = html.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+  // Italic
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>');
+  // Inline code
+  html = html.replace(/`([^`]+)`/g, '<code>$1</code>');
+  // Lists — simple
+  html = html.replace(/^(?:\s*[-•] .+(?:\n|$))+/gm, (m) => {
+    const items = m.trim().split('\n').map((line) => `<li>${line.replace(/^\s*[-•]\s+/, '')}</li>`).join('');
+    return `<ul>${items}</ul>`;
+  });
+  html = html.replace(/^(?:\s*\d+\. .+(?:\n|$))+/gm, (m) => {
+    const items = m.trim().split('\n').map((line) => `<li>${line.replace(/^\s*\d+\.\s+/, '')}</li>`).join('');
+    return `<ol>${items}</ol>`;
+  });
+  // Paragraphs
+  html = html.split(/\n\n+/).map((para) => {
+    if (/^<(h2|h3|ul|ol|pre)/.test(para.trim())) return para;
+    return `<p>${para.replace(/\n/g, '<br>')}</p>`;
+  }).join('');
+  // Restore code blocks
+  html = html.replace(/ CODE(\d+) /g, (m, i) => `<pre>${escapeHtml(codeBlocks[i])}</pre>`);
+  return html;
+}
+
+// ---------- Render turn ----------
+function appendTurn(role, content) {
+  if (emptyEl && emptyEl.parentNode) emptyEl.remove();
+  const turn = document.createElement('div');
+  turn.className = 'turn ' + role;
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble ' + role;
+  if (role === 'user') {
+    bubble.textContent = content;
+  } else {
+    bubble.innerHTML = renderMarkdown(content);
+  }
+  turn.appendChild(bubble);
+
+  if (role === 'assistant') {
+    const actions = document.createElement('div');
+    actions.className = 'bubble-actions';
+    actions.innerHTML = `
+      <button class="bubble-action copy" title="Copy to clipboard">📋 Copy</button>
+    `;
+    bubble.appendChild(actions);
+    actions.querySelector('.copy').addEventListener('click', () => {
+      navigator.clipboard.writeText(content).then(
+        () => toast('Copied'),
+        () => toast('Could not copy', 'error')
+      );
+    });
+  }
+
+  messagesEl.appendChild(turn);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+  return { turn, bubble };
+}
+
+// ---------- Auto-resize textarea ----------
+inputEl.addEventListener('input', () => {
+  sendBtn.disabled = !inputEl.value.trim() || inFlight;
+  inputEl.style.height = 'auto';
+  inputEl.style.height = Math.min(inputEl.scrollHeight, 220) + 'px';
+});
+
+// ---------- Submit ----------
+inputEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    if (!sendBtn.disabled) sendMessage();
+  }
+});
+sendBtn.addEventListener('click', sendMessage);
+
+async function sendMessage() {
+  const text = inputEl.value.trim();
+  if (!text || inFlight) return;
+  inFlight = true;
+
+  // Render the user turn + clear input
+  appendTurn('user', text);
+  history.push({ role: 'user', content: text });
+  inputEl.value = '';
+  inputEl.style.height = 'auto';
+  sendBtn.disabled = true;
+
+  // Render assistant placeholder bubble — fills in via stream
+  if (emptyEl && emptyEl.parentNode) emptyEl.remove();
+  const turn = document.createElement('div');
+  turn.className = 'turn assistant';
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble assistant thinking';
+  bubble.innerHTML = 'Ed is thinking<span class="caret"></span>';
+  turn.appendChild(bubble);
+  messagesEl.appendChild(turn);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  let assistantText = '';
+  let firstDelta = false;
+
+  try {
+    const res = await fetch('/ask-ed-chat-stream', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        community: commSel.value || '',
+        messages: history,
+      }),
+    });
+    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const frames = buf.split('\n\n');
+      buf = frames.pop();
+      for (const frame of frames) {
+        const line = frame.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        let payload;
+        try { payload = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
+        if (payload.type === 'delta' && payload.text) {
+          if (!firstDelta) {
+            firstDelta = true;
+            bubble.classList.remove('thinking');
+            bubble.innerHTML = '';
+          }
+          assistantText += payload.text;
+          bubble.innerHTML = renderMarkdown(assistantText) + '<span class="caret"></span>';
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (payload.type === 'error') {
+          throw new Error(payload.message || 'Stream error');
+        } else if (payload.type === 'done') {
+          // final
+        }
+      }
+    }
+
+    if (!assistantText) {
+      bubble.classList.remove('thinking');
+      bubble.innerHTML = '<em>No response received. Try again?</em>';
+    } else {
+      bubble.innerHTML = renderMarkdown(assistantText);
+      // Add copy action
+      const actions = document.createElement('div');
+      actions.className = 'bubble-actions';
+      actions.innerHTML = `<button class="bubble-action copy" title="Copy to clipboard">📋 Copy</button>`;
+      bubble.appendChild(actions);
+      actions.querySelector('.copy').addEventListener('click', () => {
+        navigator.clipboard.writeText(assistantText).then(
+          () => toast('Copied'),
+          () => toast('Could not copy', 'error')
+        );
+      });
+      history.push({ role: 'assistant', content: assistantText });
+      // Persist to localStorage
+      saveSession();
+    }
+  } catch (err) {
+    bubble.classList.remove('thinking');
+    bubble.innerHTML = `<em style="color:#962a2a;">Something went wrong: ${escapeHtml(err.message || 'unknown error')}</em>`;
+    // Roll back the failed user turn so the next send doesn't include it as
+    // unanswered history.
+    history.pop();
+  } finally {
+    inFlight = false;
+    sendBtn.disabled = !inputEl.value.trim();
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    inputEl.focus();
+  }
+}
+
+// ---------- Quickstart ----------
+function quickstart(btn) {
+  inputEl.value = btn.textContent;
+  inputEl.dispatchEvent(new Event('input'));
+  inputEl.focus();
+}
+
+// ---------- New chat ----------
+newBtn.addEventListener('click', () => {
+  if (inFlight) return;
+  if (history.length > 0 && !confirm('Start a fresh conversation? Current thread will be cleared.')) return;
+  history = [];
+  messagesEl.innerHTML = '';
+  // Rebuild empty state
+  const empty = document.createElement('div');
+  empty.className = 'empty-state';
+  empty.id = 'emptyState';
+  empty.innerHTML = `
+    <h1>Chat with <em>Ed</em></h1>
+    <p>Ask anything. Follow up. Drill in. Same Ed-voice as askEd — now in a thread.</p>
+    <div class="quickstart">
+      <button onclick="quickstart(this)">What's our standard violation cure period?</button>
+      <button onclick="quickstart(this)">Draft an email to a board declining a non-bid renewal</button>
+      <button onclick="quickstart(this)">A homeowner says my staff was rude. How do I handle it?</button>
+      <button onclick="quickstart(this)">Explain reserve fund vehicles for a board that wants equities</button>
+      <button onclick="quickstart(this)">What's the §209 notice requirement again?</button>
+    </div>`;
+  messagesEl.appendChild(empty);
+  saveSession();
+});
+
+// ---------- Persistence (so refresh doesn't kill thread) ----------
+const STORE_KEY = 'asked-chat-history-v1';
+function saveSession() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify({
+      community: commSel.value || '',
+      history: history.slice(-30),
+    }));
+  } catch (_) {}
+}
+function restoreSession() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (!raw) return;
+    const data = JSON.parse(raw);
+    if (data.community) commSel.value = data.community;
+    if (Array.isArray(data.history) && data.history.length > 0) {
+      history = data.history.slice();
+      if (emptyEl && emptyEl.parentNode) emptyEl.remove();
+      for (const turn of history) {
+        appendTurn(turn.role, turn.content);
+      }
+    }
+  } catch (_) {}
+}
+
+// ---------- Communities ----------
+async function loadCommunities() {
+  try {
+    const res = await fetch('/api/billing/communities');
+    if (!res.ok) return;
+    const data = await res.json();
+    const list = (data.communities || []).slice()
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    for (const c of list) {
+      const opt = document.createElement('option');
+      opt.value = c.name;
+      opt.textContent = c.name;
+      commSel.appendChild(opt);
+    }
+    restoreSession(); // restore AFTER options exist so the saved selection sticks
+  } catch (err) {
+    console.warn('communities load failed', err);
+    restoreSession();
+  }
+}
+commSel.addEventListener('change', () => {
+  saveSession();
+});
+
+loadCommunities();
+inputEl.focus();
+</script>
+</body>
+</html>
