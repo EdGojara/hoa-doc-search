@@ -799,9 +799,11 @@ function renderEditor() {
   dz.addEventListener('drop', (e) => {
     e.preventDefault(); e.stopPropagation();
     dz.classList.remove('drag-over');
+    console.log('[contract-extract] DROP event fired, files:', e.dataTransfer?.files?.length || 0);
     const files = e.dataTransfer && e.dataTransfer.files;
-    if (!files || !files.length) return;
+    if (!files || !files.length) { console.warn('[contract-extract] drop had no files'); return; }
     const file = files[0];
+    console.log('[contract-extract] dropped file:', file.name, 'size:', file.size, 'type:', file.type);
     if (!/\.pdf$/i.test(file.name)) {
       toast('Only PDF files supported.', 'error');
       return;
@@ -900,6 +902,7 @@ function refreshContractDocLink() {
 // pressing Save Amenity (no auto-write — preview-and-confirm pattern).
 // Accepts a File from either the hidden picker OR a drag-and-drop event.
 async function processContractFile(file) {
+  console.log('[contract-extract] processContractFile called with:', file ? file.name : 'NO FILE');
   if (!file) return;
   const statusEl = $('extractStatus');
   statusEl.textContent = '⏳ Reading PDF and extracting fields…';
