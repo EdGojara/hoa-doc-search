@@ -229,6 +229,7 @@
 'use strict';
 
 const CATEGORY_ICONS = {
+  management:  '👥',
   emergency:   '🚨',
   utility:     '⚙️',
   trash:       '🗑️',
@@ -302,12 +303,19 @@ function render(data) {
 
   // Trash schedule banner — render first if available
   if (data.trash_schedule && data.trash_schedule.collection_days) {
-    const days = (data.trash_schedule.collection_days || []).map(dayName).join(' & ');
+    const trashDays = (data.trash_schedule.collection_days || []).map(dayName).join(' & ');
+    const recyDays = (data.trash_schedule.recycling_days || []).map(dayName).join(' & ');
     const heavy = data.trash_schedule.heavy_trash_pattern;
+    const curbside = data.trash_schedule.curbside_deadline;
     const notes = data.trash_schedule.notes;
+    const parts = [];
+    if (trashDays) parts.push(`<strong>Trash:</strong> ${escapeHtml(trashDays)}`);
+    if (recyDays) parts.push(`<strong>Recycling:</strong> ${escapeHtml(recyDays)}`);
+    if (heavy) parts.push(`<strong>Heavy trash:</strong> ${escapeHtml(heavy)}`);
+    if (curbside) parts.push(`<strong>At curb by:</strong> ${escapeHtml(curbside)}`);
     html += `<div class="trash-banner">
       <div class="head">🗑️ Trash & recycling schedule</div>
-      <div class="days">Collection: ${escapeHtml(days)}${heavy ? ` · Heavy trash: ${escapeHtml(heavy)}` : ''}</div>
+      <div class="days">${parts.join(' · ')}</div>
       ${notes ? `<div class="notes">${escapeHtml(notes)}</div>` : ''}
     </div>`;
   }

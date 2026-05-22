@@ -19,14 +19,18 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const router = express.Router();
 
 const CATEGORY_LABELS = {
+  management: 'Your Bedrock team',
   emergency: 'Emergency',
   utility: 'Utilities & services',
   trash: 'Trash & recycling',
   tv_internet: 'TV / Internet',
-  community: 'Community contacts',
+  community: 'Community-specific contacts',
   other: 'Other',
 };
-const CATEGORY_ORDER = ['emergency', 'utility', 'trash', 'tv_internet', 'community', 'other'];
+// Order on the homeowner portal: Bedrock team first (most-used), then
+// emergency, then utilities/trash/TV. Community-specific (vendors, clubhouse)
+// last because those are reference data, not action-required.
+const CATEGORY_ORDER = ['management', 'emergency', 'utility', 'trash', 'tv_internet', 'community', 'other'];
 
 // Helper — group contacts by category in CATEGORY_ORDER sequence
 function groupByCategory(rows) {
