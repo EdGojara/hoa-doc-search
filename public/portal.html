@@ -177,7 +177,9 @@
   }
   .tile-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    /* Exactly 3 columns at desktop for the 3-rows-of-3 layout, gracefully
+       degrading to 2 on tablets and 1 on phones. */
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 16px;
     margin-bottom: 32px;
   }
@@ -305,6 +307,11 @@
   .inactive-state p { color: var(--ink-soft); font-size: 14px; }
 
   /* ---- Responsive ---- */
+  @media (max-width: 980px) {
+    /* Tablet: drop to 2-column so tiles don't get squashed below
+       comfortable width */
+    .tile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  }
   @media (max-width: 640px) {
     main { padding: 18px 14px 60px; }
     .hero { padding: 24px 20px; }
@@ -420,16 +427,18 @@
 // =============================================================================
 // Module catalog — the full set of tiles. Order is the display order.
 // =============================================================================
+// Three rows of three (with Your community trailing at 2-3 depending on
+// future additions). Order within each section is the display order.
+//
+// Row 1 — Your account:   Balance · Compliance · Property Summary
+// Row 2 — Make a request: ARC · Pool & Gate Access · Reserve Clubhouse
+// Row 3 — Your community: Documents · Meetings
+//
+// Community Map removed 2026-05-21 — promoted to the hero link under the
+// property address. Pay Assessments removed earlier — Balance tile owns
+// the pay-your-assessment CTA.
 const MODULES = [
-  {
-    key: 'property_summary',
-    title: 'Property Summary',
-    description: 'Lot details, ownership, and key dates for your home.',
-    icon: '🏠',
-    section: 'home',
-    cta: 'View details',
-    buildLink: (ctx) => `/portal/property`,
-  },
+  // ── Row 1: Your account ───────────────────────────────────────────
   {
     key: 'balance',
     title: 'Account Balance',
@@ -440,15 +449,6 @@ const MODULES = [
     buildLink: (ctx) => `/portal/balance`,
   },
   {
-    key: 'arc',
-    title: 'Architectural Review',
-    description: 'Submit a request for paint, fence, addition, or landscape changes.',
-    icon: '🏗️',
-    section: 'requests',
-    cta: 'Submit a request',
-    buildLink: (ctx) => `/apply/${ctx.communitySlug}`,
-  },
-  {
     key: 'compliance',
     title: 'Property Compliance',
     description: 'Recent inspections, courtesy notices, and time-to-address windows for this property.',
@@ -456,6 +456,26 @@ const MODULES = [
     section: 'home',
     cta: 'View status',
     buildLink: (ctx) => `/portal/compliance`,
+  },
+  {
+    key: 'property_summary',
+    title: 'Property Summary',
+    description: 'Lot details, ownership, and key dates for your home.',
+    icon: '🏠',
+    section: 'home',
+    cta: 'View details',
+    buildLink: (ctx) => `/portal/property`,
+  },
+
+  // ── Row 2: Make a request ─────────────────────────────────────────
+  {
+    key: 'arc',
+    title: 'Architectural Review',
+    description: 'Submit a request for paint, fence, addition, or landscape changes.',
+    icon: '🏗️',
+    section: 'requests',
+    cta: 'Submit a request',
+    buildLink: (ctx) => `/apply/${ctx.communitySlug}`,
   },
   {
     key: 'key_fob',
@@ -471,13 +491,12 @@ const MODULES = [
     title: 'Reserve the Clubhouse',
     description: 'Check availability, pay online, and download your rental confirmation.',
     icon: '🎉',
-    section: 'amenities',
+    section: 'requests',
     cta: 'Reserve a date',
     buildLink: (ctx) => `/clubhouse/${ctx.communitySlug}`,
   },
-  // Pay Assessments tile removed 2026-05-21 — redundant with Account Balance tile
-  // which has the prominent pay-your-assessment CTA. Keeping a separate "Pay"
-  // tile created two paths to the same action without adding value.
+
+  // ── Row 3: Your community ─────────────────────────────────────────
   {
     key: 'documents',
     title: 'Governing Documents',
@@ -496,15 +515,11 @@ const MODULES = [
     cta: 'View meetings',
     buildLink: (ctx) => `/portal/meetings`,
   },
-  // Community Map removed from the tile grid 2026-05-21 — promoted to a
-  // visible link in the hero section under the property address. Map is a
-  // utility, not a primary action; it doesn't need a co-equal card.
 ];
 
 const SECTION_LABELS = {
   home: 'Your account',
   requests: 'Make a request',
-  amenities: 'Reservations & payments',
   community: 'Your community',
 };
 
