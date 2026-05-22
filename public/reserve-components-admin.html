@@ -114,6 +114,73 @@
     display: flex; align-items: center; justify-content: center;
     font-size: 14px; flex-shrink: 0;
   }
+  /* Component rows inside a group — indented + de-emphasized chrome.
+     The group header carries the heavy visual weight; sub-rows are the
+     drill-down. */
+  .component-item.indented {
+    margin-left: 14px;
+    padding: 8px 11px;
+    background: rgba(255,255,255,0.015);
+  }
+  .component-item.indented .icon {
+    width: 22px; height: 22px; font-size: 12px;
+  }
+  .component-item.indented .name { font-size: 12.5px; }
+  .component-item.indented .sub { font-size: 10.5px; }
+
+  /* Group header — collapsible parent for related components (e.g.,
+     all 4 Tennis Courts items collapse under one "Tennis Courts" row) */
+  .group-header {
+    display: flex; align-items: center; gap: 8px;
+    padding: 11px 13px;
+    background: rgba(255,255,255,0.04);
+    border: 1px solid var(--rule-strong);
+    border-left: 4px solid var(--ink-faint);
+    border-radius: 7px;
+    cursor: pointer;
+    margin-bottom: 4px;
+    transition: all 0.15s ease;
+  }
+  .group-header:hover { background: rgba(212,175,55,0.06); border-color: var(--gold); }
+  .group-header.urgency-critical { border-left-color: #E48A8A; }
+  .group-header.urgency-imminent { border-left-color: #EC9A4D; }
+  .group-header.urgency-soon { border-left-color: #E8C96E; }
+  .group-header.urgency-medium { border-left-color: #93E5A8; }
+  .group-header.urgency-far { border-left-color: var(--ink-faint); }
+  .group-header .group-caret {
+    color: var(--gold); font-size: 14px;
+    width: 14px; text-align: center;
+    flex-shrink: 0;
+  }
+  .group-header .group-info { flex: 1; min-width: 0; }
+  .group-header .group-name {
+    font-size: 13.5px; font-weight: 600; color: var(--ink);
+  }
+  .group-header .group-sub {
+    font-size: 11px; color: var(--ink-faint); margin-top: 2px;
+    font-family: var(--font-mono);
+  }
+  .group-children {
+    margin-bottom: 8px;
+    border-left: 1px dashed rgba(212,175,55,0.18);
+    margin-left: 8px;
+    padding-left: 4px;
+  }
+  .ungrouped-sep {
+    margin: 14px 0 6px;
+    font-size: 10px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 500;
+  }
+  .group-badge {
+    font-size: 9.5px; color: var(--gold);
+    background: rgba(212,175,55,0.10);
+    padding: 1px 6px; border-radius: 999px;
+    margin-left: 6px;
+  }
+  .group-badge.muted { color: var(--ink-faint); background: rgba(255,255,255,0.04); }
   .component-item .info { flex: 1; min-width: 0; }
   .component-item .name { font-size: 13.5px; color: var(--ink); font-weight: 500; }
   .component-item .sub { font-size: 11px; color: var(--ink-faint); margin-top: 2px; }
@@ -650,6 +717,87 @@ function renderSummary(s) {
     </div>`;
 }
 
+// Group components by amenity (primary) or by name-prefix (fallback for
+// components not yet linked to an amenity). Reserve Advisors names follow
+// the "Asset, Specific item" pattern — e.g., "Tennis Courts, Color Coat"
+// and "Tennis Courts, Fence" share the prefix "Tennis Courts". Grouping
+// by that prefix gives meaningful clustering even before amenity_id is set.
+function groupComponentsForList(components) {
+  const groups = new Map();
+  const ungrouped = [];
+
+  for (const c of components) {
+    // 1) Primary key: amenity_id (when set)
+    let key = null;
+    let label = null;
+    if (c.amenity_id && c.linked_amenity_name) {
+      key = `amenity:${c.amenity_id}`;
+      label = c.linked_amenity_name;
+    } else {
+      // 2) Fallback: name prefix (everything before first comma)
+      const name = (c.component_name || '').trim();
+      const commaIdx = name.indexOf(',');
+      if (commaIdx > 2 && commaIdx < name.length - 1) {
+        const prefix = name.slice(0, commaIdx).trim();
+        // Only group if the prefix is meaningful (2+ words OR clear asset name)
+        if (prefix.includes(' ') || /^(Pool|Fence|Roof|Door|Light|Sign|Mailbox|Pond|Tennis|Concrete)/i.test(prefix)) {
+          key = `prefix:${prefix.toLowerCase()}`;
+          label = prefix;
+        }
+      }
+    }
+
+    if (!key) {
+      ungrouped.push(c);
+      continue;
+    }
+    if (!groups.has(key)) {
+      groups.set(key, { key, label, components: [], by_amenity: key.startsWith('amenity:') });
+    }
+    groups.get(key).components.push(c);
+  }
+
+  // Convert to array; only keep groups with 2+ items (singletons stay ungrouped)
+  const groupList = [];
+  for (const g of groups.values()) {
+    if (g.components.length >= 2) {
+      groupList.push(g);
+    } else {
+      ungrouped.push(...g.components);
+    }
+  }
+
+  // Sort groups: amenity-linked first (more authoritative), then alphabetical
+  groupList.sort((a, b) => {
+    if (a.by_amenity !== b.by_amenity) return a.by_amenity ? -1 : 1;
+    return (a.label || '').localeCompare(b.label || '');
+  });
+
+  return { groups: groupList, ungrouped };
+}
+
+const URGENCY_RANK = { critical: 5, imminent: 4, soon: 3, medium: 2, far: 1 };
+function groupWorstBand(group) {
+  let worst = 'far';
+  for (const c of group.components) {
+    const b = c.urgency_band || 'far';
+    if ((URGENCY_RANK[b] || 0) > (URGENCY_RANK[worst] || 0)) worst = b;
+  }
+  return worst;
+}
+function groupTotalFutureCents(group) {
+  return group.components.reduce((s, c) => s + (Number(c.future_cost_estimate_cents) || Number(c.current_cost_estimate_cents) || 0), 0);
+}
+function groupNextReplacementYear(group) {
+  let min = null;
+  for (const c of group.components) {
+    if (c.years_until_replacement != null && (min == null || c.years_until_replacement < min)) {
+      min = c.years_until_replacement;
+    }
+  }
+  return min;
+}
+
 function renderList() {
   const list = $('componentList');
   if (!state.selectedCommunityId) {
@@ -660,21 +808,99 @@ function renderList() {
     list.innerHTML = '<div style="padding: 14px; text-align: center; color: var(--ink-faint); font-size: 12.5px; font-style: italic;">No components yet. Click + Add component.</div>';
     return;
   }
-  list.innerHTML = state.components.map((c) => {
+
+  const { groups, ungrouped } = groupComponentsForList(state.components);
+
+  // Track which groups are expanded (default expanded)
+  state.expandedGroups = state.expandedGroups || new Set();
+  if (!state.expandedGroupsInitialized) {
+    // First render: expand the group containing the currently-selected component
+    if (state.selectedId) {
+      for (const g of groups) {
+        if (g.components.some(c => c.id === state.selectedId)) {
+          state.expandedGroups.add(g.key);
+          break;
+        }
+      }
+    }
+    state.expandedGroupsInitialized = true;
+  }
+
+  const formatYearsCount = (yrs) => yrs == null ? '—' : (yrs <= 0 ? 'overdue' : yrs + 'y');
+  const fmtMoneyShort = (cents) => {
+    if (cents == null) return '—';
+    const d = Number(cents) / 100;
+    if (d >= 1_000_000) return '$' + (d / 1_000_000).toFixed(1) + 'M';
+    if (d >= 1000)      return '$' + Math.round(d / 1000) + 'K';
+    return '$' + Math.round(d);
+  };
+
+  const renderComponentRow = (c, indented) => {
     const yrs = c.years_until_replacement;
-    const yrsLabel = yrs == null ? '—' : (yrs <= 0 ? 'overdue' : yrs + 'y');
     return `
-      <div class="component-item urgency-${c.urgency_band || 'far'} ${state.selectedId === c.id ? 'active' : ''}"
+      <div class="component-item urgency-${c.urgency_band || 'far'} ${state.selectedId === c.id ? 'active' : ''}${indented ? ' indented' : ''}"
            onclick="window.__selectComponent('${c.id}')">
         <div class="icon">${CATEGORY_ICONS[c.category] || '📍'}</div>
         <div class="info">
           <div class="name">${escapeHtml(c.component_name)}</div>
           <div class="sub">${escapeHtml(CATEGORY_LABELS[c.category] || '')}${c.condition ? ' · ' + c.condition : ''}</div>
         </div>
-        <div class="years">${yrsLabel}</div>
+        <div class="years">${formatYearsCount(yrs)}</div>
       </div>`;
-  }).join('');
+  };
+
+  let html = '';
+
+  // Render grouped sections first
+  for (const g of groups) {
+    const isExpanded = state.expandedGroups.has(g.key);
+    const worstBand = groupWorstBand(g);
+    const total = groupTotalFutureCents(g);
+    const nextYrs = groupNextReplacementYear(g);
+    const nextLabel = nextYrs == null ? '—' : (nextYrs <= 0 ? 'overdue' : nextYrs + 'y');
+    const groupBadge = g.by_amenity
+      ? `<span class="group-badge" title="Linked to amenity">amenity</span>`
+      : `<span class="group-badge muted" title="Grouped by name prefix">${escapeHtml(g.label)}</span>`;
+
+    html += `
+      <div class="group-header urgency-${worstBand}" onclick="window.__toggleGroup('${g.key.replace(/'/g, "\\'")}')">
+        <div class="group-caret">${isExpanded ? '▾' : '▸'}</div>
+        <div class="group-info">
+          <div class="group-name">${escapeHtml(g.label)}</div>
+          <div class="group-sub">${g.components.length} item${g.components.length === 1 ? '' : 's'} · ${fmtMoneyShort(total)} future cost · next ${nextLabel}</div>
+        </div>
+      </div>`;
+    if (isExpanded) {
+      html += '<div class="group-children">';
+      for (const c of g.components) {
+        html += renderComponentRow(c, true);
+      }
+      html += '</div>';
+    }
+  }
+
+  // Then ungrouped (true singletons + components that don't fit any grouping rule)
+  if (ungrouped.length) {
+    if (groups.length) {
+      html += '<div class="ungrouped-sep">Other components</div>';
+    }
+    for (const c of ungrouped) {
+      html += renderComponentRow(c, false);
+    }
+  }
+
+  list.innerHTML = html;
 }
+
+window.__toggleGroup = function (key) {
+  if (!state.expandedGroups) state.expandedGroups = new Set();
+  if (state.expandedGroups.has(key)) {
+    state.expandedGroups.delete(key);
+  } else {
+    state.expandedGroups.add(key);
+  }
+  renderList();
+};
 
 window.__selectComponent = function (id) {
   state.selectedId = id;
