@@ -11,7 +11,15 @@
 
 BEGIN;
 
-CREATE OR REPLACE VIEW v_reserve_components_with_totals AS
+-- DROP + CREATE instead of CREATE OR REPLACE. Postgres rejects column-name
+-- changes via CREATE OR REPLACE VIEW (error 42P16), and rc.* has expanded
+-- since the view was first defined in 088 (migration 089 added columns to
+-- reserve_components). CASCADE is safe — no other views or rules depend
+-- on v_reserve_components_with_totals (v_reserve_community_summary reads
+-- reserve_components directly, not this view).
+DROP VIEW IF EXISTS v_reserve_components_with_totals CASCADE;
+
+CREATE VIEW v_reserve_components_with_totals AS
 WITH study_year AS (
   SELECT
     rc.id AS component_id,

@@ -16,7 +16,14 @@
 
 BEGIN;
 
-CREATE OR REPLACE VIEW v_reserve_components_with_totals AS
+-- DROP + CREATE rather than REPLACE — rc.* expanded since the view was first
+-- defined in 088 (migration 089 added columns to reserve_components), and
+-- CREATE OR REPLACE VIEW rejects that as a column rename. CASCADE is safe —
+-- no other views depend on this one (v_reserve_community_summary reads
+-- reserve_components directly).
+DROP VIEW IF EXISTS v_reserve_components_with_totals CASCADE;
+
+CREATE VIEW v_reserve_components_with_totals AS
 WITH study_year AS (
   SELECT
     rc.id AS component_id,
