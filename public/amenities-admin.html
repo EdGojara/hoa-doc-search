@@ -456,6 +456,13 @@
     <div style="font-size: 11.5px; color: var(--ink-faint); margin: -8px 0 14px;">
       Vendor management agreement for this amenity (e.g., Swim Houston for the pool). This is <strong style="color: var(--ink-soft);">operating expense</strong>, not a reserve item. Surfaces as a one-line context on the reserve map when a reserve component is linked to this amenity.
     </div>
+    <!-- AI extract from contract PDF — pulls vendor + amount + dates + notes
+         so staff doesn't have to re-key. -->
+    <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: rgba(212,175,55,0.06); border: 1px dashed var(--gold); border-radius: 7px; margin-bottom: 14px;">
+      <input type="file" id="contractFileInput" accept=".pdf" style="display:none;">
+      <button type="button" class="geocode-btn" id="extractContractBtn" style="white-space: nowrap;">📄 Extract from contract PDF</button>
+      <div id="extractStatus" style="font-size: 12px; color: var(--ink-faint); flex: 1;">Drop a signed vendor contract PDF — vendor name, annual cost, dates + season will auto-fill.</div>
+    </div>
     <div class="grid-2">
       <div class="field">
         <label>Vendor / management company</label>
@@ -748,6 +755,8 @@ function renderEditor() {
     renderEditor(); renderList();
   });
   $('geocodeBtn').addEventListener('click', geocodeAddress);
+  $('extractContractBtn').addEventListener('click', () => $('contractFileInput').click());
+  $('contractFileInput').addEventListener('change', extractFromContractPdf);
 
   if (!isNew) {
     $('deleteBtn').style.display = '';
@@ -815,6 +824,61 @@ function addOrMoveMarker(lat, lng) {
       $('fld-lng').value = ll.lng.toFixed(7);
     });
   }
+}
+
+// Drop a vendor contract PDF → AI extracts vendor + amount + dates + notes
+// and populates the operating-contract + season fields. Staff confirms by
+// pressing Save Amenity (no auto-write — preview-and-confirm pattern).
+async function extractFromContractPdf(ev) {
+  const file = ev.target.files && ev.target.files[0];
+  if (!file) return;
+  const statusEl = $('extractStatus');
+  statusEl.textContent = '⏳ Reading PDF and extracting fields…';
+  statusEl.style.color = 'var(--gold)';
+  const fd = new FormData();
+  fd.append('file', file);
+  try {
+    const r = await fetch('/api/amenities/admin/amenities/extract-contract', {
+      method: 'POST', body: fd,
+    });
+    const data = await r.json();
+    if (!data.ok) {
+      statusEl.textContent = '⚠ ' + (data.message || data.error || 'Extraction failed');
+      statusEl.style.color = '#E48A8A';
+      ev.target.value = '';  // reset file input so re-pick works
+      return;
+    }
+    // Populate operating-contract fields
+    const f = data.fillable_fields || {};
+    if (f.management_vendor_name)        $('fld-management_vendor_name').value = f.management_vendor_name;
+    if (f.management_annual_cost_cents != null) $('fld-management_annual_cost_dollars').value = (f.management_annual_cost_cents / 100).toFixed(2);
+    if (f.management_contract_start_date) $('fld-management_contract_start_date').value = f.management_contract_start_date;
+    if (f.management_contract_end_date)   $('fld-management_contract_end_date').value = f.management_contract_end_date;
+    if (f.management_contract_notes)      $('fld-management_contract_notes').value = f.management_contract_notes;
+    // Also populate season fields if the contract specified them
+    if (f.season_rule)       $('fld-season_rule').value = f.season_rule;
+    if (f.season_open_md)    $('fld-season_open_md').value = f.season_open_md;
+    if (f.season_close_md)   $('fld-season_close_md').value = f.season_close_md;
+    if (f.offseason_status)  $('fld-offseason_status').value = f.offseason_status;
+    // Re-apply visibility logic now that fields are set
+    onSeasonRuleChange();
+    onOffseasonStatusChange();
+
+    // Build a confirmation message summarizing what was extracted
+    const filled = [];
+    if (f.management_vendor_name)        filled.push('vendor');
+    if (f.management_annual_cost_cents != null) filled.push('annual cost');
+    if (f.management_contract_end_date)  filled.push('end date');
+    if (f.season_open_md)                filled.push('season dates');
+    statusEl.textContent = `✓ Extracted ${filled.length ? filled.join(', ') : 'partial data'} from ${data.file_name} (${data.pdf_pages} pages). Review and click Save Amenity.`;
+    statusEl.style.color = 'rgba(140,210,160,1)';
+
+    if (typeof toast === 'function') toast('Contract extracted — review the fields and save.', 'success');
+  } catch (err) {
+    statusEl.textContent = '⚠ Extraction failed: ' + err.message;
+    statusEl.style.color = '#E48A8A';
+  }
+  ev.target.value = '';  // reset so the same file can be re-picked
 }
 
 async function geocodeAddress() {

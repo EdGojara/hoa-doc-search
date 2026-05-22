@@ -21,14 +21,19 @@
 // ============================================================================
 
 const express = require('express');
+const multer = require('multer');
+const pdfParse = require('pdf-parse');
+const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const SERVICE_TYPE = 'amenity_rental';
 
 const router = express.Router();
+const uploadPdf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // ----------------------------------------------------------------------------
 // Helpers
@@ -780,6 +785,111 @@ router.get('/admin/amenities', async (req, res) => {
     res.json({ amenities: data || [] });
   } catch (err) {
     console.error('[amenities] admin list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /admin/amenities/extract-contract
+// Accepts a signed vendor management contract PDF. Returns structured fields
+// (vendor name, annual cost, contract dates, season dates, monthly schedule,
+// notes) so the amenity editor can auto-fill instead of forcing staff to
+// re-key data that's already in the PDF.
+// Stateless — does NOT write to DB or upload the PDF. Frontend confirms and
+// saves via the existing PATCH /admin/amenities/:id.
+// ---------------------------------------------------------------------------
+router.post('/admin/amenities/extract-contract', uploadPdf.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    if (!anthropic) return res.status(500).json({ error: 'anthropic_not_configured' });
+
+    // 1) Extract text from the PDF
+    let text = '';
+    try {
+      const parsed = await pdfParse(req.file.buffer);
+      text = parsed.text || '';
+    } catch (e) {
+      return res.status(400).json({ error: 'pdf_parse_failed', message: e.message });
+    }
+    if (!text.trim()) return res.status(400).json({ error: 'pdf_empty_or_image_only' });
+
+    // Cap text for the LLM call — typical pool contract is ~10-15 pages.
+    // Keep first ~60K chars which comfortably covers the vendor + pricing
+    // schedules and stays well under context limits.
+    const trimmed = text.slice(0, 60000);
+
+    // 2) Ask the model to extract structured fields
+    const prompt = `You are extracting structured fields from a signed vendor management contract for an HOA amenity (typically a pool or clubhouse). The contract may be a proposal with some blanks unfilled — return null for any field you can't confidently extract from the actual text.
+
+Return ONLY a JSON object (no prose, no markdown) with these fields:
+{
+  "vendor_name": "Legal entity name (e.g., 'Swim Houston Pool Management, LLC')",
+  "annual_total_dollars": 42000,
+  "monthly_schedule": [
+    { "month": 1, "amount_dollars": 1200, "in_swim_season": false },
+    ...
+  ],
+  "contract_start_date": "YYYY-MM-DD",
+  "contract_end_date": "YYYY-MM-DD",
+  "swim_season_open_date": "YYYY-MM-DD or null",
+  "swim_season_close_date": "YYYY-MM-DD or null",
+  "offseason_status": "closed | limited | open",
+  "amenity_type_guess": "pool | clubhouse | landscape | other",
+  "notes": "1-2 sentence summary of scope + renewal terms"
+}
+
+Rules:
+- If the contract has $______ blanks (unsigned proposal), return null for those dollar amounts.
+- monthly_schedule should only include months with non-zero charges in the schedule table. Skip entirely if no monthly table exists.
+- Dates must be YYYY-MM-DD format. Convert month names to numbers.
+- If swim season dates aren't explicitly stated, infer from monthly schedule (months with lifeguard charges = in-season).
+- If offseason language isn't present, default offseason_status to "closed" for pools.
+
+Contract text:
+---
+${trimmed}
+---`;
+
+    const response = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    // Extract JSON from response — be lenient about markdown fences
+    const raw = (response.content?.[0]?.text || '').trim();
+    let jsonText = raw;
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fenced) jsonText = fenced[1];
+    let extracted;
+    try {
+      extracted = JSON.parse(jsonText);
+    } catch (e) {
+      return res.status(500).json({ error: 'extraction_parse_failed', raw: raw.slice(0, 500) });
+    }
+
+    res.json({
+      ok: true,
+      extracted,
+      pdf_pages: (await pdfParse(req.file.buffer)).numpages,
+      file_name: req.file.originalname,
+      // Frontend uses these to know what to populate
+      fillable_fields: {
+        management_vendor_name: extracted.vendor_name || null,
+        management_annual_cost_cents: extracted.annual_total_dollars != null
+          ? Math.round(extracted.annual_total_dollars * 100) : null,
+        management_monthly_schedule: extracted.monthly_schedule || null,
+        management_contract_start_date: extracted.contract_start_date || null,
+        management_contract_end_date: extracted.contract_end_date || null,
+        management_contract_notes: extracted.notes || null,
+        season_rule: extracted.swim_season_open_date ? 'fixed' : null,
+        season_open_md: extracted.swim_season_open_date ? extracted.swim_season_open_date.slice(5) : null,
+        season_close_md: extracted.swim_season_close_date ? extracted.swim_season_close_date.slice(5) : null,
+        offseason_status: extracted.offseason_status || null,
+      },
+    });
+  } catch (err) {
+    console.error('[amenities] extract-contract failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
