@@ -772,19 +772,25 @@ router.post('/invoices/intake-from-pdf', uploadInvoicePdf.single('file'), async 
     if (!communityId) return res.status(400).json({ error: 'community_id_required' });
 
     // 1) Extract text from the PDF
-    let text = '';
+    // Page count for diagnostics + storage. Don't fail if pdf-parse chokes —
+    // we don't actually need the text since we send the PDF directly to
+    // Claude (handles form-field overlays, tables, scanned/image PDFs).
     let pageCount = 0;
     try {
       const parsed = await pdfParse(req.file.buffer);
-      text = parsed.text || '';
       pageCount = parsed.numpages || 0;
     } catch (e) {
-      return res.status(400).json({ error: 'pdf_parse_failed', message: e.message });
+      console.warn('[reserve-studies/intake-from-pdf] pdf-parse failed (continuing with PDF-direct):', e.message);
     }
-    if (!text.trim()) return res.status(400).json({ error: 'pdf_empty_or_image_only' });
 
-    // 2) AI extraction — vendor, date, amount, invoice number, description
-    const prompt = `You are extracting structured fields from a vendor invoice PDF. The invoice is for HOA reserve-fund-eligible work (pool services, asphalt, fencing, roofing, mechanical equipment, etc.). Return ONLY a JSON object — no prose, no markdown:
+    // 2) AI extraction — vendor, date, amount, invoice number, description.
+    // Sends the PDF binary directly to Claude rather than pre-extracted text
+    // because invoices are often Adobe form-field PDFs where the values live
+    // as overlays on top of underscore lines (pdf-parse can't read those).
+    // Same pattern as amenity contract extraction.
+    const prompt = `You are extracting structured fields from a vendor invoice PDF attached to this message. The invoice is for HOA reserve-fund-eligible work (pool services, asphalt, fencing, roofing, mechanical equipment, etc.). Read the values as they appear visually, including any form-field overlays.
+
+Return ONLY a JSON object — no prose, no markdown:
 {
   "vendor_name": "Vendor's legal/business name as shown on the invoice",
   "invoice_number": "Invoice # or null if not shown",
@@ -795,19 +801,27 @@ router.post('/invoices/intake-from-pdf', uploadInvoicePdf.single('file'), async 
 }
 
 Rules:
-- amount_dollars must be the invoice TOTAL (not subtotal), expressed as a number with cents.
+- amount_dollars must be the invoice TOTAL (not subtotal), expressed as a number with cents. Read the WHOLE number including commas (e.g., "$84,829.44" → 84829.44, not 84).
 - If the invoice is for routine maintenance / monthly services / chemicals, set likely_reserve_category to "not_a_reserve_item" — staff will dismiss it.
-- description should be the actual scope, not just "invoice from Vendor X".
-
-Invoice text:
----
-${text.slice(0, 30000)}
----`;
+- description should be the actual scope, not just "invoice from Vendor X".`;
 
     const aiResp = await anthropic.messages.create({
       model: 'claude-sonnet-4-5',
       max_tokens: 1200,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [{
+        role: 'user',
+        content: [
+          {
+            type: 'document',
+            source: {
+              type: 'base64',
+              media_type: 'application/pdf',
+              data: req.file.buffer.toString('base64'),
+            },
+          },
+          { type: 'text', text: prompt },
+        ],
+      }],
     });
     const raw = (aiResp.content?.[0]?.text || '').trim();
     let jsonText = raw;
@@ -910,7 +924,9 @@ ${text.slice(0, 30000)}
       invoice_date: extracted.invoice_date || null,
       amount_cents: amountCents,
       description: extracted.description || null,
-      raw_text: text.slice(0, 8000),  // first 8K of raw text for audit trail
+      // raw_text omitted in PDF-direct mode — the source PDF itself is the
+      // audit trail (linked via intake_document_id below)
+      raw_text: null,
       file_storage_path: intakeDocId ? `documents/${intakeDocId}` : null,
       file_name: req.file.originalname,
       intake_document_id: intakeDocId,
