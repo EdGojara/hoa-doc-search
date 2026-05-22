@@ -86,6 +86,8 @@ const STANDARD_CATEGORIES = [
   'unit_ledger', 'management_agreement',
   // Resident-facing form templates (added in migration 017)
   'arc_application', 'key_fob_form', 'forms_and_applications',
+  // Vendor management agreements (pool, landscape, security, pest, etc.)
+  'vendor_contract',
   'other'
 ];
 

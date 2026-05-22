@@ -22,6 +22,7 @@
 
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
 const pdfParse = require('pdf-parse');
 const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
@@ -31,6 +32,7 @@ const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY
 const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const SERVICE_TYPE = 'amenity_rental';
+const STORAGE_BUCKET = 'documents';  // shared bucket from migration 012
 
 const router = express.Router();
 const uploadPdf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
@@ -803,11 +805,15 @@ router.post('/admin/amenities/extract-contract', uploadPdf.single('file'), async
     if (!req.file) return res.status(400).json({ error: 'file_required' });
     if (!anthropic) return res.status(500).json({ error: 'anthropic_not_configured' });
 
-    // 1) Extract text from the PDF
+    const communityId = (req.body?.community_id || '').trim() || null;
+
+    // 1) Extract text from the PDF (used by both LLM extraction + page count)
     let text = '';
+    let pageCount = 0;
     try {
       const parsed = await pdfParse(req.file.buffer);
       text = parsed.text || '';
+      pageCount = parsed.numpages || 0;
     } catch (e) {
       return res.status(400).json({ error: 'pdf_parse_failed', message: e.message });
     }
@@ -868,11 +874,84 @@ ${trimmed}
       return res.status(500).json({ error: 'extraction_parse_failed', raw: raw.slice(0, 500) });
     }
 
+    // 3) Store the PDF in Supabase Storage + create the library_documents row
+    //    so the amenity can link to it via management_contract_doc_id.
+    //    Hash-check first: if the same PDF was already uploaded, reuse the
+    //    existing doc row instead of creating a duplicate.
+    let docId = null;
+    let docError = null;
+    try {
+      const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+
+      // Hash check — same PDF previously uploaded means reuse the doc
+      const { data: existing } = await supabase
+        .from('library_documents')
+        .select('id, title, category')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('file_hash', fileHash)
+        .maybeSingle();
+
+      if (existing) {
+        docId = existing.id;
+      } else {
+        const newDocId = crypto.randomUUID();
+        const safeVendor = (extracted.vendor_name || 'Vendor Contract').replace(/[^a-z0-9]+/gi, '_').slice(0, 60);
+        const fileName = `${safeVendor}_${newDocId.slice(0, 8)}.pdf`;
+        const filePath = `${BEDROCK_MGMT_CO_ID}/${communityId || 'unassigned'}/vendor_contract/${newDocId}.pdf`;
+
+        // Upload to storage first; if it fails, skip the DB row
+        const { error: storageErr } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(filePath, req.file.buffer, { contentType: 'application/pdf', upsert: false });
+
+        if (storageErr) {
+          docError = 'storage_upload_failed: ' + storageErr.message;
+        } else {
+          const title = extracted.vendor_name
+            ? `${extracted.vendor_name}${extracted.contract_end_date ? ' (' + extracted.contract_end_date.slice(0, 4) + ')' : ''}`
+            : req.file.originalname.replace(/\.pdf$/i, '');
+          const { error: insErr } = await supabase
+            .from('library_documents')
+            .insert({
+              id: newDocId,
+              management_company_id: BEDROCK_MGMT_CO_ID,
+              community_id: communityId || null,
+              category: 'vendor_contract',
+              status: 'current',
+              title: title,
+              file_name_original: req.file.originalname,
+              file_name_normalized: fileName,
+              file_path: filePath,
+              file_hash: fileHash,
+              file_size_bytes: req.file.size,
+              page_count: pageCount,
+              effective_date: extracted.contract_start_date || null,
+              expiration_date: extracted.contract_end_date || null,
+              extraction_model: 'claude-sonnet-4-5',
+              extraction_confidence: 'medium',
+              extraction_notes: extracted.notes || null,
+            });
+
+          if (insErr) {
+            docError = 'doc_insert_failed: ' + insErr.message;
+            // Best-effort cleanup of the storage upload since the DB row didn't land
+            try { await supabase.storage.from(STORAGE_BUCKET).remove([filePath]); } catch (_) {}
+          } else {
+            docId = newDocId;
+          }
+        }
+      }
+    } catch (e) {
+      docError = 'storage_pipeline_exception: ' + e.message;
+    }
+
     res.json({
       ok: true,
       extracted,
-      pdf_pages: (await pdfParse(req.file.buffer)).numpages,
+      pdf_pages: pageCount,
       file_name: req.file.originalname,
+      document_id: docId,             // null if storage/insert failed (extraction still useful)
+      document_error: docError,        // surfaces in UI so staff knows extraction succeeded but PDF didn't archive
       // Frontend uses these to know what to populate
       fillable_fields: {
         management_vendor_name: extracted.vendor_name || null,
@@ -882,6 +961,7 @@ ${trimmed}
         management_contract_start_date: extracted.contract_start_date || null,
         management_contract_end_date: extracted.contract_end_date || null,
         management_contract_notes: extracted.notes || null,
+        management_contract_doc_id: docId,
         season_rule: extracted.swim_season_open_date ? 'fixed' : null,
         season_open_md: extracted.swim_season_open_date ? extracted.swim_season_open_date.slice(5) : null,
         season_close_md: extracted.swim_season_close_date ? extracted.swim_season_close_date.slice(5) : null,

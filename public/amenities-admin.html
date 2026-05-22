@@ -488,6 +488,12 @@
       <label>Notes</label>
       <textarea id="fld-management_contract_notes" rows="2" placeholder="Renewal terms, scope, prior vendor history, etc."></textarea>
     </div>
+    <input type="hidden" id="fld-management_contract_doc_id">
+    <div id="contractDocLink" style="display:none; margin-top: 10px; padding: 10px 14px; background: rgba(212,175,55,0.06); border-left: 3px solid var(--gold); border-radius: 0 6px 6px 0; font-size: 13px;">
+      <span style="color: var(--ink-faint);">📎 Linked contract:</span>
+      <a id="contractDocAnchor" href="#" target="_blank" style="color: var(--gold); text-decoration: underline; margin-left: 4px;">Open PDF</a>
+      <button type="button" id="unlinkContractBtn" style="background: transparent; border: none; color: var(--ink-faint); cursor: pointer; font-size: 11.5px; margin-left: 10px;">✕ Unlink</button>
+    </div>
   </div>
 
   <div class="panel">
@@ -731,6 +737,8 @@ function renderEditor() {
   $('fld-management_contract_start_date').value = e.management_contract_start_date || '';
   $('fld-management_contract_end_date').value = e.management_contract_end_date || '';
   $('fld-management_contract_notes').value = e.management_contract_notes || '';
+  $('fld-management_contract_doc_id').value = e.management_contract_doc_id || '';
+  refreshContractDocLink();
   // Apply visibility logic for season-rule conditional fields
   onSeasonRuleChange();
   onOffseasonStatusChange();
@@ -757,6 +765,11 @@ function renderEditor() {
   $('geocodeBtn').addEventListener('click', geocodeAddress);
   $('extractContractBtn').addEventListener('click', () => $('contractFileInput').click());
   $('contractFileInput').addEventListener('change', extractFromContractPdf);
+  $('unlinkContractBtn').addEventListener('click', () => {
+    $('fld-management_contract_doc_id').value = '';
+    refreshContractDocLink();
+    toast('Contract PDF unlinked from this amenity (the PDF stays in Documents). Save Amenity to persist.', 'success');
+  });
 
   if (!isNew) {
     $('deleteBtn').style.display = '';
@@ -826,6 +839,19 @@ function addOrMoveMarker(lat, lng) {
   }
 }
 
+// Show/hide the "Linked contract: Open PDF" line based on whether a doc_id
+// is set in the hidden field. Updates the anchor href to the download endpoint.
+function refreshContractDocLink() {
+  const docId = $('fld-management_contract_doc_id').value;
+  const box = $('contractDocLink');
+  if (!docId) {
+    box.style.display = 'none';
+    return;
+  }
+  $('contractDocAnchor').href = `/api/documents/${docId}/download`;
+  box.style.display = '';
+}
+
 // Drop a vendor contract PDF → AI extracts vendor + amount + dates + notes
 // and populates the operating-contract + season fields. Staff confirms by
 // pressing Save Amenity (no auto-write — preview-and-confirm pattern).
@@ -837,6 +863,12 @@ async function extractFromContractPdf(ev) {
   statusEl.style.color = 'var(--gold)';
   const fd = new FormData();
   fd.append('file', file);
+  // Include community_id so the PDF lands in the right storage folder
+  // (BEDROCK_ID/<community_id>/vendor_contract/...). Without this, contracts
+  // get filed under "unassigned" and lose their per-community grouping.
+  if (state.editing && state.editing.community_id) {
+    fd.append('community_id', state.editing.community_id);
+  }
   try {
     const r = await fetch('/api/amenities/admin/amenities/extract-contract', {
       method: 'POST', body: fd,
@@ -860,6 +892,11 @@ async function extractFromContractPdf(ev) {
     if (f.season_open_md)    $('fld-season_open_md').value = f.season_open_md;
     if (f.season_close_md)   $('fld-season_close_md').value = f.season_close_md;
     if (f.offseason_status)  $('fld-offseason_status').value = f.offseason_status;
+    // Link the PDF document if storage upload succeeded
+    if (f.management_contract_doc_id) {
+      $('fld-management_contract_doc_id').value = f.management_contract_doc_id;
+      refreshContractDocLink();
+    }
     // Re-apply visibility logic now that fields are set
     onSeasonRuleChange();
     onOffseasonStatusChange();
@@ -870,7 +907,11 @@ async function extractFromContractPdf(ev) {
     if (f.management_annual_cost_cents != null) filled.push('annual cost');
     if (f.management_contract_end_date)  filled.push('end date');
     if (f.season_open_md)                filled.push('season dates');
+    if (f.management_contract_doc_id)    filled.push('PDF archived');
     statusEl.textContent = `✓ Extracted ${filled.length ? filled.join(', ') : 'partial data'} from ${data.file_name} (${data.pdf_pages} pages). Review and click Save Amenity.`;
+    if (data.document_error) {
+      console.warn('Contract PDF archival error:', data.document_error);
+    }
     statusEl.style.color = 'rgba(140,210,160,1)';
 
     if (typeof toast === 'function') toast('Contract extracted — review the fields and save.', 'success');
@@ -936,6 +977,7 @@ function collectForm() {
     management_contract_start_date: $('fld-management_contract_start_date').value || null,
     management_contract_end_date: $('fld-management_contract_end_date').value || null,
     management_contract_notes: $('fld-management_contract_notes').value.trim() || null,
+    management_contract_doc_id: $('fld-management_contract_doc_id').value || null,
     is_rentable: $('fld-is_rentable').checked,
     rental_min_lead_time_days: $('fld-rental_min_lead_time_days').value ? parseInt($('fld-rental_min_lead_time_days').value, 10) : null,
     rental_max_lead_time_days: $('fld-rental_max_lead_time_days').value ? parseInt($('fld-rental_max_lead_time_days').value, 10) : null,
