@@ -896,22 +896,308 @@ const {
   indexLibraryDoc,
 } = require('./lib/library_reindex');
 
+// ----------------------------------------------------------------------------
+// Stopword list for the keyword half of hybrid retrieval. We strip these
+// before running ILIKE searches so "what's the quorum at Canyon Gate" doesn't
+// also match every chunk containing "the" / "at" / "is".
+// ----------------------------------------------------------------------------
+const HYBRID_STOPWORDS = new Set([
+  'a','an','and','are','as','at','be','been','being','but','by','can','could',
+  'did','do','does','for','from','had','has','have','having','he','her','here',
+  'his','how','i','if','in','into','is','it','its','just','many','me','more',
+  'most','much','my','no','not','now','of','on','one','only','or','our','out',
+  'over','same','she','should','so','some','such','than','that','the','their',
+  'them','then','there','these','they','this','those','to','too','under','up',
+  'us','very','was','we','were','what','whats','when','where','which','while',
+  'who','why','will','with','would','you','your','yours',
+]);
+
+// Extract keyword tokens for the keyword half of hybrid retrieval.
+function extractKeywords(text) {
+  if (!text) return [];
+  // Lowercase + keep alphanumerics + a few punctuation we care about
+  // (§ for statute numbers, % for percent, $ for dollars)
+  const tokens = String(text)
+    .toLowerCase()
+    .replace(/[^a-z0-9§%$\s.-]/g, ' ')
+    .split(/\s+/)
+    .map((t) => t.replace(/^[.-]+|[.-]+$/g, ''))
+    .filter((t) => t && t.length > 2 && !HYBRID_STOPWORDS.has(t));
+  // De-dup, cap at 8 to keep ILIKE OR clause manageable
+  return Array.from(new Set(tokens)).slice(0, 8);
+}
+
+// ----------------------------------------------------------------------------
+// getRelevantChunks — HYBRID retrieval (vector + keyword)
+// ----------------------------------------------------------------------------
+// Why hybrid: vector search is great for "tell me about X" / concept questions
+// but routinely misses exact-fact chunks when multiple chunks in the same
+// document score similarly. We hit this hard on 2026-05-22 with the Canyon
+// Gate quorum question: the chunk containing "twenty-five percent (25%)" was
+// loaded and indexed, but the vector search ranked the longer "reconvening
+// rule" chunk higher and never returned the % chunk. Meanwhile the legacy
+// Documents tab (keyword ILIKE) would have surfaced it instantly.
+//
+// Fix: run BOTH searches in parallel, merge results with Reciprocal Rank
+// Fusion (vector-rank + keyword-rank), dedupe by content, cap to 18 chunks.
+// Vector still drives semantic relevance; keyword acts as a safety net for
+// precise-fact lookups (numbers, %, $ amounts, statute citations, vendor
+// names, etc.).
+//
+// See CLAUDE.md scar: "Parallel retrieval silos — hybrid not optional."
+// ----------------------------------------------------------------------------
+const HYBRID_K = 18;          // total chunks returned to the model
+const VECTOR_K = 15;          // vector results before merge
+const KEYWORD_K = 10;         // keyword results before merge
+const RRF_C = 60;             // RRF damping constant; standard value
+
 async function getRelevantChunks(text, community) {
-  const embeddingResponse = await openai.embeddings.create({
-    model: 'text-embedding-ada-002',
-    input: text.replace(/\n/g, ' ').slice(0, 8000)
-  });
-  const queryEmbedding = embeddingResponse.data[0].embedding;
   const communities = ['Law', 'General', ..._communityNameVariations(community)];
-  const { data: chunks, error } = await supabase.rpc('match_documents', {
-    query_embedding: queryEmbedding,
-    match_count: 15,
-    filter_communities: communities
+
+  // --- Vector half (embedding search) ---
+  const vectorPromise = (async () => {
+    try {
+      const embeddingResponse = await openai.embeddings.create({
+        model: 'text-embedding-ada-002',
+        input: text.replace(/\n/g, ' ').slice(0, 8000),
+      });
+      const queryEmbedding = embeddingResponse.data[0].embedding;
+      const { data: chunks, error } = await supabase.rpc('match_documents', {
+        query_embedding: queryEmbedding,
+        match_count: VECTOR_K,
+        filter_communities: communities,
+      });
+      if (error) {
+        console.warn('[hybrid-retrieval] vector half failed:', error.message);
+        return [];
+      }
+      return chunks || [];
+    } catch (err) {
+      console.warn('[hybrid-retrieval] vector half threw:', err.message);
+      return [];
+    }
+  })();
+
+  // --- Title-match half (library_documents.title ILIKE) ---
+  //
+  // Most powerful signal for exact-fact lookups: when a document is LITERALLY
+  // titled "Amendment to Bylaws Regarding Quorum," that doc is by far the
+  // best answer to "what's the quorum?" — better than any single chunk.
+  // The PDF filename ("Canyon Gate at Cinco Ranch - Bylaws - 2020 -
+  // Approved.pdf") doesn't help here because dates don't tell us what's
+  // inside. The curated library_documents.title does.
+  //
+  // Strategy: for each keyword, find library_documents whose TITLE contains
+  // it. For any matching doc, pull up to 8 chunks. These get prepended to
+  // the merge with a high RRF boost so the model always sees them.
+  const titleMatchPromise = (async () => {
+    const keywords = extractKeywords(text);
+    if (keywords.length === 0) return [];
+    try {
+      const titleOrFilter = keywords.map((kw) => `title.ilike.%${kw.replace(/[%_]/g, '')}%`).join(',');
+      const { data: docs, error } = await supabase
+        .from('library_documents')
+        .select('id, title, communities:community_id(name)')
+        .or(titleOrFilter)
+        .limit(30);
+      if (error) {
+        console.warn('[hybrid-retrieval] title-match half failed:', error.message);
+        return [];
+      }
+      const communityLower = new Set(communities.map((c) => String(c || '').toLowerCase()));
+      const eligibleDocs = (docs || []).filter((d) => {
+        const cname = String(d.communities?.name || '').toLowerCase();
+        return communityLower.has(cname) || communities.includes('General') || communities.includes('Law');
+      });
+      if (eligibleDocs.length === 0) return [];
+
+      // Tokenize the community name so we can DISCOUNT community-name keywords
+      // when scoring title matches. For Canyon Gate question, "canyon" and
+      // "gate" in a title are just community noise; "quorum" in a title is
+      // the actual signal. Without this, every "Canyon Gate ..." titled doc
+      // ranks the same and the truly specific match ("Amendment to Bylaws
+      // Regarding Quorum") gets buried.
+      const communityTokens = new Set(
+        (community || '').toLowerCase().split(/\s+/).filter((t) => t && t.length > 2)
+      );
+      const discriminatingKeywords = keywords.filter((kw) => !communityTokens.has(kw));
+
+      // Score each doc by:
+      //   discriminating-keyword title matches (×3)  +  community-keyword title matches (×1)
+      // Docs with rare-keyword title hits float to the front.
+      const scoredDocs = eligibleDocs.map((d) => {
+        const titleLower = String(d.title || '').toLowerCase();
+        const discMatches = discriminatingKeywords.filter((kw) => titleLower.includes(kw)).length;
+        const commMatches = keywords.filter((kw) => communityTokens.has(kw) && titleLower.includes(kw)).length;
+        return { doc: d, score: 3 * discMatches + commMatches };
+      }).sort((a, b) => b.score - a.score);
+
+      // Pull chunks in doc-score order so chunks from the best title-match
+      // arrive first in the flattened output (which drives their RRF rank).
+      const chunkResults = await Promise.all(scoredDocs.map(async ({ doc }) => {
+        const { data, error: e2 } = await supabase
+          .from('documents')
+          .select('content, metadata')
+          .eq('metadata->>library_document_id', doc.id)
+          .limit(8);
+        if (e2) {
+          console.warn(`[hybrid-retrieval] title-match chunks for "${doc.title}" failed:`, e2.message);
+          return [];
+        }
+        return data || [];
+      }));
+      const flat = chunkResults.flat();
+      console.log(`[hybrid-retrieval] title-match found ${eligibleDocs.length} docs (top: "${scoredDocs[0]?.doc?.title}"), ${flat.length} chunks`);
+      return flat;
+    } catch (err) {
+      console.warn('[hybrid-retrieval] title-match half threw:', err.message);
+      return [];
+    }
+  })();
+
+  // --- Keyword half (ILIKE — per-keyword fanout, then re-rank by multi-hit) ---
+  //
+  // Two-pass strategy that solves the "wrong doc crowding out the right doc"
+  // problem (Canyon Gate quorum: 2 bylaws docs, the older one had 9 chunks
+  // matching "quorum" and filled the limit before the 2020 amendment's 25%
+  // chunk ever made it in):
+  //
+  //  Pass 1 — for EACH extracted keyword, fetch its own top-N matching
+  //   chunks (community-scoped). One keyword can't crowd out another.
+  //  Pass 2 — count how many DISTINCT keywords each chunk matches.
+  //   Chunks matching multiple keywords are higher signal and rank first.
+  //
+  // This keeps single-keyword recall (a chunk that just happens to mention
+  // "quorum") while ensuring multi-keyword chunks ("quorum" + "canyon" +
+  // "twenty-five" etc.) get surfaced.
+  const keywordPromise = (async () => {
+    const keywords = extractKeywords(text);
+    if (keywords.length === 0) return [];
+    const communityLower = new Set(communities.map((c) => String(c || '').toLowerCase()));
+    try {
+      // Fan out: per-keyword fetch, parallel. We pull a LARGE window per
+      // keyword (500 rows) because Postgres ILIKE returns rows in physical
+      // insertion order with no ranking — a small limit can crowd out the
+      // right answer when many chunks match (we hit this 2026-05-22 with
+      // Canyon Gate quorum: the 2020 amendment's "25%" chunk lived past
+      // row 40 in physical order, so the prior limit=40 never saw it).
+      //
+      // Community-filtering + multi-keyword re-rank below does the actual
+      // quality work — the big window just guarantees the right chunk is
+      // in the candidate pool. At ~50K rows, an ILIKE seq scan at limit
+      // 500 is still sub-100ms.
+      const perKwResults = await Promise.all(
+        keywords.map(async (kw) => {
+          const { data, error } = await supabase
+            .from('documents')
+            .select('content, metadata')
+            .ilike('content', `%${kw.replace(/[%_]/g, '')}%`)
+            .limit(500);
+          if (error) {
+            console.warn(`[hybrid-retrieval] keyword "${kw}" failed:`, error.message);
+            return { kw, rows: [] };
+          }
+          // Filter by community right here
+          const rows = (data || []).filter((row) => {
+            const c = String(row.metadata?.community || '').toLowerCase();
+            return communityLower.has(c);
+          });
+          return { kw, rows };
+        })
+      );
+
+      // Re-rank by:
+      //   (a) keywords matched in chunk CONTENT
+      //   (b) keywords matched in the parent doc's FILENAME (counts double —
+      //       a doc titled "Amendment to Bylaws Regarding Quorum" is much
+      //       stronger signal than a chunk that just happens to say "quorum")
+      //
+      // This solves the case where the exact-fact chunk only contains one of
+      // the query keywords ("quorum") because chunking split it away from the
+      // community-name context ("Canyon Gate"). The filename carries the
+      // missing context. Without this, the 25% chunk in
+      // "Canyon Gate at Cinco Ranch - Bylaws - 2020 - Approved.pdf" only
+      // matched "quorum" and got buried by chunks matching 4-5 keywords each.
+      const byKey = new Map();
+      const keyOf = (row) => `${(row.content || '').slice(0, 200)}::${row.metadata?.filename || ''}`;
+      for (const { kw, rows } of perKwResults) {
+        for (const row of rows) {
+          const k = keyOf(row);
+          const ex = byKey.get(k);
+          if (ex) { ex.matchedKeywords.add(kw); }
+          else byKey.set(k, { row, matchedKeywords: new Set([kw]) });
+        }
+      }
+      // Now boost each chunk by filename-keyword matches.
+      for (const entry of byKey.values()) {
+        const fname = String(entry.row.metadata?.filename || '').toLowerCase();
+        const titleHits = keywords.filter((kw) => fname.includes(kw));
+        // titleHits add 2 points each (vs 1 for a content-keyword hit), so
+        // doc-title strong matches outrank generic content keyword overlap.
+        entry.score = entry.matchedKeywords.size + 2 * titleHits.length;
+        entry.titleKeywords = new Set(titleHits);
+      }
+
+      const ranked = Array.from(byKey.values())
+        .sort((a, b) => b.score - a.score)
+        .slice(0, KEYWORD_K);
+
+      return ranked.map((r) => r.row);
+    } catch (err) {
+      console.warn('[hybrid-retrieval] keyword half threw:', err.message);
+      return [];
+    }
+  })();
+
+  const [vectorChunks, keywordChunks, titleMatchChunks] = await Promise.all([
+    vectorPromise, keywordPromise, titleMatchPromise,
+  ]);
+
+  // --- Reciprocal Rank Fusion merge ---
+  // Score(chunk) = sum over each result set it appears in of
+  //   1 / (RRF_C + rank_in_that_set).
+  // Title-match chunks get a 3x weight bonus because doc-title is the
+  // strongest signal for "what's the X" factual lookups — a doc literally
+  // titled "Amendment to Bylaws Regarding Quorum" should always surface
+  // on a quorum question.
+  // Dedupe by content (first 200 chars hash).
+  const byKey = new Map();
+  const keyOf = (row) => `${(row.content || '').slice(0, 200)}::${row.metadata?.filename || ''}`;
+
+  titleMatchChunks.forEach((row, i) => {
+    const k = keyOf(row);
+    const score = 3 / (RRF_C + i + 1); // 3x boost — strongest signal
+    const existing = byKey.get(k);
+    if (existing) { existing.score += score; existing.sources.add('title'); }
+    else byKey.set(k, { row, score, sources: new Set(['title']) });
   });
-  if (error) throw new Error('Search error: ' + error.message);
-  return (chunks || []).map(row => {
+  vectorChunks.forEach((row, i) => {
+    const k = keyOf(row);
+    const score = 1 / (RRF_C + i + 1);
+    const existing = byKey.get(k);
+    if (existing) { existing.score += score; existing.sources.add('vector'); }
+    else byKey.set(k, { row, score, sources: new Set(['vector']) });
+  });
+  keywordChunks.forEach((row, i) => {
+    const k = keyOf(row);
+    const score = 1 / (RRF_C + i + 1);
+    const existing = byKey.get(k);
+    if (existing) { existing.score += score; existing.sources.add('keyword'); }
+    else byKey.set(k, { row, score, sources: new Set(['keyword']) });
+  });
+
+  const merged = Array.from(byKey.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, HYBRID_K);
+
+  const dualHits = merged.filter((m) => m.sources.size >= 2).length;
+  console.log(`[hybrid-retrieval] community="${community || '(all)'}" vector=${vectorChunks.length} keyword=${keywordChunks.length} title=${titleMatchChunks.length} merged=${merged.length} multi-source=${dualHits}`);
+
+  return merged.map(({ row, sources }) => {
     const ocrTag = row.metadata?.ocr ? " — OCR'd scan, may have minor errors" : '';
-    return `[From: ${row.metadata?.filename} - ${row.metadata?.community}${ocrTag}]\n${row.content}`;
+    const sources_arr = [...sources];
+    const sourceTag = sources_arr.length >= 2 ? ` — matched ${sources_arr.join('+')}` : '';
+    return `[From: ${row.metadata?.filename} - ${row.metadata?.community}${ocrTag}${sourceTag}]\n${row.content}`;
   }).join('\n\n---\n\n');
 }
 

@@ -324,6 +324,46 @@ two-step enable:
    '<key>', jsonb_build_object('status', 'live')) WHERE NOT
    (portal_module_config ? '<key>')`
 
+### Parallel retrieval silos — hybrid is not optional
+
+**Scar**: 2026-05-22. Ed asked askEd "what's Canyon Gate's quorum?" and got a
+hedge ("I don't have the specific number — check Vantaca"). Meanwhile the
+Documents tab would have surfaced the answer instantly because it does
+keyword search. Two retrieval paths on the SAME `documents` table:
+
+- `getRelevantChunks` (askEd) — pure vector search via `match_documents` RPC
+- `api/ask.js` / Documents tab — pure ILIKE keyword search
+
+Each missed what the other found. Vector search ranked the longer
+"reconvening rule" chunk above the actual "twenty-five percent (25%)" chunk
+because both contained "quorum" and the longer one had more contextual
+filler around the embedding vector. Keyword search would have returned both.
+Two algorithms on one table = unpredictable outputs depending on which
+surface the user happens to land on. That's the parallel-silo failure
+pattern Ed has explicitly named in memory.
+
+**Rule**: `getRelevantChunks` now does **three-way hybrid retrieval**:
+
+1. **Vector** — embedding search via `match_documents` (concept matching)
+2. **Keyword** — per-keyword fanout with multi-keyword re-rank and filename
+   boost (exact-fact matching)
+3. **Title-match** — search `library_documents.title` for query keywords,
+   pull ALL chunks of docs whose title strongly matches. Title-match docs
+   are scored by DISCRIMINATING keyword matches (keywords NOT in the
+   community name, so "quorum" in a title is signal but "canyon" is just
+   community noise).
+
+Results merge via Reciprocal Rank Fusion. Title hits get 3× weight (a doc
+literally titled "Amendment to Bylaws Regarding Quorum" should always
+surface on a quorum question). Final output is the top 18 unique chunks
+across all three sources, with source tags exposed on each chunk header
+(`matched title+vector+keyword`).
+
+When building any new retrieval surface in this codebase: **don't ship a
+new keyword-only or vector-only search.** Either use the central
+`getRelevantChunks` or follow the same hybrid pattern. Parallel silos
+on the same data are a bug.
+
 ### Diagnostic-first debugging (the 90-minute lesson)
 
 **Rule**: When a feature stops working in production, the FIRST move is
