@@ -43,6 +43,25 @@
     .brand-text em { color: var(--gold-bright); font-style: italic; font-weight: 500; font-size: 14px; margin-left: 4px; }
     .topbar-title { font-size: 12px; letter-spacing: 0.16em; text-transform: uppercase; color: rgba(255,255,255,0.65); margin-left: auto; }
 
+    /* Switch-back-to-homeowner link in the board portal header. Gold pill
+       matching the brand language used for the Board View switcher in the
+       homeowner portal — visually symmetric. */
+    .homeowner-switcher {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(212,175,55,0.18);
+      color: var(--gold-bright);
+      border: 1px solid var(--gold);
+      padding: 6px 12px; border-radius: 999px;
+      font-size: 12.5px; font-weight: 500;
+      text-decoration: none;
+      transition: all 0.15s ease;
+      margin-left: 14px;
+    }
+    .homeowner-switcher:hover {
+      background: var(--gold);
+      color: var(--navy);
+    }
+
     /* ============ COMMUNITY PICKER ============ */
     .picker-bar { background: var(--paper); border-bottom: 1px solid var(--rule); padding: 12px 18px; }
     .picker-inner { max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
@@ -145,6 +164,11 @@
         <div class="brand-text">Bedrock<em>Association Management</em></div>
       </div>
       <div class="topbar-title">Board Portal</div>
+      <!-- Switch back to homeowner view. Visible whenever the user is on
+           the board portal — they got here either by clicking the Board
+           View pill in the homeowner header, or by direct nav. Either
+           way they need a one-click path back to their own account. -->
+      <a id="homeownerViewBtn" href="/portal" class="homeowner-switcher" onclick="rememberHomeownerView()">← My homeowner view</a>
     </div>
   </div>
 
@@ -177,6 +201,17 @@
 <script>
   let currentCommunityId = null;
   let currentFilter = 'open_only'; // 'all' | 'open_only'
+
+  // Save the user's last-view preference so subsequent logins default to
+  // their preferred mode (homeowner vs. board). Mirror of the homeowner
+  // portal's localStorage write on the Board View button click.
+  function rememberHomeownerView() {
+    try { localStorage.setItem('bedrock_portal_last_view', 'homeowner'); } catch (_) {}
+    // Let nav proceed normally
+  }
+  // Mark that this user is currently in board view (sets the preference
+  // on initial board portal load, since they explicitly navigated here).
+  try { localStorage.setItem('bedrock_portal_last_view', 'board'); } catch (_) {}
 
   function esc(s) {
     if (s == null) return '';

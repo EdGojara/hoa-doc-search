@@ -74,6 +74,26 @@
   .top-right .user-name {
     font-size: 13.5px; color: var(--ink); font-weight: 500;
   }
+  /* Board View switcher — gold-edged pill in the header for board members.
+     Visually distinct from regular nav (signals "this isn't your default
+     view; this is the other one"). Hidden by default; JS reveals when
+     /me returns is_board_member=true. */
+  .board-switcher {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: rgba(212,175,55,0.10);
+    color: var(--navy);
+    border: 1px solid var(--gold);
+    padding: 7px 14px; border-radius: 999px;
+    font-size: 13px; font-weight: 500;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    margin-right: 4px;
+  }
+  .board-switcher:hover {
+    background: var(--gold);
+    color: var(--navy);
+    box-shadow: 0 2px 8px rgba(212,175,55,0.4);
+  }
   .top-right .user-meta { font-size: 12px; color: var(--ink-faint); }
   .top-right button {
     background: transparent; border: 1px solid var(--rule);
@@ -345,6 +365,10 @@
   </div>
   <div class="top-right">
     <div id="demoBadge" class="demo-badge" style="display:none;">Demo</div>
+    <!-- Board View switcher — visible only when /me returns is_board_member=true.
+         Persists last-view choice to localStorage so subsequent logins can
+         route to the user's preferred default. -->
+    <a id="boardViewBtn" href="/board-portal" style="display:none;" class="board-switcher">🏛️ Board View →</a>
     <div>
       <div class="user-name" id="userName">—</div>
       <div class="user-meta" id="userMeta">—</div>
@@ -675,6 +699,18 @@ function renderPortal(ctx) {
   // Top bar
   $('userName').textContent = ctx.user.name || ctx.user.email;
   $('userMeta').textContent = ctx.property?.address || '';
+
+  // Reveal the Board View switcher if user has board access. Remember the
+  // last-chosen view so subsequent logins go straight there (we save 'board'
+  // here on click; portal-login.html reads it on auth success).
+  if (ctx.is_board_member) {
+    const btn = $('boardViewBtn');
+    btn.style.display = '';
+    btn.addEventListener('click', (e) => {
+      try { localStorage.setItem('bedrock_portal_last_view', 'board'); } catch (_) {}
+      // Let the navigation proceed normally
+    });
+  }
   if (ctx.demo) $('demoBadge').style.display = '';
 
   // Hero
