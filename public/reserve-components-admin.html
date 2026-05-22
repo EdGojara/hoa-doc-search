@@ -47,7 +47,7 @@
   .shell {
     display: grid;
     grid-template-columns: 360px 1fr;
-    height: calc(100vh - 73px);
+    height: calc(100vh - 73px - 44px);  /* header + module-subnav */
   }
   aside.list-pane {
     background: var(--navy-soft);
@@ -228,6 +228,31 @@
     color: var(--ink-soft); margin: 0 0 8px;
   }
 
+  /* ---- Shared reserves sub-nav ---- */
+  .module-subnav {
+    display: flex; align-items: center; gap: 4px;
+    padding: 10px 28px;
+    background: var(--navy-deep);
+    border-bottom: 1px solid var(--rule);
+    flex-wrap: wrap;
+  }
+  .module-subnav a {
+    padding: 7px 14px; border-radius: 6px;
+    font-size: 13px; color: var(--ink-soft);
+    text-decoration: none;
+    transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .module-subnav a:hover { background: rgba(212,175,55,0.10); color: var(--gold); }
+  .module-subnav a.active { background: var(--gold); color: var(--navy-deep); font-weight: 500; }
+  .module-subnav a.active:hover { background: var(--gold-bright); color: var(--navy-deep); }
+  .module-subnav .spacer { flex: 1; }
+  .module-subnav a.secondary {
+    border: 1px solid var(--rule-strong);
+    color: var(--ink-soft); font-size: 12.5px;
+  }
+  .module-subnav a.secondary:hover { border-color: var(--gold); color: var(--gold); background: transparent; }
+
   .toast {
     position: fixed; bottom: 24px; right: 32px;
     background: var(--navy-soft); border: 1px solid var(--rule-strong);
@@ -265,11 +290,19 @@
       <div class="sub">trustEd · operations platform</div>
     </div>
   </div>
-  <div class="module-name">Reserve <em>Components</em></div>
+  <div class="module-name">Reserves</div>
   <div class="util">
     <a href="/">← Platform</a>
   </div>
 </header>
+
+<nav class="module-subnav">
+  <a class="active" href="/reserve-components-admin.html">📋 Components</a>
+  <a href="/reserve-map.html">🗺️ Board map</a>
+  <a href="/reserve-invoice-review.html">🧾 Invoice review</a>
+  <span class="spacer"></span>
+  <a class="secondary" href="/reserve-study-import.html">📥 Import study</a>
+</nav>
 
 <div class="shell">
   <aside class="list-pane">

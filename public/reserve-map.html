@@ -85,6 +85,32 @@
   }
   .back-link:hover { border-color: var(--gold); color: var(--gold); }
 
+  /* ---- Shared reserves sub-nav (light theme to match the map page) ---- */
+  .module-subnav {
+    display: flex; align-items: center; gap: 4px;
+    padding: 8px 22px;
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    flex-wrap: wrap;
+    height: 44px;
+  }
+  .module-subnav a {
+    padding: 6px 14px; border-radius: 6px;
+    font-size: 13px; color: var(--ink-soft);
+    text-decoration: none;
+    transition: all 0.15s ease;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .module-subnav a:hover { background: var(--cream-soft); color: var(--navy); }
+  .module-subnav a.active { background: var(--navy); color: white; font-weight: 500; }
+  .module-subnav a.active:hover { background: #2A4870; color: white; }
+  .module-subnav .spacer { flex: 1; }
+  .module-subnav a.secondary {
+    border: 1px solid var(--rule);
+    font-size: 12.5px;
+  }
+  .module-subnav a.secondary:hover { border-color: var(--gold); color: var(--gold); background: transparent; }
+
   /* ---- Summary strip ---- */
   .summary-strip {
     background: white;
@@ -109,7 +135,7 @@
   .shell {
     display: grid;
     grid-template-columns: 1fr 0;
-    height: calc(100vh - 64px - 56px);
+    height: calc(100vh - 64px - 44px - 56px);  /* header + subnav + summary strip */
     overflow: hidden;
     transition: grid-template-columns 0.2s ease;
     position: relative;
@@ -464,8 +490,17 @@
     .brand svg { width: 22px; height: 28px; }
     .brand .wm { font-size: 14.5px; }
     .brand .label { display: none; }
+
+    /* Subnav: shrink labels and let it wrap; keep at 44px */
+    .module-subnav {
+      padding: 6px 14px; gap: 2px;
+      overflow-x: auto; flex-wrap: nowrap; white-space: nowrap;
+    }
+    .module-subnav a { padding: 6px 10px; font-size: 12px; }
+
+    /* Community selector — drop below the subnav as its own row */
     .top-center {
-      position: absolute; left: 14px; right: 14px; top: 56px;
+      position: absolute; left: 14px; right: 14px; top: calc(56px + 44px);
       background: white; padding: 8px 14px;
       border-bottom: 1px solid var(--rule);
       gap: 8px; z-index: 700;
@@ -488,9 +523,9 @@
     .stat .label { font-size: 9.5px; }
     .stat .value { font-size: 13px; }
 
-    /* Shell height = full viewport minus (header 56 + community-row 46 + strip 48) */
+    /* Shell = viewport minus (header 56 + subnav 44 + community row 46 + strip 48) */
     .shell {
-      height: calc(100vh - 56px - 46px - 48px);
+      height: calc(100vh - 56px - 44px - 46px - 48px);
     }
 
     /* Layer toggle: shrink + emoji-only on mobile */
@@ -597,10 +632,17 @@
     </select>
   </div>
   <div class="top-right">
-    <a class="back-link mobile-hide" href="/reserve-components-admin.html">Manage components ↗</a>
     <a class="back-link" href="/">← Platform</a>
   </div>
 </header>
+
+<nav class="module-subnav">
+  <a href="/reserve-components-admin.html">📋 Components</a>
+  <a class="active" href="/reserve-map.html">🗺️ Board map</a>
+  <a href="/reserve-invoice-review.html">🧾 Invoice review</a>
+  <span class="spacer"></span>
+  <a class="secondary" href="/reserve-study-import.html">📥 Import study</a>
+</nav>
 
 <div class="summary-strip" id="summaryStrip" style="display:none;">
   <div class="stat"><div class="label">Active components</div><div class="value" id="statActive">—</div></div>

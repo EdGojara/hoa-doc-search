@@ -389,18 +389,10 @@
   <!-- Amenities — manage clubhouse, pool, park, etc. per community with map pins,
        hours, contact info, and rental config. Populates the /portal/map. -->
   <div class="tab" onclick="location.href='/amenities-admin.html'">🏊 Amenities</div>
-  <!-- Reserve Components — manage reserve study line items per community
-       (pool plaster, parking lot, fences, etc.) with useful life, replacement
-       costs, condition, expenditures, and map pins. Powers the board reserve map. -->
+  <!-- Reserves — single entry point. Lands on the components admin; the
+       sub-nav inside each reserve page jumps between Components / Map /
+       Invoices without going back to platform nav. -->
   <div class="tab" onclick="location.href='/reserve-components-admin.html'">🏦 Reserves</div>
-  <!-- Reserve Map (board-facing) — same data, board view. Urgency-colored pins
-       across the community, filterable by category + urgency. Click any pin to
-       see remaining life, replacement cost, and spending history. -->
-  <div class="tab" onclick="location.href='/reserve-map.html'">🗺️ Reserve Map</div>
-  <!-- Reserve Invoice Review — staff matches vendor invoices to reserve
-       components. AI suggests the match; one-click confirm logs the
-       expenditure and rolls the component forward. -->
-  <div class="tab" onclick="location.href='/reserve-invoice-review.html'">🧾 Reserve Invoices</div>
   <!-- Portal Users — manage board + homeowner portal access. The 'Open ↗'
        buttons inside this tab launch the actual portals; no separate tab needed. -->
   <div class="tab" onclick="switchTab('portalusers')">🔐 Portal Users</div>
