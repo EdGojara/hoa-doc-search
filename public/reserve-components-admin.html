@@ -1038,10 +1038,23 @@ $('autoPlaceBtn').addEventListener('click', async () => {
     if (result.no_amenities) {
       toast('No amenities pinned for this community yet — go to 🏊 Amenities first.', 'error');
     } else if (result.placed === 0) {
-      toast('All components already have pins. Nothing to place.', 'success');
+      // All components already have lat/lng. Offer force-replace so staff
+      // can re-spread pins after pinning new amenities or finding the
+      // current placement is clustered.
+      btn.disabled = false;
+      btn.textContent = orig;
+      if (confirm('All components are already pinned. Clear and re-place from current amenities? (Useful if you just pinned more amenities, or the previous placement is clustered too tightly.)')) {
+        btn.disabled = true;
+        btn.textContent = '⏳ Re-placing pins…';
+        const r2 = await fetch(`/api/reserve-studies/community/${state.selectedCommunityId}/auto-place-pins?force=true`, { method: 'POST' });
+        const result2 = await r2.json();
+        if (!result2.ok) { toast(result2.error || 'Re-placement failed', 'error'); }
+        else { toast(`Re-placed ${result2.placed} pin${result2.placed === 1 ? '' : 's'} from current amenities.`, 'success'); }
+        await loadComponentsAndSummary();
+      }
     } else {
       toast(`Placed ${result.placed} pin${result.placed === 1 ? '' : 's'} near amenities. Drag any pin to fine-tune.`, 'success');
-      await loadComponentsAndSummary();  // refresh list with new coords
+      await loadComponentsAndSummary();
     }
   } catch (err) {
     toast('Auto-placement failed: ' + err.message, 'error');

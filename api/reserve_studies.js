@@ -319,8 +319,21 @@ const CATEGORY_TO_AMENITY_TYPES = {
 };
 const PERIMETER_CATEGORIES = new Set(['fence', 'paving', 'lighting', 'signage', 'irrigation', 'landscape']);
 
-async function autoPlaceComponentPins(communityId) {
-  // Unpinned active components only
+async function autoPlaceComponentPins(communityId, opts = {}) {
+  const force = opts.force === true;
+
+  // If force, first clear lat/lng on ALL active components so the next
+  // step picks them all up. Used when prior auto-place clustered pins
+  // because amenities lacked coords, and now amenities have been pinned.
+  if (force) {
+    await supabase
+      .from('reserve_components')
+      .update({ lat: null, lng: null })
+      .eq('community_id', communityId)
+      .eq('status', 'active');
+  }
+
+  // Unpinned active components (now includes the just-cleared ones if force)
   const { data: components, error: cErr } = await supabase
     .from('reserve_components')
     .select('id, component_name, category')
@@ -364,7 +377,12 @@ async function autoPlaceComponentPins(communityId) {
   }
 
   function offsetRadius(category) {
-    return PERIMETER_CATEGORIES.has(category) ? 0.0011 : 0.00035; // ~120m vs ~38m
+    // Perimeter items (fence, paving, lighting, signage, irrigation,
+    // landscape) get a much wider radius so they actually spread across
+    // the community when anchored to a single amenity. 0.0050° ≈ 550m,
+    // which covers a typical HOA subdivision diameter. Amenity-tight
+    // items (pool, playground, mechanical, common_area) stay clustered.
+    return PERIMETER_CATEGORIES.has(category) ? 0.0050 : 0.00050; // ~550m vs ~55m
   }
 
   // Build update list with deterministic-ish offsets so re-running doesn't
@@ -500,11 +518,15 @@ router.get('/community/:community_id/map', async (req, res) => {
 // ----------------------------------------------------------------------------
 
 // POST /community/:community_id/auto-place-pins — anchor unpinned components
-// to nearby amenities. Idempotent: only touches components without coords.
+// to nearby amenities. By default idempotent: only touches components
+// without coords. ?force=true clears existing lat/lng first and re-places
+// everything — use when prior placement clustered pins because amenities
+// lacked coords at the time.
 router.post('/community/:community_id/auto-place-pins', async (req, res) => {
   try {
-    const result = await autoPlaceComponentPins(req.params.community_id);
-    res.json({ ok: true, ...result });
+    const force = req.query.force === 'true' || req.query.force === '1';
+    const result = await autoPlaceComponentPins(req.params.community_id, { force });
+    res.json({ ok: true, force, ...result });
   } catch (err) {
     console.error('[reserve-studies] auto-place failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
