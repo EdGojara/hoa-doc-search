@@ -710,8 +710,8 @@ function renderEditor() {
   $('fld-contact_email').value = e.contact_email || '';
   $('fld-rules_url').value = e.rules_url || '';
   $('fld-status').value = e.status || 'active';
-  $('fld-seasonal_open_month').value = e.seasonal_open_month || '';
-  $('fld-seasonal_close_month').value = e.seasonal_close_month || '';
+  // (Deprecated month-only season fields were removed from the UI in
+  // migration 092 — date-precision via season_rule + season_open_md.)
   // New season + offseason fields
   $('fld-season_rule').value = e.season_rule || '';
   $('fld-season_open_md').value = e.season_open_md || '';
@@ -859,8 +859,7 @@ function collectForm() {
     contact_email: $('fld-contact_email').value.trim() || null,
     rules_url: $('fld-rules_url').value.trim() || null,
     status: $('fld-status').value,
-    seasonal_open_month: $('fld-seasonal_open_month').value ? parseInt($('fld-seasonal_open_month').value, 10) : null,
-    seasonal_close_month: $('fld-seasonal_close_month').value ? parseInt($('fld-seasonal_close_month').value, 10) : null,
+    // Old month-only season fields removed — date-precision replaces them
     season_rule: $('fld-season_rule').value || null,
     season_open_md: $('fld-season_open_md').value.trim() || null,
     season_close_md: $('fld-season_close_md').value.trim() || null,
