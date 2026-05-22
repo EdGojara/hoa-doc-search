@@ -234,6 +234,36 @@
   }
 
   /* Floating legend */
+  /* Base-layer toggle — same pattern as the board reserve map */
+  .layer-toggle {
+    position: absolute; top: 16px; right: 16px;
+    background: white; border: 1px solid var(--rule); border-radius: 10px;
+    padding: 4px; box-shadow: var(--shadow-soft);
+    display: flex; gap: 2px; z-index: 500;
+  }
+  .layer-toggle button {
+    background: transparent; border: none;
+    padding: 7px 12px; border-radius: 7px;
+    font-family: var(--font-sans); font-size: 12.5px;
+    color: var(--ink-soft); cursor: pointer;
+    display: flex; align-items: center; gap: 6px;
+    transition: all 0.15s ease;
+  }
+  .layer-toggle button:hover { background: var(--cream-soft); color: var(--navy); }
+  .layer-toggle button.active { background: var(--navy); color: white; }
+  .layer-toggle button.active:hover { background: #2A4870; color: white; }
+  @media (max-width: 720px) {
+    .layer-toggle { top: 12px; right: 12px; padding: 3px; }
+    .layer-toggle button {
+      padding: 8px 11px; font-size: 0;
+      min-width: 40px; min-height: 40px; justify-content: center;
+    }
+    .layer-toggle button::before { font-size: 17px; }
+    .layer-toggle button[data-layer="hybrid"]::before    { content: '🛰️'; }
+    .layer-toggle button[data-layer="satellite"]::before { content: '📷'; }
+    .layer-toggle button[data-layer="street"]::before    { content: '🗺️'; }
+  }
+
   .map-legend {
     position: absolute; bottom: 20px; left: 20px;
     background: white;
@@ -320,6 +350,11 @@
 <div class="shell" id="shell">
   <div id="mapWrap" style="position: relative; height: 100%;">
     <div id="mapEl"></div>
+    <div class="layer-toggle" id="layerToggle" style="display:none;">
+      <button data-layer="hybrid" class="active">🛰️ Hybrid</button>
+      <button data-layer="satellite">📷 Satellite</button>
+      <button data-layer="street">🗺️ Street</button>
+    </div>
     <div class="map-floater" id="mapFloater" style="display:none;">
       <h2 id="floaterName">—</h2>
       <div class="count" id="floaterCount">—</div>
@@ -342,6 +377,57 @@ let community = null;
 let isDemo = false;
 let homeMarker = null;
 let userProperty = null;
+
+// Base tile layers — built once per map init, swapped via the layer toggle.
+// Hybrid (satellite + transport + place labels) is the default — same pattern
+// as the board reserve map. Esri tiles are free, no API key needed.
+let portalTileLayers = null;
+let portalActiveBaseLayers = [];
+let portalLayerMode = 'hybrid';
+function buildPortalTileLayers() {
+  portalTileLayers = {
+    street: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }),
+    satellite: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      {
+        maxZoom: 19,
+        attribution: 'Tiles © Esri — Maxar, Earthstar Geographics, and the GIS User Community',
+      }
+    ),
+    labels: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19 }
+    ),
+    transport: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19 }
+    ),
+  };
+}
+function setPortalLayerMode(mode) {
+  if (!map || !portalTileLayers) return;
+  portalLayerMode = mode;
+  portalActiveBaseLayers.forEach(l => map.removeLayer(l));
+  portalActiveBaseLayers = [];
+  if (mode === 'street') {
+    portalTileLayers.street.addTo(map);
+    portalActiveBaseLayers = [portalTileLayers.street];
+  } else if (mode === 'satellite') {
+    portalTileLayers.satellite.addTo(map);
+    portalActiveBaseLayers = [portalTileLayers.satellite];
+  } else {
+    portalTileLayers.satellite.addTo(map);
+    portalTileLayers.transport.addTo(map);
+    portalTileLayers.labels.addTo(map);
+    portalActiveBaseLayers = [portalTileLayers.satellite, portalTileLayers.transport, portalTileLayers.labels];
+  }
+  document.querySelectorAll('#layerToggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.layer === mode);
+  });
+}
 
 const AMENITY_ICONS = {
   clubhouse:    '🎉',
@@ -549,18 +635,24 @@ function renderMap(data) {
     zoomControl: true,
     attributionControl: true,
   });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '© OpenStreetMap contributors',
-  }).addTo(map);
 
-  // Boundary polygon
+  // Build base tile layers (street / satellite / hybrid) and apply default
+  buildPortalTileLayers();
+  setPortalLayerMode('hybrid');
+
+  // Wire the toggle buttons (idempotent — re-binding is fine)
+  document.querySelectorAll('#layerToggle button').forEach(btn => {
+    btn.onclick = () => setPortalLayerMode(btn.dataset.layer);
+  });
+  $('layerToggle').style.display = '';
+
+  // Boundary polygon — gold stroke so it reads on both street and satellite
   if (data.boundary && data.boundary.geometry) {
     const bdy = L.geoJSON(data.boundary, {
       style: {
-        color: '#1A3050', weight: 2,
-        fillColor: '#D4AF37', fillOpacity: 0.05,
-        dashArray: '6 5',
+        color: '#D4AF37', weight: 3,
+        fillColor: '#1A3050', fillOpacity: 0.04,
+        dashArray: '8 6', opacity: 0.95,
       },
     }).addTo(map);
     try {

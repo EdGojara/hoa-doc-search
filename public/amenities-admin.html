@@ -199,6 +199,24 @@
   /* Tiles paint over this; keeps the box looking alive while they load
      and prevents the navy page background from bleeding through. */
   #editorMap.leaflet-container, .map-wrap .leaflet-container { background: #e8edf0; }
+
+  /* Layer toggle pinned to the top-right of the admin click-to-pin map */
+  .map-wrap { position: relative; }
+  #adminLayerToggle {
+    position: absolute; top: 10px; right: 10px;
+    background: white; border: 1px solid var(--rule); border-radius: 8px;
+    padding: 3px; box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    display: flex; gap: 2px; z-index: 500;
+  }
+  #adminLayerToggle button {
+    background: transparent; border: none;
+    padding: 5px 10px; border-radius: 5px;
+    font-family: var(--font-sans); font-size: 11.5px;
+    color: #4a4a4a; cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  #adminLayerToggle button:hover { background: #f0f0f0; color: var(--navy-deep); }
+  #adminLayerToggle button.active { background: var(--navy-deep); color: white; font-weight: 500; }
   .map-hint {
     position: absolute; bottom: 10px; left: 10px;
     background: rgba(11, 20, 36, 0.92);
@@ -386,6 +404,11 @@
       </div>
       <div class="map-wrap">
         <div id="editorMap"></div>
+        <div class="layer-toggle" id="adminLayerToggle">
+          <button data-layer="hybrid" class="active" type="button">🛰️ Hybrid</button>
+          <button data-layer="satellite" type="button">📷 Sat</button>
+          <button data-layer="street" type="button">🗺️ Street</button>
+        </div>
         <div class="map-hint" id="mapHint">Click the map to set the pin</div>
       </div>
     </div>
@@ -828,6 +851,51 @@ function renderEditor() {
   requestAnimationFrame(() => requestAnimationFrame(() => initMap()));
 }
 
+// Tile layers for the admin click-to-pin map. Hybrid satellite is the
+// default — way easier to drop a pin on an actual pool roof or clubhouse
+// from aerial imagery than from a vector street map.
+let adminTileLayers = null;
+let adminActiveBaseLayers = [];
+function adminBuildTileLayers() {
+  adminTileLayers = {
+    street: L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+    }),
+    satellite: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, attribution: 'Tiles © Esri' }
+    ),
+    labels: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19 }
+    ),
+    transport: L.tileLayer(
+      'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19 }
+    ),
+  };
+}
+function adminSetLayerMode(mode) {
+  if (!state.map || !adminTileLayers) return;
+  adminActiveBaseLayers.forEach(l => state.map.removeLayer(l));
+  adminActiveBaseLayers = [];
+  if (mode === 'street') {
+    adminTileLayers.street.addTo(state.map);
+    adminActiveBaseLayers = [adminTileLayers.street];
+  } else if (mode === 'satellite') {
+    adminTileLayers.satellite.addTo(state.map);
+    adminActiveBaseLayers = [adminTileLayers.satellite];
+  } else {
+    adminTileLayers.satellite.addTo(state.map);
+    adminTileLayers.transport.addTo(state.map);
+    adminTileLayers.labels.addTo(state.map);
+    adminActiveBaseLayers = [adminTileLayers.satellite, adminTileLayers.transport, adminTileLayers.labels];
+  }
+  document.querySelectorAll('#adminLayerToggle button').forEach(b => {
+    b.classList.toggle('active', b.dataset.layer === mode);
+  });
+}
+
 function initMap() {
   const mapEl = $('editorMap');
   if (!mapEl) return;
@@ -838,10 +906,18 @@ function initMap() {
   const hasCoords = !isNaN(lat) && !isNaN(lng);
   const center = hasCoords ? [lat, lng] : [29.6428, -95.7820];  // default: Richmond TX area
 
-  state.map = L.map(mapEl, { center, zoom: hasCoords ? 17 : 12, zoomControl: true });
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '© OpenStreetMap',
-  }).addTo(state.map);
+  state.map = L.map(mapEl, { center, zoom: hasCoords ? 18 : 13, zoomControl: true });
+
+  // Base tile layers — Hybrid (satellite + transport + place labels) is the
+  // default since staff is pinning to actual physical features (pool, clubhouse,
+  // etc.) which are way easier to identify on aerial imagery.
+  adminBuildTileLayers();
+  adminSetLayerMode('hybrid');
+
+  // Wire toggle buttons inside the map container (rendered below)
+  document.querySelectorAll('#adminLayerToggle button').forEach(btn => {
+    btn.onclick = (e) => { e.stopPropagation(); adminSetLayerMode(btn.dataset.layer); };
+  });
 
   // Force a size recalc once tiles + container have painted. Belt-and-
   // suspenders for the same race condition addressed by the rAF above.
