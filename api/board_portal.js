@@ -85,6 +85,123 @@ router.get('/community/:id/summary', async (req, res) => {
     const certifiedOrFine = safeRows.filter((r) => ['certified_209', 'fine_assessed'].includes(r.worst_open_stage)).length;
     const totalArc = safeRows.reduce((s, r) => s + (r.arc_decisions_count || 0), 0);
 
+    // Phase 2 — board dashboard data (curated > comprehensive principle).
+    // All of these are best-effort: if a sub-source fails, we still return
+    // the rest. Boards see what's available, not a 500.
+    let arAging = null;
+    try {
+      const { data: arRows } = await supabase
+        .from('owner_ar_snapshots')
+        .select('balance_total, enforcement_stage, at_legal, in_collections, payment_plan_active, snapshot_date')
+        .eq('community_id', communityId)
+        .order('snapshot_date', { ascending: false })
+        .limit(5000);
+      const ar = arRows || [];
+      // Keep most recent snapshot per property (rows are sorted desc above)
+      const seen = new Set();
+      const latest = [];
+      for (const r of ar) {
+        const k = r.property_id || r.account_number || r.snapshot_date + '|' + (r.balance_total || 0);
+        if (seen.has(k)) continue;
+        seen.add(k);
+        latest.push(r);
+      }
+      const cur = latest.filter(r => (r.balance_total || 0) <= 0).length;
+      const pastDue = latest.filter(r => (r.balance_total || 0) > 0).length;
+      const atLegal = latest.filter(r => r.at_legal === true).length;
+      const inColl = latest.filter(r => r.in_collections === true).length;
+      const planActive = latest.filter(r => r.payment_plan_active === true).length;
+      const totalOutstanding = latest.reduce((s, r) => s + (Number(r.balance_total) > 0 ? Number(r.balance_total) : 0), 0);
+      arAging = {
+        owners_current: cur,
+        owners_past_due: pastDue,
+        owners_at_legal: atLegal,
+        owners_in_collections: inColl,
+        owners_with_payment_plan: planActive,
+        total_outstanding_cents: Math.round(totalOutstanding * 100), // dollars→cents
+      };
+    } catch (e) {
+      console.warn('[board_portal] AR aging skipped:', e.message);
+    }
+
+    // Reserve health — from the community-level reserve summary view
+    let reserveHealth = null;
+    try {
+      const { data: rh } = await supabase
+        .from('v_reserve_community_summary')
+        .select('active_components, total_current_cost_cents, total_future_cost_cents, critical_2yr_count, soon_5yr_count, spent_last_12mo_cents')
+        .eq('community_id', communityId)
+        .maybeSingle();
+      if (rh) reserveHealth = rh;
+    } catch (e) {
+      console.warn('[board_portal] reserve health skipped:', e.message);
+    }
+
+    // DRV breakdown by stage — counts of currently-open violations per stage
+    let drvByStage = null;
+    try {
+      const { data: drv } = await supabase
+        .from('interactions')
+        .select('current_stage')
+        .eq('community_id', communityId)
+        .eq('service_type', 'enforcement')
+        .neq('status', 'resolved')
+        .neq('status', 'voided');
+      const buckets = { courtesy_1: 0, courtesy_2: 0, certified_209: 0, fine_assessed: 0 };
+      (drv || []).forEach(r => {
+        if (r.current_stage in buckets) buckets[r.current_stage]++;
+      });
+      drvByStage = buckets;
+    } catch (e) {
+      console.warn('[board_portal] DRV breakdown skipped:', e.message);
+    }
+
+    // ARC pipeline — open resident applications + open builder applications
+    let arcPipeline = null;
+    try {
+      const [{ data: residentApps }, { data: builderApps }] = await Promise.all([
+        supabase
+          .from('arc_applications')
+          .select('id, created_at, status')
+          .eq('community_id', communityId)
+          .in('status', ['submitted', 'under_review', 'pending_info']),
+        supabase
+          .from('builder_applications')
+          .select('id, created_at, status')
+          .eq('community_id', communityId)
+          .in('status', ['submitted', 'under_review', 'pending_info']),
+      ]);
+      const open = [...(residentApps || []), ...(builderApps || [])];
+      const oldestAgeDays = open.length
+        ? Math.floor((Date.now() - Math.min(...open.map(a => new Date(a.created_at).getTime()))) / 86400000)
+        : null;
+      arcPipeline = {
+        open_resident: (residentApps || []).length,
+        open_builder: (builderApps || []).length,
+        open_total: open.length,
+        oldest_age_days: oldestAgeDays,
+      };
+    } catch (e) {
+      console.warn('[board_portal] ARC pipeline skipped:', e.message);
+    }
+
+    // Recent board meetings — last 3 minutes documents
+    let recentMeetings = null;
+    try {
+      const { data: docs } = await supabase
+        .from('library_documents')
+        .select('id, title, effective_date, category')
+        .eq('community_id', communityId)
+        .in('category', ['regular_meeting_minutes', 'annual_board_meeting_minutes'])
+        .order('effective_date', { ascending: false, nullsFirst: false })
+        .limit(3);
+      recentMeetings = (docs || []).map(d => ({
+        id: d.id, title: d.title, date: d.effective_date, category: d.category,
+      }));
+    } catch (e) {
+      console.warn('[board_portal] recent meetings skipped:', e.message);
+    }
+
     res.json({
       community,
       counts: {
@@ -98,6 +215,12 @@ router.get('/community/:id/summary', async (req, res) => {
         residency_unknown: total - occupiedKnown,
         arc_decisions_total: totalArc,
       },
+      // Phase 2 dashboard cards
+      ar_aging: arAging,
+      reserve_health: reserveHealth,
+      drv_by_stage: drvByStage,
+      arc_pipeline: arcPipeline,
+      recent_meetings: recentMeetings,
     });
   } catch (err) {
     console.error('[board_portal] community summary failed:', err.message);

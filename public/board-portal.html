@@ -87,6 +87,105 @@
     .summary-card.warn .value { color: var(--warn); }
     .summary-card.bad { background: var(--bad-tint); border-color: #fecaca; }
     .summary-card.bad .label { color: var(--bad); }
+
+    /* ============ DASHBOARD CARDS (Phase 2) ============ */
+    .dash-section-label {
+      font-size: 11px; font-weight: 700; color: var(--ink-muted);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin: 26px 0 10px;
+    }
+    .dash-grid {
+      display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;
+      margin-bottom: 8px;
+    }
+    @media (max-width: 720px) { .dash-grid { grid-template-columns: 1fr; } }
+    .dash-card {
+      background: var(--paper); border: 1px solid var(--rule);
+      border-radius: 10px; padding: 16px 18px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+      display: flex; flex-direction: column;
+    }
+    .dash-card .head {
+      display: flex; align-items: center; gap: 8px;
+      font-size: 11px; color: var(--ink-muted);
+      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
+      margin-bottom: 12px;
+    }
+    .dash-card .head .icon { font-size: 16px; }
+    .dash-card .head .link {
+      margin-left: auto; color: var(--gold);
+      font-size: 11px; text-decoration: none; font-weight: 600;
+      text-transform: none; letter-spacing: 0;
+    }
+    .dash-card .head .link:hover { color: var(--gold-bright); }
+    .dash-row {
+      display: flex; justify-content: space-between; align-items: baseline;
+      padding: 5px 0;
+      border-bottom: 1px dashed var(--rule);
+      font-size: 13px;
+    }
+    .dash-row:last-child { border-bottom: none; }
+    .dash-row .k { color: var(--ink-muted); }
+    .dash-row .v {
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      color: var(--ink); font-weight: 600;
+    }
+    .dash-row.warn .v { color: var(--warn); }
+    .dash-row.bad .v { color: var(--bad); }
+    .dash-row.good .v { color: var(--good, #2D7956); }
+    .dash-bigstat {
+      font-size: 28px; font-weight: 800; color: var(--navy);
+      font-variant-numeric: tabular-nums; line-height: 1.05;
+      margin-bottom: 4px;
+    }
+    .dash-bigstat.bad { color: var(--bad); }
+    .dash-bigstat.warn { color: var(--warn); }
+    .dash-bigstat-sub {
+      font-size: 11.5px; color: var(--ink-muted);
+      margin-bottom: 12px;
+    }
+    .dash-stagebar {
+      display: flex; gap: 4px; margin: 6px 0 10px;
+      height: 24px; border-radius: 4px; overflow: hidden;
+      background: var(--rule);
+    }
+    .dash-stagebar .seg {
+      display: flex; align-items: center; justify-content: center;
+      color: white; font-size: 11px; font-weight: 600;
+    }
+    .dash-stagebar .seg-courtesy_1   { background: #94a3b8; }
+    .dash-stagebar .seg-courtesy_2   { background: #f59e0b; }
+    .dash-stagebar .seg-certified_209{ background: #ef4444; }
+    .dash-stagebar .seg-fine_assessed{ background: #991b1b; }
+    .dash-stage-legend {
+      display: flex; flex-wrap: wrap; gap: 12px;
+      font-size: 11px; color: var(--ink-muted);
+    }
+    .dash-stage-legend .dot {
+      display: inline-block; width: 8px; height: 8px;
+      border-radius: 50%; margin-right: 4px;
+      vertical-align: 0;
+    }
+    .dash-empty {
+      font-size: 12.5px; color: var(--ink-muted);
+      font-style: italic; padding: 8px 0;
+    }
+    .dash-meeting-row {
+      display: flex; justify-content: space-between;
+      padding: 5px 0; font-size: 12.5px;
+      border-bottom: 1px dashed var(--rule);
+    }
+    .dash-meeting-row:last-child { border-bottom: none; }
+    .dash-meeting-row .meeting-title {
+      color: var(--ink); flex: 1;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      padding-right: 8px;
+    }
+    .dash-meeting-row .meeting-date {
+      color: var(--ink-muted);
+      font-family: 'JetBrains Mono', ui-monospace, monospace;
+      font-size: 11.5px;
+    }
     .summary-card.bad .value { color: var(--bad); }
 
     /* ============ FILTER CHIPS ============ */
@@ -286,6 +385,7 @@
       ]);
       wrap.innerHTML = `
         ${renderSummary(summary)}
+        ${renderDashboardCards(summary)}
         ${renderFilterBar()}
         ${renderPropertyList(props.properties || [])}
       `;
@@ -319,6 +419,122 @@
           <div class="sub">decisions on file</div>
         </div>
       </div>`;
+  }
+
+  // Phase 2 — board dashboard cards (curated metrics above the property list)
+  function renderDashboardCards(s) {
+    const fmtMoney = (cents) => {
+      if (cents == null) return '—';
+      const dollars = Number(cents) / 100;
+      if (dollars >= 1_000_000) return '$' + (dollars / 1_000_000).toFixed(1) + 'M';
+      if (dollars >= 1000)      return '$' + Math.round(dollars / 1000) + 'K';
+      return '$' + dollars.toLocaleString('en-US', { maximumFractionDigits: 0 });
+    };
+    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+
+    // AR aging
+    const ar = s.ar_aging;
+    const arCard = !ar ? '' : `
+      <div class="dash-card">
+        <div class="head">
+          <span class="icon">💵</span>
+          <span>Accounts Receivable</span>
+          <a class="link" href="javascript:setFilter('open_only')">View list →</a>
+        </div>
+        <div class="dash-bigstat ${ar.owners_past_due > 0 ? 'warn' : ''}">${fmtMoney(ar.total_outstanding_cents)}</div>
+        <div class="dash-bigstat-sub">outstanding across ${ar.owners_past_due} owner${ar.owners_past_due === 1 ? '' : 's'}</div>
+        <div class="dash-row"><span class="k">Owners current</span><span class="v">${ar.owners_current}</span></div>
+        <div class="dash-row ${ar.owners_past_due > 0 ? 'warn' : ''}"><span class="k">Owners past-due</span><span class="v">${ar.owners_past_due}</span></div>
+        ${ar.owners_at_legal > 0 ? `<div class="dash-row bad"><span class="k">At legal / collections</span><span class="v">${ar.owners_at_legal + ar.owners_in_collections}</span></div>` : ''}
+        ${ar.owners_with_payment_plan > 0 ? `<div class="dash-row good"><span class="k">On payment plan</span><span class="v">${ar.owners_with_payment_plan}</span></div>` : ''}
+      </div>`;
+
+    // Reserve health
+    const rh = s.reserve_health;
+    const rhCard = !rh ? '' : `
+      <div class="dash-card">
+        <div class="head">
+          <span class="icon">🏦</span>
+          <span>Reserve Study</span>
+          <a class="link" href="/reserve-map.html?community=${esc(s.community?.slug || '')}">Open map →</a>
+        </div>
+        <div class="dash-bigstat">${rh.active_components || 0}</div>
+        <div class="dash-bigstat-sub">active reserve components</div>
+        <div class="dash-row"><span class="k">Current cost (today)</span><span class="v">${fmtMoney(rh.total_current_cost_cents)}</span></div>
+        <div class="dash-row"><span class="k">Future cost (inflated)</span><span class="v">${fmtMoney(rh.total_future_cost_cents)}</span></div>
+        <div class="dash-row ${rh.critical_2yr_count > 0 ? 'bad' : ''}"><span class="k">Critical · 2yr</span><span class="v">${rh.critical_2yr_count || 0}</span></div>
+        <div class="dash-row ${rh.soon_5yr_count > 0 ? 'warn' : ''}"><span class="k">Replace · 5yr</span><span class="v">${rh.soon_5yr_count || 0}</span></div>
+        <div class="dash-row"><span class="k">Spent last 12mo</span><span class="v">${fmtMoney(rh.spent_last_12mo_cents)}</span></div>
+      </div>`;
+
+    // DRV by stage
+    const drv = s.drv_by_stage;
+    const drvTotal = drv ? Object.values(drv).reduce((a, b) => a + b, 0) : 0;
+    const drvCard = !drv ? '' : `
+      <div class="dash-card">
+        <div class="head">
+          <span class="icon">🚨</span>
+          <span>Open Violations by Stage</span>
+          <a class="link" href="javascript:setFilter('open_only')">View list →</a>
+        </div>
+        <div class="dash-bigstat ${drv.fine_assessed + drv.certified_209 > 0 ? 'bad' : drvTotal > 0 ? 'warn' : ''}">${drvTotal}</div>
+        <div class="dash-bigstat-sub">total open across all properties</div>
+        ${drvTotal > 0 ? `
+          <div class="dash-stagebar">
+            ${drv.courtesy_1   > 0 ? `<div class="seg seg-courtesy_1"   style="flex: ${drv.courtesy_1}">${drv.courtesy_1}</div>` : ''}
+            ${drv.courtesy_2   > 0 ? `<div class="seg seg-courtesy_2"   style="flex: ${drv.courtesy_2}">${drv.courtesy_2}</div>` : ''}
+            ${drv.certified_209> 0 ? `<div class="seg seg-certified_209" style="flex: ${drv.certified_209}">${drv.certified_209}</div>` : ''}
+            ${drv.fine_assessed> 0 ? `<div class="seg seg-fine_assessed" style="flex: ${drv.fine_assessed}">${drv.fine_assessed}</div>` : ''}
+          </div>
+          <div class="dash-stage-legend">
+            <span><span class="dot" style="background:#94a3b8"></span>Courtesy 1 · ${drv.courtesy_1}</span>
+            <span><span class="dot" style="background:#f59e0b"></span>Courtesy 2 · ${drv.courtesy_2}</span>
+            <span><span class="dot" style="background:#ef4444"></span>§209 · ${drv.certified_209}</span>
+            <span><span class="dot" style="background:#991b1b"></span>Fine · ${drv.fine_assessed}</span>
+          </div>` : '<div class="dash-empty">No open violations. 🎉</div>'}
+      </div>`;
+
+    // ARC pipeline
+    const arc = s.arc_pipeline;
+    const arcCard = !arc ? '' : `
+      <div class="dash-card">
+        <div class="head">
+          <span class="icon">🏗️</span>
+          <span>ARC Pipeline</span>
+        </div>
+        <div class="dash-bigstat ${arc.open_total > 0 ? 'warn' : ''}">${arc.open_total}</div>
+        <div class="dash-bigstat-sub">applications awaiting decision</div>
+        <div class="dash-row"><span class="k">Resident ARC</span><span class="v">${arc.open_resident}</span></div>
+        <div class="dash-row"><span class="k">Builder ARC</span><span class="v">${arc.open_builder}</span></div>
+        ${arc.oldest_age_days != null ? `<div class="dash-row ${arc.oldest_age_days > 14 ? 'warn' : ''}"><span class="k">Oldest pending</span><span class="v">${arc.oldest_age_days}d</span></div>` : ''}
+      </div>`;
+
+    // Recent meetings
+    const meetings = s.recent_meetings;
+    const meetingsCard = !meetings || !meetings.length ? '' : `
+      <div class="dash-card" style="grid-column: 1 / -1;">
+        <div class="head">
+          <span class="icon">📅</span>
+          <span>Recent Board Meetings</span>
+        </div>
+        ${meetings.map(m => `
+          <div class="dash-meeting-row">
+            <span class="meeting-title">${esc(m.title || '(untitled)')}</span>
+            <span class="meeting-date">${fmtDate(m.date)}</span>
+          </div>
+        `).join('')}
+      </div>`;
+
+    // Compose
+    const cards = [arCard, rhCard, drvCard, arcCard].filter(Boolean);
+    if (!cards.length && !meetingsCard) return '';
+    return `
+      <div class="dash-section-label">This community at a glance</div>
+      <div class="dash-grid">
+        ${cards.join('')}
+      </div>
+      ${meetingsCard}
+    `;
   }
 
   function renderFilterBar() {
