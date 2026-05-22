@@ -1684,7 +1684,10 @@
       </select>
       <div id="homesUploadDropZone"
            style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; background:#f7f9fc; margin-bottom:8px; cursor:pointer; transition:all 0.15s;"
-           onclick="document.getElementById('homesUploadFile').click()">
+           onclick="document.getElementById('homesUploadFile').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+           ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc';"
+           ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('homesUploadFile').files=dt.files; homesUpdateDropLabel(); }">
         <div style="font-size:20px; color:#5a7390;">📥</div>
         <div id="homesUploadDropLabel" style="font-size:12px; font-weight:600; color:#1a3a5c; margin-top:4px;">
           Drag &amp; drop CSV / Excel here
@@ -4116,8 +4119,11 @@
       </select>
     </div>
     <div id="fin-drop" onclick="document.getElementById('fin-pdf-input').click()"
+         ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+         ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f8fafc';"
+         ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f8fafc'; if(event.dataTransfer.files[0]){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('fin-pdf-input').files=dt.files; finPdfPicked(document.getElementById('fin-pdf-input')); }"
          style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; cursor:pointer; background:#f8fafc; margin-bottom:8px;">
-      <span id="fin-pdf-label" style="font-size:13px; color:#475569;">📄 Click to pick the Vantaca balance sheet PDF</span>
+      <span id="fin-pdf-label" style="font-size:13px; color:#475569;">📄 Click or drop the Vantaca balance sheet PDF</span>
       <input id="fin-pdf-input" type="file" accept=".pdf,application/pdf" style="display:none;" onchange="finPdfPicked(this)">
     </div>
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
@@ -8688,7 +8694,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </div>
           <div style="margin-bottom:14px;">
             <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Vantaca violations export (CSV / XLSX)</label>
-            <input type="file" id="inspVViFile" accept=".csv,.xlsx,.xls" style="font-size:13px;">
+            <div id="inspVViDropZone"
+                 style="border:2px dashed #d0d7de; border-radius:8px; padding:14px; text-align:center; cursor:pointer; background:#f9f9f9; transition:all 0.15s;"
+                 onclick="document.getElementById('inspVViFile').click()"
+                 ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+                 ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+                 ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('inspVViFile').files=dt.files; }">
+              <div style="font-size:20px; color:#5a7390;">📥</div>
+              <div style="font-size:12px; font-weight:600; color:#1a3a5c; margin-top:4px;">Drop the Vantaca violations export here</div>
+              <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file (.csv / .xlsx / .xls)</div>
+            </div>
+            <input type="file" id="inspVViFile" accept=".csv,.xlsx,.xls" style="display:none;">
             <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Expected columns: Account # / Property Address · Violation Type · Violation Date · Status/Stage (optional) · Resolved Date (optional)</div>
           </div>
           <div style="display:flex; gap:8px;">
