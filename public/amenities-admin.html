@@ -917,6 +917,7 @@ async function processContractFile(file) {
       method: 'POST', body: fd,
     });
     const data = await r.json();
+    console.log('[contract-extract] API response:', data);
     if (!data.ok) {
       statusEl.textContent = '⚠ ' + (data.message || data.error || 'Extraction failed');
       statusEl.style.color = '#E48A8A';
@@ -924,6 +925,8 @@ async function processContractFile(file) {
     }
     // Populate operating-contract fields
     const f = data.fillable_fields || {};
+    console.log('[contract-extract] fillable_fields:', f);
+    console.log('[contract-extract] raw_extracted (before regex override):', data.raw_extracted);
     if (f.management_vendor_name)        $('fld-management_vendor_name').value = f.management_vendor_name;
     if (f.management_annual_cost_cents != null) $('fld-management_annual_cost_dollars').value = (f.management_annual_cost_cents / 100).toFixed(2);
     if (f.management_contract_start_date) $('fld-management_contract_start_date').value = f.management_contract_start_date;

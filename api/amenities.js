@@ -905,6 +905,12 @@ ${trimmed}
       return res.status(500).json({ error: 'extraction_parse_failed', raw: raw.slice(0, 500) });
     }
 
+    // Log Claude's raw output so we can debug post-processing in production
+    console.log('[amenities/extract-contract] Claude returned:', JSON.stringify(extracted));
+    // Keep a copy of what the model said BEFORE regex post-processing so the
+    // response can include it for client-side debugging.
+    const rawExtracted = JSON.parse(JSON.stringify(extracted));
+
     // Sanity check + fallback for annual_total_dollars. The model occasionally
     // returns a partial number (e.g. "84" when the contract says "$84,829.44")
     // because PDF extraction inserts whitespace inside fill-in-the-blank
@@ -924,7 +930,27 @@ ${trimmed}
         if (m) {
           const fromRegex = parseFloat(m[1].replace(/,/g, ''));
           if (fromRegex > 1000 && fromRegex > extracted.annual_total_dollars * 10) {
-            console.log(`[amenities] overrode annual_total ${extracted.annual_total_dollars} → ${fromRegex} via regex`);
+            console.log(`[amenities/extract-contract] regex override: annual_total ${extracted.annual_total_dollars} → ${fromRegex} (matched ${re.source})`);
+            extracted.annual_total_dollars = fromRegex;
+            break;
+          }
+        }
+      }
+      // If model returned null AND no regex matched yet, try the same regexes
+    }
+    if (extracted.annual_total_dollars == null) {
+      const feeRegexes = [
+        /amount equal to\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+        /annual\s+(?:fee|amount|total)\s*(?:of|:|=)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+        /fee for Services[\s\S]{0,200}?\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+        /total\s+(?:contract|annual)\s+(?:amount|value)\s*(?:of|:|=)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+      ];
+      for (const re of feeRegexes) {
+        const m = trimmed.match(re);
+        if (m) {
+          const fromRegex = parseFloat(m[1].replace(/,/g, ''));
+          if (fromRegex > 1000) {
+            console.log(`[amenities/extract-contract] regex backfill (model returned null): annual_total → ${fromRegex}`);
             extracted.annual_total_dollars = fromRegex;
             break;
           }
@@ -1026,9 +1052,18 @@ ${trimmed}
       docError = 'storage_pipeline_exception: ' + e.message;
     }
 
+    // Log what's being sent back so we can debug in production
+    console.log('[amenities/extract-contract] final fillable_fields:', JSON.stringify({
+      vendor: extracted.vendor_name,
+      annual_dollars: extracted.annual_total_dollars,
+      start: extracted.contract_start_date,
+      end: extracted.contract_end_date,
+    }));
+
     res.json({
       ok: true,
       extracted,
+      raw_extracted: rawExtracted,    // pre-regex-override copy so we can compare
       pdf_pages: pageCount,
       file_name: req.file.originalname,
       document_id: docId,             // null if storage/insert failed (extraction still useful)
