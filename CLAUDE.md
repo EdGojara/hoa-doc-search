@@ -203,6 +203,28 @@ of `CREATE OR REPLACE VIEW`. Always confirm with `SELECT * FROM
 information_schema.view_column_usage` if uncertain whether anything
 depends on the view (CASCADE handles dependents safely if there are none).
 
+### DROP VIEW loses GRANTs — must re-issue
+
+**Scar**: Migration 100 used DROP + CREATE to update the view's column
+list. The original view (migration 088) had
+`GRANT SELECT ... TO authenticated, service_role`. After DROP + CREATE,
+those grants were lost and the API silently returned empty arrays
+because the service_role couldn't SELECT. Filter counts in the UI all
+showed 0, and the map went blank — same symptom Ed hit on 2026-05-22.
+
+**Rule**: Whenever a migration does `DROP VIEW + CREATE VIEW`, re-issue
+the `GRANT SELECT ... TO anon, authenticated, service_role` statements
+that were attached to the original view. Standard pattern:
+
+```sql
+DROP VIEW IF EXISTS my_view CASCADE;
+CREATE VIEW my_view AS SELECT ...;
+GRANT SELECT ON my_view TO anon, authenticated, service_role;
+```
+
+The grant is idempotent — safe to re-run in a follow-up migration if it
+gets forgotten.
+
 ### CHECK constraint values that don't exist in the constraint
 
 **Scar**: Migration 094 inserted `typical_frequency = 'multi_year'`
