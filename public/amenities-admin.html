@@ -176,6 +176,25 @@
     border: 1px solid var(--rule-strong);
     position: relative;
   }
+  /* Contract PDF dropzone — also accepts click-to-browse via the button */
+  .contract-dropzone {
+    display: flex; align-items: center; gap: 12px;
+    padding: 14px 16px;
+    background: rgba(212,175,55,0.06);
+    border: 1.5px dashed var(--gold);
+    border-radius: 7px; margin-bottom: 14px;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .contract-dropzone.drag-over {
+    background: rgba(212,175,55,0.20);
+    border-color: var(--gold-bright);
+    border-style: solid;
+  }
+  .contract-dropzone.drag-over::before {
+    content: '📥';
+    font-size: 20px; margin-right: 4px;
+  }
+
   #editorMap { width: 100%; height: 100%; }
   /* Tiles paint over this; keeps the box looking alive while they load
      and prevents the navy page background from bleeding through. */
@@ -458,10 +477,10 @@
     </div>
     <!-- AI extract from contract PDF — pulls vendor + amount + dates + notes
          so staff doesn't have to re-key. -->
-    <div style="display: flex; align-items: center; gap: 10px; padding: 12px 14px; background: rgba(212,175,55,0.06); border: 1px dashed var(--gold); border-radius: 7px; margin-bottom: 14px;">
+    <div id="contractDropZone" class="contract-dropzone">
       <input type="file" id="contractFileInput" accept=".pdf" style="display:none;">
-      <button type="button" class="geocode-btn" id="extractContractBtn" style="white-space: nowrap;">📄 Extract from contract PDF</button>
-      <div id="extractStatus" style="font-size: 12px; color: var(--ink-faint); flex: 1;">Drop a signed vendor contract PDF — vendor name, annual cost, dates + season will auto-fill.</div>
+      <button type="button" class="geocode-btn" id="extractContractBtn" style="white-space: nowrap;">📄 Pick file</button>
+      <div id="extractStatus" style="font-size: 12px; color: var(--ink-faint); flex: 1;"><strong style="color: var(--ink);">Drop a signed vendor contract PDF here</strong> — vendor, annual cost, dates + season auto-fill.</div>
     </div>
     <div class="grid-2">
       <div class="field">
@@ -764,7 +783,31 @@ function renderEditor() {
   });
   $('geocodeBtn').addEventListener('click', geocodeAddress);
   $('extractContractBtn').addEventListener('click', () => $('contractFileInput').click());
-  $('contractFileInput').addEventListener('change', extractFromContractPdf);
+  $('contractFileInput').addEventListener('change', (ev) => {
+    const f = ev.target.files && ev.target.files[0];
+    if (f) processContractFile(f);
+    ev.target.value = '';
+  });
+  // Drag-and-drop: drop a PDF directly on the gold-dashed box
+  const dz = $('contractDropZone');
+  ['dragenter', 'dragover'].forEach(evt => {
+    dz.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.add('drag-over'); });
+  });
+  ['dragleave', 'dragend'].forEach(evt => {
+    dz.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('drag-over'); });
+  });
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('drag-over');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    const file = files[0];
+    if (!/\.pdf$/i.test(file.name)) {
+      toast('Only PDF files supported.', 'error');
+      return;
+    }
+    processContractFile(file);
+  });
   $('unlinkContractBtn').addEventListener('click', () => {
     $('fld-management_contract_doc_id').value = '';
     refreshContractDocLink();
@@ -855,8 +898,8 @@ function refreshContractDocLink() {
 // Drop a vendor contract PDF → AI extracts vendor + amount + dates + notes
 // and populates the operating-contract + season fields. Staff confirms by
 // pressing Save Amenity (no auto-write — preview-and-confirm pattern).
-async function extractFromContractPdf(ev) {
-  const file = ev.target.files && ev.target.files[0];
+// Accepts a File from either the hidden picker OR a drag-and-drop event.
+async function processContractFile(file) {
   if (!file) return;
   const statusEl = $('extractStatus');
   statusEl.textContent = '⏳ Reading PDF and extracting fields…';
@@ -877,7 +920,6 @@ async function extractFromContractPdf(ev) {
     if (!data.ok) {
       statusEl.textContent = '⚠ ' + (data.message || data.error || 'Extraction failed');
       statusEl.style.color = '#E48A8A';
-      ev.target.value = '';  // reset file input so re-pick works
       return;
     }
     // Populate operating-contract fields
@@ -919,7 +961,6 @@ async function extractFromContractPdf(ev) {
     statusEl.textContent = '⚠ Extraction failed: ' + err.message;
     statusEl.style.color = '#E48A8A';
   }
-  ev.target.value = '';  // reset so the same file can be re-picked
 }
 
 async function geocodeAddress() {
