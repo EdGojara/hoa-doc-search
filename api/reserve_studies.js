@@ -21,6 +21,9 @@
 
 const express = require('express');
 const multer = require('multer');
+const crypto = require('crypto');
+const pdfParse = require('pdf-parse');
+const Anthropic = require('@anthropic-ai/sdk');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { parseReserveAdvisorsWorkbook } = require('../lib/reserve_advisors_parser');
@@ -30,8 +33,13 @@ const {
 } = require('../lib/reserve_invoice_matcher');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+const anthropic = process.env.ANTHROPIC_API_KEY ? new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY }) : null;
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+const STORAGE_BUCKET = 'documents';
+
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
+const uploadInvoicePdf = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024 } });
 
 // ----------------------------------------------------------------------------
 // Components
@@ -752,6 +760,189 @@ async function loadCommunityMatchContext(communityId) {
   return { components: components || [], expenditureHistory: history || [] };
 }
 
+// POST /invoices/intake-from-pdf — drop a vendor invoice PDF, AI extracts
+// vendor + date + amount + description, looks up matching reserve component,
+// archives PDF to library_documents, and creates the intake row. One drop =
+// one queued invoice with a suggestion. Skip the manual typing.
+router.post('/invoices/intake-from-pdf', uploadInvoicePdf.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    if (!anthropic) return res.status(500).json({ error: 'anthropic_not_configured' });
+    const communityId = (req.body?.community_id || '').trim();
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+
+    // 1) Extract text from the PDF
+    let text = '';
+    let pageCount = 0;
+    try {
+      const parsed = await pdfParse(req.file.buffer);
+      text = parsed.text || '';
+      pageCount = parsed.numpages || 0;
+    } catch (e) {
+      return res.status(400).json({ error: 'pdf_parse_failed', message: e.message });
+    }
+    if (!text.trim()) return res.status(400).json({ error: 'pdf_empty_or_image_only' });
+
+    // 2) AI extraction — vendor, date, amount, invoice number, description
+    const prompt = `You are extracting structured fields from a vendor invoice PDF. The invoice is for HOA reserve-fund-eligible work (pool services, asphalt, fencing, roofing, mechanical equipment, etc.). Return ONLY a JSON object — no prose, no markdown:
+{
+  "vendor_name": "Vendor's legal/business name as shown on the invoice",
+  "invoice_number": "Invoice # or null if not shown",
+  "invoice_date": "YYYY-MM-DD or null",
+  "amount_dollars": 4200.00,
+  "description": "One-line summary of what was billed (e.g., 'Pool plaster replacement and tile band').",
+  "likely_reserve_category": "pool | roof | paving | fence | mechanical | landscape | common_area | playground | signage | lighting | irrigation | mailroom | other | not_a_reserve_item"
+}
+
+Rules:
+- amount_dollars must be the invoice TOTAL (not subtotal), expressed as a number with cents.
+- If the invoice is for routine maintenance / monthly services / chemicals, set likely_reserve_category to "not_a_reserve_item" — staff will dismiss it.
+- description should be the actual scope, not just "invoice from Vendor X".
+
+Invoice text:
+---
+${text.slice(0, 30000)}
+---`;
+
+    const aiResp = await anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1200,
+      messages: [{ role: 'user', content: prompt }],
+    });
+    const raw = (aiResp.content?.[0]?.text || '').trim();
+    let jsonText = raw;
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+    if (fenced) jsonText = fenced[1];
+    let extracted;
+    try {
+      extracted = JSON.parse(jsonText);
+    } catch (e) {
+      return res.status(500).json({ error: 'extraction_parse_failed', raw: raw.slice(0, 500) });
+    }
+
+    const amountCents = extracted.amount_dollars != null
+      ? Math.round(extracted.amount_dollars * 100)
+      : null;
+    if (!amountCents) {
+      return res.status(400).json({
+        error: 'amount_not_extracted',
+        message: 'Could not read invoice total from the PDF. Use the manual form below.',
+        extracted,
+      });
+    }
+
+    // 3) Compute component suggestion (same matcher as manual intake)
+    const { components, expenditureHistory } = await loadCommunityMatchContext(communityId);
+    const matches = suggestComponentMatches({
+      components,
+      expenditureHistory,
+      vendorName: extracted.vendor_name,
+      description: extracted.description,
+      amountCents,
+    });
+    const top = matches[0] || null;
+    const alternates = matches.slice(1, 4);
+
+    // 4) Archive PDF to library_documents (dedup by hash, same as contract flow)
+    let intakeDocId = null;
+    let docError = null;
+    try {
+      const fileHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
+      const { data: existing } = await supabase
+        .from('library_documents')
+        .select('id')
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .eq('file_hash', fileHash)
+        .maybeSingle();
+      if (existing) {
+        intakeDocId = existing.id;
+      } else {
+        const newDocId = crypto.randomUUID();
+        const filePath = `${BEDROCK_MGMT_CO_ID}/${communityId}/vendor_invoice/${newDocId}.pdf`;
+        const safeVendor = (extracted.vendor_name || 'Vendor Invoice').replace(/[^a-z0-9]+/gi, '_').slice(0, 60);
+        const fileName = `${safeVendor}_${newDocId.slice(0, 8)}.pdf`;
+        const { error: storageErr } = await supabase.storage
+          .from(STORAGE_BUCKET)
+          .upload(filePath, req.file.buffer, { contentType: 'application/pdf', upsert: false });
+        if (storageErr) {
+          docError = 'storage_upload_failed: ' + storageErr.message;
+        } else {
+          const title = extracted.vendor_name
+            ? `${extracted.vendor_name}${extracted.invoice_number ? ' · ' + extracted.invoice_number : ''}${extracted.invoice_date ? ' (' + extracted.invoice_date + ')' : ''}`
+            : req.file.originalname.replace(/\.pdf$/i, '');
+          const { error: insErr } = await supabase
+            .from('library_documents')
+            .insert({
+              id: newDocId,
+              management_company_id: BEDROCK_MGMT_CO_ID,
+              community_id: communityId,
+              category: 'vendor_invoice',
+              status: 'current',
+              title,
+              file_name_original: req.file.originalname,
+              file_name_normalized: fileName,
+              file_path: filePath,
+              file_hash: fileHash,
+              file_size_bytes: req.file.size,
+              page_count: pageCount,
+              effective_date: extracted.invoice_date || null,
+              extraction_model: 'claude-sonnet-4-5',
+              extraction_confidence: 'medium',
+              extraction_notes: extracted.description || null,
+            });
+          if (insErr) {
+            docError = 'doc_insert_failed: ' + insErr.message;
+            try { await supabase.storage.from(STORAGE_BUCKET).remove([filePath]); } catch (_) {}
+          } else {
+            intakeDocId = newDocId;
+          }
+        }
+      }
+    } catch (e) {
+      docError = 'storage_pipeline_exception: ' + e.message;
+    }
+
+    // 5) Insert the reserve_invoice_intake row
+    const row = {
+      community_id: communityId,
+      vendor_name: extracted.vendor_name || null,
+      invoice_number: extracted.invoice_number || null,
+      invoice_date: extracted.invoice_date || null,
+      amount_cents: amountCents,
+      description: extracted.description || null,
+      raw_text: text.slice(0, 8000),  // first 8K of raw text for audit trail
+      file_storage_path: intakeDocId ? `documents/${intakeDocId}` : null,
+      file_name: req.file.originalname,
+      intake_document_id: intakeDocId,
+      suggested_component_id: top?.component_id || null,
+      suggested_confidence: top?.confidence ?? null,
+      suggested_reason: top?.reason || null,
+      alternate_suggestions: alternates,
+      source: 'pdf_drop',
+      status: 'pending',
+    };
+    const { data: intake, error: intakeErr } = await supabase
+      .from('reserve_invoice_intake')
+      .insert(row)
+      .select('*')
+      .single();
+    if (intakeErr) throw intakeErr;
+
+    res.json({
+      ok: true,
+      intake,
+      extracted,
+      suggestion: top,
+      alternates,
+      document_id: intakeDocId,
+      document_error: docError,
+    });
+  } catch (err) {
+    console.error('[reserve-studies] invoice intake-from-pdf failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /invoices/intake — accepts manual fields OR a file (PDF stored,
 // fields filled by staff). Computes suggestion. Inserts intake row.
 router.post('/invoices/intake', express.json({ limit: '1mb' }), async (req, res) => {
@@ -850,6 +1041,9 @@ router.post('/invoices/:id/match', express.json({ limit: '32kb' }), async (req, 
       description:        intake.description || null,
       vendor_name:        intake.vendor_name || null,
       invoice_number:     intake.invoice_number || null,
+      // Flow the PDF doc link from intake → expenditure (PDF-drop intakes
+      // have this populated; manual intakes leave it null).
+      invoice_doc_id:     intake.intake_document_id || null,
       funded_from:        body.funded_from || 'reserves',
       notes:              body.notes || 'Matched from invoice intake',
       recorded_by:        body.matched_by || null,

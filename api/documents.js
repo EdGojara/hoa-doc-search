@@ -88,6 +88,8 @@ const STANDARD_CATEGORIES = [
   'arc_application', 'key_fob_form', 'forms_and_applications',
   // Vendor management agreements (pool, landscape, security, pest, etc.)
   'vendor_contract',
+  // Vendor invoices ingested via reserve invoice review queue
+  'vendor_invoice',
   'other'
 ];
 

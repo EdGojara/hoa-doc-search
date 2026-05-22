@@ -67,6 +67,29 @@
   .new-invoice h2 em { color: var(--gold); font-style: italic; }
   .new-invoice .lede { color: var(--ink-faint); font-size: 13px; margin-bottom: 16px; }
 
+  .pdf-dropzone {
+    border: 2px dashed var(--gold);
+    background: rgba(212,175,55,0.06);
+    border-radius: 10px;
+    padding: 28px 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .pdf-dropzone:hover {
+    background: rgba(212,175,55,0.12);
+  }
+  .pdf-dropzone.drag-over {
+    border-style: solid;
+    border-color: var(--gold-bright);
+    background: rgba(212,175,55,0.20);
+  }
+  .pdf-dropzone.processing {
+    border-style: solid;
+    border-color: var(--gold);
+    cursor: progress;
+  }
+
   .field { display: flex; flex-direction: column; gap: 5px; }
   .field label {
     font-size: 11px; color: var(--ink-faint);
@@ -257,7 +280,28 @@
 
   <div class="new-invoice">
     <h2>Log a reserve <em>invoice</em></h2>
-    <p class="lede">Only stage <strong>reserve-eligible</strong> invoices here — pool replasters, asphalt sealcoat, fence replacements, roof work, etc. Operating maintenance (pool chemicals, monthly landscaping, routine HVAC service) stays in AP. We'll suggest the matching reserve component; confirm with one click and the expenditure logs + rolls the component forward.</p>
+    <p class="lede">Only stage <strong>reserve-eligible</strong> invoices here — pool replasters, asphalt sealcoat, fence replacements, roof work, etc. Operating maintenance stays in AP. Drop a PDF below for one-click intake, or type manually if there's no PDF.</p>
+
+    <!-- PDF drop zone — AI extracts vendor, date, amount, description, then
+         suggests the matching reserve component and queues the row. One drop,
+         done. Manual form below is the fallback for no-PDF intakes. -->
+    <div class="field" style="margin-bottom: 16px;">
+      <label>Community<span class="req">*</span> <span style="font-weight:400; color:var(--ink-faint);">— pick before dropping a PDF</span></label>
+      <select id="commSelectTop" style="background:var(--navy-deep); border:1px solid var(--rule-strong); color:var(--ink); padding:9px 12px; font-size:13.5px; border-radius:5px; font-family:var(--font-sans);"><option value="">— Select —</option></select>
+    </div>
+    <div id="pdfDropZone" class="pdf-dropzone">
+      <input type="file" id="pdfFileInput" accept=".pdf" style="display:none;">
+      <div style="font-size: 28px; margin-bottom: 6px;">📄</div>
+      <div style="font-size: 14px; font-weight: 500; color: var(--ink); margin-bottom: 4px;">Drop a vendor invoice PDF here</div>
+      <div style="font-size: 12px; color: var(--ink-faint);">or <a href="#" id="pickPdfBtn" style="color: var(--gold);">click to pick a file</a> — AI extracts vendor, date, amount, description + suggests the matching reserve component</div>
+      <div id="pdfDropStatus" style="font-size: 12px; color: var(--ink-faint); margin-top: 10px; min-height: 16px;"></div>
+    </div>
+
+    <div style="margin: 22px 0 14px; display: flex; align-items: center; gap: 10px;">
+      <div style="flex: 1; height: 1px; background: var(--rule-strong);"></div>
+      <span style="font-size: 11px; color: var(--ink-faint); letter-spacing: 0.08em; text-transform: uppercase;">or type manually</span>
+      <div style="flex: 1; height: 1px; background: var(--rule-strong);"></div>
+    </div>
 
     <div class="grid">
       <div class="field">
@@ -342,7 +386,7 @@ function toast(msg, type) {
     const r = await fetch('/api/communities');
     const data = await r.json();
     communities = data.communities || [];
-    [$('commSelect'), $('commFilter')].forEach(sel => {
+    [$('commSelect'), $('commSelectTop'), $('commFilter')].forEach(sel => {
       communities.forEach(c => {
         const opt = document.createElement('option');
         opt.value = c.id; opt.textContent = c.name;
@@ -353,11 +397,98 @@ function toast(msg, type) {
     toast('Could not load communities: ' + err.message, 'error');
   }
 
+  // Sync the top community selector with the manual-form one so they stay
+  // in lock-step (either way to pick + drop is fine)
+  $('commSelectTop').addEventListener('change', (e) => { $('commSelect').value = e.target.value; });
+  $('commSelect').addEventListener('change', (e) => { $('commSelectTop').value = e.target.value; });
+
+  // PDF drop zone wiring
+  const dz = $('pdfDropZone');
+  const fi = $('pdfFileInput');
+  $('pickPdfBtn').addEventListener('click', (e) => { e.preventDefault(); fi.click(); });
+  fi.addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) processInvoicePdf(f);
+    e.target.value = '';
+  });
+  ['dragenter', 'dragover'].forEach(evt => {
+    dz.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.add('drag-over'); });
+  });
+  ['dragleave', 'dragend'].forEach(evt => {
+    dz.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dz.classList.remove('drag-over'); });
+  });
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('drag-over');
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (!files || !files.length) return;
+    const file = files[0];
+    if (!/\.pdf$/i.test(file.name)) {
+      toast('Only PDF files supported here. Use the manual form for non-PDF intakes.', 'error');
+      return;
+    }
+    processInvoicePdf(file);
+  });
+  // Clicking anywhere on the drop zone (but not the link/input) opens the picker
+  dz.addEventListener('click', (e) => {
+    if (e.target.id === 'pickPdfBtn' || e.target.id === 'pdfFileInput') return;
+    fi.click();
+  });
+
   $('commFilter').addEventListener('change', loadQueue);
   $('stageBtn').addEventListener('click', stageInvoice);
 
   await loadQueue();
 })();
+
+// Drop an invoice PDF → AI extracts + suggests + queues. One drop, done.
+async function processInvoicePdf(file) {
+  const dz = $('pdfDropZone');
+  const status = $('pdfDropStatus');
+  const commId = $('commSelectTop').value || $('commSelect').value;
+  if (!commId) {
+    toast('Pick a community first.', 'error');
+    status.innerHTML = '<span style="color:#E48A8A;">⚠ Pick a community above before dropping a PDF.</span>';
+    return;
+  }
+  dz.classList.add('processing');
+  status.innerHTML = '<span class="loader"></span> Reading PDF and matching to reserve components…';
+
+  const fd = new FormData();
+  fd.append('file', file);
+  fd.append('community_id', commId);
+
+  try {
+    const r = await fetch('/api/reserve-studies/invoices/intake-from-pdf', {
+      method: 'POST', body: fd,
+    });
+    const data = await r.json();
+    if (!data.ok) {
+      const msg = data.message || data.error || 'Extraction failed';
+      status.innerHTML = `<span style="color:#E48A8A;">⚠ ${escapeHtml(msg)}</span>`;
+      dz.classList.remove('processing');
+      return;
+    }
+    const sugg = data.suggestion;
+    const v = data.intake?.vendor_name || data.extracted?.vendor_name || file.name;
+    const amt = data.intake?.amount_cents != null
+      ? '$' + (data.intake.amount_cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })
+      : '—';
+    if (sugg) {
+      status.innerHTML = `<span style="color:rgba(140,210,160,1);">✓ Queued ${escapeHtml(v)} ${amt} — suggested: <strong>${escapeHtml(sugg.component_name)}</strong> (${Math.round(sugg.confidence * 100)}%)</span>`;
+    } else {
+      status.innerHTML = `<span style="color:var(--gold);">✓ Queued ${escapeHtml(v)} ${amt} — no auto-match; pick component in the queue below.</span>`;
+    }
+    if (data.document_error) {
+      console.warn('Invoice PDF archival warning:', data.document_error);
+    }
+    await loadQueue();
+  } catch (err) {
+    status.innerHTML = `<span style="color:#E48A8A;">⚠ ${escapeHtml(err.message)}</span>`;
+  } finally {
+    dz.classList.remove('processing');
+  }
+}
 
 async function stageInvoice() {
   const vendor = $('vendorName').value.trim();
@@ -438,7 +569,7 @@ function renderQueue() {
       <div>
         <div class="vendor">${escapeHtml(intake.vendor_name || '—')}</div>
         <div class="amount">${fmtMoney(intake.amount_cents)}</div>
-        <div class="meta">${fmtDate(intake.invoice_date)}${intake.invoice_number ? ' · #' + escapeHtml(intake.invoice_number) : ''}${intake.community ? ' · ' + escapeHtml(intake.community.name) : ''}</div>
+        <div class="meta">${fmtDate(intake.invoice_date)}${intake.invoice_number ? ' · #' + escapeHtml(intake.invoice_number) : ''}${intake.community ? ' · ' + escapeHtml(intake.community.name) : ''}${intake.intake_document_id ? ` · <a href="/api/documents/${intake.intake_document_id}/download" target="_blank" style="color: var(--gold);">📎 PDF</a>` : ''}</div>
         ${intake.description ? `<div class="desc">${escapeHtml(intake.description)}</div>` : ''}
       </div>
       <div class="suggestion">
