@@ -1155,6 +1155,16 @@ async function openDetail(component) {
     <div class="detail-body">
       ${component.description ? `<section><p>${escapeHtml(component.description)}</p></section>` : ''}
 
+      ${component.linked_amenity_vendor && component.linked_amenity_annual_cost_cents ? `
+        <div style="background: rgba(26,48,80,0.04); border-left: 3px solid var(--navy); border-radius: 0 6px 6px 0; padding: 10px 14px; margin-bottom: 18px;">
+          <div style="font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.07em; text-transform: uppercase; margin-bottom: 3px;">Operating context</div>
+          <div style="font-size: 13px; color: var(--ink-soft);">
+            ${component.linked_amenity_name ? escapeHtml(component.linked_amenity_name) + ' — ' : ''}<strong style="color: var(--navy);">${fmtMoney(component.linked_amenity_annual_cost_cents)}/yr</strong> ops with ${escapeHtml(component.linked_amenity_vendor)}${component.linked_amenity_contract_end ? ' · contract through ' + fmtDate(component.linked_amenity_contract_end) : ''}
+          </div>
+          <div style="font-size: 11px; color: var(--ink-faint); margin-top: 4px; font-style: italic;">Operating expense — separate fund from reserves.</div>
+        </div>
+      ` : ''}
+
       <section>
         <h3>Specs</h3>
         <div class="kv-row"><span class="k">Installed / built</span><span class="v">${component.installed_or_built_year || '—'}</span></div>

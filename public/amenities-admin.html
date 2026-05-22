@@ -404,27 +404,79 @@
         </select>
       </div>
     </div>
+  </div>
+
+  <!-- Season + offseason hours -->
+  <div class="panel">
+    <h3>Season + offseason</h3>
+    <div class="field">
+      <label>Season rule</label>
+      <select id="fld-season_rule" onchange="onSeasonRuleChange()">
+        <option value="">— No season (always open / N/A)</option>
+        <option value="memorial_to_labor">Memorial Day weekend → Labor Day weekend (computed each year)</option>
+        <option value="fixed">Fixed dates (set below)</option>
+        <option value="year_round">Year-round (no offseason)</option>
+      </select>
+      <div class="helper">Pools typically use Memorial→Labor or fixed dates. Tennis courts / parks are usually year-round.</div>
+    </div>
+    <div class="grid-2" id="seasonFixedDates" style="display:none;">
+      <div class="field">
+        <label>Season opens (month-day)</label>
+        <input type="text" id="fld-season_open_md" placeholder="04-15" pattern="(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])">
+        <div class="helper">MM-DD format, e.g. 04-15 for April 15</div>
+      </div>
+      <div class="field">
+        <label>Season closes (month-day)</label>
+        <input type="text" id="fld-season_close_md" placeholder="10-31" pattern="(0[1-9]|1[0-2])-(0[1-9]|[12][0-9]|3[01])">
+        <div class="helper">MM-DD format</div>
+      </div>
+    </div>
+
+    <div class="field" id="offseasonStatusField">
+      <label>Offseason status</label>
+      <select id="fld-offseason_status" onchange="onOffseasonStatusChange()">
+        <option value="">—</option>
+        <option value="closed">Closed (no offseason access)</option>
+        <option value="limited">Limited hours offseason</option>
+        <option value="open">Full hours offseason</option>
+      </select>
+    </div>
+    <div class="field" id="offseasonHoursField" style="display:none;">
+      <label>Offseason hours (free text)</label>
+      <input type="text" id="fld-offseason_hours_text" placeholder="e.g., Sat-Sun 8am-dusk, gate locked weekdays">
+    </div>
+  </div>
+
+  <!-- Operating contract (vendor management agreement) -->
+  <div class="panel">
+    <h3>Operating contract</h3>
+    <div style="font-size: 11.5px; color: var(--ink-faint); margin: -8px 0 14px;">
+      Vendor management agreement for this amenity (e.g., Swim Houston for the pool). This is <strong style="color: var(--ink-soft);">operating expense</strong>, not a reserve item. Surfaces as a one-line context on the reserve map when a reserve component is linked to this amenity.
+    </div>
     <div class="grid-2">
       <div class="field">
-        <label>Seasonal open month</label>
-        <select id="fld-seasonal_open_month">
-          <option value="">—</option>
-          <option value="1">January</option><option value="2">February</option><option value="3">March</option>
-          <option value="4">April</option><option value="5">May</option><option value="6">June</option>
-          <option value="7">July</option><option value="8">August</option><option value="9">September</option>
-          <option value="10">October</option><option value="11">November</option><option value="12">December</option>
-        </select>
+        <label>Vendor / management company</label>
+        <input type="text" id="fld-management_vendor_name" placeholder="Swim Houston Pool Management, LLC">
       </div>
       <div class="field">
-        <label>Seasonal close month</label>
-        <select id="fld-seasonal_close_month">
-          <option value="">—</option>
-          <option value="1">January</option><option value="2">February</option><option value="3">March</option>
-          <option value="4">April</option><option value="5">May</option><option value="6">June</option>
-          <option value="7">July</option><option value="8">August</option><option value="9">September</option>
-          <option value="10">October</option><option value="11">November</option><option value="12">December</option>
-        </select>
+        <label>Annual cost ($)</label>
+        <input type="number" id="fld-management_annual_cost_dollars" min="0" step="0.01" placeholder="42000">
+        <div class="helper">Total annual contract value</div>
       </div>
+    </div>
+    <div class="grid-2">
+      <div class="field">
+        <label>Contract start</label>
+        <input type="date" id="fld-management_contract_start_date">
+      </div>
+      <div class="field">
+        <label>Contract end</label>
+        <input type="date" id="fld-management_contract_end_date">
+      </div>
+    </div>
+    <div class="field">
+      <label>Notes</label>
+      <textarea id="fld-management_contract_notes" rows="2" placeholder="Renewal terms, scope, prior vendor history, etc."></textarea>
     </div>
   </div>
 
@@ -584,6 +636,23 @@ window.__selectAmenity = function (id) {
   renderList();
 };
 
+// Conditional show/hide for the new season + offseason fields
+function onSeasonRuleChange() {
+  const rule = $('fld-season_rule').value;
+  $('seasonFixedDates').style.display = rule === 'fixed' ? '' : 'none';
+  // Year-round amenities don't have an offseason; hide that field group
+  const showOffseason = rule && rule !== 'year_round';
+  $('offseasonStatusField').style.display = showOffseason ? '' : 'none';
+  if (!showOffseason) {
+    $('fld-offseason_status').value = '';
+    onOffseasonStatusChange();
+  }
+}
+function onOffseasonStatusChange() {
+  const s = $('fld-offseason_status').value;
+  $('offseasonHoursField').style.display = (s === 'limited' || s === 'open') ? '' : 'none';
+}
+
 function newAmenity() {
   if (!state.selectedCommunityId) {
     toast('Pick a community first.', 'error');
@@ -640,6 +709,21 @@ function renderEditor() {
   $('fld-status').value = e.status || 'active';
   $('fld-seasonal_open_month').value = e.seasonal_open_month || '';
   $('fld-seasonal_close_month').value = e.seasonal_close_month || '';
+  // New season + offseason fields
+  $('fld-season_rule').value = e.season_rule || '';
+  $('fld-season_open_md').value = e.season_open_md || '';
+  $('fld-season_close_md').value = e.season_close_md || '';
+  $('fld-offseason_status').value = e.offseason_status || '';
+  $('fld-offseason_hours_text').value = e.offseason_hours_text || '';
+  // Operating contract
+  $('fld-management_vendor_name').value = e.management_vendor_name || '';
+  $('fld-management_annual_cost_dollars').value = e.management_annual_cost_cents != null ? (e.management_annual_cost_cents / 100) : '';
+  $('fld-management_contract_start_date').value = e.management_contract_start_date || '';
+  $('fld-management_contract_end_date').value = e.management_contract_end_date || '';
+  $('fld-management_contract_notes').value = e.management_contract_notes || '';
+  // Apply visibility logic for season-rule conditional fields
+  onSeasonRuleChange();
+  onOffseasonStatusChange();
   $('fld-is_rentable').checked = !!e.is_rentable;
   $('fld-rental_min_lead_time_days').value = e.rental_min_lead_time_days || '';
   $('fld-rental_max_lead_time_days').value = e.rental_max_lead_time_days || '';
@@ -765,6 +849,18 @@ function collectForm() {
     status: $('fld-status').value,
     seasonal_open_month: $('fld-seasonal_open_month').value ? parseInt($('fld-seasonal_open_month').value, 10) : null,
     seasonal_close_month: $('fld-seasonal_close_month').value ? parseInt($('fld-seasonal_close_month').value, 10) : null,
+    season_rule: $('fld-season_rule').value || null,
+    season_open_md: $('fld-season_open_md').value.trim() || null,
+    season_close_md: $('fld-season_close_md').value.trim() || null,
+    offseason_status: $('fld-offseason_status').value || null,
+    offseason_hours_text: $('fld-offseason_hours_text').value.trim() || null,
+    management_vendor_name: $('fld-management_vendor_name').value.trim() || null,
+    management_annual_cost_cents: $('fld-management_annual_cost_dollars').value
+      ? Math.round(parseFloat($('fld-management_annual_cost_dollars').value) * 100)
+      : null,
+    management_contract_start_date: $('fld-management_contract_start_date').value || null,
+    management_contract_end_date: $('fld-management_contract_end_date').value || null,
+    management_contract_notes: $('fld-management_contract_notes').value.trim() || null,
     is_rentable: $('fld-is_rentable').checked,
     rental_min_lead_time_days: $('fld-rental_min_lead_time_days').value ? parseInt($('fld-rental_min_lead_time_days').value, 10) : null,
     rental_max_lead_time_days: $('fld-rental_max_lead_time_days').value ? parseInt($('fld-rental_max_lead_time_days').value, 10) : null,
