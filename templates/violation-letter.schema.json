@@ -1,0 +1,162 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bedrocktx.com/schemas/violation-letter.schema.json",
+  "title": "Violation Letter Input",
+  "description": "Validated input shape for renderViolationLetterBundlePdf. Letters are legally consequential — every fact in the rendered PDF must come from a field validated against this schema. Statutory wording is NOT in this schema; it's injected at render time from lib/enforcement/violation_letter_rules.js so we have ONE source of truth for Texas §209 language.",
+  "type": "object",
+  "additionalProperties": true,
+  "required": ["property", "owner", "community", "stage", "violations"],
+
+  "properties": {
+    "stage": {
+      "type": "string",
+      "enum": ["courtesy_1", "courtesy_2", "certified_209", "fine_assessed"],
+      "description": "The escalation stage. Determines title, tone, cure period, mailing class (first-class vs. certified), and whether hearing-rights block + SCRA disclosure render."
+    },
+
+    "letter_date": {
+      "type": "string",
+      "format": "date",
+      "description": "ISO date the letter is being mailed (NOT the date it was drafted). Cure-by and hearing-by deadlines are computed from this date. Stamped at Mail Queue lock time."
+    },
+
+    "property": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["street_address"],
+      "properties": {
+        "id":                  { "type": "string", "format": "uuid" },
+        "street_address":      { "type": "string", "minLength": 5, "description": "PHYSICAL LOT address — never mailing. See CLAUDE.md SSOT table." },
+        "lot_block_section":   { "type": "string" },
+        "community_id":        { "type": "string", "format": "uuid" }
+      }
+    },
+
+    "owner": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "properties": {
+        "name":             { "type": "string", "minLength": 2, "description": "Owner of record, legal name as it appears on title." },
+        "mailing_address":  {
+          "description": "Where the letter is mailed. NOT the property street address. For rentals, this is the off-site owner address.",
+          "anyOf": [
+            { "type": "string", "minLength": 5 },
+            { "type": "object",
+              "required": ["line1", "city", "state", "zip"],
+              "properties": {
+                "line1":  { "type": "string" },
+                "line2":  { "type": "string" },
+                "city":   { "type": "string" },
+                "state":  { "type": "string", "minLength": 2, "maxLength": 2 },
+                "zip":    { "type": "string", "pattern": "^[0-9]{5}(-[0-9]{4})?$" }
+              }
+            }
+          ]
+        },
+        "honorific":   { "type": "string", "description": "Mr. / Mrs. / Mr. and Mrs. — used for salutation. Renderer falls back gracefully if absent." }
+      }
+    },
+
+    "community": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": ["name"],
+      "properties": {
+        "id":                                  { "type": "string", "format": "uuid" },
+        "name":                                { "type": "string", "minLength": 2 },
+        "legal_name":                          { "type": "string", "description": "Full registered entity name, e.g., 'Waterview Estates Homeowners Association, Inc.' Used in formal salutations." },
+        "slug":                                { "type": "string" },
+        "letter_cure_days_courtesy_1":         { "type": ["integer", "null"], "minimum": 1,  "maximum": 90, "description": "Per-community override. Default 20." },
+        "letter_cure_days_courtesy_2":         { "type": ["integer", "null"], "minimum": 1,  "maximum": 90, "description": "Per-community override. Default 20." },
+        "letter_cure_days_certified_209":      { "type": ["integer", "null"], "minimum": 30, "maximum": 90, "description": "Statute floor 30 days (Tex. Prop. Code §209.006). Default 30." },
+        "letter_fee_courtesy_1_cents":         { "type": ["integer", "null"], "minimum": 0 },
+        "letter_fee_courtesy_2_cents":         { "type": ["integer", "null"], "minimum": 0 },
+        "letter_fee_certified_209_cents":      { "type": ["integer", "null"], "minimum": 0, "description": "Default 3500 = $35.00 admin fee." },
+        "letter_sender_name":                  { "type": ["string", "null"] },
+        "letter_sender_title":                 { "type": ["string", "null"] },
+        "letter_pay_to_name":                  { "type": ["string", "null"], "description": "Payee on remittance instructions. Usually association legal_name." },
+        "letter_pay_to_address":               { "type": ["string", "null"] },
+        "letter_payment_url":                  { "type": ["string", "null"], "format": "uri" },
+        "logo_storage_path":                   { "type": ["string", "null"], "description": "Community logo for the co-branded header." }
+      }
+    },
+
+    "violations": {
+      "type": "array",
+      "minItems": 1,
+      "description": "One or more violation findings being bundled in this letter. Empty array is rejected — there's no such thing as a violation letter without a violation.",
+      "items": {
+        "type": "object",
+        "required": ["type", "description", "date_documented"],
+        "additionalProperties": true,
+        "properties": {
+          "id":                       { "type": "string", "format": "uuid" },
+          "type":                     { "type": "string", "minLength": 2, "description": "Short category — 'Lawn maintenance' / 'Trash bins visible' / 'Unapproved paint color' / etc." },
+          "description":              { "type": "string", "minLength": 10, "description": "Specific finding — what was observed, where, on what date. Not editorial language." },
+          "date_documented":          { "type": "string", "format": "date", "description": "Date the inspector documented the violation. Anchors the regulatory timeline." },
+          "prior_notice_dates":       { "type": "array",  "items": { "type": "string", "format": "date" }, "description": "Dates of prior notices sent for this same violation. Required for courtesy_2 and certified_209 to satisfy §209's prior-notice expectation." },
+          "photo_url":                { "type": ["string", "null"], "format": "uri", "description": "Wide + close-up photos. Empty-chair lens: photos document for the homeowner's benefit, not adversarially." },
+          "governing_doc_reference":  { "type": ["string", "null"], "description": "CC&R or rule citation — e.g., 'CC&R Article 5, Section 3' or 'Rules & Regs Section 12'." },
+          "fine_cents":               { "type": ["integer", "null"], "minimum": 0, "description": "Fine amount in cents. ONLY populated for stage = 'fine_assessed'. Defaults to community fine schedule if null." },
+          "wrong_house_verified":     { "type": ["boolean", "null"], "description": "5-signal wrong-house verification result (GPS + heading + polygon + AI house# + reviewer). MUST be true before any letter with this violation ships. See project_drv_module memory note." }
+        }
+      }
+    },
+
+    "options": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "sender_name":                  { "type": "string" },
+        "sender_title":                 { "type": "string" },
+        "certified_tracking_number":    { "type": "string", "description": "USPS certified mail tracking number. Required for certified_209 + fine_assessed stages when mail-queue locks." },
+        "include_scra_disclosure":      { "type": "boolean", "description": "Default true on certified_209 + fine_assessed. Servicemembers Civil Relief Act notice." }
+      }
+    },
+
+    "community_logo_buffer": {
+      "description": "PNG/JPEG Buffer of the community logo. Optional — renderer falls back to text-only header + Bedrock cornerstone if absent.",
+      "anyOf": [
+        { "type": "null" },
+        { "type": "object" }
+      ]
+    }
+  },
+
+  "allOf": [
+    {
+      "description": "Fine stage requires at least one violation with fine_cents populated OR a community fine_schedule that the renderer can derive from",
+      "if": { "properties": { "stage": { "const": "fine_assessed" } } },
+      "then": {
+        "properties": {
+          "violations": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                { "required": ["fine_cents"], "properties": { "fine_cents": { "type": "integer", "minimum": 1 } } },
+                { "not": { "required": ["fine_cents"] } }
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "description": "courtesy_2 + certified_209 should reference prior notice dates (not a hard reject, but logged as a warning)",
+      "if": { "properties": { "stage": { "enum": ["courtesy_2", "certified_209", "fine_assessed"] } } },
+      "then": {
+        "properties": {
+          "violations": {
+            "type": "array",
+            "items": {
+              "properties": {
+                "prior_notice_dates": { "minItems": 1 }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}
