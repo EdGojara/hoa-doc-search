@@ -88,104 +88,78 @@
     .summary-card.bad { background: var(--bad-tint); border-color: #fecaca; }
     .summary-card.bad .label { color: var(--bad); }
 
-    /* ============ DASHBOARD CARDS (Phase 2) ============ */
-    .dash-section-label {
-      font-size: 11px; font-weight: 700; color: var(--ink-muted);
-      text-transform: uppercase; letter-spacing: 0.08em;
-      margin: 26px 0 10px;
+    /* ============ BOARD TILES (Phase 2 v2 — clean tile pattern) ============
+       Mirrors the homeowner portal aesthetic: section header, then a 3-col
+       grid of generously-whitespaced tile cards. Each tile is an entry
+       point — icon, title, description, key metric badge, CTA. Click goes
+       to the detail view. NOT dense data — boards see headline + drill in. */
+    .tile-section-label {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 13px; font-weight: 500;
+      color: var(--ink-muted); letter-spacing: 0.04em;
+      text-transform: uppercase;
+      margin: 30px 0 14px;
     }
-    .dash-grid {
-      display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px;
+    .board-tile-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 16px;
       margin-bottom: 8px;
     }
-    @media (max-width: 720px) { .dash-grid { grid-template-columns: 1fr; } }
-    .dash-card {
-      background: var(--paper); border: 1px solid var(--rule);
-      border-radius: 10px; padding: 16px 18px;
-      box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+    @media (max-width: 980px) { .board-tile-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 640px) { .board-tile-grid { grid-template-columns: 1fr; } }
+    .board-tile {
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 12px;
+      padding: 20px 22px;
+      text-decoration: none; color: inherit;
+      transition: all 0.15s ease;
       display: flex; flex-direction: column;
+      min-height: 168px;
     }
-    .dash-card .head {
-      display: flex; align-items: center; gap: 8px;
-      font-size: 11px; color: var(--ink-muted);
-      text-transform: uppercase; letter-spacing: 0.08em; font-weight: 700;
-      margin-bottom: 12px;
+    .board-tile:hover {
+      border-color: var(--gold);
+      box-shadow: 0 4px 14px rgba(212,175,55,0.10);
+      transform: translateY(-2px);
     }
-    .dash-card .head .icon { font-size: 16px; }
-    .dash-card .head .link {
-      margin-left: auto; color: var(--gold);
-      font-size: 11px; text-decoration: none; font-weight: 600;
-      text-transform: none; letter-spacing: 0;
+    .board-tile .tile-icon {
+      font-size: 28px; line-height: 1; margin-bottom: 12px;
     }
-    .dash-card .head .link:hover { color: var(--gold-bright); }
-    .dash-row {
-      display: flex; justify-content: space-between; align-items: baseline;
-      padding: 5px 0;
-      border-bottom: 1px dashed var(--rule);
-      font-size: 13px;
-    }
-    .dash-row:last-child { border-bottom: none; }
-    .dash-row .k { color: var(--ink-muted); }
-    .dash-row .v {
-      font-family: 'JetBrains Mono', ui-monospace, monospace;
-      color: var(--ink); font-weight: 600;
-    }
-    .dash-row.warn .v { color: var(--warn); }
-    .dash-row.bad .v { color: var(--bad); }
-    .dash-row.good .v { color: var(--good, #2D7956); }
-    .dash-bigstat {
-      font-size: 28px; font-weight: 800; color: var(--navy);
-      font-variant-numeric: tabular-nums; line-height: 1.05;
+    .board-tile .tile-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 18px; font-weight: 500;
+      color: var(--navy);
       margin-bottom: 4px;
     }
-    .dash-bigstat.bad { color: var(--bad); }
-    .dash-bigstat.warn { color: var(--warn); }
-    .dash-bigstat-sub {
-      font-size: 11.5px; color: var(--ink-muted);
-      margin-bottom: 12px;
+    .board-tile .tile-desc {
+      font-size: 13px; color: var(--ink-muted);
+      line-height: 1.45;
+      margin-bottom: auto;
+      padding-bottom: 14px;
     }
-    .dash-stagebar {
-      display: flex; gap: 4px; margin: 6px 0 10px;
-      height: 24px; border-radius: 4px; overflow: hidden;
-      background: var(--rule);
+    .board-tile .tile-metric {
+      display: flex; align-items: baseline; gap: 8px;
+      padding-top: 10px;
+      border-top: 1px solid var(--rule);
     }
-    .dash-stagebar .seg {
-      display: flex; align-items: center; justify-content: center;
-      color: white; font-size: 11px; font-weight: 600;
-    }
-    .dash-stagebar .seg-courtesy_1   { background: #94a3b8; }
-    .dash-stagebar .seg-courtesy_2   { background: #f59e0b; }
-    .dash-stagebar .seg-certified_209{ background: #ef4444; }
-    .dash-stagebar .seg-fine_assessed{ background: #991b1b; }
-    .dash-stage-legend {
-      display: flex; flex-wrap: wrap; gap: 12px;
-      font-size: 11px; color: var(--ink-muted);
-    }
-    .dash-stage-legend .dot {
-      display: inline-block; width: 8px; height: 8px;
-      border-radius: 50%; margin-right: 4px;
-      vertical-align: 0;
-    }
-    .dash-empty {
-      font-size: 12.5px; color: var(--ink-muted);
-      font-style: italic; padding: 8px 0;
-    }
-    .dash-meeting-row {
-      display: flex; justify-content: space-between;
-      padding: 5px 0; font-size: 12.5px;
-      border-bottom: 1px dashed var(--rule);
-    }
-    .dash-meeting-row:last-child { border-bottom: none; }
-    .dash-meeting-row .meeting-title {
-      color: var(--ink); flex: 1;
-      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-      padding-right: 8px;
-    }
-    .dash-meeting-row .meeting-date {
-      color: var(--ink-muted);
+    .board-tile .tile-metric .metric-value {
       font-family: 'JetBrains Mono', ui-monospace, monospace;
-      font-size: 11.5px;
+      font-size: 18px; font-weight: 600;
+      color: var(--navy);
     }
+    .board-tile .tile-metric .metric-value.warn { color: var(--warn); }
+    .board-tile .tile-metric .metric-value.bad  { color: var(--bad); }
+    .board-tile .tile-metric .metric-value.good { color: var(--good, #2D7956); }
+    .board-tile .tile-metric .metric-label {
+      font-size: 11.5px; color: var(--ink-muted);
+    }
+    .board-tile .tile-cta {
+      font-size: 12px; color: var(--gold);
+      font-weight: 600;
+      margin-top: 6px;
+    }
+    .board-tile:hover .tile-cta { color: var(--gold-bright); }
     .summary-card.bad .value { color: var(--bad); }
 
     /* ============ FILTER CHIPS ============ */
@@ -421,7 +395,10 @@
       </div>`;
   }
 
-  // Phase 2 — board dashboard cards (curated metrics above the property list)
+  // Phase 2 v2 — board tiles (clean tile pattern matching homeowner portal).
+  // Each tile is an entry point: icon + title + short description + one
+  // headline metric. Click → detail. Boards see the curated landing, drill
+  // in for the data.
   function renderDashboardCards(s) {
     const fmtMoney = (cents) => {
       if (cents == null) return '—';
@@ -430,110 +407,118 @@
       if (dollars >= 1000)      return '$' + Math.round(dollars / 1000) + 'K';
       return '$' + dollars.toLocaleString('en-US', { maximumFractionDigits: 0 });
     };
-    const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+    const slug = s.community?.slug || '';
 
-    // AR aging
+    // ── Financial health row ────────────────────────────────────────
     const ar = s.ar_aging;
-    const arCard = !ar ? '' : `
-      <div class="dash-card">
-        <div class="head">
-          <span class="icon">💵</span>
-          <span>Accounts Receivable</span>
-          <a class="link" href="javascript:setFilter('open_only')">View list →</a>
+    const arTile = !ar ? '' : `
+      <a class="board-tile" href="javascript:setFilter('open_only')">
+        <div class="tile-icon">💵</div>
+        <div class="tile-title">Accounts Receivable</div>
+        <div class="tile-desc">Outstanding balances, payment plans, and accounts approaching legal action.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value ${ar.owners_past_due > 0 ? 'warn' : 'good'}">${fmtMoney(ar.total_outstanding_cents)}</div>
+            <div class="metric-label">${ar.owners_past_due} owner${ar.owners_past_due === 1 ? '' : 's'} past-due${ar.owners_at_legal > 0 ? ` · ${ar.owners_at_legal} at legal` : ''}</div>
+          </div>
         </div>
-        <div class="dash-bigstat ${ar.owners_past_due > 0 ? 'warn' : ''}">${fmtMoney(ar.total_outstanding_cents)}</div>
-        <div class="dash-bigstat-sub">outstanding across ${ar.owners_past_due} owner${ar.owners_past_due === 1 ? '' : 's'}</div>
-        <div class="dash-row"><span class="k">Owners current</span><span class="v">${ar.owners_current}</span></div>
-        <div class="dash-row ${ar.owners_past_due > 0 ? 'warn' : ''}"><span class="k">Owners past-due</span><span class="v">${ar.owners_past_due}</span></div>
-        ${ar.owners_at_legal > 0 ? `<div class="dash-row bad"><span class="k">At legal / collections</span><span class="v">${ar.owners_at_legal + ar.owners_in_collections}</span></div>` : ''}
-        ${ar.owners_with_payment_plan > 0 ? `<div class="dash-row good"><span class="k">On payment plan</span><span class="v">${ar.owners_with_payment_plan}</span></div>` : ''}
-      </div>`;
+        <div class="tile-cta">View aging detail →</div>
+      </a>`;
 
-    // Reserve health
     const rh = s.reserve_health;
-    const rhCard = !rh ? '' : `
-      <div class="dash-card">
-        <div class="head">
-          <span class="icon">🏦</span>
-          <span>Reserve Study</span>
-          <a class="link" href="/reserve-map.html?community=${esc(s.community?.slug || '')}">Open map →</a>
+    const rhTile = !rh ? '' : `
+      <a class="board-tile" href="/reserve-map.html${slug ? '?community=' + encodeURIComponent(slug) : ''}">
+        <div class="tile-icon">🏦</div>
+        <div class="tile-title">Reserve Study</div>
+        <div class="tile-desc">Components, urgency, projected vs. actual spending across the community.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value">${fmtMoney(rh.total_future_cost_cents)}</div>
+            <div class="metric-label">${rh.active_components || 0} components${rh.critical_2yr_count > 0 ? ` · ${rh.critical_2yr_count} critical` : ''}</div>
+          </div>
         </div>
-        <div class="dash-bigstat">${rh.active_components || 0}</div>
-        <div class="dash-bigstat-sub">active reserve components</div>
-        <div class="dash-row"><span class="k">Current cost (today)</span><span class="v">${fmtMoney(rh.total_current_cost_cents)}</span></div>
-        <div class="dash-row"><span class="k">Future cost (inflated)</span><span class="v">${fmtMoney(rh.total_future_cost_cents)}</span></div>
-        <div class="dash-row ${rh.critical_2yr_count > 0 ? 'bad' : ''}"><span class="k">Critical · 2yr</span><span class="v">${rh.critical_2yr_count || 0}</span></div>
-        <div class="dash-row ${rh.soon_5yr_count > 0 ? 'warn' : ''}"><span class="k">Replace · 5yr</span><span class="v">${rh.soon_5yr_count || 0}</span></div>
-        <div class="dash-row"><span class="k">Spent last 12mo</span><span class="v">${fmtMoney(rh.spent_last_12mo_cents)}</span></div>
-      </div>`;
+        <div class="tile-cta">Open reserve map →</div>
+      </a>`;
 
-    // DRV by stage
+    // ── Compliance + ARC row ────────────────────────────────────────
     const drv = s.drv_by_stage;
     const drvTotal = drv ? Object.values(drv).reduce((a, b) => a + b, 0) : 0;
-    const drvCard = !drv ? '' : `
-      <div class="dash-card">
-        <div class="head">
-          <span class="icon">🚨</span>
-          <span>Open Violations by Stage</span>
-          <a class="link" href="javascript:setFilter('open_only')">View list →</a>
-        </div>
-        <div class="dash-bigstat ${drv.fine_assessed + drv.certified_209 > 0 ? 'bad' : drvTotal > 0 ? 'warn' : ''}">${drvTotal}</div>
-        <div class="dash-bigstat-sub">total open across all properties</div>
-        ${drvTotal > 0 ? `
-          <div class="dash-stagebar">
-            ${drv.courtesy_1   > 0 ? `<div class="seg seg-courtesy_1"   style="flex: ${drv.courtesy_1}">${drv.courtesy_1}</div>` : ''}
-            ${drv.courtesy_2   > 0 ? `<div class="seg seg-courtesy_2"   style="flex: ${drv.courtesy_2}">${drv.courtesy_2}</div>` : ''}
-            ${drv.certified_209> 0 ? `<div class="seg seg-certified_209" style="flex: ${drv.certified_209}">${drv.certified_209}</div>` : ''}
-            ${drv.fine_assessed> 0 ? `<div class="seg seg-fine_assessed" style="flex: ${drv.fine_assessed}">${drv.fine_assessed}</div>` : ''}
+    const drvSevere = drv ? (drv.certified_209 + drv.fine_assessed) : 0;
+    const drvTile = !drv ? '' : `
+      <a class="board-tile" href="javascript:setFilter('open_only')">
+        <div class="tile-icon">🚨</div>
+        <div class="tile-title">Compliance</div>
+        <div class="tile-desc">Open violations by enforcement stage. Click through to the property list.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value ${drvSevere > 0 ? 'bad' : drvTotal > 0 ? 'warn' : 'good'}">${drvTotal}</div>
+            <div class="metric-label">open${drvSevere > 0 ? ` · ${drvSevere} at §209/fine` : drvTotal === 0 ? ' · all clear 🎉' : ''}</div>
           </div>
-          <div class="dash-stage-legend">
-            <span><span class="dot" style="background:#94a3b8"></span>Courtesy 1 · ${drv.courtesy_1}</span>
-            <span><span class="dot" style="background:#f59e0b"></span>Courtesy 2 · ${drv.courtesy_2}</span>
-            <span><span class="dot" style="background:#ef4444"></span>§209 · ${drv.certified_209}</span>
-            <span><span class="dot" style="background:#991b1b"></span>Fine · ${drv.fine_assessed}</span>
-          </div>` : '<div class="dash-empty">No open violations. 🎉</div>'}
-      </div>`;
+        </div>
+        <div class="tile-cta">View violations →</div>
+      </a>`;
 
-    // ARC pipeline
     const arc = s.arc_pipeline;
-    const arcCard = !arc ? '' : `
-      <div class="dash-card">
-        <div class="head">
-          <span class="icon">🏗️</span>
-          <span>ARC Pipeline</span>
-        </div>
-        <div class="dash-bigstat ${arc.open_total > 0 ? 'warn' : ''}">${arc.open_total}</div>
-        <div class="dash-bigstat-sub">applications awaiting decision</div>
-        <div class="dash-row"><span class="k">Resident ARC</span><span class="v">${arc.open_resident}</span></div>
-        <div class="dash-row"><span class="k">Builder ARC</span><span class="v">${arc.open_builder}</span></div>
-        ${arc.oldest_age_days != null ? `<div class="dash-row ${arc.oldest_age_days > 14 ? 'warn' : ''}"><span class="k">Oldest pending</span><span class="v">${arc.oldest_age_days}d</span></div>` : ''}
-      </div>`;
-
-    // Recent meetings
-    const meetings = s.recent_meetings;
-    const meetingsCard = !meetings || !meetings.length ? '' : `
-      <div class="dash-card" style="grid-column: 1 / -1;">
-        <div class="head">
-          <span class="icon">📅</span>
-          <span>Recent Board Meetings</span>
-        </div>
-        ${meetings.map(m => `
-          <div class="dash-meeting-row">
-            <span class="meeting-title">${esc(m.title || '(untitled)')}</span>
-            <span class="meeting-date">${fmtDate(m.date)}</span>
+    const arcTile = !arc ? '' : `
+      <a class="board-tile" href="/arc-review.html">
+        <div class="tile-icon">🏗️</div>
+        <div class="tile-title">ARC Pipeline</div>
+        <div class="tile-desc">Architectural review applications awaiting board or staff decision.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value ${arc.open_total > 0 ? 'warn' : 'good'}">${arc.open_total}</div>
+            <div class="metric-label">${arc.open_resident} resident · ${arc.open_builder} builder${arc.oldest_age_days != null ? ` · oldest ${arc.oldest_age_days}d` : ''}</div>
           </div>
-        `).join('')}
-      </div>`;
+        </div>
+        <div class="tile-cta">Review applications →</div>
+      </a>`;
 
-    // Compose
-    const cards = [arCard, rhCard, drvCard, arcCard].filter(Boolean);
-    if (!cards.length && !meetingsCard) return '';
+    // ── Properties + Meetings row ───────────────────────────────────
+    const c = s.counts || {};
+    const propsTile = `
+      <a class="board-tile" href="javascript:setFilter('all')">
+        <div class="tile-icon">🏘️</div>
+        <div class="tile-title">Properties</div>
+        <div class="tile-desc">Every lot in the community — ownership, residency, recent history.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value">${c.total_properties || 0}</div>
+            <div class="metric-label">${c.owner_occupied || 0} owner-occupied · ${c.renters || 0} renter${c.renters === 1 ? '' : 's'}</div>
+          </div>
+        </div>
+        <div class="tile-cta">View property list →</div>
+      </a>`;
+
+    const meetings = s.recent_meetings || [];
+    const lastMeeting = meetings[0];
+    const meetingsTile = `
+      <a class="board-tile" href="/portal/meetings${slug ? '?community=' + encodeURIComponent(slug) : ''}">
+        <div class="tile-icon">📅</div>
+        <div class="tile-title">Meetings & Minutes</div>
+        <div class="tile-desc">Board meeting minutes, agendas, and recent decisions on file.</div>
+        <div class="tile-metric">
+          <div>
+            <div class="metric-value">${meetings.length}</div>
+            <div class="metric-label">${lastMeeting?.date ? 'last ' + new Date(lastMeeting.date).toLocaleDateString('en-US', { month: 'short', year: 'numeric' }) : 'on file'}</div>
+          </div>
+        </div>
+        <div class="tile-cta">Browse meetings →</div>
+      </a>`;
+
     return `
-      <div class="dash-section-label">This community at a glance</div>
-      <div class="dash-grid">
-        ${cards.join('')}
+      <div class="tile-section-label">Financial health</div>
+      <div class="board-tile-grid">
+        ${arTile}
+        ${rhTile}
+        ${meetingsTile}
       </div>
-      ${meetingsCard}
+
+      <div class="tile-section-label">Community health</div>
+      <div class="board-tile-grid">
+        ${drvTile}
+        ${arcTile}
+        ${propsTile}
+      </div>
     `;
   }
 
