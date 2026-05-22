@@ -5,6 +5,8 @@
 > **Why this file exists**: PDFKit code in the renderer is operationally accurate but not human-reviewable. This markdown is the canonical description of what a letter should contain at each stage — for QA, legal review, future-Claude reference, and as the diff target if a regression slips into the renderer.
 >
 > **Pattern**: `[STATUTORY_209.x]` markers below indicate where text injects from `lib/enforcement/violation_letter_rules.js` at render time. These are NEVER paraphrased by the model.
+>
+> **Input shape**: validated by `lib/enforcement/violation_letter_validate.js` before render. Actual field names: `owner.full_name`, `violations[].category_label`, `violations[].ai_description`, `violations[].observation_captured_at`, `violations[].governing_doc.{reference,quote,document_title}`, `violations[].prior_notices[].date`, `violations[].fine_amount` (in DOLLARS, not cents). See `templates/violation-letter.schema.json` for the formal schema.
 
 ---
 
