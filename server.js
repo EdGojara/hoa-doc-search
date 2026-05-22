@@ -747,6 +747,14 @@ app.use('/api/reserve-studies', reserveStudiesRouter);
 const { router: communityContactsRouter } = require('./api/community_contacts');
 app.use('/api/community-contacts', communityContactsRouter);
 
+// Meeting check-in — annual-meeting in-person sign-in + quorum evidence.
+// Reads voter rosters/ballot status from the SEPARATE voting Supabase
+// (read-only, via VOTING_SUPABASE_URL + VOTING_SUPABASE_PUBLISHABLE_KEY
+// env vars). Writes only to trustEd's meeting_attendance +
+// meeting_election_settings tables. See migration 102.
+const { router: meetingCheckinRouter } = require('./api/meeting_checkin');
+app.use('/api/meeting-checkin', meetingCheckinRouter);
+
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));

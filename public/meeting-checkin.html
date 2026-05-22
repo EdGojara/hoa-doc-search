@@ -1,0 +1,704 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Meeting Check-in · Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --paper: #ffffff;
+    --cream-soft: #F5F4ED;
+    --ink-dark: #1a1a1a;
+    --ink-mid: #4a4a4a;
+    --ink-light: #7a7a7a;
+    --rule-light: #E5E3DA;
+    --navy: #1A3050;
+    --gold: #D4AF37;
+    --good: #1a7a35;
+    --bad:  #962a2a;
+    --warn: #b07820;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink-dark);
+    font-family: var(--font-sans);
+    font-size: 16px; line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ---------- Header (election + quorum bar) ---------- */
+  .header {
+    background: var(--paper); border-bottom: 1px solid var(--rule-light);
+    padding: 14px 24px;
+    display: grid; grid-template-columns: 1fr auto 1fr;
+    align-items: center; gap: 16px;
+  }
+  .h-left { font-size: 13px; color: var(--ink-mid); }
+  .h-left .community {
+    font-family: var(--font-serif); font-size: 18px; color: var(--navy);
+    font-weight: 500; margin-bottom: 2px;
+  }
+  .h-right {
+    text-align: right; font-size: 12px; color: var(--ink-light);
+    font-family: var(--font-mono); letter-spacing: 0.04em;
+  }
+  .h-right a {
+    color: var(--ink-mid); text-decoration: none; margin-left: 12px;
+    padding: 4px 10px; border-radius: 14px;
+    border: 1px solid var(--rule-light);
+  }
+  .h-right a:hover { border-color: var(--gold); color: var(--navy); }
+
+  /* ---------- Quorum bar (center of header) ---------- */
+  .quorum {
+    background: var(--cream-soft);
+    border: 1px solid var(--rule-light);
+    border-radius: 12px;
+    padding: 8px 18px;
+    min-width: 320px;
+    text-align: center;
+  }
+  .quorum .label {
+    font-size: 10.5px; color: var(--ink-light);
+    font-family: var(--font-mono); letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .quorum .val {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--navy); margin-top: 2px;
+  }
+  .quorum .val strong { font-weight: 500; }
+  .quorum.met .val { color: var(--good); }
+  .quorum.short .val { color: var(--warn); }
+  .quorum .bar {
+    height: 5px; border-radius: 3px;
+    background: var(--rule-light); margin-top: 6px;
+    overflow: hidden;
+  }
+  .quorum .bar-fill {
+    height: 100%; background: var(--gold);
+    transition: width 0.3s ease;
+  }
+  .quorum.met .bar-fill { background: var(--good); }
+
+  /* ---------- Main ---------- */
+  .main {
+    max-width: 920px; margin: 0 auto;
+    padding: 22px 24px 80px;
+  }
+  .search-card {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 12px; padding: 16px 18px;
+    box-shadow: 0 2px 10px rgba(26,48,80,0.04);
+    margin-bottom: 18px;
+  }
+  .search-row { display: flex; gap: 10px; }
+  .search-row input {
+    flex: 1; border: 1px solid var(--rule-light); border-radius: 8px;
+    padding: 14px 18px; font-size: 18px; font-family: inherit;
+    color: var(--ink-dark); background: var(--paper);
+    transition: border-color 0.15s ease;
+  }
+  .search-row input:focus { outline: none; border-color: var(--gold); }
+  .search-row input::placeholder { color: var(--ink-light); }
+  .search-staff {
+    width: 200px; border: 1px solid var(--rule-light); border-radius: 8px;
+    padding: 14px 14px; font-size: 14px; font-family: inherit;
+    background: var(--paper);
+  }
+  .hint {
+    font-size: 11.5px; color: var(--ink-light);
+    margin-top: 8px; font-family: var(--font-mono);
+    letter-spacing: 0.05em;
+  }
+  .hint .kbd {
+    background: var(--cream-soft); border: 1px solid var(--rule-light);
+    padding: 1px 6px; border-radius: 4px; font-size: 11px;
+  }
+
+  /* ---------- Result cards ---------- */
+  .results { display: flex; flex-direction: column; gap: 12px; }
+  .voter-card {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 12px; padding: 18px 20px;
+    display: grid; grid-template-columns: 1fr auto;
+    gap: 14px; align-items: center;
+    transition: all 0.15s ease;
+  }
+  .voter-card:hover { border-color: var(--gold); box-shadow: 0 2px 12px rgba(26,48,80,0.08); }
+  .voter-card .name {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--navy); font-weight: 500; margin-bottom: 4px;
+  }
+  .voter-card .addr {
+    color: var(--ink-mid); font-size: 14px; margin-bottom: 4px;
+  }
+  .voter-card .meta {
+    color: var(--ink-light); font-size: 12px;
+    font-family: var(--font-mono); letter-spacing: 0.04em;
+  }
+  .voter-card .status-badge {
+    display: inline-block; margin-top: 8px;
+    padding: 5px 12px; border-radius: 999px;
+    font-size: 13px; font-weight: 500;
+  }
+  .status-badge.voted_online { background: #E5F2EA; color: var(--good); }
+  .status-badge.voted_mail   { background: #E5F2EA; color: var(--good); }
+  .status-badge.voted_walkin { background: #E5F2EA; color: var(--good); }
+  .status-badge.not_voted    { background: #FBE8E8; color: var(--bad); }
+  .status-badge.unknown      { background: var(--cream-soft); color: var(--ink-light); }
+  .voter-card .right { text-align: right; }
+  .voter-card .actions { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+  .checkin-btn {
+    background: var(--navy); color: white; border: none;
+    padding: 14px 24px; border-radius: 8px;
+    font-family: inherit; font-size: 15px; font-weight: 500;
+    cursor: pointer; letter-spacing: 0.02em;
+    transition: background 0.15s ease;
+    min-width: 180px;
+  }
+  .checkin-btn:hover { background: #2A4870; }
+  .checkin-btn.attended {
+    background: var(--good); cursor: default;
+  }
+  .checkin-btn:disabled { opacity: 0.6; cursor: wait; }
+  .walkin-note {
+    background: #FFFBEF; border: 1px solid #E8D880;
+    color: #806820; font-size: 13px;
+    padding: 8px 12px; border-radius: 8px;
+    margin-top: 8px;
+  }
+
+  /* Walk-in modal */
+  .modal-shade {
+    position: fixed; inset: 0; background: rgba(26, 48, 80, 0.4);
+    display: none; align-items: center; justify-content: center;
+    z-index: 100; backdrop-filter: blur(2px);
+  }
+  .modal-shade.show { display: flex; }
+  .modal {
+    background: var(--paper); border-radius: 14px;
+    padding: 28px 30px; max-width: 480px; width: 92%;
+    box-shadow: 0 10px 40px rgba(26,48,80,0.2);
+  }
+  .modal h3 {
+    font-family: var(--font-serif); color: var(--navy);
+    font-size: 22px; font-weight: 500; margin: 0 0 6px;
+  }
+  .modal .sub { color: var(--ink-mid); font-size: 14px; margin-bottom: 18px; }
+  .modal .voter-info {
+    background: var(--cream-soft); border-radius: 8px;
+    padding: 12px 14px; margin-bottom: 16px; font-size: 14px;
+  }
+  .modal .voter-info strong { color: var(--navy); }
+  .modal .opt {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 8px; padding: 14px 16px;
+    cursor: pointer; margin-bottom: 8px;
+    transition: all 0.15s ease;
+  }
+  .modal .opt:hover { border-color: var(--gold); background: #FFFBEF; }
+  .modal .opt .opt-name { font-weight: 500; color: var(--navy); }
+  .modal .opt .opt-help { font-size: 12.5px; color: var(--ink-light); margin-top: 2px; }
+  .modal .close {
+    background: transparent; border: none; color: var(--ink-light);
+    font-size: 14px; cursor: pointer; padding: 6px 10px;
+    margin-top: 6px;
+  }
+  .modal .close:hover { color: var(--bad); }
+
+  /* Empty + log */
+  .empty-state {
+    text-align: center; padding: 60px 20px;
+    color: var(--ink-light); font-size: 15px;
+  }
+  .empty-state .big { font-size: 48px; margin-bottom: 8px; opacity: 0.5; }
+
+  .log-collapse {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 12px; padding: 14px 16px; margin-top: 30px;
+  }
+  .log-collapse summary {
+    cursor: pointer; font-weight: 500; color: var(--navy);
+    font-family: var(--font-serif); font-size: 16px;
+  }
+  .log-collapse table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+  .log-collapse th {
+    text-align: left; font-size: 11px; color: var(--ink-light);
+    font-family: var(--font-mono); letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 8px 8px; border-bottom: 1px solid var(--rule-light);
+  }
+  .log-collapse td {
+    padding: 8px 8px; font-size: 13.5px; border-bottom: 1px solid var(--rule-light);
+  }
+  .log-collapse td.actions { white-space: nowrap; }
+  .log-collapse .mini-btn {
+    background: transparent; border: 1px solid var(--rule-light);
+    color: var(--ink-mid); padding: 3px 8px; border-radius: 12px;
+    font-size: 11px; font-family: var(--font-mono); cursor: pointer;
+    margin-left: 4px;
+  }
+  .log-collapse .mini-btn:hover { border-color: var(--gold); color: var(--navy); }
+  .log-collapse .mini-btn.danger:hover { border-color: var(--bad); color: var(--bad); }
+
+  /* End-meeting button */
+  .end-meeting {
+    position: fixed; bottom: 24px; right: 24px;
+    background: var(--gold); color: var(--navy);
+    border: none; padding: 14px 22px; border-radius: 999px;
+    font-family: inherit; font-size: 14.5px; font-weight: 600;
+    cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.4);
+    transition: all 0.15s ease;
+  }
+  .end-meeting:hover { background: #e8c96e; transform: translateY(-1px); }
+
+  /* Toast */
+  .toast {
+    position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--navy); color: white; padding: 12px 22px; border-radius: 8px;
+    font-size: 14px; opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease; z-index: 90;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: var(--bad); }
+  .toast.success { background: var(--good); }
+
+  @media (max-width: 640px) {
+    .header { grid-template-columns: 1fr; }
+    .quorum { min-width: 0; }
+    .h-right { text-align: left; margin-top: 4px; }
+    .voter-card { grid-template-columns: 1fr; }
+    .voter-card .right { text-align: left; }
+    .checkin-btn { width: 100%; }
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="h-left">
+    <div class="community" id="hCommunity">—</div>
+    <div id="hMeeting">—</div>
+  </div>
+  <div class="quorum" id="quorumBox">
+    <div class="label">Live quorum</div>
+    <div class="val" id="quorumVal">—</div>
+    <div class="bar"><div class="bar-fill" id="quorumBar" style="width:0%;"></div></div>
+  </div>
+  <div class="h-right">
+    <span id="electionSelector"></span>
+    <a href="/meeting-checkin-setup.html">⚙️ Setup</a>
+    <a href="/">← App</a>
+  </div>
+</div>
+
+<div class="main">
+  <div class="search-card">
+    <div class="search-row">
+      <input type="text" id="search" placeholder="Type a last name to find a voter…" autocomplete="off" autofocus>
+      <input type="text" id="staffName" class="search-staff" placeholder="Your name (staff)" autocomplete="off">
+    </div>
+    <div class="hint">Search is live — start typing. <span class="kbd">Esc</span> to clear. Each check-in is timestamped and counts toward quorum evidence.</div>
+  </div>
+
+  <div class="results" id="results">
+    <div class="empty-state">
+      <div class="big">🔍</div>
+      <div>Search by last name to begin checking voters in.</div>
+    </div>
+  </div>
+
+  <details class="log-collapse" id="logCollapse">
+    <summary>Attendance log (<span id="logCount">0</span>)</summary>
+    <div id="logTable"></div>
+  </details>
+</div>
+
+<button class="end-meeting" onclick="endMeeting()">End meeting & Generate PDF</button>
+
+<!-- Walk-in modal -->
+<div class="modal-shade" id="walkinModal">
+  <div class="modal">
+    <h3>Voter has not voted yet</h3>
+    <div class="sub">Choose what happens next. The check-in still records attendance either way.</div>
+    <div class="voter-info" id="walkinVoterInfo"></div>
+    <div class="opt" onclick="confirmWalkin('needed')">
+      <div class="opt-name">📝 Issue walk-in proxy ballot</div>
+      <div class="opt-help">Mark "walk-in needed." Hand them a paper ballot, enter it in the voting app, then come back to this attendance row and mark it "entered."</div>
+    </div>
+    <div class="opt" onclick="confirmWalkin('declined_to_vote')">
+      <div class="opt-name">🚷 Attended but declined to vote</div>
+      <div class="opt-help">Member is here for the meeting but doesn't want to cast a ballot. Recorded for attendance only — does NOT count toward quorum unless your governing docs use a "units present" basis.</div>
+    </div>
+    <button class="close" onclick="closeWalkin()">Cancel</button>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+// State
+let currentElection = null;
+let currentSettings = null;
+let pendingWalkin = null; // { voter_id, name }
+let searchTimer = null;
+let attendanceLog = [];
+
+// DOM
+const $ = (id) => document.getElementById(id);
+const searchEl = $('search');
+const staffEl  = $('staffName');
+const resultsEl = $('results');
+const quorumBox = $('quorumBox');
+const quorumVal = $('quorumVal');
+const quorumBar = $('quorumBar');
+const hCommunity = $('hCommunity');
+const hMeeting = $('hMeeting');
+const logCount = $('logCount');
+const logTable = $('logTable');
+const logCollapse = $('logCollapse');
+
+// ---------- Toast ----------
+function toast(msg, kind) {
+  const t = $('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  clearTimeout(window._tt);
+  window._tt = setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ---------- Load active election ----------
+async function loadActiveElection() {
+  try {
+    const res = await fetch('/api/meeting-checkin/elections');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    const elections = data.elections || [];
+
+    // Pick saved one from localStorage if available, else the first active one
+    const saved = localStorage.getItem('meeting-checkin-election');
+    let chosen = saved && elections.find((e) => e.election_id === saved);
+    if (!chosen) chosen = elections.find((e) => e.status === 'active');
+    if (!chosen) chosen = elections[0];
+
+    if (!chosen) {
+      hCommunity.textContent = 'No elections';
+      hMeeting.textContent = 'Use Setup to configure';
+      return;
+    }
+    currentElection = chosen;
+    localStorage.setItem('meeting-checkin-election', chosen.election_id);
+
+    // Render selector if there are multiple
+    const sel = $('electionSelector');
+    if (elections.length > 1) {
+      const dropdown = document.createElement('select');
+      dropdown.style.cssText = 'background:transparent; border:1px solid var(--rule-light); border-radius:14px; padding:4px 10px; font-size:11.5px; font-family:var(--font-mono); color:var(--ink-mid); cursor:pointer;';
+      for (const e of elections) {
+        const opt = document.createElement('option');
+        opt.value = e.election_id;
+        opt.textContent = `${e.community_name || ''} — ${e.election_name || ''}`;
+        if (e.election_id === chosen.election_id) opt.selected = true;
+        dropdown.appendChild(opt);
+      }
+      dropdown.addEventListener('change', (ev) => {
+        localStorage.setItem('meeting-checkin-election', ev.target.value);
+        location.reload();
+      });
+      sel.innerHTML = '';
+      sel.appendChild(dropdown);
+    }
+
+    hCommunity.textContent = chosen.community_name || '(community)';
+    hMeeting.textContent = chosen.election_name || '';
+
+    // Load settings + status
+    await loadSettings();
+    await refreshStatus();
+    await refreshLog();
+  } catch (err) {
+    hCommunity.textContent = 'Error';
+    hMeeting.textContent = err.message;
+    console.error(err);
+  }
+}
+
+async function loadSettings() {
+  if (!currentElection) return;
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    currentSettings = data.settings;
+    if (currentSettings?.community_name) hCommunity.textContent = currentSettings.community_name;
+    if (currentSettings?.meeting_date || currentSettings?.election_name) {
+      hMeeting.textContent = (currentSettings.meeting_date ? currentSettings.meeting_date + ' · ' : '') + (currentSettings.election_name || '');
+    }
+  } catch (_) {}
+}
+
+async function refreshStatus() {
+  if (!currentElection) return;
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/status');
+    if (!res.ok) return;
+    const data = await res.json();
+    const q = data.quorum;
+    quorumBox.className = 'quorum ' + (q.quorum_met ? 'met' : (q.required_units > 0 && q.pct >= q.required_units / q.total_units * 80 ? 'short' : ''));
+    if (q.required_units > 0) {
+      quorumVal.innerHTML = `<strong>${q.present_units}</strong> / ${q.required_units} <span style="font-size:14px; color:var(--ink-light);">(${q.pct}% of ${q.total_units})</span>`;
+      const fillPct = Math.min(100, (q.present_units / q.required_units) * 100);
+      quorumBar.style.width = fillPct + '%';
+    } else {
+      quorumVal.innerHTML = `<strong>${q.present_units}</strong> present <span style="font-size:14px; color:var(--ink-light);">(quorum not configured)</span>`;
+      quorumBar.style.width = '0%';
+    }
+  } catch (_) {}
+}
+
+// ---------- Search ----------
+searchEl.addEventListener('input', () => {
+  clearTimeout(searchTimer);
+  const q = searchEl.value.trim();
+  if (q.length < 2) {
+    resultsEl.innerHTML = `<div class="empty-state"><div class="big">🔍</div><div>Search by last name to begin checking voters in.</div></div>`;
+    return;
+  }
+  searchTimer = setTimeout(() => runSearch(q), 200);
+});
+searchEl.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape') { searchEl.value = ''; searchEl.dispatchEvent(new Event('input')); }
+});
+
+async function runSearch(q) {
+  if (!currentElection) return;
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/search?q=' + encodeURIComponent(q));
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    renderResults(data.voters || []);
+  } catch (err) {
+    resultsEl.innerHTML = `<div class="empty-state" style="color:var(--bad);">Search failed: ${escapeHtml(err.message)}</div>`;
+  }
+}
+
+function renderResults(voters) {
+  if (voters.length === 0) {
+    resultsEl.innerHTML = `<div class="empty-state"><div class="big">🤷</div><div>No voters match. Try a different spelling or a partial name.</div></div>`;
+    return;
+  }
+  resultsEl.innerHTML = '';
+  for (const v of voters) {
+    const card = document.createElement('div');
+    card.className = 'voter-card';
+    const statusBadge = `<span class="status-badge ${v.vote_status.status}">${escapeHtml(v.vote_status.label)}${v.vote_status.votedAt ? ` · ${new Date(v.vote_status.votedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}` : ''}</span>`;
+    const attended = v.already_attended;
+    const weight = v.vote_weight > 1 ? ` · ${v.vote_weight} units` : '';
+    card.innerHTML = `
+      <div>
+        <div class="name">${escapeHtml(v.owner_name || '')}</div>
+        <div class="addr">${escapeHtml(v.mailing_address || '')}</div>
+        <div class="meta">Lot ${escapeHtml(v.lot_number || 'n/a')}${weight}</div>
+        ${statusBadge}
+        ${attended ? `<div class="walkin-note">Checked in at ${new Date(v.attendance.checked_in_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}${v.attendance.walk_in_ballot_status === 'needed' ? ' · ⚠ Walk-in ballot pending' : ''}${v.attendance.walk_in_ballot_status === 'entered' ? ' · ✓ Walk-in ballot entered' : ''}</div>` : ''}
+      </div>
+      <div class="right actions">
+        ${attended
+          ? `<button class="checkin-btn attended" disabled>✓ Attended</button>`
+          : `<button class="checkin-btn">✓ Mark Attended</button>`}
+      </div>
+    `;
+    const btn = card.querySelector('.checkin-btn');
+    if (!attended) {
+      btn.addEventListener('click', () => onCheckIn(v));
+    }
+    resultsEl.appendChild(card);
+  }
+}
+
+// ---------- Check-in flow ----------
+async function onCheckIn(voter) {
+  const staff = staffEl.value.trim();
+  if (!staff) {
+    toast('Enter your name in the staff field first', 'error');
+    staffEl.focus();
+    return;
+  }
+  if (!currentSettings?.community_id) {
+    toast('Open Setup first to assign this election to a community', 'error');
+    return;
+  }
+
+  // If voter hasn't voted, show walk-in modal first
+  if (voter.vote_status.status === 'not_voted') {
+    pendingWalkin = { voter, staff };
+    showWalkin(voter);
+    return;
+  }
+  // Otherwise: instant check-in (already voted, just mark attended)
+  await doCheckIn(voter, staff, null);
+}
+
+function showWalkin(voter) {
+  const info = `<strong>${escapeHtml(voter.owner_name)}</strong><br>${escapeHtml(voter.mailing_address || '')} · Lot ${escapeHtml(voter.lot_number || 'n/a')}`;
+  $('walkinVoterInfo').innerHTML = info;
+  $('walkinModal').classList.add('show');
+}
+function closeWalkin() {
+  $('walkinModal').classList.remove('show');
+  pendingWalkin = null;
+}
+async function confirmWalkin(status) {
+  if (!pendingWalkin) return;
+  const { voter, staff } = pendingWalkin;
+  closeWalkin();
+  await doCheckIn(voter, staff, status);
+}
+
+async function doCheckIn(voter, staff, walkInStatus) {
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/checkin', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        voter_id: voter.voter_id,
+        community_id: currentSettings.community_id,
+        checked_in_by_staff: staff,
+        walk_in_ballot_status: walkInStatus || undefined,
+      }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'HTTP ' + res.status);
+    }
+    toast(`${voter.owner_name} checked in ✓`, 'success');
+    // Refresh search results + status + log
+    runSearch(searchEl.value.trim());
+    refreshStatus();
+    refreshLog();
+    // Clear search after successful check-in for fast next voter
+    setTimeout(() => {
+      searchEl.value = '';
+      searchEl.dispatchEvent(new Event('input'));
+      searchEl.focus();
+    }, 600);
+  } catch (err) {
+    toast('Check-in failed: ' + err.message, 'error');
+  }
+}
+
+// ---------- Attendance log ----------
+async function refreshLog() {
+  if (!currentElection) return;
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/attendance');
+    if (!res.ok) return;
+    const data = await res.json();
+    attendanceLog = data.attendance || [];
+    logCount.textContent = attendanceLog.length;
+    renderLog();
+  } catch (_) {}
+}
+
+function renderLog() {
+  if (attendanceLog.length === 0) {
+    logTable.innerHTML = '<div style="color:var(--ink-light); font-size:13px; margin-top:10px;">No one checked in yet.</div>';
+    return;
+  }
+  let html = `<table><thead><tr>
+    <th>Time</th><th>Name</th><th>Lot</th><th>Status at check-in</th><th>Walk-in</th><th>Staff</th><th></th>
+  </tr></thead><tbody>`;
+  for (const a of attendanceLog) {
+    const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : '';
+    const statusLabel =
+      a.vote_status_at_checkin === 'voted_online' ? 'Voted online' :
+      a.vote_status_at_checkin === 'voted_mail'   ? 'Voted mail' :
+      a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in' :
+      a.vote_status_at_checkin === 'not_voted'    ? 'Not voted' :
+      'Unknown';
+    const walkin =
+      a.walk_in_ballot_status === 'entered'  ? '✓ Entered' :
+      a.walk_in_ballot_status === 'needed'   ? '⚠ Needed' :
+      a.walk_in_ballot_status === 'declined_to_vote' ? '🚷 Declined' :
+      '—';
+    const showEnterBtn = a.walk_in_ballot_status === 'needed';
+    html += `<tr>
+      <td>${time}</td>
+      <td>${escapeHtml(a.owner_name || '')}</td>
+      <td>${escapeHtml(a.lot_number || '')}</td>
+      <td>${statusLabel}</td>
+      <td>${walkin}</td>
+      <td>${escapeHtml(a.checked_in_by_staff || '')}</td>
+      <td class="actions">${showEnterBtn ? `<button class="mini-btn" onclick="markWalkinEntered('${a.id}')">Mark entered</button>` : ''}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  logTable.innerHTML = html;
+}
+
+async function markWalkinEntered(attendanceId) {
+  const staff = staffEl.value.trim();
+  try {
+    const res = await fetch('/api/meeting-checkin/attendance/' + attendanceId, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        walk_in_ballot_status: 'entered',
+        walk_in_ballot_entered_by: staff || null,
+      }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    toast('Walk-in marked entered ✓', 'success');
+    refreshLog();
+    refreshStatus();
+  } catch (err) {
+    toast('Update failed: ' + err.message, 'error');
+  }
+}
+
+// ---------- End meeting → PDF ----------
+async function endMeeting() {
+  if (!currentElection) return toast('No election selected', 'error');
+  if (!confirm('Generate the quorum-evidence PDF for this meeting? It will be archived to the community library and downloaded to your device.')) return;
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/generate-pdf', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ archive: true }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    // Open in new tab
+    window.open(url, '_blank');
+    toast('Quorum evidence PDF generated + archived ✓', 'success');
+  } catch (err) {
+    toast('PDF generation failed: ' + err.message, 'error');
+  }
+}
+
+// ---------- Auto-refresh status every 30s ----------
+setInterval(() => { refreshStatus(); }, 30000);
+
+// Boot
+loadActiveElection();
+
+// Persist staff name across reloads
+staffEl.value = localStorage.getItem('meeting-checkin-staff') || '';
+staffEl.addEventListener('input', () => {
+  localStorage.setItem('meeting-checkin-staff', staffEl.value);
+});
+</script>
+</body>
+</html>

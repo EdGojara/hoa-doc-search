@@ -1,0 +1,453 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annual Meeting Setup · Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --paper: #ffffff;
+    --cream-soft: #F5F4ED;
+    --ink-dark: #1a1a1a;
+    --ink-mid: #4a4a4a;
+    --ink-light: #7a7a7a;
+    --rule-light: #E5E3DA;
+    --navy: #1A3050;
+    --gold: #D4AF37;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink-dark);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+  }
+  .topbar {
+    background: var(--paper); border-bottom: 1px solid var(--rule-light);
+    padding: 14px 28px; display: flex; align-items: center; justify-content: space-between;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand svg { width: 32px; height: 40px; }
+  .brand .wm { font-family: var(--font-serif); font-size: 18px; color: var(--navy); }
+  .brand .wm em { color: var(--gold); font-style: italic; }
+  .topbar a { color: var(--ink-mid); text-decoration: none; font-size: 13px; }
+  .topbar a:hover { color: var(--navy); }
+
+  .wrap { max-width: 880px; margin: 30px auto; padding: 0 24px; }
+  h1 {
+    font-family: var(--font-serif); color: var(--navy);
+    font-size: 28px; font-weight: 500; margin: 0 0 6px;
+  }
+  .sub { color: var(--ink-mid); font-size: 14px; margin-bottom: 28px; }
+
+  .card {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 12px; padding: 24px 26px; margin-bottom: 18px;
+    box-shadow: 0 1px 3px rgba(26, 48, 80, 0.04);
+  }
+  .card h2 {
+    font-family: var(--font-serif); color: var(--navy);
+    font-size: 19px; font-weight: 500; margin: 0 0 6px;
+  }
+  .card .help { color: var(--ink-light); font-size: 13px; margin-bottom: 16px; }
+
+  label {
+    display: block; font-size: 11.5px; color: var(--ink-light);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 5px; margin-top: 12px;
+  }
+  input[type=text], input[type=number], input[type=date], input[type=time], select, textarea {
+    width: 100%; background: var(--paper); border: 1px solid var(--rule-light);
+    color: var(--ink-dark); font-family: inherit; font-size: 14.5px;
+    padding: 10px 12px; border-radius: 7px;
+    transition: border-color 0.15s ease;
+  }
+  input:focus, select:focus, textarea:focus { outline: none; border-color: var(--gold); }
+  textarea { resize: vertical; min-height: 60px; }
+
+  .row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  .row3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  @media (max-width: 640px) { .row, .row3 { grid-template-columns: 1fr; } }
+
+  .preview-box {
+    background: #FFFBEF; border: 1px solid #E8D880;
+    border-radius: 8px; padding: 14px 18px;
+    font-size: 14px; color: #806820;
+  }
+  .preview-box strong { color: var(--navy); }
+
+  .btn {
+    background: var(--navy); color: white; border: none;
+    padding: 12px 22px; border-radius: 7px;
+    font-family: inherit; font-size: 14.5px; font-weight: 500;
+    cursor: pointer; letter-spacing: 0.02em;
+    transition: background 0.15s ease;
+  }
+  .btn:hover { background: #2A4870; }
+  .btn:disabled { background: #C0C5CE; cursor: not-allowed; }
+  .btn-secondary {
+    background: var(--paper); color: var(--navy);
+    border: 1px solid var(--rule-light);
+  }
+  .btn-secondary:hover { border-color: var(--gold); }
+
+  .actions {
+    display: flex; gap: 10px; justify-content: flex-end;
+    margin-top: 22px;
+  }
+
+  .picker-list {
+    display: flex; flex-direction: column; gap: 8px;
+    margin-top: 12px;
+  }
+  .picker-item {
+    background: var(--paper); border: 1px solid var(--rule-light);
+    border-radius: 8px; padding: 12px 14px; cursor: pointer;
+    transition: all 0.15s ease;
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  }
+  .picker-item:hover { border-color: var(--gold); background: #FFFBEF; }
+  .picker-item.selected { border-color: var(--gold); background: #FFFBEF; }
+  .picker-item .name { font-weight: 500; color: var(--navy); font-size: 15px; }
+  .picker-item .meta { color: var(--ink-light); font-size: 12px; }
+  .picker-item .pill {
+    background: rgba(26,48,80,0.08); color: var(--navy);
+    border-radius: 999px; padding: 3px 10px; font-size: 11px;
+    font-family: var(--font-mono); letter-spacing: 0.04em;
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--navy); color: white; padding: 12px 20px; border-radius: 8px;
+    font-size: 13px; opacity: 0;
+    transition: opacity 0.2s ease, transform 0.2s ease; z-index: 100;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #962a2a; }
+  .toast.success { background: #1a7a35; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div class="brand">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div class="wm">Annual Meeting <em>Setup</em></div>
+  </div>
+  <div>
+    <a href="/meeting-checkin.html">Open check-in →</a>
+    &nbsp;&nbsp;<a href="/">← App</a>
+  </div>
+</div>
+
+<div class="wrap">
+  <h1>Annual Meeting Setup</h1>
+  <div class="sub">Configure quorum threshold, meeting officials, and location. The check-in app reads these values when generating the quorum-evidence PDF.</div>
+
+  <!-- Step 1: pick election -->
+  <div class="card" id="step-election">
+    <h2>1. Pick the election</h2>
+    <div class="help">Lists active elections from the voting platform. Pick the one for the meeting you're setting up.</div>
+    <div id="electionList" class="picker-list">
+      <div style="color: var(--ink-light); font-size: 13px;">Loading elections…</div>
+    </div>
+  </div>
+
+  <!-- Step 2: meeting details (revealed after election picked) -->
+  <div class="card" id="step-details" style="display:none;">
+    <h2>2. Meeting details</h2>
+    <div class="help">Pre-populated from the election record where possible. Edit as needed.</div>
+
+    <div class="row3">
+      <div>
+        <label>Meeting date</label>
+        <input type="date" id="meeting_date">
+      </div>
+      <div>
+        <label>Meeting time</label>
+        <input type="text" id="meeting_time" placeholder="e.g. 6:30 PM">
+      </div>
+      <div>
+        <label>Community</label>
+        <select id="community_id">
+          <option value="">— Select community —</option>
+        </select>
+      </div>
+    </div>
+
+    <label>Location</label>
+    <input type="text" id="meeting_location" placeholder="e.g. Canyon Gate Clubhouse, 24330 Cinco Ranch Blvd">
+
+    <label>Election name (printed on PDF)</label>
+    <input type="text" id="election_name" placeholder="e.g. 2026 Annual Meeting and Board Election">
+  </div>
+
+  <!-- Step 3: quorum -->
+  <div class="card" id="step-quorum" style="display:none;">
+    <h2>3. Quorum threshold</h2>
+    <div class="help">The percentage of voting units required for the meeting to transact business. Pulled from your Bylaws — usually under "Quorum" or "Annual Meeting."</div>
+
+    <div class="row3">
+      <div>
+        <label>Total voting units</label>
+        <input type="number" id="total_voting_units" placeholder="auto-filled">
+      </div>
+      <div>
+        <label>Quorum %</label>
+        <input type="number" id="quorum_threshold_percent" placeholder="e.g. 10" step="0.5">
+      </div>
+      <div>
+        <label>Quorum required (units)</label>
+        <input type="number" id="quorum_threshold_units" placeholder="auto-calc" disabled>
+      </div>
+    </div>
+
+    <label>Quorum basis</label>
+    <select id="quorum_basis">
+      <option value="all_voters">% of all eligible voting units (most common)</option>
+      <option value="membership">% of total membership</option>
+      <option value="votes_cast">% of votes cast (almost never)</option>
+      <option value="units_present">% present in person or by proxy</option>
+    </select>
+
+    <label>Exact wording from Bylaws (printed on PDF for evidence)</label>
+    <textarea id="quorum_clause_text" placeholder="Paste the exact quorum clause from the Bylaws — e.g. &quot;A quorum at any annual meeting shall consist of Members representing ten percent (10%) of the total votes of the Association, present in person or by proxy.&quot;"></textarea>
+
+    <div class="preview-box" id="quorumPreview" style="margin-top:16px;">
+      Enter total voting units + quorum % to see the calculated threshold.
+    </div>
+  </div>
+
+  <!-- Step 4: meeting officials -->
+  <div class="card" id="step-officials" style="display:none;">
+    <h2>4. Meeting officials</h2>
+    <div class="help">For the signature block on the quorum-evidence PDF.</div>
+    <div class="row3">
+      <div>
+        <label>Secretary</label>
+        <input type="text" id="secretary_name" placeholder="signs the evidence PDF">
+      </div>
+      <div>
+        <label>President</label>
+        <input type="text" id="president_name">
+      </div>
+      <div>
+        <label>Parliamentarian (optional)</label>
+        <input type="text" id="parliamentarian_name">
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-secondary" onclick="window.location='/meeting-checkin.html'">Open check-in</button>
+      <button class="btn" id="saveBtn" onclick="saveSettings()">Save settings</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+let selectedElection = null;
+let selectedCommunityId = null;
+let currentSettings = null;
+
+function toast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  clearTimeout(window._tt);
+  window._tt = setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+async function loadElections() {
+  const list = document.getElementById('electionList');
+  try {
+    const res = await fetch('/api/meeting-checkin/elections');
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const data = await res.json();
+    list.innerHTML = '';
+    if (!data.elections || data.elections.length === 0) {
+      list.innerHTML = '<div style="color: var(--ink-light); font-size: 13px;">No elections found.</div>';
+      return;
+    }
+    for (const e of data.elections) {
+      const item = document.createElement('div');
+      item.className = 'picker-item';
+      item.innerHTML = `
+        <div>
+          <div class="name">${escapeHtml(e.community_name || '(community)')}</div>
+          <div class="meta">${escapeHtml(e.election_name || '')} · ${e.start_date?.slice(0,10) || ''} → ${e.end_date?.slice(0,10) || ''}</div>
+        </div>
+        <span class="pill">${escapeHtml(e.status || '')}</span>
+      `;
+      item.addEventListener('click', () => selectElection(e, item));
+      list.appendChild(item);
+    }
+  } catch (err) {
+    list.innerHTML = `<div style="color:#962a2a;">Could not load elections: ${escapeHtml(err.message)}. Check that VOTING_SUPABASE_URL and VOTING_SUPABASE_PUBLISHABLE_KEY are set in Render env.</div>`;
+  }
+}
+
+async function loadCommunities() {
+  try {
+    const res = await fetch('/api/billing/communities');
+    if (!res.ok) return;
+    const data = await res.json();
+    const sel = document.getElementById('community_id');
+    for (const c of (data.communities || []).sort((a,b) => (a.name||'').localeCompare(b.name||''))) {
+      const opt = document.createElement('option');
+      opt.value = c.id || c.community_id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    }
+  } catch (_) {}
+}
+
+async function selectElection(e, itemEl) {
+  selectedElection = e;
+  for (const el of document.querySelectorAll('.picker-item')) el.classList.remove('selected');
+  itemEl.classList.add('selected');
+
+  // Reveal subsequent cards
+  document.getElementById('step-details').style.display = '';
+  document.getElementById('step-quorum').style.display = '';
+  document.getElementById('step-officials').style.display = '';
+
+  // Pre-populate
+  document.getElementById('election_name').value = e.election_name || '';
+  if (e.meeting_date) document.getElementById('meeting_date').value = e.meeting_date;
+
+  // Auto-pick community by name match
+  await tryMatchCommunity(e.community_name);
+
+  // Pull total voting units from voting DB via status endpoint
+  try {
+    const sres = await fetch('/api/meeting-checkin/elections/' + e.election_id + '/status');
+    if (sres.ok) {
+      const sdata = await sres.json();
+      const total = sdata.quorum?.total_units || 0;
+      document.getElementById('total_voting_units').value = total;
+      recalcQuorum();
+    }
+  } catch (_) {}
+
+  // Load any saved settings
+  await loadSettings(e.election_id);
+}
+
+async function tryMatchCommunity(communityName) {
+  if (!communityName) return;
+  const sel = document.getElementById('community_id');
+  for (const opt of sel.options) {
+    if (opt.textContent.toLowerCase() === communityName.toLowerCase()
+        || communityName.toLowerCase().includes(opt.textContent.toLowerCase())) {
+      sel.value = opt.value;
+      selectedCommunityId = opt.value;
+      return;
+    }
+  }
+}
+
+async function loadSettings(eid) {
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + eid + '/settings');
+    if (!res.ok) return;
+    const data = await res.json();
+    if (!data.settings) return;
+    currentSettings = data.settings;
+    const s = data.settings;
+    if (s.community_id) {
+      document.getElementById('community_id').value = s.community_id;
+      selectedCommunityId = s.community_id;
+    }
+    if (s.meeting_date) document.getElementById('meeting_date').value = s.meeting_date;
+    if (s.meeting_time) document.getElementById('meeting_time').value = s.meeting_time;
+    if (s.meeting_location) document.getElementById('meeting_location').value = s.meeting_location;
+    if (s.election_name) document.getElementById('election_name').value = s.election_name;
+    if (s.total_voting_units) document.getElementById('total_voting_units').value = s.total_voting_units;
+    if (s.quorum_threshold_percent) document.getElementById('quorum_threshold_percent').value = s.quorum_threshold_percent;
+    if (s.quorum_basis) document.getElementById('quorum_basis').value = s.quorum_basis;
+    if (s.quorum_clause_text) document.getElementById('quorum_clause_text').value = s.quorum_clause_text;
+    if (s.secretary_name) document.getElementById('secretary_name').value = s.secretary_name;
+    if (s.president_name) document.getElementById('president_name').value = s.president_name;
+    if (s.parliamentarian_name) document.getElementById('parliamentarian_name').value = s.parliamentarian_name;
+    recalcQuorum();
+  } catch (_) {}
+}
+
+function recalcQuorum() {
+  const total = Number(document.getElementById('total_voting_units').value) || 0;
+  const pct   = Number(document.getElementById('quorum_threshold_percent').value) || 0;
+  const units = total > 0 && pct > 0 ? Math.ceil((total * pct) / 100) : null;
+  document.getElementById('quorum_threshold_units').value = units || '';
+  const preview = document.getElementById('quorumPreview');
+  if (units) {
+    preview.innerHTML = `Quorum: <strong>${units} voting units required</strong> (${pct}% of ${total}). The meeting transacts business when at least <strong>${units}</strong> units are present in person, by proxy, by mail, or by online ballot.`;
+  } else {
+    preview.textContent = 'Enter total voting units + quorum % to see the calculated threshold.';
+  }
+}
+document.getElementById('total_voting_units').addEventListener('input', recalcQuorum);
+document.getElementById('quorum_threshold_percent').addEventListener('input', recalcQuorum);
+document.getElementById('community_id').addEventListener('change', (e) => { selectedCommunityId = e.target.value; });
+
+async function saveSettings() {
+  if (!selectedElection) return toast('Pick an election first', 'error');
+  if (!selectedCommunityId) return toast('Pick a community', 'error');
+
+  const btn = document.getElementById('saveBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+
+  const payload = {
+    community_id: selectedCommunityId,
+    community_name: selectedElection.community_name,
+    election_name: document.getElementById('election_name').value || null,
+    meeting_date: document.getElementById('meeting_date').value || null,
+    meeting_time: document.getElementById('meeting_time').value || null,
+    meeting_location: document.getElementById('meeting_location').value || null,
+    total_voting_units: Number(document.getElementById('total_voting_units').value) || null,
+    quorum_threshold_percent: Number(document.getElementById('quorum_threshold_percent').value) || null,
+    quorum_threshold_units: Number(document.getElementById('quorum_threshold_units').value) || null,
+    quorum_basis: document.getElementById('quorum_basis').value || 'all_voters',
+    quorum_clause_text: document.getElementById('quorum_clause_text').value || null,
+    secretary_name: document.getElementById('secretary_name').value || null,
+    president_name: document.getElementById('president_name').value || null,
+    parliamentarian_name: document.getElementById('parliamentarian_name').value || null,
+  };
+
+  try {
+    const res = await fetch('/api/meeting-checkin/elections/' + selectedElection.election_id + '/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || 'HTTP ' + res.status);
+    }
+    toast('Settings saved ✓', 'success');
+  } catch (err) {
+    toast('Save failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save settings';
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+    .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+loadCommunities().then(loadElections);
+</script>
+</body>
+</html>
