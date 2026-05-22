@@ -124,6 +124,42 @@ The audit-trail target is: **board question → source PDF in ≤3 clicks.**
 
 ---
 
+## Record ownership — tag at schema-design time, not after
+
+Every table that holds operational data falls into one of three buckets.
+Decide at schema-design time, before the first INSERT:
+
+| Bucket | Owner | On termination | Examples |
+|---|---|---|---|
+| `association_record` | The HOA | Must be exported and handed over (typically 15-30 days per management agreement) | Governing documents, board minutes, financial books, member roster, executed vendor/insurance contracts, ARC files, correspondence sent on behalf of the association, sign-in sheets + ballots, reserve study reports |
+| `workpaper` | Bedrock | Not transferable. Bedrock IP. | AI judgment outputs (multi-persona lens analyses, triangulations), internal playbook entries, portfolio-wide vendor benchmarks, Bedrock University materials, draft letters never sent, email-triage classifications, memory layer / encode-Ed data, internal staff notes |
+| `mixed` | Splits at export time | Export rule: anything **delivered to a board member or homeowner** is `association_record`. Anything **internal to Bedrock's production process** is `workpaper`. | Board packets (delivered=theirs, underlying portfolio data=ours), vendor recommendation memos (sent memo=theirs, supporting AI analysis=ours), drafted compliance letters (sent=theirs, drafting history=ours), AI extractions (source PDF=theirs, structured JSON=ours) |
+
+**When adding a new table:**
+
+1. Decide which bucket it belongs to. Document in the migration's
+   leading comment block.
+2. If single-class, table-level documentation is enough. If `mixed`,
+   add a `record_ownership` column on the row so the export tool can
+   filter.
+3. Confirm the community FK is present and queryable — community-scoped
+   termination export depends on it.
+
+**Why this matters now**: an HOA termination 18 months from now should
+be a 30-second export, not a forensic archaeology project. The
+industry's "we don't get most of what we should on takeover" pattern
+(documented in memory) is the failure mode Bedrock must not become —
+both because it's wrong, and because being the clean-export operator
+is a board-pitch differentiator when we're on the takeover side
+complaining about a sloppy predecessor.
+
+Workpaper carve-out language must also be explicit in the management
+agreement itself — the schema discipline alone doesn't protect us if
+the contract sloppily says "all records relating to the Association."
+Standing attorney brief at `templates/legal/workpaper-carveout-memo.md`.
+
+---
+
 ## Anti-patterns we've already hit — don't repeat
 
 Each of these is a real scar. The rule is "don't do this because [actual bug we shipped]."
