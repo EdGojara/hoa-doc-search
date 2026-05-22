@@ -958,6 +958,62 @@ ${trimmed}
       }
     }
 
+    // Last-resort heuristic: find the LARGEST dollar amount in the entire
+    // document. For HOA vendor contracts the annual total is almost always
+    // the biggest dollar value present (other amounts are unit rates like
+    // "$24.50 lifeguard hourly" or "$40 admin fee" which are way smaller).
+    // Only fires if extraction + targeted regex both failed.
+    if (extracted.annual_total_dollars == null) {
+      const allDollarMatches = trimmed.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g);
+      let largest = 0;
+      for (const m of allDollarMatches) {
+        const v = parseFloat(m[1].replace(/,/g, ''));
+        if (!isNaN(v) && v > largest && v < 10_000_000) largest = v;  // sanity cap at $10M
+      }
+      if (largest > 5000) {  // only trust if it's a plausible annual contract amount
+        console.log(`[amenities/extract-contract] largest-dollar heuristic: annual_total → ${largest}`);
+        extracted.annual_total_dollars = largest;
+      }
+    }
+
+    // Permissive date backfill — look for ANY month-name + 4-digit-year
+    // patterns near "commence" or "terminate", then convert.
+    if (!extracted.contract_start_date || !extracted.contract_end_date) {
+      const months = { january:1, february:2, march:3, april:4, may:5, june:6, july:7, august:8, september:9, october:10, november:11, december:12,
+                       jan:1, feb:2, mar:3, apr:4, jun:6, jul:7, aug:8, sep:9, oct:10, nov:11, dec:12 };
+      const datePattern = /(?:(\d{1,2})(?:st|nd|rd|th)?\s+(?:day\s+of\s+)?)?(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)(?:[,.\s]+)(\d{4})/gi;
+      // Find date references near "commence"
+      const commenceIdx = trimmed.search(/commence/i);
+      const terminateIdx = trimmed.search(/terminate/i);
+      if (commenceIdx >= 0 && !extracted.contract_start_date) {
+        // Look in the 250 chars after "commence"
+        const slice = trimmed.slice(commenceIdx, commenceIdx + 300);
+        const matches = [...slice.matchAll(datePattern)];
+        if (matches.length) {
+          const m = matches[0];
+          const day = m[1] ? parseInt(m[1], 10) : 1;
+          const month = months[m[2].toLowerCase()];
+          if (month) {
+            extracted.contract_start_date = `${m[3]}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            console.log(`[amenities/extract-contract] date backfill: contract_start → ${extracted.contract_start_date}`);
+          }
+        }
+      }
+      if (terminateIdx >= 0 && !extracted.contract_end_date) {
+        const slice = trimmed.slice(terminateIdx, terminateIdx + 300);
+        const matches = [...slice.matchAll(datePattern)];
+        if (matches.length) {
+          const m = matches[0];
+          const day = m[1] ? parseInt(m[1], 10) : 1;
+          const month = months[m[2].toLowerCase()];
+          if (month) {
+            extracted.contract_end_date = `${m[3]}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+            console.log(`[amenities/extract-contract] date backfill: contract_end → ${extracted.contract_end_date}`);
+          }
+        }
+      }
+    }
+
     // Same sanity check for contract dates — if the model returned null but
     // the text clearly has narrative-form dates, extract them via regex.
     if (!extracted.contract_start_date || !extracted.contract_end_date) {
