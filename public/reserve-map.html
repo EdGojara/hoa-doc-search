@@ -300,6 +300,40 @@
     cursor: pointer;
     position: relative;
   }
+  /* Cluster pin: one bigger pin per amenity with a count badge. Used when
+     multiple reserve components share an amenity (e.g., 11 clubhouse items
+     collapsed into 1 clubhouse cluster). */
+  .reserve-marker.cluster {
+    width: 44px; height: 52px;
+  }
+  .reserve-marker.cluster .pin {
+    width: 44px !important; height: 44px !important;
+    font-size: 22px !important;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.35);
+    border-width: 3.5px;
+  }
+  .reserve-marker.cluster::after {
+    margin-left: -8px;
+    border-left-width: 8px; border-right-width: 8px; border-top-width: 11px;
+  }
+  .reserve-marker.cluster .count {
+    position: absolute;
+    top: -6px; right: -8px;
+    background: var(--navy);
+    color: white;
+    font-family: var(--font-mono);
+    font-size: 11px; font-weight: 600;
+    min-width: 20px; height: 20px; padding: 0 5px;
+    border-radius: 999px;
+    border: 2px solid white;
+    display: flex; align-items: center; justify-content: center;
+    z-index: 3;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.25);
+  }
+  .reserve-marker.cluster:hover .pin {
+    transform: scale(1.10);
+    transition: transform 0.12s ease;
+  }
   .reserve-marker .pin {
     width: 36px; height: 36px;
     border: 3px solid white;
@@ -429,6 +463,47 @@
     text-align: center; padding: 16px 8px;
     color: var(--ink-faint); font-size: 13px;
   }
+
+  /* Cluster-panel list — one row per component grouped at an amenity */
+  .cluster-item {
+    display: flex; align-items: stretch;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    margin-bottom: 8px;
+    cursor: pointer;
+    transition: all 0.12s ease;
+    overflow: hidden;
+  }
+  .cluster-item:hover {
+    border-color: rgba(212,175,55,0.5);
+    box-shadow: 0 2px 8px rgba(26,48,80,0.08);
+    transform: translateX(2px);
+  }
+  .cluster-item-band {
+    width: 4px; flex-shrink: 0;
+  }
+  .cluster-band-critical { background: var(--critical); }
+  .cluster-band-imminent { background: var(--imminent); }
+  .cluster-band-soon     { background: var(--soon); }
+  .cluster-band-medium   { background: var(--medium); }
+  .cluster-band-far      { background: var(--far); }
+  .cluster-item-body { flex: 1; padding: 10px 14px; min-width: 0; }
+  .cluster-item-name {
+    font-size: 13.5px; font-weight: 500; color: var(--ink);
+    margin-bottom: 3px;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .cluster-item-meta {
+    font-size: 11.5px; color: var(--ink-faint);
+    font-family: var(--font-mono);
+  }
+  .cluster-item-meta .cluster-item-cat { font-family: var(--font-sans); }
+  .cluster-item-arrow {
+    display: flex; align-items: center; padding-right: 12px;
+    color: var(--ink-faint); font-size: 16px;
+  }
+  .cluster-item:hover .cluster-item-arrow { color: var(--gold); }
 
   /* Loaders + empty community */
   .full-loader {
@@ -788,6 +863,14 @@ const CATEGORY_ICONS = {
   landscape: '🌳', common_area: '🏛️', playground: '🛝', signage: '🪧',
   lighting: '💡', irrigation: '💧', mailroom: '📬', other: '📍',
 };
+// Cluster pins show the AMENITY icon (one per amenity), distinct from
+// individual-component icons (one per category).
+const AMENITY_TYPE_ICONS = {
+  clubhouse: '🏛️', pool: '🏊', park: '🌳', playground: '🛝',
+  sport_court: '🎾', fitness: '🏋️', dog_park: '🐕',
+  walking_trail: '🚶', gate: '🚪', mailroom: '📬',
+  pavilion: '⛺', other: '📍',
+};
 const CATEGORY_LABELS = {
   pool: 'Pool', roof: 'Roof', paving: 'Paving', fence: 'Fence', mechanical: 'Mechanical',
   landscape: 'Landscape', common_area: 'Common area', playground: 'Playground',
@@ -983,77 +1066,108 @@ function renderMarkers() {
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
 
-  // Effective coords: if component is linked to an amenity with lat/lng,
-  // inherit the amenity's location with a small per-component deterministic
-  // offset for visual distinction. Component's own lat/lng wins ONLY when
-  // there's no amenity link (manual placement for unlinked items).
+  // Two-layer rendering:
+  // 1) Amenity-linked components COLLAPSE into one pin per amenity. Clubhouse
+  //    roof + interior + HVAC + doors + windows + walls all show as a single
+  //    "Clubhouse · 11 items" pin. Click expands to the full list.
+  // 2) Unlinked components (typically perimeter items like fence, paving,
+  //    lighting, signage) render as individual pins where they were placed.
   //
-  // This is the "amenity = canonical location" model: pin once on the
-  // amenity, all linked reserve components automatically follow.
-  function effectiveCoords(c) {
-    // Linked to amenity with coords → amenity location + per-component offset
-    if (c.linked_amenity_lat != null && c.linked_amenity_lng != null) {
-      // Deterministic offset based on component id so pins don't shuffle
-      // between renders but DO spread visibly across the amenity area.
-      // ~30m radius for amenity-clustered items (visible but tight).
-      const r = 0.00030; // ~33m
-      const seed = (function hash(s) {
-        let h = 0;
-        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
-        return Math.abs(h) % 100000 / 100000;
-      })(c.id);
-      const angle = seed * 2 * Math.PI;
-      const dist = r * (0.4 + (((seed * 7919) % 1000) / 1000) * 0.6);
-      const lat = Number(c.linked_amenity_lat) + dist * Math.cos(angle);
-      const lngScale = Math.cos(Number(c.linked_amenity_lat) * Math.PI / 180) || 1;
-      const lng = Number(c.linked_amenity_lng) + (dist * Math.sin(angle)) / lngScale;
-      return { lat, lng, source: 'amenity' };
-    }
-    // Unlinked → use component's own stored coords (if any)
-    if (c.lat != null && c.lng != null) {
-      return { lat: Number(c.lat), lng: Number(c.lng), source: 'component' };
-    }
-    return null;
-  }
+  // Cluster pin's urgency color = worst urgency in the group. Critical pool
+  // plaster makes the whole pool pin show as critical so boards see "this
+  // needs attention" at a glance.
 
-  // Compute the curated set: apply urgency + category filters, then rank
-  // by priority score and take top N.
-  const withEffective = allComponents
-    .map(c => ({ c, eff: effectiveCoords(c) }))
-    .filter(x => x.eff != null)
-    .filter(x => urgencyFilter[x.c.urgency_band || 'far'])
-    .filter(x => categoryFilter[x.c.category]);
-  const ranked = withEffective.slice().sort((a, b) => priorityScore(b.c) - priorityScore(a.c));
+  // Apply urgency + category filters first, THEN decide cluster vs. individual
+  const visible = allComponents.filter(c => {
+    if (!urgencyFilter[c.urgency_band || 'far']) return false;
+    if (!categoryFilter[c.category]) return false;
+    return true;
+  });
+
+  // Split: linked (group by amenity) vs. unlinked (individual)
+  const linked = visible.filter(c => c.amenity_id && c.linked_amenity_lat != null && c.linked_amenity_lng != null);
+  const unlinked = visible.filter(c => !(c.amenity_id && c.linked_amenity_lat != null && c.linked_amenity_lng != null) && c.lat != null && c.lng != null);
+
+  // Group linked components by amenity_id
+  const groupsByAmenity = {};
+  linked.forEach(c => {
+    if (!groupsByAmenity[c.amenity_id]) {
+      groupsByAmenity[c.amenity_id] = {
+        amenity_id: c.amenity_id,
+        amenity_name: c.linked_amenity_name,
+        amenity_type: c.linked_amenity_type,
+        lat: Number(c.linked_amenity_lat),
+        lng: Number(c.linked_amenity_lng),
+        components: [],
+      };
+    }
+    groupsByAmenity[c.amenity_id].components.push(c);
+  });
+  const amenityGroups = Object.values(groupsByAmenity);
+
+  // Curation: rank EVERYTHING (groups + unlinked) by priority. Groups use
+  // their highest-priority member's score.
+  const URGENCY_RANK = { critical: 5, imminent: 4, soon: 3, medium: 2, far: 1 };
+  const groupTopPriority = (group) => Math.max(...group.components.map(priorityScore));
+  const groupWorstBand = (group) => {
+    let worst = 'far';
+    for (const c of group.components) {
+      const b = c.urgency_band || 'far';
+      if ((URGENCY_RANK[b] || 0) > (URGENCY_RANK[worst] || 0)) worst = b;
+    }
+    return worst;
+  };
+  const rankableItems = [
+    ...amenityGroups.map(g => ({ type: 'group', score: groupTopPriority(g), group: g })),
+    ...unlinked.map(c => ({ type: 'component', score: priorityScore(c), c })),
+  ].sort((a, b) => b.score - a.score);
   const shownSet = topN === 'all'
-    ? new Set(ranked.map(x => x.c.id))
-    : new Set(ranked.slice(0, Number(topN)).map(x => x.c.id));
+    ? new Set(rankableItems.map((_, i) => i))
+    : new Set(rankableItems.slice(0, Number(topN)).map((_, i) => i));
 
   let placed = 0;
-  let withCoords = withEffective.length;
-  const unpinnedCount = allComponents.length - withEffective.length;
-  showUnpinnedBanner(unpinnedCount, allComponents.length, shownSet.size, ranked.length);
+  const unpinnedCount = allComponents.filter(c => {
+    const hasLinkedCoords = c.amenity_id && c.linked_amenity_lat != null && c.linked_amenity_lng != null;
+    const hasOwnCoords = c.lat != null && c.lng != null;
+    return !hasLinkedCoords && !hasOwnCoords;
+  }).length;
+  showUnpinnedBanner(unpinnedCount, allComponents.length, shownSet.size, rankableItems.length);
   const bounds = boundaryLayer ? null : L.latLngBounds([]);
 
-  allComponents.forEach(c => {
-    const eff = effectiveCoords(c);
-    if (!eff) return;
-    const band = c.urgency_band || 'far';
-    if (!urgencyFilter[band]) return;
-    if (!categoryFilter[c.category]) return;
-    if (!shownSet.has(c.id)) return;
+  rankableItems.forEach((item, idx) => {
+    if (!shownSet.has(idx)) return;
 
-    const icon = L.divIcon({
-      className: '',
-      html: `<div class="reserve-marker ${band}"><div class="pin">${CATEGORY_ICONS[c.category] || '📍'}</div></div>`,
-      // Must match the .reserve-marker CSS box (36 wide, 44 tall, tip at bottom-center)
-      iconSize: [36, 44],
-      iconAnchor: [18, 44],
-    });
-    const marker = L.marker([eff.lat, eff.lng], { icon }).addTo(map);
-    marker.on('click', () => openDetail(c));
-    mapMarkers.push(marker);
-    placed++;
-    if (bounds) bounds.extend([eff.lat, eff.lng]);
+    if (item.type === 'group') {
+      const g = item.group;
+      const band = groupWorstBand(g);
+      const count = g.components.length;
+      const amenityIcon = AMENITY_TYPE_ICONS[g.amenity_type] || CATEGORY_ICONS[g.components[0].category] || '📍';
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="reserve-marker ${band} cluster"><div class="pin">${amenityIcon}</div><div class="count">${count}</div></div>`,
+        iconSize: [44, 52],
+        iconAnchor: [22, 52],
+      });
+      const marker = L.marker([g.lat, g.lng], { icon }).addTo(map);
+      marker.on('click', () => openClusterDetail(g));
+      mapMarkers.push(marker);
+      placed++;
+      if (bounds) bounds.extend([g.lat, g.lng]);
+    } else {
+      const c = item.c;
+      const band = c.urgency_band || 'far';
+      const icon = L.divIcon({
+        className: '',
+        html: `<div class="reserve-marker ${band}"><div class="pin">${CATEGORY_ICONS[c.category] || '📍'}</div></div>`,
+        iconSize: [36, 44],
+        iconAnchor: [18, 44],
+      });
+      const marker = L.marker([Number(c.lat), Number(c.lng)], { icon }).addTo(map);
+      marker.on('click', () => openDetail(c));
+      mapMarkers.push(marker);
+      placed++;
+      if (bounds) bounds.extend([Number(c.lat), Number(c.lng)]);
+    }
   });
 
   if (!boundaryLayer && placed > 0 && bounds && bounds.isValid()) {
@@ -1276,6 +1390,88 @@ function renderExpenditures(items) {
     </table>
     ${items.length > 12 ? `<div style="font-size:11.5px; color:var(--ink-faint); margin-top:8px; text-align:right;">+ ${items.length - 12} more — manage in Reserves admin.</div>` : ''}
   `;
+}
+
+// Cluster panel — opens when a multi-item amenity pin is clicked. Shows
+// the amenity name + every component grouped there, sorted by urgency.
+// Click any row → drills into the individual component's detail card.
+function openClusterDetail(group) {
+  $('shell').classList.add('detail-open');
+  const URGENCY_RANK = { critical: 5, imminent: 4, soon: 3, medium: 2, far: 1 };
+  const items = group.components.slice().sort((a, b) => {
+    const ra = URGENCY_RANK[a.urgency_band || 'far'] || 0;
+    const rb = URGENCY_RANK[b.urgency_band || 'far'] || 0;
+    if (rb !== ra) return rb - ra;
+    return (b.future_cost_estimate_cents || 0) - (a.future_cost_estimate_cents || 0);
+  });
+
+  // Compute aggregate exposure for this amenity
+  const totalFuture = items.reduce((s, c) => s + (c.future_cost_estimate_cents || 0), 0);
+  const totalLifetimeSpent = items.reduce((s, c) => s + (c.lifetime_spent_cents || 0), 0);
+  const worstBand = items.reduce((w, c) => {
+    const b = c.urgency_band || 'far';
+    return (URGENCY_RANK[b] || 0) > (URGENCY_RANK[w] || 0) ? b : w;
+  }, 'far');
+  const bandMeta = URGENCY_META[worstBand];
+
+  const amenityIcon = AMENITY_TYPE_ICONS[group.amenity_type] || '📍';
+
+  const html = `
+    <div class="detail-hero">
+      <button class="close-x" id="closeDetailBtn" aria-label="Close">×</button>
+      <div class="urgency-chip ${worstBand}">${bandMeta.label} — ${escapeHtml(bandMeta.desc)}</div>
+      <h2>${amenityIcon} ${escapeHtml(group.amenity_name || 'Amenity')}</h2>
+      <div class="category-line">${items.length} reserve component${items.length === 1 ? '' : 's'} grouped here</div>
+      <div class="kv-grid">
+        <div class="kv">
+          <div class="k">Total future cost</div>
+          <div class="v">${fmtMoney(totalFuture)}</div>
+        </div>
+        <div class="kv">
+          <div class="k">Spent to date</div>
+          <div class="v">${fmtMoney(totalLifetimeSpent)}</div>
+        </div>
+      </div>
+    </div>
+    <div class="detail-body">
+      <section>
+        <h3>Components at this amenity</h3>
+        <div id="clusterItems">
+          ${items.map((c, i) => `
+            <div class="cluster-item" data-id="${c.id}" data-idx="${i}">
+              <div class="cluster-item-band cluster-band-${c.urgency_band || 'far'}"></div>
+              <div class="cluster-item-body">
+                <div class="cluster-item-name">${escapeHtml(c.component_name)}</div>
+                <div class="cluster-item-meta">
+                  <span class="cluster-item-cat">${CATEGORY_ICONS[c.category] || '📍'} ${escapeHtml((CATEGORY_LABELS[c.category] || c.category).toLowerCase())}</span>
+                  · <span>${c.years_until_replacement != null ? (c.years_until_replacement <= 0 ? 'due now' : c.years_until_replacement + 'yr') : '—'}</span>
+                  · <span>${fmtMoney(c.future_cost_estimate_cents || c.current_cost_estimate_cents)}</span>
+                </div>
+              </div>
+              <div class="cluster-item-arrow">→</div>
+            </div>
+          `).join('')}
+        </div>
+      </section>
+    </div>
+  `;
+  const panel = $('detailPanel');
+  panel.innerHTML = html;
+  panel.style.display = '';
+  $('closeDetailBtn').addEventListener('click', closeDetail);
+  // Click any item to drill into its individual detail card
+  panel.querySelectorAll('.cluster-item').forEach(el => {
+    el.addEventListener('click', () => {
+      const id = el.dataset.id;
+      const c = items.find(x => x.id === id);
+      if (c) openDetail(c);
+    });
+  });
+
+  // Pan to the cluster location
+  if (group.lat && group.lng) {
+    map.panTo([group.lat, group.lng], { animate: true });
+  }
 }
 
 function closeDetail() {
