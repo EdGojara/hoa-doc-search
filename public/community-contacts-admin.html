@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community Contacts · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100vh;
+    background: var(--navy-deep);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px; line-height: 1.45;
+  }
+  header.app {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--rule);
+    background: var(--navy-deep);
+  }
+  .brand-lockup { display: flex; align-items: center; gap: 14px; }
+  .brand-lockup svg { width: 32px; height: 40px; }
+  .brand-lockup .wm { font-family: var(--font-serif); font-size: 18px; color: var(--ink); }
+  .brand-lockup .wm em { font-style: italic; color: var(--gold); }
+  .brand-lockup .sub { font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.08em; text-transform: uppercase; margin-top: 2px; }
+  header .module-name { font-family: var(--font-serif); font-size: 22px; color: var(--ink); }
+  header .module-name em { color: var(--gold); font-style: italic; }
+  header .util a { color: var(--ink-soft); text-decoration: none; font-size: 13px; margin-left: 18px; }
+  header .util a:hover { color: var(--gold); }
+
+  main { max-width: 1120px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  .top-bar {
+    display: flex; gap: 14px; align-items: center;
+    margin-bottom: 22px;
+  }
+  .community-select {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 9px 12px;
+    font-family: var(--font-sans); font-size: 14px;
+    border-radius: 6px; min-width: 280px;
+  }
+  .preview-link {
+    margin-left: auto;
+    color: var(--ink-soft); text-decoration: none;
+    font-size: 12.5px; padding: 7px 14px;
+    border: 1px solid var(--rule-strong); border-radius: 6px;
+  }
+  .preview-link:hover { color: var(--gold); border-color: var(--gold); }
+
+  .panel {
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    border-radius: 10px; padding: 22px 26px; margin-bottom: 18px;
+  }
+  .panel h2 {
+    font-family: var(--font-serif); font-size: 19px; color: var(--ink);
+    margin: 0 0 4px;
+  }
+  .panel h2 em { color: var(--gold); font-style: italic; }
+  .panel .sub { color: var(--ink-faint); font-size: 12.5px; margin-bottom: 14px; }
+
+  /* Trash schedule */
+  .schedule-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .schedule-grid { grid-template-columns: 1fr; } }
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+  .field input, .field select, .field textarea {
+    background: var(--navy-deep); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 8px 11px; font-size: 13.5px;
+    border-radius: 5px; font-family: var(--font-sans);
+  }
+  .field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: var(--gold); }
+  .field textarea { min-height: 60px; resize: vertical; }
+  .field .helper { font-size: 11.5px; color: var(--ink-faint); }
+
+  .day-checks { display: flex; flex-wrap: wrap; gap: 8px; }
+  .day-checks label {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 6px 11px;
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    border-radius: 999px;
+    font-size: 12px; cursor: pointer;
+    user-select: none;
+  }
+  .day-checks label.checked { background: var(--gold-faint); border-color: var(--gold); color: var(--ink); }
+
+  /* Contacts list */
+  table.contacts {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  table.contacts thead th {
+    text-align: left; padding: 8px 10px;
+    border-bottom: 1px solid var(--rule-strong);
+    color: var(--ink-faint); font-size: 10.5px;
+    text-transform: uppercase; letter-spacing: 0.06em; font-weight: 500;
+    position: sticky; top: 0; background: var(--navy-soft); z-index: 2;
+  }
+  table.contacts tbody td {
+    padding: 8px 10px; border-bottom: 1px solid var(--rule);
+    color: var(--ink); vertical-align: top;
+  }
+  table.contacts input, table.contacts select {
+    background: var(--navy-deep); border: 1px solid var(--rule);
+    color: var(--ink); padding: 6px 8px; font-size: 13px;
+    border-radius: 4px; width: 100%; font-family: var(--font-sans);
+  }
+  table.contacts .row-actions {
+    display: flex; gap: 6px;
+  }
+  table.contacts .row-actions button {
+    background: transparent; border: 1px solid var(--rule-strong);
+    color: var(--ink-soft); padding: 5px 9px; border-radius: 4px;
+    font-size: 11.5px; cursor: pointer;
+  }
+  table.contacts .row-actions button:hover { color: var(--gold); border-color: var(--gold); }
+  table.contacts .row-actions button.delete { color: #E48A8A; border-color: rgba(231,90,90,0.4); }
+  table.contacts .row-actions button.delete:hover { background: rgba(231,90,90,0.08); }
+
+  .add-btn {
+    margin-top: 14px;
+    background: var(--gold); color: var(--navy-deep); border: none;
+    padding: 9px 18px; border-radius: 6px;
+    font-weight: 500; font-size: 13px; cursor: pointer;
+  }
+  .add-btn:hover { background: var(--gold-bright); }
+
+  .save-btn {
+    background: var(--gold); color: var(--navy-deep); border: none;
+    padding: 10px 22px; border-radius: 6px;
+    font-weight: 500; font-size: 13.5px; cursor: pointer;
+  }
+  .save-btn:hover { background: var(--gold-bright); }
+
+  .empty {
+    padding: 40px 30px; text-align: center; color: var(--ink-faint);
+  }
+
+  .toast {
+    position: fixed; bottom: 24px; right: 32px;
+    background: var(--navy-soft); border: 1px solid var(--rule-strong);
+    color: var(--ink); padding: 12px 18px; border-radius: 6px;
+    font-size: 13px; z-index: 1000;
+    box-shadow: 0 8px 28px rgba(0,0,0,0.4);
+    opacity: 0; transform: translateY(8px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    max-width: 420px;
+  }
+  .toast.show { opacity: 1; transform: translateY(0); }
+  .toast.success { border-color: rgba(80,200,120,0.5); }
+  .toast.error { border-color: rgba(231,90,90,0.5); }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div class="brand-lockup">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="sub">trustEd · operations platform</div>
+    </div>
+  </div>
+  <div class="module-name">Community <em>Contacts</em></div>
+  <div class="util">
+    <a href="/">← Platform</a>
+  </div>
+</header>
+
+<main>
+  <div class="top-bar">
+    <select class="community-select" id="commSelect">
+      <option value="">— Select community —</option>
+    </select>
+    <a class="preview-link" id="previewLink" href="#" target="_blank" style="display:none;">Preview portal view ↗</a>
+  </div>
+
+  <div id="content">
+    <div class="empty">
+      <p>Select a community to manage its contacts directory + trash schedule.</p>
+      <p style="font-size:12px; opacity:0.7; margin-top:18px;">
+        Contacts here surface on the homeowner portal under "Local Contacts" — sheriff, utilities,
+        trash, TV/internet. Edit once, every homeowner sees the update.
+      </p>
+    </div>
+  </div>
+</main>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+const CATEGORIES = ['emergency', 'utility', 'trash', 'tv_internet', 'community', 'other'];
+const CATEGORY_LABELS = {
+  emergency: 'Emergency',
+  utility: 'Utility',
+  trash: 'Trash',
+  tv_internet: 'TV / Internet',
+  community: 'Community',
+  other: 'Other',
+};
+const DAYS = ['monday','tuesday','wednesday','thursday','friday','saturday','sunday'];
+
+let state = {
+  selectedCommunityId: null,
+  selectedCommunitySlug: null,
+  community: null,
+  contacts: [],
+  trashSchedule: null,
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+function toast(msg, type) {
+  const t = $('toast');
+  t.textContent = msg;
+  t.className = 'toast show ' + (type || '');
+  setTimeout(() => { t.className = 'toast'; }, 3500);
+}
+
+(async function init() {
+  try {
+    const r = await fetch('/api/communities');
+    const { communities } = await r.json();
+    const sel = $('commSelect');
+    (communities || []).forEach(c => {
+      const opt = document.createElement('option');
+      opt.value = c.id; opt.dataset.slug = c.slug || ''; opt.textContent = c.name;
+      sel.appendChild(opt);
+    });
+    sel.addEventListener('change', onCommunityChange);
+  } catch (err) {
+    toast('Could not load communities: ' + err.message, 'error');
+  }
+})();
+
+async function onCommunityChange() {
+  const sel = $('commSelect');
+  state.selectedCommunityId = sel.value || null;
+  state.selectedCommunitySlug = sel.options[sel.selectedIndex]?.dataset.slug || '';
+  if (!state.selectedCommunityId) {
+    $('previewLink').style.display = 'none';
+    return;
+  }
+  $('previewLink').href = `/portal/contacts?demo=1&community=${encodeURIComponent(state.selectedCommunitySlug)}`;
+  $('previewLink').style.display = '';
+
+  try {
+    const r = await fetch(`/api/community-contacts/community/${state.selectedCommunityId}`);
+    const data = await r.json();
+    state.community = data.community;
+    state.contacts = data.contacts || [];
+    state.trashSchedule = data.community?.trash_schedule || {};
+    render();
+  } catch (err) {
+    toast('Could not load contacts: ' + err.message, 'error');
+  }
+}
+
+function render() {
+  const html = `
+    <div class="panel">
+      <h2>Trash + recycling <em>schedule</em></h2>
+      <div class="sub">Days are surfaced on every homeowner's portal at /portal/contacts.</div>
+
+      <div class="field">
+        <label>Collection days</label>
+        <div class="day-checks" id="dayChecks">
+          ${DAYS.map(d => {
+            const on = (state.trashSchedule.collection_days || []).includes(d);
+            return `<label class="${on ? 'checked' : ''}"><input type="checkbox" value="${d}" ${on ? 'checked' : ''} style="display:none;">${d.charAt(0).toUpperCase() + d.slice(1)}</label>`;
+          }).join('')}
+        </div>
+        <div class="helper">Click to toggle. Most HOAs have 1-2 collection days per week.</div>
+      </div>
+
+      <div class="schedule-grid">
+        <div class="field">
+          <label>Heavy trash pattern (optional)</label>
+          <input id="heavyPattern" value="${escapeHtml(state.trashSchedule.heavy_trash_pattern || '')}" placeholder="e.g., 1st Wednesday of each month">
+        </div>
+        <div class="field">
+          <label style="display:flex; align-items:center; gap:6px;">
+            <input type="checkbox" id="holidayPause" ${state.trashSchedule.holidays_no_service ? 'checked' : ''}>
+            <span>No service on federal holidays (delayed by one day)</span>
+          </label>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Notes (shown on portal)</label>
+        <textarea id="trashNotes" placeholder="e.g., 'Place trash at curb by 7:00am' or vendor pickup-window instructions">${escapeHtml(state.trashSchedule.notes || '')}</textarea>
+      </div>
+
+      <button class="save-btn" onclick="saveTrashSchedule()">Save schedule</button>
+    </div>
+
+    <div class="panel">
+      <h2>Contacts <em>directory</em></h2>
+      <div class="sub">Emergency numbers, utilities, TV/internet, community-specific contacts. Order within each category controls display order on the portal.</div>
+
+      <table class="contacts">
+        <thead>
+          <tr>
+            <th style="width: 130px;">Category</th>
+            <th>Name<span style="color: var(--gold);"> *</span></th>
+            <th style="width: 150px;">Phone</th>
+            <th style="width: 160px;">Email</th>
+            <th>URL</th>
+            <th>Notes</th>
+            <th style="width: 70px;">Order</th>
+            <th style="width: 90px;"></th>
+          </tr>
+        </thead>
+        <tbody id="contactsTbody">
+          ${state.contacts.length ? state.contacts.map(renderContactRow).join('') : '<tr><td colspan="8" class="empty">No contacts yet. Click + Add below.</td></tr>'}
+        </tbody>
+      </table>
+      <button class="add-btn" onclick="addContact()">+ Add contact</button>
+    </div>
+  `;
+  $('content').innerHTML = html;
+
+  // Wire day-check toggles
+  document.querySelectorAll('#dayChecks label').forEach(l => {
+    l.addEventListener('click', (e) => {
+      if (e.target.tagName === 'INPUT') return;
+      const cb = l.querySelector('input');
+      cb.checked = !cb.checked;
+      l.classList.toggle('checked', cb.checked);
+    });
+  });
+}
+
+function renderContactRow(c) {
+  return `<tr data-id="${c.id}">
+    <td>
+      <select class="fld-category" data-id="${c.id}">
+        ${CATEGORIES.map(cat => `<option value="${cat}" ${c.category === cat ? 'selected' : ''}>${CATEGORY_LABELS[cat]}</option>`).join('')}
+      </select>
+    </td>
+    <td><input class="fld-name" data-id="${c.id}" value="${escapeHtml(c.name || '')}" placeholder="Sheriff / MUD #143 / Best Trash"></td>
+    <td><input class="fld-phone" data-id="${c.id}" value="${escapeHtml(c.phone || '')}" placeholder="(281) 341-4665"></td>
+    <td><input class="fld-email" data-id="${c.id}" value="${escapeHtml(c.email || '')}" type="email"></td>
+    <td><input class="fld-url" data-id="${c.id}" value="${escapeHtml(c.url || '')}" type="url"></td>
+    <td><input class="fld-notes" data-id="${c.id}" value="${escapeHtml(c.notes || '')}"></td>
+    <td><input class="fld-order" data-id="${c.id}" value="${c.display_order || 100}" type="number" min="0"></td>
+    <td class="row-actions">
+      <button onclick="saveContact('${c.id}')">Save</button>
+      <button class="delete" onclick="deleteContact('${c.id}')">×</button>
+    </td>
+  </tr>`;
+}
+
+async function addContact() {
+  if (!state.selectedCommunityId) return;
+  try {
+    const r = await fetch('/api/community-contacts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        community_id: state.selectedCommunityId,
+        category: 'emergency',
+        name: 'New contact',
+        display_order: (state.contacts.reduce((m, c) => Math.max(m, c.display_order || 0), 0) || 0) + 10,
+      }),
+    });
+    const result = await r.json();
+    if (!result.ok) throw new Error(result.error);
+    state.contacts.push(result.contact);
+    render();
+    toast('Added — edit the row + click Save.', 'success');
+  } catch (err) { toast('Add failed: ' + err.message, 'error'); }
+}
+
+async function saveContact(id) {
+  const row = (selector) => document.querySelector(`${selector}[data-id="${id}"]`)?.value;
+  const patch = {
+    category: row('.fld-category'),
+    name: row('.fld-name')?.trim(),
+    phone: row('.fld-phone')?.trim() || null,
+    email: row('.fld-email')?.trim() || null,
+    url: row('.fld-url')?.trim() || null,
+    notes: row('.fld-notes')?.trim() || null,
+    display_order: parseInt(row('.fld-order'), 10) || 100,
+  };
+  if (!patch.name) { toast('Name is required.', 'error'); return; }
+  try {
+    const r = await fetch(`/api/community-contacts/${id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    });
+    const result = await r.json();
+    if (!result.ok) throw new Error(result.error);
+    const idx = state.contacts.findIndex(c => c.id === id);
+    if (idx >= 0) state.contacts[idx] = result.contact;
+    toast('Saved.', 'success');
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
+}
+
+async function deleteContact(id) {
+  if (!confirm('Delete this contact?')) return;
+  try {
+    const r = await fetch(`/api/community-contacts/${id}`, { method: 'DELETE' });
+    const result = await r.json();
+    if (!result.ok) throw new Error(result.error);
+    state.contacts = state.contacts.filter(c => c.id !== id);
+    render();
+    toast('Deleted.', 'success');
+  } catch (err) { toast('Delete failed: ' + err.message, 'error'); }
+}
+
+async function saveTrashSchedule() {
+  const days = Array.from(document.querySelectorAll('#dayChecks input:checked')).map(i => i.value);
+  const schedule = {
+    collection_days: days,
+    heavy_trash_pattern: $('heavyPattern').value.trim() || null,
+    holidays_no_service: $('holidayPause').checked,
+    notes: $('trashNotes').value.trim() || null,
+  };
+  try {
+    const r = await fetch(`/api/community-contacts/community/${state.selectedCommunityId}/trash-schedule`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ trash_schedule: schedule }),
+    });
+    const result = await r.json();
+    if (!result.ok) throw new Error(result.error);
+    state.trashSchedule = schedule;
+    toast('Trash schedule saved.', 'success');
+  } catch (err) { toast('Save failed: ' + err.message, 'error'); }
+}
+</script>
+
+</body>
+</html>

@@ -741,6 +741,12 @@ app.use('/api/ownership-proposals', ownershipProposalsRouter);
 const { router: reserveStudiesRouter } = require('./api/reserve_studies');
 app.use('/api/reserve-studies', reserveStudiesRouter);
 
+// Per-community contact directory (sheriff, utilities, trash, TV/internet).
+// Powers the Local Contacts tile on the homeowner portal + future welcome
+// packets. See project_integration_depth_moat memory note.
+const { router: communityContactsRouter } = require('./api/community_contacts');
+app.use('/api/community-contacts', communityContactsRouter);
+
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));
@@ -758,6 +764,7 @@ app.get('/portal/balance',   (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-compliance.html')));
 app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-documents.html')));
 app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-meetings.html')));
+app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 

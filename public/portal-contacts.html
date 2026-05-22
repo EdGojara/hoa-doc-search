@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Local Contacts · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --shadow-hover: 0 4px 12px rgba(26, 48, 80, 0.1), 0 12px 32px rgba(26, 48, 80, 0.08);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0; min-height: 100vh;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    height: 64px;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; flex-shrink: 0; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .label { font-size: 13px; color: var(--ink-soft); margin-top: 2px; }
+  .top-right { display: flex; align-items: center; gap: 12px; }
+  .back-link {
+    font-size: 13px; color: var(--navy);
+    text-decoration: none; padding: 8px 14px;
+    border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+  }
+
+  main {
+    max-width: 920px;
+    margin: 0 auto;
+    padding: 32px 22px 80px;
+  }
+
+  h1.page-title {
+    font-family: var(--font-serif); font-size: 32px; font-weight: 500;
+    color: var(--navy); margin: 0 0 6px;
+    letter-spacing: -0.01em;
+  }
+  h1.page-title em { font-style: italic; color: var(--gold); }
+  .page-sub { color: var(--ink-soft); font-size: 14.5px; margin-bottom: 28px; }
+
+  /* Trash schedule banner */
+  .trash-banner {
+    background: white;
+    border: 1px solid var(--rule);
+    border-left: 4px solid var(--gold);
+    border-radius: 10px;
+    padding: 18px 22px; margin-bottom: 28px;
+    box-shadow: var(--shadow-soft);
+  }
+  .trash-banner .head {
+    display: flex; align-items: center; gap: 10px;
+    font-size: 11px; color: var(--ink-faint);
+    text-transform: uppercase; letter-spacing: 0.08em;
+    margin-bottom: 8px;
+  }
+  .trash-banner .days {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--navy); font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .trash-banner .notes {
+    font-size: 13.5px; color: var(--ink-soft);
+  }
+
+  /* Category section */
+  section.category {
+    margin-bottom: 28px;
+  }
+  section.category h2 {
+    font-family: var(--font-serif); font-size: 18px;
+    color: var(--navy); font-weight: 500;
+    margin: 0 0 12px;
+    padding-bottom: 8px;
+    border-bottom: 1px solid var(--rule);
+    display: flex; align-items: center; gap: 10px;
+  }
+  section.category h2 .icon { font-size: 20px; }
+  section.category h2 em { color: var(--gold); font-style: italic; }
+
+  .contact-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .contact {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 10px;
+    padding: 14px 16px;
+    transition: all 0.15s ease;
+  }
+  .contact:hover {
+    border-color: rgba(212,175,55,0.4);
+    box-shadow: var(--shadow-hover);
+    transform: translateY(-1px);
+  }
+  .contact .name {
+    font-weight: 600; color: var(--navy);
+    font-size: 14.5px; margin-bottom: 6px;
+  }
+  .contact .links {
+    display: flex; flex-direction: column; gap: 4px;
+    margin: 6px 0;
+  }
+  .contact .links a {
+    color: var(--navy); text-decoration: none;
+    font-family: var(--font-mono); font-size: 13px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .contact .links a:hover { color: var(--gold); }
+  .contact .links .icon { color: var(--gold); width: 14px; text-align: center; }
+  .contact .notes {
+    font-size: 12.5px; color: var(--ink-soft);
+    margin-top: 8px; line-height: 1.45;
+  }
+
+  .empty {
+    background: white; border: 1px solid var(--rule);
+    border-radius: 10px; padding: 40px 30px;
+    text-align: center; color: var(--ink-faint);
+  }
+  .empty h2 { font-family: var(--font-serif); color: var(--navy); margin: 0 0 6px; }
+
+  .spinner {
+    width: 22px; height: 22px; margin: 60px auto;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  @media (max-width: 640px) {
+    main { padding: 22px 14px 60px; }
+    h1.page-title { font-size: 26px; }
+    .contact-list { grid-template-columns: 1fr; }
+  }
+
+  /* Footer */
+  footer.bottom {
+    text-align: center; padding: 26px 16px 40px;
+    color: var(--ink-faint); font-size: 13px;
+  }
+  footer .tag {
+    font-family: var(--font-serif); font-style: italic;
+    color: var(--gold); margin-bottom: 6px;
+  }
+  footer a { color: var(--ink-soft); text-decoration: none; }
+  footer a:hover { color: var(--gold); }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Association Management</em></div>
+      <div class="label">Local Contacts</div>
+    </div>
+  </a>
+  <div class="top-right">
+    <div id="demoBadge" class="demo-ribbon" style="display:none;">Demo</div>
+    <a class="back-link" href="/portal" id="backLink">← Portal</a>
+  </div>
+</header>
+
+<main>
+  <h1 class="page-title">Local <em>contacts</em></h1>
+  <div class="page-sub" id="pageSub">—</div>
+
+  <div id="content"><div class="spinner"></div></div>
+</main>
+
+<footer class="bottom">
+  <div class="tag">Community. Simplified.</div>
+  <div id="footerCommunity">—</div>
+  <div style="margin-top:6px;">
+    <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> ·
+    <a href="tel:8325882485">(832) 588-2485</a> ·
+    <a href="https://bedrocktx.com" target="_blank" rel="noopener">bedrocktx.com</a>
+  </div>
+</footer>
+
+<script>
+'use strict';
+
+const CATEGORY_ICONS = {
+  emergency:   '🚨',
+  utility:     '⚙️',
+  trash:       '🗑️',
+  tv_internet: '📡',
+  community:   '🏘️',
+  other:       '📞',
+};
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return {
+    demo: u.searchParams.get('demo') === '1',
+    community: u.searchParams.get('community') || '',
+  };
+}
+function dayName(d) {
+  return d.charAt(0).toUpperCase() + d.slice(1);
+}
+
+(async function init() {
+  const q = getQueryParams();
+  let slug = q.community;
+  let isDemo = q.demo;
+
+  // Auth-mode: find community from /api/portal/me
+  if (!slug && !isDemo) {
+    try {
+      const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+      if (r.status === 401) {
+        window.location.href = '/portal-login.html';
+        return;
+      }
+      if (r.ok) {
+        const data = await r.json();
+        slug = data?.community?.slug;
+      }
+    } catch (_) { /* swallow */ }
+  }
+
+  if (!slug) {
+    slug = 'waterview';
+    isDemo = true;
+  }
+
+  if (isDemo) {
+    $('demoBadge').style.display = '';
+    const back = `/portal?demo=1&community=${encodeURIComponent(slug)}`;
+    $('brandLink').href = back;
+    $('backLink').href = back;
+  }
+
+  try {
+    const r = await fetch(`/api/community-contacts/by-slug/${encodeURIComponent(slug)}`);
+    if (!r.ok) throw new Error('Could not load contacts');
+    const data = await r.json();
+    render(data);
+  } catch (err) {
+    $('content').innerHTML = `<div class="empty"><h2>Couldn't load contacts</h2><p>${escapeHtml(err.message)}</p></div>`;
+  }
+})();
+
+function render(data) {
+  $('pageSub').textContent = `Emergency numbers, utilities, trash + recycling, and other quick-dial contacts for ${data.community.name}.`;
+  $('footerCommunity').textContent = data.community.name;
+
+  let html = '';
+
+  // Trash schedule banner — render first if available
+  if (data.trash_schedule && data.trash_schedule.collection_days) {
+    const days = (data.trash_schedule.collection_days || []).map(dayName).join(' & ');
+    const heavy = data.trash_schedule.heavy_trash_pattern;
+    const notes = data.trash_schedule.notes;
+    html += `<div class="trash-banner">
+      <div class="head">🗑️ Trash & recycling schedule</div>
+      <div class="days">Collection: ${escapeHtml(days)}${heavy ? ` · Heavy trash: ${escapeHtml(heavy)}` : ''}</div>
+      ${notes ? `<div class="notes">${escapeHtml(notes)}</div>` : ''}
+    </div>`;
+  }
+
+  // Grouped contact sections
+  if (!data.grouped || !data.grouped.length) {
+    html += `<div class="empty">
+      <h2>No contacts on file yet</h2>
+      <p>Your community manager will add emergency numbers, utility contacts, and trash schedule shortly. Need something now? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a>.</p>
+    </div>`;
+  } else {
+    data.grouped.forEach(group => {
+      html += `<section class="category">
+        <h2><span class="icon">${CATEGORY_ICONS[group.category] || '📞'}</span> ${escapeHtml(group.label)}</h2>
+        <div class="contact-list">`;
+      group.contacts.forEach(c => {
+        html += renderContact(c);
+      });
+      html += `</div></section>`;
+    });
+  }
+
+  $('content').innerHTML = html;
+}
+
+function renderContact(c) {
+  const phoneClean = (c.phone || '').replace(/[^\d+]/g, '');
+  return `<div class="contact">
+    <div class="name">${escapeHtml(c.name)}</div>
+    <div class="links">
+      ${c.phone ? `<a href="tel:${escapeHtml(phoneClean)}"><span class="icon">📞</span> ${escapeHtml(c.phone)}</a>` : ''}
+      ${c.email ? `<a href="mailto:${escapeHtml(c.email)}"><span class="icon">✉</span> ${escapeHtml(c.email)}</a>` : ''}
+      ${c.url ? `<a href="${escapeHtml(c.url)}" target="_blank" rel="noopener"><span class="icon">🔗</span> ${escapeHtml(c.url.replace(/^https?:\/\//, ''))}</a>` : ''}
+    </div>
+    ${c.notes ? `<div class="notes">${escapeHtml(c.notes)}</div>` : ''}
+  </div>`;
+}
+</script>
+
+</body>
+</html>
