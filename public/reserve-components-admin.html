@@ -357,7 +357,10 @@
   </div>
 
   <div class="panel">
-    <h3>Reserve study line</h3>
+    <h3>Reserve study line <span id="baselineYearChip" style="display:none; font-family: var(--font-mono); font-size:10.5px; color:var(--gold); background:rgba(212,175,55,0.10); padding:2px 8px; border-radius:999px; margin-left:8px;">baseline FY—</span></h3>
+    <div style="font-size: 11.5px; color: var(--ink-faint); margin: -8px 0 14px;">
+      These are the <strong style="color: var(--ink-soft);">baseline values from the study</strong> — kept as the audit trail. The "today" panel below shows what these become as years pass + inflation compounds.
+    </div>
     <div class="grid-4">
       <div class="field">
         <label>Installed year</label>
@@ -368,7 +371,7 @@
         <input type="number" id="fld-useful_life_years" min="0">
       </div>
       <div class="field">
-        <label>Remaining life (yrs)</label>
+        <label>Remaining life (yrs) <span style="font-size:9.5px; color:var(--ink-faint); font-weight:400;">— baseline</span></label>
         <input type="number" id="fld-remaining_useful_life_years" min="0">
       </div>
       <div class="field">
@@ -378,9 +381,9 @@
     </div>
     <div class="grid-3">
       <div class="field">
-        <label>Current cost estimate ($)</label>
+        <label>Current cost estimate ($) <span style="font-size:9.5px; color:var(--ink-faint); font-weight:400;">— baseline</span></label>
         <input type="number" id="fld-current_cost_dollars" min="0" step="0.01">
-        <div class="helper">Today's replacement cost</div>
+        <div class="helper">Replacement cost as of study year</div>
       </div>
       <div class="field">
         <label>Future cost estimate ($)</label>
@@ -392,6 +395,26 @@
         <input type="number" id="fld-inflation_factor" min="1" max="2" step="0.001" placeholder="1.034">
         <div class="helper">e.g., 1.034 = 3.4%/yr</div>
       </div>
+    </div>
+
+    <!-- "As of today" computed values — these tick forward automatically -->
+    <div id="todayPanel" style="display:none; margin-top: 18px; padding: 14px 18px; background: rgba(212,175,55,0.06); border-left: 3px solid var(--gold); border-radius: 0 7px 7px 0;">
+      <div style="font-size: 10.5px; color: var(--gold); letter-spacing: 0.08em; text-transform: uppercase; font-weight: 500; margin-bottom: 8px;">As of today (auto-computed)</div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px;">
+        <div>
+          <div style="font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.05em; text-transform: uppercase;">Remaining life today</div>
+          <div style="font-family: var(--font-mono); font-size: 16px; color: var(--ink);" id="todayRul">—</div>
+        </div>
+        <div>
+          <div style="font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.05em; text-transform: uppercase;">Replacement cost today</div>
+          <div style="font-family: var(--font-mono); font-size: 16px; color: var(--ink);" id="todayCost">—</div>
+        </div>
+        <div>
+          <div style="font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.05em; text-transform: uppercase;">Urgency now</div>
+          <div style="font-family: var(--font-mono); font-size: 16px; color: var(--ink);" id="todayUrgency">—</div>
+        </div>
+      </div>
+      <div style="font-size: 11px; color: var(--ink-faint); margin-top: 10px; font-style: italic;" id="todayExplain">—</div>
     </div>
     <div class="field">
       <label>Source section in reserve study</label>
@@ -674,6 +697,11 @@ function renderEditor() {
   $('fld-source_section').value = e.source_section || '';
   $('fld-notes').value = e.notes || '';
   $('fld-lat').value = e.lat || '';
+
+  // "As of today" panel — shows the auto-ticked values from the view.
+  // baseline_fiscal_year + years_elapsed_since_baseline + current_*
+  // are all returned by /v_reserve_components_with_totals.
+  renderTodayPanel(e);
   $('fld-lng').value = e.lng || '';
   $('fld-pin_label_override').value = e.pin_label_override || '';
 
@@ -691,6 +719,68 @@ function renderEditor() {
   }
 
   setTimeout(() => initMap(), 50);
+}
+
+// "As of today" panel — shows the view's auto-computed current values.
+// The view returns: baseline_fiscal_year, years_elapsed_since_baseline,
+// current_remaining_useful_life_years, current_cost_today_cents, urgency_band.
+function renderTodayPanel(e) {
+  const panel = $('todayPanel');
+  const chip = $('baselineYearChip');
+  // If no study link, no auto-ticking — hide the panel
+  if (!e || e.baseline_fiscal_year == null || e.years_elapsed_since_baseline == null) {
+    panel.style.display = 'none';
+    chip.style.display = 'none';
+    return;
+  }
+  const baselineFY = e.baseline_fiscal_year;
+  const elapsed = e.years_elapsed_since_baseline || 0;
+  const currentYear = new Date().getFullYear();
+
+  chip.textContent = 'baseline FY' + baselineFY;
+  chip.style.display = '';
+
+  // Today's RUL
+  const todayRul = e.current_remaining_useful_life_years;
+  let rulText = '—';
+  if (todayRul != null) {
+    if (todayRul === 0) rulText = '0 yrs (replace now)';
+    else if (todayRul === 1) rulText = '1 yr';
+    else rulText = todayRul + ' yrs';
+  }
+  $('todayRul').textContent = rulText;
+
+  // Today's cost (inflated forward)
+  const todayCostCents = e.current_cost_today_cents;
+  $('todayCost').textContent = todayCostCents != null
+    ? '$' + (Number(todayCostCents) / 100).toLocaleString('en-US', { maximumFractionDigits: 0 })
+    : '—';
+
+  // Urgency now (re-derived from current RUL by the view)
+  const urgencyLabels = {
+    critical: '🔴 Critical',
+    imminent: '🟠 Imminent',
+    soon:     '🟡 Soon',
+    medium:   '🟢 Medium',
+    far:      '⚪ Far out',
+  };
+  $('todayUrgency').textContent = urgencyLabels[e.urgency_band] || '—';
+
+  // Explanation footer
+  let parts = [];
+  if (elapsed > 0) {
+    parts.push(`${elapsed} year${elapsed === 1 ? '' : 's'} elapsed since FY${baselineFY}`);
+  } else {
+    parts.push(`Same year as baseline (FY${baselineFY})`);
+  }
+  if (e.inflation_factor && elapsed > 0 && e.current_cost_estimate_cents) {
+    const inflPct = ((e.inflation_factor - 1) * 100).toFixed(2);
+    const baselineCost = '$' + (Number(e.current_cost_estimate_cents) / 100).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    parts.push(`cost inflated forward at ${inflPct}%/yr from baseline ${baselineCost}`);
+  }
+  $('todayExplain').textContent = parts.join(' · ') + '.';
+
+  panel.style.display = '';
 }
 
 function initMap() {

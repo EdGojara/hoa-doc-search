@@ -1101,11 +1101,11 @@ async function openDetail(component) {
           <div class="v">${component.next_scheduled_replacement_year || (component.remaining_useful_life_years != null ? new Date().getFullYear() + component.remaining_useful_life_years : '—')}</div>
         </div>
         <div class="kv">
-          <div class="k">Current cost</div>
-          <div class="v">${fmtMoney(component.current_cost_estimate_cents)}</div>
+          <div class="k">Cost today</div>
+          <div class="v">${fmtMoney(component.current_cost_today_cents != null ? component.current_cost_today_cents : component.current_cost_estimate_cents)}</div>
         </div>
         <div class="kv">
-          <div class="k">Future cost (inflated)</div>
+          <div class="k">Cost at replacement</div>
           <div class="v">${fmtMoney(component.future_cost_estimate_cents)}</div>
         </div>
       </div>
@@ -1117,10 +1117,15 @@ async function openDetail(component) {
         <h3>Specs</h3>
         <div class="kv-row"><span class="k">Installed / built</span><span class="v">${component.installed_or_built_year || '—'}</span></div>
         <div class="kv-row"><span class="k">Useful life</span><span class="v">${component.useful_life_years != null ? component.useful_life_years + ' yrs' : '—'}</span></div>
-        <div class="kv-row"><span class="k">Remaining life</span><span class="v">${component.remaining_useful_life_years != null ? component.remaining_useful_life_years + ' yrs' : '—'}</span></div>
+        <div class="kv-row"><span class="k">Remaining life today</span><span class="v">${
+          component.current_remaining_useful_life_years != null
+            ? component.current_remaining_useful_life_years + ' yrs' + (component.years_elapsed_since_baseline > 0 && component.remaining_useful_life_years != null ? ' <span style="color:var(--ink-faint); font-size:11px;">(baseline ' + component.remaining_useful_life_years + ')</span>' : '')
+            : (component.remaining_useful_life_years != null ? component.remaining_useful_life_years + ' yrs' : '—')
+        }</span></div>
         <div class="kv-row"><span class="k">Condition</span><span class="v">${component.condition ? component.condition.replace(/_/g, ' ') : '—'}</span></div>
         <div class="kv-row"><span class="k">Last inspection</span><span class="v">${fmtDate(component.last_inspection_date)}</span></div>
         <div class="kv-row"><span class="k">Inflation factor</span><span class="v">${component.inflation_factor != null ? component.inflation_factor : '—'}</span></div>
+        ${component.baseline_fiscal_year ? `<div class="kv-row"><span class="k">Study baseline</span><span class="v">FY${component.baseline_fiscal_year}${component.years_elapsed_since_baseline > 0 ? ' (' + component.years_elapsed_since_baseline + 'yr elapsed)' : ''}</span></div>` : ''}
       </section>
 
       <section>
