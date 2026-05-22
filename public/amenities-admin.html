@@ -177,6 +177,9 @@
     position: relative;
   }
   #editorMap { width: 100%; height: 100%; }
+  /* Tiles paint over this; keeps the box looking alive while they load
+     and prevents the navy page background from bleeding through. */
+  #editorMap.leaflet-container, .map-wrap .leaflet-container { background: #e8edf0; }
   .map-hint {
     position: absolute; bottom: 10px; left: 10px;
     background: rgba(11, 20, 36, 0.92);
@@ -751,7 +754,11 @@ function renderEditor() {
     $('deleteBtn').addEventListener('click', deleteAmenity);
   }
 
-  setTimeout(() => initMap(), 50);
+  // Use requestAnimationFrame so the map only initializes after the editor's
+  // layout has settled. setTimeout(50) raced the layout once the editor grew
+  // (season + operating-contract panels added above the map panel), which
+  // made Leaflet capture a 0-height container and never render tiles.
+  requestAnimationFrame(() => requestAnimationFrame(() => initMap()));
 }
 
 function initMap() {
@@ -768,6 +775,11 @@ function initMap() {
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
     maxZoom: 19, attribution: '© OpenStreetMap',
   }).addTo(state.map);
+
+  // Force a size recalc once tiles + container have painted. Belt-and-
+  // suspenders for the same race condition addressed by the rAF above.
+  setTimeout(() => { try { state.map.invalidateSize(); } catch (_) {} }, 100);
+  setTimeout(() => { try { state.map.invalidateSize(); } catch (_) {} }, 400);
 
   if (hasCoords) addOrMoveMarker(lat, lng);
 
