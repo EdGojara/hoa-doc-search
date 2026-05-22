@@ -825,12 +825,12 @@ router.post('/admin/amenities/extract-contract', uploadPdf.single('file'), async
     const trimmed = text.slice(0, 60000);
 
     // 2) Ask the model to extract structured fields
-    const prompt = `You are extracting structured fields from a signed vendor management contract for an HOA amenity (typically a pool or clubhouse). The contract may be a proposal with some blanks unfilled — return null for any field you can't confidently extract from the actual text.
+    const prompt = `You are extracting structured fields from a signed vendor management contract for an HOA amenity (typically a pool or clubhouse). PDF text extraction often introduces extra whitespace around fill-in-the-blank values — read carefully and reconstruct the original numbers.
 
 Return ONLY a JSON object (no prose, no markdown) with these fields:
 {
   "vendor_name": "Legal entity name (e.g., 'Swim Houston Pool Management, LLC')",
-  "annual_total_dollars": 42000,
+  "annual_total_dollars": 84829.44,
   "monthly_schedule": [
     { "month": 1, "amount_dollars": 1200, "in_swim_season": false },
     ...
@@ -844,12 +844,43 @@ Return ONLY a JSON object (no prose, no markdown) with these fields:
   "notes": "1-2 sentence summary of scope + renewal terms"
 }
 
-Rules:
-- If the contract has $______ blanks (unsigned proposal), return null for those dollar amounts.
-- monthly_schedule should only include months with non-zero charges in the schedule table. Skip entirely if no monthly table exists.
-- Dates must be YYYY-MM-DD format. Convert month names to numbers.
-- If swim season dates aren't explicitly stated, infer from monthly schedule (months with lifeguard charges = in-season).
-- If offseason language isn't present, default offseason_status to "closed" for pools.
+== CRITICAL parsing rules ==
+
+DOLLAR AMOUNTS — Read the COMPLETE number, including commas and cents.
+PDF extraction often inserts whitespace inside or around the amount because the
+original was written on a fill-in line. Examples of patterns to handle:
+  · "amount equal to $    84,829.44     (tax exempted)" → 84829.44
+  · "fee of $   12,500.00   per year" → 12500
+  · "$ 7,200 .50" (split by extraction) → 7200.50
+Strip commas and surrounding whitespace before parsing. A 2-digit answer like
+"84" when the surrounding context says "annual fee" is almost always wrong —
+look harder for the full number.
+
+CONTRACT START + END DATES — These are often written in narrative form:
+  · "commence on the 1st day of April, 2026" → "2026-04-01"
+  · "terminate on the 31st day of March, 2027" → "2027-03-31"
+  · "for a one-year Term beginning January 1, 2026" → start "2026-01-01",
+     end "2026-12-31"
+  · "effective February 15, 2026 through February 14, 2027" → both dates
+Convert these to YYYY-MM-DD. Do not return null if the dates are present in
+narrative form — only return null if truly absent.
+
+SWIM SEASON DATES — Same narrative pattern:
+  · "The Swim-Season will begin when the pool is open on May 23, 2026 and
+     ends when the pool closes on September 7, 2026" → both dates
+  · If only month names given without a year, use the contract_start_date's year
+
+OFFSEASON STATUS — If pool is closed during off-season (typical for HOA
+pools in Texas), return "closed". Only return "limited" if there's
+explicit reduced-hours offseason language, "open" if year-round.
+
+UNFILLED BLANKS — Only return null when the contract literally has empty
+underscores ("$______") with no number filled in. If a number is present
+(even oddly formatted), extract it.
+
+NOTES FIELD — One or two sentences. Mention scope (lifeguards + chemicals
++ maintenance vs. maintenance-only), renewal clause if present, and any
+notable special terms (late-fee rate, hourly lifeguard rate, etc.).
 
 Contract text:
 ---
@@ -872,6 +903,56 @@ ${trimmed}
       extracted = JSON.parse(jsonText);
     } catch (e) {
       return res.status(500).json({ error: 'extraction_parse_failed', raw: raw.slice(0, 500) });
+    }
+
+    // Sanity check + fallback for annual_total_dollars. The model occasionally
+    // returns a partial number (e.g. "84" when the contract says "$84,829.44")
+    // because PDF extraction inserts whitespace inside fill-in-the-blank
+    // amounts. Detect this by scanning the contract text for the
+    // "amount equal to / annual fee / fee for Services" patterns and pulling
+    // the actual number with regex. If the regex finds a number that's
+    // substantially larger than the model's extraction, prefer the regex.
+    if (extracted.annual_total_dollars != null && extracted.annual_total_dollars < 1000) {
+      const feeRegexes = [
+        /amount equal to\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+        /annual\s+(?:fee|amount|total)\s*(?:of|:|=)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+        /fee for Services[^$]*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+        /total\s+(?:contract|annual)\s+(?:amount|value)\s*(?:of|:|=)?\s*\$\s*([\d,]+(?:\.\d{1,2})?)/i,
+      ];
+      for (const re of feeRegexes) {
+        const m = trimmed.match(re);
+        if (m) {
+          const fromRegex = parseFloat(m[1].replace(/,/g, ''));
+          if (fromRegex > 1000 && fromRegex > extracted.annual_total_dollars * 10) {
+            console.log(`[amenities] overrode annual_total ${extracted.annual_total_dollars} → ${fromRegex} via regex`);
+            extracted.annual_total_dollars = fromRegex;
+            break;
+          }
+        }
+      }
+    }
+
+    // Same sanity check for contract dates — if the model returned null but
+    // the text clearly has narrative-form dates, extract them via regex.
+    if (!extracted.contract_start_date || !extracted.contract_end_date) {
+      const months = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+      const monthRe = '(january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|oct|nov|dec)';
+      // "1st day of April, 2026 ... 31st day of March, 2027"
+      const narrativeRe = new RegExp(
+        `commence(?:s|d)?\\s*(?:on)?\\s*(?:the)?\\s*(\\d{1,2})(?:st|nd|rd|th)?\\s*day\\s*of\\s*${monthRe}[,.\\s]+(\\d{4})[\\s\\S]{0,200}?terminate[\\s\\S]{0,30}(\\d{1,2})(?:st|nd|rd|th)?\\s*day\\s*of\\s*${monthRe}[,.\\s]+(\\d{4})`,
+        'i'
+      );
+      const m = trimmed.match(narrativeRe);
+      if (m) {
+        const startMonth = months[m[2].slice(0, 3).toLowerCase()];
+        const endMonth = months[m[5].slice(0, 3).toLowerCase()];
+        if (startMonth && !extracted.contract_start_date) {
+          extracted.contract_start_date = `${m[3]}-${String(startMonth).padStart(2, '0')}-${String(m[1]).padStart(2, '0')}`;
+        }
+        if (endMonth && !extracted.contract_end_date) {
+          extracted.contract_end_date = `${m[6]}-${String(endMonth).padStart(2, '0')}-${String(m[4]).padStart(2, '0')}`;
+        }
+      }
     }
 
     // 3) Store the PDF in Supabase Storage + create the library_documents row
