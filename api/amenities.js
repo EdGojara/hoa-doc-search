@@ -1116,10 +1116,27 @@ ${trimmed}
       end: extracted.contract_end_date,
     }));
 
+    // Diagnostic: what does the extracted text actually look like around key
+    // markers? Helps us see when pdf-parse garbles dollar amounts or dates.
+    const allDollarMatches = [...trimmed.matchAll(/\$\s*([\d,]+(?:\.\d{1,2})?)/g)].slice(0, 30).map(m => m[0]);
+    const amountIdx = trimmed.toLowerCase().indexOf('amount equal');
+    const commenceIdx = trimmed.toLowerCase().indexOf('commence');
+    const terminateIdx = trimmed.toLowerCase().indexOf('terminate');
+    const debugSamples = {
+      text_length: text.length,
+      first_500_chars: text.slice(0, 500),
+      dollar_matches_found: allDollarMatches,
+      near_amount_equal: amountIdx >= 0 ? trimmed.slice(Math.max(0, amountIdx - 30), amountIdx + 200) : '(not found)',
+      near_commence: commenceIdx >= 0 ? trimmed.slice(Math.max(0, commenceIdx - 30), commenceIdx + 300) : '(not found)',
+      near_terminate: terminateIdx >= 0 ? trimmed.slice(Math.max(0, terminateIdx - 30), terminateIdx + 300) : '(not found)',
+    };
+    console.log('[amenities/extract-contract] debug samples:', JSON.stringify(debugSamples));
+
     res.json({
       ok: true,
       extracted,
       raw_extracted: rawExtracted,    // pre-regex-override copy so we can compare
+      debug_samples: debugSamples,    // surfaces text excerpts so we can see what pdf-parse extracted
       pdf_pages: pageCount,
       file_name: req.file.originalname,
       document_id: docId,             // null if storage/insert failed (extraction still useful)
