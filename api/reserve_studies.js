@@ -517,6 +517,75 @@ router.get('/community/:community_id/map', async (req, res) => {
 // Reserve study versions + funding plan
 // ----------------------------------------------------------------------------
 
+// POST /community/:community_id/auto-link-amenities — bulk-link reserve
+// components to their best-matching amenity by category, so they
+// automatically track the amenity's location on the reserve map.
+//
+// Skips components already linked to an amenity. Skips perimeter
+// categories (fence, paving, lighting, signage, irrigation, landscape)
+// because those don't live at one amenity — they're community-wide.
+router.post('/community/:community_id/auto-link-amenities', async (req, res) => {
+  try {
+    const communityId = req.params.community_id;
+
+    // All active components that aren't yet linked
+    const { data: components } = await supabase
+      .from('reserve_components')
+      .select('id, component_name, category, amenity_id')
+      .eq('community_id', communityId)
+      .eq('status', 'active')
+      .is('amenity_id', null);
+    if (!components || !components.length) return res.json({ ok: true, linked: 0, skipped: 0 });
+
+    // All active amenities
+    const { data: amenities } = await supabase
+      .from('amenities')
+      .select('id, name, amenity_type')
+      .eq('community_id', communityId)
+      .eq('status', 'active');
+    if (!amenities || !amenities.length) return res.json({ ok: true, linked: 0, skipped: components.length, no_amenities: true });
+
+    // Same category mapping as auto-place — amenity types to look for per category.
+    // Perimeter categories intentionally NOT mapped here (they're community-wide).
+    const CAT_TO_AMENITY = {
+      pool:        ['pool'],
+      playground:  ['playground'],
+      mailroom:    ['mailroom'],
+      common_area: ['clubhouse', 'pavilion'],
+      roof:        ['clubhouse', 'pavilion'],
+      mechanical:  ['pool', 'clubhouse'],   // pool equipment most common; fall back to clubhouse mechanical
+    };
+
+    let linked = 0;
+    let skipped = 0;
+    for (const c of components) {
+      const candidates = CAT_TO_AMENITY[c.category];
+      if (!candidates) { skipped++; continue; }
+      // Prefer name-match (e.g., "Playground, Splash Pad" → Splash Pad amenity)
+      const nameLower = (c.component_name || '').toLowerCase();
+      let chosen = null;
+      for (const t of candidates) {
+        const named = amenities.find(a => a.amenity_type === t && a.name &&
+          nameLower.includes(a.name.toLowerCase().split(/[, ]/)[0]));
+        if (named) { chosen = named; break; }
+      }
+      if (!chosen) {
+        for (const t of candidates) {
+          const any = amenities.find(a => a.amenity_type === t);
+          if (any) { chosen = any; break; }
+        }
+      }
+      if (!chosen) { skipped++; continue; }
+      await supabase.from('reserve_components').update({ amenity_id: chosen.id }).eq('id', c.id);
+      linked++;
+    }
+    res.json({ ok: true, linked, skipped, total_unlinked_at_start: components.length });
+  } catch (err) {
+    console.error('[reserve-studies] auto-link failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // POST /community/:community_id/auto-place-pins — anchor unpinned components
 // to nearby amenities. By default idempotent: only touches components
 // without coords. ?force=true clears existing lat/lng first and re-places

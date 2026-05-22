@@ -983,27 +983,60 @@ function renderMarkers() {
   mapMarkers.forEach(m => map.removeLayer(m));
   mapMarkers = [];
 
+  // Effective coords: if component is linked to an amenity with lat/lng,
+  // inherit the amenity's location with a small per-component deterministic
+  // offset for visual distinction. Component's own lat/lng wins ONLY when
+  // there's no amenity link (manual placement for unlinked items).
+  //
+  // This is the "amenity = canonical location" model: pin once on the
+  // amenity, all linked reserve components automatically follow.
+  function effectiveCoords(c) {
+    // Linked to amenity with coords → amenity location + per-component offset
+    if (c.linked_amenity_lat != null && c.linked_amenity_lng != null) {
+      // Deterministic offset based on component id so pins don't shuffle
+      // between renders but DO spread visibly across the amenity area.
+      // ~30m radius for amenity-clustered items (visible but tight).
+      const r = 0.00030; // ~33m
+      const seed = (function hash(s) {
+        let h = 0;
+        for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+        return Math.abs(h) % 100000 / 100000;
+      })(c.id);
+      const angle = seed * 2 * Math.PI;
+      const dist = r * (0.4 + (((seed * 7919) % 1000) / 1000) * 0.6);
+      const lat = Number(c.linked_amenity_lat) + dist * Math.cos(angle);
+      const lngScale = Math.cos(Number(c.linked_amenity_lat) * Math.PI / 180) || 1;
+      const lng = Number(c.linked_amenity_lng) + (dist * Math.sin(angle)) / lngScale;
+      return { lat, lng, source: 'amenity' };
+    }
+    // Unlinked → use component's own stored coords (if any)
+    if (c.lat != null && c.lng != null) {
+      return { lat: Number(c.lat), lng: Number(c.lng), source: 'component' };
+    }
+    return null;
+  }
+
   // Compute the curated set: apply urgency + category filters, then rank
-  // by priority score and take top N. This is the "curated > comprehensive"
-  // principle applied to the map — boards see the items that matter most
-  // for this meeting, not every component.
-  const filtered = allComponents
-    .filter(c => c.lat != null && c.lng != null)
-    .filter(c => urgencyFilter[c.urgency_band || 'far'])
-    .filter(c => categoryFilter[c.category]);
-  const ranked = filtered.slice().sort((a, b) => priorityScore(b) - priorityScore(a));
+  // by priority score and take top N.
+  const withEffective = allComponents
+    .map(c => ({ c, eff: effectiveCoords(c) }))
+    .filter(x => x.eff != null)
+    .filter(x => urgencyFilter[x.c.urgency_band || 'far'])
+    .filter(x => categoryFilter[x.c.category]);
+  const ranked = withEffective.slice().sort((a, b) => priorityScore(b.c) - priorityScore(a.c));
   const shownSet = topN === 'all'
-    ? new Set(ranked.map(c => c.id))
-    : new Set(ranked.slice(0, Number(topN)).map(c => c.id));
+    ? new Set(ranked.map(x => x.c.id))
+    : new Set(ranked.slice(0, Number(topN)).map(x => x.c.id));
 
   let placed = 0;
-  let withCoords = filtered.length;
-  const unpinnedCount = allComponents.filter(c => c.lat == null || c.lng == null).length;
+  let withCoords = withEffective.length;
+  const unpinnedCount = allComponents.length - withEffective.length;
   showUnpinnedBanner(unpinnedCount, allComponents.length, shownSet.size, ranked.length);
   const bounds = boundaryLayer ? null : L.latLngBounds([]);
 
   allComponents.forEach(c => {
-    if (c.lat == null || c.lng == null) return;
+    const eff = effectiveCoords(c);
+    if (!eff) return;
     const band = c.urgency_band || 'far';
     if (!urgencyFilter[band]) return;
     if (!categoryFilter[c.category]) return;
@@ -1016,11 +1049,11 @@ function renderMarkers() {
       iconSize: [36, 44],
       iconAnchor: [18, 44],
     });
-    const marker = L.marker([Number(c.lat), Number(c.lng)], { icon }).addTo(map);
+    const marker = L.marker([eff.lat, eff.lng], { icon }).addTo(map);
     marker.on('click', () => openDetail(c));
     mapMarkers.push(marker);
     placed++;
-    if (bounds) bounds.extend([Number(c.lat), Number(c.lng)]);
+    if (bounds) bounds.extend([eff.lat, eff.lng]);
   });
 
   if (!boundaryLayer && placed > 0 && bounds && bounds.isValid()) {

@@ -312,7 +312,8 @@
     <div id="summaryCard"></div>
     <button class="add-btn" id="addBtn">+ Add component</button>
     <a href="/reserve-study-import.html" style="display:block; text-align:center; padding: 8px 12px; margin-bottom: 8px; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); text-decoration: none; font-size: 12.5px; transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';">📥 Import reserve study Excel</a>
-    <button id="autoPlaceBtn" style="width:100%; padding: 8px 12px; margin-bottom: 16px; background: transparent; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); cursor: pointer; font-size: 12.5px; font-family: var(--font-sans); transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';" title="Drop pins on unpinned components using nearby amenities as anchors. Idempotent — only touches components without coords.">📍 Auto-place pins from amenities</button>
+    <button id="autoLinkBtn" style="width:100%; padding: 8px 12px; margin-bottom: 6px; background: transparent; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); cursor: pointer; font-size: 12.5px; font-family: var(--font-sans); transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';" title="Link reserve components to their best-matching amenity by category. Linked components automatically track the amenity's location on the board map — pin once, propagates everywhere.">🔗 Auto-link to amenities by category</button>
+    <button id="autoPlaceBtn" style="width:100%; padding: 8px 12px; margin-bottom: 16px; background: transparent; border: 1px solid var(--rule-strong); border-radius: 6px; color: var(--ink-soft); cursor: pointer; font-size: 12.5px; font-family: var(--font-sans); transition: all 0.15s ease;" onmouseover="this.style.borderColor='var(--gold)'; this.style.color='var(--gold)';" onmouseout="this.style.borderColor='var(--rule-strong)'; this.style.color='var(--ink-soft)';" title="Drop fixed pins on unlinked components using nearby amenities as anchors. Use auto-link above for components that should follow their amenity.">📍 Auto-place fixed pins (perimeter items)</button>
     <div id="componentList"></div>
   </aside>
 
@@ -1024,6 +1025,32 @@ $('communitySelect').addEventListener('change', async (e) => {
   renderEditor();
 });
 $('addBtn').addEventListener('click', newComponent);
+
+$('autoLinkBtn').addEventListener('click', async () => {
+  if (!state.selectedCommunityId) { toast('Pick a community first.', 'error'); return; }
+  const btn = $('autoLinkBtn');
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Linking…';
+  try {
+    const r = await fetch(`/api/reserve-studies/community/${state.selectedCommunityId}/auto-link-amenities`, { method: 'POST' });
+    const result = await r.json();
+    if (!result.ok) { toast(result.error || 'Auto-link failed', 'error'); return; }
+    if (result.no_amenities) {
+      toast('No amenities pinned yet — pin Pool/Clubhouse/etc. in 🏊 Amenities first.', 'error');
+    } else if (result.linked === 0) {
+      toast(`All eligible components already linked. (${result.skipped} perimeter/unmatchable.)`, 'success');
+    } else {
+      toast(`Linked ${result.linked} component${result.linked === 1 ? '' : 's'} to amenities. Reserve map updates immediately.`, 'success');
+      await loadComponentsAndSummary();
+    }
+  } catch (err) {
+    toast('Auto-link failed: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
+});
 
 $('autoPlaceBtn').addEventListener('click', async () => {
   if (!state.selectedCommunityId) { toast('Pick a community first.', 'error'); return; }
