@@ -765,6 +765,20 @@
         <button type="button" class="ed-mode-btn" data-mode="quick" onclick="setEdMode('quick')">⚡ Quick Lookup</button>
       </div>
 
+      <!-- Tone toggle — default casual (Bedrock-voice, no AI tells). Flip off for formal/measured tone (heated homeowner, sensitive situations). Letters/ACC/compliance surfaces are untouched. -->
+      <label style="display:inline-flex; align-items:center; gap:6px; margin-top:6px; padding:4px 10px; background:#FFFBEF; border:1px solid #E8D880; border-radius:14px; font-size:11px; color:#806820; cursor:pointer;" id="edCasualPill" title="Casual tone — Bedrock-manager voice, no 'Thank you for reaching out', no AI tells. Turn off for formal/measured tone.">
+        <input type="checkbox" id="edCasualToggle" checked style="margin:0;" onchange="localStorage.setItem('asked-casual', this.checked ? '1' : '0');">
+        <span>💬 Casual tone</span>
+      </label>
+      <script>
+        // Restore Casual toggle state from prior visit (defaults to ON if never set)
+        (function() {
+          const saved = localStorage.getItem('asked-casual');
+          const cb = document.getElementById('edCasualToggle');
+          if (cb && saved !== null) cb.checked = (saved === '1');
+        })();
+      </script>
+
       <div class="section-label" style="margin-top:10px;">Community Context</div>
       <select id="edCommunitySelect" class="draft-type-select">
         <option value="">— Use community selected at top —</option>
@@ -15598,6 +15612,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       formData.append('situation', cfg.wrapInput(situation));
       if (resolvedCommunity) formData.append('community', resolvedCommunity);
       if (cfg.serverMode) formData.append('mode', cfg.serverMode);
+      // Casual tone toggle — default on. Sends 'casual' or 'formal' to backend.
+      const casualToggle = document.getElementById('edCasualToggle');
+      formData.append('tone', (casualToggle && !casualToggle.checked) ? 'formal' : 'casual');
       edSelectedFiles.forEach((f) => formData.append('attachment', f));
       const res = await fetch('/ask-ed', {
         method: 'POST',

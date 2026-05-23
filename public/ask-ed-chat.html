@@ -451,6 +451,9 @@
     <label class="pill toggle" id="concisePill" title="Terse 1-2 sentence answers (great for field staff + voice)">
       <input type="checkbox" id="conciseToggle"><span aria-hidden="true">⚡</span><span>Concise</span>
     </label>
+    <label class="pill toggle on" id="casualPill" title="Casual tone — Bedrock-manager voice, no 'Thank you for reaching out', no AI tells. Turn OFF for formal/measured tone.">
+      <input type="checkbox" id="casualToggle" checked><span aria-hidden="true">💬</span><span>Casual</span>
+    </label>
     <div class="pill" title="Which community's docs to consult">
       <span aria-hidden="true">🏘️</span>
       <select id="communitySelect" aria-label="Community">
@@ -525,6 +528,8 @@ const speakerToggle = document.getElementById('speakerToggle');
 const voiceSelectEl = document.getElementById('voiceSelect');
 const concisePill   = document.getElementById('concisePill');
 const conciseToggle = document.getElementById('conciseToggle');
+const casualPill    = document.getElementById('casualPill');
+const casualToggle  = document.getElementById('casualToggle');
 const stopTtsBtn    = document.getElementById('stopTtsBtn');
 const installBanner = document.getElementById('installBanner');
 const installBtn    = document.getElementById('installBtn');
@@ -1034,6 +1039,17 @@ conciseToggle.checked = localStorage.getItem('asked-concise') === '1';
 applyConciseToggle();
 conciseToggle.addEventListener('change', applyConciseToggle);
 
+// ---------- Casual tone toggle ----------
+function applyCasualToggle() {
+  casualPill.classList.toggle('on', casualToggle.checked);
+  localStorage.setItem('asked-casual', casualToggle.checked ? '1' : '0');
+}
+// Default ON unless user explicitly turned it off in a prior visit
+const savedCasual = localStorage.getItem('asked-casual');
+casualToggle.checked = (savedCasual === null) ? true : (savedCasual === '1');
+applyCasualToggle();
+casualToggle.addEventListener('change', applyCasualToggle);
+
 // ---------- Voice picker ----------
 const VOICE_LABEL = { onyx:'Onyx', echo:'Echo', fable:'Fable', alloy:'Alloy', nova:'Nova', shimmer:'Shimmer' };
 let currentVoice = localStorage.getItem('asked-voice') || 'onyx';
@@ -1334,6 +1350,7 @@ runStream = async function patchedRunStream({ filesToSend }) {
     form.append('community', commSel.value || '');
     form.append('messages', JSON.stringify(history));
     form.append('concise', conciseToggle.checked ? 'true' : 'false');
+    form.append('tone', casualToggle.checked ? 'casual' : 'formal');
     for (const f of filesToSend) form.append('attachment', f, f.name);
 
     const res = await fetch('/ask-ed-chat-stream', {

@@ -2055,6 +2055,113 @@ app.post('/api/tts', async (req, res) => {
 });
 
 // ============================================================================
+// ============================================================================
+// TONE — casual vs formal
+// ----------------------------------------------------------------------------
+// Ed's diagnosis 2026-05-22: AI text reads as AI not because of CONTENT but
+// because of TELLS — comprehensive when it shouldn't be, perfect grammar with
+// em-dashes everywhere, generic "Thank you for reaching out" openers, closing
+// boilerplate, formal vocabulary unnecessarily, no contractions, and
+// pre-empting questions that weren't asked. The cure is a written-by-a-real-
+// person voice: brevity + specificity + contractions + answer-only-what's-asked.
+//
+// CASUAL is the default for askEd, chat, voice, draft-response, and review.
+// FORMAL is reserved for those rare cases where the homeowner is heated and
+// you want a measured tone, or where staff explicitly wants the older style.
+//
+// CRITICAL: this addendum is ONLY injected on the conversational surfaces.
+// It is NEVER applied to violation letters, ACC decisions, estoppels,
+// builder ARC letters, annual meeting notices, or board packets. Those
+// surfaces have their own renderers (lib/enforcement/*, templates/*) and
+// the casual tone would be wrong/legally risky there.
+// ============================================================================
+const TONE_CASUAL_ADDENDUM = `
+
+TONE — CASUAL (active for emails, chat, voice, drafts, review — NOT for letters, ACC decisions, or board packets):
+Write like a knowledgeable Bedrock manager talking to a real person, not like a corporate help desk. Specifically:
+
+OPENERS — BANNED. Never begin with:
+- "Thank you for reaching out…"
+- "Thanks for your message…"
+- "Great question…"
+- "Certainly…"
+- "Of course…"
+- "I hope this email finds you well…"
+Just answer. Use their first name if you have it ("Hey Marcia — ").
+
+CLOSERS — BANNED. Never end with:
+- "Please let me know if you have any other questions."
+- "I hope this helps."
+- "Please don't hesitate to reach out."
+- "Looking forward to your reply."
+When the answer's done, stop.
+
+MIDDLE — rewrite if you catch yourself:
+- "I would be happy to" → "I can"
+- "I will be sure to" → "I'll"
+- "pursuant to" → "per" or "based on"
+- "regarding your concern about" → "about" or omit
+- "additionally" → "also" or new sentence
+
+GENERAL RULES:
+- Contractions required: I'll, don't, we're, you'll, can't, won't, it's.
+- Match their length. One-line question → one-line answer. Don't pad.
+- Don't pre-empt edge cases — answer what they asked, not what they MIGHT ask.
+- Don't apologize for things you can't fix.
+- If you don't know, say "I'll find out" — never invent.
+- Specificity is the human signal: reference a specific detail from THEIR message (the pothole, the gate code, the deadline they mentioned) so it's obvious you read it.
+- No bullet lists unless they genuinely help — plain sentences usually win.
+- No bold or headers unless the answer is complex.
+- Em-dashes OK but sparingly; commas work most places.
+- No fake typos, no fake casualness. Brevity and specificity are what make it human — not errors.`;
+
+// Silent rewriter — strips banned phrases from non-streaming responses.
+// We CAN'T do this on streaming endpoints (would show up mid-stream), so for
+// streaming we rely on the prompt addendum above. For /ask-ed (non-streaming)
+// and /review-draft, this is a belt-and-suspenders second pass: the prompt
+// tells the model not to use these phrases, AND this strips any that slip
+// through. Silent — no warnings shown to staff per Ed's preference.
+function stripBannedPhrases(text) {
+  if (!text || typeof text !== 'string') return text;
+  let t = text;
+
+  // Banned OPENERS — strip the whole opening sentence
+  const openers = [
+    /^\s*thank you for reaching out[^.!?\n]*[.!?\n]\s*/i,
+    /^\s*thanks for reaching out[^.!?\n]*[.!?\n]\s*/i,
+    /^\s*thank you for your (?:message|email|note|inquiry)[^.!?\n]*[.!?\n]\s*/i,
+    /^\s*thanks for your (?:message|email|note|inquiry)[^.!?\n]*[.!?\n]\s*/i,
+    /^\s*i hope this (?:email )?finds you well[^.!?\n]*[.!?\n]\s*/i,
+    /^\s*great question[!.]?\s*/i,
+    /^\s*certainly[!,—\s\-]+/i,
+    /^\s*of course[!,—\s\-]+/i,
+    /^\s*absolutely[!,—\s\-]+/i,
+  ];
+  for (const re of openers) t = t.replace(re, '');
+
+  // Banned CLOSERS — strip the trailing sentence
+  const closers = [
+    /\s*please (?:don't|do not) hesitate to (?:reach out|contact me|let me know)[^.!?\n]*[.!?]\s*$/i,
+    /\s*(?:please )?(?:feel free|don't hesitate) to (?:reach out|contact me)[^.!?\n]*[.!?]\s*$/i,
+    /\s*(?:please )?let me know if (?:you have|there's|there are) (?:any |any other |additional )?(?:questions?|concerns?|further questions?)[^.!?\n]*[.!?]\s*$/i,
+    /\s*if you have any (?:further |other |additional )?(?:questions?|concerns?)[^.!?\n]*[.!?]\s*$/i,
+    /\s*i hope this helps[!.]?\s*$/i,
+    /\s*hope (?:this|that) helps[!.]?\s*$/i,
+    /\s*looking forward to (?:your reply|hearing from you|your response)[!.]?\s*$/i,
+  ];
+  for (const re of closers) t = t.replace(re, '');
+
+  // MIDDLE phrase rewrites
+  t = t.replace(/\bi would be happy to\b/gi, 'I can');
+  t = t.replace(/\bi'd be happy to\b/gi, "I'll");
+  t = t.replace(/\bplease be advised that\b/gi, '');
+  t = t.replace(/\bkindly\b/gi, 'please');
+
+  // Normalize whitespace after strips
+  t = t.replace(/\n{3,}/g, '\n\n').replace(/[ \t]{2,}/g, ' ').trim();
+  return t;
+}
+
 // askEd shared system prompt — same text used by /ask-ed and /ask-ed-stream
 // Defined once so the streaming and non-streaming endpoints stay in sync.
 // ============================================================================
@@ -2258,6 +2365,8 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
     const modeNorm = (mode || '').toString().toLowerCase().trim();
     const quickMode = modeNorm === 'quick';
     const coachMode = modeNorm === 'coach_review';
+    // Tone — default casual (Bedrock's standing voice for non-letter surfaces).
+    const toneFlag = (String(req.body.tone || 'casual').toLowerCase() === 'formal') ? 'formal' : 'casual';
     // Coach mode skips RAG entirely (the draft being reviewed is the source
     // material — no value in pulling other docs). Quick mode USED to skip
     // RAG too, but that meant field-staff doc questions ("what's the
@@ -2318,9 +2427,10 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
       situation, community, communityContext, playbookContext, docContext, attachmentContents, attachmentNote
     });
 
-    const systemPrompt = quickMode
+    const systemPrompt = (quickMode
       ? askEdQuickSystem()
-      : (coachMode ? askEdCoachSystem() : askEdSystem());
+      : (coachMode ? askEdCoachSystem() : askEdSystem())
+    ) + (toneFlag === 'casual' ? TONE_CASUAL_ADDENDUM : '');
 
     // Raw SSE iterator (stream:true on create). Avoids the listener-timing
     // race of the higher-level .stream() + .on('text') API.
@@ -2474,6 +2584,9 @@ app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res)
     // the request is multipart (because FormData stringifies).
     const community = (req.body.community || '').toString();
     const conciseFlag = String(req.body.concise || '').toLowerCase() === 'true';
+    // Tone — defaults to 'casual' (the new Bedrock default) for everything
+    // except explicit 'formal'. Casual injects the no-AI-tells voice block.
+    const toneFlag = (String(req.body.tone || 'casual').toLowerCase() === 'formal') ? 'formal' : 'casual';
     let rawMessages = req.body.messages;
     if (typeof rawMessages === 'string') {
       try { rawMessages = JSON.parse(rawMessages); }
@@ -2596,7 +2709,8 @@ You are in a multi-turn chat with a Bedrock staff member or board member. They c
 - If a follow-up shifts to a clearly different topic, you can return to the structured template.
 - Keep paragraphs tight. Use bullets when a list helps. Never wall-of-text on a clarifying question.`;
 
-    const systemPrompt = askEdSystem() + (conciseFlag ? conciseAddendum : standardAddendum) + `
+    const toneAddendum = toneFlag === 'casual' ? TONE_CASUAL_ADDENDUM : '';
+    const systemPrompt = askEdSystem() + (conciseFlag ? conciseAddendum : standardAddendum) + toneAddendum + `
 
 TOOL USE: You have a lookup_community_vendor tool that returns active vendor contacts (vendor name, contact person, phone, email, last-updated date) for a community + service category. Whenever the user asks for a phone number, email, or vendor contact for a specific community, ALWAYS call this tool — never recite phone numbers or emails from memory or the community profile summary. The tool's response is the source of truth.`;
 
@@ -2709,6 +2823,7 @@ app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
     const modeNorm = (mode || '').toString().toLowerCase().trim();
     const quickMode = modeNorm === 'quick';
     const coachMode = modeNorm === 'coach_review';
+    const toneFlag = (String(req.body.tone || 'casual').toLowerCase() === 'formal') ? 'formal' : 'casual';
     const skipRag = quickMode || coachMode;
 
     // Build attachment content blocks — supports multiple files
@@ -2855,9 +2970,10 @@ TOOL USE: For any phone, email, or vendor contact question, ALWAYS call lookup_c
 
 Do not mention you are an AI. Do not apologize. Do not editorialize. Just the facts.`;
 
-    const systemForCall = quickMode
+    const systemForCall = (quickMode
       ? askEdQuickPrompt
-      : (coachMode ? askEdCoachSystem() : askEdSystemPrompt);
+      : (coachMode ? askEdCoachSystem() : askEdSystemPrompt)
+    ) + (toneFlag === 'casual' ? TONE_CASUAL_ADDENDUM : '');
 
     const { text: guidance } = await askEdTools.runAskEdWithTools({
       anthropic,
@@ -2871,7 +2987,12 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
       max_tokens: quickMode ? 400 : (coachMode ? 3000 : 4000),
     });
 
-    res.json({ guidance });
+    // Silent belt-and-suspenders: even though the prompt forbids the
+    // "Thank you for reaching out / I hope this helps" tells, strip any
+    // that slipped through. Only applied in casual mode — formal mode
+    // intentionally preserves the more measured phrasing.
+    const cleaned = toneFlag === 'casual' ? stripBannedPhrases(guidance) : guidance;
+    res.json({ guidance: cleaned });
   } catch (err) {
     console.error(err);
     res.status(500).json({ guidance: 'Error getting guidance. Please try again.' });
@@ -2917,14 +3038,26 @@ Format your response as:
 1. GOOD START — what the draft got right, even if small
 2. A FEW THINGS TO STRENGTHEN — specific suggestions framed as improvements not failures
 3. IMPROVED VERSION — a rewrite that shows what great looks like
-4. QUICK SUMMARY — two or three sentences on the main changes made`,
+4. QUICK SUMMARY — two or three sentences on the main changes made` +
+      // Apply casual tone to the IMPROVED VERSION the coach writes, unless
+      // staff explicitly asked for a formal draft type (violation notice,
+      // attorney correspondence, board legal memo).
+      (((req.body.tone || 'casual').toLowerCase() === 'casual')
+        && !['violation notice','attorney communication','board legal memo'].includes((draftType || '').toLowerCase())
+          ? TONE_CASUAL_ADDENDUM
+          : ''),
       messages: [{
         role: 'user',
         content: `Please review this ${draftType || 'communication'} draft${community ? ` for ${community}` : ''} and provide feedback and an improved version.\n\nDraft to review:\n\n${draft}`
       }]
     });
 
-    res.json({ review: response.content[0].text });
+    const reviewText = response.content[0].text;
+    const cleaned = (((req.body.tone || 'casual').toLowerCase() === 'casual')
+      && !['violation notice','attorney communication','board legal memo'].includes((draftType || '').toLowerCase()))
+        ? stripBannedPhrases(reviewText)
+        : reviewText;
+    res.json({ review: cleaned });
   } catch (err) {
     console.error(err);
     res.status(500).json({ review: 'Error reviewing draft. Please try again.' });
