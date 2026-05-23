@@ -2,8 +2,13 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Chat with askEd · Bedrock Intelligence</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>askEd · Bedrock Intelligence</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#1A3050">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="askEd">
 <link rel="stylesheet" href="/brand.css">
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
@@ -328,6 +333,70 @@
   }
   @keyframes blink { 50% { opacity: 0; } }
 
+  /* Mic button (left of textarea, mirrors paperclip on the right) */
+  .icon-btn.listening {
+    background: #962a2a; color: white;
+    animation: pulseRec 1.2s ease-in-out infinite;
+  }
+  .icon-btn.listening:hover { background: #b03434; color: white; }
+  @keyframes pulseRec {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(150, 42, 42, 0.45); }
+    50%      { box-shadow: 0 0 0 8px rgba(150, 42, 42, 0); }
+  }
+  .icon-btn.disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* Pill toggles in the topbar — Read aloud, Concise */
+  .pill.toggle {
+    background: var(--paper); cursor: pointer;
+    user-select: none;
+  }
+  .pill.toggle.on {
+    background: #FFFBEF; border-color: #D4AF37; color: #1A3050;
+  }
+  .pill.toggle input { display: none; }
+  .pill .voice-select-wrap {
+    display: none; margin-left: 4px; padding-left: 6px;
+    border-left: 1px solid var(--rule-light);
+  }
+  .pill.toggle.on .voice-select-wrap { display: inline-flex; }
+
+  /* Per-bubble speak button (replaces standalone Replay) */
+  .bubble-action.speak.playing { color: #1A3050; border-color: #D4AF37; }
+
+  /* Floating stop-talking pill — visible while TTS is playing */
+  .stop-tts {
+    position: fixed; bottom: 100px; left: 50%; transform: translateX(-50%);
+    background: #962a2a; color: white; border: none;
+    padding: 8px 18px; border-radius: 999px;
+    font-size: 13px; cursor: pointer; z-index: 90;
+    box-shadow: 0 4px 14px rgba(150,42,42,0.4);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease;
+    font-family: var(--font-sans);
+  }
+  .stop-tts.show { opacity: 1; pointer-events: auto; }
+
+  /* Install banner — Android Chrome A2HS */
+  .install-banner {
+    position: fixed; bottom: 16px; left: 16px; right: 16px;
+    background: #1A3050; color: white;
+    padding: 12px 16px; border-radius: 12px;
+    display: none; align-items: center; gap: 12px;
+    box-shadow: 0 6px 20px rgba(26,48,80,0.3);
+    z-index: 110;
+    font-size: 13.5px;
+  }
+  .install-banner.show { display: flex; }
+  .install-banner button {
+    background: #D4AF37; color: #1A3050; border: none;
+    padding: 6px 14px; border-radius: 6px; cursor: pointer;
+    font-weight: 600; font-family: inherit;
+  }
+  .install-banner .dismiss {
+    background: transparent; color: rgba(255,255,255,0.7);
+    border: 1px solid rgba(255,255,255,0.3);
+  }
+
   /* Toast */
   .toast {
     position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(8px);
@@ -368,6 +437,20 @@
     </div>
   </div>
   <div class="topbar-right">
+    <label class="pill toggle" id="speakerPill" title="Read responses aloud (Ed's voice)">
+      <input type="checkbox" id="speakerToggle"><span aria-hidden="true">🔊</span><span>Read aloud</span>
+      <span class="voice-select-wrap"><select id="voiceSelect" aria-label="askEd voice" style="background:transparent; border:none; font-family:inherit; font-size:12px; color:inherit; outline:none;">
+        <option value="onyx">Onyx</option>
+        <option value="echo">Echo</option>
+        <option value="fable">Fable</option>
+        <option value="alloy">Alloy</option>
+        <option value="nova">Nova</option>
+        <option value="shimmer">Shimmer</option>
+      </select></span>
+    </label>
+    <label class="pill toggle" id="concisePill" title="Terse 1-2 sentence answers (great for field staff + voice)">
+      <input type="checkbox" id="conciseToggle"><span aria-hidden="true">⚡</span><span>Concise</span>
+    </label>
     <div class="pill" title="Which community's docs to consult">
       <span aria-hidden="true">🏘️</span>
       <select id="communitySelect" aria-label="Community">
@@ -399,15 +482,24 @@
   <div class="composer-wrap">
     <div class="composer-attachments" id="composerAttachments"></div>
     <div class="composer" id="composer">
+      <button class="icon-btn" id="micBtn" title="Tap to speak (transcribed by Whisper)" aria-label="Voice input">🎤</button>
       <button class="icon-btn" id="attachBtn" title="Attach PDFs or images (or drag & drop)" aria-label="Attach files">📎</button>
       <input type="file" id="fileInput" accept=".pdf,image/*" multiple style="display:none;">
-      <textarea id="input" placeholder="Ask Ed anything…  (Enter = send · Shift+Enter = new line · drop files anywhere here)" rows="1"></textarea>
+      <textarea id="input" placeholder="Ask Ed anything…  (Enter = send · Shift+Enter = new line · 🎤 to speak · 📎 or drop files)" rows="1"></textarea>
       <button class="send-btn" id="sendBtn" disabled title="Send">
         <svg viewBox="0 0 24 24"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>
       </button>
     </div>
     <div class="composer-hint" id="composerHint">Ed-voice synthesis · community docs + playbook + vendor directory</div>
   </div>
+</div>
+
+<button class="stop-tts" id="stopTtsBtn" aria-label="Stop Ed talking">⏹ Stop talking</button>
+
+<div class="install-banner" id="installBanner">
+  <div style="flex:1;">📲 Install askEd to your home screen for one-tap access</div>
+  <button id="installBtn">Install</button>
+  <button class="dismiss" id="dismissInstall">Not now</button>
 </div>
 
 <div class="toast" id="toast"></div>
@@ -427,6 +519,16 @@ const composerHint = document.getElementById('composerHint');
 const attachBtn  = document.getElementById('attachBtn');
 const fileInput  = document.getElementById('fileInput');
 const attachStrip = document.getElementById('composerAttachments');
+const micBtn       = document.getElementById('micBtn');
+const speakerPill  = document.getElementById('speakerPill');
+const speakerToggle = document.getElementById('speakerToggle');
+const voiceSelectEl = document.getElementById('voiceSelect');
+const concisePill   = document.getElementById('concisePill');
+const conciseToggle = document.getElementById('conciseToggle');
+const stopTtsBtn    = document.getElementById('stopTtsBtn');
+const installBanner = document.getElementById('installBanner');
+const installBtn    = document.getElementById('installBtn');
+const dismissInstall = document.getElementById('dismissInstall');
 
 // In-memory conversation. Each turn: { role: 'user'|'assistant', content: '...', attachments?: [{name, type}] }
 let history = [];
@@ -660,7 +762,7 @@ async function regenerateLast() {
   await runStream({ filesToSend: [] });
 }
 
-async function runStream({ filesToSend }) {
+let runStream = async function ({ filesToSend }) {
   // Placeholder assistant bubble with context badge + thinking caret
   if (emptyEl && emptyEl.parentNode) emptyEl.remove();
   const turn = document.createElement('div');
@@ -789,7 +891,7 @@ async function runStream({ filesToSend }) {
     messagesEl.scrollTop = messagesEl.scrollHeight;
     inputEl.focus();
   }
-}
+};
 
 // ---------- Quickstart ----------
 function quickstart(btn) {
@@ -888,6 +990,496 @@ commSel.addEventListener('change', () => {
 
 loadCommunities();
 inputEl.focus();
+
+// ============================================================================
+// VOICE — concise toggle, mic input, TTS playback
+// Ported from /voice.html so this surface is now the single Voice+Chat
+// experience. See server.js conciseFlag handling.
+// ============================================================================
+
+// ---------- Service worker (PWA install support) ----------
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch((err) => console.warn('SW registration failed', err));
+  });
+}
+
+// ---------- A2HS install banner (Android Chrome) ----------
+let deferredInstallPrompt = null;
+window.addEventListener('beforeinstallprompt', (e) => {
+  e.preventDefault();
+  deferredInstallPrompt = e;
+  if (localStorage.getItem('asked-install-dismissed') !== 'true') {
+    installBanner.classList.add('show');
+  }
+});
+installBtn.addEventListener('click', async () => {
+  if (!deferredInstallPrompt) return;
+  deferredInstallPrompt.prompt();
+  await deferredInstallPrompt.userChoice;
+  deferredInstallPrompt = null;
+  installBanner.classList.remove('show');
+});
+dismissInstall.addEventListener('click', () => {
+  installBanner.classList.remove('show');
+  localStorage.setItem('asked-install-dismissed', 'true');
+});
+
+// ---------- Concise toggle ----------
+function applyConciseToggle() {
+  concisePill.classList.toggle('on', conciseToggle.checked);
+  localStorage.setItem('asked-concise', conciseToggle.checked ? '1' : '0');
+}
+conciseToggle.checked = localStorage.getItem('asked-concise') === '1';
+applyConciseToggle();
+conciseToggle.addEventListener('change', applyConciseToggle);
+
+// ---------- Voice picker ----------
+const VOICE_LABEL = { onyx:'Onyx', echo:'Echo', fable:'Fable', alloy:'Alloy', nova:'Nova', shimmer:'Shimmer' };
+let currentVoice = localStorage.getItem('asked-voice') || 'onyx';
+if (!VOICE_LABEL[currentVoice]) currentVoice = 'onyx';
+voiceSelectEl.value = currentVoice;
+voiceSelectEl.addEventListener('change', () => {
+  currentVoice = voiceSelectEl.value;
+  localStorage.setItem('asked-voice', currentVoice);
+  resetTtsQueue();
+  // Preview the new voice with a short greeting
+  speakOne(`Hi, I'm Ed. This is the ${VOICE_LABEL[currentVoice]} voice.`);
+});
+
+// ---------- Speaker toggle (Read aloud) ----------
+function applySpeakerToggle() {
+  speakerPill.classList.toggle('on', speakerToggle.checked);
+  localStorage.setItem('asked-speaker', speakerToggle.checked ? '1' : '0');
+  if (!speakerToggle.checked) resetTtsQueue();
+}
+speakerToggle.checked = localStorage.getItem('asked-speaker') === '1';
+applySpeakerToggle();
+speakerToggle.addEventListener('change', applySpeakerToggle);
+
+// Clicking the speaker pill area shouldn't accept clicks on the voice
+// dropdown as toggle clicks. Stop propagation.
+voiceSelectEl.addEventListener('click', (e) => e.stopPropagation());
+
+// ---------- Stop-TTS pill ----------
+stopTtsBtn.addEventListener('click', () => {
+  resetTtsQueue();
+  toast('Stopped');
+});
+
+// ============================================================================
+// TTS playback — sentence-aware queue with strict ordering
+// ============================================================================
+const ttsAudio = new Audio();
+ttsAudio.preload = 'auto';
+let audioUnlocked = false;
+function unlockAudio() {
+  if (audioUnlocked) return;
+  try {
+    ttsAudio.src = 'data:audio/wav;base64,UklGRhwAAABXQVZFZm10IBAAAAABAAEAQB8AAEAfAAABAAgAZGF0YQAAAAA=';
+    const p = ttsAudio.play();
+    if (p && p.then) p.then(() => { audioUnlocked = true; }).catch(() => {});
+    else audioUnlocked = true;
+  } catch (_) {}
+}
+document.addEventListener('click', unlockAudio, { once: true, capture: true });
+document.addEventListener('touchstart', unlockAudio, { once: true, capture: true });
+
+const ttsQueue = [];
+let ttsPlaying = false;
+let currentTtsResolver = null;
+
+function updateStopTtsBtn() {
+  const visible = ttsPlaying || ttsQueue.length > 0;
+  stopTtsBtn.classList.toggle('show', visible);
+}
+
+function enqueueTtsSentence(sentence) {
+  if (!speakerToggle.checked) return;
+  const cleaned = cleanForTts(sentence);
+  if (!cleaned) return;
+  const voiceAtRequest = currentVoice;
+  const audioPromise = fetch('/api/tts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text: cleaned, voice: voiceAtRequest }),
+  })
+    .then((r) => { if (!r.ok) throw new Error('TTS HTTP ' + r.status); return r.blob(); })
+    .then((blob) => URL.createObjectURL(blob))
+    .catch((err) => { console.warn('tts seg failed', err); return null; });
+  ttsQueue.push({ audioPromise });
+  updateStopTtsBtn();
+  drainTtsQueue();
+}
+
+async function drainTtsQueue() {
+  if (ttsPlaying) return;
+  const next = ttsQueue.shift();
+  if (!next) { updateStopTtsBtn(); return; }
+  ttsPlaying = true;
+  updateStopTtsBtn();
+  try {
+    const url = await next.audioPromise;
+    if (!url) { ttsPlaying = false; updateStopTtsBtn(); return drainTtsQueue(); }
+    ttsAudio.src = url;
+    await new Promise((resolve) => {
+      currentTtsResolver = resolve;
+      ttsAudio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+      ttsAudio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+      const p = ttsAudio.play();
+      if (p && p.catch) p.catch(() => resolve());
+    });
+    currentTtsResolver = null;
+  } catch (err) { console.warn('tts play err', err); }
+  ttsPlaying = false;
+  updateStopTtsBtn();
+  drainTtsQueue();
+}
+
+function resetTtsQueue() {
+  ttsQueue.length = 0;
+  try { ttsAudio.pause(); } catch (_) {}
+  try { ttsAudio.currentTime = 0; } catch (_) {}
+  if (currentTtsResolver) { currentTtsResolver(); currentTtsResolver = null; }
+  updateStopTtsBtn();
+}
+
+// One-off speak (voice preview + bubble replay button)
+async function speakOne(text) {
+  resetTtsQueue();
+  const cleaned = cleanForTts(text);
+  if (!cleaned) return;
+  try {
+    const res = await fetch('/api/tts', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text: cleaned, voice: currentVoice }),
+    });
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    ttsAudio.src = url;
+    ttsAudio.onended = () => URL.revokeObjectURL(url);
+    ttsAudio.onerror = () => URL.revokeObjectURL(url);
+    await ttsAudio.play();
+  } catch (err) { console.warn('speakOne failed', err); }
+}
+
+function cleanForTts(text) {
+  let t = String(text || '')
+    .replace(/^#{1,6}\s+.*$/gm, '')       // drop heading lines
+    .replace(/^[-*•]\s+/gm, '')           // bullet dashes
+    .replace(/^\d+\.\s+/gm, '')           // ordered-list markers
+    .replace(/[*_`]/g, '')                // markdown emphasis
+    .replace(/\[(.*?)\]\(.*?\)/g, '$1')   // markdown links
+    .replace(/[✅📋💡⚠️🧠🎙️📑🏗️📊🏘️🚤🐕🌳🔊📲⚡💬]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (t.length < 3) return '';
+  if (/^[A-Z\s\-]{4,}$/.test(t)) return '';
+  return t;
+}
+
+function flushSentences(buffer) {
+  const sentences = [];
+  let remainder = buffer;
+  const re = /([.!?])\s+|\n{2,}/g;
+  let lastIdx = 0;
+  let m;
+  while ((m = re.exec(buffer)) !== null) {
+    const end = m.index + (m[1] ? 1 : 0);
+    const piece = buffer.slice(lastIdx, end).trim();
+    if (piece) sentences.push(piece);
+    lastIdx = re.lastIndex;
+  }
+  remainder = buffer.slice(lastIdx);
+  return { sentences, remainder };
+}
+
+// ============================================================================
+// MIC input — record → /api/stt (Whisper) → fill textarea → auto-send
+// ============================================================================
+let mediaRecorder = null;
+let recordedChunks = [];
+let listening = false;
+
+function pickAudioMime() {
+  const candidates = ['audio/webm;codecs=opus','audio/webm','audio/mp4','audio/mp4;codecs=mp4a.40.2','audio/ogg;codecs=opus'];
+  for (const m of candidates) {
+    if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported && MediaRecorder.isTypeSupported(m)) return m;
+  }
+  return '';
+}
+
+if (!window.MediaRecorder || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+  micBtn.classList.add('disabled');
+  micBtn.disabled = true;
+  micBtn.title = 'Voice input not supported on this browser';
+}
+
+micBtn.addEventListener('click', async () => {
+  if (micBtn.disabled) return;
+  if (listening) { stopListening(); return; }
+  unlockAudio();
+  resetTtsQueue();
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    const mime = pickAudioMime();
+    const opts = mime ? { mimeType: mime } : {};
+    mediaRecorder = new MediaRecorder(stream, opts);
+    recordedChunks = [];
+    mediaRecorder.ondataavailable = (e) => { if (e.data && e.data.size > 0) recordedChunks.push(e.data); };
+    mediaRecorder.onstop = async () => {
+      stream.getTracks().forEach((t) => t.stop());
+      listening = false;
+      micBtn.classList.remove('listening');
+      if (recordedChunks.length === 0) { toast('No audio captured — tap mic and try again', 'error'); return; }
+      const blob = new Blob(recordedChunks, { type: mediaRecorder.mimeType || mime || 'audio/webm' });
+      await transcribeAndSubmit(blob);
+    };
+    mediaRecorder.start();
+    listening = true;
+    micBtn.classList.add('listening');
+    micBtn.title = 'Tap again to stop recording';
+    toast('🎤 Listening… tap mic again when done');
+  } catch (err) {
+    console.warn('mic error', err);
+    if (err.name === 'NotAllowedError' || err.name === 'SecurityError') {
+      toast('🚫 Mic access denied. Allow microphone in browser settings.', 'error');
+    } else if (err.name === 'NotFoundError') {
+      toast('🚫 No microphone found.', 'error');
+    } else {
+      toast('Mic error: ' + (err.message || err.name), 'error');
+    }
+  }
+});
+
+function stopListening() {
+  if (!listening || !mediaRecorder) return;
+  try { mediaRecorder.stop(); } catch (err) { console.warn('stop err', err); }
+}
+
+async function transcribeAndSubmit(blob) {
+  toast('✍️ Transcribing…');
+  try {
+    const form = new FormData();
+    const ext = (blob.type || '').includes('mp4') ? 'mp4'
+              : (blob.type || '').includes('mpeg') ? 'mp3'
+              : (blob.type || '').includes('ogg') ? 'ogg'
+              : 'webm';
+    form.append('audio', blob, `voice.${ext}`);
+    const res = await fetch('/api/stt', { method: 'POST', body: form });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    const text = (data.text || '').trim();
+    if (!text) { toast("Didn't catch that — try again", 'error'); return; }
+    inputEl.value = text;
+    inputEl.dispatchEvent(new Event('input'));
+    // Auto-send transcribed input
+    sendMessage();
+  } catch (err) {
+    console.warn('stt failed', err);
+    toast('Transcription error: ' + (err.message || 'unknown'), 'error');
+  }
+}
+
+// ============================================================================
+// PATCH sendMessage / runStream to pass concise flag + feed TTS during stream
+// ============================================================================
+// Wrap original runStream to inject concise + TTS sentence flushing without
+// rewriting the function. We monkey-patch FormData on the outgoing chat
+// request and listen to the existing delta stream.
+//
+// Simpler: extend the existing runStream by adding hooks. The current
+// implementation does its own SSE parsing. We add a small intercept by
+// shadowing fetch only for the chat endpoint — but that's heavy. Instead,
+// override runStream itself by reassigning. The original was defined as
+// `async function runStream(...)` so it's available on the window scope.
+
+const _origRunStream = runStream;
+runStream = async function patchedRunStream({ filesToSend }) {
+  // Stop any in-flight TTS playback when a new message starts streaming
+  resetTtsQueue();
+
+  // We need to add `concise` to the form, AND tap deltas for TTS. The
+  // simplest path is to call the original but patch FormData via a one-shot
+  // override. Easier: replicate the original's body but with extra params
+  // and TTS observation.
+  if (emptyEl && emptyEl.parentNode) emptyEl.remove();
+  const turn = document.createElement('div');
+  turn.className = 'turn assistant';
+
+  const contextBadge = document.createElement('div');
+  contextBadge.className = 'context-badge';
+  contextBadge.innerHTML = '<span class="dot"></span> Pulling context…';
+  turn.appendChild(contextBadge);
+
+  const bubble = document.createElement('div');
+  bubble.className = 'bubble assistant thinking';
+  bubble.innerHTML = '<em>Ed is thinking</em><span class="caret"></span>';
+  turn.appendChild(bubble);
+  messagesEl.appendChild(turn);
+  messagesEl.scrollTop = messagesEl.scrollHeight;
+
+  let assistantText = '';
+  let pendingForTts = '';
+  let firstDelta = false;
+  let activeToolStatusEl = null;
+
+  setStreaming(true);
+  currentAbort = new AbortController();
+
+  try {
+    const form = new FormData();
+    form.append('community', commSel.value || '');
+    form.append('messages', JSON.stringify(history));
+    form.append('concise', conciseToggle.checked ? 'true' : 'false');
+    for (const f of filesToSend) form.append('attachment', f, f.name);
+
+    const res = await fetch('/ask-ed-chat-stream', {
+      method: 'POST', body: form, signal: currentAbort.signal,
+    });
+    if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, { stream: true });
+      const frames = buf.split('\n\n');
+      buf = frames.pop();
+      for (const frame of frames) {
+        const line = frame.split('\n').find((l) => l.startsWith('data:'));
+        if (!line) continue;
+        let payload;
+        try { payload = JSON.parse(line.slice(5).trim()); } catch (_) { continue; }
+
+        if (payload.type === 'context_loaded') {
+          const parts = [];
+          if (payload.community) parts.push(`📍 ${payload.community}`);
+          if (payload.has_community_profile) parts.push('profile');
+          if (payload.playbook_count > 0) parts.push(`${payload.playbook_count} playbook example${payload.playbook_count === 1 ? '' : 's'}`);
+          if (payload.doc_count > 0) parts.push(`${payload.doc_count} doc section${payload.doc_count === 1 ? '' : 's'}`);
+          contextBadge.innerHTML = `<span class="dot"></span> Reading ${parts.length > 0 ? parts.join(' · ') : 'general guidance'}`;
+          if (payload.rewritten_query) contextBadge.title = `Searched as: "${payload.rewritten_query}"`;
+        } else if (payload.type === 'tool_status') {
+          if (activeToolStatusEl) activeToolStatusEl.remove();
+          activeToolStatusEl = document.createElement('div');
+          activeToolStatusEl.className = 'tool-status';
+          activeToolStatusEl.innerHTML = `<span class="dot"></span> ${escapeHtml(payload.message || 'Tool…')}`;
+          turn.insertBefore(activeToolStatusEl, bubble);
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+        } else if (payload.type === 'delta' && payload.text) {
+          if (!firstDelta) {
+            firstDelta = true;
+            bubble.classList.remove('thinking');
+            bubble.innerHTML = '';
+            const dotEl = contextBadge.querySelector('.dot');
+            if (dotEl) { dotEl.style.animation = 'none'; dotEl.style.background = '#9B8A3F'; }
+          }
+          assistantText += payload.text;
+          pendingForTts += payload.text;
+          bubble.innerHTML = renderMarkdown(assistantText) + '<span class="caret"></span>';
+          messagesEl.scrollTop = messagesEl.scrollHeight;
+
+          // Stream TTS: flush completed sentences as they arrive
+          if (speakerToggle.checked) {
+            const { sentences, remainder } = flushSentences(pendingForTts);
+            pendingForTts = remainder;
+            for (const s of sentences) if (s.length >= 12) enqueueTtsSentence(s);
+          }
+        } else if (payload.type === 'error') {
+          throw new Error(payload.message || 'Stream error');
+        } else if (payload.type === 'done') {
+          // Flush any trailing prose as the final TTS chunk
+          if (speakerToggle.checked && pendingForTts.trim()) {
+            enqueueTtsSentence(pendingForTts.trim());
+            pendingForTts = '';
+          }
+        }
+      }
+    }
+
+    if (!assistantText) {
+      bubble.classList.remove('thinking');
+      bubble.innerHTML = '<em>No response received. Try again?</em>';
+      contextBadge.remove();
+    } else {
+      bubble.innerHTML = renderMarkdown(assistantText);
+      addAssistantActionsWithSpeak(turn, bubble, assistantText);
+      history.push({ role: 'assistant', content: assistantText });
+      saveSession();
+    }
+  } catch (err) {
+    const aborted = err.name === 'AbortError';
+    bubble.classList.remove('thinking');
+    if (aborted) {
+      if (assistantText) {
+        bubble.innerHTML = renderMarkdown(assistantText) + '<p><em style="color:#962a2a; font-size:13px;">— stopped</em></p>';
+        addAssistantActionsWithSpeak(turn, bubble, assistantText);
+        history.push({ role: 'assistant', content: assistantText });
+        saveSession();
+      } else {
+        bubble.innerHTML = '<em style="color:#962a2a;">Stopped.</em>';
+        history.pop();
+      }
+      contextBadge.remove();
+    } else {
+      bubble.innerHTML = `<em style="color:#962a2a;">Something went wrong: ${escapeHtml(err.message || 'unknown error')}</em>`;
+      contextBadge.remove();
+      history.pop();
+    }
+  } finally {
+    currentAbort = null;
+    setStreaming(false);
+    messagesEl.scrollTop = messagesEl.scrollHeight;
+    inputEl.focus();
+  }
+};
+
+// Replace addAssistantActions to include a Speak button
+function addAssistantActionsWithSpeak(turn, bubble, text) {
+  const actions = document.createElement('div');
+  actions.className = 'bubble-actions';
+  actions.innerHTML = `
+    <button class="bubble-action speak" title="Read aloud">🔊 Speak</button>
+    <button class="bubble-action copy" title="Copy to clipboard">📋 Copy</button>
+    <button class="bubble-action regen" title="Regenerate this answer">🔄 Regenerate</button>
+  `;
+  bubble.appendChild(actions);
+  actions.querySelector('.copy').addEventListener('click', () => {
+    navigator.clipboard.writeText(text).then(() => toast('Copied'), () => toast('Could not copy', 'error'));
+  });
+  actions.querySelector('.regen').addEventListener('click', () => {
+    if (inFlight) return toast('Wait for the current answer to finish', 'error');
+    regenerateLast();
+  });
+  actions.querySelector('.speak').addEventListener('click', (e) => {
+    const btn = e.currentTarget;
+    if (btn.classList.contains('playing')) {
+      resetTtsQueue();
+      btn.classList.remove('playing');
+      return;
+    }
+    btn.classList.add('playing');
+    // Replay = clear queue + speak the full text as one block, then drop the
+    // playing state when audio ends.
+    resetTtsQueue();
+    speakOne(text).finally(() => {
+      // small heuristic: the speak() promise resolves when play() starts, so
+      // poll until ttsAudio is paused or ends
+      const check = setInterval(() => {
+        if (ttsAudio.paused || ttsAudio.ended) {
+          btn.classList.remove('playing');
+          clearInterval(check);
+        }
+      }, 400);
+    });
+  });
+}
+
 </script>
 </body>
 </html>

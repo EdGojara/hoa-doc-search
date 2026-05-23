@@ -2258,9 +2258,18 @@ app.post('/ask-ed-stream', upload.array('attachment', 10), async (req, res) => {
     const modeNorm = (mode || '').toString().toLowerCase().trim();
     const quickMode = modeNorm === 'quick';
     const coachMode = modeNorm === 'coach_review';
-    // Coach mode skips RAG (the draft being reviewed is the source material).
-    // Quick mode skips RAG for latency. Both still pull community profile.
-    const skipRag = quickMode || coachMode;
+    // Coach mode skips RAG entirely (the draft being reviewed is the source
+    // material — no value in pulling other docs). Quick mode USED to skip
+    // RAG too, but that meant field-staff doc questions ("what's the
+    // quorum?") got "I don't know" responses from Voice askEd when the
+    // answer was sitting in trustEd's document library the whole time
+    // (the parallel-silo failure pattern Ed flagged 2026-05-22). With
+    // hybrid retrieval now running in ~500-1500ms, the latency cost is
+    // small enough that we just always include doc context. The "quick"
+    // part of Quick mode now refers to the OUTPUT shape (1-2 sentences,
+    // no preamble, no 4-section template), not whether we consult the
+    // library.
+    const skipRag = coachMode;
 
     const attachmentContents = [];
     let attachmentNote = '';
@@ -2464,6 +2473,7 @@ app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res)
     // multer leaves req.body as fields. messages comes as a JSON string when
     // the request is multipart (because FormData stringifies).
     const community = (req.body.community || '').toString();
+    const conciseFlag = String(req.body.concise || '').toLowerCase() === 'true';
     let rawMessages = req.body.messages;
     if (typeof rawMessages === 'string') {
       try { rawMessages = JSON.parse(rawMessages); }
@@ -2516,7 +2526,7 @@ app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res)
       attachmentNote = `\n\nNote: ${parts.join(' and ')} attached above. Examine each carefully (screenshots, letters, photos of property conditions, etc.) and factor them into your guidance.`;
     }
 
-    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: 'chat' });
+    send({ type: 'meta', model: 'claude-sonnet-4-6', mode: conciseFlag ? 'chat-concise' : 'chat' });
 
     // STEP 1 — query rewrite to disambiguate follow-ups before RAG.
     const { rewritten: ragQuery, changed: queryWasRewritten } =
@@ -2560,8 +2570,23 @@ app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res)
     }));
     messagesForModel.push({ role: 'user', content: lastUserAugmented });
 
-    // System prompt — same Ed voice as one-shot askEd, plus a chat-tone addendum.
-    const systemPrompt = askEdSystem() + `
+    // System prompt — same Ed voice as one-shot askEd, plus a chat-tone addendum
+    // that varies by concise vs standard. Concise mode is what powers Voice
+    // askEd's terse field-friendly responses; standard is full conversational
+    // chat.
+    const conciseAddendum = `
+
+CONCISE MODE — VOICE / FIELD-STAFF DEFAULT:
+You are being read aloud or shown to a Bedrock staff member or board member on the move (in the field, at a meeting, on a phone). Stay in Ed's voice but:
+- 1-2 short sentences maximum. Lead with the answer. NO preamble, NO "here's what you need to know," NO strategic commentary, NO 4-section template.
+- If the answer is a number or fact, just state it. ("Quorum is 25% — 181 of 721 units. Source: 2020 Amendment to Bylaws.")
+- If a community-specific document has the answer, cite it briefly by name (one phrase).
+- If the answer requires nuance the question can't be answered concisely, give the best 2-sentence answer and add "— ask me for the full version if you need it."
+- Use plain prose. NO markdown headings, NO bullet lists, NO bold. The response may be spoken aloud.
+- Phone numbers: format as 281-555-0100.
+- Do not mention you are an AI. Do not apologize. Do not editorialize.`;
+
+    const standardAddendum = `
 
 CHAT MODE — CONVERSATIONAL DEFAULT:
 You are in a multi-turn chat with a Bedrock staff member or board member. They can ask follow-up questions in the same thread. Stay in Ed's voice but:
@@ -2569,7 +2594,9 @@ You are in a multi-turn chat with a Bedrock staff member or board member. They c
 - The 4-part template (RECOMMENDED ACTION / HOW TO RESPOND / REASONING / WATCH OUTS) is appropriate for the FIRST substantive question on a new topic, or when the user explicitly asks for a recommendation or a draft. For "what about X?", "explain that more," or "is that right?" — just answer.
 - Track what the conversation has already established. Don't re-explain context the user already gave you.
 - If a follow-up shifts to a clearly different topic, you can return to the structured template.
-- Keep paragraphs tight. Use bullets when a list helps. Never wall-of-text on a clarifying question.
+- Keep paragraphs tight. Use bullets when a list helps. Never wall-of-text on a clarifying question.`;
+
+    const systemPrompt = askEdSystem() + (conciseFlag ? conciseAddendum : standardAddendum) + `
 
 TOOL USE: You have a lookup_community_vendor tool that returns active vendor contacts (vendor name, contact person, phone, email, last-updated date) for a community + service category. Whenever the user asks for a phone number, email, or vendor contact for a specific community, ALWAYS call this tool — never recite phone numbers or emails from memory or the community profile summary. The tool's response is the source of truth.`;
 
@@ -2578,6 +2605,7 @@ TOOL USE: You have a lookup_community_vendor tool that returns active vendor con
     // 'tool_use', we execute the tools, push results back, and run again.
     const MAX_TOOL_HOPS = 5;
     const messagesAccum = [...messagesForModel];
+    const maxTokensForCall = conciseFlag ? 500 : 3000;
     let deltaCount = 0;
     let toolCount = 0;
     let finalStopReason = null;
@@ -2585,7 +2613,7 @@ TOOL USE: You have a lookup_community_vendor tool that returns active vendor con
     for (let hop = 0; hop < MAX_TOOL_HOPS && !aborted; hop++) {
       const streamResp = await anthropic.messages.create({
         model: 'claude-sonnet-4-6',
-        max_tokens: 3000,
+        max_tokens: maxTokensForCall,
         system: systemPrompt,
         tools: askEdTools.TOOLS,
         messages: messagesAccum,

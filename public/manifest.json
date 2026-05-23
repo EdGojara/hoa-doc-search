@@ -1,13 +1,13 @@
 {
   "name": "askEd by Bedrock",
   "short_name": "askEd",
-  "description": "Voice-first AI advisor for HOA management — trained on Ed's playbook and your community's governing documents.",
-  "start_url": "/voice.html",
+  "description": "AI advisor for HOA management — voice + chat, trained on Ed's playbook and your community's governing documents.",
+  "start_url": "/ask-ed-chat.html",
   "scope": "/",
   "display": "standalone",
   "orientation": "portrait",
-  "background_color": "#315A87",
-  "theme_color": "#315A87",
+  "background_color": "#1A3050",
+  "theme_color": "#1A3050",
   "icons": [
     {
       "src": "/logos/bedrock_logo.png",
