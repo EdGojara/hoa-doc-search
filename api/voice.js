@@ -45,6 +45,33 @@ router.post('/incoming', async (req, res) => {
 
     console.log(`[voice/incoming] call ${callSid} from ${fromPhone} to ${toPhone}`);
 
+    // PREREQUISITES CHECK — Claire needs Deepgram (STT) + ElevenLabs (TTS) +
+    // Anthropic (reasoning) all configured to hold a real conversation.
+    // If any are missing, we play a clear "under construction" message via
+    // Twilio's built-in TTS rather than opening a WebSocket that will
+    // immediately close and drop the caller — which is what's confusingly
+    // sounds like "the call just disconnects."
+    const haveDeepgram = !!process.env.DEEPGRAM_API_KEY;
+    const haveElevenLabs = !!process.env.ELEVENLABS_API_KEY;
+    const haveAnthropic = !!process.env.ANTHROPIC_API_KEY;
+
+    if (!haveDeepgram || !haveElevenLabs || !haveAnthropic) {
+      const missing = [];
+      if (!haveDeepgram) missing.push('Deepgram');
+      if (!haveElevenLabs) missing.push('ElevenLabs');
+      if (!haveAnthropic) missing.push('Anthropic');
+      console.log(`[voice/incoming] dev fallback — missing: ${missing.join(', ')}`);
+
+      // Friendly TwiML using Twilio's built-in Polly TTS. Doesn't open the
+      // Media Stream, just speaks and hangs up gracefully.
+      const fallbackTwiml = `<?xml version="1.0" encoding="UTF-8"?>
+<Response>
+  <Say voice="Polly.Joanna-Neural">Hey, this is Claire from Bedrock. The voice system is still being set up, so I'm not able to take a real call yet. Please try again in a day or two, or email info at bedrock t x dot com. Thanks for your patience.</Say>
+  <Hangup/>
+</Response>`;
+      return res.set('Content-Type', 'text/xml').send(fallbackTwiml);
+    }
+
     // Look up which community this number belongs to. If no route is
     // configured we fall back to a generic greeting.
     let route = null;
