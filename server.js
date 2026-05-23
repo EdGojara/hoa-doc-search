@@ -423,6 +423,13 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/portal\/balance$/,                  // GET balance + aging buckets + history (cookie-gated)
   /^\/api\/portal\/meetings$/,                 // GET upcoming meetings + past minutes (cookie-gated)
   /^\/api\/payments\/webhook$/,                // Stripe webhook (signature-verified inside)
+  // Twilio voice webhooks — same pattern as Stripe: outside-service webhooks,
+  // never carry a staff cookie. The voice router handles them. Long-term,
+  // these should validate the X-Twilio-Signature header to confirm the
+  // request actually came from Twilio (not anyone else hitting the URL).
+  /^\/api\/voice\/incoming$/,                  // Twilio "A call comes in" webhook
+  /^\/api\/voice\/status$/,                    // Twilio "Call status changes" webhook
+  /^\/api\/voice\/stream$/,                    // Twilio Media Streams WebSocket upgrade path
   /^\/api\/payments\/create-checkout-session$/, // public form posts here before Stripe redirect
   /^\/api\/payments\/by-session\/[^/]+$/,      // success page lookup post-Stripe-redirect
   /^\/api\/amenities\/community\/[^/]+$/,      // clubhouse form bootstrap
