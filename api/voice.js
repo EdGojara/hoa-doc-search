@@ -72,8 +72,9 @@ router.post('/incoming', async (req, res) => {
       return res.set('Content-Type', 'text/xml').send(fallbackTwiml);
     }
 
-    // Look up which community this number belongs to. If no route is
-    // configured we fall back to a generic greeting.
+    // STEP 1 — voice_phone_routes lookup (Model B: dedicated number per
+    // community). If no route is configured for this number, fall back to
+    // the caller-ID lookup below.
     let route = null;
     try {
       const { data } = await supabase
@@ -87,15 +88,95 @@ router.post('/incoming', async (req, res) => {
       console.warn('[voice/incoming] route lookup failed:', e.message);
     }
 
+    // STEP 2 — caller-ID lookup against contacts table (Model A: one Bedrock
+    // number, identify who's calling by their phone). This is the killer
+    // feature — Claire greets by first name and already knows their
+    // community + property without the caller saying a word.
+    //
+    // Privacy/security note: caller ID can be spoofed. We use this match
+    // for *context* (greeting, community routing) but Claire still verifies
+    // identity before sharing sensitive info (AR balance, payment info,
+    // ARC outcomes). Handled in the system prompt, not here.
+    let callerContact = null;
+    let callerProperty = null;
+    let callerCommunity = null;
+    if (fromPhone) {
+      try {
+        // Normalize Twilio's E.164 (e.g., "+18324302956") → last 10 digits
+        const digits = String(fromPhone).replace(/\D/g, '');
+        const last10 = digits.length === 11 && digits.startsWith('1')
+          ? digits.slice(1)
+          : (digits.length === 10 ? digits : null);
+
+        if (last10) {
+          // ILIKE %last10% catches all common phone formats stored in the DB:
+          //   "832-430-2956", "(832) 430-2956", "+18324302956", "8324302956"
+          const { data: candidates } = await supabase
+            .from('contacts')
+            .select('id, full_name, preferred_name, primary_phone, secondary_phone, notification_phone')
+            .or(`primary_phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%,notification_phone.ilike.%${last10}%`)
+            .limit(5);
+
+          // Filter to EXACT match — guard against coincidental substring
+          // collisions (e.g., last10="1234567890" matching "+15551234567890").
+          callerContact = (candidates || []).find((c) => {
+            for (const f of ['primary_phone', 'secondary_phone', 'notification_phone']) {
+              const d = String(c[f] || '').replace(/\D/g, '').slice(-10);
+              if (d === last10) return true;
+            }
+            return false;
+          }) || null;
+
+          if (callerContact) {
+            console.log(`[voice/incoming] caller-ID match: ${callerContact.preferred_name || callerContact.full_name} (id=${callerContact.id})`);
+
+            // Look up their primary property + community via property_residencies
+            const { data: residency } = await supabase
+              .from('property_residencies')
+              .select('property_id, residency_type, properties:property_id(id, street_address, community_id, communities:community_id(id, name))')
+              .eq('contact_id', callerContact.id)
+              .is('end_date', null)  // current residencies only
+              .order('start_date', { ascending: false })
+              .limit(1)
+              .maybeSingle();
+
+            if (residency?.properties) {
+              callerProperty = residency.properties;
+              callerCommunity = residency.properties.communities || null;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('[voice/incoming] caller-ID lookup failed:', e.message);
+      }
+    }
+
+    // Derive the community Claire uses for context. Priority order:
+    //   1. voice_phone_routes (Model B — explicit per-community routing)
+    //   2. caller's home community via caller-ID lookup
+    //   3. null (generic Bedrock greeting + Claire asks which community)
+    const effectiveCommunityId = route?.community_id || callerCommunity?.id || null;
+    const effectiveCommunityName = route?.community_display_name || callerCommunity?.name || null;
+
+    // Derive first name for the opener — preferred_name if set, else first
+    // word of full_name. (Bedrock's contacts schema uses full_name not
+    // separate first_name/last_name.)
+    let callerFirstName = null;
+    if (callerContact) {
+      const candidate = callerContact.preferred_name || callerContact.full_name || '';
+      callerFirstName = candidate.trim().split(/\s+/)[0] || null;
+    }
+
     // Pre-create the homeowner_calls row so the bridge can update it as
     // the call progresses (best-effort — call still proceeds if this fails).
-    if (route?.community_id) {
+    if (effectiveCommunityId) {
       try {
         await supabase.from('homeowner_calls').upsert({
-          community_id: route.community_id,
-          voice_route_id: route.id,
+          community_id: effectiveCommunityId,
+          voice_route_id: route?.id || null,
           call_sid: callSid,
           caller_phone: fromPhone,
+          caller_homeowner_id: callerContact?.id || null,
           status: 'ringing',
         }, { onConflict: 'call_sid' });
       } catch (e) {
@@ -118,8 +199,13 @@ router.post('/incoming', async (req, res) => {
       <Parameter name="call_sid" value="${escapeXml(callSid)}"/>
       <Parameter name="from_phone" value="${escapeXml(fromPhone || '')}"/>
       <Parameter name="to_phone" value="${escapeXml(toPhone || '')}"/>
-      <Parameter name="community_id" value="${escapeXml(route?.community_id || '')}"/>
-      <Parameter name="community_name" value="${escapeXml(route?.community_display_name || '')}"/>
+      <Parameter name="community_id" value="${escapeXml(effectiveCommunityId || '')}"/>
+      <Parameter name="community_name" value="${escapeXml(effectiveCommunityName || '')}"/>
+      <Parameter name="caller_contact_id" value="${escapeXml(callerContact?.id || '')}"/>
+      <Parameter name="caller_name" value="${escapeXml(callerContact?.full_name || '')}"/>
+      <Parameter name="caller_first_name" value="${escapeXml(callerFirstName || '')}"/>
+      <Parameter name="caller_property_id" value="${escapeXml(callerProperty?.id || '')}"/>
+      <Parameter name="caller_property_address" value="${escapeXml(callerProperty?.street_address || '')}"/>
     </Stream>
   </Connect>
 </Response>`;
@@ -212,6 +298,16 @@ function handleWebSocketConnection(ws, req) {
         call_sid: params.call_sid || msg.start.callSid,
         from_phone: params.from_phone,
         to_phone: params.to_phone,
+        // Caller-ID-matched homeowner info (null if anonymous / unknown caller)
+        caller: params.caller_contact_id
+          ? {
+              contact_id: params.caller_contact_id,
+              full_name: params.caller_name || null,
+              first_name: params.caller_first_name || null,
+              property_id: params.caller_property_id || null,
+              property_address: params.caller_property_address || null,
+            }
+          : null,
         community: {
           id: params.community_id || null,
           name: params.community_name || null,
