@@ -204,11 +204,24 @@ router.put('/elections/:eid/settings', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// GET /elections/:eid/search?q=... — search voters by name
+// GET /elections/:eid/search?q=... — search voters by name OR address OR lot
 // ----------------------------------------------------------------------------
-// Searches by owner_name (ILIKE). Returns up to 20 matches with current
-// vote status derived from the voters row. Also pulls any existing
-// attendance record so the UI can show "already checked in" state.
+// Three-field search via PostgREST or() filter:
+//
+//   owner_name        — primary lookup ("Smith", "Nguyen")
+//   mailing_address   — property-address lookup. NOTE: the voting app only
+//                       stores mailing_address, which equals the property
+//                       address for owner-occupants (~95% of walk-ins) but
+//                       is OFF-property for absentee owners (investors,
+//                       LLCs). The proper fix is importing Canyon Gate's
+//                       property table into trustEd so we can cross-
+//                       reference by lot_number to a real property address
+//                       even for absentee owners; that's a separate import
+//                       not blocking the Wednesday meeting.
+//   lot_number        — Vantaca lot account ID. Useful when staff has the
+//                       cheat-sheet or homeowner provides it.
+//
+// Returns up to 20 matches with vote status + attendance state.
 // ----------------------------------------------------------------------------
 router.get('/elections/:eid/search', async (req, res) => {
   try {
@@ -216,12 +229,21 @@ router.get('/elections/:eid/search', async (req, res) => {
     const q = (req.query.q || '').toString().trim();
     if (!q || q.length < 2) return res.json({ voters: [] });
 
+    // Sanitize % and _ which are ILIKE wildcards — we want literal substring
+    // match, not pattern injection from user input.
+    const safe = q.replace(/[%_]/g, '');
+    const orFilter = [
+      `owner_name.ilike.%${safe}%`,
+      `mailing_address.ilike.%${safe}%`,
+      `lot_number.ilike.%${safe}%`,
+    ].join(',');
+
     const voting = getVotingClient();
     const { data: votersRows, error: vErr } = await voting
       .from('voters')
       .select('voter_id, election_id, owner_name, mailing_address, lot_number, vote_weight, token_used, token_used_at, vote_method, entered_by, entered_at')
       .eq('election_id', eid)
-      .ilike('owner_name', `%${q}%`)
+      .or(orFilter)
       .order('owner_name')
       .limit(20);
     if (vErr) throw vErr;
@@ -239,15 +261,23 @@ router.get('/elections/:eid/search', async (req, res) => {
       attendanceByVoter = indexBy(attRows, 'external_voter_id');
     }
 
+    // Tag each result with WHICH field matched so the UI can show "matched
+    // by lot #" / "matched by address" hints for ambiguous queries.
+    const qLower = safe.toLowerCase();
     const voters = (votersRows || []).map((v) => {
       const status = deriveVoteStatus(v);
       const att = attendanceByVoter.get(v.voter_id) || null;
+      const matchedFields = [];
+      if ((v.owner_name || '').toLowerCase().includes(qLower)) matchedFields.push('name');
+      if ((v.mailing_address || '').toLowerCase().includes(qLower)) matchedFields.push('address');
+      if ((v.lot_number || '').toLowerCase().includes(qLower)) matchedFields.push('lot');
       return {
         voter_id: v.voter_id,
         owner_name: v.owner_name,
         mailing_address: v.mailing_address,
         lot_number: v.lot_number,
         vote_weight: v.vote_weight || 1,
+        matched_fields: matchedFields,
         vote_status: status,
         already_attended: !!att,
         attendance: att,

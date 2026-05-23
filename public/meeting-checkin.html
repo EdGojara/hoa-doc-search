@@ -146,6 +146,14 @@
     padding: 5px 12px; border-radius: 999px;
     font-size: 13px; font-weight: 500;
   }
+  .voter-card .match-tag {
+    display: inline-block; margin-top: 8px; margin-right: 6px;
+    padding: 3px 10px; border-radius: 999px;
+    font-size: 11px; font-family: var(--font-mono);
+    letter-spacing: 0.02em;
+    background: #FFFBEF; color: #806820;
+    border: 1px solid #E8D880;
+  }
   .status-badge.voted_online { background: #E5F2EA; color: var(--good); }
   .status-badge.voted_mail   { background: #E5F2EA; color: var(--good); }
   .status-badge.voted_walkin { background: #E5F2EA; color: var(--good); }
@@ -299,10 +307,10 @@
 <div class="main">
   <div class="search-card">
     <div class="search-row">
-      <input type="text" id="search" placeholder="Type a last name to find a voter…" autocomplete="off" autofocus>
+      <input type="text" id="search" placeholder="Name, property address, or lot # — start typing…" autocomplete="off" autofocus>
       <input type="text" id="staffName" class="search-staff" placeholder="Your name (staff)" autocomplete="off">
     </div>
-    <div class="hint">Search is live — start typing. <span class="kbd">Esc</span> to clear. Each check-in is timestamped and counts toward quorum evidence.</div>
+    <div class="hint">Search is live — matches name, property address, or lot #. <span class="kbd">Esc</span> to clear. Each check-in is timestamped and counts toward quorum evidence.</div>
   </div>
 
   <div class="results" id="results">
@@ -505,11 +513,20 @@ function renderResults(voters) {
     const statusBadge = `<span class="status-badge ${v.vote_status.status}">${escapeHtml(v.vote_status.label)}${v.vote_status.votedAt ? ` · ${new Date(v.vote_status.votedAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}` : ''}</span>`;
     const attended = v.already_attended;
     const weight = v.vote_weight > 1 ? ` · ${v.vote_weight} units` : '';
+    // Match-source tag — only show when search matched something other than
+    // (or in addition to) the name. Helps staff understand "why did this card
+    // come up?" when they typed an address or lot #.
+    let matchTag = '';
+    if (v.matched_fields && v.matched_fields.length > 0 && !(v.matched_fields.length === 1 && v.matched_fields[0] === 'name')) {
+      const labels = v.matched_fields.map((f) => f === 'name' ? 'name' : f === 'address' ? 'property address' : f === 'lot' ? 'lot #' : f);
+      matchTag = `<span class="match-tag" title="Which fields your search matched">🔎 matched ${labels.join(' + ')}</span>`;
+    }
     card.innerHTML = `
       <div>
         <div class="name">${escapeHtml(v.owner_name || '')}</div>
         <div class="addr">${escapeHtml(v.mailing_address || '')}</div>
         <div class="meta">Lot ${escapeHtml(v.lot_number || 'n/a')}${weight}</div>
+        ${matchTag}
         ${statusBadge}
         ${attended ? `<div class="walkin-note">Checked in at ${new Date(v.attendance.checked_in_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'})}${v.attendance.walk_in_ballot_status === 'needed' ? ' · ⚠ Walk-in ballot pending' : ''}${v.attendance.walk_in_ballot_status === 'entered' ? ' · ✓ Walk-in ballot entered' : ''}</div>` : ''}
       </div>
