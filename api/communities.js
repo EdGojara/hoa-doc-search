@@ -615,6 +615,61 @@ async function buildCommunityContextBlock(communityNameOrId) {
     }
   } catch (_) { /* table may not exist yet; silent */ }
 
+  // Amenities — pool hours, clubhouse, gates, key fobs. Without this block,
+  // askEd / Claire have no idea about operational schedules. Bug surfaced
+  // 2026-05-23 when Claire said "I don't have the pool hours for Waterview"
+  // — they were sitting in the amenities table the whole time.
+  try {
+    const { data: amenities } = await supabase
+      .from('amenities')
+      .select('name, amenity_type, hours_text, contact_name, contact_phone, contact_email, description, is_rentable, offseason_hours_text, status')
+      .eq('community_id', comm.id)
+      .eq('status', 'active')
+      .order('amenity_type', { ascending: true });
+    if (amenities && amenities.length > 0) {
+      lines.push('');
+      lines.push('AMENITIES (operational schedule + contact — quote hours verbatim, do not paraphrase)');
+      for (const a of amenities) {
+        const parts = [];
+        if (a.hours_text) parts.push(`hours: ${a.hours_text}`);
+        if (a.offseason_hours_text) parts.push(`off-season: ${a.offseason_hours_text}`);
+        if (a.contact_name) parts.push(a.contact_name);
+        if (a.contact_phone) parts.push(`phone: ${a.contact_phone}`);
+        if (a.contact_email) parts.push(`email: ${a.contact_email}`);
+        if (a.is_rentable) parts.push('reservable');
+        if (a.description) parts.push(a.description);
+        const detail = parts.length > 0 ? ` — ${parts.join(' · ')}` : '';
+        lines.push(`  • ${a.name}${a.amenity_type ? ` (${a.amenity_type})` : ''}${detail}`);
+      }
+    }
+  } catch (_) { /* silent */ }
+
+  // Community contacts directory — vendor phone numbers, key personnel,
+  // utility lookups. Without this, Claire can't answer "what's the pool
+  // company phone" or "who do I call about trash?" These are in their own
+  // table (community_contacts), separate from `current vendors / system-
+  // maintained` above which is computed from contracts.
+  try {
+    const { data: contacts } = await supabase
+      .from('community_contacts')
+      .select('name, category, phone, email, notes, is_published')
+      .eq('community_id', comm.id)
+      .eq('is_published', true)
+      .order('category', { ascending: true });
+    if (contacts && contacts.length > 0) {
+      lines.push('');
+      lines.push('LOCAL CONTACTS (vendor + utility directory — quote phone numbers verbatim)');
+      for (const c of contacts) {
+        const parts = [];
+        if (c.phone) parts.push(c.phone);
+        if (c.email) parts.push(c.email);
+        if (c.notes) parts.push(c.notes);
+        const detail = parts.length > 0 ? ` — ${parts.join(' · ')}` : '';
+        lines.push(`  • ${c.name}${c.category ? ` (${c.category})` : ''}${detail}`);
+      }
+    }
+  } catch (_) { /* silent */ }
+
   // Upcoming + recently-completed events — so AskEd knows about the pool party
   // when a homeowner asks "is there a community event coming up?"
   try {
