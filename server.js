@@ -7447,8 +7447,38 @@ app.get('/api/me', async (req, res) => {
   }
 });
 
-app.listen(3000, () => {
+// ============================================================================
+// Voice — Twilio webhook routes + WebSocket bridge for Claire (Bedrock's voice persona).
+// See lib/voice/README.md for architecture, lib/voice/persona.js for the
+// Claire opener + handoff phrasing, and templates/responder-engine.spec.md §5
+// for the design rationale.
+// ============================================================================
+const { router: voiceRouter, handleWebSocketConnection: handleVoiceWs } = require('./api/voice');
+app.use('/api/voice', voiceRouter);
+
+// Create the HTTP server explicitly so we can attach a WebSocket upgrade
+// handler for the Twilio Media Streams path.
+const http = require('http');
+const { WebSocketServer } = require('ws');
+const httpServer = http.createServer(app);
+const voiceWss = new WebSocketServer({ noServer: true });
+
+httpServer.on('upgrade', (req, socket, head) => {
+  // Only intercept the voice WS path; everything else gets dropped
+  // (we don't have any other WS endpoints today).
+  const pathname = req.url ? req.url.split('?')[0] : '';
+  if (pathname === '/api/voice/stream') {
+    voiceWss.handleUpgrade(req, socket, head, (ws) => {
+      handleVoiceWs(ws, req);
+    });
+  } else {
+    socket.destroy();
+  }
+});
+
+httpServer.listen(3000, () => {
   console.log('Server running at http://localhost:3000');
+  console.log('Voice WebSocket bridge ready at /api/voice/stream');
   try {
     const { startScheduler } = require('./lib/scheduler');
     startScheduler();
