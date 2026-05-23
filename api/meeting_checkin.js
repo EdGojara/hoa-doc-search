@@ -424,13 +424,36 @@ router.patch('/attendance/:aid', async (req, res) => {
 // ----------------------------------------------------------------------------
 // GET /elections/:eid/status — live quorum + attendance summary
 // ----------------------------------------------------------------------------
+// QUORUM MATH NOTE — under "presence" bylaws (Canyon Gate and most TX HOAs):
+//
+//   3.4 QUORUM. The presence (in person, by proxy, or by absentee ballot)
+//   of N% of the Members shall constitute a quorum...
+//
+// The key word is PRESENCE, not "votes cast." Three presence categories
+// all count toward quorum, deduplicated per voter unit:
+//
+//   1. Voted absentee (online/mail) — token_used=true on the voter row
+//   2. Physically attended — has an attendance row, REGARDLESS of whether
+//      they then file a walk-in ballot. Attending a board meeting without
+//      voting is still "presence in person" — the law cares about whether
+//      they're there, not whether they cast a ballot.
+//   3. By proxy — handled via the voting app's proxy intake; for quorum
+//      math, a proxy that's been recorded shows up as token_used=true with
+//      vote_method='walkin' or similar.
+//
+// Each voter unit counts ONCE — someone who voted online AND walks in is
+// already counted by their absentee ballot; their attendance is evidence
+// but doesn't double up the math.
+//
+// Earlier shipped logic (now fixed) incorrectly required a walk-in ballot
+// for attendance to count. That would have undercounted quorum for anyone
+// who showed up but declined to vote — contrary to what the bylaws say.
+// ----------------------------------------------------------------------------
 router.get('/elections/:eid/status', async (req, res) => {
   try {
     const eid = req.params.eid;
     const voting = getVotingClient();
 
-    // Pull all voters for this election (vote_weight + token_used columns
-    // are enough for the quorum math; we don't need the names here).
     const { data: voterRows, error: vErr } = await voting
       .from('voters')
       .select('voter_id, vote_weight, token_used, vote_method')
@@ -438,9 +461,10 @@ router.get('/elections/:eid/status', async (req, res) => {
     if (vErr) throw vErr;
 
     const totalUnits = (voterRows || []).reduce((s, r) => s + (r.vote_weight || 1), 0);
-    const votedUnits = (voterRows || []).filter((r) => r.token_used).reduce((s, r) => s + (r.vote_weight || 1), 0);
+    const voterById = new Map((voterRows || []).map((r) => [r.voter_id, r]));
 
-    // Breakdown by vote_method
+    // Vote breakdown (informational — these are absentee ballots cast)
+    const votedUnits = (voterRows || []).filter((r) => r.token_used).reduce((s, r) => s + (r.vote_weight || 1), 0);
     const methodCounts = {};
     for (const r of voterRows || []) {
       if (!r.token_used) continue;
@@ -455,18 +479,29 @@ router.get('/elections/:eid/status', async (req, res) => {
       .eq('external_election_id', eid);
     if (aErr) throw aErr;
 
+    // Build the PRESENT set — every voter_id who counts toward quorum
+    // by any presence method. Deduplicates across absentee + in-person.
+    const presentVoterIds = new Set();
+    for (const r of voterRows || []) {
+      if (r.token_used) presentVoterIds.add(r.voter_id);
+    }
+    for (const a of attRows || []) {
+      if (a.external_voter_id) presentVoterIds.add(a.external_voter_id);
+    }
+    const presentUnits = [...presentVoterIds].reduce((s, vid) => {
+      const v = voterById.get(vid);
+      return s + (v?.vote_weight || 1);
+    }, 0);
+
+    // Attendance breakdown (informational, doesn't affect quorum math)
     const attendedTotal = (attRows || []).length;
     const attendedUnits = (attRows || []).reduce((s, r) => s + (r.vote_weight || 1), 0);
-    // "Attended but had not voted at check-in" — these count toward quorum
-    // ONLY if they file a walk-in ballot (so we further filter by
-    // walk_in_ballot_status = 'entered' OR by current voted-status from
-    // voting DB at this moment). We compute both for transparency.
-    const attendedNotVotedAtCheckin = (attRows || []).filter(
-      (r) => r.vote_status_at_checkin === 'not_voted'
-    );
-    const walkInEnteredUnits = attendedNotVotedAtCheckin
-      .filter((r) => r.walk_in_ballot_status === 'entered')
-      .reduce((s, r) => s + (r.vote_weight || 1), 0);
+    const attendedNotVoted = (attRows || []).filter((r) => r.vote_status_at_checkin === 'not_voted');
+    const walkInEntered = attendedNotVoted.filter((r) => r.walk_in_ballot_status === 'entered');
+    const walkInNeeded  = attendedNotVoted.filter((r) => r.walk_in_ballot_status === 'needed');
+    const declined      = attendedNotVoted.filter((r) => r.walk_in_ballot_status === 'declined_to_vote');
+    // Attendees who showed up AFTER their absentee ballot was already in
+    const attendedAlreadyVoted = (attRows || []).filter((r) => r.vote_status_at_checkin !== 'not_voted');
 
     // Settings
     const { data: settings } = await supabase
@@ -476,12 +511,17 @@ router.get('/elections/:eid/status', async (req, res) => {
       .maybeSingle();
 
     const threshold = settings?.quorum_threshold_units || 0;
-    const quorum = computeQuorum({
-      totalUnits,
-      votedUnits,
-      attendedUnitsNotVoted: walkInEnteredUnits,
-      threshold,
-    });
+    const met = threshold > 0 && presentUnits >= threshold;
+    const quorum = {
+      total_units: totalUnits,
+      voted_units: votedUnits,
+      attended_units: attendedUnits,
+      present_units: presentUnits, // dedup of voted + attended
+      required_units: threshold,
+      pct: totalUnits > 0 ? Number(((presentUnits / totalUnits) * 100).toFixed(2)) : 0,
+      quorum_met: met,
+      short_by: met ? 0 : Math.max(0, threshold - presentUnits),
+    };
 
     res.json({
       quorum,
@@ -489,9 +529,11 @@ router.get('/elections/:eid/status', async (req, res) => {
       attendance: {
         total_checkins: attendedTotal,
         total_units_attended: attendedUnits,
-        attended_not_voted: attendedNotVotedAtCheckin.length,
-        walk_in_ballots_entered: attendedNotVotedAtCheckin.filter((r) => r.walk_in_ballot_status === 'entered').length,
-        walk_in_ballots_needed: attendedNotVotedAtCheckin.filter((r) => r.walk_in_ballot_status === 'needed').length,
+        attended_already_voted: attendedAlreadyVoted.length,
+        attended_not_voted: attendedNotVoted.length,
+        walk_in_ballots_entered: walkInEntered.length,
+        walk_in_ballots_needed: walkInNeeded.length,
+        declined_to_vote: declined.length,
       },
       settings,
     });
@@ -554,18 +596,34 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
 
     if (!election) return res.status(404).json({ error: 'election_not_found' });
 
-    // Quorum math (same logic as /status)
+    // Quorum math (same logic as /status — "presence" basis):
+    // Each voter counts once toward quorum if they EITHER voted absentee
+    // OR physically attended (regardless of whether they filed a ballot
+    // at the meeting). Deduped via voter_id set.
     const totalUnits = voters.reduce((s, r) => s + (r.vote_weight || 1), 0);
     const votedUnits = voters.filter((r) => r.token_used).reduce((s, r) => s + (r.vote_weight || 1), 0);
-    const walkInEnteredUnits = attendance
-      .filter((r) => r.vote_status_at_checkin === 'not_voted' && r.walk_in_ballot_status === 'entered')
-      .reduce((s, r) => s + (r.vote_weight || 1), 0);
-    const quorum = computeQuorum({
-      totalUnits,
-      votedUnits,
-      attendedUnitsNotVoted: walkInEnteredUnits,
-      threshold: settings?.quorum_threshold_units || 0,
-    });
+    const voterById = new Map(voters.map((r) => [r.voter_id, r]));
+    const presentVoterIds = new Set();
+    for (const r of voters) { if (r.token_used) presentVoterIds.add(r.voter_id); }
+    for (const a of attendance) { if (a.external_voter_id) presentVoterIds.add(a.external_voter_id); }
+    const presentUnits = [...presentVoterIds].reduce((s, vid) => s + (voterById.get(vid)?.vote_weight || 1), 0);
+    const attendedUnits = attendance.reduce((s, r) => s + (r.vote_weight || 1), 0);
+    const walkInEnteredCount = attendance.filter((r) => r.vote_status_at_checkin === 'not_voted' && r.walk_in_ballot_status === 'entered').length;
+    const attendedOnlyCount   = attendance.filter((r) => r.vote_status_at_checkin === 'not_voted' && r.walk_in_ballot_status !== 'entered').length;
+    const threshold = settings?.quorum_threshold_units || 0;
+    const met = threshold > 0 && presentUnits >= threshold;
+    const quorum = {
+      total_units: totalUnits,
+      voted_units: votedUnits,
+      attended_units: attendedUnits,
+      walk_in_entered_count: walkInEnteredCount,
+      attended_only_count: attendedOnlyCount,
+      present_units: presentUnits,
+      required_units: threshold,
+      pct: totalUnits > 0 ? Number(((presentUnits / totalUnits) * 100).toFixed(2)) : 0,
+      quorum_met: met,
+      short_by: met ? 0 : Math.max(0, threshold - presentUnits),
+    };
 
     // Stream PDF
     const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
@@ -659,13 +717,17 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050').text('Quorum Calculation');
     doc.moveDown(0.3);
     doc.font('Helvetica').fontSize(10).fillColor('#1a1a1a');
+    const onlineCount = voters.filter((v) => v.token_used && (v.vote_method || '').toLowerCase() === 'online').length;
+    const mailCount   = voters.filter((v) => v.token_used && (v.vote_method || '').toLowerCase() === 'mail').length;
     const qLines = [
       ['Total voting units in the Association', String(quorum.total_units)],
-      ['Voted by online or mail ballot before meeting', String(quorum.voted_units)],
-      ['  • Online ballots', String(voters.filter((v) => v.token_used && (v.vote_method || '').toLowerCase() === 'online').length)],
-      ['  • Mail ballots', String(voters.filter((v) => v.token_used && (v.vote_method || '').toLowerCase() === 'mail').length)],
-      ['Walk-in proxy ballots entered at meeting', String(quorum.attended_not_voted_units)],
-      ['Total units present (voted + walk-in)', String(quorum.present_units)],
+      ['Presence by absentee ballot (counted toward quorum)', String(quorum.voted_units)],
+      ['  • Online ballots', String(onlineCount)],
+      ['  • Mail ballots', String(mailCount)],
+      ['Presence in person at the meeting (counted toward quorum)', String(quorum.attended_units)],
+      ['  • Walk-in proxy ballot filed at meeting', String(quorum.walk_in_entered_count)],
+      ['  • Attended without filing a walk-in ballot', String(quorum.attended_only_count)],
+      ['Total unique units present (voted absentee OR attended in person)', String(quorum.present_units)],
       ['Quorum required', settings?.quorum_threshold_units
         ? `${quorum.required_units} units (${settings.quorum_threshold_percent}% of ${quorum.total_units})`
         : '(not configured)'],
@@ -676,6 +738,10 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       doc.font('Helvetica').text(v);
     }
 
+    doc.moveDown(0.3);
+    doc.font('Helvetica-Oblique').fontSize(8).fillColor('#7a7a7a')
+       .text('Members who both voted absentee AND physically attended are counted once. Physical attendance counts toward quorum under the governing-document "presence" language whether or not the member files a walk-in ballot.',
+         { width: 504 });
     doc.moveDown(0.5);
     doc.font('Helvetica-Bold').fontSize(13)
        .fillColor(quorum.quorum_met ? '#1a7a35' : '#962a2a')
