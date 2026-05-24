@@ -41,6 +41,9 @@ const path = require('path');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
+const MsgReader = require('@kenjiuno/msgreader').default;
+const { simpleParser: emlParse } = require('mailparser');
+const PDFDocument = require('pdfkit');
 
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
@@ -91,7 +94,10 @@ function slugify(s) {
 // ----------------------------------------------------------------------------
 // Hard-skip rules
 // ----------------------------------------------------------------------------
-const ALLOWED_EXT = new Set(['.pdf']); // upload endpoint only accepts PDFs
+// .pdf goes through the standard PDF pipeline. .msg / .eml get parsed +
+// rendered to a synthetic PDF, then routed through the same upload path.
+const ALLOWED_PDF_EXT = new Set(['.pdf']);
+const ALLOWED_EMAIL_EXT = new Set(['.msg', '.eml']);
 const KNOWN_NON_DOC_EXT = new Set([
   '.docx', '.doc', '.xlsx', '.xls', '.csv', '.txt',
   '.png', '.jpg', '.jpeg', '.gif', '.heic', '.tiff', '.bmp',
@@ -111,10 +117,132 @@ function hardSkipReason(filePath, stat) {
   if (KNOWN_NON_DOC_EXT.has(ext)) return ext === '.docx' || ext === '.doc' || ext === '.xlsx' || ext === '.xls'
     ? 'filetype_unsupported'  // Office docs that would be relevant if PDF'd
     : 'filetype_irrelevant';
-  if (!ALLOWED_EXT.has(ext)) return 'filetype_unknown';
-  if (stat.size < MIN_BYTES) return 'too_small';
+  if (!ALLOWED_PDF_EXT.has(ext) && !ALLOWED_EMAIL_EXT.has(ext)) return 'filetype_unknown';
+  if (stat.size < MIN_BYTES && !ALLOWED_EMAIL_EXT.has(ext)) return 'too_small'; // emails can be tiny
   if (stat.size > MAX_BYTES) return 'too_large';
   return null;
+}
+
+function isEmailFile(filePath) {
+  return ALLOWED_EMAIL_EXT.has(path.extname(filePath).toLowerCase());
+}
+
+// ----------------------------------------------------------------------------
+// Email parsing — unified shape for .msg and .eml
+// Returns: { subject, from, to, cc, date, body, attachments, parser }
+// or null if parsing fails / file is malformed.
+// ----------------------------------------------------------------------------
+function cleanExchangeAddr(name, email) {
+  // Exchange .msg files often carry sender/recipient addresses as a Distinguished
+  // Name like "/O=EXCHANGELABS/OU=Exchange Administrative Group..." — useless for
+  // human display. Prefer the friendly name if the email looks like an Exchange DN.
+  const looksLikeDN = email && /^\/O=|^\/o=|EXCHANGE/i.test(email);
+  if (looksLikeDN) return name || email || '';
+  if (name && email) return `${name} <${email}>`;
+  return name || email || '';
+}
+
+async function parseEmailFile(filePath) {
+  const ext = path.extname(filePath).toLowerCase();
+  const buf = await fsp.readFile(filePath);
+  if (ext === '.msg') {
+    const reader = new MsgReader(buf);
+    const d = reader.getFileData();
+    const recips = d.recipients || [];
+    const to = recips.filter((r) => r.recipType === 'to' || !r.recipType).map((r) => cleanExchangeAddr(r.name, r.email));
+    const cc = recips.filter((r) => r.recipType === 'cc').map((r) => cleanExchangeAddr(r.name, r.email));
+    const body = (d.body || '').trim() || (d.bodyHtml ? htmlToText(d.bodyHtml) : '');
+    return {
+      subject: (d.subject || '').trim() || '(no subject)',
+      from: cleanExchangeAddr(d.senderName, d.senderEmail),
+      to,
+      cc,
+      date: d.messageDeliveryTime || d.creationTime || null,
+      body,
+      attachments: (d.attachments || []).map((a) => a.fileName).filter(Boolean),
+      parser: 'msg',
+    };
+  }
+  // .eml
+  const parsed = await emlParse(buf);
+  return {
+    subject: (parsed.subject || '').trim() || '(no subject)',
+    from: parsed.from ? parsed.from.text : '',
+    to: parsed.to ? (Array.isArray(parsed.to) ? parsed.to.map((t) => t.text) : [parsed.to.text]) : [],
+    cc: parsed.cc ? (Array.isArray(parsed.cc) ? parsed.cc.map((t) => t.text) : [parsed.cc.text]) : [],
+    date: parsed.date ? parsed.date.toISOString() : null,
+    body: (parsed.text || '').trim() || htmlToText(parsed.html || ''),
+    attachments: (parsed.attachments || []).map((a) => a.filename).filter(Boolean),
+    parser: 'eml',
+  };
+}
+
+function htmlToText(html) {
+  return String(html || '')
+    .replace(/<style[\s\S]*?<\/style>/gi, '')
+    .replace(/<script[\s\S]*?<\/script>/gi, '')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|tr)>/gi, '\n')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+// ----------------------------------------------------------------------------
+// Render parsed email to a deterministic PDF (same content => same bytes,
+// so the existing hash-dedup still catches re-uploads).
+// ----------------------------------------------------------------------------
+function renderEmailToPDF(email, sourceFilename) {
+  return new Promise((resolve, reject) => {
+    const chunks = [];
+    // Deterministic PDF metadata: pin CreationDate / ModDate to the email's
+    // date so the binary doesn't vary by when we ran the script.
+    const stamp = email.date ? new Date(email.date) : new Date('2000-01-01T00:00:00Z');
+    const doc = new PDFDocument({
+      size: 'LETTER',
+      margin: 50,
+      info: {
+        Title: email.subject,
+        Author: email.from,
+        Subject: email.subject,
+        CreationDate: stamp,
+        ModDate: stamp,
+      },
+    });
+    doc.on('data', (c) => chunks.push(c));
+    doc.on('end', () => resolve(Buffer.concat(chunks)));
+    doc.on('error', reject);
+
+    // Header block — looks like a standard email print-out
+    doc.fontSize(14).font('Helvetica-Bold').text(email.subject, { paragraphGap: 6 });
+    doc.fontSize(10).font('Helvetica');
+    doc.text(`From: ${email.from}`);
+    if (email.to && email.to.length) doc.text(`To: ${email.to.join('; ')}`);
+    if (email.cc && email.cc.length) doc.text(`Cc: ${email.cc.join('; ')}`);
+    if (email.date) doc.text(`Date: ${new Date(email.date).toUTCString()}`);
+    if (email.attachments && email.attachments.length) {
+      doc.text(`Attachments: ${email.attachments.join('; ')}`);
+    }
+    doc.text(`Source: ${sourceFilename} (${email.parser})`);
+    doc.moveDown(1);
+
+    // Divider
+    doc.moveTo(doc.x, doc.y).lineTo(doc.page.width - doc.page.margins.right, doc.y).stroke();
+    doc.moveDown(0.6);
+
+    // Body
+    doc.fontSize(11).font('Helvetica').text(email.body || '(empty body)', {
+      align: 'left',
+      lineGap: 2,
+    });
+
+    doc.end();
+  });
 }
 
 // ----------------------------------------------------------------------------
@@ -195,6 +323,14 @@ NOT RELEVANT examples: blank/corrupted scans, personal Ed Gojara files unrelated
 
 NOT RELEVANT — one-off retail receipts: Amazon orders, Costco trips, Home Depot purchases, Office Depot, Walmart, Target, Staples, etc. Even if the items were purchased for HOA use (pool supplies, office supplies, clubhouse stuff), one-off retail receipts are noise — they're not structured vendor records and don't belong in document search. Real vendor records look like recurring service contracts, invoices from a named service vendor with terms, or multi-page agreements — NOT a 1-page Amazon order confirmation.
 
+EMAIL-SPECIFIC RULES (when the file looks like an email — has Subject/From/To/Date headers visible):
+- INCLUDE: threads where a vendor, board member, homeowner, attorney, insurance carrier, government agency, or other counterparty is discussing substantive HOA business (decisions, disputes, complaints, proposals, status updates with operational content, claim correspondence, contract negotiations, governance debates).
+- INCLUDE: emails documenting a decision, deadline shift, or commitment ("approved," "we agreed," "deadline is X," "you can proceed with...").
+- NOT RELEVANT: pure logistics ("running late," "moved meeting to 3pm," "thanks!", "got it"), brief acknowledgments with no substance.
+- NOT RELEVANT: auto-generated notifications (calendar invites, read receipts, out-of-office bounces, automated newsletters, subscription confirmations, password reset emails).
+- NOT RELEVANT: spam, marketing, vendor cold-pitches that didn't go anywhere.
+- NOT RELEVANT: Ed's personal emails (family, his other consulting work, personal financial) that ended up in an HOA folder by misfiling.
+
 NOT RELEVANT — documents clearly for a DIFFERENT community that Bedrock doesn't manage. If the doc is titled for or addresses a community other than ${communityHint} (and isn't a Bedrock-portfolio-wide doc like a template or training material), mark relevant=no.
 
 When in doubt about junk vs. real, mark relevant=no — we'd rather miss a few than junk up the system.
@@ -252,8 +388,8 @@ async function ensureLoggedIn() {
 // ----------------------------------------------------------------------------
 // Upload to trustEd
 // ----------------------------------------------------------------------------
-async function uploadToTrusted(filePath, fileBuffer) {
-  const filename = path.basename(filePath);
+async function uploadToTrusted(filePath, fileBuffer, uploadFilename) {
+  const filename = uploadFilename || path.basename(filePath);
   const blob = new Blob([fileBuffer], { type: 'application/pdf' });
   const form = new FormData();
   form.append('pdf', blob, filename);
@@ -302,7 +438,9 @@ function csvEscape(v) {
 const CSV_HEADER = [
   'path', 'size_bytes', 'sha256', 'outcome', 'doc_id', 'community',
   'category', 'pre_screen_doc_type', 'pre_screen_confidence',
-  'pre_screen_reasoning', 'existing_id', 'error',
+  'pre_screen_reasoning', 'existing_id',
+  'email_subject', 'email_from', 'email_date',
+  'error',
 ];
 const csvStream = fs.createWriteStream(CSV_OUT, { flags: 'w' });
 csvStream.write(CSV_HEADER.join(',') + '\n');
@@ -334,30 +472,57 @@ async function processFile(filePath, existingHashes) {
     return row;
   }
 
-  // 2. Hash dedup (cheap)
-  try {
-    row.sha256 = await sha256File(filePath);
-  } catch (e) {
-    row.outcome = 'error';
-    row.error = `hash failed: ${e.message}`;
-    csvRow(row);
-    return row;
+  // 2. For emails: parse + render to a deterministic PDF first. The PDF
+  //    bytes are what we hash, pre-screen, and upload — so the existing
+  //    pipeline downstream of this step doesn't care if the source was a
+  //    .pdf vs a .msg/.eml. For PDFs: just read the file as-is.
+  let fileBuffer;        // bytes we send to Claude pre-screen + trustEd upload
+  let uploadFilename;    // filename POSTed to trustEd
+  if (isEmailFile(filePath)) {
+    try {
+      const email = await parseEmailFile(filePath);
+      row.email_subject = email.subject;
+      row.email_from = email.from;
+      row.email_date = email.date;
+      fileBuffer = await renderEmailToPDF(email, path.basename(filePath));
+      // Rename to .pdf so trustEd's multer + mime check accepts it
+      const base = path.basename(filePath, path.extname(filePath));
+      uploadFilename = `${base} [email].pdf`;
+    } catch (e) {
+      row.outcome = 'error';
+      row.error = `email parse failed: ${e.message}`;
+      csvRow(row);
+      return row;
+    }
+    row.size_bytes = fileBuffer.length;
+    row.sha256 = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+  } else {
+    // PDF path: hash the file on disk
+    try {
+      row.sha256 = await sha256File(filePath);
+    } catch (e) {
+      row.outcome = 'error';
+      row.error = `hash failed: ${e.message}`;
+      csvRow(row);
+      return row;
+    }
+    try {
+      fileBuffer = await fsp.readFile(filePath);
+    } catch (e) {
+      row.outcome = 'error';
+      row.error = `read failed: ${e.message}`;
+      csvRow(row);
+      return row;
+    }
+    uploadFilename = path.basename(filePath);
   }
+
+  // 3. Hash dedup (works for both — for emails, the deterministic PDF means
+  //    re-runs of the same email produce the same hash and get caught here).
   const existing = existingHashes.get(row.sha256);
   if (existing) {
     row.outcome = 'skipped_already_in_trusted';
     row.existing_id = existing.id;
-    csvRow(row);
-    return row;
-  }
-
-  // 3. Read bytes once for both pre-screen + upload
-  let fileBuffer;
-  try {
-    fileBuffer = await fsp.readFile(filePath);
-  } catch (e) {
-    row.outcome = 'error';
-    row.error = `read failed: ${e.message}`;
     csvRow(row);
     return row;
   }
@@ -398,7 +563,7 @@ async function processFile(filePath, existingHashes) {
 
   let result;
   try {
-    result = await uploadToTrusted(filePath, fileBuffer);
+    result = await uploadToTrusted(filePath, fileBuffer, uploadFilename);
   } catch (e) {
     row.outcome = 'error';
     row.error = `upload failed: ${e.message}`;
