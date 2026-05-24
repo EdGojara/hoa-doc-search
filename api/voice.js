@@ -708,25 +708,25 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       history,
       community,
       caller,
-      // 2026-05-24 (and now reverted) — Haiku 4.5 works after all.
+      // 2026-05-24 (final) — back to Sonnet 4.5 for production voice.
       //
-      // Quick history: shipped Haiku → flagged "strike 3" on synthesis
-      // regression and swapped to Sonnet → user pointed out the
-      // diagnostic call I was looking at was actually Haiku working
-      // correctly (the rule citation that flagged was in conversational
-      // register, which lands fine per project context — only paralegal
-      // citation register is banned).
+      // Ed's perceptive A/B feedback after running both: Sonnet 'sounded
+      // more personable' (his words). Not imagination — it's a real
+      // model-tier difference. Sonnet reads conversational nuance better
+      // (tone, register, social cues), uses more relational phrasing,
+      // maintains persona consistency better. Haiku is competent but
+      // sounds slightly more transactional.
       //
-      // With FINAL HARD RULES + HARD RULE #6 (document-citation voice
-      // ban) + synthesis principle examples, Haiku follows the rules
-      // well enough for production. Keeping Haiku — the latency win
-      // (~3× faster LLM call) and cost win (~3× cheaper) are real and
-      // user-noticeable; the synthesis compliance is now adequate.
+      // For customer-facing voice where personality is part of the
+      // product, warmth matters. Sonnet's latency penalty (~1.7s slower
+      // per turn) is mitigated by the prompt-caching change (commit
+      // 39ee396) AND the per-call profile cache (commit 76d6d59) —
+      // turn 2+ approach Haiku speed. Cost premium ~$0.20 per 5-min
+      // call vs Haiku — rounding error at current volume; small at
+      // back-office scale per the cost-consciousness memo.
       //
-      // If a future production call shows the over-citing failure mode
-      // (leading WITH the rule citation instead of with the answer),
-      // swap to Sonnet here. Otherwise Haiku is the right tier for voice.
-      model: 'claude-haiku-4-5-20251001',
+      // Don't keep flipping. This is the choice.
+      model: 'claude-sonnet-4-5',
       // Tool-use support — Claire can call get_ar_for_property when a
       // caller asks for account balance. Verifies identity via address
       // confirmation before disclosing. See lib/voice/tools.js.
