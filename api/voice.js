@@ -362,7 +362,10 @@ function handleWebSocketConnection(ws, req) {
 
 // Vapi sends application/json; the router-level urlencoded parser above
 // won't handle it. Apply express.json() specifically on this route.
-router.post('/vapi-llm-webhook', express.json({ limit: '256kb' }), async (req, res) => {
+// Vapi treats the configured URL as a BASE and appends /chat/completions
+// (OpenAI-compatible convention). So the actual mounted path matches what
+// Vapi calls: /api/voice/vapi-llm-webhook/chat/completions.
+router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' }), async (req, res) => {
   const startMs = Date.now();
   const requestId = `vapi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -379,6 +382,13 @@ router.post('/vapi-llm-webhook', express.json({ limit: '256kb' }), async (req, r
   }
 
   // ---- Diagnostic logging (Phase 2a — learn Vapi's actual payload shape) ----
+  // Log ALL headers too: Vapi's docs are vague on which header carries the
+  // auth secret (Authorization Bearer? X-API-Key? something else?). The
+  // headers from the first real call tell us.
+  const safeHeaders = { ...req.headers };
+  if (safeHeaders.authorization) safeHeaders.authorization = safeHeaders.authorization.slice(0, 20) + '…';
+  console.log(`[vapi-llm ${requestId}] headers:`, JSON.stringify(safeHeaders, null, 2));
+
   const body = req.body || {};
   try {
     const payloadPreview = JSON.stringify(body, null, 2);
