@@ -657,18 +657,25 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       history,
       community,
       caller,
-      // 2026-05-24 (even later) — confirmed Haiku regression. First live
-      // call (RV question over the phone) showed Haiku still recited
-      // "60 hours within a 72-hour window" despite FINAL HARD RULES +
-      // HARD RULE #6 + synthesis principle examples. End-of-call analysis
-      // summary captured it verbatim. Strike 3 — Haiku is not reliable
-      // enough on long-prompt synthesis nuance for production voice.
+      // 2026-05-24 (and now reverted) — Haiku 4.5 works after all.
       //
-      // Permanent swap to Sonnet 4.5. Cost premium accepted in exchange
-      // for synthesis compliance. Latency mitigated by prompt caching
-      // (commit 39ee396). If Anthropic ships a Haiku that handles this
-      // better, retest.
-      model: 'claude-sonnet-4-5',
+      // Quick history: shipped Haiku → flagged "strike 3" on synthesis
+      // regression and swapped to Sonnet → user pointed out the
+      // diagnostic call I was looking at was actually Haiku working
+      // correctly (the rule citation that flagged was in conversational
+      // register, which lands fine per project context — only paralegal
+      // citation register is banned).
+      //
+      // With FINAL HARD RULES + HARD RULE #6 (document-citation voice
+      // ban) + synthesis principle examples, Haiku follows the rules
+      // well enough for production. Keeping Haiku — the latency win
+      // (~3× faster LLM call) and cost win (~3× cheaper) are real and
+      // user-noticeable; the synthesis compliance is now adequate.
+      //
+      // If a future production call shows the over-citing failure mode
+      // (leading WITH the rule citation instead of with the answer),
+      // swap to Sonnet here. Otherwise Haiku is the right tier for voice.
+      model: 'claude-haiku-4-5-20251001',
       // Tool-use support — Claire can call get_ar_for_property when a
       // caller asks for account balance. Verifies identity via address
       // confirmation before disclosing. See lib/voice/tools.js.
