@@ -25,6 +25,8 @@ const { streamTurn } = require('../lib/voice/reason');
 const { VOICE_TOOLS, VOICE_TOOL_HANDLERS } = require('../lib/voice/tools');
 const { buildOpener } = require('../lib/voice/persona');
 const { resolveCallerByPhone } = require('../lib/voice/caller_lookup');
+const { buildCommunityContextBlock } = require('./communities');
+const { getCall: cacheGet, setCall: cacheSet, clearCall: cacheClear } = require('../lib/voice/call_cache');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -412,6 +414,9 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
     // can stay quiet to avoid log noise.
     if (eventType === 'end-of-call-report') {
       console.log(`[vapi-ar ${requestId}] end-of-call report received`, JSON.stringify(safeForLogs(msg)).slice(0, 500));
+      // Clear the per-call cache to release memory
+      const endingCallId = msg?.call?.id || msg?.callId || null;
+      if (endingCallId) cacheClear(endingCallId);
     }
     return res.json({});
   }
@@ -466,6 +471,32 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
   // both code paths.
   const firstMessage = buildOpener(community?.name || null, caller?.first_name || null);
 
+  // Pre-fetch the community profile here at call start, so subsequent
+  // LLM webhook turns don't re-fetch it from Supabase on every turn.
+  // This is the per-call cache pattern — saves ~200-500ms per turn after
+  // the first. Best-effort: if fetch fails, the LLM webhook will fall
+  // back to its own fetch.
+  let profileBlock = null;
+  if (community?.name) {
+    try {
+      profileBlock = await buildCommunityContextBlock(community.name);
+    } catch (e) {
+      console.warn(`[vapi-ar ${requestId}] community profile pre-fetch failed: ${e.message}`);
+    }
+  }
+
+  // Stash the resolved context by Vapi call_id so the LLM webhook can
+  // pull it on every turn without re-resolving. Cache expires after
+  // 10 minutes (longer than any normal call).
+  const incomingCallId = msg?.call?.id || msg?.callId || null;
+  if (incomingCallId) {
+    cacheSet(incomingCallId, {
+      community: community ? { id: community.id, name: community.name, profileBlock } : null,
+      caller: caller || null,
+      resolvedAt: Date.now(),
+    });
+  }
+
   // Response per Vapi's assistant-request contract:
   //   { assistantId: '<existing assistant>', assistantOverrides: {...} }
   // The metadata field flows through to every LLM webhook call as
@@ -484,7 +515,7 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
     },
   };
 
-  console.log(`[vapi-ar ${requestId}] responding with firstMessage="${firstMessage}"`);
+  console.log(`[vapi-ar ${requestId}] responding with firstMessage="${firstMessage}", cached_profile=${!!profileBlock}, call_id=${incomingCallId || 'none'}`);
   res.json(response);
 });
 
@@ -581,26 +612,45 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({ role: m.role, content: String(m.content || '') }));
 
-  // ---- Resolve community + caller from Vapi metadata (Phase 2b) ----
-  // The assistant-request webhook (above) does the caller-ID lookup at
-  // call start and stashes the result in assistantOverrides.metadata.
-  // Every per-turn LLM webhook call carries that metadata. So we just
-  // pluck it from the payload rather than re-doing the lookup per turn.
-  //
-  // Fallback: if metadata is missing (e.g., web Talk test with no
-  // customer.number, or assistant-request wasn't configured yet),
-  // hardcode Waterview for backward compat with the testing flow.
+  // ---- Resolve community + caller (Phase 2b + per-call cache) ----
+  // Priority order:
+  //   1. Per-call cache (populated by assistant-request webhook at call
+  //      start) — includes a pre-fetched profileBlock, saving ~200-500ms
+  //      per turn vs re-fetching from Supabase
+  //   2. Vapi metadata on the LLM payload (works after assistant-request
+  //      but no profile pre-fetch)
+  //   3. Hardcoded Waterview fallback (web Talk test path with no real
+  //      phone, no assistant-request fired)
+  const incomingCallId = body?.call?.id || body?.callId || null;
+  const cached = incomingCallId ? cacheGet(incomingCallId) : null;
+
   const callMetadata = body?.call?.assistantOverrides?.metadata
     || body?.assistantOverrides?.metadata
     || body?.metadata
     || {};
+
   let community = null;
   let caller = null;
-  if (callMetadata.community_id) {
+  let profileBlockFromCache = null;
+
+  if (cached?.community?.id) {
+    community = { id: cached.community.id, name: cached.community.name };
+    profileBlockFromCache = cached.community.profileBlock || null;
+    caller = cached.caller || null;
+    console.log(`[vapi-llm ${requestId}] cache hit for call_id=${incomingCallId}`);
+  } else if (callMetadata.community_id) {
     community = {
       id: callMetadata.community_id,
       name: callMetadata.community_name || null,
     };
+    if (callMetadata.caller_contact_id) {
+      caller = {
+        id: callMetadata.caller_contact_id,
+        first_name: callMetadata.caller_first_name || null,
+        full_name: callMetadata.caller_full_name || null,
+      };
+    }
+    console.log(`[vapi-llm ${requestId}] metadata path (no cache)`);
   } else {
     // Fallback for web-test path (no real phone, no assistant-request).
     try {
@@ -613,13 +663,14 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     } catch (e) {
       console.warn(`[vapi-llm ${requestId}] community fallback lookup failed: ${e.message}`);
     }
+    console.log(`[vapi-llm ${requestId}] fallback to hardcoded Waterview`);
   }
-  if (callMetadata.caller_contact_id) {
-    caller = {
-      id: callMetadata.caller_contact_id,
-      first_name: callMetadata.caller_first_name || null,
-      full_name: callMetadata.caller_full_name || null,
-    };
+
+  // If we have a pre-fetched profileBlock from cache, plumb it into the
+  // community object so streamTurn uses it instead of re-fetching. streamTurn
+  // already accepts community.profile_block as a fast path (see reason.js).
+  if (community && profileBlockFromCache) {
+    community.profile_block = profileBlockFromCache;
   }
 
   console.log(`[vapi-llm ${requestId}] resolved: community=${community?.name || 'none'}, caller=${caller?.first_name || 'none'}, utterance="${utterance.slice(0, 200)}"`);
