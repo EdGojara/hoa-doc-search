@@ -487,7 +487,10 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
         predecessor_name: provenance.predecessor,
         extraction_model: 'claude-sonnet-4-5',
         extraction_confidence: parsed.extraction_confidence || 'medium',
-        extraction_notes: parsed.extraction_notes || null
+        extraction_notes: parsed.extraction_notes || null,
+        // Queue for background indexing. Null when there's no file in storage
+        // (extraction-only upload) so the scheduler won't try to index nothing.
+        index_status: uploadedFile ? 'pending' : null
       })
       .select()
       .single();
@@ -577,20 +580,19 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
       duration_ms: Date.now() - t0
     });
 
-    // Bridge: auto-index the new doc into the askEd chunks table so it's
-    // immediately searchable. Without this, uploads silently disappeared from
-    // askEd even though they got a green check in the matrix. Runs synchronously
-    // so the response carries the indexing result — caller can show the user.
-    let indexed = { ok: false, reason: 'not_attempted' };
-    if (uploadedFile && doc) {
-      try {
-        const libDoc = { ...doc, community_name: community?.name || null };
-        indexed = await indexLibraryDoc(supabase, openai, libDoc);
-      } catch (idxErr) {
-        console.warn('[documents] auto-index failed:', idxErr.message);
-        indexed = { ok: false, reason: 'exception', error: idxErr.message };
-      }
-    } else if (!uploadedFile) {
+    // Bridge: queue the new doc for background indexing into askEd's chunks
+    // table. We used to call indexLibraryDoc synchronously here, which worked
+    // for fast PDFs but silently failed for form-field / scanned PDFs that
+    // need the Claude vision pipeline (~30-90s per doc) — Render's 100s
+    // gateway timeout would guillotine the upload request mid-OCR, chunks
+    // would never insert, and the doc would land in queue limbo with no
+    // visible error. 2026-05-24: switched to async-via-status-column. The
+    // upload INSERT at step 8 marks the row index_status='pending' when
+    // there's a file in storage. The scheduler's documents_auto_reindex job
+    // picks up pending rows and runs the same indexLibraryDoc pipeline with
+    // no HTTP timeout pressure. Migration 104 backfills existing rows.
+    let indexed = { ok: true, reason: 'queued', queued: true };
+    if (!uploadedFile) {
       indexed = { ok: false, reason: 'no_file_in_storage' };
     }
 
@@ -857,29 +859,30 @@ async function _indexWithTimeout(supabase, openai, doc, timeoutMs = 180000) {
 
 // Find library docs not yet indexed for askEd. Used by both the
 // reindex-all endpoint and the scheduled auto-reindex job.
+//
+// 2026-05-24: replaced the JSONB-scan-of-documents.metadata approach with a
+// direct read of library_documents.index_status (column added in migration
+// 104). Single source of truth, partial index makes the query trivial, and
+// 'failed_permanent' rows are excluded so poison-pill docs don't soak up
+// the queue budget on every run. To force a retry of a permanent-failed
+// doc, manually set index_status='pending' or use the per-doc reindex
+// endpoint.
 async function _findUnindexedDocs(supabase, { communityFilter = null, limit = null } = {}) {
-  const { data: docs, error } = await supabase
+  let q = supabase
     .from('library_documents')
-    .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+    .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, index_status, index_attempt_count, communities:community_id(name)')
     .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-    .neq('status', 'missing')
+    .in('index_status', ['pending', 'failed'])
     .not('file_path', 'is', null)
     .order('uploaded_at', { ascending: true });
+  if (limit) q = q.limit(limit * 2); // pull extra for community filtering before slicing
+  const { data: docs, error } = await q;
   if (error) throw error;
 
   let queue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
   if (communityFilter) {
     const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
     queue = queue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
-  }
-  if (queue.length > 0) {
-    const ids = queue.map((d) => d.id);
-    const { data: hits } = await supabase
-      .from('documents')
-      .select('metadata')
-      .filter('metadata->>library_document_id', 'in', `(${ids.map((id) => `"${id}"`).join(',')})`);
-    const haveIds = new Set((hits || []).map((h) => h.metadata && h.metadata.library_document_id).filter(Boolean));
-    queue = queue.filter((d) => !haveIds.has(d.id));
   }
   return limit ? queue.slice(0, limit) : queue;
 }
@@ -919,28 +922,28 @@ router.post('/reindex-all', async (req, res) => {
     const BATCH_BUDGET_MS = 75000;
     const startedAt = Date.now();
 
-    const { data: docs, error } = await supabase
+    // Pull candidates from library_documents. `onlyMissing` (the default)
+    // now means "index_status IN ('pending','failed')" — i.e., the queue.
+    // Pass-through `onlyMissing=0` returns ALL library docs (including
+    // already-indexed) for explicit full-rebuild scenarios.
+    let q = supabase
       .from('library_documents')
-      .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, communities:community_id(name)')
+      .select('id, community_id, file_path, file_name_original, file_name_normalized, category, period_label, status, index_status, communities:community_id(name)')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
-      .neq('status', 'missing')
       .not('file_path', 'is', null)
       .order('uploaded_at', { ascending: true });
+    if (onlyMissing) {
+      q = q.in('index_status', ['pending', 'failed']);
+    } else {
+      q = q.neq('status', 'missing');
+    }
+    const { data: docs, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
 
     let workQueue = (docs || []).map((d) => ({ ...d, community_name: (d.communities && d.communities.name) || null }));
     if (communityFilter) {
       const filt = communityFilter.toLowerCase().split(' at ')[0].trim();
       workQueue = workQueue.filter((d) => (d.community_name || '').toLowerCase().includes(filt));
-    }
-    if (onlyMissing && workQueue.length > 0) {
-      const ids = workQueue.map((d) => d.id);
-      const { data: hits } = await supabase
-        .from('documents')
-        .select('metadata')
-        .filter('metadata->>library_document_id', 'in', `(${ids.map((id) => `"${id}"`).join(',')})`);
-      const haveIds = new Set((hits || []).map((h) => h.metadata && h.metadata.library_document_id).filter(Boolean));
-      workQueue = workQueue.filter((d) => !haveIds.has(d.id));
     }
 
     const queueTotal = workQueue.length;
