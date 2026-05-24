@@ -370,15 +370,21 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
   const requestId = `vapi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // ---- Auth ----
+  // Two modes:
+  //   1. VAPI_WEBHOOK_SECRET set → enforce Bearer-token match (production)
+  //   2. VAPI_WEBHOOK_SECRET unset → DIAGNOSTIC mode: allow through with a
+  //      warning log. Used for capturing Vapi's actual request headers /
+  //      payload to learn the contract. Re-enable enforcement once we know
+  //      what header Vapi sends + how to configure it.
   const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
-  if (!expectedSecret) {
-    console.warn('[vapi-llm] VAPI_WEBHOOK_SECRET not configured — refusing all requests');
-    return res.status(503).json({ error: 'webhook_not_configured' });
-  }
-  const auth = String(req.headers.authorization || '');
-  if (auth !== `Bearer ${expectedSecret}`) {
-    console.warn(`[vapi-llm ${requestId}] auth failed`);
-    return res.status(401).json({ error: 'unauthorized' });
+  if (expectedSecret) {
+    const auth = String(req.headers.authorization || '');
+    if (auth !== `Bearer ${expectedSecret}`) {
+      console.warn(`[vapi-llm ${requestId}] auth failed (header: ${auth.slice(0, 30)}…)`);
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+  } else {
+    console.warn(`[vapi-llm ${requestId}] DIAGNOSTIC MODE — VAPI_WEBHOOK_SECRET unset, allowing request. Set the env var to enforce auth.`);
   }
 
   // ---- Diagnostic logging (Phase 2a — learn Vapi's actual payload shape) ----
