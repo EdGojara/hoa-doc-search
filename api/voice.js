@@ -380,6 +380,26 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
   const eventType = msg?.type || body?.type || 'unknown';
   console.log(`[vapi-ar ${requestId}] event=${eventType}`);
 
+  // Defensive log redaction. Vapi's payload includes credentials we should
+  // NEVER write to logs in plaintext (twilioAuthToken, twilioAccountSid,
+  // any *Token / *Secret / *Key field). Build a safe-to-log clone of the
+  // body that masks these before any console.log call below.
+  function safeForLogs(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+    if (Array.isArray(obj)) return obj.map(safeForLogs);
+    const out = {};
+    for (const [k, v] of Object.entries(obj)) {
+      if (/token|secret|key|password|credential/i.test(k) && typeof v === 'string') {
+        out[k] = v.slice(0, 4) + '***REDACTED***';
+      } else if (v && typeof v === 'object') {
+        out[k] = safeForLogs(v);
+      } else {
+        out[k] = v;
+      }
+    }
+    return out;
+  }
+
   // Vapi's Server URL receives MULTIPLE event types — assistant-request,
   // end-of-call-report, conversation-update, function-call, status-update,
   // transcript, hang, speech-update, model-output, tool-calls, etc.
@@ -391,13 +411,13 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
     // Useful logging for end-of-call-report (audit trail), other events
     // can stay quiet to avoid log noise.
     if (eventType === 'end-of-call-report') {
-      console.log(`[vapi-ar ${requestId}] end-of-call report received`, JSON.stringify(msg).slice(0, 500));
+      console.log(`[vapi-ar ${requestId}] end-of-call report received`, JSON.stringify(safeForLogs(msg)).slice(0, 500));
     }
     return res.json({});
   }
 
-  // assistant-request specifically. Log full payload for diagnostic.
-  console.log(`[vapi-ar ${requestId}] assistant-request payload:`, JSON.stringify(body).slice(0, 2000));
+  // assistant-request specifically. Log redacted payload for diagnostic.
+  console.log(`[vapi-ar ${requestId}] assistant-request payload:`, JSON.stringify(safeForLogs(body)).slice(0, 2000));
 
   // Vapi's assistant-request shape (per their docs / observed in practice):
   //   { message: { type: 'assistant-request', call: { customer: { number: '+1...' },
@@ -637,16 +657,18 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       history,
       community,
       caller,
-      // 2026-05-24 (later) — switched BACK to Haiku 4.5 to test whether
-      // the additional prompt tightening (FINAL HARD RULES section + HARD
-      // RULE #6 explicitly banning document-citation voice + the synthesis
-      // principle examples) now makes Haiku reliable enough on the over-
-      // citing pattern. Cost win: Haiku LLM is ~3× cheaper + ~3× faster
-      // than Sonnet, can nearly offset the Vapi platform fee.
+      // 2026-05-24 (even later) — confirmed Haiku regression. First live
+      // call (RV question over the phone) showed Haiku still recited
+      // "60 hours within a 72-hour window" despite FINAL HARD RULES +
+      // HARD RULE #6 + synthesis principle examples. End-of-call analysis
+      // summary captured it verbatim. Strike 3 — Haiku is not reliable
+      // enough on long-prompt synthesis nuance for production voice.
       //
-      // If over-citing regression returns, swap back to Sonnet here and
-      // accept the cost premium for reliable synthesis compliance.
-      model: 'claude-haiku-4-5-20251001',
+      // Permanent swap to Sonnet 4.5. Cost premium accepted in exchange
+      // for synthesis compliance. Latency mitigated by prompt caching
+      // (commit 39ee396). If Anthropic ships a Haiku that handles this
+      // better, retest.
+      model: 'claude-sonnet-4-5',
       // Tool-use support — Claire can call get_ar_for_property when a
       // caller asks for account balance. Verifies identity via address
       // confirmation before disclosing. See lib/voice/tools.js.
