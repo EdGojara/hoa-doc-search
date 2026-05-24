@@ -393,6 +393,7 @@ const _STAFF_GATE_PUBLIC = [
   // returns 401 before the route handler runs — Vapi sees that as
   // pipeline-error-custom-llm-401-unauthorized and never gives us a chance.
   /^\/api\/voice\/vapi-llm-webhook\b/,
+  /^\/api\/voice\/vapi-assistant-request$/,
   /^\/api\/voice\/incoming$/,
   /^\/api\/voice\/status$/,
   /^\/api\/voice\/stream$/,

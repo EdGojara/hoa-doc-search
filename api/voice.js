@@ -23,6 +23,8 @@ const { createClient } = require('@supabase/supabase-js');
 const { CallBridge } = require('../lib/voice/bridge');
 const { streamTurn } = require('../lib/voice/reason');
 const { VOICE_TOOLS, VOICE_TOOL_HANDLERS } = require('../lib/voice/tools');
+const { buildOpener } = require('../lib/voice/persona');
+const { resolveCallerByPhone } = require('../lib/voice/caller_lookup');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -337,6 +339,116 @@ function handleWebSocketConnection(ws, req) {
 }
 
 // ============================================================================
+// POST /api/voice/vapi-assistant-request — Vapi assistant-request webhook
+// ----------------------------------------------------------------------------
+// Vapi calls this BEFORE connecting an inbound call. Payload includes the
+// caller's phone number; we look up their contact + property + community
+// via the shared caller_lookup helper, then return an assistant config with:
+//   - assistantId: which assistant to use (the existing Friendly FAQ Agent)
+//   - assistantOverrides.firstMessage: DYNAMIC opener built from caller-ID
+//   - assistantOverrides.metadata: caller_contact_id, community_id,
+//     community_name (flows through to every LLM webhook call so Claire
+//     knows who's on the line and which community to scope to)
+//
+// Why this matters:
+//   - The Vapi "First Message" field is static (hardcoded "Am I speaking
+//     with Ed from Waterview"). Useless for any non-Ed caller.
+//   - Without dynamic metadata, our LLM webhook can't know which
+//     community context to load — was hardcoded to Waterview for testing.
+//   - This endpoint solves BOTH at once via Vapi's assistant-request
+//     pattern: pre-call lookup → per-call config.
+//
+// Vapi config: in the assistant's settings, set "Server URL" to
+//   https://my.bedrocktxai.com/api/voice/vapi-assistant-request
+// Then Vapi will POST here on every inbound call before connecting.
+// ============================================================================
+const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID || '6054ad5b-28c1-4d61-b2fa-92068c06a4d7';
+
+router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (req, res) => {
+  const requestId = `vapi-ar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+  if (expectedSecret) {
+    const auth = String(req.headers.authorization || '');
+    if (auth !== `Bearer ${expectedSecret}`) {
+      console.warn(`[vapi-ar ${requestId}] auth failed`);
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+  }
+
+  const body = req.body || {};
+  console.log(`[vapi-ar ${requestId}] payload:`, JSON.stringify(body).slice(0, 2000));
+
+  // Vapi's assistant-request shape (per their docs / observed in practice):
+  //   { message: { type: 'assistant-request', call: { customer: { number: '+1...' },
+  //                                                    phoneNumber: { number: '+1...' } } } }
+  // Extract the caller's phone — defensively check both top-level and nested
+  // 'message' wrapper since Vapi has historically used both shapes.
+  const msg = body.message || body;
+  const callerNumber = msg?.call?.customer?.number
+    || msg?.customer?.number
+    || msg?.call?.customer?.phoneNumber
+    || null;
+  const calledNumber = msg?.call?.phoneNumber?.number
+    || msg?.phoneNumber?.number
+    || null;
+
+  let caller = null;
+  let community = null;
+  if (callerNumber) {
+    try {
+      const lookup = await resolveCallerByPhone(callerNumber);
+      caller = lookup.contact;
+      community = lookup.community;
+      console.log(`[vapi-ar ${requestId}] resolved caller=${caller?.first_name || 'unknown'}, community=${community?.name || 'unknown'}`);
+    } catch (e) {
+      console.warn(`[vapi-ar ${requestId}] caller lookup failed: ${e.message}`);
+    }
+  }
+
+  // Fallback: if no caller-ID match but the called number is configured for
+  // a specific community via voice_phone_routes, use that.
+  if (!community && calledNumber) {
+    try {
+      const { data: route } = await supabase
+        .from('voice_phone_routes')
+        .select('community_id, community_display_name, communities:community_id(id, name)')
+        .eq('inbound_phone_number', calledNumber)
+        .eq('enabled', true)
+        .maybeSingle();
+      if (route?.communities) {
+        community = { id: route.communities.id, name: route.communities.name };
+      }
+    } catch (_) { /* swallow */ }
+  }
+
+  // Build the dynamic opener via the same buildOpener used by the old
+  // Twilio bridge — Single source of truth for opener phrasing across
+  // both code paths.
+  const firstMessage = buildOpener(community?.name || null, caller?.first_name || null);
+
+  // Response per Vapi's assistant-request contract:
+  //   { assistantId: '<existing assistant>', assistantOverrides: {...} }
+  // The metadata field flows through to every LLM webhook call as
+  // call.assistantOverrides.metadata — Claire's brain can read it.
+  const response = {
+    assistantId: VAPI_ASSISTANT_ID,
+    assistantOverrides: {
+      firstMessage,
+      metadata: {
+        caller_contact_id: caller?.id || null,
+        caller_first_name: caller?.first_name || null,
+        caller_full_name: caller?.full_name || null,
+        community_id: community?.id || null,
+        community_name: community?.name || null,
+      },
+    },
+  };
+
+  console.log(`[vapi-ar ${requestId}] responding with firstMessage="${firstMessage}"`);
+  res.json(response);
+});
+
+// ============================================================================
 // POST /api/voice/vapi-llm-webhook — Vapi Custom LLM endpoint
 // ----------------------------------------------------------------------------
 // Vapi handles the voice loop (STT, turn-taking, interruption handling, TTS).
@@ -429,26 +541,46 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     .filter((m) => m.role === 'user' || m.role === 'assistant')
     .map((m) => ({ role: m.role, content: String(m.content || '') }));
 
-  // ---- Resolve community (Phase 2a: hardcoded Waterview) ----
-  // TODO Phase 2b: extract community_id from Vapi call metadata. Likely
-  // path is body.call.phoneNumber.number → voice_phone_routes lookup, OR
-  // body.assistant.metadata.communityId if we set it during assistant config.
+  // ---- Resolve community + caller from Vapi metadata (Phase 2b) ----
+  // The assistant-request webhook (above) does the caller-ID lookup at
+  // call start and stashes the result in assistantOverrides.metadata.
+  // Every per-turn LLM webhook call carries that metadata. So we just
+  // pluck it from the payload rather than re-doing the lookup per turn.
+  //
+  // Fallback: if metadata is missing (e.g., web Talk test with no
+  // customer.number, or assistant-request wasn't configured yet),
+  // hardcode Waterview for backward compat with the testing flow.
+  const callMetadata = body?.call?.assistantOverrides?.metadata
+    || body?.assistantOverrides?.metadata
+    || body?.metadata
+    || {};
   let community = null;
-  try {
-    const { data: comm } = await supabase
-      .from('communities')
-      .select('id, name')
-      .ilike('name', 'Waterview Estates')
-      .maybeSingle();
-    if (comm) {
-      community = { id: comm.id, name: comm.name };
+  let caller = null;
+  if (callMetadata.community_id) {
+    community = {
+      id: callMetadata.community_id,
+      name: callMetadata.community_name || null,
+    };
+  } else {
+    // Fallback for web-test path (no real phone, no assistant-request).
+    try {
+      const { data: comm } = await supabase
+        .from('communities')
+        .select('id, name')
+        .ilike('name', 'Waterview Estates')
+        .maybeSingle();
+      if (comm) community = { id: comm.id, name: comm.name };
+    } catch (e) {
+      console.warn(`[vapi-llm ${requestId}] community fallback lookup failed: ${e.message}`);
     }
-  } catch (e) {
-    console.warn(`[vapi-llm ${requestId}] community lookup failed: ${e.message}`);
   }
-
-  // ---- Resolve caller (Phase 2a: skip; Phase 2b: lookup body.customer.number) ----
-  const caller = null;
+  if (callMetadata.caller_contact_id) {
+    caller = {
+      id: callMetadata.caller_contact_id,
+      first_name: callMetadata.caller_first_name || null,
+      full_name: callMetadata.caller_full_name || null,
+    };
+  }
 
   console.log(`[vapi-llm ${requestId}] resolved: community=${community?.name || 'none'}, caller=${caller?.first_name || 'none'}, utterance="${utterance.slice(0, 200)}"`);
 
