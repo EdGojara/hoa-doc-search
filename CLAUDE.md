@@ -416,6 +416,58 @@ Log raw model output server-side. For text extraction, return excerpts
 near key markers. Confirm the input matches your assumptions before
 changing the processing. See `feedback_diagnostic_first_debugging.md`.
 
+### IIFE script-wrap before dependency defined
+
+**Scar**: 2026-05-24, Owner AR community dropdown stuck on "Loading…"
+forever — blocked Ed mid-AR-test-flow for ~10 min of debugging. Root
+cause: an IIFE at `public/index.html` line 8444 tried to wrap
+`window.switchTab` to add an auto-load-on-tab-open hook, but
+`switchTab` itself is defined at line **14932** — ~6,000 lines later.
+The IIFE's defensive guard `if (typeof orig !== 'function') return;`
+bailed silently during page parse. The auto-load never fired.
+
+This pattern is used in **8 places** in `index.html` (lines 3950, 8152,
+8444, 12380, 18128, 20864, 20985, 21007). The four BELOW 14932 work
+fine; the four ABOVE silently no-op the same way Owner AR did. Symptom:
+a tab opens but its "auto-load on first view" data never populates —
+dropdowns stuck on placeholder text, lists empty when they should fill.
+
+**Rule**: When wiring auto-load / tab-open / page-init logic via
+script-tag IIFEs that depend on functions defined elsewhere, ALWAYS
+guard with DOMContentLoaded retry (not just an early-return):
+
+```js
+function _wireSwitchTabHook() {
+  const orig = window.switchTab;
+  if (typeof orig !== 'function') return false;
+  window.switchTab = function (tab) {
+    const r = orig.apply(this, arguments);
+    if (tab === 'mytab') { autoLoadMyTabData(); }
+    return r;
+  };
+  return true;
+}
+if (!_wireSwitchTabHook()) {
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', _wireSwitchTabHook);
+  } else {
+    // DOM ready but dep still missing — retry next tick
+    setTimeout(_wireSwitchTabHook, 0);
+  }
+}
+```
+
+Anti-pattern is the naive IIFE with silent return. When you spot the
+silent-return pattern in `index.html` (or anywhere else this technique
+is used), promote it to the retry pattern above. The Owner AR fix in
+commit `4cf01c3` is the canonical example.
+
+Better long-term fix: hoist `function switchTab(tab)` to the TOP of
+`index.html`'s script tags so all subsequent IIFEs can wrap it safely.
+Risky to do as a single sweeping change (the function references other
+helpers defined later); doing it incrementally per-tab as bugs surface
+is the pragmatic path.
+
 ---
 
 ## Database conventions
