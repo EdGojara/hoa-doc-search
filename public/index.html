@@ -383,6 +383,9 @@
   <!-- Inspect tab moved up next to ACC (above) — both feed enforcement. -->
   <!-- Owner Receivables — Vantaca AR ingest + portfolio at-legal view. -->
   <div class="tab" onclick="switchTab('ownerar')">💵 Owner AR</div>
+  <!-- Calls Dashboard — incoming voice calls handled by Claire + follow-up queue.
+       Surfaces transcripts, Stage-1 briefs, response deadlines, action buttons. -->
+  <div class="tab" onclick="switchTab('calls')">📞 Calls</div>
   <!-- Amenity Rentals — clubhouse + future pool/court bookings, payment status,
        post-event inspection + deposit refund workflow. -->
   <div class="tab" onclick="location.href='/amenity-rentals-review.html'">🎉 Rentals</div>
@@ -8463,6 +8466,318 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       } else {
         // DOM already loaded but switchTab still missing — retry next tick
         setTimeout(_arWireSwitchTabHook, 0);
+      }
+    }
+  </script>
+</div>
+
+<!-- ============================================================ -->
+<!-- CALLS DASHBOARD TAB                                          -->
+<!--                                                              -->
+<!-- Lists incoming voice calls handled by Claire with follow-up  -->
+<!-- queue, deadlines, transcripts. Powered by /api/calls.        -->
+<!-- See migration 106 + api/calls.js.                            -->
+<!-- ============================================================ -->
+<div class="tab-content" id="tab-calls" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+  <div style="max-width: 1280px; margin: 0 auto;">
+
+    <div style="margin-bottom: 14px;">
+      <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 4px; letter-spacing: -0.01em;">
+        📞 <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Calls</em> &amp; Follow-ups
+      </h2>
+      <p style="font-size: 13px; color: #64748b; margin: 0;">
+        Calls Claire handled. Open follow-ups are the operational queue —
+        respond by the deadline shown. Click any row to see the full transcript
+        + Stage-1 brief.
+      </p>
+    </div>
+
+    <!-- Filter bar -->
+    <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; display: flex; gap: 12px; flex-wrap: wrap; align-items: center;">
+      <div>
+        <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 4px;">Status</label>
+        <select id="calls-filter-status" style="padding: 6px 10px; font-size: 13px; border: 1px solid #d0d7de; border-radius: 6px;" onchange="callsLoad()">
+          <option value="open,in_progress">Active (open + in progress)</option>
+          <option value="open">Open only</option>
+          <option value="in_progress">In progress only</option>
+          <option value="done">Done</option>
+          <option value="dismissed">Dismissed</option>
+          <option value="all">All calls</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 4px;">Community</label>
+        <select id="calls-filter-community" style="padding: 6px 10px; font-size: 13px; border: 1px solid #d0d7de; border-radius: 6px; min-width: 200px;" onchange="callsLoad()">
+          <option value="">All communities</option>
+        </select>
+      </div>
+      <div>
+        <label style="font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; display: block; margin-bottom: 4px;">Since</label>
+        <select id="calls-filter-since" style="padding: 6px 10px; font-size: 13px; border: 1px solid #d0d7de; border-radius: 6px;" onchange="callsLoad()">
+          <option value="7">Last 7 days</option>
+          <option value="30" selected>Last 30 days</option>
+          <option value="90">Last 90 days</option>
+          <option value="365">Last year</option>
+        </select>
+      </div>
+      <div style="display: flex; align-items: center; gap: 6px; margin-top: 18px;">
+        <input type="checkbox" id="calls-filter-compliance" onchange="callsLoad()">
+        <label for="calls-filter-compliance" style="font-size: 13px; color: #374151;">Compliance flag only</label>
+      </div>
+      <div style="margin-left: auto; margin-top: 18px;">
+        <button class="secondary-btn" onclick="callsLoad()" style="font-size: 12px; padding: 6px 12px;">↻ Refresh</button>
+      </div>
+    </div>
+
+    <!-- Summary counters -->
+    <div id="calls-summary" style="font-size: 12px; color: #64748b; margin-bottom: 8px;"></div>
+
+    <!-- Calls table -->
+    <div id="calls-table-wrap" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; overflow: hidden;">
+      <div id="calls-table" style="font-size: 13px;">Pick filters above and click Refresh to load.</div>
+    </div>
+
+  </div>
+
+  <script>
+    let callsCurrent = [];
+
+    async function callsLoadCommunities() {
+      try {
+        const r = await fetch('/api/board-portal/communities');
+        const j = await r.json();
+        const sel = document.getElementById('calls-filter-community');
+        const opts = ['<option value="">All communities</option>']
+          .concat((j.communities || []).map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`));
+        sel.innerHTML = opts.join('');
+      } catch (e) { /* leave default */ }
+    }
+
+    async function callsLoad() {
+      const status = document.getElementById('calls-filter-status').value;
+      const community = document.getElementById('calls-filter-community').value;
+      const sinceDays = parseInt(document.getElementById('calls-filter-since').value, 10) || 30;
+      const compliance = document.getElementById('calls-filter-compliance').checked ? '1' : '';
+      const sinceIso = new Date(Date.now() - sinceDays * 86400 * 1000).toISOString();
+
+      const params = new URLSearchParams({ status, since: sinceIso });
+      if (community) params.set('community_id', community);
+      if (compliance) params.set('compliance', compliance);
+
+      const tableEl = document.getElementById('calls-table');
+      tableEl.innerHTML = '<div style="padding: 20px; color:#64748b;">Loading…</div>';
+
+      try {
+        const r = await fetch('/api/calls/list?' + params.toString());
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        callsCurrent = j.calls || [];
+        callsRenderTable(callsCurrent);
+        const overdueCount = callsCurrent.filter((c) => callsIsOverdue(c)).length;
+        const openCount = callsCurrent.filter((c) => c.follow_up_status === 'open' || c.follow_up_status === 'in_progress').length;
+        document.getElementById('calls-summary').textContent =
+          `${j.count} call(s) · ${openCount} active follow-up(s) · ${overdueCount} overdue`;
+      } catch (e) {
+        tableEl.innerHTML = `<div style="padding: 20px; color:#b91c1c;">Load failed: ${escapeHtml(e.message)}</div>`;
+      }
+    }
+
+    function callsIsOverdue(c) {
+      if (!c.respond_by_at) return false;
+      if (c.follow_up_status === 'done' || c.follow_up_status === 'dismissed') return false;
+      return new Date(c.respond_by_at).getTime() < Date.now();
+    }
+
+    function callsRenderTable(rows) {
+      const tableEl = document.getElementById('calls-table');
+      if (!rows || rows.length === 0) {
+        tableEl.innerHTML = '<div style="padding: 20px; color:#64748b;">No calls match these filters.</div>';
+        return;
+      }
+      const rowsHtml = rows.map((c) => {
+        const overdue = callsIsOverdue(c);
+        const statusChip = c.follow_up_status
+          ? `<span style="font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; ${callsStatusChipStyle(c.follow_up_status)}">${c.follow_up_status}</span>`
+          : '<span style="font-size: 10.5px; color: #9ca3af;">—</span>';
+        const complianceChip = c.compliance_flag
+          ? '<span style="font-size: 10.5px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: #fee2e2; color: #991b1b;">compliance</span>'
+          : '';
+        const respondBy = c.respond_by_at
+          ? `<span style="${overdue ? 'color: #b91c1c; font-weight: 600;' : 'color: #475569;'}">${callsRelTime(c.respond_by_at, overdue)}</span>`
+          : '<span style="color: #9ca3af;">—</span>';
+        return `
+          <tr class="calls-row" data-id="${c.id}" style="border-top: 1px solid #f1f5f9; cursor: pointer;" onclick="callsToggleExpand('${c.id}')">
+            <td style="padding: 10px 12px; white-space: nowrap; font-size: 12px; color: #475569;">${callsFmtTime(c.started_at)}</td>
+            <td style="padding: 10px 12px;">
+              <div style="font-weight: 600; color: #1A3050;">${escapeHtml(c.caller_display_name || 'Unknown')}</div>
+              <div style="font-size: 11.5px; color: #64748b;">${escapeHtml(c.caller_phone || '')}</div>
+            </td>
+            <td style="padding: 10px 12px; font-size: 12px; color: #475569;">${escapeHtml(c.community_name || '—')}</td>
+            <td style="padding: 10px 12px; font-size: 13px; color: #1f2937; max-width: 320px;">${escapeHtml(c.concern || '—')}</td>
+            <td style="padding: 10px 12px; font-size: 11.5px; color: #6b7280;">${escapeHtml(c.category || '—')}</td>
+            <td style="padding: 10px 12px;">${statusChip} ${complianceChip}</td>
+            <td style="padding: 10px 12px; font-size: 12px;">${respondBy}</td>
+          </tr>
+          <tr id="expand-${c.id}" style="display: none; background: #f8fafc;">
+            <td colspan="7" style="padding: 12px 18px; border-top: 1px solid #f1f5f9;">
+              <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 18px;">
+                <div>
+                  <div style="font-weight: 600; color: #1A3050; margin-bottom: 4px; font-size: 12px;">Transcript</div>
+                  <pre id="transcript-${c.id}" style="font-size: 12px; color: #1f2937; white-space: pre-wrap; word-wrap: break-word; max-height: 280px; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px;">loading…</pre>
+                </div>
+                <div>
+                  <div style="font-weight: 600; color: #1A3050; margin-bottom: 4px; font-size: 12px;">Brief</div>
+                  <pre id="brief-${c.id}" style="font-size: 11px; color: #475569; white-space: pre-wrap; word-wrap: break-word; background: #fff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px;">loading…</pre>
+                  <div style="font-weight: 600; color: #1A3050; margin: 10px 0 4px; font-size: 12px;">Internal notes</div>
+                  <pre id="notes-${c.id}" style="font-size: 11px; color: #475569; white-space: pre-wrap; word-wrap: break-word; background: #fff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; max-height: 100px; overflow-y: auto;">${escapeHtml(c.internal_notes || '(none)')}</pre>
+                  <textarea id="newnote-${c.id}" placeholder="Add a note…" style="width: 100%; margin-top: 6px; padding: 6px 8px; font-size: 12px; border: 1px solid #d0d7de; border-radius: 6px; resize: vertical; min-height: 50px;"></textarea>
+                  <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
+                    <button class="secondary-btn" style="font-size: 11px; padding: 4px 10px;" onclick="event.stopPropagation(); callsUpdateFollowup('${c.id}', 'in_progress')">→ In progress</button>
+                    <button class="secondary-btn" style="font-size: 11px; padding: 4px 10px;" onclick="event.stopPropagation(); callsUpdateFollowup('${c.id}', 'done')">✓ Done</button>
+                    <button class="secondary-btn" style="font-size: 11px; padding: 4px 10px;" onclick="event.stopPropagation(); callsUpdateFollowup('${c.id}', 'dismissed')">✗ Dismiss</button>
+                    <button class="secondary-btn" style="font-size: 11px; padding: 4px 10px;" onclick="event.stopPropagation(); callsAddNoteOnly('${c.id}')">📝 Save note only</button>
+                  </div>
+                </div>
+              </div>
+            </td>
+          </tr>
+        `;
+      }).join('');
+      tableEl.innerHTML = `
+        <table style="width: 100%; border-collapse: collapse;">
+          <thead>
+            <tr style="background: #f8fafc; border-bottom: 2px solid #e2e8f0;">
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Time</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Caller</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Community</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Concern</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Category</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Status</th>
+              <th style="padding: 10px 12px; text-align: left; font-size: 11px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Respond by</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+    }
+
+    function callsStatusChipStyle(status) {
+      switch (status) {
+        case 'open':         return 'background: #fef3c7; color: #92400e;';
+        case 'in_progress':  return 'background: #dbeafe; color: #1e40af;';
+        case 'done':         return 'background: #d1fae5; color: #065f46;';
+        case 'dismissed':    return 'background: #e5e7eb; color: #4b5563;';
+        default:             return 'background: #f3f4f6; color: #6b7280;';
+      }
+    }
+
+    function callsFmtTime(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const now = new Date();
+      const sameDay = d.toDateString() === now.toDateString();
+      const opts = sameDay
+        ? { hour: 'numeric', minute: '2-digit' }
+        : { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' };
+      return d.toLocaleString('en-US', opts);
+    }
+
+    function callsRelTime(iso, overdue) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      const diffMs = d.getTime() - Date.now();
+      const absHr = Math.abs(diffMs / 3600000);
+      const inOrAgo = diffMs < 0 ? 'ago' : 'in';
+      if (absHr < 1) {
+        const mins = Math.round(absHr * 60);
+        return `${inOrAgo === 'in' ? '' : '-'}${mins}m ${inOrAgo}`;
+      }
+      if (absHr < 24) {
+        return `${inOrAgo === 'in' ? '' : '-'}${absHr.toFixed(1)}h ${inOrAgo}`;
+      }
+      const days = absHr / 24;
+      return `${inOrAgo === 'in' ? '' : '-'}${days.toFixed(1)}d ${inOrAgo}`;
+    }
+
+    async function callsToggleExpand(id) {
+      const expandRow = document.getElementById('expand-' + id);
+      if (!expandRow) return;
+      const isOpen = expandRow.style.display !== 'none';
+      // Close all other expansions for tidy single-open behavior
+      document.querySelectorAll('[id^="expand-"]').forEach((el) => el.style.display = 'none');
+      if (isOpen) return;
+      expandRow.style.display = '';
+      // Lazy-load full detail
+      try {
+        const r = await fetch('/api/calls/' + id);
+        const j = await r.json();
+        const c = j.call || {};
+        const transcriptEl = document.getElementById('transcript-' + id);
+        if (transcriptEl) transcriptEl.textContent = c.full_transcript || '(no transcript captured)';
+        const briefEl = document.getElementById('brief-' + id);
+        if (briefEl) briefEl.textContent = c.brief ? JSON.stringify(c.brief, null, 2) : '(no brief)';
+      } catch (e) {
+        const transcriptEl = document.getElementById('transcript-' + id);
+        if (transcriptEl) transcriptEl.textContent = 'Failed to load: ' + e.message;
+      }
+    }
+
+    async function callsUpdateFollowup(id, status) {
+      const note = (document.getElementById('newnote-' + id) || {}).value || '';
+      const body = { status };
+      if (note.trim()) body.notes_append = note.trim();
+      try {
+        const r = await fetch('/api/calls/' + id + '/follow-up', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'update failed');
+        // Refresh the table
+        callsLoad();
+      } catch (e) {
+        alert('Update failed: ' + e.message);
+      }
+    }
+
+    async function callsAddNoteOnly(id) {
+      const note = (document.getElementById('newnote-' + id) || {}).value || '';
+      if (!note.trim()) { alert('Type a note first.'); return; }
+      try {
+        const r = await fetch('/api/calls/' + id + '/follow-up', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes_append: note.trim() }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'update failed');
+        callsLoad();
+      } catch (e) {
+        alert('Update failed: ' + e.message);
+      }
+    }
+
+    // Auto-load on tab open (uses the same defer pattern as Owner AR per the
+    // CLAUDE.md IIFE-before-dependency scar).
+    function _callsWireSwitchTabHook() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'calls') {
+          callsLoadCommunities();
+          callsLoad();
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_callsWireSwitchTabHook()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _callsWireSwitchTabHook);
+      } else {
+        setTimeout(_callsWireSwitchTabHook, 0);
       }
     }
   </script>

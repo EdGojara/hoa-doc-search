@@ -714,6 +714,12 @@ app.use('/api/board-portal', boardPortalRouter);
 const { router: ownerArRouter } = require('./api/owner_ar');
 app.use('/api/owner-ar', ownerArRouter);
 
+// Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
+// Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
+// state columns to homeowner_calls).
+const { router: callsRouter } = require('./api/calls');
+app.use('/api/calls', callsRouter);
+
 // Portal Admin — manage who has access to the board + homeowner portals
 // (project_portal_release_gates.md). Auth enforcement on the portals comes
 // in a follow-up commit; this admin layer is the input the auth needs.
