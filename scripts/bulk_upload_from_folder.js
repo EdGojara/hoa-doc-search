@@ -67,6 +67,30 @@ const CSV_OUT = arg('csv') || path.resolve(
   `bulk-upload-${slugify(COMMUNITY_HINT)}-${new Date().toISOString().replace(/[:.]/g, '-')}.csv`,
 );
 
+// --exclude takes a comma-separated list of subfolder NAMES (case-insensitive)
+// to skip entirely. Matches against any path component, so passing
+// "Accounting,Logos" skips C:\...\Accounting\... and C:\...\Logos and Designs\...
+// (full prefix-match on path components, not substring — "Accounting" won't
+// accidentally skip "Account statement" because the latter is a sibling file
+// not a path component).
+const EXCLUDE_RAW = arg('exclude') || '';
+const EXCLUDE_SET = new Set(
+  EXCLUDE_RAW
+    ? EXCLUDE_RAW.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean)
+    : []
+);
+
+function isInExcludedSubfolder(filePath) {
+  if (EXCLUDE_SET.size === 0) return false;
+  // Walk relative-to-FOLDER path components; if any matches an excluded name, skip.
+  const rel = path.relative(FOLDER, filePath);
+  const parts = rel.split(path.sep).slice(0, -1); // drop filename, keep dirs
+  for (const p of parts) {
+    if (EXCLUDE_SET.has(p.toLowerCase())) return true;
+  }
+  return false;
+}
+
 if (!FOLDER) {
   console.error('ERROR: --folder is required.');
   process.exit(1);
@@ -464,7 +488,14 @@ async function processFile(filePath, existingHashes) {
     return row;
   }
 
-  // 1. Hard skips (cheap)
+  // 1a. Subfolder exclusion (cheapest skip — happens before any I/O)
+  if (isInExcludedSubfolder(filePath)) {
+    row.outcome = 'skipped_excluded_subfolder';
+    csvRow(row);
+    return row;
+  }
+
+  // 1b. Hard skips (file-extension / size based)
   const skipReason = hardSkipReason(filePath, stat);
   if (skipReason) {
     row.outcome = `skipped_${skipReason}`;
@@ -602,6 +633,9 @@ async function runWithConcurrency(items, limit, fn) {
   console.log(`[bulk-upload] csv out:   ${CSV_OUT}`);
   console.log(`[bulk-upload] dry run:   ${DRY_RUN}`);
   console.log(`[bulk-upload] concurrency: ${CONCURRENCY}`);
+  if (EXCLUDE_SET.size > 0) {
+    console.log(`[bulk-upload] excluded subfolders: ${[...EXCLUDE_SET].join(', ')}`);
+  }
   console.log('');
 
   const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
