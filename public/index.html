@@ -8439,10 +8439,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
     }
 
-    // Auto-load communities when the Owner AR tab opens
-    (function () {
+    // Auto-load communities when the Owner AR tab opens.
+    // FIX 2026-05-24: switchTab is defined ~6,000 lines below this script tag.
+    // The original IIFE ran during parse, found switchTab undefined, bailed
+    // silently — community dropdown stuck on "Loading…" forever. Defer the
+    // wrap until DOMContentLoaded (all scripts parsed by then).
+    function _arWireSwitchTabHook() {
       const orig = window.switchTab;
-      if (typeof orig !== 'function') return;
+      if (typeof orig !== 'function') return false;
       window.switchTab = function (tab) {
         const r = orig.apply(this, arguments);
         if (tab === 'ownerar') {
@@ -8451,7 +8455,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         }
         return r;
       };
-    })();
+      return true;
+    }
+    if (!_arWireSwitchTabHook()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _arWireSwitchTabHook);
+      } else {
+        // DOM already loaded but switchTab still missing — retry next tick
+        setTimeout(_arWireSwitchTabHook, 0);
+      }
+    }
   </script>
 </div>
 
