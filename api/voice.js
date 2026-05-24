@@ -484,7 +484,15 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       history,
       community,
       caller,
-      model: 'claude-haiku-4-5-20251001', // voice = Haiku for speed
+      // 2026-05-24 — switched Vapi voice from Haiku 4.5 → Sonnet 4.5
+      // after 3 test calls showed Haiku reliably regressed on the
+      // synthesis principle (reciting "60 hours within 72-hour window"
+      // on simple yes/no RV questions despite multiple prompt iterations).
+      // Sonnet follows the long-prompt nuance reliably. Latency hit is
+      // mitigated by the prompt-caching change in commit 39ee396 (stable
+      // portion of system prompt cached at 10× discount + faster
+      // first-byte response after turn 1).
+      model: 'claude-sonnet-4-5',
     })) {
       if (aborted) break;
       // Prepend a space between sentences for natural concatenation. The
