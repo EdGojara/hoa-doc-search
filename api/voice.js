@@ -617,15 +617,16 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       history,
       community,
       caller,
-      // 2026-05-24 — switched Vapi voice from Haiku 4.5 → Sonnet 4.5
-      // after 3 test calls showed Haiku reliably regressed on the
-      // synthesis principle (reciting "60 hours within 72-hour window"
-      // on simple yes/no RV questions despite multiple prompt iterations).
-      // Sonnet follows the long-prompt nuance reliably. Latency hit is
-      // mitigated by the prompt-caching change in commit 39ee396 (stable
-      // portion of system prompt cached at 10× discount + faster
-      // first-byte response after turn 1).
-      model: 'claude-sonnet-4-5',
+      // 2026-05-24 (later) — switched BACK to Haiku 4.5 to test whether
+      // the additional prompt tightening (FINAL HARD RULES section + HARD
+      // RULE #6 explicitly banning document-citation voice + the synthesis
+      // principle examples) now makes Haiku reliable enough on the over-
+      // citing pattern. Cost win: Haiku LLM is ~3× cheaper + ~3× faster
+      // than Sonnet, can nearly offset the Vapi platform fee.
+      //
+      // If over-citing regression returns, swap back to Sonnet here and
+      // accept the cost premium for reliable synthesis compliance.
+      model: 'claude-haiku-4-5-20251001',
       // Tool-use support — Claire can call get_ar_for_property when a
       // caller asks for account balance. Verifies identity via address
       // confirmation before disclosing. See lib/voice/tools.js.
