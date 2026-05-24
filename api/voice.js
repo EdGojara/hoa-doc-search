@@ -376,14 +376,34 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
   }
 
   const body = req.body || {};
-  console.log(`[vapi-ar ${requestId}] payload:`, JSON.stringify(body).slice(0, 2000));
+  const msg = body.message || body;
+  const eventType = msg?.type || body?.type || 'unknown';
+  console.log(`[vapi-ar ${requestId}] event=${eventType}`);
+
+  // Vapi's Server URL receives MULTIPLE event types — assistant-request,
+  // end-of-call-report, conversation-update, function-call, status-update,
+  // transcript, hang, speech-update, model-output, tool-calls, etc.
+  //
+  // We only do the dynamic-opener / metadata logic on 'assistant-request'.
+  // For every other event type, return 200 OK with empty body — Vapi
+  // doesn't require a structured response for most events.
+  if (eventType !== 'assistant-request') {
+    // Useful logging for end-of-call-report (audit trail), other events
+    // can stay quiet to avoid log noise.
+    if (eventType === 'end-of-call-report') {
+      console.log(`[vapi-ar ${requestId}] end-of-call report received`, JSON.stringify(msg).slice(0, 500));
+    }
+    return res.json({});
+  }
+
+  // assistant-request specifically. Log full payload for diagnostic.
+  console.log(`[vapi-ar ${requestId}] assistant-request payload:`, JSON.stringify(body).slice(0, 2000));
 
   // Vapi's assistant-request shape (per their docs / observed in practice):
   //   { message: { type: 'assistant-request', call: { customer: { number: '+1...' },
   //                                                    phoneNumber: { number: '+1...' } } } }
   // Extract the caller's phone — defensively check both top-level and nested
   // 'message' wrapper since Vapi has historically used both shapes.
-  const msg = body.message || body;
   const callerNumber = msg?.call?.customer?.number
     || msg?.customer?.number
     || msg?.call?.customer?.phoneNumber
