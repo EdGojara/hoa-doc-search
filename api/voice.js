@@ -22,6 +22,7 @@ const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { CallBridge } = require('../lib/voice/bridge');
 const { streamTurn } = require('../lib/voice/reason');
+const { VOICE_TOOLS, VOICE_TOOL_HANDLERS } = require('../lib/voice/tools');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -493,6 +494,11 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       // portion of system prompt cached at 10× discount + faster
       // first-byte response after turn 1).
       model: 'claude-sonnet-4-5',
+      // Tool-use support — Claire can call get_ar_for_property when a
+      // caller asks for account balance. Verifies identity via address
+      // confirmation before disclosing. See lib/voice/tools.js.
+      tools: VOICE_TOOLS,
+      toolHandlers: VOICE_TOOL_HANDLERS,
     })) {
       if (aborted) break;
       // Prepend a space between sentences for natural concatenation. The
