@@ -21,6 +21,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { CallBridge } = require('../lib/voice/bridge');
+const { streamTurn } = require('../lib/voice/reason');
 const { safeErrorMessage } = require('./_safe_error');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -333,5 +334,169 @@ function handleWebSocketConnection(ws, req) {
     if (bridge) bridge.endCall('ws_error');
   });
 }
+
+// ============================================================================
+// POST /api/voice/vapi-llm-webhook — Vapi Custom LLM endpoint
+// ----------------------------------------------------------------------------
+// Vapi handles the voice loop (STT, turn-taking, interruption handling, TTS).
+// On each user turn, Vapi POSTs an OpenAI-compatible chat completions request
+// to this endpoint; we run Bedrock's brain (hybrid retrieval + community
+// profile + playbook + caller-ID + the Claire system prompt) and stream the
+// response back in OpenAI SSE format.
+//
+// Per CLAUDE.md diagnostic-first rule: we LOG the full request body on every
+// hit so we can learn Vapi's exact metadata format (their public docs are
+// vague on the call/customer/assistant field shape). Iterate from real logs.
+//
+// Phase 2a: community is hardcoded to Waterview Estates for testing. Phase 2b
+// will resolve community from Vapi call metadata (incoming phone number) and
+// caller from Vapi customer info (caller phone number → contacts table).
+//
+// Auth: VAPI_WEBHOOK_SECRET env var. Vapi sends `Authorization: Bearer <key>`
+// per its docs. We reject any request without a matching bearer token.
+//
+// Streaming format: OpenAI SSE chat.completion.chunk events, sentence-level
+// chunks (each completed sentence becomes a delta). Final chunk has
+// finish_reason='stop' + a `data: [DONE]` terminator.
+// ============================================================================
+
+// Vapi sends application/json; the router-level urlencoded parser above
+// won't handle it. Apply express.json() specifically on this route.
+router.post('/vapi-llm-webhook', express.json({ limit: '256kb' }), async (req, res) => {
+  const startMs = Date.now();
+  const requestId = `vapi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+  // ---- Auth ----
+  const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+  if (!expectedSecret) {
+    console.warn('[vapi-llm] VAPI_WEBHOOK_SECRET not configured — refusing all requests');
+    return res.status(503).json({ error: 'webhook_not_configured' });
+  }
+  const auth = String(req.headers.authorization || '');
+  if (auth !== `Bearer ${expectedSecret}`) {
+    console.warn(`[vapi-llm ${requestId}] auth failed`);
+    return res.status(401).json({ error: 'unauthorized' });
+  }
+
+  // ---- Diagnostic logging (Phase 2a — learn Vapi's actual payload shape) ----
+  const body = req.body || {};
+  try {
+    const payloadPreview = JSON.stringify(body, null, 2);
+    console.log(`[vapi-llm ${requestId}] payload (${payloadPreview.length} chars):\n${payloadPreview.slice(0, 5000)}${payloadPreview.length > 5000 ? '\n…[truncated]' : ''}`);
+  } catch (_) {
+    console.log(`[vapi-llm ${requestId}] payload not JSON-serializable, keys: ${Object.keys(body).join(', ')}`);
+  }
+
+  // ---- Extract messages from the OpenAI-format payload ----
+  const messages = Array.isArray(body.messages) ? body.messages : [];
+  if (messages.length === 0) {
+    console.warn(`[vapi-llm ${requestId}] no messages in payload`);
+    return res.status(400).json({ error: 'messages_required' });
+  }
+
+  // Latest user message is what Claire responds to. History is everything
+  // before that (excluding the SYSTEM message; streamTurn builds its own).
+  const lastUserIdx = (() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if (messages[i].role === 'user') return i;
+    }
+    return -1;
+  })();
+  if (lastUserIdx === -1) {
+    console.warn(`[vapi-llm ${requestId}] no user message in payload`);
+    return res.status(400).json({ error: 'no_user_message' });
+  }
+  const utterance = String(messages[lastUserIdx].content || '').trim();
+  const history = messages
+    .slice(0, lastUserIdx)
+    .filter((m) => m.role === 'user' || m.role === 'assistant')
+    .map((m) => ({ role: m.role, content: String(m.content || '') }));
+
+  // ---- Resolve community (Phase 2a: hardcoded Waterview) ----
+  // TODO Phase 2b: extract community_id from Vapi call metadata. Likely
+  // path is body.call.phoneNumber.number → voice_phone_routes lookup, OR
+  // body.assistant.metadata.communityId if we set it during assistant config.
+  let community = null;
+  try {
+    const { data: comm } = await supabase
+      .from('communities')
+      .select('id, name')
+      .ilike('name', 'Waterview Estates')
+      .maybeSingle();
+    if (comm) {
+      community = { id: comm.id, name: comm.name };
+    }
+  } catch (e) {
+    console.warn(`[vapi-llm ${requestId}] community lookup failed: ${e.message}`);
+  }
+
+  // ---- Resolve caller (Phase 2a: skip; Phase 2b: lookup body.customer.number) ----
+  const caller = null;
+
+  console.log(`[vapi-llm ${requestId}] resolved: community=${community?.name || 'none'}, caller=${caller?.first_name || 'none'}, utterance="${utterance.slice(0, 200)}"`);
+
+  // ---- SSE response headers ----
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache, no-transform');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // disable proxy buffering (some hosts)
+  res.flushHeaders();
+
+  const createdTs = Math.floor(Date.now() / 1000);
+  function sseChunk(delta, finishReason = null) {
+    const chunk = {
+      id: requestId,
+      object: 'chat.completion.chunk',
+      created: createdTs,
+      model: 'bedrock-claire',
+      choices: [{ index: 0, delta, finish_reason: finishReason }],
+    };
+    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+  }
+
+  // ---- Stream the response from streamTurn ----
+  let aborted = false;
+  res.on('close', () => { aborted = true; });
+
+  try {
+    // Initial role chunk (OpenAI convention — first delta announces the role)
+    sseChunk({ role: 'assistant', content: '' });
+
+    let sentenceCount = 0;
+    for await (const sentence of streamTurn({
+      utterance,
+      history,
+      community,
+      caller,
+      model: 'claude-haiku-4-5-20251001', // voice = Haiku for speed
+    })) {
+      if (aborted) break;
+      // Prepend a space between sentences for natural concatenation. The
+      // first sentence has no leading space.
+      const content = sentenceCount === 0 ? sentence : ' ' + sentence;
+      sseChunk({ content });
+      sentenceCount += 1;
+    }
+
+    // Final chunk with finish_reason
+    sseChunk({}, 'stop');
+    res.write('data: [DONE]\n\n');
+    res.end();
+    console.log(`[vapi-llm ${requestId}] completed in ${Date.now() - startMs}ms, ${sentenceCount} sentence(s)`);
+  } catch (err) {
+    console.error(`[vapi-llm ${requestId}] streamTurn failed: ${err.message}`);
+    // Try to deliver a graceful fallback over SSE so Vapi has SOMETHING to
+    // speak instead of dead silence. If the connection is already torn down
+    // this swallow is fine.
+    try {
+      if (!aborted) {
+        sseChunk({ content: "Sorry, I'm having trouble right now — want me to put you through to someone on the team?" });
+        sseChunk({}, 'stop');
+        res.write('data: [DONE]\n\n');
+        res.end();
+      }
+    } catch (_) { /* connection closed; nothing to do */ }
+  }
+});
 
 module.exports = { router, handleWebSocketConnection };
