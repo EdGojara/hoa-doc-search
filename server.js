@@ -386,6 +386,16 @@ const _STAFF_GATE_PUBLIC = [
   /^\/staff-login\.html$/,
   /^\/api\/staff-login$/,
   /^\/api\/auth\/config$/,
+  // External voice provider webhooks. These services can't authenticate
+  // with the staff-cookie session; each handler enforces its own auth
+  // (Vapi: VAPI_WEBHOOK_SECRET bearer token when set; Twilio: signature
+  // header verification). Without this exemption the global staff gate
+  // returns 401 before the route handler runs — Vapi sees that as
+  // pipeline-error-custom-llm-401-unauthorized and never gives us a chance.
+  /^\/api\/voice\/vapi-llm-webhook\b/,
+  /^\/api\/voice\/incoming$/,
+  /^\/api\/voice\/status$/,
+  /^\/api\/voice\/stream$/,
   // Short-URL redirects to public forms
   /^\/f\//,
   // Homeowner-facing dynamic pages — match the actual app.get routes
