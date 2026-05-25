@@ -5254,14 +5254,45 @@
       </details>`;
     }
 
-    // Section: ORPHANS (informational only — can't apply, no matching contact)
+    // Section: ORPHANS (informational only — will be skipped on apply)
+    // Split by reason: no_contact_match (Account ID not in trustEd) vs
+    // placeholder_owner (DB has "Current Resident" or similar, file has real name)
     const orphans = preview.methods?.orphan || [];
     if (orphans.length > 0) {
+      const placeholderOrphans = orphans.filter((r) => (r.reason || '').startsWith('placeholder_owner'));
+      const noMatchOrphans = orphans.filter((r) => !((r.reason || '').startsWith('placeholder_owner')));
+
+      if (placeholderOrphans.length > 0) {
+        html += `<details style="margin-top:8px;">
+          <summary style="cursor:pointer; font-weight:700; color:#b45309; font-size:12.5px;">⚠ Placeholder-owner skipped — property's DB owner is "Current Resident"/Unknown; file has real name. Fix property ownership first, then re-import — ${placeholderOrphans.length}</summary>
+          <div style="padding:6px 0 0 12px; max-height:240px; overflow-y:auto; font-size:11px; color:#6B7280;">
+            <div style="background:#fef3c7; border:1px solid #fde68a; padding:6px 8px; border-radius:6px; font-size:11px; color:#92400e; margin-bottom:6px;">
+              These rows can't be safely applied: the DB-side owner is a Vantaca placeholder ("Current Resident", etc.) shared across many properties. Attaching emails/phones to it would corrupt that one contact with hundreds of unrelated values. <strong>Fix:</strong> use the Vantaca homeowner export to transition each property's ownership to the real homeowner first, then re-run this import.
+            </div>
+            ${placeholderOrphans.slice(0, 60).map((r) => `<div style="padding:2px 0;"><strong>Acct ${escapeHtml(r.account_id)}</strong> · file: ${escapeHtml(r.homeowner_name || '?')} · ${r.method_type} <code>${escapeHtml(r.value)}</code></div>`).join('')}
+            ${placeholderOrphans.length > 60 ? `<div style="font-style:italic;">…and ${placeholderOrphans.length - 60} more.</div>` : ''}
+          </div>
+        </details>`;
+      }
+      if (noMatchOrphans.length > 0) {
+        html += `<details style="margin-top:8px;">
+          <summary style="cursor:pointer; font-weight:700; color:#475569; font-size:12.5px;">○ No-match orphans — Account ID not in trustEd properties (will be skipped) — ${noMatchOrphans.length}</summary>
+          <div style="padding:6px 0 0 12px; max-height:200px; overflow-y:auto; font-size:11px; color:#6B7280;">
+            ${noMatchOrphans.slice(0, 60).map((r) => `<div style="padding:1px 0;">Account ${escapeHtml(r.account_id)} (${escapeHtml(r.homeowner_name || '?')}) — ${r.method_type} ${escapeHtml(r.value)}</div>`).join('')}
+            ${noMatchOrphans.length > 60 ? `<div style="font-style:italic;">…and ${noMatchOrphans.length - 60} more.</div>` : ''}
+          </div>
+        </details>`;
+      }
+    }
+
+    // Mailing orphans (no_contact + placeholder_owner)
+    const mailingOrphans = preview.mailing?.orphan || [];
+    if (mailingOrphans.length > 0) {
       html += `<details style="margin-top:8px;">
-        <summary style="cursor:pointer; font-weight:700; color:#475569; font-size:12.5px;">○ Orphans — Account ID not in trustEd (will be skipped) — ${orphans.length}</summary>
+        <summary style="cursor:pointer; font-weight:700; color:#475569; font-size:12.5px;">○ Mailing orphans (will be skipped) — ${mailingOrphans.length}</summary>
         <div style="padding:6px 0 0 12px; max-height:200px; overflow-y:auto; font-size:11px; color:#6B7280;">
-          ${orphans.slice(0, 60).map((r) => `<div style="padding:1px 0;">Account ${escapeHtml(r.account_id)} (${escapeHtml(r.homeowner_name || '?')}) — ${r.method_type} ${escapeHtml(r.value)}</div>`).join('')}
-          ${orphans.length > 60 ? `<div style="font-style:italic;">…and ${orphans.length - 60} more.</div>` : ''}
+          ${mailingOrphans.slice(0, 60).map((r) => `<div style="padding:2px 0;"><strong>Acct ${escapeHtml(r.account_id)}</strong> · ${escapeHtml(r.homeowner_name || '?')}${r.reason ? ' · <em style="color:#b45309;">' + escapeHtml(r.reason) + '</em>' : ''}</div>`).join('')}
+          ${mailingOrphans.length > 60 ? `<div style="font-style:italic;">…and ${mailingOrphans.length - 60} more.</div>` : ''}
         </div>
       </details>`;
     }
