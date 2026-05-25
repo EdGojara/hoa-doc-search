@@ -1229,6 +1229,7 @@ router.post('/contacts/methods/import', upload.single('file'), async (req, res) 
         addresses: parsed.addresses.length,
         emails: parsed.emails.length,
         phones: parsed.phones.length,
+        balances: parsed.balances ? parsed.balances.length : 0,
       },
       counts: diff.counts,
       preview: diff,

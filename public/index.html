@@ -5117,7 +5117,10 @@
       homesMethodsImportActive = j;
       homesMethodsImportChoices = {};
       homesMethodsImportRenderDiff();
-      status.innerHTML = `<span style="color:#15803d;">✓ Parsed ${j.sheet_counts.emails} emails, ${j.sheet_counts.phones} phones, ${j.sheet_counts.addresses} address rows.</span>`;
+      const balancesNote = j.sheet_counts.balances ? `, ${j.sheet_counts.balances} balances (not imported — use AR snapshot flow)` : '';
+      const warningsNote = (j.warnings && j.warnings.length)
+        ? `<div style="margin-top:4px; font-size:11.5px; color:#92400e;">⚠ ${j.warnings.map(escapeHtml).join('; ')}</div>` : '';
+      status.innerHTML = `<span style="color:#15803d;">✓ Parsed ${j.sheet_counts.emails} emails, ${j.sheet_counts.phones} phones, ${j.sheet_counts.addresses} address rows${balancesNote}.</span>${warningsNote}`;
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     } finally {
