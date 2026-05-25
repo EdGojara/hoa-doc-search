@@ -392,7 +392,13 @@ const _STAFF_GATE_PUBLIC = [
   // header verification). Without this exemption the global staff gate
   // returns 401 before the route handler runs — Vapi sees that as
   // pipeline-error-custom-llm-401-unauthorized and never gives us a chance.
+  // Both Claire (English) and Isabella (Spanish) LLM webhooks. The \b after
+  // "webhook" matches both /vapi-llm-webhook/... and /vapi-llm-webhook-es/...
+  // since `k` → `-` is a word boundary, but we list both explicitly so the
+  // intent is obvious to future readers (and so a regex tweak can't silently
+  // break Isabella).
   /^\/api\/voice\/vapi-llm-webhook\b/,
+  /^\/api\/voice\/vapi-llm-webhook-es\b/,
   /^\/api\/voice\/vapi-assistant-request$/,
   /^\/api\/voice\/incoming$/,
   /^\/api\/voice\/status$/,

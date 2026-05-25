@@ -24,7 +24,21 @@ const { CallBridge } = require('../lib/voice/bridge');
 const { streamTurn } = require('../lib/voice/reason');
 const { VOICE_TOOLS, VOICE_TOOL_HANDLERS } = require('../lib/voice/tools');
 const { buildOpener } = require('../lib/voice/persona');
+const { buildIsabellaSystemPromptParts } = require('../lib/voice/reason_isabella');
+const {
+  buildOpener: buildIsabellaOpener,
+  BANNED_PATTERNS: ISABELLA_BANNED_PATTERNS,
+} = require('../lib/voice/persona_isabella');
 const { resolveCallerByPhone } = require('../lib/voice/caller_lookup');
+
+// Isabella's persona pack — passed into streamTurn to swap the system prompt
+// builder + the language-specific banned-phrase list. Claire is the implicit
+// default when no personaPack is supplied. See lib/voice/reason.js streamTurn
+// and project_multilingual_voice_architecture.md.
+const ISABELLA_PERSONA_PACK = {
+  buildSystemPromptParts: buildIsabellaSystemPromptParts,
+  bannedPatterns: ISABELLA_BANNED_PATTERNS,
+};
 const { buildCommunityContextBlock } = require('./communities');
 const { getCall: cacheGet, setCall: cacheSet, clearCall: cacheClear } = require('../lib/voice/call_cache');
 const { safeErrorMessage } = require('./_safe_error');
@@ -365,6 +379,13 @@ function handleWebSocketConnection(ws, req) {
 // Then Vapi will POST here on every inbound call before connecting.
 // ============================================================================
 const VAPI_ASSISTANT_ID = process.env.VAPI_ASSISTANT_ID || '6054ad5b-28c1-4d61-b2fa-92068c06a4d7';
+// Isabella's Vapi assistant ID. Unset by default — when unset, all callers
+// route to Claire (graceful degradation). Set this env var AFTER:
+//   1. Creating Isabella as a separate Vapi assistant in the dashboard
+//   2. Configuring her Server URL to /api/voice/vapi-llm-webhook-es/chat/completions
+//   3. Picking her ElevenLabs Spanish voice ID via ISABELLA_VOICE_ID env var
+// See docs/voice-isabella-setup.md for the full walkthrough.
+const VAPI_ISABELLA_ASSISTANT_ID = process.env.VAPI_ISABELLA_ASSISTANT_ID || '';
 
 router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (req, res) => {
   const requestId = `vapi-ar-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -466,10 +487,30 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
     } catch (_) { /* swallow */ }
   }
 
-  // Build the dynamic opener via the same buildOpener used by the old
-  // Twilio bridge — Single source of truth for opener phrasing across
-  // both code paths.
-  const firstMessage = buildOpener(community?.name || null, caller?.first_name || null);
+  // Persona routing — decide if this caller goes to Claire (English) or
+  // Isabella (Spanish) based on contacts.preferred_language. Defaults to
+  // Claire when:
+  //   - caller is unknown, OR
+  //   - preferred_language is null/'en', OR
+  //   - VAPI_ISABELLA_ASSISTANT_ID env var is unset (Isabella not configured yet)
+  //
+  // The persona swap drives both:
+  //   1. Which Vapi assistantId we return (Vapi connects the call to that
+  //      assistant's voice + Server URL, so the LLM webhook called for each
+  //      turn becomes /vapi-llm-webhook-es instead of /vapi-llm-webhook).
+  //   2. Which opener builder we use for firstMessage — so the very first
+  //      thing the caller hears is in their language.
+  //
+  // Future personas (Mei Mandarin, Linh Vietnamese, Jin-Soo Korean) add an
+  // env-var + opener-builder pair to the same conditional.
+  const callerLanguage = caller?.preferred_language || null;
+  const useIsabella = callerLanguage === 'es' && !!VAPI_ISABELLA_ASSISTANT_ID;
+  const selectedAssistantId = useIsabella ? VAPI_ISABELLA_ASSISTANT_ID : VAPI_ASSISTANT_ID;
+  const openerBuilder = useIsabella ? buildIsabellaOpener : buildOpener;
+  const firstMessage = openerBuilder(community?.name || null, caller?.first_name || null);
+  if (useIsabella) {
+    console.log(`[vapi-ar ${requestId}] routing to Isabella (Spanish) — caller.preferred_language=es`);
+  }
 
   // Pre-fetch the community profile here at call start, so subsequent
   // LLM webhook turns don't re-fetch it from Supabase on every turn.
@@ -502,20 +543,22 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
   // The metadata field flows through to every LLM webhook call as
   // call.assistantOverrides.metadata — Claire's brain can read it.
   const response = {
-    assistantId: VAPI_ASSISTANT_ID,
+    assistantId: selectedAssistantId,
     assistantOverrides: {
       firstMessage,
       metadata: {
         caller_contact_id: caller?.id || null,
         caller_first_name: caller?.first_name || null,
         caller_full_name: caller?.full_name || null,
+        caller_preferred_language: callerLanguage,
         community_id: community?.id || null,
         community_name: community?.name || null,
+        persona: useIsabella ? 'isabella' : 'claire',
       },
     },
   };
 
-  console.log(`[vapi-ar ${requestId}] responding with firstMessage="${firstMessage}", cached_profile=${!!profileBlock}, call_id=${incomingCallId || 'none'}`);
+  console.log(`[vapi-ar ${requestId}] responding persona=${useIsabella ? 'isabella' : 'claire'} assistantId=${selectedAssistantId} firstMessage="${firstMessage}" cached_profile=${!!profileBlock} call_id=${incomingCallId || 'none'}`);
   res.json(response);
 });
 
@@ -544,14 +587,33 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
 // finish_reason='stop' + a `data: [DONE]` terminator.
 // ============================================================================
 
-// Vapi sends application/json; the router-level urlencoded parser above
-// won't handle it. Apply express.json() specifically on this route.
-// Vapi treats the configured URL as a BASE and appends /chat/completions
-// (OpenAI-compatible convention). So the actual mounted path matches what
-// Vapi calls: /api/voice/vapi-llm-webhook/chat/completions.
-router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' }), async (req, res) => {
+// ----------------------------------------------------------------------------
+// Shared LLM-webhook handler — used by both Claire (English) and Isabella
+// (Spanish) routes. All language differences flow through `personaConfig`:
+//
+//   personaConfig.personaPack  — optional { buildSystemPromptParts,
+//                                bannedPatterns } that overrides Claire defaults.
+//                                Undefined = Claire (English) default.
+//   personaConfig.logTag       — log prefix ('vapi-llm' / 'vapi-llm-es')
+//   personaConfig.modelLabel   — string written into the SSE `model` field
+//                                (cosmetic, Vapi logs it). E.g. 'bedrock-claire'.
+//   personaConfig.fallbackMessage — language-appropriate failure sentence.
+//
+// Extracted 2026-05-25 when Isabella (Spanish) landed. Before that, this was
+// inlined in the Claire route. Anything inside this function applies to BOTH
+// personas — if you find yourself adding persona-specific logic INSIDE the
+// handler, push it up into personaConfig instead so all personas stay in sync.
+// ----------------------------------------------------------------------------
+async function handleVapiLlmTurn(req, res, personaConfig) {
+  const cfg = personaConfig || {};
+  const personaPack = cfg.personaPack || null;
+  const logTag = cfg.logTag || 'vapi-llm';
+  const modelLabel = cfg.modelLabel || 'bedrock-claire';
+  const fallbackMessage = cfg.fallbackMessage
+    || "Sorry, I'm having trouble right now — want me to put you through to someone on the team?";
+
   const startMs = Date.now();
-  const requestId = `vapi-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const requestId = `${logTag === 'vapi-llm' ? 'vapi' : logTag}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // ---- Auth ----
   // Two modes:
@@ -564,11 +626,11 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
   if (expectedSecret) {
     const auth = String(req.headers.authorization || '');
     if (auth !== `Bearer ${expectedSecret}`) {
-      console.warn(`[vapi-llm ${requestId}] auth failed (header: ${auth.slice(0, 30)}…)`);
+      console.warn(`[${logTag} ${requestId}] auth failed (header: ${auth.slice(0, 30)}…)`);
       return res.status(401).json({ error: 'unauthorized' });
     }
   } else {
-    console.warn(`[vapi-llm ${requestId}] DIAGNOSTIC MODE — VAPI_WEBHOOK_SECRET unset, allowing request. Set the env var to enforce auth.`);
+    console.warn(`[${logTag} ${requestId}] DIAGNOSTIC MODE — VAPI_WEBHOOK_SECRET unset, allowing request. Set the env var to enforce auth.`);
   }
 
   // ---- Diagnostic logging (Phase 2a — learn Vapi's actual payload shape) ----
@@ -577,20 +639,20 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
   // headers from the first real call tell us.
   const safeHeaders = { ...req.headers };
   if (safeHeaders.authorization) safeHeaders.authorization = safeHeaders.authorization.slice(0, 20) + '…';
-  console.log(`[vapi-llm ${requestId}] headers:`, JSON.stringify(safeHeaders, null, 2));
+  console.log(`[${logTag} ${requestId}] headers:`, JSON.stringify(safeHeaders, null, 2));
 
   const body = req.body || {};
   try {
     const payloadPreview = JSON.stringify(body, null, 2);
-    console.log(`[vapi-llm ${requestId}] payload (${payloadPreview.length} chars):\n${payloadPreview.slice(0, 5000)}${payloadPreview.length > 5000 ? '\n…[truncated]' : ''}`);
+    console.log(`[${logTag} ${requestId}] payload (${payloadPreview.length} chars):\n${payloadPreview.slice(0, 5000)}${payloadPreview.length > 5000 ? '\n…[truncated]' : ''}`);
   } catch (_) {
-    console.log(`[vapi-llm ${requestId}] payload not JSON-serializable, keys: ${Object.keys(body).join(', ')}`);
+    console.log(`[${logTag} ${requestId}] payload not JSON-serializable, keys: ${Object.keys(body).join(', ')}`);
   }
 
   // ---- Extract messages from the OpenAI-format payload ----
   const messages = Array.isArray(body.messages) ? body.messages : [];
   if (messages.length === 0) {
-    console.warn(`[vapi-llm ${requestId}] no messages in payload`);
+    console.warn(`[${logTag} ${requestId}] no messages in payload`);
     return res.status(400).json({ error: 'messages_required' });
   }
 
@@ -603,7 +665,7 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     return -1;
   })();
   if (lastUserIdx === -1) {
-    console.warn(`[vapi-llm ${requestId}] no user message in payload`);
+    console.warn(`[${logTag} ${requestId}] no user message in payload`);
     return res.status(400).json({ error: 'no_user_message' });
   }
   const utterance = String(messages[lastUserIdx].content || '').trim();
@@ -637,7 +699,7 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     community = { id: cached.community.id, name: cached.community.name };
     profileBlockFromCache = cached.community.profileBlock || null;
     caller = cached.caller || null;
-    console.log(`[vapi-llm ${requestId}] cache hit for call_id=${incomingCallId}`);
+    console.log(`[${logTag} ${requestId}] cache hit for call_id=${incomingCallId}`);
   } else if (callMetadata.community_id) {
     community = {
       id: callMetadata.community_id,
@@ -650,7 +712,7 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
         full_name: callMetadata.caller_full_name || null,
       };
     }
-    console.log(`[vapi-llm ${requestId}] metadata path (no cache)`);
+    console.log(`[${logTag} ${requestId}] metadata path (no cache)`);
   } else {
     // Fallback for web-test path (no real phone, no assistant-request).
     try {
@@ -661,9 +723,9 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
         .maybeSingle();
       if (comm) community = { id: comm.id, name: comm.name };
     } catch (e) {
-      console.warn(`[vapi-llm ${requestId}] community fallback lookup failed: ${e.message}`);
+      console.warn(`[${logTag} ${requestId}] community fallback lookup failed: ${e.message}`);
     }
-    console.log(`[vapi-llm ${requestId}] fallback to hardcoded Waterview`);
+    console.log(`[${logTag} ${requestId}] fallback to hardcoded Waterview`);
   }
 
   // If we have a pre-fetched profileBlock from cache, plumb it into the
@@ -673,7 +735,7 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     community.profile_block = profileBlockFromCache;
   }
 
-  console.log(`[vapi-llm ${requestId}] resolved: community=${community?.name || 'none'}, caller=${caller?.first_name || 'none'}, utterance="${utterance.slice(0, 200)}"`);
+  console.log(`[${logTag} ${requestId}] resolved: community=${community?.name || 'none'}, caller=${caller?.first_name || 'none'}, utterance="${utterance.slice(0, 200)}"`);
 
   // ---- SSE response headers ----
   res.setHeader('Content-Type', 'text/event-stream');
@@ -688,7 +750,7 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       id: requestId,
       object: 'chat.completion.chunk',
       created: createdTs,
-      model: 'bedrock-claire',
+      model: modelLabel,
       choices: [{ index: 0, delta, finish_reason: finishReason }],
     };
     res.write(`data: ${JSON.stringify(chunk)}\n\n`);
@@ -725,13 +787,20 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
       // call vs Haiku — rounding error at current volume; small at
       // back-office scale per the cost-consciousness memo.
       //
-      // Don't keep flipping. This is the choice.
+      // Don't keep flipping. This is the choice. Applies to Isabella too —
+      // Spanish callers deserve the same warmth tier; the language is the
+      // variable, not the model class.
       model: 'claude-sonnet-4-5',
-      // Tool-use support — Claire can call get_ar_for_property when a
-      // caller asks for account balance. Verifies identity via address
-      // confirmation before disclosing. See lib/voice/tools.js.
+      // Tool-use support — Claire/Isabella can call get_ar_for_property when
+      // a caller asks for account balance. The tool returns language-neutral
+      // data (numbers, dates, flags); each persona's system prompt handles
+      // the language-appropriate disclosure wording. Same tool, same handlers,
+      // both languages.
       tools: VOICE_TOOLS,
       toolHandlers: VOICE_TOOL_HANDLERS,
+      // Persona swap — Claire (default English) or Isabella (Spanish). See
+      // top-of-file ISABELLA_PERSONA_PACK and lib/voice/reason.js streamTurn.
+      personaPack,
     })) {
       if (aborted) break;
       // Prepend a space between sentences for natural concatenation. The
@@ -745,21 +814,74 @@ router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' 
     sseChunk({}, 'stop');
     res.write('data: [DONE]\n\n');
     res.end();
-    console.log(`[vapi-llm ${requestId}] completed in ${Date.now() - startMs}ms, ${sentenceCount} sentence(s)`);
+    console.log(`[${logTag} ${requestId}] completed in ${Date.now() - startMs}ms, ${sentenceCount} sentence(s)`);
   } catch (err) {
-    console.error(`[vapi-llm ${requestId}] streamTurn failed: ${err.message}`);
+    console.error(`[${logTag} ${requestId}] streamTurn failed: ${err.message}`);
     // Try to deliver a graceful fallback over SSE so Vapi has SOMETHING to
     // speak instead of dead silence. If the connection is already torn down
     // this swallow is fine.
     try {
       if (!aborted) {
-        sseChunk({ content: "Sorry, I'm having trouble right now — want me to put you through to someone on the team?" });
+        sseChunk({ content: fallbackMessage });
         sseChunk({}, 'stop');
         res.write('data: [DONE]\n\n');
         res.end();
       }
     } catch (_) { /* connection closed; nothing to do */ }
   }
+}
+
+// ----------------------------------------------------------------------------
+// Claire (English) — original Vapi Custom LLM endpoint.
+// Vapi sends application/json; the router-level urlencoded parser above
+// won't handle it. Apply express.json() specifically on this route.
+// Vapi treats the configured URL as a BASE and appends /chat/completions
+// (OpenAI-compatible convention). So the mounted path matches what
+// Vapi calls: /api/voice/vapi-llm-webhook/chat/completions.
+// ----------------------------------------------------------------------------
+router.post('/vapi-llm-webhook/chat/completions', express.json({ limit: '256kb' }), (req, res) => {
+  return handleVapiLlmTurn(req, res, {
+    personaPack: null, // Claire = default
+    logTag: 'vapi-llm',
+    modelLabel: 'bedrock-claire',
+    fallbackMessage:
+      "Sorry, I'm having trouble right now — want me to put you through to someone on the team?",
+  });
+});
+
+// ----------------------------------------------------------------------------
+// Isabella (Spanish) — parallel Vapi Custom LLM endpoint.
+// ----------------------------------------------------------------------------
+// Set up in Vapi as a SEPARATE assistant pointing at:
+//   https://my.bedrocktxai.com/api/voice/vapi-llm-webhook-es/chat/completions
+//
+// The persona's voice + first message live in the Vapi assistant config (or in
+// the assistant-request webhook response). This endpoint is just the LLM
+// reasoning surface — same pipeline as Claire, but swapped to use Isabella's
+// Spanish system prompt + Spanish banned-phrase filter.
+//
+// Routing options Ed can choose between in the Vapi dashboard:
+//   A) Dedicated Spanish phone number → Isabella assistant statically
+//      (simplest; ~$2/mo extra Vapi number).
+//   B) Single phone number → assistant-request webhook decides per-caller
+//      based on contacts.preferred_language. Requires migration 107 +
+//      the routing logic added to /vapi-assistant-request below.
+//
+// Either way, this LLM endpoint is the brain Isabella thinks with.
+//
+// See docs/voice-isabella-setup.md for the full setup walkthrough.
+// ----------------------------------------------------------------------------
+router.post('/vapi-llm-webhook-es/chat/completions', express.json({ limit: '256kb' }), (req, res) => {
+  return handleVapiLlmTurn(req, res, {
+    personaPack: ISABELLA_PERSONA_PACK,
+    logTag: 'vapi-llm-es',
+    modelLabel: 'bedrock-isabella',
+    // Spanish fallback when streamTurn throws. Same intent as Claire's
+    // English fallback — offer a take-a-message path so the caller doesn't
+    // hear dead air.
+    fallbackMessage:
+      'Disculpe, estoy teniendo problemas en este momento — ¿quiere que tome un mensaje para que alguien del equipo le devuelva la llamada?',
+  });
 });
 
 module.exports = { router, handleWebSocketConnection };
