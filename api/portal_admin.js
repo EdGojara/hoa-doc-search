@@ -420,6 +420,153 @@ router.post('/users/:id/revoke-property', async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/portal-admin/community/:communityId/module-config
+// ----------------------------------------------------------------------------
+// Returns the current per-tile visibility config for a community plus the
+// community-wide kill switch (portal_active). Used by the admin Tile
+// Visibility panel to render the per-tile dropdowns.
+//
+// Response shape:
+//   {
+//     community: { id, name, slug, portal_active, portal_welcome_message },
+//     module_config: { <module_key>: { status: 'live'|'coming_soon'|'hidden'|'maintenance',
+//                                       notes?: <string>, link?: <override-url> } }
+//   }
+//
+// The canonical list of available module keys lives in public/portal.html
+// (MODULES array) — this endpoint just returns what's currently stored. The
+// admin UI is responsible for showing tiles that exist in the canonical list
+// but are missing from the config (treated as 'coming_soon' by default at
+// render time).
+// ============================================================================
+router.get('/community/:communityId/module-config', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('communities')
+      .select('id, name, slug, portal_active, portal_module_config, portal_welcome_message')
+      .eq('id', req.params.communityId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!data) return res.status(404).json({ error: 'community_not_found' });
+    res.json({
+      community: {
+        id: data.id,
+        name: data.name,
+        slug: data.slug,
+        portal_active: data.portal_active === true,
+        portal_welcome_message: data.portal_welcome_message || '',
+      },
+      module_config: data.portal_module_config || {},
+    });
+  } catch (err) {
+    console.error('[portal_admin] get module-config failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// PATCH /api/portal-admin/community/:communityId/module-config
+// ----------------------------------------------------------------------------
+// Body:
+//   {
+//     module_config?: { <key>: { status, notes?, link? } },   // FULL replace
+//     module_patch?:  { <key>: { status, notes?, link? } },   // MERGE
+//     portal_active?:  bool,                                  // kill switch
+//     portal_welcome_message?: <string>,                      // banner copy
+//     updated_by?: <staff label>
+//   }
+//
+// Pick one of module_config (full replace) OR module_patch (merge into
+// existing). The admin UI uses module_patch for per-tile toggles so a single
+// tile change doesn't risk overwriting other tiles set in a parallel tab.
+//
+// Status validation: only allows the four canonical states. Anything else
+// rejected with 400.
+// ============================================================================
+const ALLOWED_TILE_STATUSES = ['live', 'coming_soon', 'hidden', 'maintenance'];
+
+router.patch('/community/:communityId/module-config', async (req, res) => {
+  try {
+    const communityId = req.params.communityId;
+    const body = req.body || {};
+    const { module_config, module_patch, portal_active, portal_welcome_message, updated_by } = body;
+
+    // Validate status values in either shape
+    const validateCfg = (cfg) => {
+      if (!cfg || typeof cfg !== 'object') return null;
+      for (const key of Object.keys(cfg)) {
+        const v = cfg[key];
+        if (!v || typeof v !== 'object') return `invalid value for ${key}`;
+        if (v.status && !ALLOWED_TILE_STATUSES.includes(v.status)) {
+          return `invalid status "${v.status}" for ${key} (allowed: ${ALLOWED_TILE_STATUSES.join(', ')})`;
+        }
+      }
+      return null;
+    };
+    const cfgErr = validateCfg(module_config) || validateCfg(module_patch);
+    if (cfgErr) return res.status(400).json({ error: cfgErr });
+
+    // Fetch current row (needed for merge OR for diff logging)
+    const { data: current } = await supabase
+      .from('communities')
+      .select('id, portal_module_config, portal_active, portal_welcome_message')
+      .eq('id', communityId)
+      .maybeSingle();
+    if (!current) return res.status(404).json({ error: 'community_not_found' });
+
+    const update = {};
+    let newCfg = null;
+    if (module_config) {
+      newCfg = module_config; // full replace
+    } else if (module_patch) {
+      newCfg = { ...(current.portal_module_config || {}) };
+      // Per-key merge: shallow assign on each tile key so existing tiles not in
+      // the patch keep their settings.
+      for (const k of Object.keys(module_patch)) {
+        newCfg[k] = { ...(newCfg[k] || {}), ...(module_patch[k] || {}) };
+      }
+    }
+    if (newCfg) update.portal_module_config = newCfg;
+    if (typeof portal_active === 'boolean') update.portal_active = portal_active;
+    if (typeof portal_welcome_message === 'string') update.portal_welcome_message = portal_welcome_message;
+
+    if (Object.keys(update).length === 0) {
+      return res.status(400).json({ error: 'nothing_to_update' });
+    }
+
+    const { error: upErr } = await supabase
+      .from('communities')
+      .update(update)
+      .eq('id', communityId);
+    if (upErr) throw upErr;
+
+    // Audit log — note this isn't tied to a specific portal_user (community-
+    // level admin action), so portal_user_id is null. Notes string summarizes
+    // what changed for forensic readability.
+    const changedFields = [];
+    if (newCfg) changedFields.push('module_config');
+    if (typeof portal_active === 'boolean') changedFields.push(`portal_active=${portal_active}`);
+    if (typeof portal_welcome_message === 'string') changedFields.push('welcome_message');
+    await logAudit('community_portal_config_changed', {
+      resource_type: 'community',
+      resource_id: communityId,
+      performed_by: updated_by || null,
+      notes: changedFields.join('; '),
+    });
+
+    res.json({
+      ok: true,
+      community_id: communityId,
+      module_config: newCfg || current.portal_module_config || {},
+      portal_active: ('portal_active' in update) ? update.portal_active : current.portal_active,
+    });
+  } catch (err) {
+    console.error('[portal_admin] patch module-config failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 // GET /api/portal-admin/communities
 // ----------------------------------------------------------------------------
 // Lightweight list of communities for the admin UI dropdowns. Returns

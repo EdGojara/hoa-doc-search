@@ -303,6 +303,126 @@
     to   { opacity: 1; transform: translateY(0); }
   }
 
+  /* ---- Tile visibility panel (per-community module config) ---- */
+  .section-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px 24px;
+    margin-top: 28px;
+    box-shadow: var(--shadow-soft);
+  }
+  .section-card h2 {
+    font-family: var(--font-serif); font-size: 20px; font-weight: 500;
+    color: var(--navy); margin: 0 0 4px; letter-spacing: -0.01em;
+  }
+  .section-card h2 em { color: var(--gold); font-style: italic; }
+  .section-card .section-sub {
+    color: var(--ink-soft); font-size: 13px; margin-bottom: 18px;
+  }
+  .kill-switch {
+    display: flex; align-items: center; justify-content: space-between;
+    background: var(--cream-soft);
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 12px 16px;
+    margin-bottom: 20px;
+    gap: 14px;
+  }
+  .kill-switch .label-block {
+    flex: 1;
+  }
+  .kill-switch .label-block strong {
+    color: var(--navy); font-weight: 500;
+  }
+  .kill-switch .label-block .help {
+    color: var(--ink-faint); font-size: 12px; margin-top: 2px;
+  }
+  .kill-switch .toggle {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-size: 13px; color: var(--ink-soft);
+  }
+  /* Custom switch (accessible) */
+  .switch {
+    position: relative; display: inline-block;
+    width: 44px; height: 24px;
+    flex-shrink: 0;
+  }
+  .switch input { opacity: 0; width: 0; height: 0; }
+  .switch .slider {
+    position: absolute; cursor: pointer; inset: 0;
+    background-color: #d4d2c8;
+    border-radius: 999px;
+    transition: 0.2s;
+  }
+  .switch .slider::before {
+    position: absolute; content: '';
+    height: 18px; width: 18px;
+    left: 3px; top: 3px;
+    background-color: white;
+    border-radius: 50%;
+    transition: 0.2s;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+  }
+  .switch input:checked + .slider { background-color: var(--gold); }
+  .switch input:checked + .slider::before { transform: translateX(20px); }
+
+  .tile-grid-admin {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 12px;
+  }
+  .tile-admin {
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 14px 16px;
+    background: var(--paper);
+    display: flex; flex-direction: column;
+    gap: 10px;
+  }
+  .tile-admin.live { border-left: 4px solid var(--good); }
+  .tile-admin.coming_soon { border-left: 4px solid var(--rule); }
+  .tile-admin.maintenance { border-left: 4px solid var(--warn); }
+  .tile-admin.hidden { border-left: 4px solid var(--ink-faint); opacity: 0.7; }
+  .tile-admin-head {
+    display: flex; align-items: flex-start; gap: 10px;
+  }
+  .tile-admin-icon {
+    width: 30px; height: 30px;
+    background: var(--gold-faint);
+    border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 16px; flex-shrink: 0;
+  }
+  .tile-admin-name {
+    font-family: var(--font-serif);
+    font-size: 15px; font-weight: 500;
+    color: var(--navy);
+    line-height: 1.2;
+  }
+  .tile-admin-desc {
+    font-size: 11.5px; color: var(--ink-faint);
+    line-height: 1.4;
+    margin-top: 2px;
+  }
+  .tile-admin-status select {
+    width: 100%;
+    font-family: var(--font-sans); font-size: 13px;
+    padding: 6px 10px; border-radius: 5px;
+    border: 1px solid var(--rule);
+    background: white; color: var(--ink);
+    cursor: pointer;
+  }
+  .tile-admin-status select:focus { outline: none; border-color: var(--gold); }
+  .tile-admin-status .saved-badge {
+    font-size: 11px; color: var(--good);
+    margin-top: 4px;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .tile-admin-status .saved-badge.show { opacity: 1; }
+  .tile-admin-status .saved-badge.error { color: var(--bad); }
+
   /* Responsive */
   @media (max-width: 900px) {
     .funnel { grid-template-columns: repeat(2, 1fr); }
@@ -312,6 +432,7 @@
     .funnel { grid-template-columns: 1fr 1fr; }
     .toolbar select { min-width: 0; width: 100%; }
     th, td { padding: 8px 10px; font-size: 12.5px; }
+    .tile-grid-admin { grid-template-columns: 1fr; }
   }
 </style>
 </head>
@@ -412,6 +533,41 @@
         </tbody>
       </table>
     </div>
+
+    <!-- Per-community tile visibility control. Lets an operator take a tile
+         down ("maintenance"), hide a half-built one ("hidden"), or make it
+         "coming soon" without touching SQL. Changes auto-save on dropdown
+         change and immediately affect what homeowners see on next portal
+         load. -->
+    <div class="section-card" id="moduleConfigCard" style="display:none;">
+      <h2>Tile <em>visibility</em></h2>
+      <p class="section-sub">
+        Control what homeowners see on the portal for this community. Changes
+        save automatically and take effect on next portal load.
+      </p>
+
+      <div class="kill-switch">
+        <div class="label-block">
+          <strong>Portal active for this community</strong>
+          <div class="help">
+            When OFF, homeowners see a "Portal not yet available" page instead of
+            their tiles. Use during initial setup before invites go out, or to
+            take the whole portal down during a major change.
+          </div>
+        </div>
+        <label class="toggle">
+          <span id="killSwitchLabel">—</span>
+          <span class="switch">
+            <input type="checkbox" id="portalActiveToggle">
+            <span class="slider"></span>
+          </span>
+        </label>
+      </div>
+
+      <div class="tile-grid-admin" id="moduleConfigGrid">
+        <!-- Tile rows rendered by JS -->
+      </div>
+    </div>
   </div>
 </main>
 
@@ -421,12 +577,43 @@
 'use strict';
 
 // =============================================================================
+// Module catalog — KEEP IN SYNC WITH public/portal.html `MODULES` array.
+// This is the canonical list of homeowner-facing tiles. The admin UI shows
+// ALL of them (even ones not in the per-community config yet) so an operator
+// can toggle a newly-added tile on for any community without re-deploying.
+//
+// If you add/rename a tile, update both this list AND the one in portal.html
+// (and add a migration for the default if you want it auto-enabled — see
+// migrations/099_enable_contacts_module.sql for the pattern).
+// =============================================================================
+const PORTAL_MODULES = [
+  { key: 'balance',          title: 'Account Balance',         icon: '💵', desc: 'Current balance, due dates, payments.' },
+  { key: 'compliance',       title: 'Property Compliance',     icon: '✅', desc: 'Inspections, courtesy notices, cure windows.' },
+  { key: 'property_summary', title: 'Property Summary',        icon: '🏠', desc: 'Lot details, ownership, key dates.' },
+  { key: 'arc',              title: 'Architectural Review',    icon: '🏗️', desc: 'Submit paint / fence / addition / landscape requests.' },
+  { key: 'key_fob',          title: 'Pool & Gate Access',      icon: '🔑', desc: 'Request new key fobs or update access.' },
+  { key: 'clubhouse',        title: 'Reserve the Clubhouse',   icon: '🎉', desc: 'Check availability, pay online, get confirmations.' },
+  { key: 'documents',        title: 'Governing Documents',     icon: '📄', desc: 'CC&Rs, Bylaws, ARC Guidelines, financials.' },
+  { key: 'meetings',         title: 'Meetings & Notices',      icon: '📅', desc: 'Board meeting agendas + minutes.' },
+  { key: 'contacts',         title: 'Local Contacts',          icon: '📞', desc: 'Sheriff, utilities, trash, TV/internet quick-dial.' },
+];
+
+const TILE_STATUS_OPTIONS = [
+  { value: 'live',         label: 'Live (visible & clickable)' },
+  { value: 'coming_soon',  label: 'Coming soon (shown, not clickable)' },
+  { value: 'maintenance',  label: 'Maintenance (shown, not clickable, amber pill)' },
+  { value: 'hidden',       label: 'Hidden (not shown at all)' },
+];
+
+// =============================================================================
 // State
 // =============================================================================
 let _communities = [];
 let _currentCommunityId = '';
 let _contacts = [];          // current adoption rows
 let _selectedContactIds = new Set();
+let _moduleConfig = {};      // current portal_module_config for selected community
+let _portalActive = false;   // current portal_active for selected community
 
 // =============================================================================
 // Helpers
@@ -485,21 +672,37 @@ async function loadAdoption(communityId) {
   $('loadingState').style.display = '';
   $('loadingState').innerHTML = '<span class="spinner"></span>Loading adoption data…';
   $('resultsWrap').style.display = 'none';
+  $('moduleConfigCard').style.display = 'none';
   _selectedContactIds = new Set();
   try {
-    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(communityId)}/adoption`, {
-      credentials: 'same-origin',
-    });
-    if (!r.ok) throw new Error(`API ${r.status}`);
-    const data = await r.json();
-    _contacts = data.contacts || [];
-    renderFunnel(data.summary || {});
+    // Fetch adoption + module config in parallel — both are scoped to the
+    // same community and the operator usually wants to see both at once.
+    const [adoptionRes, moduleRes] = await Promise.all([
+      fetch(`/api/portal-admin/community/${encodeURIComponent(communityId)}/adoption`, {
+        credentials: 'same-origin',
+      }),
+      fetch(`/api/portal-admin/community/${encodeURIComponent(communityId)}/module-config`, {
+        credentials: 'same-origin',
+      }),
+    ]);
+    if (!adoptionRes.ok) throw new Error(`adoption API ${adoptionRes.status}`);
+    if (!moduleRes.ok) throw new Error(`module-config API ${moduleRes.status}`);
+    const adoptionData = await adoptionRes.json();
+    const moduleData = await moduleRes.json();
+
+    _contacts = adoptionData.contacts || [];
+    _moduleConfig = moduleData.module_config || {};
+    _portalActive = !!moduleData.community?.portal_active;
+
+    renderFunnel(adoptionData.summary || {});
     renderTable();
+    renderModuleConfig();
     $('loadingState').style.display = 'none';
     $('resultsWrap').style.display = '';
+    $('moduleConfigCard').style.display = '';
   } catch (err) {
     $('loadingState').innerHTML = `<span style="color:var(--bad);">Could not load adoption: ${escapeHtml(err.message)}</span>`;
-    toast('Could not load adoption: ' + err.message, 'error');
+    toast('Could not load community: ' + err.message, 'error');
   }
 }
 
@@ -687,6 +890,116 @@ function quickDeselect() {
 }
 
 // =============================================================================
+// Tile visibility (module config) — render + save
+// =============================================================================
+function renderModuleConfig() {
+  // Kill switch
+  $('portalActiveToggle').checked = _portalActive;
+  $('killSwitchLabel').textContent = _portalActive ? 'On' : 'Off';
+
+  // Per-tile grid
+  const grid = $('moduleConfigGrid');
+  grid.innerHTML = PORTAL_MODULES.map((mod) => {
+    const cfg = _moduleConfig[mod.key] || { status: 'coming_soon' };
+    const status = cfg.status || 'coming_soon';
+    const options = TILE_STATUS_OPTIONS.map((opt) =>
+      `<option value="${opt.value}"${opt.value === status ? ' selected' : ''}>${escapeHtml(opt.label)}</option>`
+    ).join('');
+    return `
+      <div class="tile-admin ${escapeHtml(status)}" data-module-key="${escapeHtml(mod.key)}">
+        <div class="tile-admin-head">
+          <div class="tile-admin-icon">${mod.icon}</div>
+          <div>
+            <div class="tile-admin-name">${escapeHtml(mod.title)}</div>
+            <div class="tile-admin-desc">${escapeHtml(mod.desc)}</div>
+          </div>
+        </div>
+        <div class="tile-admin-status">
+          <select data-tile-select data-key="${escapeHtml(mod.key)}">${options}</select>
+          <div class="saved-badge" data-key="${escapeHtml(mod.key)}">✓ saved</div>
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  // Wire per-tile change listeners
+  grid.querySelectorAll('select[data-tile-select]').forEach((sel) => {
+    sel.addEventListener('change', (e) => {
+      saveTileStatus(e.target.dataset.key, e.target.value);
+    });
+  });
+}
+
+async function saveTileStatus(moduleKey, newStatus) {
+  if (!_currentCommunityId || !moduleKey) return;
+  const badgeEl = document.querySelector(`.saved-badge[data-key="${moduleKey}"]`);
+  // Optimistically update local state + visual cue
+  _moduleConfig[moduleKey] = { ...(_moduleConfig[moduleKey] || {}), status: newStatus };
+  const tileEl = document.querySelector(`.tile-admin[data-module-key="${moduleKey}"]`);
+  if (tileEl) {
+    tileEl.classList.remove('live', 'coming_soon', 'maintenance', 'hidden');
+    tileEl.classList.add(newStatus);
+  }
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/module-config`, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        module_patch: { [moduleKey]: { status: newStatus } },
+        updated_by: 'portal-adoption-ui',
+      }),
+    });
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    if (badgeEl) {
+      badgeEl.classList.remove('error');
+      badgeEl.textContent = '✓ saved';
+      badgeEl.classList.add('show');
+      setTimeout(() => badgeEl.classList.remove('show'), 1800);
+    }
+  } catch (err) {
+    if (badgeEl) {
+      badgeEl.classList.add('error', 'show');
+      badgeEl.textContent = '✗ save failed';
+    }
+    toast('Save failed: ' + err.message, 'error');
+  }
+}
+
+async function savePortalActive(newActive) {
+  if (!_currentCommunityId) return;
+  // Confirmation: switching OFF is a real-impact action — show a quick guard.
+  if (_portalActive === true && newActive === false) {
+    if (!confirm('Turn the portal OFF for this community? Homeowners will see "Portal not yet available" until you turn it back on. (You can revert in one click.)')) {
+      // Revert the toggle UI without saving
+      $('portalActiveToggle').checked = true;
+      return;
+    }
+  }
+  _portalActive = newActive;
+  $('killSwitchLabel').textContent = newActive ? 'On' : 'Off';
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/module-config`, {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        portal_active: newActive,
+        updated_by: 'portal-adoption-ui',
+      }),
+    });
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    toast(`Portal ${newActive ? 'enabled' : 'disabled'} for this community.`, 'success');
+  } catch (err) {
+    // Revert local state + toggle on failure
+    _portalActive = !newActive;
+    $('portalActiveToggle').checked = _portalActive;
+    $('killSwitchLabel').textContent = _portalActive ? 'On' : 'Off';
+    toast('Could not change portal status: ' + err.message, 'error');
+  }
+}
+
+// =============================================================================
 // Boot
 // =============================================================================
 (async () => {
@@ -720,6 +1033,11 @@ function quickDeselect() {
   $('quickSelectUninvited').addEventListener('click', quickSelectEligibleNotInvited);
   $('quickSelectStale').addEventListener('click', quickSelectStale);
   $('quickDeselect').addEventListener('click', quickDeselect);
+
+  // Portal-active kill switch
+  $('portalActiveToggle').addEventListener('change', (e) => {
+    savePortalActive(e.target.checked);
+  });
 })();
 </script>
 </body>
