@@ -1786,6 +1786,7 @@
           <div id="homesContactProfileTagsRow" style="margin-top:8px;"></div>
         </div>
         <div style="display:flex; gap:6px; align-items:flex-start;">
+          <button id="homesContactEditBtn" onclick="homesToggleEditPanel()" title="Edit contact info — for updates during a homeowner call" style="background:#fff; color:#1E2761; border:1px solid #1E2761; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:600; cursor:pointer;">✏ Edit</button>
           <button id="homesContactMimicBtn" disabled title="Mimic mode — staff renders the homeowner portal as this person. Coming in next build." style="background:#f1f5f9; color:#94A3B8; border:1px solid #e2e8f0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:600; cursor:not-allowed;">🎭 Mimic (soon)</button>
           <button onclick="homesCloseContactProfile()" style="background:transparent; border:0; font-size:22px; color:#94A3B8; cursor:pointer; padding:0 6px;">×</button>
         </div>
@@ -4122,6 +4123,11 @@
     // Body sections
     let html = '';
 
+    // Edit panel (only when toggled open)
+    if (_homesEditPanelOpen) {
+      html += _hpRenderEditPanel();
+    }
+
     // Properties owned
     html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">🏠 Properties owned (${(d.properties || []).length})</h4>`;
     if ((d.properties || []).length === 0) {
@@ -4409,6 +4415,185 @@
       homesOpenContactProfile(contactId);
     } catch (e) {
       alert(e.message);
+    }
+  }
+
+  // ===== Edit contact info — for on-call updates =============================
+  // Toggles an inline edit panel at top of the profile body. Two save paths:
+  // identity fields → PATCH /api/contacts/:id; comm prefs → PUT preferences.
+  // Both run from the single Save button so staff doesn't have to think about
+  // which save fires for which field. Pre-fills from homesContactProfileState.data.
+
+  let _homesEditPanelOpen = false;
+
+  function homesToggleEditPanel() {
+    _homesEditPanelOpen = !_homesEditPanelOpen;
+    const btn = document.getElementById('homesContactEditBtn');
+    if (btn) {
+      btn.textContent = _homesEditPanelOpen ? '✕ Close edit' : '✏ Edit';
+      btn.style.background = _homesEditPanelOpen ? '#1E2761' : '#fff';
+      btn.style.color = _homesEditPanelOpen ? '#fff' : '#1E2761';
+    }
+    homesRenderContactProfile();
+  }
+
+  function _hpRenderEditPanel() {
+    const d = homesContactProfileState.data || {};
+    const c = d.contact || {};
+    const prefs = d.preferences || {};
+    const lang = c.preferred_language || 'en';
+    const ch = (v) => v === true ? 'checked' : '';
+    const sel = (current, value) => current === value ? 'selected' : '';
+    const generalCh = prefs.general_comm_channel || 'email';
+    const billingCh = prefs.billing_comm_channel || 'email';
+    return `
+      <div id="homesEditPanel" style="border:2px solid #1E2761; border-radius:10px; padding:14px; background:#f1f5fb; margin-bottom:18px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h4 style="margin:0; color:#1E2761; font-size:14px;">✏ Edit contact info <span style="color:#94A3B8; font-weight:400; font-size:11px;">(for on-call updates)</span></h4>
+          <div id="homesEditStatus" style="font-size:11.5px; color:#94A3B8;"></div>
+        </div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;">
+          <label style="font-size:11.5px; color:#475569;">Full name
+            <input id="hpEditFullName" value="${escapeHtml(c.full_name || '')}" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Preferred name
+            <input id="hpEditPreferredName" value="${escapeHtml(c.preferred_name || '')}" placeholder="e.g., Sarah for Sara" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Primary email
+            <input id="hpEditPrimaryEmail" type="email" value="${escapeHtml(c.primary_email || '')}" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Secondary email
+            <input id="hpEditSecondaryEmail" type="email" value="${escapeHtml(c.secondary_email || '')}" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Primary phone
+            <input id="hpEditPrimaryPhone" value="${escapeHtml(c.primary_phone || '')}" placeholder="(832) 588-2485" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Secondary phone
+            <input id="hpEditSecondaryPhone" value="${escapeHtml(c.secondary_phone || '')}" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:11.5px; color:#475569; grid-column:1 / -1;">Mailing address
+            <textarea id="hpEditMailingAddress" rows="2" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; font-family:inherit; margin-top:2px; resize:vertical;">${escapeHtml(c.mailing_address || '')}</textarea>
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Preferred language
+            <select id="hpEditPreferredLanguage" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;">
+              <option value="en" ${sel(lang, 'en')}>English</option>
+              <option value="es" ${sel(lang, 'es')}>Español</option>
+              <option value="zh" ${sel(lang, 'zh')}>中文</option>
+              <option value="vi" ${sel(lang, 'vi')}>Tiếng Việt</option>
+              <option value="ko" ${sel(lang, 'ko')}>한국어</option>
+            </select>
+          </label>
+          <label style="font-size:11.5px; color:#475569;">SMS notification phone <span style="color:#94A3B8;">(if different from primary)</span>
+            <input id="hpEditNotificationPhone" value="${escapeHtml(c.notification_phone || '')}" placeholder="(832) 588-2485" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+          <label style="font-size:12px; color:#475569; user-select:none; display:flex; align-items:center; gap:6px;">
+            <input id="hpEditSmsOptIn" type="checkbox" ${ch(c.sms_opt_in)} /> SMS opt-in
+          </label>
+          <label style="font-size:12px; color:#475569; user-select:none; display:flex; align-items:center; gap:6px;">
+            <input id="hpEditEmailOptOut" type="checkbox" ${ch(c.email_opt_out)} /> Email opt-OUT (all)
+          </label>
+        </div>
+
+        <div style="border-top:1px dashed #cbd5e1; margin:14px 0 10px 0;"></div>
+        <div style="font-size:12.5px; color:#1E2761; font-weight:700; margin-bottom:8px;">📡 Communication preferences</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;">
+          <label style="font-size:11.5px; color:#475569;">General comms
+            <select id="hpEditGeneralCh" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;">
+              <option value="email" ${sel(generalCh, 'email')}>Email</option>
+              <option value="paper" ${sel(generalCh, 'paper')}>Paper</option>
+              <option value="both" ${sel(generalCh, 'both')}>Both</option>
+              <option value="suppress" ${sel(generalCh, 'suppress')}>Suppress all</option>
+            </select>
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Billing comms
+            <select id="hpEditBillingCh" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;">
+              <option value="email" ${sel(billingCh, 'email')}>Email</option>
+              <option value="paper" ${sel(billingCh, 'paper')}>Paper</option>
+              <option value="both" ${sel(billingCh, 'both')}>Both</option>
+              <option value="suppress" ${sel(billingCh, 'suppress')}>Suppress all</option>
+            </select>
+          </label>
+          <label style="font-size:12px; color:#475569; user-select:none; display:flex; align-items:center; gap:6px;">
+            <input id="hpEditPaymentConfEmail" type="checkbox" ${ch(prefs.payment_confirmation_email_enabled !== false)} /> Payment confirmation emails
+          </label>
+          <label style="font-size:12px; color:#475569; user-select:none; display:flex; align-items:center; gap:6px;">
+            <input id="hpEditPaymentRemindersText" type="checkbox" ${ch(prefs.payment_reminders_text_enabled === true)} /> Payment reminder texts
+          </label>
+          <label style="font-size:11.5px; color:#475569; grid-column:1 / -1;">Payment reminder phone <span style="color:#94A3B8;">(if texts enabled and different from primary)</span>
+            <input id="hpEditPaymentRemindersPhone" value="${escapeHtml(prefs.payment_reminders_phone || '')}" placeholder="(832) 588-2485" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:2px;" />
+          </label>
+        </div>
+
+        <div style="display:flex; gap:8px; align-items:center; margin-top:14px;">
+          <button onclick="homesSubmitEdit()" class="action-btn" style="font-size:13px; padding:7px 16px;">💾 Save changes</button>
+          <button onclick="homesToggleEditPanel()" class="secondary-btn" style="font-size:13px; padding:7px 16px;">Cancel</button>
+          <div style="margin-left:auto; font-size:11px; color:#94A3B8;">Edits apply immediately. Profile refreshes on save.</div>
+        </div>
+      </div>`;
+  }
+
+  async function homesSubmitEdit() {
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    const status = document.getElementById('homesEditStatus');
+    status.textContent = '⏳ Saving…';
+
+    const contactPayload = {
+      full_name:        document.getElementById('hpEditFullName').value.trim(),
+      preferred_name:   document.getElementById('hpEditPreferredName').value.trim() || null,
+      primary_email:    document.getElementById('hpEditPrimaryEmail').value.trim() || null,
+      secondary_email:  document.getElementById('hpEditSecondaryEmail').value.trim() || null,
+      primary_phone:    document.getElementById('hpEditPrimaryPhone').value.trim() || null,
+      secondary_phone:  document.getElementById('hpEditSecondaryPhone').value.trim() || null,
+      notification_phone: document.getElementById('hpEditNotificationPhone').value.trim() || null,
+      mailing_address:  document.getElementById('hpEditMailingAddress').value.trim() || null,
+      preferred_language: document.getElementById('hpEditPreferredLanguage').value,
+      sms_opt_in:       document.getElementById('hpEditSmsOptIn').checked,
+      email_opt_out:    document.getElementById('hpEditEmailOptOut').checked,
+    };
+    if (!contactPayload.full_name) {
+      status.innerHTML = '<span style="color:#b91c1c;">Full name required.</span>';
+      return;
+    }
+
+    const prefsPayload = {
+      general_comm_channel:  document.getElementById('hpEditGeneralCh').value,
+      billing_comm_channel:  document.getElementById('hpEditBillingCh').value,
+      payment_confirmation_email_enabled: document.getElementById('hpEditPaymentConfEmail').checked,
+      payment_reminders_text_enabled:     document.getElementById('hpEditPaymentRemindersText').checked,
+      payment_reminders_phone:            document.getElementById('hpEditPaymentRemindersPhone').value.trim() || null,
+    };
+
+    try {
+      // Run both saves in parallel — independent endpoints, no ordering dependency
+      const [contactRes, prefsRes] = await Promise.all([
+        fetch(`/api/contacts/${contactId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(contactPayload),
+        }),
+        fetch(`/api/contacts/${contactId}/preferences`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(prefsPayload),
+        }),
+      ]);
+      if (!contactRes.ok) {
+        const j = await contactRes.json().catch(() => ({}));
+        throw new Error(`Contact update failed: ${j.error || contactRes.status}`);
+      }
+      if (!prefsRes.ok) {
+        const j = await prefsRes.json().catch(() => ({}));
+        throw new Error(`Preferences update failed: ${j.error || prefsRes.status}`);
+      }
+      // Close edit panel + refresh profile
+      _homesEditPanelOpen = false;
+      const btn = document.getElementById('homesContactEditBtn');
+      if (btn) { btn.textContent = '✏ Edit'; btn.style.background = '#fff'; btn.style.color = '#1E2761'; }
+      await homesOpenContactProfile(contactId);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
     }
   }
 

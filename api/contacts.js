@@ -727,13 +727,65 @@ router.post('/contacts', express.json(), async (req, res) => {
 
 router.patch('/contacts/:id', express.json(), async (req, res) => {
   try {
-    const allowed = ['full_name','preferred_name','primary_email','primary_phone','secondary_email','secondary_phone','mailing_address','notes'];
+    const allowed = [
+      'full_name','preferred_name',
+      'primary_email','primary_phone','secondary_email','secondary_phone',
+      'notification_phone','mailing_address','notes',
+      'preferred_language',
+      'sms_opt_in','sms_opt_out','email_opt_out',
+    ];
     const patch = { updated_at: new Date().toISOString() };
     allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    // Stamp the timestamp side-fields when an opt-in/out flag flips so the
+    // audit trail captures WHEN (the boolean alone doesn't tell you).
+    const nowIso = new Date().toISOString();
+    if ('sms_opt_in' in patch && patch.sms_opt_in) {
+      patch.sms_opt_in_at = nowIso;
+      patch.sms_opt_in_source = req.body.sms_opt_in_source || 'staff_edit';
+    }
+    if ('sms_opt_out' in patch && patch.sms_opt_out) patch.sms_opt_out_at = nowIso;
+    if ('email_opt_out' in patch && patch.email_opt_out) patch.email_opt_out_at = nowIso;
     const { data, error } = await supabase
       .from('contacts').update(patch).eq('id', req.params.id).select().single();
     if (error) return res.status(500).json({ error: error.message });
     res.json({ contact: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CONTACT PREFERENCES — upsert for the per-contact granular comm prefs
+// (general/billing channel split, payment confirmation email, payment
+// reminders text + phone). One row per contact (UNIQUE on contact_id);
+// absent row defaults to implicit values in the application layer.
+// ---------------------------------------------------------------------------
+router.put('/contacts/:id/preferences', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    // Validate enum fields against the migration 110 CHECK constraints
+    const channelEnum = ['paper','email','both','suppress'];
+    const upsertPayload = { contact_id: req.params.id, updated_at: new Date().toISOString() };
+    if ('general_comm_channel' in b) {
+      if (!channelEnum.includes(b.general_comm_channel)) return res.status(400).json({ error: 'invalid_general_comm_channel' });
+      upsertPayload.general_comm_channel = b.general_comm_channel;
+    }
+    if ('billing_comm_channel' in b) {
+      if (!channelEnum.includes(b.billing_comm_channel)) return res.status(400).json({ error: 'invalid_billing_comm_channel' });
+      upsertPayload.billing_comm_channel = b.billing_comm_channel;
+    }
+    if ('payment_confirmation_email_enabled' in b) upsertPayload.payment_confirmation_email_enabled = !!b.payment_confirmation_email_enabled;
+    if ('payment_reminders_text_enabled' in b) upsertPayload.payment_reminders_text_enabled = !!b.payment_reminders_text_enabled;
+    if ('payment_reminders_phone' in b) upsertPayload.payment_reminders_phone = b.payment_reminders_phone || null;
+    if ('notes' in b) upsertPayload.notes = b.notes || null;
+
+    const { data, error } = await supabase
+      .from('contact_preferences')
+      .upsert(upsertPayload, { onConflict: 'contact_id' })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ preferences: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
