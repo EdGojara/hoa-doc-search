@@ -33,6 +33,12 @@ const COOKIE_NAME = 'TRUSTED_PORTAL';
 const COOKIE_TTL_DAYS = 30;
 const MAGIC_LINK_TTL_HOURS = 1;
 
+// Mimic session — staff renders the portal as a specific portal_user with
+// audit logging. Separate cookie so a staff member's own portal session (if
+// any) survives the mimic. 30-min TTL so abandoned sessions auto-expire.
+const MIMIC_COOKIE_NAME = 'TRUSTED_PORTAL_MIMIC';
+const MIMIC_COOKIE_TTL_MIN = 30;
+
 const router = express.Router();
 
 // ----------------------------------------------------------------------------
@@ -84,6 +90,64 @@ function setPortalCookie(res, value) {
 function clearPortalCookie(res) {
   res.setHeader('Set-Cookie',
     `${COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+// Mimic cookie helpers. Format: <portal_user_id>.<staff_email_b64>.<ts>.<hmac>
+// Same secret as portal cookie. 30-min TTL.
+function signMimicCookie(portalUserId, staffEmail) {
+  const ts = Date.now().toString();
+  const emailB64 = Buffer.from(String(staffEmail), 'utf8').toString('base64url');
+  const sig = crypto.createHmac('sha256', portalSecret())
+    .update(`${portalUserId}.${emailB64}.${ts}.mimic`)
+    .digest('hex');
+  return `${portalUserId}.${emailB64}.${ts}.${sig}`;
+}
+
+function verifyMimicCookie(token) {
+  if (!token) return null;
+  const parts = String(token).split('.');
+  if (parts.length !== 4) return null;
+  const [portalUserId, emailB64, ts, sig] = parts;
+  if (!ts || !/^\d+$/.test(ts)) return null;
+  const age = Date.now() - Number(ts);
+  if (age > MIMIC_COOKIE_TTL_MIN * 60 * 1000) return null;
+  const expected = crypto.createHmac('sha256', portalSecret())
+    .update(`${portalUserId}.${emailB64}.${ts}.mimic`)
+    .digest('hex');
+  try {
+    if (sig.length !== expected.length) return null;
+    if (!crypto.timingSafeEqual(Buffer.from(sig, 'hex'), Buffer.from(expected, 'hex'))) return null;
+  } catch (_) { return null; }
+  let staffEmail = '';
+  try { staffEmail = Buffer.from(emailB64, 'base64url').toString('utf8'); } catch (_) { return null; }
+  return {
+    portal_user_id: portalUserId,
+    staff_email: staffEmail,
+    started_at: new Date(Number(ts)).toISOString(),
+    expires_at: new Date(Number(ts) + MIMIC_COOKIE_TTL_MIN * 60 * 1000).toISOString(),
+  };
+}
+
+function setMimicCookie(res, value) {
+  const maxAge = MIMIC_COOKIE_TTL_MIN * 60;
+  res.setHeader('Set-Cookie',
+    `${MIMIC_COOKIE_NAME}=${encodeURIComponent(value)}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${maxAge}; Secure`);
+}
+
+function clearMimicCookie(res) {
+  res.setHeader('Set-Cookie',
+    `${MIMIC_COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`);
+}
+
+// Resolve effective portal user. Mimic cookie takes precedence when present
+// (and valid) so staff sees the portal AS the target homeowner.
+function resolvePortalUser(req) {
+  const mimicCookieValue = readCookie(req, MIMIC_COOKIE_NAME);
+  const mimic = mimicCookieValue ? verifyMimicCookie(mimicCookieValue) : null;
+  if (mimic) return { portalUserId: mimic.portal_user_id, mimic };
+  const cookieValue = readCookie(req, COOKIE_NAME);
+  const portalUserId = verifyCookie(cookieValue);
+  return { portalUserId, mimic: null };
 }
 
 function makeMagicToken() {
@@ -348,11 +412,12 @@ router.post('/consume', async (req, res) => {
 // GET /api/portal/me
 // Returns the full portal context for the signed-in homeowner.
 // 401 if no cookie / expired / invalid.
+// When a staff mimic cookie is present, /me resolves the TARGET portal user
+// and includes a `mimic` block so the frontend can render the warning banner.
 // ============================================================================
 router.get('/me', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId, mimic } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
 
     const { data: user, error: uErr } = await supabase
@@ -571,9 +636,97 @@ router.get('/me', async (req, res) => {
       // Board-portal switcher hints (consumed by portal.html header)
       is_board_member: isBoardMember,
       board_communities: boardCommunities,
+      // Mimic block — present (with active:true) ONLY when a staff member
+      // is rendering the portal as this homeowner via /mimic/start. Frontend
+      // uses this to render the persistent "you are in mimic mode" banner.
+      mimic: mimic ? {
+        active: true,
+        staff_email: mimic.staff_email,
+        started_at: mimic.started_at,
+        expires_at: mimic.expires_at,
+      } : null,
     });
   } catch (err) {
     console.error('[portal] /me failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/portal/mimic/start
+// Staff renders the portal as a specific portal_user. Sets a separate
+// TRUSTED_PORTAL_MIMIC cookie (30-min TTL) that takes precedence over the
+// normal session cookie. Logs to portal_audit_log so the audit trail
+// captures who, when, and for whom.
+//
+// Body: { portal_user_id, staff_email }
+// Trust model: the trustEd app this is called from is gated by staff auth at
+// the network/app layer. The staff_email passed in is recorded for audit.
+// Future hardening: cross-check req.headers against a staff session.
+// ============================================================================
+router.post('/mimic/start', express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const portalUserId = String(req.body?.portal_user_id || '').trim();
+    const staffEmail = String(req.body?.staff_email || '').trim().toLowerCase();
+    if (!portalUserId || !staffEmail) {
+      return res.status(400).json({ error: 'portal_user_id_and_staff_email_required' });
+    }
+    if (!staffEmail.includes('@')) {
+      return res.status(400).json({ error: 'staff_email_invalid' });
+    }
+
+    // Confirm target portal user exists + is active
+    const { data: user } = await supabase
+      .from('portal_users')
+      .select('id, email, full_name, role, status')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    if (!user) return res.status(404).json({ error: 'portal_user_not_found' });
+    if (user.status === 'revoked') return res.status(403).json({ error: 'portal_user_revoked' });
+
+    setMimicCookie(res, signMimicCookie(portalUserId, staffEmail));
+
+    await logAudit('mimic_start', {
+      portal_user_id: portalUserId,
+      performed_by: staffEmail,
+      ip_address: req.ip,
+      user_agent: req.headers['user-agent'] || null,
+      notes: `Staff ${staffEmail} started mimic session as ${user.full_name || user.email} (${user.email})`,
+    });
+
+    res.json({
+      ok: true,
+      target_email: user.email,
+      target_name: user.full_name,
+      expires_in_minutes: MIMIC_COOKIE_TTL_MIN,
+    });
+  } catch (err) {
+    console.error('[portal] mimic/start failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/portal/mimic/stop
+// Clears the mimic cookie. Does NOT touch the normal portal session cookie
+// (so if staff had their own portal login, they return to their own session).
+// ============================================================================
+router.post('/mimic/stop', async (req, res) => {
+  try {
+    const mimicCookieValue = readCookie(req, MIMIC_COOKIE_NAME);
+    const mimic = mimicCookieValue ? verifyMimicCookie(mimicCookieValue) : null;
+    clearMimicCookie(res);
+    if (mimic) {
+      await logAudit('mimic_end', {
+        portal_user_id: mimic.portal_user_id,
+        performed_by: mimic.staff_email,
+        ip_address: req.ip,
+        user_agent: req.headers['user-agent'] || null,
+      });
+    }
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[portal] mimic/stop failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -686,8 +839,7 @@ router.get('/map/:slug', async (req, res) => {
 // ============================================================================
 router.get('/compliance', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
 
     // Resolve property scope (first property for v0; multi-property in follow-on)
@@ -934,8 +1086,7 @@ const CATEGORY_LABELS = {
 
 router.get('/documents', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
 
     const { data: scopes } = await supabase
@@ -1010,8 +1161,7 @@ router.get('/documents', async (req, res) => {
 // ============================================================================
 router.get('/property', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
 
     const { data: scopes } = await supabase
@@ -1153,8 +1303,7 @@ router.get('/property', async (req, res) => {
 // ============================================================================
 router.get('/balance', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
 
     const { data: scopes } = await supabase
@@ -1240,8 +1389,7 @@ router.get('/balance', async (req, res) => {
 // ============================================================================
 router.get('/meetings', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
 
     const { data: scopes } = await supabase
@@ -1357,8 +1505,7 @@ function meetingTypeLabel(t) {
 // ============================================================================
 router.post('/tutorial-dismissed', async (req, res) => {
   try {
-    const cookieValue = readCookie(req, COOKIE_NAME);
-    const portalUserId = verifyCookie(cookieValue);
+    const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
     await supabase
       .from('portal_users')
@@ -1377,8 +1524,19 @@ router.post('/tutorial-dismissed', async (req, res) => {
 // POST /api/portal/logout
 // ============================================================================
 router.post('/logout', async (req, res) => {
-  const cookieValue = readCookie(req, COOKIE_NAME);
-  const portalUserId = verifyCookie(cookieValue);
+  const { portalUserId, mimic } = resolvePortalUser(req);
+  // Always clear both cookies on logout — if staff was mimicking, end mimic
+  // session too so we don't leave a stale mimic cookie that takes precedence
+  // on next visit.
+  clearMimicCookie(res);
+  if (mimic) {
+    await logAudit('mimic_end', {
+      portal_user_id: mimic.portal_user_id,
+      performed_by: mimic.staff_email,
+      ip_address: req.ip,
+      notes: 'mimic ended via logout',
+    });
+  }
   if (portalUserId) {
     await logAudit('portal_logout', { portal_user_id: portalUserId, ip_address: req.ip });
   }

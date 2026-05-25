@@ -4079,6 +4079,33 @@
       ? subParts.join('  ·  ')
       : '<em style="color:#94A3B8;">No primary email/phone on file</em>';
 
+    // Mimic button — enable when contact has at least one portal_user; otherwise grey out
+    const mimicBtn = document.getElementById('homesContactMimicBtn');
+    const logins = d.portal_logins || [];
+    if (mimicBtn) {
+      if (logins.length > 0) {
+        mimicBtn.disabled = false;
+        mimicBtn.style.background = '#1E2761';
+        mimicBtn.style.color = '#fff';
+        mimicBtn.style.borderColor = '#1E2761';
+        mimicBtn.style.cursor = 'pointer';
+        mimicBtn.textContent = logins.length > 1 ? `🎭 Mimic (${logins.length})` : '🎭 Mimic';
+        mimicBtn.title = logins.length === 1
+          ? `Render the homeowner portal as ${logins[0].email}. Session lasts 30 min; banner shows on every page.`
+          : `${logins.length} portal logins exist for this contact. Click to choose which one to mimic.`;
+        mimicBtn.onclick = () => homesStartMimic(logins);
+      } else {
+        mimicBtn.disabled = true;
+        mimicBtn.style.background = '#f1f5f9';
+        mimicBtn.style.color = '#94A3B8';
+        mimicBtn.style.borderColor = '#e2e8f0';
+        mimicBtn.style.cursor = 'not-allowed';
+        mimicBtn.textContent = '🎭 No portal login';
+        mimicBtn.title = 'This contact has no portal_user account yet. Invite them from the Portal Adoption page first.';
+        mimicBtn.onclick = null;
+      }
+    }
+
     // Tags strip
     const tagsRow = document.getElementById('homesContactProfileTagsRow');
     if ((d.active_tags || []).length === 0) {
@@ -4382,6 +4409,45 @@
       homesOpenContactProfile(contactId);
     } catch (e) {
       alert(e.message);
+    }
+  }
+
+  // Start a Mimic session — staff sees the homeowner portal as this person.
+  // 30-min auto-expire; persistent red banner across every portal page;
+  // every action logged to portal_audit_log with the staff email + target.
+  async function homesStartMimic(logins) {
+    if (!logins || logins.length === 0) return;
+    let chosen = logins[0];
+    if (logins.length > 1) {
+      const list = logins.map((l, i) => `${i + 1}. ${l.email} (${l.role || 'homeowner'})`).join('\n');
+      const ans = prompt(`This contact has ${logins.length} portal logins. Which one to mimic?\n\n${list}\n\nEnter the number (1-${logins.length}):`, '1');
+      if (ans === null) return;
+      const idx = parseInt(ans, 10) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= logins.length) {
+        alert('Invalid selection.');
+        return;
+      }
+      chosen = logins[idx];
+    }
+    const staffEmail = window.currentUserEmail || 'staff@bedrocktx.com';
+    if (!confirm(`Mimic ${chosen.email}?\n\nYou will see the homeowner portal exactly as they do.\nA red banner will show "MIMIC MODE" on every page.\nActions you take will be logged with your staff email.\nSession auto-expires in 30 minutes.`)) return;
+    try {
+      const r = await fetch('/api/portal/mimic/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify({ portal_user_id: chosen.id, staff_email: staffEmail }),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        alert('Mimic start failed: ' + (j.error || `HTTP ${r.status}`));
+        return;
+      }
+      // Open the portal in a new tab so staff can keep the operator profile
+      // visible side-by-side.
+      window.open('/portal', '_blank', 'noopener,noreferrer');
+    } catch (e) {
+      alert('Mimic start failed: ' + e.message);
     }
   }
 

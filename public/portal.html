@@ -525,9 +525,26 @@
     .picker-head h2 { font-size: 26px; }
     .header-chip { padding: 6px 10px; font-size: 11.5px; }
   }
+
+  /* Mimic mode — body gets padding-top so the fixed banner doesn't cover
+     the sticky header. Applied/removed by applyMimicBanner() in JS. */
+  body.mimic-on { padding-top: 40px; }
+  body.mimic-on header.top { top: 40px; }
 </style>
 </head>
 <body>
+
+<!-- Mimic banner — fixed at very top, visible ONLY when /me returns
+     mimic.active=true. Persistent across the whole portal session so staff
+     can't forget they're impersonating. Body gets padding-top via the
+     .mimic-on class to make room. Hidden by default. -->
+<div id="mimicBanner" style="display:none; position:fixed; top:0; left:0; right:0; background:#b91c1c; color:#fff; padding:8px 16px; z-index:1000; align-items:center; justify-content:space-between; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,0.25); font-family:Inter,-apple-system,sans-serif; font-size:13px; font-weight:600;">
+  <div>🎭 <strong>MIMIC MODE</strong> — viewing portal as <span id="mimicTargetName" style="text-decoration:underline;">—</span> <span id="mimicStaffLabel" style="opacity:0.85; font-weight:400;"></span></div>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <span id="mimicExpiresIn" style="opacity:0.85; font-size:12px; font-weight:400;"></span>
+    <button onclick="exitMimic()" style="background:#fff; color:#b91c1c; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">Exit mimic →</button>
+  </div>
+</div>
 
 <div id="app">
   <div class="full-loader"><div class="spinner"></div> Loading your portal…</div>
@@ -863,6 +880,47 @@ function setStoredPropertyId(id) {
 }
 function clearStoredPropertyId() {
   try { sessionStorage.removeItem(SS_PROPERTY_KEY); } catch (_) {}
+}
+
+async function applyMimicBanner(ctx) {
+  const banner = document.getElementById('mimicBanner');
+  if (!banner) return;
+  const mimic = ctx && ctx.mimic;
+  if (mimic && mimic.active) {
+    document.getElementById('mimicTargetName').textContent =
+      (ctx.user && (ctx.user.name || ctx.user.email)) || '—';
+    document.getElementById('mimicStaffLabel').textContent =
+      `· staff: ${mimic.staff_email}`;
+    // Live countdown until expiry
+    const updateCountdown = () => {
+      const expiresAt = new Date(mimic.expires_at).getTime();
+      const ms = expiresAt - Date.now();
+      const lbl = document.getElementById('mimicExpiresIn');
+      if (!lbl) return;
+      if (ms <= 0) { lbl.textContent = 'expired — refresh'; return; }
+      const m = Math.floor(ms / 60000);
+      const s = Math.floor((ms % 60000) / 1000);
+      lbl.textContent = `expires in ${m}m ${s.toString().padStart(2,'0')}s`;
+    };
+    updateCountdown();
+    if (window._mimicTimer) clearInterval(window._mimicTimer);
+    window._mimicTimer = setInterval(updateCountdown, 1000);
+    banner.style.display = 'flex';
+    document.body.classList.add('mimic-on');
+  } else {
+    banner.style.display = 'none';
+    document.body.classList.remove('mimic-on');
+    if (window._mimicTimer) { clearInterval(window._mimicTimer); window._mimicTimer = null; }
+  }
+}
+
+async function exitMimic() {
+  try {
+    await fetch('/api/portal/mimic/stop', { method: 'POST', credentials: 'same-origin' });
+  } catch (_) { /* ignore */ }
+  // Reload back to the portal — if staff also has their own portal session,
+  // they'll see that; otherwise the auth redirect kicks them to the login page.
+  window.location.href = '/portal';
 }
 
 async function loadPortal() {
@@ -1378,6 +1436,7 @@ function _dismissTutorial() {
 // =============================================================================
 (async () => {
   const ctx = await loadPortal();
+  applyMimicBanner(ctx);
   renderPortal(ctx);
 })();
 </script>
