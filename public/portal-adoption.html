@@ -1,0 +1,726 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal Adoption · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* =============================================================================
+     Portal Adoption Admin — Bedrock staff page
+     -----------------------------------------------------------------------------
+     The operational lever that converts a community's contact list into actual
+     portal users at scale. Pick a community → see the adoption funnel + per-
+     contact status → bulk-invite or per-row resend.
+     Behind the staff gate (NOT public). Brand-matches the trustEd admin app.
+     ============================================================================= */
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --navy-deep: #0B1424;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --cream-soft: #F5F4ED;
+    --paper: #FFFFFF;
+    --rule: #E5E3DA;
+    --good: #4A9A6A;
+    --warn: #C77E2C;
+    --bad: #C0392B;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14px;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Header */
+  header.top {
+    background: white;
+    border-bottom: 1px solid var(--rule);
+    padding: 14px 24px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; }
+  .brand svg { width: 26px; height: 32px; flex-shrink: 0; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .sub {
+    font-family: var(--font-mono); font-size: 9px;
+    color: var(--ink-faint); letter-spacing: 0.16em; text-transform: uppercase;
+    margin-top: 2px;
+  }
+  .page-title {
+    font-family: var(--font-sans);
+    font-size: 13px; color: var(--ink-soft);
+    font-weight: 500;
+  }
+  .back-link {
+    font-size: 12.5px; color: var(--ink-faint);
+    text-decoration: none;
+    transition: color 0.15s ease;
+  }
+  .back-link:hover { color: var(--gold); }
+
+  main { max-width: 1280px; margin: 0 auto; padding: 28px 24px 80px; }
+
+  h1 {
+    font-family: var(--font-serif); font-size: 26px; font-weight: 500;
+    color: var(--navy); margin: 0 0 6px; letter-spacing: -0.01em;
+  }
+  h1 em { color: var(--gold); font-style: italic; }
+  .h1-sub {
+    color: var(--ink-soft); font-size: 14px; margin-bottom: 28px;
+  }
+
+  /* Toolbar */
+  .toolbar {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; flex-wrap: wrap;
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 14px 18px;
+    margin-bottom: 20px;
+    box-shadow: var(--shadow-soft);
+  }
+  .toolbar label {
+    font-size: 11.5px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 500;
+    display: block; margin-bottom: 4px;
+  }
+  .toolbar select {
+    font-family: var(--font-sans); font-size: 14px;
+    padding: 8px 12px; border-radius: 6px;
+    border: 1px solid var(--rule);
+    background: white; color: var(--ink);
+    min-width: 280px;
+    cursor: pointer;
+  }
+  .toolbar select:focus { outline: none; border-color: var(--gold); }
+
+  /* Funnel cards */
+  .funnel {
+    display: grid;
+    grid-template-columns: repeat(5, 1fr);
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .funnel-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 16px 18px;
+    box-shadow: var(--shadow-soft);
+  }
+  .funnel-card .label {
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 500;
+    margin-bottom: 6px;
+  }
+  .funnel-card .num {
+    font-family: var(--font-serif); font-size: 28px; font-weight: 500;
+    color: var(--navy); line-height: 1;
+  }
+  .funnel-card .pct {
+    font-size: 11.5px; color: var(--ink-faint);
+    margin-top: 4px;
+  }
+  .funnel-card.good .num { color: var(--good); }
+  .funnel-card.warn .num { color: var(--warn); }
+
+  /* Action bar */
+  .actions-bar {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 12px 18px;
+    margin-bottom: 16px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 18px; flex-wrap: wrap;
+    box-shadow: var(--shadow-soft);
+  }
+  .actions-bar .left {
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .actions-bar .selected-count {
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .actions-bar button {
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    padding: 8px 14px; border-radius: 6px;
+    cursor: pointer; transition: all 0.15s ease;
+    border: 1px solid var(--rule);
+    background: white; color: var(--ink-soft);
+  }
+  .actions-bar button:hover:not(:disabled) {
+    border-color: var(--navy); color: var(--navy);
+  }
+  .actions-bar button:disabled {
+    opacity: 0.5; cursor: not-allowed;
+  }
+  .actions-bar button.primary {
+    background: var(--navy); color: white; border-color: var(--navy);
+  }
+  .actions-bar button.primary:hover:not(:disabled) {
+    background: var(--navy-soft);
+  }
+  .actions-bar .quick {
+    font-size: 12px; color: var(--gold);
+    text-decoration: none; cursor: pointer;
+    padding: 6px 10px; border-radius: 5px;
+    border: 1px dashed rgba(212, 175, 55, 0.4);
+  }
+  .actions-bar .quick:hover { background: var(--gold-faint); }
+
+  /* Contact table */
+  .table-wrap {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  table {
+    width: 100%; border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  thead {
+    background: var(--cream-soft);
+    border-bottom: 2px solid var(--rule);
+  }
+  th {
+    text-align: left; padding: 10px 14px;
+    font-size: 11px; color: var(--ink-faint);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  th.check { width: 32px; padding-left: 18px; }
+  td {
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--rule);
+    vertical-align: middle;
+  }
+  td.check { padding-left: 18px; }
+  tr:last-child td { border-bottom: none; }
+  tr:hover { background: rgba(212, 175, 55, 0.025); }
+
+  .row-name {
+    font-weight: 500; color: var(--ink);
+  }
+  .row-email {
+    color: var(--ink-soft);
+    font-family: var(--font-mono); font-size: 12px;
+  }
+  .row-empty-email {
+    color: var(--ink-faint); font-style: italic; font-size: 12px;
+  }
+  .row-address {
+    color: var(--ink-soft); font-size: 13px;
+  }
+
+  /* Status pills */
+  .pill {
+    display: inline-block;
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11px; font-weight: 500;
+    letter-spacing: 0.04em;
+  }
+  .pill.none { background: var(--cream-soft); color: var(--ink-faint); border: 1px solid var(--rule); }
+  .pill.invited { background: rgba(231, 195, 78, 0.18); color: #966C00; border: 1px solid rgba(231, 195, 78, 0.4); }
+  .pill.active { background: rgba(80, 200, 120, 0.15); color: var(--good); border: 1px solid rgba(80, 200, 120, 0.35); }
+  .pill.revoked { background: rgba(192, 57, 43, 0.10); color: var(--bad); border: 1px solid rgba(192, 57, 43, 0.3); }
+
+  .row-action {
+    background: transparent;
+    border: 1px solid var(--rule);
+    padding: 5px 11px; border-radius: 5px;
+    font-size: 12px; color: var(--ink-soft);
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .row-action:hover:not(:disabled) {
+    border-color: var(--gold); color: var(--gold);
+  }
+  .row-action:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  /* Empty + loading states */
+  .empty, .loading {
+    padding: 48px 24px;
+    text-align: center;
+    color: var(--ink-faint);
+  }
+  .spinner {
+    display: inline-block;
+    width: 20px; height: 20px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: middle; margin-right: 8px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* Toast (transient messages) */
+  .toast-container {
+    position: fixed; bottom: 24px; right: 24px;
+    display: flex; flex-direction: column; gap: 10px;
+    z-index: 200;
+    max-width: 360px;
+  }
+  .toast {
+    padding: 12px 16px;
+    border-radius: 8px;
+    background: var(--navy); color: white;
+    font-size: 13px; line-height: 1.4;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.18);
+    animation: toastIn 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  .toast.success { background: var(--good); }
+  .toast.warn { background: var(--warn); }
+  .toast.error { background: var(--bad); }
+  @keyframes toastIn {
+    from { opacity: 0; transform: translateY(8px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+
+  /* Responsive */
+  @media (max-width: 900px) {
+    .funnel { grid-template-columns: repeat(2, 1fr); }
+  }
+  @media (max-width: 640px) {
+    main { padding: 18px 14px 60px; }
+    .funnel { grid-template-columns: 1fr 1fr; }
+    .toolbar select { min-width: 0; width: 100%; }
+    th, td { padding: 8px 10px; font-size: 12.5px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Intelligence</em></div>
+      <div class="sub">trustEd · portal adoption</div>
+    </div>
+  </div>
+  <div class="page-title">
+    <a href="/" class="back-link">← back to trustEd</a>
+  </div>
+</header>
+
+<main>
+  <h1>Portal <em>Adoption</em></h1>
+  <p class="h1-sub">Pick a community, see who's on the portal and who isn't, invite eligible homeowners in bulk.</p>
+
+  <div class="toolbar">
+    <div>
+      <label for="communitySelect">Community</label>
+      <select id="communitySelect">
+        <option value="">— Loading communities —</option>
+      </select>
+    </div>
+    <div style="font-size: 12px; color: var(--ink-faint);">
+      Eligible = current resident with a primary email on file. Already-invited
+      contacts are skipped automatically on bulk invite.
+    </div>
+  </div>
+
+  <div id="loadingState" class="loading"><span class="spinner"></span>Pick a community to start.</div>
+
+  <div id="resultsWrap" style="display:none;">
+    <div class="funnel">
+      <div class="funnel-card">
+        <div class="label">Total residents</div>
+        <div class="num" id="numTotal">—</div>
+        <div class="pct" id="pctTotal">Current owners + tenants</div>
+      </div>
+      <div class="funnel-card">
+        <div class="label">With email on file</div>
+        <div class="num" id="numEmail">—</div>
+        <div class="pct" id="pctEmail">Eligible to invite</div>
+      </div>
+      <div class="funnel-card">
+        <div class="label">Invited</div>
+        <div class="num" id="numInvited">—</div>
+        <div class="pct" id="pctInvited">Portal user created</div>
+      </div>
+      <div class="funnel-card good">
+        <div class="label">Logged in ever</div>
+        <div class="num" id="numLoggedIn">—</div>
+        <div class="pct" id="pctLoggedIn">Activated the account</div>
+      </div>
+      <div class="funnel-card good">
+        <div class="label">Active 30d</div>
+        <div class="num" id="numActive">—</div>
+        <div class="pct" id="pctActive">Logged in within 30 days</div>
+      </div>
+    </div>
+
+    <div class="actions-bar">
+      <div class="left">
+        <span class="selected-count" id="selectedCount">0 selected</span>
+        <button type="button" class="primary" id="btnBulkInvite" disabled>Invite selected</button>
+      </div>
+      <div class="left">
+        <a class="quick" id="quickSelectUninvited">Select eligible-not-yet-invited</a>
+        <a class="quick" id="quickSelectStale">Select invited-no-login (7+ days)</a>
+        <a class="quick" id="quickDeselect">Clear selection</a>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th class="check"><input type="checkbox" id="selectAllCheck" aria-label="Select all"></th>
+            <th>Name</th>
+            <th>Email</th>
+            <th>Property</th>
+            <th>Status</th>
+            <th>Last login</th>
+            <th>Action</th>
+          </tr>
+        </thead>
+        <tbody id="contactTbody">
+          <tr><td colspan="7" style="padding:24px;color:var(--ink-faint);text-align:center;">No data yet.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</main>
+
+<div class="toast-container" id="toastContainer"></div>
+
+<script>
+'use strict';
+
+// =============================================================================
+// State
+// =============================================================================
+let _communities = [];
+let _currentCommunityId = '';
+let _contacts = [];          // current adoption rows
+let _selectedContactIds = new Set();
+
+// =============================================================================
+// Helpers
+// =============================================================================
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+function daysSince(iso) {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (isNaN(d.getTime())) return null;
+  return Math.floor((Date.now() - d.getTime()) / (24 * 60 * 60 * 1000));
+}
+function pct(num, denom) {
+  if (!denom || denom === 0) return '';
+  return `${Math.round((num / denom) * 100)}% of total`;
+}
+function toast(message, type = '') {
+  const wrap = $('toastContainer');
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.textContent = message;
+  wrap.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    el.style.transition = 'opacity 0.3s';
+    setTimeout(() => el.remove(), 320);
+  }, type === 'error' ? 6000 : 4000);
+}
+
+// =============================================================================
+// Data loaders
+// =============================================================================
+async function loadCommunities() {
+  try {
+    const r = await fetch('/api/portal-admin/communities', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('Could not load communities');
+    const data = await r.json();
+    _communities = data.communities || [];
+    const select = $('communitySelect');
+    select.innerHTML = '<option value="">— Pick a community —</option>'
+      + _communities.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}${c.portal_active ? '' : '  (portal not active)'}</option>`).join('');
+  } catch (err) {
+    toast('Could not load communities: ' + err.message, 'error');
+  }
+}
+
+async function loadAdoption(communityId) {
+  $('loadingState').style.display = '';
+  $('loadingState').innerHTML = '<span class="spinner"></span>Loading adoption data…';
+  $('resultsWrap').style.display = 'none';
+  _selectedContactIds = new Set();
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(communityId)}/adoption`, {
+      credentials: 'same-origin',
+    });
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    const data = await r.json();
+    _contacts = data.contacts || [];
+    renderFunnel(data.summary || {});
+    renderTable();
+    $('loadingState').style.display = 'none';
+    $('resultsWrap').style.display = '';
+  } catch (err) {
+    $('loadingState').innerHTML = `<span style="color:var(--bad);">Could not load adoption: ${escapeHtml(err.message)}</span>`;
+    toast('Could not load adoption: ' + err.message, 'error');
+  }
+}
+
+// =============================================================================
+// Render
+// =============================================================================
+function renderFunnel(summary) {
+  const total = summary.total_contacts || 0;
+  $('numTotal').textContent = total.toLocaleString();
+  $('numEmail').textContent = (summary.with_email || 0).toLocaleString();
+  $('pctEmail').textContent = pct(summary.with_email || 0, total);
+  $('numInvited').textContent = (summary.invited || 0).toLocaleString();
+  $('pctInvited').textContent = pct(summary.invited || 0, summary.with_email || 0).replace('of total', 'of eligible');
+  $('numLoggedIn').textContent = (summary.logged_in_ever || 0).toLocaleString();
+  $('pctLoggedIn').textContent = pct(summary.logged_in_ever || 0, summary.invited || 0).replace('of total', 'of invited');
+  $('numActive').textContent = (summary.active_30d || 0).toLocaleString();
+  $('pctActive').textContent = pct(summary.active_30d || 0, summary.invited || 0).replace('of total', 'of invited');
+}
+
+function renderTable() {
+  const tbody = $('contactTbody');
+  if (!_contacts.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:32px;color:var(--ink-faint);text-align:center;">No current residents found for this community.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = _contacts.map((c) => {
+    const isSelected = _selectedContactIds.has(c.contact_id);
+    const hasEmail = !!(c.email && c.email.includes('@'));
+    const isInvited = !!c.portal_user_id;
+    const hasLoggedIn = !!c.first_login_at;
+    const canInvite = hasEmail && !isInvited; // for individual row, can-invite eligibility
+
+    // Status pill
+    let pillHtml = '';
+    if (c.portal_status === 'revoked')         pillHtml = '<span class="pill revoked">Revoked</span>';
+    else if (hasLoggedIn)                       pillHtml = '<span class="pill active">Active</span>';
+    else if (isInvited)                         pillHtml = '<span class="pill invited">Invited · no login</span>';
+    else if (hasEmail)                          pillHtml = '<span class="pill none">Eligible</span>';
+    else                                        pillHtml = '<span class="pill none">No email</span>';
+
+    // Action button — context-aware
+    let actionHtml = '';
+    if (canInvite) {
+      actionHtml = `<button class="row-action" data-action="invite" data-contact-id="${escapeHtml(c.contact_id)}">Invite</button>`;
+    } else if (isInvited && c.portal_status !== 'revoked') {
+      actionHtml = `<button class="row-action" data-action="resend" data-user-id="${escapeHtml(c.portal_user_id)}">Resend invite</button>`;
+    } else {
+      actionHtml = '<span style="color:var(--ink-faint); font-size:11.5px;">—</span>';
+    }
+
+    const lastLoginCell = hasLoggedIn
+      ? `${escapeHtml(fmtDate(c.last_login_at))}<div style="font-size:11px;color:var(--ink-faint);">${c.login_count || 1} login${c.login_count === 1 ? '' : 's'}</div>`
+      : (isInvited
+          ? `<span style="color:var(--ink-faint); font-size:12px;">Invited ${escapeHtml(fmtDate(c.invited_at))}</span>`
+          : '<span style="color:var(--ink-faint);">—</span>');
+
+    return `
+      <tr>
+        <td class="check">
+          <input type="checkbox" class="row-check" data-contact-id="${escapeHtml(c.contact_id)}" ${isSelected ? 'checked' : ''} ${hasEmail ? '' : 'disabled title="Contact has no email"'}>
+        </td>
+        <td class="row-name">${escapeHtml(c.name || '—')}</td>
+        <td>${hasEmail ? `<span class="row-email">${escapeHtml(c.email)}</span>` : '<span class="row-empty-email">no email on file</span>'}</td>
+        <td class="row-address">${escapeHtml(c.property_address || '—')}</td>
+        <td>${pillHtml}</td>
+        <td>${lastLoginCell}</td>
+        <td>${actionHtml}</td>
+      </tr>
+    `;
+  }).join('');
+
+  // Wire row checkboxes + actions
+  tbody.querySelectorAll('.row-check').forEach((cb) => {
+    cb.addEventListener('change', (e) => {
+      const id = e.target.dataset.contactId;
+      if (e.target.checked) _selectedContactIds.add(id);
+      else _selectedContactIds.delete(id);
+      updateSelectionUI();
+    });
+  });
+  tbody.querySelectorAll('button[data-action="invite"]').forEach((btn) => {
+    btn.addEventListener('click', () => inviteSingle(btn.dataset.contactId));
+  });
+  tbody.querySelectorAll('button[data-action="resend"]').forEach((btn) => {
+    btn.addEventListener('click', () => resendInvite(btn.dataset.userId, btn));
+  });
+  updateSelectionUI();
+}
+
+function updateSelectionUI() {
+  $('selectedCount').textContent = `${_selectedContactIds.size} selected`;
+  $('btnBulkInvite').disabled = _selectedContactIds.size === 0;
+  // Sync the select-all checkbox state
+  const allEligible = _contacts.filter((c) => c.email && c.email.includes('@') && !c.portal_user_id);
+  const allChecked = allEligible.length > 0 && allEligible.every((c) => _selectedContactIds.has(c.contact_id));
+  $('selectAllCheck').checked = allChecked;
+  $('selectAllCheck').indeterminate = !allChecked && _selectedContactIds.size > 0;
+}
+
+// =============================================================================
+// Actions
+// =============================================================================
+async function inviteSingle(contactId) {
+  if (!contactId) return;
+  await bulkInvite([contactId]);
+}
+
+async function bulkInvite(contactIds) {
+  if (!contactIds || !contactIds.length) return;
+  const community = _communities.find((c) => c.id === _currentCommunityId);
+  if (!confirm(`Send portal invitation email to ${contactIds.length} homeowner${contactIds.length === 1 ? '' : 's'} at ${community?.name || 'this community'}?`)) {
+    return;
+  }
+  toast(`Inviting ${contactIds.length} homeowner${contactIds.length === 1 ? '' : 's'}…`);
+  try {
+    const r = await fetch(`/api/portal-admin/community/${encodeURIComponent(_currentCommunityId)}/bulk-invite`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ contact_ids: contactIds, invited_by: 'portal-adoption-ui' }),
+    });
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    const data = await r.json();
+    const msg = `Invited ${data.invited}, skipped ${data.skipped}. Email sent on the invited rows.`;
+    toast(msg, data.invited > 0 ? 'success' : 'warn');
+    // Refresh adoption to show updated statuses
+    await loadAdoption(_currentCommunityId);
+  } catch (err) {
+    toast('Bulk invite failed: ' + err.message, 'error');
+  }
+}
+
+async function resendInvite(userId, btn) {
+  if (!userId) return;
+  if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
+  try {
+    const r = await fetch(`/api/portal-admin/users/${encodeURIComponent(userId)}/resend-invite`, {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ invited_by: 'portal-adoption-ui' }),
+    });
+    if (!r.ok) throw new Error(`API ${r.status}`);
+    const data = await r.json();
+    if (data.email_sent) {
+      toast('Invite re-sent.', 'success');
+    } else {
+      toast('Magic link created but email send failed: ' + (data.email_error || 'unknown'), 'warn');
+    }
+    await loadAdoption(_currentCommunityId);
+  } catch (err) {
+    toast('Resend failed: ' + err.message, 'error');
+    if (btn) { btn.disabled = false; btn.textContent = 'Resend invite'; }
+  }
+}
+
+// =============================================================================
+// Quick-select shortcuts
+// =============================================================================
+function quickSelectEligibleNotInvited() {
+  _selectedContactIds = new Set(
+    _contacts
+      .filter((c) => c.email && c.email.includes('@') && !c.portal_user_id)
+      .map((c) => c.contact_id)
+  );
+  renderTable();
+  toast(`${_selectedContactIds.size} eligible homeowner${_selectedContactIds.size === 1 ? '' : 's'} selected.`);
+}
+
+function quickSelectStale() {
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+  _selectedContactIds = new Set(
+    _contacts
+      .filter((c) => c.portal_user_id && !c.first_login_at && c.invited_at
+        && (Date.now() - new Date(c.invited_at).getTime()) >= SEVEN_DAYS)
+      .map((c) => c.contact_id)
+  );
+  renderTable();
+  toast(`${_selectedContactIds.size} stale invite${_selectedContactIds.size === 1 ? '' : 's'} selected (invited 7+ days ago, never logged in).`);
+}
+
+function quickDeselect() {
+  _selectedContactIds = new Set();
+  renderTable();
+}
+
+// =============================================================================
+// Boot
+// =============================================================================
+(async () => {
+  await loadCommunities();
+  $('communitySelect').addEventListener('change', (e) => {
+    _currentCommunityId = e.target.value;
+    if (_currentCommunityId) loadAdoption(_currentCommunityId);
+    else {
+      $('resultsWrap').style.display = 'none';
+      $('loadingState').style.display = '';
+      $('loadingState').innerHTML = 'Pick a community to start.';
+    }
+  });
+  $('btnBulkInvite').addEventListener('click', () => {
+    // For bulk invite, send only contact_ids that are eligible — the server
+    // will silently skip the rest with reason: 'already_invited' or 'no_email',
+    // but pre-filtering here gives the operator a clearer confirmation count.
+    const eligible = Array.from(_selectedContactIds).filter((cid) => {
+      const c = _contacts.find((x) => x.contact_id === cid);
+      return c && c.email && c.email.includes('@') && !c.portal_user_id;
+    });
+    bulkInvite(eligible);
+  });
+  $('selectAllCheck').addEventListener('change', (e) => {
+    if (e.target.checked) {
+      quickSelectEligibleNotInvited();
+    } else {
+      quickDeselect();
+    }
+  });
+  $('quickSelectUninvited').addEventListener('click', quickSelectEligibleNotInvited);
+  $('quickSelectStale').addEventListener('click', quickSelectStale);
+  $('quickDeselect').addEventListener('click', quickDeselect);
+})();
+</script>
+</body>
+</html>
