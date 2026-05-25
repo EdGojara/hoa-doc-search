@@ -111,6 +111,57 @@ async function logAudit(action, opts = {}) {
   } catch (_) { /* non-fatal */ }
 }
 
+// ----------------------------------------------------------------------------
+// In-memory rate limiter for /request-link
+// ----------------------------------------------------------------------------
+// Why in-memory not Redis: at current scale (~few hundred homeowners across
+// 7 communities), magic-link request volume is tiny. An in-memory Map with
+// periodic prune handles 100K req/hr trivially while adding zero new deps.
+// When/if trustEd scales to franchise / multi-instance, this would be the
+// time to swap in Redis — the abstraction below makes that a one-function
+// change.
+//
+// Throttle is keyed by email (the abuse vector — attacker spams a target
+// email to either DoS them with link emails or fish the response timing).
+// Also tracks per-IP as a secondary signal so an attacker can't trivially
+// rotate emails from one host.
+//
+// Limits (configurable via env):
+//   RATELIMIT_PORTAL_PER_EMAIL_HOUR  default 5
+//   RATELIMIT_PORTAL_PER_IP_HOUR     default 20
+// Both windows are rolling 60-minute.
+// ----------------------------------------------------------------------------
+const RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000; // 1 hour
+const RATE_LIMIT_PER_EMAIL = Number(process.env.RATELIMIT_PORTAL_PER_EMAIL_HOUR || 5);
+const RATE_LIMIT_PER_IP = Number(process.env.RATELIMIT_PORTAL_PER_IP_HOUR || 20);
+const _rateLimitHits = new Map(); // key -> [ts1, ts2, ...]
+let _rateLimitLastPrune = Date.now();
+
+/** Check whether `key` has exceeded `limit` hits within the rolling window.
+ *  Returns { allowed: bool, retryAfterSeconds: number }. Increments the
+ *  count if allowed (side-effecting on purpose — simpler call sites). */
+function _consumeRateLimit(key, limit) {
+  const now = Date.now();
+  // Periodic prune to prevent unbounded growth (run at most once / 5 min)
+  if (now - _rateLimitLastPrune > 5 * 60 * 1000) {
+    for (const [k, hits] of _rateLimitHits.entries()) {
+      const recent = hits.filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+      if (recent.length === 0) _rateLimitHits.delete(k);
+      else _rateLimitHits.set(k, recent);
+    }
+    _rateLimitLastPrune = now;
+  }
+  const existing = (_rateLimitHits.get(key) || []).filter((t) => now - t < RATE_LIMIT_WINDOW_MS);
+  if (existing.length >= limit) {
+    const oldestMs = Math.min(...existing);
+    const retryAfterSeconds = Math.ceil((RATE_LIMIT_WINDOW_MS - (now - oldestMs)) / 1000);
+    return { allowed: false, retryAfterSeconds: Math.max(retryAfterSeconds, 1) };
+  }
+  existing.push(now);
+  _rateLimitHits.set(key, existing);
+  return { allowed: true, retryAfterSeconds: 0 };
+}
+
 // ============================================================================
 // POST /api/portal/request-link
 // Body: { email }
@@ -121,6 +172,28 @@ router.post('/request-link', express.json({ limit: '8kb' }), async (req, res) =>
     const email = String(req.body?.email || '').trim().toLowerCase();
     if (!email || !email.includes('@')) {
       // Don't reveal what's wrong — same shape as success
+      return res.json({ ok: true });
+    }
+
+    // ---- Rate limiting (per email + per IP) ----
+    // Email throttle is the primary defense (abuse vector: spam a target's
+    // inbox with link emails). IP throttle catches an attacker rotating
+    // emails from one host. BOTH must pass.
+    //
+    // On throttle: still return 200 with { ok: true } shape so we don't
+    // leak which limit fired, but set Retry-After header for legitimate
+    // clients that respect it. Log a warn for visibility — if these fire
+    // frequently for a real user, the limits are too tight.
+    const ipKey = `ip:${req.ip || 'unknown'}`;
+    const emailKey = `email:${email}`;
+    const ipCheck = _consumeRateLimit(ipKey, RATE_LIMIT_PER_IP);
+    const emailCheck = _consumeRateLimit(emailKey, RATE_LIMIT_PER_EMAIL);
+    if (!ipCheck.allowed || !emailCheck.allowed) {
+      const retry = Math.max(ipCheck.retryAfterSeconds, emailCheck.retryAfterSeconds);
+      console.warn(`[portal] rate-limited request-link email=${email.slice(0, 3)}*** ip=${(req.ip || '').slice(0, 7)}*** retry=${retry}s`);
+      res.setHeader('Retry-After', String(retry));
+      // Still 200 with anti-enumeration shape — the attacker can't tell us
+      // apart from a fresh request. Retry-After leaks nothing useful.
       return res.json({ ok: true });
     }
 
@@ -223,15 +296,38 @@ router.post('/consume', async (req, res) => {
       })
       .eq('id', link.id);
 
-    // Update portal_users login tracking
+    // Update portal_users login tracking. login_count must actually increment
+    // (was hardcoded to 1 — see fix 2026-05-25). Fetch current value then write
+    // value+1 so the count reflects real usage. Race conditions on rapid
+    // consecutive logins (highly unlikely with magic links) are acceptable —
+    // worst case is a momentary off-by-one in an analytics number, no
+    // functional impact. If we ever need atomic increment, swap to a Postgres
+    // RPC that does `UPDATE ... SET login_count = login_count + 1 RETURNING *`.
+    let currentCount = 0;
+    let alreadyLoggedInOnce = false;
+    try {
+      const { data: lp } = await supabase
+        .from('portal_users')
+        .select('login_count, first_login_at')
+        .eq('id', user.id)
+        .single();
+      currentCount = Number(lp?.login_count || 0);
+      alreadyLoggedInOnce = !!lp?.first_login_at;
+    } catch (_) { /* fall through with defaults */ }
+
+    const updatePayload = {
+      status: user.status === 'invited' ? 'active' : user.status,
+      last_login_at: new Date().toISOString(),
+      login_count: currentCount + 1,
+    };
+    // Stamp first_login_at on the FIRST login only; preserve existing value
+    // thereafter so we have a stable "joined the portal" timestamp.
+    if (!alreadyLoggedInOnce) {
+      updatePayload.first_login_at = new Date().toISOString();
+    }
     await supabase
       .from('portal_users')
-      .update({
-        status: user.status === 'invited' ? 'active' : user.status,
-        first_login_at: null,  // only set the first time; let DB default handle
-        last_login_at: new Date().toISOString(),
-        login_count: 1,  // simplistic; would be increment in production
-      })
+      .update(updatePayload)
       .eq('id', user.id);
 
     await logAudit('portal_login', {
@@ -261,7 +357,7 @@ router.get('/me', async (req, res) => {
 
     const { data: user, error: uErr } = await supabase
       .from('portal_users')
-      .select('id, email, full_name, role, status')
+      .select('id, email, full_name, role, status, tutorial_dismissed_at, first_login_at, login_count')
       .eq('id', portalUserId)
       .single();
     if (uErr || !user || user.status === 'revoked') {
@@ -269,7 +365,14 @@ router.get('/me', async (req, res) => {
       return res.status(401).json({ error: 'session no longer valid' });
     }
 
-    // Resolve property scope (homeowners are scoped to one or more properties)
+    // Resolve property scope (homeowners are scoped to one or more properties).
+    // We pull the FULL list of accessible properties so the frontend can:
+    //   - Render the property picker on first load when length > 1
+    //   - Render the header "Switch property" affordance
+    //   - Surface a quick balance preview per property on the picker cards
+    // The CURRENT focus property is selected via optional ?property_id query;
+    // defaults to the first accessible property if omitted (preserves prior
+    // single-property behavior for the common case).
     const { data: propScopes } = await supabase
       .from('portal_user_properties')
       .select(`
@@ -294,8 +397,11 @@ router.get('/me', async (req, res) => {
     if (!props.length) {
       // User has portal access but no property scope yet — show a polite empty state
       return res.json({
-        user: { name: user.full_name || user.email, email: user.email },
+        user: { name: user.full_name || user.email, email: user.email,
+                tutorial_dismissed: !!user.tutorial_dismissed_at,
+                first_login_at: user.first_login_at, login_count: user.login_count || 0 },
         property: null,
+        properties: [],
         community: { name: 'Your Community', slug: '', portal_active: false },
         balance: {},
         compliance: {},
@@ -303,8 +409,14 @@ router.get('/me', async (req, res) => {
       });
     }
 
-    // For v0, return first property's context. Multi-property switching is a follow-on.
-    const prop = props[0];
+    // Honor ?property_id if provided AND that property is in the user's
+    // accessible list. Otherwise default to the first. Security: NEVER trust
+    // the client-supplied property_id without verifying it's in propScopes —
+    // that's the community-scoping discipline from CLAUDE.md. The .find()
+    // below is that verification.
+    const requestedPropertyId = String(req.query?.property_id || '').trim();
+    const prop = (requestedPropertyId && props.find((p) => String(p.id) === requestedPropertyId))
+      || props[0];
     const community = prop.communities || {};
 
     // Balance — most recent owner_ar_snapshot for this property
@@ -398,8 +510,38 @@ router.get('/me', async (req, res) => {
     }
     const isBoardMember = isBoardCapable && boardCommunities.length > 0;
 
+    // Light summary array of ALL accessible properties (for the picker UI
+    // and the header switcher). We keep the per-property payload SMALL —
+    // address + community name + property id — so the picker can render
+    // instantly without N+1 lookups. The currently-focused property gets
+    // the full balance/compliance/requests payload below; switching
+    // properties triggers a fresh /me?property_id=<X> fetch to load the
+    // full context for that one.
+    const propertiesList = props.map((p) => ({
+      id: p.id,
+      address: p.street_address,
+      lot_block_section: [
+        p.lot_number && `Lot ${p.lot_number}`,
+        p.block_number && `Block ${p.block_number}`,
+        p.section_number && `Section ${p.section_number}`,
+      ].filter(Boolean).join(', '),
+      community_id: p.community_id,
+      community_name: p.communities?.name || '',
+      community_slug: p.communities?.slug || '',
+    }));
+
     res.json({
-      user: { name: user.full_name || user.email, email: user.email, role: user.role },
+      user: {
+        name: user.full_name || user.email,
+        email: user.email,
+        role: user.role,
+        // Tutorial state — true means "user has dismissed/completed the
+        // first-login tutorial, don't auto-show again." Frontend reads this
+        // to decide whether to render the overlay automatically on load.
+        tutorial_dismissed: !!user.tutorial_dismissed_at,
+        first_login_at: user.first_login_at,
+        login_count: user.login_count || 0,
+      },
       property: {
         id: prop.id,
         address: prop.street_address,
@@ -411,6 +553,9 @@ router.get('/me', async (req, res) => {
         community_slug: community.slug,
         community_name: community.name,
       },
+      // Full list of accessible properties — used by the frontend picker
+      // and header switcher. Always present (may be length 1).
+      properties: propertiesList,
       community: {
         id: community.id,
         slug: community.slug,
@@ -1196,6 +1341,37 @@ function meetingTypeLabel(t) {
     meeting: 'Meeting',
   })[t] || 'Meeting';
 }
+
+// ============================================================================
+// POST /api/portal/tutorial-dismissed
+// ----------------------------------------------------------------------------
+// Called by the frontend overlay when a homeowner dismisses or completes the
+// first-login tutorial. Sets portal_users.tutorial_dismissed_at = now() so
+// the overlay doesn't auto-show on subsequent logins. The user can still
+// re-launch the tutorial manually via the "Tour" link in the portal header —
+// that path doesn't re-update the timestamp (we don't track repeat views).
+//
+// Idempotent: re-calling has no effect after the first call (already
+// dismissed). Safe to call on every dismissal attempt without checking
+// state first.
+// ============================================================================
+router.post('/tutorial-dismissed', async (req, res) => {
+  try {
+    const cookieValue = readCookie(req, COOKIE_NAME);
+    const portalUserId = verifyCookie(cookieValue);
+    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    await supabase
+      .from('portal_users')
+      .update({ tutorial_dismissed_at: new Date().toISOString() })
+      .eq('id', portalUserId)
+      .is('tutorial_dismissed_at', null); // only set on first dismissal
+    await logAudit('tutorial_dismissed', { portal_user_id: portalUserId, ip_address: req.ip });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[portal] tutorial-dismissed failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
 
 // ============================================================================
 // POST /api/portal/logout

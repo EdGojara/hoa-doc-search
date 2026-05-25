@@ -326,6 +326,187 @@
   }
   .inactive-state p { color: var(--ink-soft); font-size: 14px; }
 
+  /* ---- Header chips (Switch property + Tour) ----
+     Both follow the same visual pattern as .board-switcher but distinguished:
+     switch-property uses navy outline (utilitarian, frequent use), tour uses
+     gold-tinted ghost (less common, slightly inviting). */
+  .header-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 7px 13px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 500;
+    text-decoration: none; cursor: pointer;
+    background: transparent;
+    color: var(--ink-soft);
+    border: 1px solid var(--rule);
+    transition: all 0.15s ease;
+    font-family: var(--font-sans);
+  }
+  .header-chip:hover {
+    border-color: var(--navy);
+    color: var(--navy);
+    background: rgba(26, 48, 80, 0.04);
+  }
+  .header-chip.gold:hover {
+    border-color: var(--gold);
+    color: var(--navy);
+    background: var(--gold-faint);
+  }
+
+  /* ---- Property picker (shown when user has 2+ properties) ---- */
+  .picker-wrap {
+    max-width: 880px; margin: 60px auto; padding: 0 24px;
+  }
+  .picker-head {
+    text-align: center; margin-bottom: 36px;
+  }
+  .picker-head .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 11px; color: var(--gold);
+    letter-spacing: 0.18em; text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+  .picker-head h2 {
+    font-family: var(--font-serif); font-size: 32px; font-weight: 500;
+    color: var(--navy); margin: 0 0 8px; letter-spacing: -0.015em;
+  }
+  .picker-head h2 em { color: var(--gold); font-style: italic; }
+  .picker-head p {
+    color: var(--ink-soft); font-size: 15px; max-width: 52ch;
+    margin: 0 auto;
+  }
+  .picker-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+  .picker-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px;
+    box-shadow: var(--shadow-soft);
+    text-decoration: none; color: inherit;
+    cursor: pointer;
+    transition: all 0.18s ease;
+    display: flex; flex-direction: column;
+    text-align: left;
+  }
+  .picker-card:hover {
+    border-color: var(--gold);
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-hover);
+  }
+  .picker-card .pc-community {
+    font-family: var(--font-mono);
+    font-size: 10px; color: var(--ink-faint);
+    letter-spacing: 0.14em; text-transform: uppercase;
+    margin-bottom: 10px;
+  }
+  .picker-card .pc-address {
+    font-family: var(--font-serif); font-size: 19px; font-weight: 500;
+    color: var(--navy); margin: 0 0 4px; line-height: 1.3;
+  }
+  .picker-card .pc-lot {
+    font-size: 12.5px; color: var(--ink-faint); margin-bottom: 16px;
+  }
+  .picker-card .pc-cta {
+    margin-top: auto;
+    padding-top: 14px; border-top: 1px solid var(--rule);
+    display: flex; justify-content: space-between; align-items: center;
+    font-size: 13px; color: var(--navy); font-weight: 500;
+  }
+  .picker-card .pc-cta .arrow {
+    color: var(--gold); transition: transform 0.15s ease;
+  }
+  .picker-card:hover .pc-cta .arrow { transform: translateX(3px); }
+
+  /* ---- First-login tutorial overlay (3-slide modal) ---- */
+  .tutorial-backdrop {
+    position: fixed; inset: 0; z-index: 100;
+    background: rgba(11, 20, 36, 0.66);
+    backdrop-filter: blur(4px);
+    display: flex; align-items: center; justify-content: center;
+    padding: 20px;
+    animation: tutFadeIn 0.22s ease;
+  }
+  @keyframes tutFadeIn { from { opacity: 0; } to { opacity: 1; } }
+  .tutorial-modal {
+    background: white;
+    border-radius: 14px;
+    max-width: 520px; width: 100%;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+    overflow: hidden;
+    position: relative;
+    animation: tutSlideUp 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  }
+  @keyframes tutSlideUp {
+    from { opacity: 0; transform: translateY(12px); }
+    to   { opacity: 1; transform: translateY(0); }
+  }
+  .tutorial-close {
+    position: absolute; top: 14px; right: 14px;
+    width: 32px; height: 32px;
+    background: transparent; border: none;
+    border-radius: 50%; cursor: pointer;
+    color: var(--ink-faint);
+    font-size: 18px; line-height: 1;
+    display: flex; align-items: center; justify-content: center;
+    transition: all 0.15s ease;
+  }
+  .tutorial-close:hover { background: var(--cream-soft); color: var(--navy); }
+  .tutorial-slide {
+    padding: 44px 36px 28px;
+    text-align: center;
+  }
+  .tutorial-slide .icon {
+    width: 64px; height: 64px;
+    border-radius: 14px;
+    background: var(--gold-faint);
+    color: var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    margin: 0 auto 22px;
+    font-size: 32px;
+  }
+  .tutorial-slide h3 {
+    font-family: var(--font-serif); font-size: 24px; font-weight: 500;
+    color: var(--navy); margin: 0 0 12px; letter-spacing: -0.015em;
+  }
+  .tutorial-slide h3 em { color: var(--gold); font-style: italic; }
+  .tutorial-slide p {
+    color: var(--ink-soft); font-size: 14.5px; line-height: 1.6;
+    margin: 0 auto; max-width: 38ch;
+  }
+  .tutorial-controls {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 20px 28px 24px;
+    border-top: 1px solid var(--rule);
+    background: var(--cream-soft);
+  }
+  .tutorial-dots {
+    display: flex; gap: 7px;
+  }
+  .tutorial-dot {
+    width: 7px; height: 7px; border-radius: 50%;
+    background: var(--rule);
+    transition: all 0.2s ease;
+  }
+  .tutorial-dot.active { background: var(--gold); width: 18px; border-radius: 999px; }
+  .tutorial-btn {
+    padding: 9px 18px;
+    border-radius: 6px; border: none;
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s ease;
+  }
+  .tutorial-btn.primary {
+    background: var(--navy); color: white;
+  }
+  .tutorial-btn.primary:hover { background: var(--navy-soft); }
+  .tutorial-btn.ghost {
+    background: transparent; color: var(--ink-faint);
+  }
+  .tutorial-btn.ghost:hover { color: var(--navy); }
+
   /* ---- Responsive ---- */
   @media (max-width: 980px) {
     /* Tablet: drop to 2-column so tiles don't get squashed below
@@ -340,6 +521,9 @@
     .tile-grid { grid-template-columns: 1fr; }
     header.top { padding: 12px 14px; }
     .top-right .user-meta { display: none; }
+    .picker-grid { grid-template-columns: 1fr; }
+    .picker-head h2 { font-size: 26px; }
+    .header-chip { padding: 6px 10px; font-size: 11.5px; }
   }
 </style>
 </head>
@@ -442,6 +626,75 @@
 <div class="inactive-state">
   <h2 id="inactiveTitle">Portal not yet available</h2>
   <p id="inactiveMessage">Your community's portal is being prepared. Until it goes live, please contact Bedrock at <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or (832) 588-2485 for assistance.</p>
+</div>
+</template>
+
+<!-- Property picker: rendered when /me returns properties.length >= 2 AND
+     no sessionStorage selection. Lets a multi-property homeowner pick which
+     property to view. Card grid of address + community; click to load that
+     property's full portal. Selection persists in sessionStorage for the
+     duration of the browser session, cleared on logout or "Switch property"
+     click. -->
+<template id="propertyPickerTemplate">
+<header class="top">
+  <div class="brand">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div>
+      <div class="wm">Bedrock <em>Association Management</em></div>
+      <div class="sub">Community. Simplified.</div>
+    </div>
+  </div>
+  <div class="top-right">
+    <div id="pickerDemoBadge" class="demo-badge" style="display:none;">Demo</div>
+    <div>
+      <div class="user-name" id="pickerUserName">—</div>
+    </div>
+    <button id="pickerLogoutBtn">Sign out</button>
+  </div>
+</header>
+<main>
+  <div class="picker-wrap">
+    <div class="picker-head">
+      <div class="eyebrow">Welcome back</div>
+      <h2>Which <em>property</em> today?</h2>
+      <p>You have access to multiple properties. Pick the one you want to view — you can switch anytime from the header.</p>
+    </div>
+    <div class="picker-grid" id="pickerGrid"></div>
+  </div>
+</main>
+<footer class="bottom">
+  <div class="tag">Community. Simplified.</div>
+  <div>Bedrock Association Management</div>
+  <div style="margin-top:6px;">
+    <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> ·
+    <a href="tel:8325882485">(832) 588-2485</a>
+  </div>
+</footer>
+</template>
+
+<!-- First-login tutorial overlay (3 slides). Auto-renders if user.tutorial_dismissed
+     is false. Dismiss via X button or final "Got it" — both POST
+     /api/portal/tutorial-dismissed. Re-launchable via the header "Tour" link
+     at any time (re-launches don't update the dismissed timestamp). -->
+<template id="tutorialOverlayTemplate">
+<div class="tutorial-backdrop" id="tutorialBackdrop">
+  <div class="tutorial-modal" role="dialog" aria-modal="true" aria-labelledby="tutSlideTitle">
+    <button class="tutorial-close" id="tutCloseBtn" aria-label="Close tutorial">×</button>
+    <div class="tutorial-slide" id="tutSlideContent">
+      <!-- Populated by JS -->
+    </div>
+    <div class="tutorial-controls">
+      <div class="tutorial-dots" id="tutDots"></div>
+      <div style="display:flex; gap:8px;">
+        <button class="tutorial-btn ghost" id="tutBackBtn" style="display:none;">Back</button>
+        <button class="tutorial-btn primary" id="tutNextBtn">Next →</button>
+      </div>
+    </div>
+  </div>
 </div>
 </template>
 
@@ -591,6 +844,18 @@ function getQueryParams() {
 // =============================================================================
 // Data loaders
 // =============================================================================
+const SS_PROPERTY_KEY = 'bedrock_portal_property_id';
+
+function getStoredPropertyId() {
+  try { return sessionStorage.getItem(SS_PROPERTY_KEY) || ''; } catch (_) { return ''; }
+}
+function setStoredPropertyId(id) {
+  try { sessionStorage.setItem(SS_PROPERTY_KEY, String(id || '')); } catch (_) { /* private mode */ }
+}
+function clearStoredPropertyId() {
+  try { sessionStorage.removeItem(SS_PROPERTY_KEY); } catch (_) {}
+}
+
 async function loadPortal() {
   const { demo, community } = getQueryParams();
 
@@ -599,9 +864,18 @@ async function loadPortal() {
     return buildDemoContext(community || 'waterview');
   }
 
-  // Real auth mode
+  // Real auth mode. If we have a stored property selection in sessionStorage
+  // (set by the property picker or restored on tab refresh), pass it as
+  // ?property_id so /me returns context for THAT property. Otherwise /me
+  // defaults to the first property — which is fine for single-property
+  // homeowners and also a sensible default for first-load of the picker
+  // before the user picks.
+  const storedId = getStoredPropertyId();
+  const url = storedId
+    ? `/api/portal/me?property_id=${encodeURIComponent(storedId)}`
+    : '/api/portal/me';
   try {
-    const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+    const r = await fetch(url, { credentials: 'same-origin' });
     if (r.status === 401) {
       window.location.href = '/portal-login.html';
       return null;
@@ -684,6 +958,22 @@ function renderPortal(ctx) {
     return;
   }
   if (!ctx) return;
+
+  // Multi-property picker — render BEFORE the portal itself if the user has
+  // 2+ properties AND hasn't already picked one in this session. The picker
+  // is the user's "which property today?" entry point. After they pick, we
+  // re-fetch /me?property_id=<id> and re-enter renderPortal with the chosen
+  // property's context — at which point properties.length >= 2 is still
+  // true but getStoredPropertyId() now returns the chosen id, so we skip
+  // the picker and render the portal proper.
+  const stored = getStoredPropertyId();
+  const props = Array.isArray(ctx.properties) ? ctx.properties : [];
+  const showPicker = !ctx.demo && props.length >= 2 && !stored;
+  if (showPicker) {
+    renderPropertyPicker(ctx);
+    return;
+  }
+
   if (!ctx.community?.portal_active && !ctx.demo) {
     renderInactive({
       title: 'Portal not yet available for your community',
@@ -699,6 +989,40 @@ function renderPortal(ctx) {
   // Top bar
   $('userName').textContent = ctx.user.name || ctx.user.email;
   $('userMeta').textContent = ctx.property?.address || '';
+
+  // Inject "Switch property" + "Tour" chips into the header. Both rendered
+  // dynamically so the existing template stays minimal — chips only appear
+  // when applicable (switcher: 2+ properties; tour: always available
+  // post-login as a re-launch option). Inserted BEFORE the user-name block
+  // so the visual hierarchy is: action chips → identity → sign-out.
+  const switchEl = document.createElement('a');
+  switchEl.id = 'switchPropertyBtn';
+  switchEl.href = '#';
+  switchEl.className = 'header-chip';
+  switchEl.innerHTML = '🏠 Switch property';
+  switchEl.title = 'Pick a different property to view';
+  switchEl.addEventListener('click', (e) => {
+    e.preventDefault();
+    clearStoredPropertyId();
+    // Reload to fetch /me without property_id — picker will show
+    window.location.reload();
+  });
+  const tourEl = document.createElement('button');
+  tourEl.id = 'tourBtn';
+  tourEl.className = 'header-chip gold';
+  tourEl.type = 'button';
+  tourEl.innerHTML = '🎓 Tour';
+  tourEl.title = 'Walk through what the portal can do';
+  tourEl.addEventListener('click', () => showTutorialOverlay({ updateDismissed: false }));
+
+  // Insert chips before the user-name container in the top-right group.
+  // For multi-property users, both chips appear; otherwise only Tour.
+  const topRight = document.querySelector('.top-right');
+  const userNameWrapper = $('userName')?.parentElement;
+  if (topRight && userNameWrapper) {
+    if (props.length >= 2) topRight.insertBefore(switchEl, userNameWrapper);
+    topRight.insertBefore(tourEl, userNameWrapper);
+  }
 
   // Reveal the Board View switcher if user has board access. Remember the
   // last-chosen view so subsequent logins go straight there (we save 'board'
@@ -789,9 +1113,23 @@ function renderPortal(ctx) {
       window.location.href = '/';
       return;
     }
+    // Clear stored property choice so the next login starts clean (multi-
+    // property users go back through the picker on next sign-in unless
+    // they re-pick the same property).
+    clearStoredPropertyId();
     try { await fetch('/api/portal/logout', { method: 'POST', credentials: 'same-origin' }); }
     finally { window.location.href = '/portal-login.html'; }
   });
+
+  // Auto-show first-login tutorial overlay if the user hasn't dismissed it.
+  // tutorial_dismissed = true means "user has seen + dismissed the tutorial
+  // at least once" — they can still re-launch via the Tour chip.
+  // Skip in demo mode (no real user, no persistence target).
+  if (!ctx.demo && ctx.user && ctx.user.tutorial_dismissed === false) {
+    // Small delay so the portal renders first, then the overlay appears
+    // on top of a fully-loaded page rather than a flash of empty state.
+    setTimeout(() => showTutorialOverlay({ updateDismissed: true }), 600);
+  }
 }
 
 function renderTiles(ctx) {
@@ -865,6 +1203,164 @@ function renderTiles(ctx) {
 
   // Remove the initial empty grid container created by the template
   grid.remove();
+}
+
+// =============================================================================
+// Property picker (multi-property users)
+// =============================================================================
+function renderPropertyPicker(ctx) {
+  const tpl = $('propertyPickerTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  $('pickerUserName').textContent = ctx.user?.name || ctx.user?.email || '';
+  if (ctx.demo) $('pickerDemoBadge').style.display = '';
+
+  const grid = $('pickerGrid');
+  grid.innerHTML = '';
+
+  (ctx.properties || []).forEach((p) => {
+    const card = document.createElement('button');
+    card.type = 'button';
+    card.className = 'picker-card';
+    card.innerHTML = `
+      <div class="pc-community">${escapeHtml(p.community_name || 'Community')}</div>
+      <div class="pc-address">${escapeHtml(p.address || '—')}</div>
+      ${p.lot_block_section ? `<div class="pc-lot">${escapeHtml(p.lot_block_section)}</div>` : ''}
+      <div class="pc-cta">
+        <span>View this property</span>
+        <span class="arrow">→</span>
+      </div>
+    `;
+    card.addEventListener('click', async () => {
+      // Lock in this choice for the session, then reload to fetch the
+      // full portal context for THIS property. Reload (rather than re-
+      // entering renderPortal with the lighter list payload) keeps the
+      // data path consistent — /me handles property_id, frontend just
+      // re-runs its normal flow.
+      setStoredPropertyId(p.id);
+      window.location.reload();
+    });
+    grid.appendChild(card);
+  });
+
+  // Wire logout in the picker header
+  const logoutBtn = $('pickerLogoutBtn');
+  if (logoutBtn) {
+    logoutBtn.addEventListener('click', async () => {
+      clearStoredPropertyId();
+      try { await fetch('/api/portal/logout', { method: 'POST', credentials: 'same-origin' }); }
+      finally { window.location.href = '/portal-login.html'; }
+    });
+  }
+}
+
+// =============================================================================
+// First-login tutorial overlay (3 slides)
+// =============================================================================
+// Slide content — kept here so it's easy to edit copy without touching markup.
+// Each slide: { icon, title (allows <em> for gold accent), body }.
+// Length discipline: under 280 chars of body per slide. People skim overlays.
+const TUTORIAL_SLIDES = [
+  {
+    icon: '👋',
+    title: 'Welcome to your <em>community portal</em>',
+    body: 'This is your one place for everything related to your home and community — your balance, compliance status, governing documents, and quick ways to request services. Built by Bedrock, made for you.',
+  },
+  {
+    icon: '🏠',
+    title: 'See your <em>account at a glance</em>',
+    body: 'The hero card up top shows your current balance, compliance status, and any open requests. Click the tiles below for full detail on each. Everything updates as we process things on our end.',
+  },
+  {
+    icon: '🎉',
+    title: 'Make a <em>request anytime</em>',
+    body: 'Submit an architectural request, ask for a new pool fob, or reserve the clubhouse — all from the "Make a request" tiles. Questions? Email info@bedrocktx.com or call (832) 588-2485. Welcome aboard!',
+  },
+];
+
+let _tutorialSlideIndex = 0;
+let _tutorialShouldDismiss = false;
+
+function showTutorialOverlay({ updateDismissed = false } = {}) {
+  _tutorialSlideIndex = 0;
+  _tutorialShouldDismiss = !!updateDismissed;
+  const tpl = $('tutorialOverlayTemplate');
+  // Append to body so backdrop covers the entire viewport regardless of
+  // current app contents.
+  const fragment = tpl.content.cloneNode(true);
+  document.body.appendChild(fragment);
+  _renderTutorialSlide();
+
+  // Wire controls
+  $('tutCloseBtn')?.addEventListener('click', () => _dismissTutorial());
+  $('tutBackBtn')?.addEventListener('click', () => {
+    if (_tutorialSlideIndex > 0) { _tutorialSlideIndex--; _renderTutorialSlide(); }
+  });
+  $('tutNextBtn')?.addEventListener('click', () => {
+    if (_tutorialSlideIndex < TUTORIAL_SLIDES.length - 1) {
+      _tutorialSlideIndex++;
+      _renderTutorialSlide();
+    } else {
+      // Final slide "Got it" → dismiss
+      _dismissTutorial();
+    }
+  });
+  // Click outside the modal also dismisses (backdrop click). Don't catch
+  // clicks inside .tutorial-modal.
+  $('tutorialBackdrop')?.addEventListener('click', (e) => {
+    if (e.target.id === 'tutorialBackdrop') _dismissTutorial();
+  });
+  // ESC key to close
+  document.addEventListener('keydown', _tutorialEscHandler);
+}
+
+function _tutorialEscHandler(e) {
+  if (e.key === 'Escape') _dismissTutorial();
+}
+
+function _renderTutorialSlide() {
+  const slide = TUTORIAL_SLIDES[_tutorialSlideIndex];
+  const contentEl = $('tutSlideContent');
+  if (contentEl) {
+    contentEl.innerHTML = `
+      <div class="icon">${slide.icon}</div>
+      <h3 id="tutSlideTitle">${slide.title}</h3>
+      <p>${escapeHtml(slide.body)}</p>
+    `;
+  }
+  // Dots
+  const dotsEl = $('tutDots');
+  if (dotsEl) {
+    dotsEl.innerHTML = TUTORIAL_SLIDES.map((_, i) =>
+      `<div class="tutorial-dot${i === _tutorialSlideIndex ? ' active' : ''}"></div>`
+    ).join('');
+  }
+  // Back button visibility (hidden on first slide)
+  const backBtn = $('tutBackBtn');
+  if (backBtn) backBtn.style.display = _tutorialSlideIndex === 0 ? 'none' : '';
+  // Next button label changes on final slide
+  const nextBtn = $('tutNextBtn');
+  if (nextBtn) {
+    nextBtn.textContent = (_tutorialSlideIndex === TUTORIAL_SLIDES.length - 1)
+      ? 'Got it →'
+      : 'Next →';
+  }
+}
+
+function _dismissTutorial() {
+  const backdrop = $('tutorialBackdrop');
+  if (backdrop) backdrop.remove();
+  document.removeEventListener('keydown', _tutorialEscHandler);
+  // Only mark dismissed in the DB if this was an AUTO-show (first login).
+  // Re-launches via "Tour" button don't update the timestamp.
+  if (_tutorialShouldDismiss) {
+    fetch('/api/portal/tutorial-dismissed', {
+      method: 'POST',
+      credentials: 'same-origin',
+    }).catch(() => { /* best-effort */ });
+    _tutorialShouldDismiss = false;
+  }
 }
 
 // =============================================================================
