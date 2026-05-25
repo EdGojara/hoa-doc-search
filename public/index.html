@@ -1772,6 +1772,27 @@
       <div id="homesPropBody" style="margin-top:14px; font-size:13px;">Loading…</div>
     </div>
   </div>
+
+  <!-- Homeowner Profile modal — opens when staff clicks an owner name from
+       any list. Aggregates everything about this person across properties,
+       AR, tags, notes, interactions, and voice calls. Backs the unified
+       Homeowner Profile design (2026-05-25). -->
+  <div id="homesContactProfileModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9060; align-items:flex-start; justify-content:center; padding:30px 12px; overflow-y:auto;">
+    <div style="background:#fff; width:100%; max-width:980px; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.25); display:flex; flex-direction:column; max-height:90vh;">
+      <div style="padding:18px 22px 14px 22px; border-bottom:1px solid #e2e8f0; display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+        <div style="flex:1; min-width:0;">
+          <div id="homesContactProfileTitle" style="font-size:18px; font-weight:700; color:#1E2761;">—</div>
+          <div id="homesContactProfileSubtitle" style="font-size:12.5px; color:#6B7280; margin-top:2px; word-break:break-word;">—</div>
+          <div id="homesContactProfileTagsRow" style="margin-top:8px;"></div>
+        </div>
+        <div style="display:flex; gap:6px; align-items:flex-start;">
+          <button id="homesContactMimicBtn" disabled title="Mimic mode — staff renders the homeowner portal as this person. Coming in next build." style="background:#f1f5f9; color:#94A3B8; border:1px solid #e2e8f0; border-radius:6px; padding:6px 12px; font-size:12px; font-weight:600; cursor:not-allowed;">🎭 Mimic (soon)</button>
+          <button onclick="homesCloseContactProfile()" style="background:transparent; border:0; font-size:22px; color:#94A3B8; cursor:pointer; padding:0 6px;">×</button>
+        </div>
+      </div>
+      <div id="homesContactProfileBody" style="padding:18px 22px; overflow-y:auto; flex:1; font-size:13px;">Loading…</div>
+    </div>
+  </div>
 </div>
 
 <!-- Annual Mailing Tab -->
@@ -3884,7 +3905,11 @@
         ${filtered.map((p) => `
           <tr style="border-bottom:1px solid #e2e8f0; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">
             <td style="padding:5px 6px; font-weight:600; color:#1E2761;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
-            <td style="padding:5px 6px;">${renderOwnerCell(p.owner_name)}</td>
+            <td style="padding:5px 6px;" ${p.owner_contact_id ? `onclick="event.stopPropagation(); homesOpenContactProfile('${p.owner_contact_id}');"` : ''}>
+              ${p.owner_contact_id
+                ? `<span style="color:#1E2761; text-decoration:underline; text-decoration-style:dotted;">${renderOwnerCell(p.owner_name)}</span>`
+                : renderOwnerCell(p.owner_name)}
+            </td>
             <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_email || '')}</td>
             <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_phone || '')}</td>
             <td style="padding:5px 6px; color:#94A3B8;">${escapeHtml(p.owned_since || '')}</td>
@@ -3939,6 +3964,425 @@
 
   function homesClosePropertyModal() {
     document.getElementById('homesPropertyModal').style.display = 'none';
+  }
+
+  // ===== Homeowner Profile modal — unified "everything about this person" ===
+  // Backs the click-on-owner-name interaction. Aggregates from contacts +
+  // properties + ownerships + AR + tags + notes + interactions + calls.
+  // Mimic button is greyed pending task 2.
+
+  let homesContactProfileState = { contactId: null, data: null };
+
+  async function homesOpenContactProfile(contactId) {
+    if (!contactId) return;
+    const modal = document.getElementById('homesContactProfileModal');
+    const body  = document.getElementById('homesContactProfileBody');
+    document.getElementById('homesContactProfileTitle').textContent = 'Loading…';
+    document.getElementById('homesContactProfileSubtitle').textContent = '';
+    document.getElementById('homesContactProfileTagsRow').innerHTML = '';
+    body.innerHTML = '';
+    modal.style.display = 'flex';
+    homesContactProfileState = { contactId, data: null };
+    // Make sure the communities cache is loaded for the add-tag dropdown
+    homesEnsureCommunities();
+    try {
+      const r = await fetch(`/api/contacts/${contactId}/profile`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesContactProfileState.data = j;
+      homesRenderContactProfile();
+    } catch (e) {
+      body.innerHTML = `<div style="color:#b91c1c; padding:10px;">Couldn't load profile: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function homesCloseContactProfile() {
+    document.getElementById('homesContactProfileModal').style.display = 'none';
+    homesContactProfileState = { contactId: null, data: null };
+  }
+
+  function _hpTagColor(key) {
+    const map = {
+      board_member: '#0369a1', vip: '#7c3aed', advisory_panel: '#059669',
+      problem_resident: '#b45309', litigation_pending: '#b91c1c',
+      special_accommodation: '#0891b2', do_not_contact: '#475569',
+      attorney_represented: '#b91c1c', collections_hold: '#b45309',
+      language_assistance: '#0891b2', elderly_assistance: '#0891b2',
+      fraud_flag: '#b91c1c',
+    };
+    return map[key] || '#6B7280';
+  }
+  function _hpTagLabel(key) {
+    const map = {
+      board_member: 'Board', vip: 'VIP', advisory_panel: 'Advisory',
+      problem_resident: 'Problem', litigation_pending: 'Litigation',
+      special_accommodation: 'Accommodation', do_not_contact: 'DNC',
+      attorney_represented: 'Atty rep', collections_hold: 'Collections',
+      language_assistance: 'Language', elderly_assistance: 'Elderly',
+      fraud_flag: 'Fraud',
+    };
+    return map[key] || key;
+  }
+  function _hpArColor(ar) {
+    if (!ar) return '#6B7280';
+    if (ar.at_legal) return '#b91c1c';
+    if (ar.in_collections) return '#b45309';
+    if ((ar.balance_total || 0) === 0) return '#15803d';
+    if ((ar.bucket_over_120 || 0) > 0 || (ar.bucket_91_120 || 0) > 0) return '#b45309';
+    if ((ar.bucket_61_90 || 0) > 0 || (ar.bucket_31_60 || 0) > 0) return '#d97706';
+    return '#15803d';
+  }
+  function _hpInteractionIcon(type) {
+    if (!type) return '•';
+    if (type.startsWith('email')) return '📧';
+    if (type.startsWith('letter')) return '✉';
+    if (type === 'phone') return '📞';
+    if (type === 'sms') return '💬';
+    if (type === 'in_person') return '🤝';
+    if (type === 'board_communication') return '📋';
+    if (type === 'ai_draft') return '✨';
+    if (type === 'internal_note' || type === 'observation_note') return '📝';
+    return '•';
+  }
+  function _hpCallToInteraction(call) {
+    const brief = call.brief || {};
+    return {
+      id: 'call_' + call.id,
+      type: 'phone',
+      direction: 'inbound',
+      subject: brief.concern || 'Voice call',
+      content: brief.answer_or_status || '',
+      delivery_method: 'phone',
+      sent_at: call.started_at,
+      _call_duration: call.duration_seconds,
+      _call_handoff: call.handoff_accepted,
+      _call_compliance: call.compliance_flag,
+    };
+  }
+
+  function homesRenderContactProfile() {
+    const d = homesContactProfileState.data;
+    if (!d) return;
+    const c = d.contact || {};
+
+    // Header — name + identity line
+    const titleHtml = c.preferred_name && c.preferred_name !== c.full_name
+      ? `${escapeHtml(c.full_name)} <span style="color:#6B7280; font-weight:400; font-size:14px;">("${escapeHtml(c.preferred_name)}")</span>`
+      : escapeHtml(c.full_name || '—');
+    document.getElementById('homesContactProfileTitle').innerHTML = titleHtml;
+    const subParts = [];
+    if (c.primary_email) subParts.push('✉ ' + escapeHtml(c.primary_email));
+    if (c.primary_phone) subParts.push('📞 ' + escapeHtml(c.primary_phone));
+    if (c.mailing_address) subParts.push('📬 ' + escapeHtml(c.mailing_address));
+    if (c.preferred_language && c.preferred_language !== 'en') subParts.push('🌐 ' + escapeHtml(c.preferred_language));
+    document.getElementById('homesContactProfileSubtitle').innerHTML = subParts.length
+      ? subParts.join('  ·  ')
+      : '<em style="color:#94A3B8;">No primary email/phone on file</em>';
+
+    // Tags strip
+    const tagsRow = document.getElementById('homesContactProfileTagsRow');
+    if ((d.active_tags || []).length === 0) {
+      tagsRow.innerHTML = '<span style="font-size:11px; color:#94A3B8; font-style:italic;">No active tags</span>';
+    } else {
+      tagsRow.innerHTML = d.active_tags.map((t) => `
+        <span style="display:inline-flex; align-items:center; gap:4px; background:${_hpTagColor(t.tag_key)}; color:#fff; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700; margin-right:4px; margin-bottom:3px;">
+          ${escapeHtml(_hpTagLabel(t.tag_key))}${t.communities ? ' · ' + escapeHtml(t.communities.name) : ''}
+          <button onclick="homesRevokeTag('${t.id}')" title="Revoke (preserves history)" style="background:transparent; border:0; color:#fff; cursor:pointer; padding:0 0 0 2px; font-size:12px; line-height:1;">×</button>
+        </span>
+      `).join('');
+    }
+
+    // Body sections
+    let html = '';
+
+    // Properties owned
+    html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">🏠 Properties owned (${(d.properties || []).length})</h4>`;
+    if ((d.properties || []).length === 0) {
+      html += '<div style="color:#94A3B8; font-style:italic; margin-bottom:18px;">No properties currently owned on file.</div>';
+    } else {
+      html += '<div style="margin-bottom:18px;">';
+      d.properties.forEach((entry) => {
+        const p = entry.property || {};
+        const ar = entry.latest_ar;
+        const res = entry.residency;
+        const cname = (p.communities && p.communities.name) || '';
+        const arPill = ar
+          ? `<span style="background:${_hpArColor(ar)}; color:#fff; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;" title="AR snapshot ${escapeHtml(ar.snapshot_date || '')}">$${Number(ar.balance_total || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} · ${escapeHtml(ar.enforcement_stage || 'reminder')}</span>`
+          : '<span style="color:#94A3B8; font-size:10.5px;">No AR snapshot</span>';
+        const legalPill = ar && (ar.at_legal || ar.in_collections)
+          ? `<span style="background:#fef2f2; color:#b91c1c; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700; border:1px solid #fecaca;">⚠ ${ar.at_legal ? 'WITH LEGAL' : 'IN COLLECTIONS'} — verify before quoting balance</span>`
+          : '';
+        const resPill = res
+          ? `<span style="background:#e0f2fe; color:#075985; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:600;">${escapeHtml(res.residency_type)}</span>`
+          : '';
+        html += `
+          <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:8px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+              <div style="font-weight:700; color:#1E2761; cursor:pointer; text-decoration:underline; text-decoration-style:dotted;" onclick="homesOpenProperty('${p.id}')">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</div>
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">${resPill}${arPill}</div>
+            </div>
+            ${legalPill ? `<div style="margin-top:6px;">${legalPill}</div>` : ''}
+            <div style="font-size:11px; color:#6B7280; margin-top:4px;">
+              ${escapeHtml(cname)} · Owned since ${escapeHtml(entry.ownership.start_date || '')}${entry.ownership.vesting ? ' · ' + escapeHtml(entry.ownership.vesting) : ''}${entry.ownership.is_primary ? ' · <strong style="color:#1E2761;">Primary contact</strong>' : ''}
+            </div>
+          </div>`;
+      });
+      html += '</div>';
+    }
+
+    // Staff notes
+    html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">📝 Staff notes <span style="font-weight:400; color:#94A3B8; font-size:11px;">(staff-only — never visible to homeowner)</span></h4>`;
+    html += _hpRenderAddNoteForm();
+    if ((d.notes || []).length === 0) {
+      html += '<div style="color:#94A3B8; font-style:italic; margin:8px 0 18px 0;">No notes yet.</div>';
+    } else {
+      html += '<div style="margin-bottom:18px;">';
+      d.notes.forEach((n) => {
+        const propTag = n.properties ? ` · 🏠 ${escapeHtml(n.properties.street_address)}` : '';
+        const commTag = n.communities ? ` · ${escapeHtml(n.communities.name)}` : '';
+        html += `
+          <div style="border:1px solid ${n.pinned ? '#fef3c7' : '#e2e8f0'}; background:${n.pinned ? '#fffbeb' : '#fff'}; border-radius:8px; padding:8px 10px; margin-bottom:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+              <div style="flex:1; min-width:0;">
+                <div style="font-size:12.5px; color:#1a3a5c; white-space:pre-wrap; word-break:break-word;">${escapeHtml(n.note_text)}</div>
+                <div style="font-size:10.5px; color:#94A3B8; margin-top:4px;">
+                  ${escapeHtml(n.category)} · ${escapeHtml(n.author_email)} · ${new Date(n.created_at).toLocaleString()}${commTag}${propTag}
+                </div>
+              </div>
+              <div style="display:flex; gap:4px; flex-shrink:0;">
+                <button onclick="homesToggleNotePin('${n.id}', ${!n.pinned})" title="${n.pinned ? 'Unpin' : 'Pin to top'}" style="background:transparent; border:0; cursor:pointer; font-size:14px;">${n.pinned ? '📌' : '📍'}</button>
+                <button onclick="homesDeleteNote('${n.id}')" title="Delete" style="background:transparent; border:0; cursor:pointer; color:#94A3B8; font-size:14px;">🗑</button>
+              </div>
+            </div>
+          </div>`;
+      });
+      html += '</div>';
+    }
+
+    // Recent interactions (merged with calls, sorted by time)
+    html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">💬 Recent interactions <span style="font-weight:400; color:#94A3B8; font-size:11px;">(email · letter · call · portal · SMS)</span></h4>`;
+    const merged = [
+      ...(d.interactions || []),
+      ...((d.calls || []).map(_hpCallToInteraction)),
+    ].sort((a, b) => {
+      const aTs = new Date(a.sent_at || a.created_at || 0).getTime();
+      const bTs = new Date(b.sent_at || b.created_at || 0).getTime();
+      return bTs - aTs;
+    }).slice(0, 20);
+    if (merged.length === 0) {
+      html += '<div style="color:#94A3B8; font-style:italic; margin-bottom:18px;">No interactions on file.</div>';
+    } else {
+      html += '<div style="margin-bottom:18px;">';
+      merged.forEach((i) => {
+        const icon = _hpInteractionIcon(i.type);
+        const ts = i.sent_at || i.received_at || i.created_at;
+        const dirArrow = i.direction === 'outbound' ? '→' : i.direction === 'inbound' ? '←' : '·';
+        const subj = i.subject || (i.content ? String(i.content).slice(0, 90) + (String(i.content).length > 90 ? '…' : '') : '(no subject)');
+        const cls = i.ai_classification && i.ai_classification.category
+          ? `<span style="font-size:9.5px; background:#eef2ff; color:#3730a3; padding:1px 5px; border-radius:8px; margin-left:4px; font-weight:600;">${escapeHtml(i.ai_classification.category)}</span>` : '';
+        const delivery = i.delivery_method ? ` · ${escapeHtml(i.delivery_method)}` : '';
+        html += `
+          <div style="border-bottom:1px solid #f1f5f9; padding:7px 0; font-size:12px;">
+            <div style="display:flex; justify-content:space-between; gap:8px; align-items:flex-start;">
+              <div style="flex:1; min-width:0;">
+                <div>
+                  <span style="font-size:11px; color:#6B7280;">${icon} ${dirArrow} ${escapeHtml(i.type || '')}${delivery}</span>${cls}
+                </div>
+                <div style="color:#1a3a5c; margin-top:2px;">${escapeHtml(subj)}</div>
+              </div>
+              <div style="font-size:10.5px; color:#94A3B8; white-space:nowrap; flex-shrink:0;">${ts ? new Date(ts).toLocaleDateString() : ''}</div>
+            </div>
+          </div>`;
+      });
+      html += '</div>';
+    }
+
+    // Add-tag form (collapsed below)
+    html += `<details style="margin-bottom:14px;">
+      <summary style="cursor:pointer; font-size:12.5px; color:#1E2761; font-weight:600; padding:6px 0;">➕ Add tag</summary>
+      <div style="padding:8px 0 0 0;">${_hpRenderAddTagForm()}</div>
+    </details>`;
+
+    // Communication preferences (read-only)
+    const prefs = d.preferences;
+    if (prefs) {
+      html += `<h4 style="margin:18px 0 8px 0; font-size:13px; color:#1E2761;">📡 Communication preferences <span style="font-weight:400; color:#94A3B8; font-size:11px;">(editable by homeowner in their portal)</span></h4>
+        <div style="border:1px solid #e2e8f0; border-radius:8px; padding:10px; font-size:12px; color:#475569;">
+          General: <strong>${escapeHtml(prefs.general_comm_channel)}</strong> ·
+          Billing: <strong>${escapeHtml(prefs.billing_comm_channel)}</strong> ·
+          Payment confirmation email: <strong>${prefs.payment_confirmation_email_enabled ? 'on' : 'off'}</strong> ·
+          Payment reminders text: <strong>${prefs.payment_reminders_text_enabled ? 'on (' + escapeHtml(prefs.payment_reminders_phone || '?') + ')' : 'off'}</strong>
+        </div>`;
+    }
+
+    // Portal logins (read-only)
+    if ((d.portal_logins || []).length > 0) {
+      html += `<h4 style="margin:18px 0 8px 0; font-size:13px; color:#1E2761;">🔑 Portal logins (${d.portal_logins.length})</h4>
+        <div style="font-size:12px;">`;
+      d.portal_logins.forEach((pu) => {
+        html += `<div style="border:1px solid #e2e8f0; border-radius:6px; padding:6px 10px; margin-bottom:4px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div>${escapeHtml(pu.email)} <span style="color:#94A3B8; font-size:11px;">· ${escapeHtml(pu.role)} · ${escapeHtml(pu.status)}</span></div>
+          <div style="font-size:10.5px; color:#6B7280;">${pu.last_login_at ? 'Last login ' + new Date(pu.last_login_at).toLocaleDateString() : 'Never logged in'} · ${pu.login_count || 0} logins</div>
+        </div>`;
+      });
+      html += '</div>';
+    }
+
+    // Warnings (if any sub-query failed)
+    if (d.warnings && d.warnings.length > 0) {
+      html += `<div style="margin-top:18px; padding:8px 10px; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; font-size:11px; color:#92400e;">
+        ⚠ Partial load — ${d.warnings.length} section(s) failed: ${d.warnings.map((w) => escapeHtml(w.section)).join(', ')}
+      </div>`;
+    }
+
+    document.getElementById('homesContactProfileBody').innerHTML = html;
+  }
+
+  function _hpRenderAddNoteForm() {
+    return `
+      <div style="border:1px dashed #cbd5e1; border-radius:8px; padding:8px 10px; margin-bottom:10px; background:#f8fafc;">
+        <textarea id="homesNewNoteText" placeholder="Add a staff note (NEVER visible to homeowner — internal workspace only)…" style="width:100%; min-height:48px; border:1px solid #d0d7de; border-radius:6px; padding:6px 8px; font-size:12px; font-family:inherit; resize:vertical; box-sizing:border-box;"></textarea>
+        <div style="display:flex; gap:6px; align-items:center; margin-top:6px; flex-wrap:wrap;">
+          <select id="homesNewNoteCategory" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px;">
+            <option value="general">general</option>
+            <option value="escalation_history">escalation_history</option>
+            <option value="contact_preference_context">contact_preference_context</option>
+            <option value="legal_note">legal_note</option>
+            <option value="payment_history_context">payment_history_context</option>
+            <option value="accommodation">accommodation</option>
+            <option value="attorney_strategy">attorney_strategy</option>
+            <option value="do_not_contact_reason">do_not_contact_reason</option>
+            <option value="vendor_context">vendor_context</option>
+          </select>
+          <label style="font-size:11.5px; color:#475569; user-select:none;">
+            <input type="checkbox" id="homesNewNotePinned" /> Pin to top
+          </label>
+          <button onclick="homesSubmitNote()" class="action-btn" style="font-size:11.5px; padding:5px 12px; margin-left:auto;">💾 Add note</button>
+        </div>
+        <div id="homesNewNoteStatus" style="font-size:11px; margin-top:4px;"></div>
+      </div>`;
+  }
+
+  function _hpRenderAddTagForm() {
+    const tags = ['board_member','vip','advisory_panel','problem_resident','litigation_pending','special_accommodation','do_not_contact','attorney_represented','collections_hold','language_assistance','elderly_assistance','fraud_flag'];
+    const commOpts = '<option value="">Portfolio-wide</option>' +
+      (homesCommunitiesCache || []).map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    return `
+      <div style="border:1px dashed #cbd5e1; border-radius:8px; padding:8px 10px; background:#f8fafc;">
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <select id="homesNewTagKey" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px;">
+            ${tags.map((t) => `<option value="${t}">${escapeHtml(_hpTagLabel(t))}</option>`).join('')}
+          </select>
+          <select id="homesNewTagCommunity" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px; max-width:220px;">
+            ${commOpts}
+          </select>
+          <input id="homesNewTagNote" placeholder="Optional note…" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px; flex:1; min-width:140px;" />
+          <button onclick="homesSubmitTag()" class="action-btn" style="font-size:11.5px; padding:5px 12px;">➕ Add</button>
+        </div>
+        <div id="homesNewTagStatus" style="font-size:11px; margin-top:4px;"></div>
+      </div>`;
+  }
+
+  async function homesSubmitNote() {
+    const text = (document.getElementById('homesNewNoteText').value || '').trim();
+    const category = document.getElementById('homesNewNoteCategory').value;
+    const pinned = document.getElementById('homesNewNotePinned').checked;
+    const status = document.getElementById('homesNewNoteStatus');
+    const contactId = homesContactProfileState.contactId;
+    if (!text) { status.innerHTML = '<span style="color:#b91c1c;">Note text required.</span>'; return; }
+    if (!contactId) return;
+    const authorEmail = (window.currentUserEmail || 'staff@bedrocktx.com');
+    status.textContent = '⏳ Saving…';
+    try {
+      const r = await fetch(`/api/contacts/${contactId}/notes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ note_text: text, category, pinned, author_email: authorEmail }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function homesSubmitTag() {
+    const tag_key = document.getElementById('homesNewTagKey').value;
+    const community_id = document.getElementById('homesNewTagCommunity').value || null;
+    const note = (document.getElementById('homesNewTagNote').value || '').trim() || null;
+    const status = document.getElementById('homesNewTagStatus');
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    const grantedBy = (window.currentUserEmail || 'staff@bedrocktx.com');
+    status.textContent = '⏳ Adding…';
+    try {
+      const r = await fetch(`/api/contacts/${contactId}/tags`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ tag_key, community_id, note, granted_by: grantedBy }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function homesRevokeTag(tagId) {
+    if (!confirm('Revoke this tag?\n\n(History is preserved — the tag stays in the database with revoked_at set, so audit trails remain intact.)')) return;
+    const contactId = homesContactProfileState.contactId;
+    try {
+      const r = await fetch(`/api/homeowner-tags/${tagId}/revoke`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ revoked_by: window.currentUserEmail || 'staff@bedrocktx.com' }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Revoke failed: ' + (j.error || `HTTP ${r.status}`));
+        return;
+      }
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      alert('Revoke failed: ' + e.message);
+    }
+  }
+
+  async function homesToggleNotePin(noteId, pinned) {
+    const contactId = homesContactProfileState.contactId;
+    try {
+      const r = await fetch(`/api/homeowner-notes/${noteId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pinned }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Pin toggle failed: ' + (j.error || `HTTP ${r.status}`));
+        return;
+      }
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function homesDeleteNote(noteId) {
+    if (!confirm('Delete this note? (hard delete — cannot be recovered)')) return;
+    const contactId = homesContactProfileState.contactId;
+    try {
+      const r = await fetch(`/api/homeowner-notes/${noteId}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Delete failed: ' + (j.error || `HTTP ${r.status}`));
+        return;
+      }
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      alert(e.message);
+    }
   }
 
   // Auto-load when the Homes tab is first opened.

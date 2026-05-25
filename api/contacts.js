@@ -754,4 +754,258 @@ router.get('/contacts/occupancy-summary', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// SINGLE CONTACT — basic record only (used for editor pre-fill).
+// ---------------------------------------------------------------------------
+router.get('/contacts/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('contacts')
+      .select('*')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ contact: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// HOMEOWNER PROFILE — the aggregate "everything about this person" payload.
+// Backs the Homeowner Profile modal in Homes & Owners. Single round-trip
+// instead of 8 fetches from the browser.
+//
+// Shape:
+//   {
+//     contact:        { ...flat contacts row + preferred_language etc. },
+//     preferences:    { ...contact_preferences row or null },
+//     properties:     [ { property, ownership, residency, latest_ar } ],
+//     ownership_history:   [ ...older closed ownerships across all props ],
+//     active_tags:    [ { id, tag_key, community_id, community_name, note, granted_at, granted_by } ],
+//     notes:          [ ...homeowner_notes ordered pinned desc, created_at desc ],
+//     portal_logins:  [ { portal_user, scoped_properties: [...] } ],
+//     interactions:   [ ...recent N interactions where contact_id = :id ],
+//     calls:          [ ...recent voice calls where caller_homeowner_id = :id ]
+//   }
+// ---------------------------------------------------------------------------
+router.get('/contacts/:id/profile', async (req, res) => {
+  try {
+    const id = req.params.id;
+
+    // 1. Contact itself (required — 404 if not found)
+    const { data: contact, error: cErr } = await supabase
+      .from('contacts').select('*').eq('id', id).maybeSingle();
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!contact) return res.status(404).json({ error: 'not_found' });
+
+    // 2-9. Parallel fan-out for everything else.
+    const [
+      prefRes, ownRes, resRes, tagRes, noteRes,
+      portalRes, intRes, callRes
+    ] = await Promise.all([
+      supabase.from('contact_preferences').select('*').eq('contact_id', id).maybeSingle(),
+      supabase.from('property_ownerships')
+        .select('id, property_id, start_date, end_date, vesting, is_primary, source, properties(id, street_address, unit, city, state, zip, community_id, communities(id, name))')
+        .eq('contact_id', id)
+        .order('end_date', { ascending: true, nullsFirst: true })
+        .order('start_date', { ascending: false }),
+      supabase.from('property_residencies')
+        .select('id, property_id, start_date, end_date, residency_type, lease_end_date, properties(id, street_address, unit, community_id, communities(id, name))')
+        .eq('contact_id', id)
+        .is('end_date', null),
+      supabase.from('homeowner_tags')
+        .select('id, tag_key, community_id, note, granted_at, granted_by, communities(id, name)')
+        .eq('contact_id', id)
+        .is('revoked_at', null)
+        .order('granted_at', { ascending: false }),
+      supabase.from('homeowner_notes')
+        .select('*, communities(id, name), properties(id, street_address)')
+        .eq('contact_id', id)
+        .order('pinned', { ascending: false })
+        .order('created_at', { ascending: false })
+        .limit(50),
+      supabase.from('portal_users')
+        .select('id, email, full_name, role, status, last_login_at, first_login_at, invited_at, login_count')
+        .eq('contact_id', id),
+      supabase.from('interactions')
+        .select('id, community_id, property_id, type, direction, subject, content, delivery_method, certified_tracking_number, status, sent_at, received_at, ai_drafted, ai_classification, thread_id, parent_interaction_id, created_at')
+        .eq('contact_id', id)
+        .order('sent_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
+        .limit(30),
+      supabase.from('homeowner_calls')
+        .select('id, community_id, started_at, ended_at, duration_seconds, status, brief, handoff_offered, handoff_accepted, handoff_reason, compliance_flag')
+        .eq('caller_homeowner_id', id)
+        .order('started_at', { ascending: false })
+        .limit(10),
+    ]);
+
+    // Surface non-fatal errors as warnings but don't abort — profile still
+    // renders with whatever loaded.
+    const warnings = [];
+    [['preferences', prefRes], ['ownerships', ownRes], ['residencies', resRes],
+     ['tags', tagRes], ['notes', noteRes], ['portal_logins', portalRes],
+     ['interactions', intRes], ['calls', callRes]
+    ].forEach(([k, r]) => { if (r.error) warnings.push({ section: k, error: r.error.message }); });
+
+    // Roll up ownerships into "properties" (current + historical), then attach
+    // latest AR snapshot for current-owned properties.
+    const allOwnerships = ownRes.data || [];
+    const currentOwnerships = allOwnerships.filter((o) => !o.end_date);
+    const currentPropertyIds = currentOwnerships.map((o) => o.property_id);
+
+    let arByProperty = {};
+    if (currentPropertyIds.length > 0) {
+      const { data: arRows } = await supabase
+        .from('owner_ar_snapshots')
+        .select('property_id, snapshot_date, balance_total, bucket_0_30, bucket_31_60, bucket_61_90, bucket_91_120, bucket_over_120, at_legal, in_collections, payment_plan_active, enforcement_stage, approved_at')
+        .in('property_id', currentPropertyIds)
+        .order('snapshot_date', { ascending: false });
+      // Keep only the most recent snapshot per property
+      (arRows || []).forEach((row) => {
+        if (!arByProperty[row.property_id]) arByProperty[row.property_id] = row;
+      });
+    }
+
+    // Build properties array (one entry per currently-owned property)
+    const residenciesByProperty = {};
+    (resRes.data || []).forEach((r) => { residenciesByProperty[r.property_id] = r; });
+    const properties = currentOwnerships.map((o) => ({
+      ownership: {
+        id: o.id, start_date: o.start_date, vesting: o.vesting,
+        is_primary: o.is_primary, source: o.source,
+      },
+      property: o.properties || null,
+      residency: residenciesByProperty[o.property_id] || null,
+      latest_ar: arByProperty[o.property_id] || null,
+    }));
+
+    const ownershipHistory = allOwnerships.filter((o) => o.end_date);
+
+    res.json({
+      contact,
+      preferences: prefRes.data || null,
+      properties,
+      ownership_history: ownershipHistory,
+      active_tags: tagRes.data || [],
+      notes: noteRes.data || [],
+      portal_logins: portalRes.data || [],
+      interactions: intRes.data || [],
+      calls: callRes.data || [],
+      warnings,
+    });
+  } catch (err) {
+    console.error('[contacts/:id/profile]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// HOMEOWNER TAGS — add + revoke. Tags are time-bounded so "delete" is really
+// "set revoked_at = now()" to preserve history.
+// ---------------------------------------------------------------------------
+router.post('/contacts/:id/tags', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.tag_key) return res.status(400).json({ error: 'tag_key_required' });
+    const { data, error } = await supabase
+      .from('homeowner_tags')
+      .insert({
+        contact_id:   req.params.id,
+        community_id: b.community_id || null,
+        tag_key:      b.tag_key,
+        note:         b.note || null,
+        granted_by:   b.granted_by || null,
+      })
+      .select('id, tag_key, community_id, note, granted_at, granted_by, communities(id, name)')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ tag: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/homeowner-tags/:tagId/revoke', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { data, error } = await supabase
+      .from('homeowner_tags')
+      .update({
+        revoked_at: new Date().toISOString(),
+        revoked_by: b.revoked_by || null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', req.params.tagId)
+      .is('revoked_at', null)
+      .select()
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not_found_or_already_revoked' });
+    res.json({ tag: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// HOMEOWNER NOTES — staff workspace (NEVER customer-visible). Add + edit.
+// ---------------------------------------------------------------------------
+router.post('/contacts/:id/notes', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.note_text || !b.note_text.trim()) return res.status(400).json({ error: 'note_text_required' });
+    if (!b.author_email) return res.status(400).json({ error: 'author_email_required' });
+    const { data, error } = await supabase
+      .from('homeowner_notes')
+      .insert({
+        contact_id:   req.params.id,
+        community_id: b.community_id || null,
+        property_id:  b.property_id || null,
+        note_text:    b.note_text.trim(),
+        category:     b.category || 'general',
+        author_email: b.author_email,
+        pinned:       !!b.pinned,
+      })
+      .select('*, communities(id, name), properties(id, street_address)')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ note: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/homeowner-notes/:noteId', express.json(), async (req, res) => {
+  try {
+    const allowed = ['note_text', 'category', 'pinned', 'community_id', 'property_id'];
+    const patch = { updated_at: new Date().toISOString() };
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    const { data, error } = await supabase
+      .from('homeowner_notes')
+      .update(patch)
+      .eq('id', req.params.noteId)
+      .select('*, communities(id, name), properties(id, street_address)')
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'not_found' });
+    res.json({ note: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/homeowner-notes/:noteId', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('homeowner_notes').delete().eq('id', req.params.noteId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };
