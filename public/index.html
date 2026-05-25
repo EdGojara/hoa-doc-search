@@ -4406,9 +4406,158 @@
       <details style="margin-top:6px;">
         <summary style="cursor:pointer; font-size:12px; color:#1E2761; font-weight:600; padding:4px 0;">➕ Add email or phone</summary>
         <div style="padding:8px 0 0 0;">${_hpRenderAddMethodForm()}</div>
+      </details>
+      <details style="margin-top:6px;">
+        <summary style="cursor:pointer; font-size:12px; color:#1E2761; font-weight:600; padding:4px 0;">✨ Smart extract <span style="color:#94A3B8; font-weight:400;">— paste email signature, screenshot, or drop a PDF; Claude finds emails + phones</span></summary>
+        <div style="padding:8px 0 0 0;">${_hpRenderSmartExtractForm()}</div>
       </details>`;
     html += '</div>';
     return html;
+  }
+
+  function _hpRenderSmartExtractForm() {
+    return `
+      <div style="border:1px dashed #cbd5e1; border-radius:8px; padding:10px; background:#f8fafc;">
+        <div style="font-size:11.5px; color:#475569; margin-bottom:6px;">Paste text (email signature, contact card, etc.):</div>
+        <textarea id="hpExtractText" rows="3" placeholder="e.g., 'Drona Gautam · drona@gmail.com · (832) 555-1234 cell · home: (281) 555-9999'" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12px; font-family:inherit; resize:vertical; box-sizing:border-box;"></textarea>
+        <div style="display:flex; gap:8px; align-items:center; margin-top:6px;">
+          <button onclick="homesExtractFromText()" class="action-btn" style="font-size:11.5px; padding:5px 12px;">✨ Extract from text</button>
+          <div style="flex:1; border-left:1px dashed #cbd5e1; padding-left:12px;">
+            <div style="font-size:11.5px; color:#475569;">Or drop a PDF / image (screenshot, scan of a form):</div>
+            <input type="file" id="hpExtractFile" accept=".pdf,image/*" onchange="homesExtractFromFile()" style="font-size:11px; margin-top:3px;" />
+          </div>
+        </div>
+        <div id="hpExtractStatus" style="font-size:11px; margin-top:6px;"></div>
+        <div id="hpExtractResults" style="margin-top:8px;"></div>
+      </div>`;
+  }
+
+  async function homesExtractFromText() {
+    const text = (document.getElementById('hpExtractText').value || '').trim();
+    if (!text) return;
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    const status = document.getElementById('hpExtractStatus');
+    status.textContent = '⏳ Asking Claude to extract emails + phones…';
+    try {
+      const r = await fetch(`/api/contacts/${contactId}/methods/extract`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _hpRenderExtractResults(j);
+      status.textContent = '';
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function homesExtractFromFile() {
+    const file = document.getElementById('hpExtractFile').files[0];
+    if (!file) return;
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    const status = document.getElementById('hpExtractStatus');
+    status.textContent = `⏳ Reading ${escapeHtml(file.name)} via Claude…`;
+    const fd = new FormData();
+    fd.append('file', file);
+    try {
+      const r = await fetch(`/api/contacts/${contactId}/methods/extract`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _hpRenderExtractResults(j);
+      status.textContent = '';
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  function _hpRenderExtractResults(j) {
+    const box = document.getElementById('hpExtractResults');
+    const suggestions = j.suggestions || [];
+    if (suggestions.length === 0 && !j.mailing_address_suggestion) {
+      box.innerHTML = `<div style="color:#94A3B8; font-style:italic; padding:6px 0;">No new emails/phones found${j.name_hint ? ' (name detected: ' + escapeHtml(j.name_hint) + ')' : ''}.</div>`;
+      return;
+    }
+    const confColor = (c) => c === 'high' ? '#15803d' : c === 'medium' ? '#92400e' : '#b91c1c';
+    let html = `<div style="font-size:11.5px; color:#475569; margin-bottom:6px;">Found ${suggestions.length} new method${suggestions.length === 1 ? '' : 's'}${j.name_hint ? ` (name in source: ${escapeHtml(j.name_hint)})` : ''} — check the ones to add:</div>`;
+    html += '<div>';
+    suggestions.forEach((s, i) => {
+      const icon = s.method_type === 'email' ? '✉' : '📞';
+      html += `
+        <label style="display:flex; gap:8px; align-items:center; padding:4px 6px; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:3px; background:#fff; cursor:pointer;">
+          <input type="checkbox" data-extract-idx="${i}" checked />
+          <span style="font-size:13px;">${icon} <strong>${escapeHtml(s.value)}</strong></span>
+          ${s.is_primary ? '<span style="background:#dcfce7; color:#15803d; padding:1px 5px; border-radius:6px; font-size:10px; font-weight:700;">PRIMARY</span>' : ''}
+          ${s.subtype ? `<span style="background:#f1f5f9; color:#475569; padding:1px 5px; border-radius:6px; font-size:10px;">${escapeHtml(s.subtype)}</span>` : ''}
+          ${s.label ? `<span style="color:#94A3B8; font-size:11px;">[${escapeHtml(s.label)}]</span>` : ''}
+          <span style="margin-left:auto; font-size:10px; color:${confColor(s.confidence)}; font-weight:600;">${escapeHtml(s.confidence || '')}</span>
+        </label>`;
+    });
+    html += '</div>';
+    if (j.mailing_address_suggestion) {
+      html += `<div style="margin-top:6px; padding:6px; border:1px solid #fef3c7; background:#fffbeb; border-radius:6px; font-size:11.5px;">
+        <strong>Mailing address found:</strong> ${escapeHtml(j.mailing_address_suggestion)}
+        <button onclick="homesApplyExtractedMailing('${escapeHtml(j.mailing_address_suggestion).replace(/'/g, "\\'")}')" class="action-btn" style="font-size:11px; padding:3px 9px; margin-left:6px;">Use as mailing address</button>
+      </div>`;
+    }
+    html += `<button onclick="homesApplySelectedExtractions(${JSON.stringify(suggestions).replace(/"/g, '&quot;')})" class="action-btn" style="font-size:11.5px; padding:5px 12px; margin-top:6px;">➕ Add checked</button>`;
+    box.innerHTML = html;
+  }
+
+  async function homesApplySelectedExtractions(suggestions) {
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    // Read checkbox state
+    const checked = [];
+    document.querySelectorAll('[data-extract-idx]').forEach((cb) => {
+      if (cb.checked) checked.push(suggestions[parseInt(cb.dataset.extractIdx, 10)]);
+    });
+    if (checked.length === 0) { alert('Nothing checked.'); return; }
+    const status = document.getElementById('hpExtractStatus');
+    status.textContent = `⏳ Adding ${checked.length} method${checked.length === 1 ? '' : 's'}…`;
+    let added = 0, failed = 0;
+    for (const s of checked) {
+      try {
+        const r = await fetch(`/api/contacts/${contactId}/methods`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            method_type: s.method_type,
+            value: s.value,
+            is_primary: !!s.is_primary,
+            subtype: s.subtype,
+            label: s.label,
+          }),
+        });
+        if (r.ok) added += 1; else failed += 1;
+      } catch (_) { failed += 1; }
+    }
+    status.innerHTML = `<span style="color:${failed === 0 ? '#15803d' : '#b91c1c'};">${added} added${failed ? ', ' + failed + ' failed' : ''}.</span>`;
+    homesOpenContactProfile(contactId);
+  }
+
+  async function homesApplyExtractedMailing(addr) {
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    if (!confirm(`Set mailing address to:\n\n${addr}\n\n(Overwrites the current mailing address on file.)`)) return;
+    try {
+      const r = await fetch(`/api/contacts/${contactId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mailing_address: addr }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(`Update failed: ${j.error || r.status}`);
+        return;
+      }
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      alert(e.message);
+    }
   }
 
   function _hpRenderAddMethodForm() {

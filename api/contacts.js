@@ -1445,6 +1445,146 @@ router.post('/contacts/methods/import/:id/apply', express.json({ limit: '50mb' }
   }
 });
 
+// ---------------------------------------------------------------------------
+// SMART EXTRACT — Claude reads pasted text OR an uploaded PDF/image and
+// returns suggested contact_methods for staff to review + add.
+//
+// POST /api/contacts/:id/methods/extract
+//   - multipart with 'file' (PDF or image, ≤10MB) OR
+//   - JSON body with { text: '...' }
+//   - returns { suggestions: [{ method_type, value, is_primary, subtype, label, confidence }], raw_text }
+//
+// Used by the profile modal's "✨ Smart extract" section. Suggestions are
+// pre-filtered against the contact's existing contact_methods so duplicates
+// don't appear (idempotent — paste the same signature twice, second time
+// shows no suggestions).
+// ---------------------------------------------------------------------------
+const Anthropic = require('@anthropic-ai/sdk');
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+async function _extractContactInfoFromClaude(input) {
+  const prompt = `Read the following and extract every email address, phone number, and mailing address you can find. Distinguish primary vs secondary if context suggests it (e.g., "preferred" or "main" → primary). Infer subtype where possible (cell/mobile, work, home, spouse, property_manager).
+
+Return ONLY a JSON object (no markdown, no commentary):
+{
+  "emails": [
+    { "value": "string", "is_primary": true | false, "subtype": "personal" | "work" | "spouse" | "property_manager" | null, "label": "string or null", "confidence": "high" | "medium" | "low" }
+  ],
+  "phones": [
+    { "value": "string formatted as found", "is_primary": true | false, "subtype": "cell" | "home" | "work" | "fax" | "spouse" | null, "label": "string or null", "confidence": "high" | "medium" | "low" }
+  ],
+  "mailing_address": "string or null — single composed mailing address if found",
+  "name_hint": "string or null — if a name appears, return it for verification"
+}
+
+Confidence guide:
+- high: explicitly labeled (e.g., "Email: ...", "Cell: ...", "Work phone: ...")
+- medium: clear context but no explicit label
+- low: ambiguous (could be either type, partial info)`;
+
+  const content = [];
+  if (input.text) {
+    content.push({ type: 'text', text: `${prompt}\n\nTEXT:\n${String(input.text).slice(0, 8000)}` });
+  } else if (input.fileBuffer && input.fileMimeType) {
+    // PDF or image → use document/image content block
+    if (input.fileMimeType === 'application/pdf') {
+      content.push({
+        type: 'document',
+        source: { type: 'base64', media_type: 'application/pdf', data: input.fileBuffer.toString('base64') },
+      });
+      content.push({ type: 'text', text: prompt });
+    } else if (input.fileMimeType.startsWith('image/')) {
+      content.push({
+        type: 'image',
+        source: { type: 'base64', media_type: input.fileMimeType, data: input.fileBuffer.toString('base64') },
+      });
+      content.push({ type: 'text', text: prompt });
+    } else {
+      throw new Error(`unsupported_file_type: ${input.fileMimeType}`);
+    }
+  } else {
+    throw new Error('no_text_or_file_provided');
+  }
+
+  const resp = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1500,
+    messages: [{ role: 'user', content }],
+  });
+  const text = (resp.content[0]?.text || '').trim();
+  const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim();
+  return JSON.parse(cleaned);
+}
+
+router.post('/contacts/:id/methods/extract', upload.single('file'), async (req, res) => {
+  try {
+    // Body comes either as multipart with file (req.file) or JSON with text (req.body.text)
+    let pastedText = req.body?.text;
+    if (typeof pastedText !== 'string') pastedText = null;
+
+    let extracted;
+    try {
+      extracted = await _extractContactInfoFromClaude({
+        text: pastedText,
+        fileBuffer: req.file?.buffer,
+        fileMimeType: req.file?.mimetype,
+      });
+    } catch (err) {
+      console.error('[contacts/methods/extract] Claude failed:', err.message);
+      return res.status(500).json({ error: 'extraction_failed', detail: err.message });
+    }
+
+    // Pull existing contact_methods for this contact so we can dedupe suggestions
+    const { data: existing } = await supabase
+      .from('contact_methods')
+      .select('method_type, value')
+      .eq('contact_id', req.params.id);
+    const existingEmails = new Set(((existing || []).filter((m) => m.method_type === 'email')).map((m) => String(m.value).toLowerCase()));
+    const existingPhonesDigits = new Set(((existing || []).filter((m) => m.method_type === 'phone')).map((m) => String(m.value).replace(/\D+/g, '')));
+
+    // Normalize + dedupe suggestions
+    const suggestions = [];
+    (extracted.emails || []).forEach((e) => {
+      const v = String(e.value || '').trim().toLowerCase();
+      if (!v || !v.includes('@')) return;
+      if (existingEmails.has(v)) return; // already on file
+      suggestions.push({
+        method_type: 'email',
+        value: v,
+        is_primary: !!e.is_primary,
+        subtype: e.subtype || null,
+        label: e.label || null,
+        confidence: e.confidence || 'medium',
+      });
+    });
+    (extracted.phones || []).forEach((p) => {
+      const v = String(p.value || '').trim();
+      if (!v) return;
+      const digits = v.replace(/\D+/g, '');
+      if (digits.length < 7) return;
+      if (existingPhonesDigits.has(digits)) return;
+      suggestions.push({
+        method_type: 'phone',
+        value: v,
+        is_primary: !!p.is_primary,
+        subtype: p.subtype || null,
+        label: p.label || null,
+        confidence: p.confidence || 'medium',
+      });
+    });
+
+    res.json({
+      suggestions,
+      mailing_address_suggestion: extracted.mailing_address || null,
+      name_hint: extracted.name_hint || null,
+      raw_extraction: extracted,
+    });
+  } catch (err) {
+    console.error('[contacts/methods/extract]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/contacts/methods/import/recent', async (req, res) => {
   try {
     const { data, error } = await supabase
