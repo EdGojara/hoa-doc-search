@@ -1731,6 +1731,37 @@
     </div>
   </div>
 
+  <!-- Bulk Contact Methods Import — 3-tab xlsx (Address / Email / Phone)
+       joined to contacts by vantaca_account_id. Same preview-then-apply
+       pattern as the Vantaca import above. -->
+  <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap;">
+      <div style="flex:1; min-width:280px;">
+        <h3 style="margin:0 0 4px 0; font-size:14px; color:#1E2761;">📞 Bulk contact methods import</h3>
+        <p style="font-size:11.5px; color:#94A3B8; margin:0;">
+          3-tab xlsx with sheets <strong>Address</strong> / <strong>Email</strong> / <strong>Phone</strong>, joined by Vantaca Account ID.
+          Populates the per-email + per-phone notification grid in each homeowner's profile.
+          Inconsistencies are flagged for review, not overwritten.
+        </p>
+      </div>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <div id="homesMethodsImportDropZone"
+             style="border:2px dashed #c0d0e0; border-radius:8px; padding:12px 20px; background:#f7f9fc; cursor:pointer; text-align:center;"
+             onclick="document.getElementById('homesMethodsImportFile').click()"
+             ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+             ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc';"
+             ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('homesMethodsImportFile').files=dt.files; homesMethodsImportUpdateLabel(); }">
+          <div style="font-size:18px; color:#5a7390;">📥</div>
+          <div id="homesMethodsImportDropLabel" style="font-size:11.5px; font-weight:600; color:#1a3a5c; margin-top:2px;">Drag or click to pick xlsx</div>
+        </div>
+        <input type="file" id="homesMethodsImportFile" accept=".xlsx,.xls" style="display:none;" onchange="homesMethodsImportUpdateLabel()">
+        <button class="action-btn" onclick="homesMethodsImportUpload()" id="homesMethodsImportBtn" style="font-size:12.5px; padding:8px 14px;">🔍 Preview diff</button>
+      </div>
+    </div>
+    <div id="homesMethodsImportStatus" style="font-size:12px; margin-top:8px;"></div>
+    <div id="homesMethodsImportDiff" style="display:none; margin-top:10px; border-top:1px dashed #cbd5e1; padding-top:10px;"></div>
+  </div>
+
   <!-- Middle row: diff preview (only visible after an upload) -->
   <div id="homesDiffPanel" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:16px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -4905,6 +4936,236 @@
       window.open('/portal', '_blank', 'noopener,noreferrer');
     } catch (e) {
       alert('Mimic start failed: ' + e.message);
+    }
+  }
+
+  // ===== Bulk contact methods import — 3-tab xlsx (Address/Email/Phone) ====
+  let homesMethodsImportActive = null;  // { sync_log_id, preview, counts, file_name }
+  // Per-row inconsistency choices keyed by `${section}:${row}` → 'keep_file' | 'keep_db' | 'add_both' | 'skip'
+  let homesMethodsImportChoices = {};
+
+  function homesMethodsImportUpdateLabel() {
+    const f = document.getElementById('homesMethodsImportFile').files[0];
+    const label = document.getElementById('homesMethodsImportDropLabel');
+    label.innerHTML = f
+      ? `✓ <span style="color:#15803d;">${escapeHtml(f.name)}</span>`
+      : 'Drag or click to pick xlsx';
+  }
+
+  async function homesMethodsImportUpload() {
+    const file = document.getElementById('homesMethodsImportFile').files[0];
+    const status = document.getElementById('homesMethodsImportStatus');
+    if (!file) { status.innerHTML = '<span style="color:#b91c1c;">Pick a file first.</span>'; return; }
+    const fd = new FormData();
+    fd.append('file', file);
+    const btn = document.getElementById('homesMethodsImportBtn');
+    btn.disabled = true; btn.textContent = '⏳ Parsing + computing diff…';
+    status.textContent = '';
+    try {
+      const r = await fetch('/api/contacts/methods/import', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesMethodsImportActive = j;
+      homesMethodsImportChoices = {};
+      homesMethodsImportRenderDiff();
+      status.innerHTML = `<span style="color:#15803d;">✓ Parsed ${j.sheet_counts.emails} emails, ${j.sheet_counts.phones} phones, ${j.sheet_counts.addresses} address rows.</span>`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '🔍 Preview diff';
+    }
+  }
+
+  function homesMethodsImportRenderDiff() {
+    const panel = document.getElementById('homesMethodsImportDiff');
+    if (!homesMethodsImportActive) { panel.style.display = 'none'; return; }
+    const { counts, preview, file_name } = homesMethodsImportActive;
+    const pill = (label, n, color) => `<span style="background:${color}; padding:3px 9px; border-radius:11px; font-size:11.5px; font-weight:700; margin-right:6px; margin-bottom:4px; display:inline-block;">${label}: ${n}</span>`;
+
+    let html = `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; flex-wrap:wrap; gap:8px;">
+      <h4 style="margin:0; font-size:13px; color:#1E2761;">📋 Diff preview <span style="font-weight:400; color:#94A3B8; font-size:11px;">· ${escapeHtml(file_name || '(upload)')}</span></h4>
+      <div>
+        <button class="secondary-btn" onclick="homesMethodsImportDiscard()" style="font-size:11.5px; padding:5px 10px;">Discard</button>
+        <button class="action-btn" id="homesMethodsApplyBtn" onclick="homesMethodsImportApply()" style="font-size:11.5px; padding:5px 14px; background:#15803d; border-color:#15803d;">✓ Apply selected</button>
+      </div>
+    </div>`;
+
+    html += `<div style="margin-bottom:10px;">
+      ${counts.emails_new ? pill('Emails NEW', counts.emails_new, '#dcfce7') : ''}
+      ${counts.emails_match ? pill('Emails MATCH', counts.emails_match, '#e0f2fe') : ''}
+      ${counts.emails_primary_flip ? pill('Emails primary-flip', counts.emails_primary_flip, '#fef3c7') : ''}
+      ${counts.emails_inconsistent ? pill('Emails INCONSISTENT', counts.emails_inconsistent, '#fecaca') : ''}
+      ${counts.phones_new ? pill('Phones NEW', counts.phones_new, '#dcfce7') : ''}
+      ${counts.phones_match ? pill('Phones MATCH', counts.phones_match, '#e0f2fe') : ''}
+      ${counts.phones_primary_flip ? pill('Phones primary-flip', counts.phones_primary_flip, '#fef3c7') : ''}
+      ${counts.phones_inconsistent ? pill('Phones INCONSISTENT', counts.phones_inconsistent, '#fecaca') : ''}
+      ${counts.mailing_new ? pill('Mailing NEW', counts.mailing_new, '#dcfce7') : ''}
+      ${counts.mailing_match ? pill('Mailing MATCH', counts.mailing_match, '#e0f2fe') : ''}
+      ${counts.mailing_inconsistent ? pill('Mailing INCONSISTENT', counts.mailing_inconsistent, '#fecaca') : ''}
+      ${counts.orphans ? pill('Orphans (no contact match)', counts.orphans, '#e2e8f0') : ''}
+      ${counts.mailing_orphan ? pill('Mailing orphans', counts.mailing_orphan, '#e2e8f0') : ''}
+    </div>`;
+
+    // Section: NEW (auto-applied unless unchecked)
+    const newItems = preview.methods?.new || [];
+    if (newItems.length > 0) {
+      html += `<details open style="margin-top:10px;">
+        <summary style="cursor:pointer; font-weight:700; color:#15803d; font-size:12.5px;">✓ NEW emails + phones (will be ADDED) — ${newItems.length}</summary>
+        <div style="padding:6px 0 0 12px; max-height:240px; overflow-y:auto; font-size:11.5px;">
+          ${newItems.slice(0, 100).map((r) => `
+            <div style="padding:2px 0;">
+              <span style="color:#15803d;">+</span>
+              <strong>${escapeHtml(r.contact_name)}</strong>
+              ${r.method_type === 'email' ? '✉' : '📞'} <code>${escapeHtml(r.value)}</code>
+              ${r.is_primary ? '<span style="background:#dcfce7; color:#15803d; padding:1px 5px; border-radius:6px; font-size:10px; font-weight:700;">PRIMARY</span>' : ''}
+              ${r.label ? ` <span style="color:#94A3B8;">[${escapeHtml(r.label)}]</span>` : ''}
+            </div>`).join('')}
+          ${newItems.length > 100 ? `<div style="color:#94A3B8; font-style:italic;">…and ${newItems.length - 100} more.</div>` : ''}
+        </div>
+      </details>`;
+    }
+
+    // Section: PRIMARY FLIPS
+    const flipItems = preview.methods?.primary_flip || [];
+    if (flipItems.length > 0) {
+      html += `<details style="margin-top:8px;">
+        <summary style="cursor:pointer; font-weight:700; color:#92400e; font-size:12.5px;">⚡ Primary-flip — file says primary but DB doesn't (or vice versa) — ${flipItems.length}</summary>
+        <div style="padding:6px 0 0 12px; max-height:240px; overflow-y:auto; font-size:11.5px;">
+          ${flipItems.slice(0, 80).map((r) => `
+            <div style="padding:2px 0;">
+              <strong>${escapeHtml(r.contact_name)}</strong>
+              ${r.method_type === 'email' ? '✉' : '📞'} <code>${escapeHtml(r.value)}</code>
+              <span style="color:#94A3B8;">db=${r.current_primary ? 'primary' : 'non-primary'} → file=${r.file_primary ? 'primary' : 'non-primary'}</span>
+            </div>`).join('')}
+        </div>
+      </details>`;
+    }
+
+    // Section: INCONSISTENT — staff per-row action picker
+    const incItems = preview.methods?.inconsistent || [];
+    if (incItems.length > 0) {
+      html += `<details open style="margin-top:8px;">
+        <summary style="cursor:pointer; font-weight:700; color:#b91c1c; font-size:12.5px;">⚠ INCONSISTENT — file primary differs from DB primary — pick an action per row (${incItems.length})</summary>
+        <div style="padding:6px 0 0 12px; max-height:340px; overflow-y:auto; font-size:11.5px;">
+          ${incItems.map((r) => {
+            const key = `methods:${r.row}`;
+            return `<div style="padding:4px 6px; border-bottom:1px solid #f1f5f9; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <div style="flex:1; min-width:240px;">
+                <strong>${escapeHtml(r.contact_name)}</strong>
+                ${r.method_type === 'email' ? '✉' : '📞'}
+                <br>
+                <span style="color:#475569;">DB primary: <code>${escapeHtml(r.db_primary_value || '')}</code></span><br>
+                <span style="color:#b45309;">File primary: <code>${escapeHtml(r.file_value || '')}</code></span>
+              </div>
+              <select onchange="homesMethodsImportChoices['${key}']=this.value" style="font-size:11px; padding:3px 5px; border:1px solid #d0d7de; border-radius:5px;">
+                <option value="skip">Skip (do nothing)</option>
+                <option value="keep_db">Keep DB primary</option>
+                <option value="keep_file">Use FILE primary (demote DB, insert file as primary)</option>
+                <option value="add_both">Keep both (add file as non-primary)</option>
+              </select>
+            </div>`;
+          }).join('')}
+        </div>
+      </details>`;
+    }
+
+    // Section: MAILING NEW
+    const mNew = preview.mailing?.new || [];
+    if (mNew.length > 0) {
+      html += `<details style="margin-top:8px;">
+        <summary style="cursor:pointer; font-weight:700; color:#15803d; font-size:12.5px;">✓ Mailing addresses NEW (will be SET) — ${mNew.length}</summary>
+        <div style="padding:6px 0 0 12px; max-height:240px; overflow-y:auto; font-size:11.5px;">
+          ${mNew.slice(0, 80).map((r) => `<div style="padding:2px 0;"><span style="color:#15803d;">+</span> <strong>${escapeHtml(r.contact_name)}</strong> → <code>${escapeHtml(r.value)}</code></div>`).join('')}
+        </div>
+      </details>`;
+    }
+
+    // Section: MAILING INCONSISTENT
+    const mInc = preview.mailing?.inconsistent || [];
+    if (mInc.length > 0) {
+      html += `<details open style="margin-top:8px;">
+        <summary style="cursor:pointer; font-weight:700; color:#b91c1c; font-size:12.5px;">⚠ Mailing INCONSISTENT — pick action per row (${mInc.length})</summary>
+        <div style="padding:6px 0 0 12px; max-height:340px; overflow-y:auto; font-size:11.5px;">
+          ${mInc.map((r) => {
+            const key = `mailing:${r.row}`;
+            return `<div style="padding:4px 6px; border-bottom:1px solid #f1f5f9; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <div style="flex:1; min-width:240px;">
+                <strong>${escapeHtml(r.contact_name)}</strong>
+                <br><span style="color:#475569;">DB: <code>${escapeHtml(r.db_value || '')}</code></span>
+                <br><span style="color:#b45309;">File: <code>${escapeHtml(r.file_value || '')}</code></span>
+              </div>
+              <select onchange="homesMethodsImportChoices['${key}']=this.value" style="font-size:11px; padding:3px 5px; border:1px solid #d0d7de; border-radius:5px;">
+                <option value="skip">Skip</option>
+                <option value="keep_db">Keep DB</option>
+                <option value="keep_file">Overwrite with file value</option>
+              </select>
+            </div>`;
+          }).join('')}
+        </div>
+      </details>`;
+    }
+
+    // Section: ORPHANS (informational only — can't apply, no matching contact)
+    const orphans = preview.methods?.orphan || [];
+    if (orphans.length > 0) {
+      html += `<details style="margin-top:8px;">
+        <summary style="cursor:pointer; font-weight:700; color:#475569; font-size:12.5px;">○ Orphans — Account ID not in trustEd (will be skipped) — ${orphans.length}</summary>
+        <div style="padding:6px 0 0 12px; max-height:200px; overflow-y:auto; font-size:11px; color:#6B7280;">
+          ${orphans.slice(0, 60).map((r) => `<div style="padding:1px 0;">Account ${escapeHtml(r.account_id)} (${escapeHtml(r.homeowner_name || '?')}) — ${r.method_type} ${escapeHtml(r.value)}</div>`).join('')}
+          ${orphans.length > 60 ? `<div style="font-style:italic;">…and ${orphans.length - 60} more.</div>` : ''}
+        </div>
+      </details>`;
+    }
+
+    panel.innerHTML = html;
+    panel.style.display = 'block';
+  }
+
+  function homesMethodsImportDiscard() {
+    homesMethodsImportActive = null;
+    homesMethodsImportChoices = {};
+    document.getElementById('homesMethodsImportDiff').style.display = 'none';
+    document.getElementById('homesMethodsImportStatus').textContent = '';
+  }
+
+  async function homesMethodsImportApply() {
+    if (!homesMethodsImportActive) return;
+    if (!confirm('Apply selected changes?\n\n• NEW emails/phones → inserted\n• Primary-flips → toggled to match file\n• Inconsistencies → handled per the action you picked (skip/keep_db/keep_file/add_both)\n• Mailing-new → set\n• Mailing-inconsistent → handled per your pick\n\nOrphans (no contact match) are always skipped.\n\nProceed?')) return;
+    const btn = document.getElementById('homesMethodsApplyBtn');
+    btn.disabled = true; btn.textContent = '⏳ Applying…';
+
+    // Build inconsistent action arrays from the per-row picks
+    const methodsInc = (homesMethodsImportActive.preview.methods?.inconsistent || []).map((r) => ({
+      row: r.row, action: homesMethodsImportChoices[`methods:${r.row}`] || 'skip',
+    }));
+    const mailingInc = (homesMethodsImportActive.preview.mailing?.inconsistent || []).map((r) => ({
+      row: r.row, action: homesMethodsImportChoices[`mailing:${r.row}`] || 'skip',
+    }));
+
+    try {
+      const r = await fetch(`/api/contacts/methods/import/${homesMethodsImportActive.sync_log_id}/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          apply: {
+            new: 'all',
+            primary_flip: 'all',
+            inconsistent: methodsInc,
+            mailing_new: 'all',
+            mailing_inconsistent: mailingInc,
+          },
+        }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`Applied:\n• ${j.applied.methods_added} contact methods added\n• ${j.applied.methods_primary_flipped} primary-flips applied\n• ${j.applied.methods_inconsistencies_resolved} inconsistencies resolved\n• ${j.applied.mailing_addresses_updated} mailing addresses updated\n${j.applied.errors?.length ? '\n⚠ ' + j.applied.errors.length + ' errors — check Render logs' : ''}`);
+      homesMethodsImportDiscard();
+      // Optionally reload the homeowners list so new methods reflect in the table
+      if (typeof homesLoadHomeowners === 'function') homesLoadHomeowners();
+    } catch (e) {
+      alert('Apply failed: ' + e.message);
+    } finally {
+      btn.disabled = false; btn.textContent = '✓ Apply selected';
     }
   }
 

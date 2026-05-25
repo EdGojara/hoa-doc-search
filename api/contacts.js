@@ -27,6 +27,7 @@ const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { parseVantacaExport, computeDiff } = require('../lib/contacts/vantaca_import');
+const { parseContactInfoXlsx, computeContactMethodsDiff } = require('../lib/contacts/contact_methods_import');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
@@ -1181,6 +1182,283 @@ router.delete('/contact-methods/:methodId', async (req, res) => {
       .from('contact_methods').delete().eq('id', req.params.methodId);
     if (error) return res.status(500).json({ error: error.message });
     res.json({ ok: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// BULK CONTACT METHODS IMPORT — 3-tab xlsx (Address / Email / Phone) joined
+// to contacts by vantaca_account_id. Same staged-preview-then-apply pattern
+// as the Vantaca homeowner import: nothing writes to contact_methods until
+// staff explicitly approves selections.
+//
+// POST /api/contacts/methods/import        — multipart, parse + diff, persist sync_log row, return preview
+// POST /api/contacts/methods/import/:id/apply  — apply selected items
+// GET  /api/contacts/methods/import/recent — list recent uploads
+// ---------------------------------------------------------------------------
+router.post('/contacts/methods/import', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'no_file_uploaded' });
+
+    const parsed = parseContactInfoXlsx(req.file.buffer);
+    if ((parsed.emails.length + parsed.phones.length + parsed.addresses.length) === 0) {
+      return res.status(400).json({ error: 'no_recognized_rows', warnings: parsed.warnings });
+    }
+
+    const diff = await computeContactMethodsDiff(supabase, parsed);
+
+    const { data: logRow, error: logErr } = await supabase
+      .from('contact_methods_sync_log')
+      .insert({
+        uploaded_by: req.body.uploaded_by || null,
+        file_name: req.file.originalname || null,
+        total_rows: parsed.emails.length + parsed.phones.length + parsed.addresses.length,
+        parsed_data: parsed,
+        diff_summary: diff,
+        status: 'previewed',
+      })
+      .select()
+      .single();
+    if (logErr) return res.status(500).json({ error: logErr.message });
+
+    res.json({
+      sync_log_id: logRow.id,
+      file_name: req.file.originalname,
+      sheet_counts: {
+        addresses: parsed.addresses.length,
+        emails: parsed.emails.length,
+        phones: parsed.phones.length,
+      },
+      counts: diff.counts,
+      preview: diff,
+      warnings: parsed.warnings,
+    });
+  } catch (err) {
+    console.error('[contacts/methods/import]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/contacts/methods/import/:id/apply', express.json({ limit: '50mb' }), async (req, res) => {
+  try {
+    const { data: log, error: logErr } = await supabase
+      .from('contact_methods_sync_log')
+      .select('*').eq('id', req.params.id).maybeSingle();
+    if (logErr || !log) return res.status(404).json({ error: 'sync_log_not_found' });
+    if (log.status === 'applied') return res.status(409).json({ error: 'already_applied' });
+
+    const diff = log.diff_summary || {};
+    const apply = (req.body && req.body.apply) || {};
+    const today = new Date().toISOString();
+
+    const applied = {
+      methods_added: 0,
+      methods_primary_flipped: 0,
+      methods_inconsistencies_resolved: 0,
+      mailing_addresses_updated: 0,
+      errors: [],
+    };
+
+    // Helper for resolving "all" vs Array<row_index> vs Array<{row, action}>
+    const wantAll = (v) => v === 'all';
+    const rowSet = (v) => Array.isArray(v) ? new Set(v.map((x) => typeof x === 'object' ? x.row : x)) : null;
+    const actionMap = (v) => {
+      if (!Array.isArray(v)) return null;
+      const m = new Map();
+      v.forEach((x) => { if (x && typeof x === 'object' && x.row != null) m.set(x.row, x.action || 'skip'); });
+      return m;
+    };
+
+    // ---- NEW methods (insert) ------------------------------------------------
+    const newItems = (diff.methods?.new) || [];
+    if (newItems.length > 0) {
+      const selected = wantAll(apply.new) ? newItems : (() => {
+        const set = rowSet(apply.new);
+        return set ? newItems.filter((r) => set.has(r.row)) : [];
+      })();
+      // For inserting primaries, first demote any existing primary of the same
+      // (contact_id, method_type) so the unique-ish "one primary" invariant holds.
+      // We do this in-loop because Promise.all of demote+insert can race.
+      for (const item of selected) {
+        try {
+          if (item.is_primary) {
+            await supabase
+              .from('contact_methods')
+              .update({ is_primary: false, updated_at: today })
+              .eq('contact_id', item.contact_id)
+              .eq('method_type', item.method_type)
+              .eq('is_primary', true);
+          }
+          const { error: insErr } = await supabase.from('contact_methods').insert({
+            contact_id: item.contact_id,
+            method_type: item.method_type,
+            value: item.value,
+            is_primary: !!item.is_primary,
+            subtype: item.inferred_subtype || null,
+            label: item.label || null,
+          });
+          if (insErr) { applied.errors.push({ phase: 'new', row: item.row, error: insErr.message }); continue; }
+          applied.methods_added += 1;
+          // Sync to contacts.primary_email/.primary_phone if this becomes primary
+          if (item.is_primary) {
+            const syncField = item.method_type === 'email' ? 'primary_email' : 'primary_phone';
+            await supabase.from('contacts').update({ [syncField]: item.value, updated_at: today }).eq('id', item.contact_id);
+          }
+        } catch (e) {
+          applied.errors.push({ phase: 'new', row: item.row, error: e.message });
+        }
+      }
+    }
+
+    // ---- PRIMARY FLIPS (existing method, just toggle is_primary to match file) ----
+    const flipItems = (diff.methods?.primary_flip) || [];
+    if (flipItems.length > 0) {
+      const selected = wantAll(apply.primary_flip) ? flipItems : (() => {
+        const set = rowSet(apply.primary_flip);
+        return set ? flipItems.filter((r) => set.has(r.row)) : [];
+      })();
+      for (const item of selected) {
+        try {
+          // If flipping TO primary, first demote any existing primary of same type for this contact
+          if (item.file_primary) {
+            await supabase
+              .from('contact_methods')
+              .update({ is_primary: false, updated_at: today })
+              .eq('contact_id', item.contact_id)
+              .eq('method_type', item.method_type)
+              .eq('is_primary', true)
+              .neq('id', item.existing_method_id);
+          }
+          const { error: updErr } = await supabase
+            .from('contact_methods')
+            .update({ is_primary: !!item.file_primary, updated_at: today })
+            .eq('id', item.existing_method_id);
+          if (updErr) { applied.errors.push({ phase: 'primary_flip', row: item.row, error: updErr.message }); continue; }
+          applied.methods_primary_flipped += 1;
+        } catch (e) {
+          applied.errors.push({ phase: 'primary_flip', row: item.row, error: e.message });
+        }
+      }
+    }
+
+    // ---- INCONSISTENT (file says primary, db has different primary on file) ----
+    // apply.inconsistent expected shape: [{ row, action: 'keep_file' | 'keep_db' | 'add_both' | 'skip' }]
+    const incItems = (diff.methods?.inconsistent) || [];
+    if (incItems.length > 0) {
+      const actions = actionMap(apply.inconsistent);
+      for (const item of incItems) {
+        const action = actions ? actions.get(item.row) : (apply.inconsistent === 'keep_db' ? 'keep_db' : null);
+        if (!action || action === 'skip') continue;
+        try {
+          if (action === 'keep_db') {
+            // No-op for the DB; mark resolved
+            applied.methods_inconsistencies_resolved += 1;
+            continue;
+          }
+          if (action === 'keep_file') {
+            // Insert the file's value as the new primary, demote current primary
+            await supabase
+              .from('contact_methods')
+              .update({ is_primary: false, updated_at: today })
+              .eq('contact_id', item.contact_id)
+              .eq('method_type', item.method_type)
+              .eq('is_primary', true);
+            await supabase.from('contact_methods').insert({
+              contact_id: item.contact_id,
+              method_type: item.method_type,
+              value: item.file_value,
+              is_primary: true,
+              subtype: null,
+            });
+            const syncField = item.method_type === 'email' ? 'primary_email' : 'primary_phone';
+            await supabase.from('contacts').update({ [syncField]: item.file_value, updated_at: today }).eq('id', item.contact_id);
+            applied.methods_inconsistencies_resolved += 1;
+            applied.methods_added += 1;
+          } else if (action === 'add_both') {
+            // Keep current primary; add file's value as non-primary
+            await supabase.from('contact_methods').insert({
+              contact_id: item.contact_id,
+              method_type: item.method_type,
+              value: item.file_value,
+              is_primary: false,
+              subtype: null,
+            });
+            applied.methods_inconsistencies_resolved += 1;
+            applied.methods_added += 1;
+          }
+        } catch (e) {
+          applied.errors.push({ phase: 'inconsistent', row: item.row, error: e.message });
+        }
+      }
+    }
+
+    // ---- MAILING addresses ---------------------------------------------------
+    const mailingNew = (diff.mailing?.new) || [];
+    const mailingInc = (diff.mailing?.inconsistent) || [];
+    if (mailingNew.length > 0) {
+      const selected = wantAll(apply.mailing_new) ? mailingNew : (() => {
+        const set = rowSet(apply.mailing_new);
+        return set ? mailingNew.filter((r) => set.has(r.row)) : [];
+      })();
+      for (const item of selected) {
+        try {
+          const { error: e } = await supabase.from('contacts').update({ mailing_address: item.value, updated_at: today }).eq('id', item.contact_id);
+          if (e) { applied.errors.push({ phase: 'mailing_new', row: item.row, error: e.message }); continue; }
+          applied.mailing_addresses_updated += 1;
+        } catch (e) {
+          applied.errors.push({ phase: 'mailing_new', row: item.row, error: e.message });
+        }
+      }
+    }
+    if (mailingInc.length > 0) {
+      const actions = actionMap(apply.mailing_inconsistent);
+      for (const item of mailingInc) {
+        const action = actions ? actions.get(item.row) : null;
+        if (!action || action === 'skip' || action === 'keep_db') continue;
+        if (action === 'keep_file') {
+          try {
+            const { error: e } = await supabase.from('contacts').update({ mailing_address: item.file_value, updated_at: today }).eq('id', item.contact_id);
+            if (e) { applied.errors.push({ phase: 'mailing_inconsistent', row: item.row, error: e.message }); continue; }
+            applied.mailing_addresses_updated += 1;
+          } catch (e) {
+            applied.errors.push({ phase: 'mailing_inconsistent', row: item.row, error: e.message });
+          }
+        }
+      }
+    }
+
+    await supabase
+      .from('contact_methods_sync_log')
+      .update({
+        status: 'applied',
+        applied_at: today,
+        applied_by: (req.body && req.body.applied_by) || null,
+        applied_summary: applied,
+      })
+      .eq('id', log.id);
+
+    res.json({ ok: true, applied });
+  } catch (err) {
+    console.error('[contacts/methods/import/apply]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/contacts/methods/import/recent', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('contact_methods_sync_log')
+      .select('id, uploaded_by, uploaded_at, file_name, total_rows, status, applied_at, applied_summary, diff_summary')
+      .order('uploaded_at', { ascending: false })
+      .limit(20);
+    if (error) return res.status(500).json({ error: error.message });
+    const slim = (data || []).map((r) => ({
+      ...r,
+      // Strip the heavy detail blob from the list response
+      diff_summary: r.diff_summary ? { counts: r.diff_summary.counts } : null,
+    }));
+    res.json({ uploads: slim });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
