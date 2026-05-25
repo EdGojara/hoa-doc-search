@@ -792,6 +792,82 @@ router.put('/contacts/:id/preferences', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// HOMEOWNERS LIST — contact-centric view of current property owners across
+// the portfolio. Aggregates property_ownerships (current only) joined with
+// contacts + properties + communities, groups by contact, returns one row
+// per homeowner with their full property list.
+//
+// Query params:
+//   community_id   (optional) — limit to one community
+//   q              (optional) — case-insensitive search on name + email
+//
+// Used by the Homes & Owners "👤 Homeowners" section as the person-first
+// entry point (vs. the property-first list right above it). Click any
+// row → opens the Homeowner Profile modal.
+// ---------------------------------------------------------------------------
+router.get('/homeowners', async (req, res) => {
+  try {
+    const communityId = (req.query.community_id || '').trim();
+    const q = (req.query.q || '').trim().toLowerCase();
+
+    const { data, error } = await supabase
+      .from('property_ownerships')
+      .select(`
+        contact_id, property_id, is_primary, start_date,
+        contacts ( id, full_name, preferred_name, primary_email, primary_phone, mailing_address, preferred_language ),
+        properties ( id, street_address, unit, community_id,
+                     communities ( id, name ) )
+      `)
+      .is('end_date', null)
+      .limit(5000);
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Group by contact_id with optional community filter + search
+    const byContact = new Map();
+    (data || []).forEach((row) => {
+      if (!row.contact_id || !row.contacts) return;
+      const prop = row.properties || {};
+      if (communityId && prop.community_id !== communityId) return;
+      const name = (row.contacts.full_name || '').toLowerCase();
+      const email = (row.contacts.primary_email || '').toLowerCase();
+      if (q && !name.includes(q) && !email.includes(q)) return;
+
+      const existing = byContact.get(row.contact_id) || {
+        contact_id: row.contact_id,
+        full_name: row.contacts.full_name,
+        preferred_name: row.contacts.preferred_name,
+        primary_email: row.contacts.primary_email,
+        primary_phone: row.contacts.primary_phone,
+        mailing_address: row.contacts.mailing_address,
+        preferred_language: row.contacts.preferred_language,
+        properties: [],
+        communities: new Set(),
+      };
+      existing.properties.push({
+        property_id: prop.id,
+        street_address: prop.street_address,
+        unit: prop.unit,
+        community_id: prop.community_id,
+        community_name: prop.communities?.name || '',
+        is_primary: row.is_primary,
+        owned_since: row.start_date,
+      });
+      if (prop.communities?.name) existing.communities.add(prop.communities.name);
+      byContact.set(row.contact_id, existing);
+    });
+
+    const homeowners = Array.from(byContact.values())
+      .map((h) => ({ ...h, communities: Array.from(h.communities) }))
+      .sort((a, b) => (a.full_name || '').localeCompare(b.full_name || ''));
+
+    res.json({ homeowners, count: homeowners.length });
+  } catch (err) {
+    console.error('[contacts.homeowners]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Owner-occupancy summary per community — drives the dashboard rollup.
 // ---------------------------------------------------------------------------
 router.get('/contacts/occupancy-summary', async (req, res) => {
