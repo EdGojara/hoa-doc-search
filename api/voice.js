@@ -21,7 +21,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { CallBridge } = require('../lib/voice/bridge');
-const { streamTurn } = require('../lib/voice/reason');
+const { streamTurn, PASSTHROUGH_CONTROL_MARKER } = require('../lib/voice/reason');
 const { VOICE_TOOLS, VOICE_TOOL_HANDLERS } = require('../lib/voice/tools');
 const { buildOpener } = require('../lib/voice/persona');
 const { buildIsabellaSystemPromptParts } = require('../lib/voice/reason_isabella');
@@ -737,6 +737,38 @@ async function handleVapiLlmTurn(req, res, personaConfig) {
 
   console.log(`[${logTag} ${requestId}] resolved: community=${community?.name || 'none'}, caller=${caller?.first_name || 'none'}, utterance="${utterance.slice(0, 200)}"`);
 
+  // ---- Extract Vapi-supplied tools (transferCall etc.) and merge with local tools ----
+  // Vapi sends `tools` in the request body in OpenAI tool format:
+  //   { type: 'function', function: { name, description, parameters: <jsonschema> } }
+  // We translate to Anthropic tools format and append to our local tools so
+  // Claude can call BOTH our server-side tools (get_ar_for_property — runs in
+  // streamTurn) AND Vapi-side tools (transferCall — passes through to Vapi
+  // via SSE tool_calls). The split is enforced in streamTurn via
+  // passthroughToolNames.
+  //
+  // Why pass Vapi tools through at all: Squad transfers (Claire ↔ Isabella)
+  // happen at the Vapi layer, not ours. Vapi's built-in transferCall function
+  // is exposed to the LLM only by being included in the tools array. The
+  // function name + arg schema match what Vapi expects when it parses the
+  // tool_calls back out of our SSE response.
+  const vapiTools = Array.isArray(body.tools) ? body.tools : [];
+  const passthroughToolNames = [];
+  const translatedVapiTools = [];
+  for (const t of vapiTools) {
+    if (t?.type !== 'function' || !t.function?.name) continue;
+    const fn = t.function;
+    translatedVapiTools.push({
+      name: fn.name,
+      description: fn.description || '',
+      input_schema: fn.parameters || { type: 'object', properties: {} },
+    });
+    passthroughToolNames.push(fn.name);
+  }
+  if (translatedVapiTools.length > 0) {
+    console.log(`[${logTag} ${requestId}] forwarding ${translatedVapiTools.length} Vapi-side tool(s) to Claude: ${passthroughToolNames.join(', ')}`);
+  }
+  const mergedTools = [...VOICE_TOOLS, ...translatedVapiTools];
+
   // ---- SSE response headers ----
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -791,18 +823,48 @@ async function handleVapiLlmTurn(req, res, personaConfig) {
       // Spanish callers deserve the same warmth tier; the language is the
       // variable, not the model class.
       model: 'claude-sonnet-4-5',
-      // Tool-use support — Claire/Isabella can call get_ar_for_property when
-      // a caller asks for account balance. The tool returns language-neutral
-      // data (numbers, dates, flags); each persona's system prompt handles
-      // the language-appropriate disclosure wording. Same tool, same handlers,
-      // both languages.
-      tools: VOICE_TOOLS,
+      // Tool-use support — Claire/Isabella can call:
+      //   • get_ar_for_property (LOCAL): runs server-side, loops back to Claude
+      //     with the result. Caller hears the balance disclosure in Claire's
+      //     voice.
+      //   • transferCall (PASSTHROUGH from Vapi req.body.tools): routed to
+      //     Vapi via SSE tool_calls to execute a Squad transfer between
+      //     assistants (Claire ↔ Isabella).
+      // Tool-name-level split happens in streamTurn via passthroughToolNames.
+      tools: mergedTools,
       toolHandlers: VOICE_TOOL_HANDLERS,
+      passthroughToolNames,
       // Persona swap — Claire (default English) or Isabella (Spanish). See
       // top-of-file ISABELLA_PERSONA_PACK and lib/voice/reason.js streamTurn.
       personaPack,
     })) {
       if (aborted) break;
+      // PASSTHROUGH TOOL — Claude called a Vapi-side tool (today: transferCall).
+      // Don't yield as a sentence; emit OpenAI tool_calls SSE so Vapi parses
+      // and executes the transfer. After this chunk the turn is over (Vapi
+      // takes the wheel) — break the loop and end the response with
+      // finish_reason='tool_calls'.
+      if (sentence && typeof sentence === 'object' && sentence[PASSTHROUGH_CONTROL_MARKER]) {
+        const toolCallId = 'call_' + Math.random().toString(36).slice(2, 12);
+        const toolCallChunk = {
+          tool_calls: [{
+            index: 0,
+            id: toolCallId,
+            type: 'function',
+            function: {
+              name: sentence.toolName,
+              arguments: JSON.stringify(sentence.toolArgs || {}),
+            },
+          }],
+        };
+        if (sentenceCount === 0) toolCallChunk.role = 'assistant';
+        sseChunk(toolCallChunk);
+        sseChunk({}, 'tool_calls');
+        res.write('data: [DONE]\n\n');
+        res.end();
+        console.log(`[${logTag} ${requestId}] PASSTHROUGH tool fired: ${sentence.toolName} args=${JSON.stringify(sentence.toolArgs)} — Vapi takes over`);
+        return;
+      }
       // Prepend a space between sentences for natural concatenation. The
       // first sentence has no leading space.
       const content = sentenceCount === 0 ? sentence : ' ' + sentence;

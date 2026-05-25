@@ -157,12 +157,94 @@ If step 3 fails (Claire picks up instead of Isabella):
 
 ---
 
-## 7. What's NOT in this build (deferred)
+## 7. Squad transfer setup (mid-call language switch)
 
-- **Mid-call language switch** (Claire detects caller is speaking Spanish →
-  hands off to Isabella). Requires Vapi Squad config + transferCall tool
-  registered in Claire's assistant. Reasonable Phase 1B add-on once Path A
-  or Path B above is producing real Spanish calls.
+Phase 1B is now BUILT in code (Claire and Isabella can both call `transferCall`
+when the caller switches language mid-conversation). The remaining step is
+Vapi dashboard config so the transfer actually executes.
+
+### 7a. Create the Squad
+
+Vapi dashboard → Squads → New Squad. Add both assistants as members:
+- Member 1: Claire (English) — your existing assistant
+- Member 2: Isabella (Spanish) — created in step 3 above
+
+Name the squad something obvious like "Bedrock voice team."
+
+Point your Vapi phone number(s) at the SQUAD (not at an individual assistant).
+The first assistant the caller hears is determined by the assistant-request
+webhook (already wired — Claire by default, Isabella if
+`caller.preferred_language='es'`).
+
+### 7b. Register transferCall on each assistant
+
+On Claire's assistant:
+- Tools → Add tool → built-in `transferCall`
+- Destinations:
+  - Name: `isabella` — type: `assistant` — assistantId: `<Isabella's ID>`
+- Save
+
+On Isabella's assistant:
+- Tools → Add tool → built-in `transferCall`
+- Destinations:
+  - Name: `claire` — type: `assistant` — assistantId: `<Claire's ID>`
+- Save
+
+The destination NAME (`'isabella'` / `'claire'`) is what Claude refers to in
+the tool arguments — both prompts are wired to use those exact strings. Don't
+rename them in the dashboard without also updating the prompts.
+
+### 7c. How the transfer fires at runtime
+
+The flow Claude executes (English caller hands phone to Spanish-only mom,
+calling Claire):
+
+1. Mom speaks Spanish: *"Hola, soy la mamá de Juan, llamo por la queja..."*
+2. Claire's STT garbles it (English-tuned), but pattern shift is obvious
+3. After 2 Spanish turns, Claire's HARD RULE #7 triggers — she offers
+   bilingual choice (Spanish/English) for transfer-OR-message
+4. Mom (or daughter) says *"sí conecte con español"*
+5. Claire announces: *"Perfect, connecting you to Isabella now. One moment."*
+6. Claire's LLM emits `tool_calls` with `function.name = 'transferCall'` and
+   `arguments = {"destination":"isabella"}`
+7. Our SSE handler forwards that to Vapi via the OpenAI tool_calls format
+8. Vapi parses, looks up `destination='isabella'` in Claire's transferCall
+   config, swaps the assistant
+9. Isabella picks up with conversation history intact
+10. Isabella's own opener-exception handles incoming transfers — gives a brief
+    "Hola, soy Isabella — Claire me conectó. ¿En qué le ayudo?" and continues
+
+Reverse direction (Isabella → Claire) works the same way with destinations
+flipped.
+
+### 7d. Test the transfer
+
+Easiest test path:
+1. Set a contact's `preferred_language='es'` so Isabella picks up
+2. Call from that phone
+3. Isabella greets in Spanish
+4. You respond in English (mimicking the bilingual-relative scenario)
+5. After ~2 English turns, Isabella offers the transfer
+6. Say "yes connect me to Claire"
+7. Confirm Claire picks up with a brief acknowledgment and the conversation
+   continues in English
+
+If step 7 fails (Vapi error or call drops):
+- Check Render logs for `PASSTHROUGH tool fired: transferCall args={"destination":"claire"}`
+  — confirms our side emitted the tool call correctly
+- If you see that log but the transfer didn't execute → Vapi dashboard config
+  issue. Most common: destination name mismatch (we sent `'claire'`, dashboard
+  has `'Claire'` — case sensitive)
+- If you DON'T see that log → Claude didn't decide to call transferCall.
+  Check the system prompt rendering (the HARD RULE #7 didn't fire). Possible
+  causes: caller only used English for 1 turn (need 2+), or Vapi didn't send
+  the transferCall tool in the request body (check `forwarding N Vapi-side
+  tool(s)` log line at the top of the LLM webhook request)
+
+---
+
+## 8. What's NOT in this build (deferred)
+
 - **Admin UI to set `preferred_language`** per contact. Today: Supabase
   direct edit. Small UI task — add to Contact edit screen alongside other
   fields.
