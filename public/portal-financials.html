@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Financials · Bedrock Homeowner Portal</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  /* =============================================================================
+     Homeowner Portal — Financials
+     ----------------------------------------------------------------------------
+     Focused view of the financial documents subset (annual budget,
+     audited annual financials, monthly unaudited statements, reserve report).
+     Reuses /api/portal/documents endpoint and filters to the 'financial'
+     group on the client. Same visual language as portal-documents.html.
+     ============================================================================= */
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --gold-faint: rgba(212, 175, 55, 0.08);
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+    --radius: 10px;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream-soft);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 15px; line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+  }
+  header.top {
+    background: white; border-bottom: 1px solid var(--rule);
+    padding: 14px 22px;
+    display: flex; align-items: center; justify-content: space-between;
+    position: sticky; top: 0; z-index: 50;
+  }
+  .brand { display: flex; align-items: center; gap: 12px; text-decoration: none; color: inherit; }
+  .brand svg { width: 26px; height: 33px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 16px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .back-link {
+    font-size: 13px; color: var(--navy); text-decoration: none;
+    padding: 8px 14px; border: 1px solid var(--rule); border-radius: 6px;
+    transition: all 0.15s ease;
+  }
+  .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .demo-ribbon {
+    background: var(--gold); color: var(--navy);
+    padding: 4px 10px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-left: 10px;
+  }
+
+  main { max-width: 880px; margin: 0 auto; padding: 28px 22px 80px; }
+
+  .hero {
+    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    color: var(--cream);
+    border-radius: var(--radius);
+    padding: 30px 32px;
+    margin-bottom: 26px;
+    position: relative; overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .hero::after {
+    content: ''; position: absolute; top: -40px; right: -50px;
+    width: 240px; height: 240px;
+    background: radial-gradient(circle, rgba(212,175,55,0.18) 0%, transparent 70%);
+    pointer-events: none;
+  }
+  .hero .eyebrow {
+    font-size: 12px; color: rgba(255,255,255,0.7);
+    letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 8px;
+  }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 28px; font-weight: 500;
+    margin: 0 0 8px; letter-spacing: -0.01em; line-height: 1.1;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; }
+  .hero p { margin: 0; color: rgba(255,255,255,0.85); font-size: 14px; line-height: 1.55; }
+
+  /* Sub-section headers (per financial doc type) */
+  .subsection {
+    background: white; border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    margin-bottom: 16px;
+    overflow: hidden;
+    box-shadow: var(--shadow-soft);
+  }
+  .subsection-header {
+    display: flex; align-items: center; gap: 12px;
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .subsection-header .icon {
+    width: 38px; height: 38px; border-radius: 9px;
+    background: var(--gold-faint); color: var(--gold);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 20px; flex-shrink: 0;
+  }
+  .subsection-header h2 {
+    font-family: var(--font-serif); font-size: 19px; font-weight: 500;
+    margin: 0; color: var(--navy); letter-spacing: -0.005em;
+  }
+  .subsection-header .count {
+    margin-left: auto; font-size: 12px; color: var(--ink-faint);
+    font-family: var(--font-mono);
+  }
+  .doc-list { list-style: none; margin: 0; padding: 0; }
+  .doc-list li {
+    display: flex; align-items: center; gap: 14px;
+    padding: 14px 24px;
+    border-bottom: 1px solid var(--rule);
+    transition: background 0.1s ease;
+  }
+  .doc-list li:last-child { border-bottom: none; }
+  .doc-list li:hover { background: var(--cream-soft); }
+  .doc-list .doc-icon {
+    width: 32px; height: 32px; border-radius: 6px;
+    background: var(--cream-soft); color: var(--navy);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 14px; flex-shrink: 0;
+  }
+  .doc-list .doc-meta { flex: 1; min-width: 0; }
+  .doc-list .doc-title {
+    font-size: 14px; color: var(--ink); font-weight: 500;
+    margin-bottom: 2px;
+  }
+  .doc-list .doc-sub {
+    font-size: 12.5px; color: var(--ink-faint);
+  }
+  .doc-list .doc-sub .dot { margin: 0 6px; opacity: 0.4; }
+  .doc-list .download-btn {
+    background: white; border: 1px solid var(--rule);
+    color: var(--navy); padding: 7px 14px;
+    font-family: var(--font-sans); font-size: 12.5px; font-weight: 500;
+    border-radius: 6px; cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 6px;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+  }
+  .doc-list .download-btn:hover { border-color: var(--gold); color: var(--gold); }
+  .doc-list .download-btn.disabled {
+    color: var(--ink-faint); border-color: var(--rule);
+    cursor: not-allowed; pointer-events: none;
+  }
+
+  .empty-state {
+    background: white; border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 60px 30px;
+    text-align: center;
+    box-shadow: var(--shadow-soft);
+  }
+  .empty-state .icon { font-size: 36px; margin-bottom: 14px; }
+  .empty-state h2 {
+    font-family: var(--font-serif); font-size: 22px;
+    color: var(--navy); margin: 0 0 8px;
+  }
+  .empty-state p { color: var(--ink-soft); margin: 6px 0; }
+  .empty-state a { color: var(--navy); text-decoration: none; }
+
+  .info-footer {
+    background: var(--gold-faint);
+    border: 1px solid rgba(212, 175, 55, 0.2);
+    border-radius: 8px;
+    padding: 14px 18px;
+    margin-top: 30px;
+    font-size: 13px;
+    color: var(--ink-soft);
+    line-height: 1.55;
+  }
+  .info-footer strong { color: var(--navy); }
+  .info-footer a { color: var(--navy); text-decoration: none; }
+
+  .full-loader {
+    min-height: 60vh; display: flex; align-items: center; justify-content: center;
+    flex-direction: column; gap: 14px; color: var(--ink-faint);
+  }
+  .spinner {
+    width: 22px; height: 22px;
+    border: 2px solid var(--rule); border-top-color: var(--gold);
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  footer {
+    margin-top: 36px; text-align: center;
+    font-size: 11.5px; color: var(--ink-faint);
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft);
+  }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div class="full-loader"><div class="spinner"></div> Loading your community's financials…</div>
+</div>
+
+<template id="pageTemplate">
+<header class="top">
+  <a class="brand" href="/portal" id="brandLink">
+    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg">
+      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+    </svg>
+    <div><div class="wm">Bedrock <em>Association Management</em></div></div>
+  </a>
+  <a class="back-link" href="/portal" id="backLink">← Portal</a>
+</header>
+
+<main>
+  <div class="hero">
+    <div class="eyebrow" id="heroEyebrow">Community financials</div>
+    <h1>Community <em>Financials</em></h1>
+    <p>Your community's budget, audited annual financials, monthly statements, and reserve reports. Updated as soon as each is finalized.</p>
+  </div>
+
+  <div id="sectionsContainer"></div>
+
+  <div class="info-footer">
+    <strong>Don't see this month's statement yet?</strong> Monthly financials are typically posted by the 15th of the following month once the books are closed. If you have a question about a specific line item or need an older statement, email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or call (832) 588-2485.
+  </div>
+</main>
+
+<footer>
+  <div class="tag">Community. Simplified.</div>
+  <div style="margin-top:6px;">Bedrock Association Management · (832) 588-2485</div>
+</footer>
+</template>
+
+<script>
+'use strict';
+
+// =============================================================================
+// Financials = filtered view of /api/portal/documents
+// -----------------------------------------------------------------------------
+// We deliberately reuse the existing /api/portal/documents endpoint rather
+// than spinning up a new one — the document schema + signed-url generation +
+// homeowner scoping all already live there. The "financial" group in the
+// response covers the 3 financial categories (annual_budget,
+// annual_financial_statements, current_unaudited_financials).
+//
+// If we ever decide to break reserves out from documents into their own
+// surface, we'd add the reserve_report + reserve_study categories to this
+// page's display too — they're financial-adjacent and the homeowner-mental-
+// model treats them as financial info.
+// =============================================================================
+let isDemo = false;
+let demoCommunitySlug = '';
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) {
+  return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function fmtDate(iso) {
+  if (!iso) return '';
+  const d = new Date(iso + (iso.length === 10 ? 'T00:00:00' : ''));
+  return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function getQueryParams() {
+  const u = new URL(window.location.href);
+  return { demo: u.searchParams.get('demo') === '1', community: u.searchParams.get('community') || '' };
+}
+
+// Subsection definitions — order is the display order on the page.
+// Group keys map to library_documents.category values. Multiple categories
+// can roll up to one subsection if they're semantically equivalent
+// (currently 1:1 but the shape leaves room).
+const SUBSECTIONS = [
+  {
+    key: 'current_unaudited_financials',
+    label: 'Monthly Statements',
+    icon: '📊',
+    description: 'Unaudited monthly financials — balance sheet, income statement, reserve activity.',
+    categories: ['current_unaudited_financials'],
+  },
+  {
+    key: 'annual_financial_statements',
+    label: 'Annual Financials',
+    icon: '📑',
+    description: 'Reviewed or audited year-end financial statements.',
+    categories: ['annual_financial_statements'],
+  },
+  {
+    key: 'annual_budget',
+    label: 'Annual Budget',
+    icon: '💵',
+    description: 'The board-approved budget for the current fiscal year.',
+    categories: ['annual_budget'],
+  },
+  {
+    key: 'reserve_report',
+    label: 'Reserve Reports',
+    icon: '🏦',
+    description: 'Current reserve balance and funding-progress reports.',
+    categories: ['reserve_report'],
+  },
+];
+
+(async function init() {
+  const q = getQueryParams();
+  isDemo = q.demo;
+  demoCommunitySlug = q.community;
+
+  if (isDemo) return renderPage(buildDemoData(demoCommunitySlug || 'waterview'));
+
+  try {
+    // Reuse the documents endpoint — it already groups by section. We pull
+    // financial + reserves group items here.
+    const r = await fetch('/api/portal/documents', { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    renderPage(data);
+  } catch (err) {
+    $('app').innerHTML = `<div class="full-loader">Couldn't load: ${escapeHtml(err.message)}</div>`;
+  }
+})();
+
+function buildDemoData(slug) {
+  const names = {
+    'waterview':            'Waterview Estates',
+    'canyon-gate':          'Canyon Gate at Cinco Ranch',
+    'august-meadows':       'August Meadows',
+    'still-creek-ranch':    'Still Creek Ranch',
+    'lakes-of-pine-forest': 'Lakes of Pine Forest',
+    'quail-ridge':          'Quail Ridge',
+  };
+  const name = names[slug] || 'Your Community';
+  // Match the /api/portal/documents response shape: groups by section.
+  // Only populate the financial + reserves groups here.
+  const monthly = (label, eff) => ({
+    id: Math.random().toString(36).slice(2, 8),
+    category: 'current_unaudited_financials',
+    category_label: 'Current Unaudited Financials',
+    title: `${name} — ${label}`,
+    period_label: label,
+    effective_date: eff,
+    download_url: '#',
+  });
+  return {
+    community: { id: 'demo', name, slug },
+    groups: {
+      financial: {
+        label: 'Financials', icon: '💵',
+        items: [
+          monthly('April 2026', '2026-04-30'),
+          monthly('March 2026', '2026-03-31'),
+          monthly('February 2026', '2026-02-28'),
+          { id: 'demo-budget-26', category: 'annual_budget', category_label: 'Annual Budget',
+            title: `${name} — 2026 Annual Budget`, period_label: 'FY 2026',
+            effective_date: '2025-12-15', download_url: '#' },
+          { id: 'demo-audit-25', category: 'annual_financial_statements', category_label: 'Annual Financial Statements',
+            title: `${name} — 2025 Audited Financials`, period_label: 'FY 2025',
+            effective_date: '2026-03-30', download_url: '#' },
+        ],
+      },
+      reserves: {
+        label: 'Reserves', icon: '🏦',
+        items: [
+          { id: 'demo-res-26q1', category: 'reserve_report', category_label: 'Reserve Report',
+            title: `${name} — Q1 2026 Reserve Report`, period_label: 'Q1 2026',
+            effective_date: '2026-04-15', download_url: '#' },
+        ],
+      },
+    },
+  };
+}
+
+function renderPage(data) {
+  const tpl = $('pageTemplate');
+  $('app').innerHTML = '';
+  $('app').appendChild(tpl.content.cloneNode(true));
+
+  if (isDemo) {
+    const head = document.querySelector('.brand .wm');
+    if (head) head.insertAdjacentHTML('beforeend', '<span class="demo-ribbon">Demo</span>');
+    // Preserve demo + community params on the back link
+    const back = $('backLink');
+    if (back && demoCommunitySlug) {
+      back.href = `/portal?demo=1&community=${encodeURIComponent(demoCommunitySlug)}`;
+    }
+  }
+
+  const eyebrow = $('heroEyebrow');
+  if (eyebrow && data.community?.name) {
+    eyebrow.textContent = data.community.name;
+  }
+
+  // Combine relevant items from the financial + reserves groups into one
+  // flat list, then bucket by SUBSECTIONS. Documents page returns ALL items
+  // in groups; we just take the subset we display here.
+  const groups = data.groups || {};
+  const allItems = [
+    ...((groups.financial && groups.financial.items) || []),
+    ...((groups.reserves && groups.reserves.items) || []),
+  ];
+
+  const sectionsEl = $('sectionsContainer');
+  let renderedAny = false;
+
+  for (const sub of SUBSECTIONS) {
+    const items = allItems.filter((it) => sub.categories.includes(it.category));
+    if (!items.length) continue;
+    renderedAny = true;
+    const block = document.createElement('div');
+    block.className = 'subsection';
+    block.innerHTML = `
+      <div class="subsection-header">
+        <div class="icon">${sub.icon}</div>
+        <h2>${escapeHtml(sub.label)}</h2>
+        <div class="count">${items.length} document${items.length === 1 ? '' : 's'}</div>
+      </div>
+      <ul class="doc-list">
+        ${items.map((it) => `
+          <li>
+            <div class="doc-icon">📄</div>
+            <div class="doc-meta">
+              <div class="doc-title">${escapeHtml(it.title || it.category_label || sub.label)}</div>
+              <div class="doc-sub">
+                ${escapeHtml(it.category_label || sub.label)}${it.period_label ? `<span class="dot">·</span>${escapeHtml(it.period_label)}` : ''}${it.effective_date ? `<span class="dot">·</span>${escapeHtml(fmtDate(it.effective_date))}` : ''}
+              </div>
+            </div>
+            ${it.download_url
+              ? `<a class="download-btn" href="${escapeHtml(it.download_url)}" target="_blank" rel="noopener">Download</a>`
+              : `<span class="download-btn disabled">No file</span>`}
+          </li>
+        `).join('')}
+      </ul>
+    `;
+    sectionsEl.appendChild(block);
+  }
+
+  if (!renderedAny) {
+    sectionsEl.innerHTML = `
+      <div class="empty-state">
+        <div class="icon">💵</div>
+        <h2>Your financials will appear here</h2>
+        <p>Monthly financial statements, the annual budget, audited annual financials, and reserve reports — once each is finalized by your community's board and posted by Bedrock.</p>
+        <p style="margin-top:18px;">Questions about a specific report? Email <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or call (832) 588-2485.</p>
+      </div>
+    `;
+  }
+}
+</script>
+</body>
+</html>

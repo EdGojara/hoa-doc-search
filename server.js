@@ -801,6 +801,7 @@ app.get('/portal/property',  (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/balance',   (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-balance.html')));
 app.get('/portal/compliance',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-compliance.html')));
 app.get('/portal/documents', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-documents.html')));
+app.get('/portal/financials',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-financials.html')));
 app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-meetings.html')));
 app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));

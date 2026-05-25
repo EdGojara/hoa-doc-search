@@ -777,11 +777,20 @@ const MODULES = [
   {
     key: 'documents',
     title: 'Governing Documents',
-    description: 'CC&Rs, Bylaws, Architectural Guidelines, financial statements.',
+    description: 'CC&Rs, Bylaws, Architectural Guidelines, board resolutions.',
     icon: '📄',
     section: 'community',
     cta: 'Browse documents',
     buildLink: (ctx) => `/portal/documents`,
+  },
+  {
+    key: 'financials',
+    title: 'Financials',
+    description: 'Annual budget, audited financial statements, monthly statements, reserve reports.',
+    icon: '💵',
+    section: 'community',
+    cta: 'View financials',
+    buildLink: (ctx) => `/portal/financials`,
   },
   {
     key: 'meetings',
@@ -933,6 +942,7 @@ function defaultDemoModuleConfig(slug) {
     key_fob:          { status: 'live' },
     clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow
     documents:        { status: 'live' },  // demo mode: renders mock governing docs library
+    financials:       { status: 'live' },  // demo mode: renders the same docs payload filtered to financial group
     meetings:         { status: 'live' },  // demo mode: 2 upcoming + 5 past meeting minutes
     map:              { status: 'live' },  // demo mode: map renders mock amenities
     contacts:         { status: 'live' },  // demo mode: loads from community_contacts table (seeded for Waterview)
