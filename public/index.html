@@ -1770,7 +1770,7 @@
         <select id="homesPersonListCommunity" onchange="homesLoadHomeowners()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px;">
           <option value="">All communities</option>
         </select>
-        <input type="search" id="homesPersonListSearch" placeholder="Name or email…" oninput="homesRenderHomeowners()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px; width:240px;">
+        <input type="search" id="homesPersonListSearch" placeholder="Name, email, phone, or address…" oninput="homesRenderHomeowners()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px; width:260px;">
         <span id="homesPersonListCount" style="font-size:11.5px; color:#94A3B8;"></span>
       </div>
     </div>
@@ -4146,8 +4146,13 @@
       html += _hpRenderEditPanel();
     }
 
+    // Contact methods — N emails + phones per contact, each with per-topic
+    // notification subscriptions. Per migration 114 / Ed's 2026-05-25 ask.
+    html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">📬 Contact methods <span style="font-weight:400; color:#94A3B8; font-size:11px;">(each email/phone has its own notification subscriptions)</span></h4>`;
+    html += _hpRenderContactMethods(d.contact_methods || []);
+
     // Properties owned
-    html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">🏠 Properties owned (${(d.properties || []).length})</h4>`;
+    html += `<h4 style="margin:18px 0 8px 0; font-size:13px; color:#1E2761;">🏠 Properties owned (${(d.properties || []).length})</h4>`;
     if ((d.properties || []).length === 0) {
       html += '<div style="color:#94A3B8; font-style:italic; margin-bottom:18px;">No properties currently owned on file.</div>';
     } else {
@@ -4207,6 +4212,36 @@
             </div>
           </div>`;
       });
+      html += '</div>';
+    }
+
+    // Violations (DRV history) — across all properties currently owned
+    const violations = d.violations || [];
+    if (violations.length > 0) {
+      const open = violations.filter((v) => !['cured','closed','voided'].includes(v.current_stage));
+      const closed = violations.filter((v) => ['cured','closed','voided'].includes(v.current_stage));
+      html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">🚧 Compliance / DRV history <span style="font-weight:400; color:#94A3B8; font-size:11px;">(${open.length} open · ${closed.length} closed)</span></h4>`;
+      html += '<div style="margin-bottom:18px;">';
+      violations.slice(0, 15).forEach((v) => {
+        html += _hpRenderViolationRow(v);
+      });
+      if (violations.length > 15) {
+        html += `<div style="font-size:11px; color:#94A3B8; padding:4px 0; font-style:italic;">…and ${violations.length - 15} older.</div>`;
+      }
+      html += '</div>';
+    }
+
+    // ARC submissions
+    const arc = d.arc_applications || [];
+    if (arc.length > 0) {
+      html += `<h4 style="margin:0 0 8px 0; font-size:13px; color:#1E2761;">🎨 ARC submissions (${arc.length})</h4>`;
+      html += '<div style="margin-bottom:18px;">';
+      arc.slice(0, 15).forEach((a) => {
+        html += _hpRenderArcRow(a);
+      });
+      if (arc.length > 15) {
+        html += `<div style="font-size:11px; color:#94A3B8; padding:4px 0; font-style:italic;">…and ${arc.length - 15} older.</div>`;
+      }
       html += '</div>';
     }
 
@@ -4287,6 +4322,225 @@
     }
 
     document.getElementById('homesContactProfileBody').innerHTML = html;
+  }
+
+  // Render the contact_methods grid — each method is a card with its value,
+  // primary badge, subtype, and a 7-topic notification toggle row.
+  function _hpRenderContactMethods(methods) {
+    const NOTIFY_TOPICS = [
+      { key: 'notify_general',         label: 'General',  title: 'Mailers, broadcasts, community announcements' },
+      { key: 'notify_events',          label: 'Events',   title: 'Community events, parties, meetings' },
+      { key: 'notify_billing',         label: 'Billing',  title: 'Statements, invoices, late notices' },
+      { key: 'notify_violations',      label: 'DRV',      title: 'Compliance notices, violations correspondence' },
+      { key: 'notify_arc_decisions',   label: 'ARC',      title: 'ARC approvals, denials, conditional decisions' },
+      { key: 'notify_emergency',       label: 'Emergency',title: 'Water shutoffs, gate failures, urgent safety' },
+      { key: 'notify_payment_confirm', label: 'Pay-rcpt', title: 'Auto-receipts for successful payments' },
+    ];
+    let html = '<div style="margin-bottom:18px;">';
+    if (methods.length === 0) {
+      html += '<div style="color:#94A3B8; font-style:italic; margin-bottom:8px;">No contact methods on file. Add one below.</div>';
+    }
+    methods.forEach((m) => {
+      const typeIcon = m.method_type === 'email' ? '✉' : '📞';
+      const primaryBadge = m.is_primary
+        ? '<span style="background:#dcfce7; color:#15803d; padding:1px 7px; border-radius:9px; font-size:10px; font-weight:700; margin-left:6px;">PRIMARY</span>'
+        : '';
+      const subtypeBadge = m.subtype
+        ? `<span style="background:#f1f5f9; color:#475569; padding:1px 7px; border-radius:9px; font-size:10px; font-weight:600; margin-left:6px;">${escapeHtml(m.subtype)}</span>`
+        : '';
+      const labelText = m.label ? ` <span style="color:#94A3B8; font-size:11px;">(${escapeHtml(m.label)})</span>` : '';
+      html += `
+        <div style="border:1px solid ${m.is_primary ? '#bbf7d0' : '#e2e8f0'}; background:${m.is_primary ? '#f0fdf4' : '#fff'}; border-radius:8px; padding:10px 12px; margin-bottom:6px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap;">
+            <div style="font-size:13px; color:#1E2761;">
+              <span style="font-size:14px;">${typeIcon}</span>
+              <strong>${escapeHtml(m.value)}</strong>${labelText}${subtypeBadge}${primaryBadge}
+            </div>
+            <div style="display:flex; gap:4px; align-items:center;">
+              ${!m.is_primary ? `<button onclick="homesMakeMethodPrimary('${m.id}')" title="Set as primary" style="background:transparent; border:1px solid #cbd5e1; border-radius:4px; padding:2px 7px; font-size:10.5px; color:#475569; cursor:pointer;">★ Primary</button>` : ''}
+              <button onclick="homesDeleteMethod('${m.id}')" title="Remove this method" style="background:transparent; border:0; cursor:pointer; color:#94A3B8; font-size:13px;">🗑</button>
+            </div>
+          </div>
+          <div style="display:flex; gap:6px; flex-wrap:wrap; margin-top:8px; font-size:11px; color:#475569;">
+            ${NOTIFY_TOPICS.map((t) => `
+              <label title="${t.title}" style="display:inline-flex; align-items:center; gap:3px; padding:2px 6px; background:${m[t.key] ? '#eef2ff' : '#f8fafc'}; border:1px solid ${m[t.key] ? '#c7d2fe' : '#e2e8f0'}; border-radius:5px; cursor:pointer; user-select:none;">
+                <input type="checkbox" ${m[t.key] ? 'checked' : ''} onchange="homesToggleMethodNotify('${m.id}', '${t.key}', this.checked)" style="margin:0;" />
+                <span style="color:${m[t.key] ? '#3730a3' : '#94A3B8'}; font-weight:${m[t.key] ? '600' : '400'};">${t.label}</span>
+              </label>`).join('')}
+          </div>
+        </div>`;
+    });
+    // Add-method inline form (collapsed)
+    html += `
+      <details style="margin-top:6px;">
+        <summary style="cursor:pointer; font-size:12px; color:#1E2761; font-weight:600; padding:4px 0;">➕ Add email or phone</summary>
+        <div style="padding:8px 0 0 0;">${_hpRenderAddMethodForm()}</div>
+      </details>`;
+    html += '</div>';
+    return html;
+  }
+
+  function _hpRenderAddMethodForm() {
+    return `
+      <div style="border:1px dashed #cbd5e1; border-radius:8px; padding:8px 10px; background:#f8fafc;">
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <select id="hpNewMethodType" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px;">
+            <option value="email">✉ Email</option>
+            <option value="phone">📞 Phone</option>
+          </select>
+          <input id="hpNewMethodValue" placeholder="email@domain.com or (832) 555-1234" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px; min-width:220px;" />
+          <input id="hpNewMethodLabel" placeholder="Label (optional, e.g. 'Husband's work email')" style="font-size:11.5px; padding:4px 6px; border:1px solid #d0d7de; border-radius:6px; flex:1; min-width:180px;" />
+          <label style="font-size:11.5px; color:#475569; user-select:none;">
+            <input type="checkbox" id="hpNewMethodPrimary" /> Set as primary
+          </label>
+          <button onclick="homesSubmitMethod()" class="action-btn" style="font-size:11.5px; padding:5px 12px;">➕ Add</button>
+        </div>
+        <div id="hpNewMethodStatus" style="font-size:11px; margin-top:4px;"></div>
+        <div style="font-size:10.5px; color:#94A3B8; margin-top:4px;">New methods default to subscribed to all notification topics. Untick what they don't want.</div>
+      </div>`;
+  }
+
+  function _hpRenderViolationRow(v) {
+    const stage = v.current_stage || '';
+    const isOpen = !['cured','closed','voided'].includes(stage);
+    const stageColors = {
+      courtesy_1: '#fef3c7', courtesy_2: '#fde68a', certified_209: '#fed7aa',
+      fine_assessed: '#fecaca', cured: '#dcfce7', closed: '#e2e8f0', voided: '#e2e8f0',
+    };
+    const stageTextColors = {
+      courtesy_1: '#92400e', courtesy_2: '#92400e', certified_209: '#9a3412',
+      fine_assessed: '#991b1b', cured: '#15803d', closed: '#475569', voided: '#475569',
+    };
+    const stageBg = stageColors[stage] || '#f1f5f9';
+    const stageColor = stageTextColors[stage] || '#475569';
+    const cureWarn = isOpen && v.cure_period_ends_at
+      ? `<span style="color:#b91c1c; font-size:10.5px; margin-left:6px;">⏰ cure by ${new Date(v.cure_period_ends_at).toLocaleDateString()}</span>`
+      : '';
+    return `
+      <div style="border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; margin-bottom:5px; font-size:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <strong style="color:#1E2761;">${escapeHtml(v.enforcement_categories?.label || 'Violation')}</strong>
+            <span style="background:${stageBg}; color:${stageColor}; padding:1px 7px; border-radius:9px; font-size:10px; font-weight:700; margin-left:6px;">${escapeHtml(stage)}</span>
+            ${cureWarn}
+          </div>
+          <div style="font-size:10.5px; color:#94A3B8; white-space:nowrap;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : ''}</div>
+        </div>
+        <div style="font-size:11px; color:#6B7280; margin-top:2px;">
+          ${escapeHtml(v.properties?.street_address || '')}${v.properties?.unit ? ' #' + escapeHtml(v.properties.unit) : ''}
+          ${v.resolved_at ? ` · resolved ${new Date(v.resolved_at).toLocaleDateString()}${v.resolved_via ? ' (' + escapeHtml(v.resolved_via) + ')' : ''}` : ''}
+        </div>
+      </div>`;
+  }
+
+  function _hpRenderArcRow(a) {
+    const status = a.final_status || 'pending';
+    const statusColors = {
+      approved: '#dcfce7', denied: '#fecaca', conditional: '#fef3c7',
+      pending: '#e0f2fe', pending_review: '#e0f2fe', pending_committee_review: '#e0f2fe',
+      withdrawn: '#e2e8f0',
+    };
+    const statusTextColors = {
+      approved: '#15803d', denied: '#991b1b', conditional: '#92400e',
+      pending: '#075985', pending_review: '#075985', pending_committee_review: '#075985',
+      withdrawn: '#475569',
+    };
+    const bg = statusColors[status] || '#f1f5f9';
+    const color = statusTextColors[status] || '#475569';
+    return `
+      <div style="border:1px solid #e2e8f0; border-radius:8px; padding:8px 12px; margin-bottom:5px; font-size:12px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <strong style="color:#1E2761;">${escapeHtml(a.subject || a.application_type || 'ARC Request')}</strong>
+            <span style="background:${bg}; color:${color}; padding:1px 7px; border-radius:9px; font-size:10px; font-weight:700; margin-left:6px;">${escapeHtml(status)}</span>
+          </div>
+          <div style="font-size:10.5px; color:#94A3B8; white-space:nowrap;">${a.created_at ? new Date(a.created_at).toLocaleDateString() : ''}</div>
+        </div>
+        <div style="font-size:11px; color:#6B7280; margin-top:2px;">
+          ${escapeHtml(a.communities?.name || '')} · ${escapeHtml(a.application_type || '')} · ${escapeHtml(a.submitter_email || '')}
+        </div>
+      </div>`;
+  }
+
+  // ===== Contact methods — add / edit / delete handlers =====================
+  async function homesSubmitMethod() {
+    const contactId = homesContactProfileState.contactId;
+    if (!contactId) return;
+    const method_type = document.getElementById('hpNewMethodType').value;
+    const value = document.getElementById('hpNewMethodValue').value.trim();
+    const label = document.getElementById('hpNewMethodLabel').value.trim() || null;
+    const is_primary = document.getElementById('hpNewMethodPrimary').checked;
+    const status = document.getElementById('hpNewMethodStatus');
+    if (!value) { status.innerHTML = '<span style="color:#b91c1c;">Value required.</span>'; return; }
+    status.textContent = '⏳ Adding…';
+    try {
+      const r = await fetch(`/api/contacts/${contactId}/methods`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ method_type, value, label, is_primary }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function homesToggleMethodNotify(methodId, topicKey, checked) {
+    const contactId = homesContactProfileState.contactId;
+    try {
+      const r = await fetch(`/api/contact-methods/${methodId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ [topicKey]: !!checked }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(`Toggle failed: ${j.error || r.status}`);
+        homesOpenContactProfile(contactId); // refresh to revert UI
+        return;
+      }
+      // No reload — UI already reflects the new state; cheap operation
+    } catch (e) {
+      alert(e.message);
+      homesOpenContactProfile(contactId);
+    }
+  }
+
+  async function homesMakeMethodPrimary(methodId) {
+    const contactId = homesContactProfileState.contactId;
+    try {
+      const r = await fetch(`/api/contact-methods/${methodId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_primary: true }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(`Set primary failed: ${j.error || r.status}`);
+        return;
+      }
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      alert(e.message);
+    }
+  }
+
+  async function homesDeleteMethod(methodId) {
+    if (!confirm('Remove this email/phone? (Notifications routed to it will stop. Hard delete.)')) return;
+    const contactId = homesContactProfileState.contactId;
+    try {
+      const r = await fetch(`/api/contact-methods/${methodId}`, { method: 'DELETE' });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert(`Delete failed: ${j.error || r.status}`);
+        return;
+      }
+      homesOpenContactProfile(contactId);
+    } catch (e) {
+      alert(e.message);
+    }
   }
 
   function _hpRenderAddNoteForm() {
@@ -4682,9 +4936,12 @@
     const countEl = document.getElementById('homesPersonListCount');
     const q = (document.getElementById('homesPersonListSearch').value || '').toLowerCase().trim();
     const filtered = !q ? homesHomeownersCache : homesHomeownersCache.filter((h) => {
-      return (h.full_name || '').toLowerCase().includes(q)
-          || (h.primary_email || '').toLowerCase().includes(q)
-          || (h.primary_phone || '').toLowerCase().includes(q);
+      // Search by name, email, phone, OR any of their property addresses
+      if ((h.full_name || '').toLowerCase().includes(q)) return true;
+      if ((h.primary_email || '').toLowerCase().includes(q)) return true;
+      if ((h.primary_phone || '').toLowerCase().includes(q)) return true;
+      if ((h.properties || []).some((p) => (p.street_address || '').toLowerCase().includes(q))) return true;
+      return false;
     });
     countEl.textContent = `${filtered.length} of ${homesHomeownersCache.length}`;
     if (filtered.length === 0) {

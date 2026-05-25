@@ -928,12 +928,18 @@ router.get('/contacts/:id/profile', async (req, res) => {
     if (cErr) return res.status(500).json({ error: cErr.message });
     if (!contact) return res.status(404).json({ error: 'not_found' });
 
-    // 2-9. Parallel fan-out for everything else.
+    // 2-N. Parallel fan-out for everything else.
     const [
-      prefRes, ownRes, resRes, tagRes, noteRes,
+      prefRes, methodsRes, ownRes, resRes, tagRes, noteRes,
       portalRes, intRes, callRes
     ] = await Promise.all([
       supabase.from('contact_preferences').select('*').eq('contact_id', id).maybeSingle(),
+      supabase.from('contact_methods')
+        .select('*')
+        .eq('contact_id', id)
+        .order('method_type')
+        .order('is_primary', { ascending: false })
+        .order('created_at'),
       supabase.from('property_ownerships')
         .select('id, property_id, start_date, end_date, vesting, is_primary, source, properties(id, street_address, unit, city, state, zip, community_id, communities(id, name))')
         .eq('contact_id', id)
@@ -973,7 +979,7 @@ router.get('/contacts/:id/profile', async (req, res) => {
     // Surface non-fatal errors as warnings but don't abort — profile still
     // renders with whatever loaded.
     const warnings = [];
-    [['preferences', prefRes], ['ownerships', ownRes], ['residencies', resRes],
+    [['preferences', prefRes], ['contact_methods', methodsRes], ['ownerships', ownRes], ['residencies', resRes],
      ['tags', tagRes], ['notes', noteRes], ['portal_logins', portalRes],
      ['interactions', intRes], ['calls', callRes]
     ].forEach(([k, r]) => { if (r.error) warnings.push({ section: k, error: r.error.message }); });
@@ -1012,9 +1018,49 @@ router.get('/contacts/:id/profile', async (req, res) => {
 
     const ownershipHistory = allOwnerships.filter((o) => o.end_date);
 
+    // Violations across all properties currently owned. Returns recent +
+    // open; lets the profile surface "Drona has 2 open + 5 cured" without
+    // a separate round-trip.
+    let violations = [];
+    if (currentPropertyIds.length > 0) {
+      const { data: vRows } = await supabase
+        .from('violations')
+        .select(`
+          id, property_id, current_stage, opened_at, cure_period_ends_at,
+          resolved_at, resolved_via, board_priority_at_open,
+          enforcement_categories ( label ),
+          properties ( street_address, unit )
+        `)
+        .in('property_id', currentPropertyIds)
+        .order('opened_at', { ascending: false })
+        .limit(50);
+      violations = vRows || [];
+    }
+
+    // ARC submissions — pulled from community_applications joined on
+    // homeowner emails. Schema check: community_applications has
+    // submitter_email per migration 021 / 027.
+    let arc_applications = [];
+    const homeownerEmails = [contact.primary_email, contact.secondary_email]
+      .concat((methodsRes.data || []).filter((m) => m.method_type === 'email').map((m) => m.value))
+      .filter(Boolean)
+      .filter((e, i, arr) => arr.indexOf(e) === i); // dedup
+    if (homeownerEmails.length > 0) {
+      try {
+        const { data: arcRows } = await supabase
+          .from('community_applications')
+          .select('id, community_id, submitter_email, submitter_name, application_type, subject, final_status, created_at, communities(id, name)')
+          .in('submitter_email', homeownerEmails)
+          .order('created_at', { ascending: false })
+          .limit(30);
+        arc_applications = arcRows || [];
+      } catch (_) { /* table or fields may not exist; non-fatal */ }
+    }
+
     res.json({
       contact,
       preferences: prefRes.data || null,
+      contact_methods: methodsRes.data || [],
       properties,
       ownership_history: ownershipHistory,
       active_tags: tagRes.data || [],
@@ -1022,10 +1068,120 @@ router.get('/contacts/:id/profile', async (req, res) => {
       portal_logins: portalRes.data || [],
       interactions: intRes.data || [],
       calls: callRes.data || [],
+      violations,
+      arc_applications,
       warnings,
     });
   } catch (err) {
     console.error('[contacts/:id/profile]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// CONTACT METHODS — N emails + phones per contact with per-method notification
+// subscriptions (per migration 114). When a primary method is added/edited,
+// also syncs back to contacts.primary_email / .primary_phone so legacy code
+// reading the flat columns (voice caller-phone resolution, etc.) continues
+// to see the latest values.
+// ---------------------------------------------------------------------------
+router.post('/contacts/:id/methods', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.method_type || !['email','phone'].includes(b.method_type)) {
+      return res.status(400).json({ error: 'method_type must be email or phone' });
+    }
+    if (!b.value || !String(b.value).trim()) {
+      return res.status(400).json({ error: 'value_required' });
+    }
+    const payload = {
+      contact_id: req.params.id,
+      method_type: b.method_type,
+      subtype: b.subtype || null,
+      value: String(b.value).trim(),
+      label: b.label || null,
+      is_primary: !!b.is_primary,
+      notify_general: b.notify_general !== false,
+      notify_events: b.notify_events !== false,
+      notify_billing: b.notify_billing !== false,
+      notify_violations: b.notify_violations !== false,
+      notify_arc_decisions: b.notify_arc_decisions !== false,
+      notify_emergency: b.notify_emergency !== false,
+      notify_payment_confirm: !!b.notify_payment_confirm,
+      notes: b.notes || null,
+    };
+    // If marking as primary, demote any existing primary of the same method_type
+    if (payload.is_primary) {
+      await supabase
+        .from('contact_methods')
+        .update({ is_primary: false, updated_at: new Date().toISOString() })
+        .eq('contact_id', req.params.id)
+        .eq('method_type', payload.method_type)
+        .eq('is_primary', true);
+    }
+    const { data, error } = await supabase
+      .from('contact_methods').insert(payload).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    // Sync back to contacts.primary_email / .primary_phone if this is primary
+    if (data.is_primary) {
+      const syncField = data.method_type === 'email' ? 'primary_email' : 'primary_phone';
+      await supabase.from('contacts').update({ [syncField]: data.value, updated_at: new Date().toISOString() }).eq('id', req.params.id);
+    }
+    res.json({ method: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.patch('/contact-methods/:methodId', express.json(), async (req, res) => {
+  try {
+    const allowed = [
+      'subtype','value','label','is_primary',
+      'notify_general','notify_events','notify_billing','notify_violations',
+      'notify_arc_decisions','notify_emergency','notify_payment_confirm',
+      'notes','verified_at','verified_via',
+    ];
+    const patch = { updated_at: new Date().toISOString() };
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+
+    // Fetch existing to know contact_id + method_type for primary-demotion + sync
+    const { data: existing } = await supabase
+      .from('contact_methods').select('*').eq('id', req.params.methodId).maybeSingle();
+    if (!existing) return res.status(404).json({ error: 'not_found' });
+
+    // If flipping is_primary=true, demote any other primary of same method_type
+    if (patch.is_primary === true) {
+      await supabase
+        .from('contact_methods')
+        .update({ is_primary: false, updated_at: new Date().toISOString() })
+        .eq('contact_id', existing.contact_id)
+        .eq('method_type', existing.method_type)
+        .eq('is_primary', true)
+        .neq('id', req.params.methodId);
+    }
+
+    const { data, error } = await supabase
+      .from('contact_methods').update(patch).eq('id', req.params.methodId).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+
+    // Sync back to contacts.primary_email / .primary_phone if this is now primary
+    if (data.is_primary) {
+      const syncField = data.method_type === 'email' ? 'primary_email' : 'primary_phone';
+      await supabase.from('contacts').update({ [syncField]: data.value, updated_at: new Date().toISOString() }).eq('id', data.contact_id);
+    }
+    res.json({ method: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/contact-methods/:methodId', async (req, res) => {
+  try {
+    const { error } = await supabase
+      .from('contact_methods').delete().eq('id', req.params.methodId);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
