@@ -1132,6 +1132,48 @@ app.post('/acc-review', upload.any(), async (req, res) => {
     }
     const context = await getRelevantChunks(appDetails, community);
 
+    // ---- Missing-CC&Rs guard ----------------------------------------------
+    // getRelevantChunks tags each chunk with [From: filename - communityName].
+    // If NONE of the chunks reference the current community, the model is
+    // about to "reason" from other communities' CC&Rs — that's the silent
+    // failure mode on the 2026-05-26 Canyon Gate review. Detect it, raise a
+    // hard flag, and force the model to label its output PRELIMINARY rather
+    // than cite dimensional standards from a different community's docs.
+    let missingCCRsFlag = '';
+    if (community) {
+      const commLower = String(community).toLowerCase();
+      const commTokens = commLower
+        .split(/\s+/)
+        .filter((t) => t.length > 3 && !['the', 'and', 'at', 'of'].includes(t));
+      // Look at each chunk header line — [From: filename - community ...]
+      const headerRe = /\[From:[^\]]*?- ([^\]\n—]+)/gi;
+      const headers = [];
+      let m;
+      while ((m = headerRe.exec(context || '')) !== null) {
+        headers.push(String(m[1] || '').toLowerCase().trim());
+      }
+      const hasCommunityChunks = headers.some((h) => {
+        if (h === commLower) return true;
+        // Allow substring match on a discriminating token (e.g., "canyon" or "waterview")
+        return commTokens.some((tok) => h.includes(tok));
+      });
+      // Law / General reference docs are fine, but we need at least one
+      // community-specific chunk to make a real merit recommendation.
+      const onlyReference = headers.length > 0 && headers.every((h) =>
+        h === 'law' || h === 'general' || h.startsWith('law ') || h.startsWith('general ')
+      );
+      if (!hasCommunityChunks || onlyReference) {
+        missingCCRsFlag =
+          `\n\n⚠ CRITICAL — COMMUNITY CC&Rs NOT IN RETRIEVED CONTEXT:\n` +
+          `The knowledge base did not return any chunks tagged with the community "${community}". ` +
+          `${headers.length > 0 ? `Retrieved chunks come from: ${[...new Set(headers)].join(', ')}.` : 'No chunks were retrieved at all.'} ` +
+          `You MUST NOT cite specific dimensional standards, setback distances, height limits, lot-coverage caps, or other quantitative restrictions from documents tagged to a different community — those rules do not bind this property. ` +
+          `Label your recommendation as PRELIMINARY. Use only general HOA principles, the project-type framework in this prompt, and items visible on the application/drawings/survey itself. ` +
+          `Explicitly note in the internal analysis that the controlling CC&Rs for ${community} are not in the system and recommend the manager confirm dimensional standards against the actual governing documents before finalizing.\n`;
+        console.warn(`[acc-review] CC&Rs missing for community="${community}" — retrieved=${headers.length} chunks from [${[...new Set(headers)].join(', ')}]`);
+      }
+    }
+
     const { data: playbookEntries } = await supabase
   .from('playbook')
   .select('*')
@@ -1175,6 +1217,16 @@ JUDGMENT PRINCIPLES:
 - When in doubt add conditions rather than deny outright — leave the door open
 - Never approve something that clearly violates a specific governing document provision
 - Always leave the door open for resubmission if denying
+
+DIMENSIONAL RECONCILIATION — HARD RULE (the 280 vs 240 sq ft bug):
+When dimensions appear in multiple places in a packet (homeowner-typed application form, contractor estimate, architect-stamped drawings, site plan, survey), THE ARCHITECT-STAMPED DRAWING CONTROLS. That is the instrument being approved.
+- The application form is often a pre-design estimate or rough number from the homeowner — never controlling.
+- The contractor estimate is a quote — never controlling on geometry.
+- The stamped/sealed architect or engineer drawing is the controlling dimension set. So is the recorded survey or plat for property geometry.
+- If the application form says one dimension (e.g., 20'×14') and the architect drawing says another (e.g., 20'×12'), the architect drawing controls. Period.
+- ALL DERIVED CALCULATIONS (square footage, area, footprint, lot coverage, distance from setback) must flow from the controlling dimension set. Pick ONE set, do the math from THAT set, do not mix.
+- If the discrepancy is material (>5% or >1 foot), surface it in the internal analysis as a noted discrepancy AND state explicitly which set you are approving. In the homeowner letter, state only the controlling dimensions — never both — and make clear the approval is for the project as drawn on the stamped plans.
+- Never have one paragraph cite the form dimension and another paragraph cite the drawing dimension in the same output. That is a system bug, not a judgment call.
 
 PRAGMATIC OVER RULE-OF-THE-LETTER — THIS IS HOW BEDROCK WINS:
 Bedrock applies judgment, not checklists. Every letter must read as helpful and decisive — never bureaucratic. Reader test: "Would this letter make me feel helped or hassled?" Optimize for helped, every time.
@@ -1334,7 +1386,7 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
           }
           parts.push({
             type: 'text',
-            text: `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\nCommunity: ${community}\n\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${conditions ? `Staff notes: ${conditions}\n\n` : ''}${notes ? `Additional notes: ${notes}\n\n` : ''}Relevant governing documents:\n${context}\n${playbookContext}\n${decision === 'approved with conditions' ? `STAFF DECISION: APPROVED WITH CONDITIONS\n\nThe staff has decided to approve this application. Do NOT second guess this decision.\n\nGenerate a complete professional approval letter. For conditions: search the governing documents and pull the appropriate standard conditions for this specific project type in this community. Use the actual document sections to determine what conditions apply. Do not make up generic conditions — base them on what the governing documents actually require for this type of improvement. Include the standard permit disclaimer. Format as a complete ready to send approval letter.` : decision === 'approved no conditions' ? `STAFF DECISION: APPROVED — NO CONDITIONS\n\nThe staff has decided to approve this application with no conditions. Do NOT second guess this decision.\n\nGenerate a clean simple approval letter confirming the approval. Include only the standard permit disclaimer. Keep it warm and brief.` : decision === 'incomplete' ? `STAFF DECISION: REQUEST MISSING INFORMATION\n\nGenerate a warm helpful letter requesting the missing information. Identify what is missing based on the application and governing document requirements. Keep it encouraging and specific about what is needed and why. Do not make the homeowner feel rejected.` : decision === 'denied' ? `STAFF DECISION: DENIED\n\nGenerate a professional warm denial letter. Cite the specific governing document provision that cannot be met. Leave the door open for a revised application. Never be harsh or cold.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`,
+            text: `Today's date: ${new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })}\n\nCommunity: ${community}\n${missingCCRsFlag}\nExtracted application details:\n${appDetails}\n\n${additionalContext ? `IMPORTANT ADDITIONAL CONTEXT: ${additionalContext}\n\n` : ''}${conditions ? `Staff notes: ${conditions}\n\n` : ''}${notes ? `Additional notes: ${notes}\n\n` : ''}Relevant governing documents:\n${context}\n${playbookContext}\n${decision === 'approved with conditions' ? `STAFF DECISION: APPROVED WITH CONDITIONS\n\nThe staff has decided to approve this application. Do NOT second guess this decision.\n\nGenerate a complete professional approval letter. For conditions: search the governing documents and pull the appropriate standard conditions for this specific project type in this community. Use the actual document sections to determine what conditions apply. Do not make up generic conditions — base them on what the governing documents actually require for this type of improvement. Include the standard permit disclaimer. Format as a complete ready to send approval letter.` : decision === 'approved no conditions' ? `STAFF DECISION: APPROVED — NO CONDITIONS\n\nThe staff has decided to approve this application with no conditions. Do NOT second guess this decision.\n\nGenerate a clean simple approval letter confirming the approval. Include only the standard permit disclaimer. Keep it warm and brief.` : decision === 'incomplete' ? `STAFF DECISION: REQUEST MISSING INFORMATION\n\nGenerate a warm helpful letter requesting the missing information. Identify what is missing based on the application and governing document requirements. Keep it encouraging and specific about what is needed and why. Do not make the homeowner feel rejected.` : decision === 'denied' ? `STAFF DECISION: DENIED\n\nGenerate a professional warm denial letter. Cite the specific governing document provision that cannot be met. Leave the door open for a revised application. Never be harsh or cold.` : `Please provide a complete ACC review with the following sections:\n1. APPLICANT SUMMARY — name, address, project type\n2. COMPLETENESS CHECK — is the application complete or missing items\n3. DOCUMENT REVIEW — what the governing documents say about this project type\n4. RECOMMENDATION — approve, approve with conditions, request more information, or deny\n5. CONDITIONS — specific conditions if approving\n6. COMPLETE LETTER — full formatted approval, incomplete notice, or denial letter ready to send`}`,
           });
           return parts;
         })(),
@@ -1351,10 +1403,11 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
     // emit anything else is the most reliable way to keep the analysis out of
     // the printed letter.
     let letterBody = '';
+    let letterTruncated = false;
     try {
       const letterResp = await anthropic.messages.create({
         model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1200,
+        max_tokens: 2000,
         system:
           `You write CLEAN homeowner-facing decision letters for HOA architectural reviews. Output ONLY the prose body of the letter. The letterhead template will add the salutation ("Dear ___,"), the signature ("On behalf of the [Community] ACC, ${BRAND.service.name}, ${BRAND.service.phone} | ${BRAND.service.website}"), and the recipient/return address blocks. You output ONLY the salutation through the closing sentence — body paragraphs and numbered conditions if applicable.\n\n` +
           'STRICT RULES:\n' +
@@ -1390,11 +1443,24 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
         .replace(/(?<![A-Za-z])_([^_\n]+)_(?![A-Za-z])/g, '$1')
         .replace(/^-{3,}\s*$/gm, '')
         .trim();
+
+      // Truncation guard: the letter MUST end with the contact-our-office
+      // sentence per the system prompt. If it doesn't (model ran out of
+      // tokens or stopped early), the letter is unusable as-is — blank it
+      // out so the UI falls back to the review text rather than sending a
+      // letter that ends mid-sentence ("This approval is granted...").
+      const stopReason = letterResp.stop_reason;
+      const endsCorrectly = /contact our office at .{4,200}\.?\s*$/i.test(letterBody);
+      if (stopReason === 'max_tokens' || !endsCorrectly) {
+        letterTruncated = true;
+        console.warn(`[acc-review] letter truncated/incomplete — stop_reason=${stopReason}, ends_correctly=${endsCorrectly}, length=${letterBody.length}. Blanking letter_body.`);
+        letterBody = '';
+      }
     } catch (e) {
       console.warn('[acc-review] letter-body call failed, falling back to review:', e.message);
     }
 
-    res.json({ review: reviewText, extracted, letter_body: letterBody });
+    res.json({ review: reviewText, extracted, letter_body: letterBody, letter_truncated: letterTruncated });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error processing ACC application: ' + err.message });
