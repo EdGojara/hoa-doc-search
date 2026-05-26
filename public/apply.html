@@ -186,7 +186,7 @@
     <div id="form-screen" style="display:none;">
       <h1 id="page-title">ARC Application</h1>
       <p class="lede" id="page-lede">
-        Tell us about the project you'd like approved. You'll get a <strong>preliminary AI assessment within seconds</strong>, and your community manager will follow up with the official decision within 24 hours.
+        Tell us about the project you'd like approved. You'll get a confirmation with your reference number as soon as you submit, and your community manager will respond with the official decision <strong>within 48 hours</strong>.
       </p>
 
       <div class="fee-banner" id="fee-banner" style="display:none;"></div>
@@ -659,54 +659,44 @@
     function renderResult(payload) {
       const ref = payload.reference_number;
       const a = payload.assessment;
+      const receipt = payload.receipt || {};
 
       $('ref-code').textContent = ref;
       $('status-link').href = payload.status_url;
       $('result-screen').classList.add('show');
 
-      if (!a) {
-        $('result-icon').textContent = '📬';
-        $('result-icon').className = 'result-icon manual';
-        $('result-title').textContent = 'Application received';
-        $('summary-card').style.display = '';
-        $('summary-body').textContent = 'Your application has been submitted to your community manager for review. You\'ll hear back within 24 hours.';
-        return;
-      }
+      // Default: clean receipt. We don't show AI analysis to the homeowner
+      // unless the community has explicitly opted in AND the assessment
+      // passed every guard + validator (server enforces this — `a` is null
+      // for everyone by default).
+      $('result-icon').textContent = '✓';
+      $('result-icon').className = 'result-icon likely';
+      $('result-title').textContent = receipt.headline || 'Application received';
+      $('summary-card').style.display = '';
+      $('summary-body').textContent = receipt.preview
+        || "We've received your application. Your community manager will follow up within 48 hours.";
 
-      // Title + icon based on status
+      // Optional: opted-in communities can show the AI's preliminary read.
+      // Most communities will not opt in until they've validated the AI
+      // output in production for a few weeks.
+      if (!a) return;
+
       const statusMap = {
-        likely_approved: { icon: '✓', cls: 'likely', title: 'Likely to be approved' },
-        incomplete: { icon: '📝', cls: 'incomplete', title: 'A few details needed' },
-        concerns_identified: { icon: '⚠️', cls: 'concerns', title: 'Some items to review' },
-        manual_review: { icon: '👤', cls: 'manual', title: 'Manager review required' }
+        likely_approved: { icon: '✓', cls: 'likely', title: 'Preliminary review complete' },
+        incomplete: { icon: '📝', cls: 'incomplete', title: 'A few details may be needed' },
+        concerns_identified: { icon: '⚠️', cls: 'concerns', title: 'A few items to discuss' },
+        manual_review: { icon: '👤', cls: 'manual', title: 'Application received' }
       };
       const s = statusMap[a.status] || statusMap.manual_review;
       $('result-icon').textContent = s.icon;
       $('result-icon').className = 'result-icon ' + s.cls;
       $('result-title').textContent = s.title;
 
-      if (a.summary) {
-        $('summary-card').style.display = '';
-        $('summary-body').textContent = a.summary;
-      }
-
-      if (a.concerns && a.concerns.length > 0) {
-        $('concerns-card').style.display = '';
-        $('concerns-list').innerHTML = a.concerns.map(c => `
-          <li><strong>${escapeHtml(c.concern || '')}</strong>${c.citation ? ` <span style="color:#666; font-size:12px;">(${escapeHtml(c.citation)})</span>` : ''}</li>
-        `).join('');
-      }
-
       if (a.missing_items && a.missing_items.length > 0) {
         $('missing-card').style.display = '';
         $('missing-list').innerHTML = a.missing_items.map(m => `
           <li>${escapeHtml(m.item || '')}${m.hint ? ` <span style="color:#666; font-size:12px;">— ${escapeHtml(m.hint)}</span>` : ''}${m.required ? ' <span style="color:#b91c1c; font-weight:700; font-size:11px;">REQUIRED</span>' : ''}</li>
         `).join('');
-      }
-
-      if (a.draft_response) {
-        $('draft-card').style.display = '';
-        $('draft-body').textContent = a.draft_response;
       }
     }
 

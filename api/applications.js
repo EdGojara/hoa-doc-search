@@ -23,12 +23,14 @@
 //   - The application data itself
 // ============================================================================
 
+const crypto = require('crypto');
 const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
+const { getRelevantChunks } = require('../lib/hybrid_retrieval');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -37,6 +39,229 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 const ASSESSMENT_MODEL = 'claude-sonnet-4-6';
+const ASSESSMENT_MAX_TOKENS = 2500;
+
+// ============================================================================
+// Assessment guards + validators
+// ----------------------------------------------------------------------------
+// Layer 1: pre-flight guards on the AI call (parse failure, max_tokens
+// truncation, missing community CC&Rs in retrieval).
+// Layer 2: structural cross-validators on the parsed JSON (dimension
+// consistency, length sanity, decision/letter agreement, citation source).
+//
+// Any blocker (Layer 1 or Layer 2) → assessment is "held_for_review" — still
+// saved + visible to the manager, but flagged in the queue + NEVER exposed to
+// the homeowner regardless of the community's homeowner-visible setting.
+// ============================================================================
+
+function parseRetrievalFingerprint(contextText) {
+  // hybrid_retrieval.js formats chunk headers as:
+  //   [From: <filename> - <community><ocrTag><sourceTag>]
+  const fingerprint = [];
+  const re = /\[From:\s*([^\]\n]+)\]/g;
+  let m;
+  while ((m = re.exec(contextText || '')) !== null) {
+    const raw = m[1].trim();
+    const beforeTags = raw.split(/\s+—\s+/);
+    const head = beforeTags[0];
+    const sources = beforeTags.slice(1).filter((s) => /^matched/i.test(s)).join(', ');
+    const lastDash = head.lastIndexOf(' - ');
+    const filename = lastDash > 0 ? head.slice(0, lastDash).trim() : head.trim();
+    const community = lastDash > 0 ? head.slice(lastDash + 3).trim() : '';
+    fingerprint.push({ filename, community, sources });
+  }
+  return fingerprint;
+}
+
+function summarizeContamination(fingerprint, targetCommunityName) {
+  const targetLower = String(targetCommunityName || '').toLowerCase();
+  let community = 0;
+  let lawGeneral = 0;
+  let wrong = 0;
+  for (const f of fingerprint) {
+    const c = (f.community || '').toLowerCase();
+    if (c === 'law' || c === 'general') lawGeneral += 1;
+    else if (targetLower && c && (c === targetLower || c.includes(targetLower) || targetLower.includes(c))) community += 1;
+    else if (c) wrong += 1;
+  }
+  const total = fingerprint.length || 0;
+  const contaminationRatio = total > 0 ? +(wrong / total).toFixed(4) : 0;
+  return { total, community, lawGeneral, wrong, contaminationRatio };
+}
+
+function runPreflightGuards({ fingerprint, contamination, completion, parsed, parseError }) {
+  const guards = [];
+  if (parseError) {
+    guards.push({ code: 'JSON_PARSE_FAILED', severity: 'block', detail: String(parseError).slice(0, 200) });
+  }
+  if (completion?.stop_reason === 'max_tokens') {
+    guards.push({ code: 'AI_TRUNCATED', severity: 'block', detail: `stop_reason=max_tokens (output_tokens=${completion?.usage?.output_tokens})` });
+  }
+  if (contamination.total === 0) {
+    guards.push({ code: 'NO_RETRIEVAL', severity: 'block', detail: 'No governing-doc chunks retrieved.' });
+  } else if (contamination.community === 0 && contamination.lawGeneral === 0) {
+    guards.push({ code: 'CCRS_MISSING', severity: 'block', detail: `Retrieved chunks from wrong communities only: ${[...new Set(fingerprint.map(f => f.community))].join(', ')}` });
+  } else if (contamination.community === 0) {
+    guards.push({ code: 'CCRS_COMMUNITY_MISSING', severity: 'warn', detail: 'Only Law/General reference chunks — no community-specific CC&Rs in retrieval.' });
+  } else if (contamination.contaminationRatio > 0.25) {
+    guards.push({ code: 'RETRIEVAL_CONTAMINATED', severity: 'warn', detail: `${Math.round(contamination.contaminationRatio * 100)}% of retrieved chunks are from other communities.` });
+  }
+  return guards;
+}
+
+function extractDimensions(text) {
+  if (!text) return { sizes: [], areas: [] };
+  const sizes = [];
+  const areas = [];
+  // 20x14, 20×14, 20'x14', 20 x 14, etc.
+  const sizeRe = /(\d{1,4})\s*['′]?\s*[xX×]\s*['′]?\s*(\d{1,4})\s*['′]?/g;
+  let m;
+  while ((m = sizeRe.exec(text)) !== null) {
+    const a = parseInt(m[1], 10);
+    const b = parseInt(m[2], 10);
+    if (a >= 2 && a <= 500 && b >= 2 && b <= 500) {
+      sizes.push(`${Math.min(a, b)}x${Math.max(a, b)}`);
+    }
+  }
+  // 280 sq ft, 240 square feet
+  const areaRe = /(\d{2,5})\s*(?:square\s*feet|sq\.?\s*ft|sqft)/gi;
+  while ((m = areaRe.exec(text)) !== null) {
+    areas.push(parseInt(m[1], 10));
+  }
+  return { sizes: [...new Set(sizes)], areas: [...new Set(areas)] };
+}
+
+function runCrossValidators(parsed, fingerprint) {
+  const out = {
+    dimension_consistency: { ok: true, severity: 'ok' },
+    length_sanity: { ok: true, severity: 'ok' },
+    decision_letter_agreement: { ok: true, severity: 'ok' },
+    citation_source: { ok: true, severity: 'ok' },
+  };
+
+  // (a) Dimension consistency across summary + conditions + draft_response
+  const summaryText = String(parsed?.summary || '');
+  const conditionsText = (parsed?.conditions || []).map((c) => `${c?.condition || ''} ${c?.rationale || ''}`).join(' ');
+  const draftText = String(parsed?.draft_response || '');
+  const combined = `${summaryText}\n${conditionsText}\n${draftText}`;
+  const summaryDims = extractDimensions(summaryText);
+  const draftDims = extractDimensions(draftText);
+  const allSizes = [...new Set([...summaryDims.sizes, ...draftDims.sizes, ...extractDimensions(conditionsText).sizes])];
+  const allAreas = [...new Set([...summaryDims.areas, ...draftDims.areas, ...extractDimensions(conditionsText).areas])];
+  if (allSizes.length > 1) {
+    out.dimension_consistency = {
+      ok: false,
+      severity: 'block',
+      detail: `Multiple project sizes cited in same output: ${allSizes.join(', ')}. Architect drawing controls — analysis + letter must agree.`,
+    };
+  } else if (allAreas.length > 1) {
+    out.dimension_consistency = {
+      ok: false,
+      severity: 'block',
+      detail: `Multiple square-footage values cited in same output: ${allAreas.map((a) => a + ' sq ft').join(', ')}.`,
+    };
+  }
+
+  // (b) Length sanity on draft_response
+  const wordCount = draftText.split(/\s+/).filter(Boolean).length;
+  if (draftText) {
+    if (wordCount < 60) {
+      out.length_sanity = { ok: false, severity: 'warn', word_count: wordCount, detail: `Draft response is unusually short (${wordCount} words). Letters usually run 120-350 words.` };
+    } else if (wordCount > 800) {
+      out.length_sanity = { ok: false, severity: 'warn', word_count: wordCount, detail: `Draft response is unusually long (${wordCount} words). Letters usually run 120-350 words.` };
+    } else {
+      out.length_sanity = { ok: true, severity: 'ok', word_count: wordCount };
+    }
+  }
+
+  // (c) Decision/letter agreement — recommended_action must match the language in draft_response
+  const action = (parsed?.recommended_action || '').toLowerCase();
+  if (action && draftText) {
+    const draftLower = draftText.toLowerCase();
+    const sayApproved = /\b(approved?|approval|granted|pleased to (let|inform|approve)|approve your)\b/.test(draftLower);
+    const sayDenied = /\b(denied?|cannot (approve|proceed)|unable to approve|not approved|denial)\b/.test(draftLower);
+    const sayRequest = /\b(need|require|missing|please (provide|submit|send)|additional information|cannot fully review)\b/.test(draftLower);
+    if (action === 'approve' && sayDenied) {
+      out.decision_letter_agreement = { ok: false, severity: 'block', detail: 'recommended_action=approve but draft_response uses denial language.' };
+    } else if ((action === 'deny') && (sayApproved && !sayDenied)) {
+      out.decision_letter_agreement = { ok: false, severity: 'block', detail: 'recommended_action=deny but draft_response uses approval language.' };
+    } else if (action === 'request_more_info' && !sayRequest) {
+      out.decision_letter_agreement = { ok: false, severity: 'warn', detail: 'recommended_action=request_more_info but draft_response does not appear to ask for additional info.' };
+    }
+  }
+
+  // (d) Citation source — every cited document should appear in the retrieval fingerprint
+  const citations = parsed?.citations || [];
+  const fingerprintFilenames = fingerprint.map((f) => (f.filename || '').toLowerCase());
+  const unmatched = [];
+  for (const cit of citations) {
+    const docName = String(cit?.document || '').toLowerCase().trim();
+    if (!docName) continue;
+    // Match if any fingerprint filename contains the cited doc name (or vice versa) at a discriminating length
+    const matched = fingerprintFilenames.some((fname) => {
+      if (!fname) return false;
+      if (fname.includes(docName) || docName.includes(fname)) return true;
+      // Loose: share at least one 6+ char token
+      const docTokens = docName.split(/[^a-z0-9]+/).filter((t) => t.length >= 6);
+      return docTokens.some((t) => fname.includes(t));
+    });
+    if (!matched) unmatched.push(cit.document);
+  }
+  if (unmatched.length > 0) {
+    out.citation_source = {
+      ok: false,
+      severity: 'warn',
+      detail: `Cited documents not present in retrieval fingerprint: ${unmatched.join('; ')}. Model may have hallucinated citations.`,
+      unmatched,
+    };
+  }
+
+  return out;
+}
+
+function tallyValidators(validators) {
+  let blockers = 0;
+  let warnings = 0;
+  for (const v of Object.values(validators)) {
+    if (v?.severity === 'block') blockers += 1;
+    else if (v?.severity === 'warn') warnings += 1;
+  }
+  return { blockers, warnings };
+}
+
+async function writeAuditRow(row) {
+  // Defensive — table may not yet exist if migration 118 hasn't been applied.
+  try {
+    const { error } = await supabase.from('acc_assessment_audit').insert(row);
+    if (error) console.warn('[applications] audit insert failed:', error.message);
+  } catch (e) {
+    console.warn('[applications] audit insert threw:', e.message);
+  }
+}
+
+function homeownerReceiptFromAssessment(parsed, holdForReview) {
+  // What the homeowner sees in the receipt. NEVER the full AI assessment.
+  // A short, neutral sentence based on the AI's high-level read, gated to
+  // not over-promise. If the assessment was held for review, return a
+  // generic "we'll be in touch" message — no AI peek through.
+  if (holdForReview) {
+    return {
+      headline: 'Application received',
+      preview: "We've received your application and will follow up within 48 hours with the next steps.",
+    };
+  }
+  const action = (parsed?.recommended_action || '').toLowerCase();
+  if (action === 'request_more_info' || (parsed?.missing_items || []).some((m) => m?.required)) {
+    return {
+      headline: 'Application received',
+      preview: 'Based on a preliminary review, we may need a few additional materials. Our team will reach out within 48 hours.',
+    };
+  }
+  return {
+    headline: 'Application received',
+    preview: 'Based on a preliminary review, your draft appears complete. You can expect a response within 48 hours.',
+  };
+}
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 * 1024 * 1024 } });
 const router = express.Router();
@@ -93,8 +318,9 @@ async function nextReferenceNumber(communityId, serviceType, prefix) {
 // AI assessment — the encode-Ed triangulation
 // ----------------------------------------------------------------------------
 
-async function runAssessment(application) {
+async function runAssessment(application, opts = {}) {
   const t0 = Date.now();
+  const triggerSource = opts.triggerSource || 'public_submit';
 
   // 1. Community profile + facts
   const { data: comm } = await supabase
@@ -109,7 +335,8 @@ async function runAssessment(application) {
     .eq('community_id', application.community_id)
     .order('category');
 
-  // 2. Build embedding from project description to drive retrieval
+  // 2. Build a FOCUSED retrieval query — community + project type + summary.
+  //    Hybrid retrieval was tuned for short focused queries, not long blobs.
   const appData = application.application_data || {};
   const projectSnippet = [
     appData.project_type,
@@ -118,31 +345,30 @@ async function runAssessment(application) {
     appData.dimensions,
     appData.location_on_property
   ].filter(Boolean).join(' — ');
-  const queryEmbed = await embed(projectSnippet || 'general architectural review');
+  const retrievalQuery = [
+    comm?.name,
+    appData.project_type,
+    appData.project_description?.slice(0, 200),
+  ].filter(Boolean).join(' — ').slice(0, 400) || projectSnippet || 'architectural review application';
 
-  // 3. Governing-doc chunks (semantic)
+  // 3. Governing-doc chunks via the unified hybrid retrieval (vector +
+  //    keyword + title-match, RRF-merged). Community filtering happens
+  //    inside getRelevantChunks; same retrieval used by askEd + Review tab.
   let govDocContext = '';
-  if (queryEmbed) {
-    try {
-      const { data: chunks } = await supabase.rpc('match_documents', {
-        query_embedding: queryEmbed,
-        match_count: 8,
-        filter_communities: ['Law', 'General', comm?.name].filter(Boolean)
-      });
-      if (chunks && chunks.length > 0) {
-        govDocContext = chunks.map(c =>
-          `[${c.metadata?.filename || 'doc'}] ${c.content}`
-        ).join('\n\n---\n\n');
-      }
-    } catch (e) { console.warn('[assess] gov-doc retrieval failed:', e.message); }
+  try {
+    govDocContext = await getRelevantChunks(retrievalQuery, comm?.name);
+  } catch (e) {
+    console.warn('[assess] hybrid retrieval failed:', e.message);
   }
 
-  // 4. Historical ACC decisions (semantic match)
+  // 4. Historical ACC decisions (semantic match) — uses a focused embedding
+  //    of the retrieval query (cheaper than the long blob).
   let historyContext = '';
-  if (queryEmbed) {
-    try {
+  try {
+    const historyEmbed = await embed(retrievalQuery);
+    if (historyEmbed) {
       const { data: matches } = await supabase.rpc('match_arc_decisions', {
-        query_embedding: queryEmbed,
+        query_embedding: historyEmbed,
         community_id_in: application.community_id,
         match_count: 5,
         similarity_threshold: 0.6
@@ -152,14 +378,14 @@ async function runAssessment(application) {
           `[${(m.decision_type || '?').toUpperCase()}] ${m.decided_at || '(no date)'} — ${m.property_address || ''}: ${m.summary || m.project_description || ''}${m.conditions ? ` (conditions: ${m.conditions})` : ''}`
         ).join('\n');
       }
-    } catch (e) { console.warn('[assess] arc-history retrieval failed:', e.message); }
-  }
+    }
+  } catch (e) { console.warn('[assess] arc-history retrieval failed:', e.message); }
 
   // 5. Ed's playbook (semantic via existing helper if available)
   let playbookContext = '';
   try {
     const { getRelevantPlaybook, formatPlaybookContext } = require('../playbook');
-    const entries = await getRelevantPlaybook(projectSnippet || 'ACC application review', { matchCount: 6 });
+    const entries = await getRelevantPlaybook(retrievalQuery, { matchCount: 6 });
     playbookContext = formatPlaybookContext(entries, { heading: "ED'S PLAYBOOK — RELEVANT PATTERNS" });
   } catch (e) { console.warn('[assess] playbook retrieval failed:', e.message); }
 
@@ -192,14 +418,19 @@ async function runAssessment(application) {
 
   const systemPrompt = `You are reviewing a homeowner-submitted ARC (Architectural Review Committee) application for an HOA managed by Bedrock Association Management.
 
-Your role: provide a structured PRELIMINARY assessment that helps the community manager make the final decision. You are NOT the final authority — the manager and committee are. Your output gets shown to the homeowner IMMEDIATELY after they submit, framed as "preliminary AI analysis — your community manager will follow up within 24 hours with the official decision."
+Your role: produce a structured PRELIMINARY assessment + a draft response letter that the community manager will review, optionally edit, and send. You are NOT the final authority — the manager and committee are. Your output is NOT shown to the homeowner directly; the homeowner only sees a brief receipt and the manager's final reviewed letter.
+
+DIMENSIONAL RECONCILIATION — HARD RULE:
+When dimensions appear in multiple places (homeowner-typed form, contractor estimate, architect-stamped drawings, survey), THE STAMPED ARCHITECT/ENGINEER DRAWING CONTROLS. The form is a homeowner estimate; the drawing is the instrument being approved. ALL derived calculations (square footage, area, lot coverage, distances) must flow from the controlling dimension set. NEVER cite two different dimensions for the same measurement within the same output. If you see a form-vs-drawing discrepancy, surface it in the summary AND state explicitly which set you are approving; in the draft_response, use only the controlling dimensions.
 
 CRITICAL OUTPUT RULES:
 - Return ONLY a single valid JSON object (no markdown fences, no commentary outside the JSON)
 - Use the exact shape below
-- Be CONCRETE — cite specific governing-doc sections when possible
+- Be CONCRETE — cite specific governing-doc sections when possible, but ONLY from documents that appeared in the RELEVANT GOVERNING DOCUMENTS section below. Do NOT invent citations or reference documents you haven't been shown.
 - Treat HISTORICAL DECISIONS as informational context, not binding precedent. The current governing documents are the authority.
 - "draft_response" should be in Bedrock's voice: warm, clear, respectful, lead with the decision, explain reasoning, offer path forward. Sign off "— Bedrock Association Management" (never a personal name).
+- "draft_response" should be 120-350 words. Long form letters lose homeowners; short ones look hasty. Find the middle.
+- "recommended_action" must match the language in "draft_response" — if you recommend approve, the letter must read as an approval; if deny, as a denial; if request_more_info, as a polite request for additional materials.
 
 OUTPUT SHAPE:
 {
@@ -235,21 +466,102 @@ ${appBlock}
 
 Return the JSON assessment now.`;
 
+  // Parse retrieval fingerprint up-front so we can log/audit it even if
+  // the AI call fails later.
+  const fingerprint = parseRetrievalFingerprint(govDocContext);
+  const contamination = summarizeContamination(fingerprint, comm?.name);
+  console.log(`[applications] retrieval — community="${comm?.name}" chunks=${contamination.total} target=${contamination.community} law/general=${contamination.lawGeneral} wrong=${contamination.wrong} contamination=${(contamination.contaminationRatio * 100).toFixed(1)}%`);
+
+  let completion = null;
+  let parsed = null;
+  let parseError = null;
+  let rawText = '';
   try {
-    const completion = await anthropic.messages.create({
+    completion = await anthropic.messages.create({
       model: ASSESSMENT_MODEL,
-      max_tokens: 2500,
+      max_tokens: ASSESSMENT_MAX_TOKENS,
       system: systemPrompt,
       messages: [{ role: 'user', content: userMessage }]
     });
 
-    const raw = completion.content[0]?.text || '';
-    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
-    const parsed = JSON.parse(cleaned);
-
+    rawText = completion.content[0]?.text || '';
+    const cleaned = rawText.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+    try {
+      parsed = JSON.parse(cleaned);
+    } catch (e) {
+      parseError = e.message;
+    }
+  } catch (err) {
+    console.error('[applications] AI call failed:', err.message);
     const durationMs = Date.now() - t0;
+    // Audit even the failed call so the manager queue sees it.
+    await writeAuditRow({
+      application_id: application.id,
+      community_id: application.community_id,
+      trigger_source: triggerSource,
+      retrieved_chunks: fingerprint,
+      retrieved_chunk_count: fingerprint.length,
+      contamination_ratio: contamination.contaminationRatio,
+      community_chunk_count: contamination.community,
+      law_general_chunk_count: contamination.lawGeneral,
+      ai_model: ASSESSMENT_MODEL,
+      ai_max_tokens: ASSESSMENT_MAX_TOKENS,
+      ai_duration_ms: durationMs,
+      guards_fired: [{ code: 'AI_CALL_FAILED', severity: 'block', detail: String(err.message || err).slice(0, 200) }],
+      validators: {},
+      validator_blockers: 1,
+      validator_warnings: 0,
+      final_status: 'failed',
+      hold_reason: 'AI call failed — see server log',
+    });
+    return { ok: false, error: safeErrorMessage(err), held_for_review: true };
+  }
 
-    // Persist to application_assessments (full history)
+  const durationMs = Date.now() - t0;
+
+  // Layer 1: pre-flight guards
+  const guards = runPreflightGuards({ fingerprint, contamination, completion, parsed, parseError });
+  const guardBlocked = guards.some((g) => g.severity === 'block');
+
+  // Layer 2: cross-validators (only meaningful if we have parsed JSON)
+  const validators = parsed ? runCrossValidators(parsed, fingerprint) : {};
+  const { blockers: validatorBlockers, warnings: validatorWarnings } = tallyValidators(validators);
+
+  const holdForReview = guardBlocked || validatorBlockers > 0 || !parsed;
+  const finalStatus = parsed ? (holdForReview ? 'held_for_review' : 'shipped') : 'failed';
+  const promptHash = crypto.createHash('sha256').update(userMessage).digest('hex').slice(0, 16);
+
+  // Audit
+  await writeAuditRow({
+    application_id: application.id,
+    community_id: application.community_id,
+    trigger_source: triggerSource,
+    retrieved_chunks: fingerprint,
+    retrieved_chunk_count: fingerprint.length,
+    contamination_ratio: contamination.contaminationRatio,
+    community_chunk_count: contamination.community,
+    law_general_chunk_count: contamination.lawGeneral,
+    ai_model: ASSESSMENT_MODEL,
+    ai_input_tokens: completion?.usage?.input_tokens || null,
+    ai_output_tokens: completion?.usage?.output_tokens || null,
+    ai_max_tokens: ASSESSMENT_MAX_TOKENS,
+    ai_stop_reason: completion?.stop_reason || null,
+    ai_duration_ms: durationMs,
+    guards_fired: guards,
+    validators,
+    validator_blockers: validatorBlockers,
+    validator_warnings: validatorWarnings,
+    final_status: finalStatus,
+    hold_reason: holdForReview
+      ? (guards.filter((g) => g.severity === 'block').map((g) => g.code).join(',')
+          || (validatorBlockers > 0 ? 'validator_blocker' : 'parse_failure'))
+      : null,
+    prompt_hash: promptHash,
+    response_excerpt: (rawText || '').slice(0, 600),
+  });
+
+  // Persist to application_assessments (full history) — only if we have a parse
+  if (parsed) {
     await supabase.from('application_assessments').insert({
       application_id: application.id,
       status: parsed.status,
@@ -264,13 +576,15 @@ Return the JSON assessment now.`;
       ai_input_tokens: completion.usage?.input_tokens || null,
       ai_output_tokens: completion.usage?.output_tokens || null,
       ai_duration_ms: durationMs,
-      prompt_version: 'v1',
-      triggered_by: 'initial_submission'
+      prompt_version: 'v2_hardened',
+      triggered_by: triggerSource,
     });
 
-    // Denormalize latest snapshot onto the application row
+    // Denormalize latest snapshot onto the application row. If held for
+    // review, force the status into a manual_review-flavored bucket so the
+    // queue surfaces it loud.
     await supabase.from('community_applications').update({
-      assessment_status: parsed.status,
+      assessment_status: holdForReview ? 'manual_review' : parsed.status,
       assessment_summary: parsed.summary,
       assessment_missing_items: parsed.missing_items || [],
       assessment_concerns: parsed.concerns || [],
@@ -280,12 +594,17 @@ Return the JSON assessment now.`;
       assessment_recommended_action: parsed.recommended_action || null,
       last_assessment_at: new Date().toISOString()
     }).eq('id', application.id);
-
-    return { ok: true, assessment: parsed, duration_ms: durationMs };
-  } catch (err) {
-    console.error('[applications] assessment failed:', err.message);
-    return { ok: false, error: safeErrorMessage(err) };
   }
+
+  return {
+    ok: !!parsed,
+    assessment: parsed,
+    held_for_review: holdForReview,
+    guards,
+    validators,
+    contamination,
+    duration_ms: durationMs,
+  };
 }
 
 // ============================================================================
@@ -450,7 +769,7 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
     // Resolve service (arc — schema constraint uses 'arc', not 'arc_application')
     const { data: service } = await supabase
       .from('community_services')
-      .select('id, service_type, application_fee_usd, paid_by, fee_structure_notes, service_config')
+      .select('id, service_type, application_fee_usd, paid_by, fee_structure_notes, service_config, arc_ai_homeowner_visible')
       .eq('community_id', comm.id)
       .eq('service_type', 'arc')
       .maybeSingle();
@@ -545,16 +864,35 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
       }
     }
 
-    // Run AI assessment SYNCHRONOUSLY — the instant-feedback wedge
-    const assessmentResult = await runAssessment(app);
+    // Run AI assessment SYNCHRONOUSLY so the manager queue is populated
+    // before the homeowner navigates away. The HOMEOWNER does NOT see the
+    // full AI output — they see a clean receipt + 48hr SLA. The AI output
+    // is for the manager (and optionally, per-community, for the homeowner
+    // once the community has been validated in production for that exposure).
+    const assessmentResult = await runAssessment(app, { triggerSource: 'public_submit' });
+
+    // Receipt for the homeowner — a brief, neutral acknowledgment.
+    const receipt = homeownerReceiptFromAssessment(
+      assessmentResult.assessment,
+      assessmentResult.held_for_review || !assessmentResult.ok
+    );
+
+    // Per-community flag: do we want to expose the AI's assessment block
+    // to this community's homeowners? Default FALSE (migration 118).
+    const homeownerVisible =
+      service.arc_ai_homeowner_visible === true &&
+      assessmentResult.ok &&
+      !assessmentResult.held_for_review;
 
     res.json({
       ok: true,
       reference_number: reference,
       application_id: app.id,
       status_url: `/apply/status/${encodeURIComponent(reference)}`,
-      assessment: assessmentResult.ok ? assessmentResult.assessment : null,
-      assessment_error: assessmentResult.ok ? null : assessmentResult.error
+      receipt,
+      // assessment block is only included when the community has opted in
+      // AND the assessment passed all guards/validators. Otherwise null.
+      assessment: homeownerVisible ? assessmentResult.assessment : null,
     });
   } catch (err) {
     console.error('[applications] submit failed:', err.message);
