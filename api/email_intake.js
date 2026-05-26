@@ -1155,7 +1155,27 @@ Write the recap. Lead with a one-sentence overview. Then sections. Then close wi
     max_tokens: 2000,
     messages: [{ role: 'user', content: prompt }]
   });
-  return response.content[0]?.text || '';
+  let recap = response.content[0]?.text || '';
+
+  // IP-leak guard: recaps land in front of the board, which includes
+  // members with documented competitor conflicts. Scrub before return —
+  // auto-rewrite the soft phrases; if a hard-banned phrase remains
+  // (e.g., model started narrating Bedrock's methodology), append a
+  // BLOCKED warning so the caller can refuse to send.
+  try {
+    const { screenForLeaks } = require('../lib/voice/leak_filter');
+    const screen = screenForLeaks(recap, { audience: 'board', autoRewrite: true });
+    if (screen.blocks.length > 0) {
+      console.warn('[email_intake/recap] recap BLOCKED by leak filter:',
+        screen.blocks.map((b) => `${b.reason} ("${b.matches.slice(0, 2).join('", "')}")`).join('; '));
+      recap = '⚠ This recap was blocked by the IP-leak filter because the AI included internal methodology language. Please regenerate or rewrite by hand. Detected: '
+        + screen.blocks.map((b) => `"${b.matches.slice(0, 2).join('", "')}"`).join(', ');
+    } else if (screen.rewrites.length > 0) {
+      recap = screen.text;
+    }
+  } catch (e) { console.warn('[email_intake/recap] leak filter threw:', e.message); }
+
+  return recap;
 }
 
 // POST /api/email-intelligence/recaps — generate a new recap
