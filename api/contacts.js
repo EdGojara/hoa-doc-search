@@ -1271,6 +1271,28 @@ router.post('/contacts/methods/import/:id/apply', express.json({ limit: '50mb' }
       return m;
     };
 
+    // ---- FLAT-FIELD-ONLY MATCHES (silent sync into contact_methods) --------
+    // These are MATCH classifications where the value is on the contact's
+    // legacy primary/secondary flat field but not yet in contact_methods.
+    // Auto-sync them so per-method notification subscriptions can target.
+    // Always applied (no opt-in / opt-out from the UI — they're already on
+    // file, just in a different shape).
+    const flatSyncItems = ((diff.methods?.match) || []).filter((m) => m._flat_field_only);
+    let flatSyncCount = 0;
+    for (const item of flatSyncItems) {
+      try {
+        const { error } = await supabase.from('contact_methods').insert({
+          contact_id: item.contact_id,
+          method_type: item.method_type,
+          value: item.value,
+          is_primary: !!item._flat_is_primary,
+          label: 'auto-synced from legacy flat field',
+        });
+        if (!error) flatSyncCount += 1;
+      } catch (_) { /* non-fatal — flat field still works for sends */ }
+    }
+    applied.flat_field_synced_to_methods = flatSyncCount;
+
     // ---- NEW methods (insert) ------------------------------------------------
     const newItems = (diff.methods?.new) || [];
     if (newItems.length > 0) {

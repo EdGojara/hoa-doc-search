@@ -1779,11 +1779,21 @@
   <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
       <h3 style="margin:0; font-size:14px; color:#1E2761;">Properties</h3>
-      <div style="display:flex; gap:6px; align-items:center;">
+      <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
         <select id="homesListCommunity" onchange="homesLoadProperties()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px;">
           <option value="">All communities</option>
         </select>
-        <input type="search" id="homesListSearch" placeholder="Filter by address, owner, email, or phone…" oninput="homesRenderProperties()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px; width:260px;">
+        <input type="search" id="homesListSearch" placeholder="Filter by address, owner, email, or phone…" oninput="homesListPage=1; homesRenderProperties();" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px; width:260px;">
+        <select id="homesListPageSize" onchange="homesListPage=1; homesRenderProperties();" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px;" title="Rows per page">
+          <option value="25">25 / page</option>
+          <option value="50" selected>50 / page</option>
+          <option value="100">100 / page</option>
+          <option value="200">200 / page</option>
+          <option value="2000">All</option>
+        </select>
+        <button onclick="homesListPage=Math.max(1,homesListPage-1); homesRenderProperties();" style="font-size:12.5px; padding:5px 10px; border:1px solid #d0d7de; border-radius:6px; background:#fff; cursor:pointer;" title="Previous page">‹</button>
+        <span id="homesListPageInfo" style="font-size:11.5px; color:#475569; min-width:120px; text-align:center;"></span>
+        <button onclick="homesListPage+=1; homesRenderProperties();" style="font-size:12.5px; padding:5px 10px; border:1px solid #d0d7de; border-radius:6px; background:#fff; cursor:pointer;" title="Next page">›</button>
         <span id="homesListCount" style="font-size:11.5px; color:#94A3B8;"></span>
       </div>
     </div>
@@ -3558,6 +3568,7 @@
   let homesPropertiesCache = [];
   let homesActiveDiff = null;     // { sync_log_id, diff, summary, file_name }
   let homesLoaded = false;
+  let homesListPage = 1;          // current page in the Properties table (1-indexed)
 
   async function homesEnsureCommunities() {
     if (homesCommunitiesCache.length > 0) return homesCommunitiesCache;
@@ -3912,6 +3923,7 @@
   function homesRenderProperties() {
     const list = document.getElementById('homesPropertyList');
     const countEl = document.getElementById('homesListCount');
+    const pageInfo = document.getElementById('homesListPageInfo');
     const q = (document.getElementById('homesListSearch').value || '').toLowerCase().trim();
     const filtered = !q ? homesPropertiesCache : homesPropertiesCache.filter((p) => {
       return (p.street_address || '').toLowerCase().includes(q)
@@ -3922,8 +3934,23 @@
     countEl.textContent = `${filtered.length} of ${homesPropertiesCache.length}`;
     if (filtered.length === 0) {
       list.innerHTML = '<div style="padding:10px; color:#94A3B8; font-style:italic;">No properties match. Upload a Vantaca export to populate, or add manually.</div>';
+      if (pageInfo) pageInfo.textContent = '0 of 0';
       return;
     }
+
+    // Pagination — slice the filtered array based on homesListPage + page size
+    const pageSizeEl = document.getElementById('homesListPageSize');
+    const pageSize = pageSizeEl ? Number(pageSizeEl.value) || 50 : 50;
+    const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+    if (homesListPage > totalPages) homesListPage = totalPages;
+    if (homesListPage < 1) homesListPage = 1;
+    const start = (homesListPage - 1) * pageSize;
+    const end = Math.min(start + pageSize, filtered.length);
+    const pageRows = filtered.slice(start, end);
+    if (pageInfo) {
+      pageInfo.textContent = `${start + 1}-${end} of ${filtered.length} (p${homesListPage}/${totalPages})`;
+    }
+
     list.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
       <thead>
         <tr style="border-bottom:1.5px solid #1E2761; color:#475569; position:sticky; top:0; background:#fff;">
@@ -3935,7 +3962,7 @@
         </tr>
       </thead>
       <tbody>
-        ${filtered.map((p) => `
+        ${pageRows.map((p) => `
           <tr style="border-bottom:1px solid #e2e8f0; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">
             <td style="padding:5px 6px; font-weight:600; color:#1E2761;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
             <td style="padding:5px 6px;" ${p.owner_contact_id ? `onclick="event.stopPropagation(); homesOpenContactProfile('${p.owner_contact_id}');"` : ''}>
