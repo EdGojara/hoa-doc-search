@@ -4012,7 +4012,21 @@
             </tr>`).join('')}
           </tbody></table>`;
       };
+      // Build the "Current residency" highlight panel — shown at the top of
+      // the modal body. Surfaces lease info for renters (start/end/days/PDF/
+      // monthly rent/expiring-soon warning) and a simple badge for
+      // owner-occupied / family / vacant cases.
+      const currentRes = (j.residencies || []).find((r) => !r.end_date);
+      const lease = j.active_lease;
+      let currentResHtml = '';
+      if (currentRes) {
+        currentResHtml = _hpRenderCurrentResidency(currentRes, lease, j.property.id);
+      } else {
+        currentResHtml = '<div style="background:#f1f5f9; color:#6B7280; padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:14px;">No current residency on file. <button onclick="homesAddResidency(\'' + j.property.id + '\')" style="background:#1E2761; color:#fff; border:0; border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; margin-left:6px;">+ Add residency</button></div>';
+      }
+
       body.innerHTML = `
+        ${currentResHtml}
         <h4 style="margin:0 0 6px 0; font-size:13px; color:#1E2761;">Ownership history</h4>
         ${rendRel(j.ownerships, 'Owner', false)}
         <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Residency history</h4>
@@ -4024,6 +4038,177 @@
 
   function homesClosePropertyModal() {
     document.getElementById('homesPropertyModal').style.display = 'none';
+  }
+
+  // ===== Current residency / lease panel ====================================
+  // Renders inside the Property Detail modal. Shows lease term + renter info
+  // for active leases; simple badge for owner-occupied / family / vacant.
+
+  function _hpResidencyTypeColor(t) {
+    const map = {
+      renter: '#92400e', owner_occupied: '#15803d',
+      family_member: '#7c3aed', vacant: '#475569', unknown: '#94A3B8',
+    };
+    return map[t] || '#475569';
+  }
+  function _hpResidencyTypeBg(t) {
+    const map = {
+      renter: '#fef3c7', owner_occupied: '#dcfce7',
+      family_member: '#ede9fe', vacant: '#f1f5f9', unknown: '#f8fafc',
+    };
+    return map[t] || '#f1f5f9';
+  }
+  function _hpResidencyTypeLabel(t) {
+    const map = {
+      renter: '🏘️ Renter', owner_occupied: '🏠 Owner-occupied',
+      family_member: '👨‍👩‍👧 Family member', vacant: '🚪 Vacant', unknown: '❓ Unknown',
+    };
+    return map[t] || t;
+  }
+
+  function _hpRenderCurrentResidency(residency, activeLease, propertyId) {
+    const t = residency.residency_type || 'unknown';
+    const typeBg = _hpResidencyTypeBg(t);
+    const typeColor = _hpResidencyTypeColor(t);
+    const typeLabel = _hpResidencyTypeLabel(t);
+    const residentName = (residency.contacts && residency.contacts.full_name) || '<em style="color:#94A3B8;">(no resident contact on file)</em>';
+    const residentEmail = (residency.contacts && residency.contacts.primary_email) || '';
+    const residentPhone = (residency.contacts && residency.contacts.primary_phone) || '';
+
+    let leaseSection = '';
+    if (t === 'renter') {
+      const isActive = activeLease && activeLease.lease_active;
+      const daysLeft = activeLease ? activeLease.days_until_lease_expires : null;
+      const expiringSoon = activeLease && activeLease.expiring_within_60_days;
+      const leaseStatusPill = activeLease && activeLease.lease_end_date
+        ? (isActive
+            ? `<span style="background:${expiringSoon ? '#fef3c7' : '#dcfce7'}; color:${expiringSoon ? '#92400e' : '#15803d'}; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;">✓ ACTIVE${expiringSoon ? ' — expires in ' + daysLeft + 'd' : ''}</span>`
+            : '<span style="background:#fecaca; color:#991b1b; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;">⏰ EXPIRED</span>')
+        : '<span style="background:#f1f5f9; color:#475569; padding:2px 8px; border-radius:11px; font-size:10.5px; font-weight:700;">— no lease dates on file —</span>';
+
+      leaseSection = `
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; margin-top:10px; font-size:11.5px;">
+          <div><span style="color:#94A3B8;">Lease start</span><br><strong>${residency.lease_start_date || '—'}</strong></div>
+          <div><span style="color:#94A3B8;">Lease end</span><br><strong>${residency.lease_end_date || '—'}</strong></div>
+          <div><span style="color:#94A3B8;">Status</span><br>${leaseStatusPill}</div>
+          <div><span style="color:#94A3B8;">Monthly rent</span><br>${residency.monthly_rent != null ? '$' + Number(residency.monthly_rent).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'}</div>
+          <div><span style="color:#94A3B8;">Security deposit</span><br>${residency.security_deposit != null ? '$' + Number(residency.security_deposit).toLocaleString('en-US', { minimumFractionDigits: 2 }) : '—'}</div>
+          <div><span style="color:#94A3B8;">Renewals</span><br>${residency.lease_renewal_count || 0}</div>
+        </div>
+        ${residency.lease_pdf_path ? `<div style="margin-top:6px; font-size:11.5px;">📄 <a href="${escapeHtml(residency.lease_pdf_path)}" target="_blank" style="color:#1E2761;">View lease PDF</a></div>` : ''}
+        ${residency.notes_renter ? `<div style="margin-top:6px; font-size:11px; color:#475569; padding:6px 8px; background:#fffbeb; border-radius:6px; border-left:3px solid #fef3c7;"><strong>Renter notes:</strong> ${escapeHtml(residency.notes_renter)}</div>` : ''}`;
+    }
+
+    return `
+      <div id="hpResidencyPanel" style="border:1px solid #d0d7de; border-radius:10px; padding:12px 14px; margin-bottom:14px; background:${typeBg};">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-size:13px; font-weight:700; color:${typeColor};">${typeLabel}</div>
+            <div style="font-size:12px; color:#1a3a5c; margin-top:2px;">
+              ${residency.contacts?.id ? `<a href="#" onclick="event.preventDefault(); homesOpenContactProfile('${residency.contacts.id}');" style="color:#1E2761; text-decoration:underline; text-decoration-style:dotted;">${escapeHtml(residency.contacts.full_name || '')}</a>` : residentName}
+              ${residentEmail ? ` · ✉ ${escapeHtml(residentEmail)}` : ''}
+              ${residentPhone ? ` · 📞 ${escapeHtml(residentPhone)}` : ''}
+            </div>
+            <div style="font-size:11px; color:#6B7280; margin-top:2px;">Residency started ${escapeHtml(residency.start_date || '—')}</div>
+            ${leaseSection}
+          </div>
+          <button onclick="homesEditResidency('${residency.id}', ${JSON.stringify(residency).replace(/"/g, '&quot;').replace(/'/g, '&#39;')})" style="background:#fff; color:#1E2761; border:1px solid #1E2761; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer;">✏ Edit residency</button>
+        </div>
+      </div>`;
+  }
+
+  function homesEditResidency(residencyId, residency) {
+    const panel = document.getElementById('hpResidencyPanel');
+    if (!panel) return;
+    const r = typeof residency === 'string' ? JSON.parse(residency) : residency;
+    panel.innerHTML = _hpRenderEditResidencyForm(residencyId, r);
+  }
+
+  function _hpRenderEditResidencyForm(residencyId, r) {
+    const types = ['owner_occupied', 'renter', 'family_member', 'vacant', 'unknown'];
+    const sel = (v) => r.residency_type === v ? 'selected' : '';
+    return `
+      <div style="font-size:13px; font-weight:700; color:#1E2761; margin-bottom:8px;">✏ Edit residency</div>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px 12px; font-size:11.5px; color:#475569;">
+        <label>Residency type
+          <select id="hpResType" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;">
+            ${types.map((t) => `<option value="${t}" ${sel(t)}>${_hpResidencyTypeLabel(t)}</option>`).join('')}
+          </select>
+        </label>
+        <label>Residency start
+          <input id="hpResStart" type="date" value="${r.start_date || ''}" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;" />
+        </label>
+        <label>Lease start
+          <input id="hpResLeaseStart" type="date" value="${r.lease_start_date || ''}" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;" />
+        </label>
+        <label>Lease end
+          <input id="hpResLeaseEnd" type="date" value="${r.lease_end_date || ''}" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;" />
+        </label>
+        <label>Monthly rent
+          <input id="hpResRent" type="number" step="0.01" value="${r.monthly_rent || ''}" placeholder="e.g., 1850.00" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;" />
+        </label>
+        <label>Security deposit
+          <input id="hpResDeposit" type="number" step="0.01" value="${r.security_deposit || ''}" placeholder="e.g., 1850.00" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;" />
+        </label>
+        <label style="grid-column:1 / -1;">Lease PDF path (Supabase storage path)
+          <input id="hpResPdfPath" value="${r.lease_pdf_path || ''}" placeholder="leases/property-id/lease.pdf" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; margin-top:2px;" />
+        </label>
+        <label style="grid-column:1 / -1;">Renter notes (vehicles, pets, occupants, etc.)
+          <textarea id="hpResRenterNotes" rows="2" style="width:100%; padding:5px 7px; border:1px solid #d0d7de; border-radius:5px; font-size:12.5px; font-family:inherit; margin-top:2px; resize:vertical;">${escapeHtml(r.notes_renter || '')}</textarea>
+        </label>
+      </div>
+      <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+        <button onclick="homesSaveResidency('${residencyId}', '${r.property_id || ''}')" class="action-btn" style="font-size:12.5px; padding:6px 14px;">💾 Save</button>
+        <button onclick="homesOpenProperty('${r.property_id || ''}')" class="secondary-btn" style="font-size:12.5px; padding:6px 14px;">Cancel</button>
+        <div id="hpResStatus" style="margin-left:auto; font-size:11.5px; color:#94A3B8;"></div>
+      </div>`;
+  }
+
+  async function homesSaveResidency(residencyId, propertyId) {
+    const status = document.getElementById('hpResStatus');
+    const payload = {
+      residency_type: document.getElementById('hpResType').value,
+      start_date: document.getElementById('hpResStart').value || null,
+      lease_start_date: document.getElementById('hpResLeaseStart').value || null,
+      lease_end_date: document.getElementById('hpResLeaseEnd').value || null,
+      monthly_rent: parseFloat(document.getElementById('hpResRent').value) || null,
+      security_deposit: parseFloat(document.getElementById('hpResDeposit').value) || null,
+      lease_pdf_path: document.getElementById('hpResPdfPath').value.trim() || null,
+      notes_renter: document.getElementById('hpResRenterNotes').value.trim() || null,
+    };
+    status.textContent = '⏳ Saving…';
+    try {
+      const r = await fetch(`/api/property-residencies/${residencyId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Refresh the whole property modal so the updated info displays
+      if (propertyId) homesOpenProperty(propertyId);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function homesAddResidency(propertyId) {
+    const type = prompt('Residency type? (owner_occupied / renter / family_member / vacant / unknown)', 'renter');
+    if (!type) return;
+    const validTypes = ['owner_occupied', 'renter', 'family_member', 'vacant', 'unknown'];
+    if (!validTypes.includes(type)) { alert('Invalid type.'); return; }
+    try {
+      const r = await fetch('/api/property-residencies', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ property_id: propertyId, residency_type: type, end_previous: true }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      homesOpenProperty(propertyId);
+    } catch (e) {
+      alert('Add residency failed: ' + e.message);
+    }
   }
 
   // ===== Homeowner Profile modal — unified "everything about this person" ===

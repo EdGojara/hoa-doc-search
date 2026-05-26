@@ -628,7 +628,7 @@ router.get('/properties/:id', async (req, res) => {
       .maybeSingle();
     if (error || !prop) return res.status(404).json({ error: 'not found' });
 
-    const [{ data: ownerships }, { data: residencies }] = await Promise.all([
+    const [{ data: ownerships }, { data: residencies }, { data: activeLease }] = await Promise.all([
       supabase.from('property_ownerships')
         .select('*, contacts(id, full_name, primary_email, primary_phone)')
         .eq('property_id', req.params.id)
@@ -637,9 +637,89 @@ router.get('/properties/:id', async (req, res) => {
         .select('*, contacts(id, full_name, primary_email, primary_phone)')
         .eq('property_id', req.params.id)
         .order('start_date', { ascending: false }),
+      // v_active_leases — only returns a row if there's a current renter
+      // residency; consumed by the Property Detail UI's lease section
+      supabase.from('v_active_leases')
+        .select('*')
+        .eq('property_id', req.params.id)
+        .maybeSingle(),
     ]);
 
-    res.json({ property: prop, ownerships: ownerships || [], residencies: residencies || [] });
+    res.json({
+      property: prop,
+      ownerships: ownerships || [],
+      residencies: residencies || [],
+      active_lease: activeLease || null,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PROPERTY RESIDENCIES — CRUD for the rental/owner-occupied/vacant lifecycle
+// of a property. Lease tracking columns added in migration 116.
+// ---------------------------------------------------------------------------
+router.patch('/property-residencies/:id', express.json(), async (req, res) => {
+  try {
+    const allowed = [
+      'residency_type', 'start_date', 'end_date',
+      'lease_start_date', 'lease_end_date', 'lease_pdf_path',
+      'monthly_rent', 'security_deposit', 'lease_renewal_count',
+      'notes', 'notes_renter', 'contact_id',
+    ];
+    const validTypes = ['owner_occupied', 'renter', 'family_member', 'vacant', 'unknown'];
+    const patch = { updated_at: new Date().toISOString() };
+    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    if ('residency_type' in patch && !validTypes.includes(patch.residency_type)) {
+      return res.status(400).json({ error: 'invalid_residency_type' });
+    }
+    const { data, error } = await supabase
+      .from('property_residencies').update(patch).eq('id', req.params.id).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ residency: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/property-residencies', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
+    if (!b.residency_type) return res.status(400).json({ error: 'residency_type_required' });
+    const validTypes = ['owner_occupied', 'renter', 'family_member', 'vacant', 'unknown'];
+    if (!validTypes.includes(b.residency_type)) return res.status(400).json({ error: 'invalid_residency_type' });
+
+    // If end_previous=true, end any current residency on this property first
+    // (preserves audit trail — old residency stays in the table with end_date set).
+    const today = new Date().toISOString().slice(0, 10);
+    if (b.end_previous) {
+      await supabase
+        .from('property_residencies')
+        .update({ end_date: today, updated_at: new Date().toISOString() })
+        .eq('property_id', b.property_id)
+        .is('end_date', null);
+    }
+    const payload = {
+      property_id: b.property_id,
+      contact_id: b.contact_id || null,
+      residency_type: b.residency_type,
+      start_date: b.start_date || today,
+      end_date: b.end_date || null,
+      lease_start_date: b.lease_start_date || null,
+      lease_end_date: b.lease_end_date || null,
+      lease_pdf_path: b.lease_pdf_path || null,
+      monthly_rent: b.monthly_rent || null,
+      security_deposit: b.security_deposit || null,
+      notes: b.notes || null,
+      notes_renter: b.notes_renter || null,
+      source: b.source || 'manual',
+    };
+    const { data, error } = await supabase
+      .from('property_residencies').insert(payload).select().single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ residency: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
