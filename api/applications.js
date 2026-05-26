@@ -1127,10 +1127,10 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /api/applications/:id — full detail (assessments + responses)
+// GET /api/applications/:id — full detail (assessments + responses + audit)
 router.get('/:id', async (req, res) => {
   try {
-    const [appResp, assessResp, respResp, attachResp] = await Promise.all([
+    const [appResp, assessResp, respResp, attachResp, auditResp] = await Promise.all([
       supabase.from('community_applications')
         .select('*, community:communities(id, name, slug)')
         .eq('id', req.params.id)
@@ -1147,7 +1147,16 @@ router.get('/:id', async (req, res) => {
       supabase.from('application_attachments')
         .select('id, attachment_type, original_filename, file_size_bytes, caption, uploaded_at')
         .eq('application_id', req.params.id)
-        .order('display_order')
+        .order('display_order'),
+      // Latest audit row — surfaces guards/validators/contamination/etc.
+      // Defensive: returns empty if migration 118 hasn't been applied yet.
+      supabase.from('acc_assessment_audit')
+        .select('*')
+        .eq('application_id', req.params.id)
+        .order('ran_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+        .then((r) => r, () => ({ data: null, error: null })),
     ]);
 
     if (appResp.error) throw appResp.error;
@@ -1157,7 +1166,8 @@ router.get('/:id', async (req, res) => {
       application: appResp.data,
       assessments: assessResp.data || [],
       responses: respResp.data || [],
-      attachments: attachResp.data || []
+      attachments: attachResp.data || [],
+      latest_audit: auditResp?.data || null
     });
   } catch (err) {
     console.error('[applications] detail failed:', err.message);

@@ -8741,6 +8741,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   function accRenderDetail() {
     const a = accCurrent.application;
     const latestAssess = accCurrent.assessments[0];
+    const audit = accCurrent.latest_audit || null;
     const view = document.getElementById('acc-detail-view');
     document.getElementById('acc-list-view').style.display = 'none';
     view.style.display = '';
@@ -8748,6 +8749,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const appData = a.application_data || {};
     const submitted = a.submitted_at ? new Date(a.submitted_at).toLocaleString() : null;
     const ageHours = a.submitted_at ? (Date.now() - new Date(a.submitted_at).getTime()) / 1000 / 3600 : null;
+    const heldForReview = audit && audit.final_status === 'held_for_review';
 
     view.innerHTML = `
       <div style="margin-bottom:14px;">
@@ -8770,10 +8772,99 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         </div>
       </div>
 
+      <!-- Held-for-review banner — fires when Layer 1 guards or Layer 2
+           validators tripped on the latest assessment run. The manager
+           MUST review + fix or hand-write before any letter goes out. -->
+      ${heldForReview ? `
+        <div class="acc-card" style="border:2px solid #b91c1c; background:#fef2f2;">
+          <div style="display:flex; align-items:flex-start; gap:14px;">
+            <div style="font-size:32px; line-height:1;">🛑</div>
+            <div style="flex:1;">
+              <h3 style="margin:0 0 6px; color:#991b1b;">Held for review — do not send without manager edit</h3>
+              <p style="margin:0 0 10px; font-size:13px; color:#7f1d1d; line-height:1.55;">
+                The AI assessment for this application tripped one or more safety checks. The draft below is shown for context but is NOT safe to send as-is. Review the flags, edit the message, or click Re-assess after addressing the underlying issue (e.g., ingest the community's CC&Rs if missing).
+              </p>
+              ${audit.hold_reason ? `<div style="font-size:11px; color:#5a7390; margin-bottom:8px;"><strong>Hold codes:</strong> ${accEsc(audit.hold_reason)}</div>` : ''}
+              ${(audit.guards_fired || []).length > 0 ? `
+                <div style="margin-top:8px;">
+                  <strong style="font-size:12px; color:#7f1d1d;">Pre-flight guards fired:</strong>
+                  <ul style="margin:4px 0 0; padding-left:22px; font-size:12px; color:#7f1d1d;">
+                    ${audit.guards_fired.map(g => `
+                      <li style="margin-bottom:3px;">
+                        <strong>${accEsc(g.code || '?')}</strong>
+                        <span style="font-size:10px; padding:1px 6px; background:${g.severity === 'block' ? '#991b1b' : '#92400e'}; color:#fff; border-radius:3px; margin-left:4px;">${accEsc(g.severity || '')}</span>
+                        ${g.detail ? `<div style="font-size:11px; color:#5a7390; margin-left:4px; margin-top:2px;">${accEsc(g.detail)}</div>` : ''}
+                      </li>`).join('')}
+                  </ul>
+                </div>` : ''
+              }
+              ${audit.validators && Object.keys(audit.validators).length > 0 ? `
+                <div style="margin-top:10px;">
+                  <strong style="font-size:12px; color:#7f1d1d;">Cross-validators:</strong>
+                  <ul style="margin:4px 0 0; padding-left:22px; font-size:12px;">
+                    ${Object.entries(audit.validators).map(([k, v]) => `
+                      <li style="margin-bottom:3px; color:${v.severity === 'block' ? '#991b1b' : v.severity === 'warn' ? '#92400e' : '#166534'};">
+                        <strong>${accEsc(k.replace(/_/g, ' '))}</strong>
+                        <span style="font-size:10px; padding:1px 6px; background:${v.severity === 'block' ? '#991b1b' : v.severity === 'warn' ? '#92400e' : '#166534'}; color:#fff; border-radius:3px; margin-left:4px;">${accEsc(v.severity || (v.ok ? 'ok' : '?'))}</span>
+                        ${v.detail ? `<div style="font-size:11px; color:#5a7390; margin-left:4px; margin-top:2px;">${accEsc(v.detail)}</div>` : ''}
+                      </li>`).join('')}
+                  </ul>
+                </div>` : ''
+              }
+            </div>
+          </div>
+        </div>` : ''
+      }
+
+      <!-- Retrieval fingerprint — always shown when audit exists, even on
+           clean runs, so the manager can spot-check whether the model was
+           actually seeing the right community's docs before signing. -->
+      ${audit ? `
+        <div class="acc-card" style="background:#f8fafc;">
+          <details>
+            <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">
+              📊 Retrieval &amp; audit
+              <span style="font-weight:400; font-size:12px; color:#5a7390; margin-left:8px;">
+                ${audit.retrieved_chunk_count || 0} chunks · ${audit.community_chunk_count || 0} community · ${audit.law_general_chunk_count || 0} reference${audit.contamination_ratio != null ? ` · contamination ${Math.round((audit.contamination_ratio || 0) * 100)}%` : ''}
+              </span>
+            </summary>
+            <div style="margin-top:10px; font-size:12px; color:#5a7390;">
+              <div style="margin-bottom:8px;">
+                <strong>Model:</strong> ${accEsc(audit.ai_model || '?')}
+                · <strong>Tokens:</strong> in=${audit.ai_input_tokens || '?'} / out=${audit.ai_output_tokens || '?'}${audit.ai_max_tokens ? ' / max=' + audit.ai_max_tokens : ''}
+                · <strong>Stop:</strong> ${accEsc(audit.ai_stop_reason || '?')}
+                · <strong>Took:</strong> ${audit.ai_duration_ms ? Math.round(audit.ai_duration_ms / 100) / 10 + 's' : '?'}
+              </div>
+              ${(audit.retrieved_chunks || []).length > 0 ? `
+                <table style="width:100%; border-collapse:collapse; font-size:11px;">
+                  <thead><tr style="background:#e2e8f0;">
+                    <th style="padding:4px 8px; text-align:left;">Filename</th>
+                    <th style="padding:4px 8px; text-align:left;">Community</th>
+                    <th style="padding:4px 8px; text-align:left;">Sources</th>
+                  </tr></thead>
+                  <tbody>
+                    ${audit.retrieved_chunks.slice(0, 18).map(c => {
+                      const isTarget = (c.community || '').toLowerCase() === (a.community?.name || '').toLowerCase();
+                      const isReference = (c.community || '').toLowerCase() === 'law' || (c.community || '').toLowerCase() === 'general';
+                      const color = isTarget ? '#166534' : (isReference ? '#5a7390' : '#991b1b');
+                      return `<tr style="border-bottom:1px solid #e2e8f0; color:${color};">
+                        <td style="padding:3px 8px;">${accEsc(c.filename || '?')}</td>
+                        <td style="padding:3px 8px;"><strong>${accEsc(c.community || '?')}</strong></td>
+                        <td style="padding:3px 8px;">${accEsc(c.sources || '')}</td>
+                      </tr>`;
+                    }).join('')}
+                  </tbody>
+                </table>` : ''
+              }
+            </div>
+          </details>
+        </div>` : ''
+      }
+
       <!-- AI assessment -->
       ${latestAssess ? `
-        <div class="acc-card acc-ai-card">
-          <h3>🤖 Preliminary AI assessment</h3>
+        <div class="acc-card acc-ai-card${heldForReview ? '' : ''}">
+          <h3>🤖 Preliminary AI assessment${heldForReview ? ' <span style="font-size:13px; font-weight:400; color:#991b1b;">— held for review</span>' : ''}</h3>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
             <span class="acc-pill acc-pill-${latestAssess.status === 'likely_approved' ? 'likely' : latestAssess.status === 'concerns_identified' ? 'concerns' : latestAssess.status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(latestAssess.status)}</span>
             <span style="font-size:11px; color:#5a7390; align-self:center;">Confidence: <strong>${accEsc(latestAssess.confidence || '—')}</strong></span>
