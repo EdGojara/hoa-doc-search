@@ -64,6 +64,28 @@ const NOMINATION_PHOTO_TARGET = 1 * 1024 * 1024;
 // Replaces per-endpoint category filters.
 
 const { getRelevantPlaybook, formatPlaybookContext, buildAppliedPlaybookSummary } = require('./playbook');
+const { screenForLeaks } = require('./lib/voice/leak_filter');
+
+// Resolve the requester's role from the Authorization Bearer JWT. Returns
+// 'admin' | 'staff' | 'unknown'. Used to gate workpaper output on surfaces
+// that ship customer-bound text mixed with internal analysis.
+async function resolveUserRole(req) {
+  try {
+    const auth = req.headers && req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!token) return 'unknown';
+    const { data: { user }, error } = await supabase.auth.getUser(token);
+    if (error || !user) return 'unknown';
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('role')
+      .eq('id', user.id)
+      .maybeSingle();
+    return profile?.role || 'staff';
+  } catch (_) {
+    return 'unknown';
+  }
+}
 // =====================================================================
 // RFP DOCX GENERATOR — produces a polished Word doc from structured RFP data
 // =====================================================================
@@ -1495,7 +1517,54 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
       console.warn('[acc-review] letter-body call failed, falling back to review:', e.message);
     }
 
-    res.json({ review: reviewText, extracted, letter_body: letterBody, letter_truncated: letterTruncated });
+    // ----------------------------------------------------------------------
+    // IP-leak defense
+    // ----------------------------------------------------------------------
+    // 1) Workpaper (sections 1-5 of the review text) is admin-only. Non-admin
+    //    users get only the clean letter body. This prevents the failure
+    //    mode where staff copy-pastes the full review into a Word doc and
+    //    mails the workpaper to homeowners + board.
+    // 2) The clean letter body is run through the leak filter to scrub
+    //    methodology-exposure phrases and verbatim CC&R citations before
+    //    it gets near a customer. Auto-rewrites for "rewrite" rules;
+    //    blocks ship if any "block"-severity phrase remains.
+    // 3) For admin users, the workpaper still ships, but we tag it with an
+    //    explicit INTERNAL header so even an accidental copy travels with a
+    //    DO-NOT-DISTRIBUTE marker.
+    // ----------------------------------------------------------------------
+    const role = await resolveUserRole(req);
+    const isAdmin = role === 'admin';
+
+    // Run the customer-bound letter body through the leak filter (audience='customer').
+    const letterScreen = letterBody
+      ? screenForLeaks(letterBody, { audience: 'customer', autoRewrite: true })
+      : { ok: true, text: '', violations: [], blocks: [], rewrites: [] };
+    if (letterScreen.blocks.length > 0) {
+      console.warn('[acc-review] letter_body BLOCKED by leak filter:',
+        letterScreen.blocks.map((b) => b.reason).join('; '));
+      // Blank the letter — manager must hand-write or re-run.
+      letterBody = '';
+      letterTruncated = true;
+    } else {
+      letterBody = letterScreen.text;
+    }
+
+    const responseBody = {
+      letter_body: letterBody,
+      letter_truncated: letterTruncated,
+      extracted,
+      // Surface scrubber output so the UI can show "we removed X phrases"
+      letter_screening: {
+        rewrites: letterScreen.rewrites.length,
+        blocks: letterScreen.blocks.length,
+      },
+    };
+    if (isAdmin) {
+      responseBody.review = `*** INTERNAL — BEDROCK WORKPAPER — DO NOT DISTRIBUTE — REMOVE BEFORE SENDING TO HOMEOWNER OR BOARD ***\n\n${reviewText}\n\n*** END INTERNAL — DO NOT DISTRIBUTE ***`;
+    }
+    // role echo so the UI can adjust without re-querying /api/me
+    responseBody.viewer_role = role;
+    res.json(responseBody);
   } catch (err) {
     // Log the full error server-side for diagnostic. Surface a SHORT but
     // SPECIFIC message to the UI so the operator can tell whether to retry,
@@ -1567,6 +1636,24 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
     const files = req.files || [];
     const applicationFile = files.find((f) => f.fieldname === 'application_pdf');
     const photoFiles = files.filter((f) => f.fieldname === 'photos');
+
+    // IP-leak guard: scrub the body before rendering. The body_text the
+    // manager edits in the textarea CAN contain leaked workpaper phrases
+    // (e.g., they hand-edited and pasted in something internal). The leak
+    // filter scrubs auto-rewritable phrases and BLOCKS if a hard-banned
+    // phrase remains — better to fail loud than render a leaky letter.
+    const bodyScreen = screenForLeaks(body.body_text, { audience: 'customer', autoRewrite: true });
+    if (bodyScreen.blocks.length > 0) {
+      console.warn('[acc-review/letter] body BLOCKED by leak filter:',
+        bodyScreen.blocks.map((b) => `${b.reason} ("${b.matches.join('", "')}")`).join('; '));
+      return res.status(400).json({
+        error: 'Letter contains internal-only phrases that cannot be sent to a homeowner. Please edit the highlighted phrases before downloading. ' +
+               'Blocked: ' + bodyScreen.blocks.map((b) => `"${b.matches.join('", "')}"`).join(', '),
+        blocked_phrases: bodyScreen.blocks,
+      });
+    }
+    // Use the auto-rewritten version for the PDF render
+    body.body_text = bodyScreen.text;
 
     // 1) Render the letter PDF first — if this fails, nothing else matters.
     const pdfBuffer = await renderLetterPdfBuffer(body);

@@ -321,6 +321,11 @@ async function nextReferenceNumber(communityId, serviceType, prefix) {
 async function runAssessment(application, opts = {}) {
   const t0 = Date.now();
   const triggerSource = opts.triggerSource || 'public_submit';
+  // In eval mode we skip ALL persistence (application_assessments,
+  // community_applications.update, acc_assessment_audit). Lets us run the
+  // assessment pipeline against synthetic applications for accuracy
+  // benchmarking without polluting production tables.
+  const evalMode = opts.evalMode === true;
 
   // 1. Community profile + facts
   const { data: comm } = await supabase
@@ -420,6 +425,23 @@ async function runAssessment(application, opts = {}) {
 
 Your role: produce a structured PRELIMINARY assessment + a draft response letter that the community manager will review, optionally edit, and send. You are NOT the final authority — the manager and committee are. Your output is NOT shown to the homeowner directly; the homeowner only sees a brief receipt and the manager's final reviewed letter.
 
+COMMIT TO A DECISION — DO NOT PUNT:
+You are not the manager's research assistant. You are the manager's first draft. Your job is to make a confident, well-reasoned recommendation on EVERY application. The manager will review and edit. Punting wastes their time and defeats the entire point of preliminary AI review.
+
+Use "manual_review" ONLY when ALL of the following are true:
+  (a) The project is unusual enough that no comparable historical decision exists in this community
+  (b) The governing documents do not give clear guidance for this project type
+  (c) Even an experienced manager would need to confer with the board before deciding
+This should be rare — maybe 5% of applications.
+
+Use "request_more_info" ONLY when a SPECIFIC critical fact is missing AND that fact materially changes the decision:
+  - A structural addition or pool with NO site plan/survey showing location
+  - A paint change with NO color reference (name, sample, photo, or "match existing")
+  - A contractor-required project with NO contractor identified
+Do NOT request more info for minor gaps the manager can fill in by phone, for things visible in attached photos, or because you'd like more comfort. If the homeowner gave you enough to make a judgment call the way an experienced manager would, MAKE THE CALL.
+
+When historical decisions show a clear pattern for similar projects (e.g., "fence replacements at this community are routinely approved with standard conditions"), follow that pattern. Do NOT punt to manual_review just because you see a duplicate — that's a SIGNAL the standard treatment applies, not a reason for caution.
+
 DIMENSIONAL RECONCILIATION — HARD RULE:
 When dimensions appear in multiple places (homeowner-typed form, contractor estimate, architect-stamped drawings, survey), THE STAMPED ARCHITECT/ENGINEER DRAWING CONTROLS. The form is a homeowner estimate; the drawing is the instrument being approved. ALL derived calculations (square footage, area, lot coverage, distances) must flow from the controlling dimension set. NEVER cite two different dimensions for the same measurement within the same output. If you see a form-vs-drawing discrepancy, surface it in the summary AND state explicitly which set you are approving; in the draft_response, use only the controlling dimensions.
 
@@ -427,7 +449,7 @@ CRITICAL OUTPUT RULES:
 - Return ONLY a single valid JSON object (no markdown fences, no commentary outside the JSON)
 - Use the exact shape below
 - Be CONCRETE — cite specific governing-doc sections when possible, but ONLY from documents that appeared in the RELEVANT GOVERNING DOCUMENTS section below. Do NOT invent citations or reference documents you haven't been shown.
-- Treat HISTORICAL DECISIONS as informational context, not binding precedent. The current governing documents are the authority.
+- Treat HISTORICAL DECISIONS as STRONG PATTERN evidence — if 8 of the last 10 fence applications at this community were conditional approvals with standard conditions, recommend approve_with_conditions matching those standard conditions. The governing documents are the legal authority, but past decisions tell you how that authority is applied in practice at THIS community.
 - "draft_response" should be in Bedrock's voice: warm, clear, respectful, lead with the decision, explain reasoning, offer path forward. Sign off "— Bedrock Association Management" (never a personal name).
 - "draft_response" should be 120-350 words. Long form letters lose homeowners; short ones look hasty. Find the middle.
 - "recommended_action" must match the language in "draft_response" — if you recommend approve, the letter must read as an approval; if deny, as a denial; if request_more_info, as a polite request for additional materials.
@@ -495,25 +517,27 @@ Return the JSON assessment now.`;
     console.error('[applications] AI call failed:', err.message);
     const durationMs = Date.now() - t0;
     // Audit even the failed call so the manager queue sees it.
-    await writeAuditRow({
-      application_id: application.id,
-      community_id: application.community_id,
-      trigger_source: triggerSource,
-      retrieved_chunks: fingerprint,
-      retrieved_chunk_count: fingerprint.length,
-      contamination_ratio: contamination.contaminationRatio,
-      community_chunk_count: contamination.community,
-      law_general_chunk_count: contamination.lawGeneral,
-      ai_model: ASSESSMENT_MODEL,
-      ai_max_tokens: ASSESSMENT_MAX_TOKENS,
-      ai_duration_ms: durationMs,
-      guards_fired: [{ code: 'AI_CALL_FAILED', severity: 'block', detail: String(err.message || err).slice(0, 200) }],
-      validators: {},
-      validator_blockers: 1,
-      validator_warnings: 0,
-      final_status: 'failed',
-      hold_reason: 'AI call failed — see server log',
-    });
+    if (!evalMode) {
+      await writeAuditRow({
+        application_id: application.id,
+        community_id: application.community_id,
+        trigger_source: triggerSource,
+        retrieved_chunks: fingerprint,
+        retrieved_chunk_count: fingerprint.length,
+        contamination_ratio: contamination.contaminationRatio,
+        community_chunk_count: contamination.community,
+        law_general_chunk_count: contamination.lawGeneral,
+        ai_model: ASSESSMENT_MODEL,
+        ai_max_tokens: ASSESSMENT_MAX_TOKENS,
+        ai_duration_ms: durationMs,
+        guards_fired: [{ code: 'AI_CALL_FAILED', severity: 'block', detail: String(err.message || err).slice(0, 200) }],
+        validators: {},
+        validator_blockers: 1,
+        validator_warnings: 0,
+        final_status: 'failed',
+        hold_reason: 'AI call failed — see server log',
+      });
+    }
     return { ok: false, error: safeErrorMessage(err), held_for_review: true };
   }
 
@@ -532,7 +556,7 @@ Return the JSON assessment now.`;
   const promptHash = crypto.createHash('sha256').update(userMessage).digest('hex').slice(0, 16);
 
   // Audit
-  await writeAuditRow({
+  if (!evalMode) await writeAuditRow({
     application_id: application.id,
     community_id: application.community_id,
     trigger_source: triggerSource,
@@ -561,7 +585,7 @@ Return the JSON assessment now.`;
   });
 
   // Persist to application_assessments (full history) — only if we have a parse
-  if (parsed) {
+  if (parsed && !evalMode) {
     await supabase.from('application_assessments').insert({
       application_id: application.id,
       status: parsed.status,
@@ -1320,4 +1344,4 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
   }
 });
 
-module.exports = { router };
+module.exports = { router, runAssessment };

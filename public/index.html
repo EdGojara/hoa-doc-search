@@ -683,9 +683,33 @@
     </div>
     <div class="panel">
       <h3>📋 ACC Review & Recommendation</h3>
-      <div class="output-box placeholder" id="accOutput">Fill in application details and click Review.</div>
-      <button class="secondary-btn" id="copyAccBtn" onclick="copyText('accOutput')" style="display:none">📋 Copy to Clipboard</button>
-      <button class="secondary-btn" id="printAccBtn" onclick="printACC()" style="display:none">🖨️ Print / Save as PDF</button>
+
+      <!-- Staff-only acknowledgment: a clean "review complete" panel that
+           non-admin users see in place of the workpaper. The clean letter
+           below is what they edit and send. -->
+      <div id="accStaffPanel" class="output-box" style="display:none; background:#f0fdf4; border-color:#86efac;">
+        <div style="font-weight:600; color:#166534;">✓ Review complete</div>
+        <div style="font-size:13px; color:#475569; margin-top:6px;">
+          A draft letter for the homeowner has been prepared below. Review and edit the wording as needed, then click <strong>Download letter</strong> to produce the printable PDF.
+        </div>
+        <div style="font-size:12px; color:#475569; margin-top:10px; padding:8px 10px; background:#fef9c3; border:1px solid #fde68a; border-radius:6px;">
+          <strong>⚠ Please:</strong> the letter below is the only artifact to send to the homeowner. Do not download, screenshot, copy, or forward the internal review notes — those are workpaper, not for distribution.
+        </div>
+      </div>
+
+      <!-- Admin-only workpaper. Stamped INTERNAL — DO NOT DISTRIBUTE so even
+           an accidental copy travels with the warning attached.
+           Visible by default; the auth bootstrap hides it for non-admin
+           users via document.querySelectorAll('[data-admin-only]'). -->
+      <div data-admin-only>
+        <div style="margin-bottom:6px; padding:8px 10px; background:#fef2f2; border:1px solid #f87171; border-radius:6px; font-size:12px; color:#991b1b;">
+          <strong>🛑 INTERNAL — BEDROCK WORKPAPER — DO NOT DISTRIBUTE.</strong>
+          The sections below are Bedrock's analytical work product. They are <strong>not</strong> for homeowners, board members, or staff outside Bedrock leadership. Send the cleaned letter below — never this output.
+        </div>
+        <div class="output-box placeholder" id="accOutput">Fill in application details and click Review.</div>
+        <button class="secondary-btn" id="copyAccBtn" onclick="copyText('accOutput')" style="display:none">📋 Copy to Clipboard</button>
+        <button class="secondary-btn" id="printAccBtn" onclick="printACC()" style="display:none">🖨️ Print / Save as PDF</button>
+      </div>
 
       <!-- Decision letter (renders a Bedrock-letterhead PDF for the homeowner) -->
       <div id="accLetterSection" style="display:none; margin-top:18px; padding:16px; background:#f1f5fb; border:1px solid #c0d0e0; border-radius:10px;">
@@ -17083,13 +17107,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!details && !pdfFile) { alert('Please enter application details or upload a PDF.'); return; }
     if (!currentCommunity) { alert('Please select a community first.'); return; }
     const reviewBtn = document.getElementById('reviewBtn');
-    const accOutput = document.getElementById('accOutput');
+    const accOutput = document.getElementById('accOutput');             // admin-only — may be hidden for staff
+    const accStaffPanel = document.getElementById('accStaffPanel');
     const copyBtn = document.getElementById('copyAccBtn');
+    const isAdmin = (window.currentUser && window.currentUser.role === 'admin');
     reviewBtn.disabled = true;
     reviewBtn.textContent = '⏳ Reviewing...';
-    accOutput.className = 'output-box';
-    accOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
+    if (isAdmin && accOutput) {
+      accOutput.className = 'output-box';
+      accOutput.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
+    } else if (accStaffPanel) {
+      accStaffPanel.style.display = 'block';
+      accStaffPanel.innerHTML = '<div style="font-weight:600; color:#1E2761;">⏳ Reviewing…</div><div style="font-size:13px; color:#475569; margin-top:6px;">Preparing the homeowner letter — this usually takes 30-60 seconds.</div>';
+    }
+    if (copyBtn) copyBtn.style.display = 'none';
     try {
       const formData = new FormData();
       formData.append('community', currentCommunity);
@@ -17099,21 +17130,48 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (details) formData.append('details', details);
       if (pdfFile) formData.append('pdf', pdfFile);
       accSelectedFiles.forEach((f) => formData.append('images', f));
-      const res = await fetch('/acc-review', { method: 'POST', body: formData });
+      // Attach the Supabase JWT so the server can resolve the user's role and
+      // gate the workpaper. Without this header the server defaults to
+      // 'unknown' and never returns review text — exactly the right default.
+      let authHeader = {};
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) authHeader = { Authorization: `Bearer ${session.access_token}` };
+      } catch (_) { /* no-op */ }
+      const res = await fetch('/acc-review', { method: 'POST', body: formData, headers: authHeader });
       const data = await res.json();
-      accOutput.className = 'output-box';
-      accOutput.textContent = data.review || data.error;
-      copyBtn.style.display = 'block';
-      document.getElementById('printAccBtn').style.display = 'block';
+
+      // Admin: render the workpaper into the gated output box. Staff: render
+      // the clean acknowledgment panel only — never the review text.
+      if (isAdmin && accOutput) {
+        accOutput.className = 'output-box';
+        accOutput.textContent = data.review || data.error || '(no output)';
+        if (copyBtn) copyBtn.style.display = 'block';
+        const printBtn = document.getElementById('printAccBtn');
+        if (printBtn) printBtn.style.display = 'block';
+      } else if (accStaffPanel) {
+        accStaffPanel.style.display = 'block';
+        if (data.error) {
+          accStaffPanel.innerHTML = '<div style="font-weight:600; color:#991b1b;">⚠ Review failed</div><div style="font-size:13px; color:#475569; margin-top:6px;">' + (data.error || '') + '</div>';
+        } else {
+          accStaffPanel.innerHTML =
+            '<div style="font-weight:600; color:#166534;">✓ Review complete</div>' +
+            '<div style="font-size:13px; color:#475569; margin-top:6px;">A draft letter for the homeowner has been prepared below. Review and edit the wording as needed, then click <strong>Download letter</strong> to produce the printable PDF.</div>' +
+            '<div style="font-size:12px; color:#475569; margin-top:10px; padding:8px 10px; background:#fef9c3; border:1px solid #fde68a; border-radius:6px;"><strong>⚠ Please:</strong> the letter below is the only artifact to send to the homeowner. Do not download, screenshot, copy, or forward any internal review notes — those are workpaper, not for distribution.</div>';
+        }
+      }
       // Show the decision-letter form and pre-fill the body with the CLEAN
-      // homeowner-facing letter body (extracted server-side from the AI's
-      // <<<LETTER_BODY>>> block). Falls back to the full review if the model
-      // forgot to emit the block.
-      if (data.review || data.letter_body) {
+      // homeowner-facing letter body. For non-admin users, data.review is
+      // not returned by the server — only letter_body. Fallback to nothing
+      // rather than to the (admin-only) review text.
+      if (data.letter_body || data.review) {
         const sec = document.getElementById('accLetterSection');
         if (sec) sec.style.display = 'block';
         const body = document.getElementById('accLetterBody');
-        if (body) body.value = (data.letter_body && data.letter_body.trim()) ? data.letter_body : data.review;
+        const letterText = (data.letter_body && data.letter_body.trim())
+          ? data.letter_body
+          : (isAdmin ? (data.review || '') : '');
+        if (body) body.value = letterText;
         // Stash extracted data + uploaded files for the packet endpoint.
         accLastReview = {
           extracted: data.extracted || {},
