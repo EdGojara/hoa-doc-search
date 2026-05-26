@@ -291,6 +291,12 @@ router.post('/decide', express.json(), async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/open-violation', express.json(), async (req, res) => {
   try {
+    // Capture actor from JWT — do NOT trust body.opened_by_user_id any
+    // longer. Pre-team-management code accepted whatever the client sent.
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+
     const body = req.body || {};
     const observationId = body.observation_id;
     if (!observationId) return res.status(400).json({ error: 'observation_id required' });
@@ -368,7 +374,7 @@ router.post('/open-violation', express.json(), async (req, res) => {
         current_stage_started_at: new Date().toISOString(),
         cure_period_ends_at: cureEnd,
         opened_at: new Date().toISOString(),
-        opened_by_user_id: body.opened_by_user_id || null,
+        opened_by_user_id: actor.id,
       })
       .select()
       .single();
@@ -382,7 +388,7 @@ router.post('/open-violation', express.json(), async (req, res) => {
         .update({
           reviewer_status: 'confirmed',
           reviewed_at: new Date().toISOString(),
-          reviewer_user_id: body.opened_by_user_id || null,
+          reviewer_user_id: actor.id,
         })
         .eq('id', obs.id);
       if (!oErr) observationUpdated = true;
@@ -1172,13 +1178,20 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
 // ---------------------------------------------------------------------------
 router.post('/drafts/approve', express.json(), async (req, res) => {
   try {
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+
     const ids = (req.body && req.body.interaction_ids) || [];
     if (!Array.isArray(ids) || ids.length === 0) {
       return res.status(400).json({ error: 'interaction_ids (array) required' });
     }
     const { error: upErr, count } = await supabase
       .from('interactions')
-      .update({ status: 'approved' }, { count: 'exact' })
+      .update({
+        status: 'approved',
+        approved_by_user_id: actor.id,
+      }, { count: 'exact' })
       .in('id', ids)
       .eq('status', 'draft');
     if (upErr) return res.status(500).json({ error: upErr.message });
@@ -1559,6 +1572,10 @@ router.get('/violations/:id/delivery-receipts', async (req, res) => {
 
 router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
   try {
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+
     const body = req.body || {};
     const deliveryMethod = body.delivery_method;
     const communityId = body.community_id || null;
@@ -1866,10 +1883,13 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
       return res.status(500).json({ error: 'Could not regenerate any letter PDFs.', skipped });
     }
 
-    // Mark all included letters as printed
+    // Mark all included letters as printed + stamp the locking user
     await supabase
       .from('interactions')
-      .update({ printed_at: new Date().toISOString() })
+      .update({
+        printed_at: new Date().toISOString(),
+        locked_by_user_id: actor.id,
+      })
       .in('id', included);
 
     const mergedBytes = await out.save();

@@ -65,6 +65,7 @@ const NOMINATION_PHOTO_TARGET = 1 * 1024 * 1024;
 
 const { getRelevantPlaybook, formatPlaybookContext, buildAppliedPlaybookSummary } = require('./playbook');
 const { screenForLeaks } = require('./lib/voice/leak_filter');
+const { getActingUser, actorDisplayName } = require('./api/_acting_user');
 
 // Resolve the requester's role from the Authorization Bearer JWT. Returns
 // 'admin' | 'staff' | 'assistant' | 'inactive' | 'unknown'.
@@ -1638,6 +1639,11 @@ async function renderLetterPdfBuffer(body) {
 // lookup + on-demand packet generation.
 app.post('/acc-review/letter', upload.any(), async (req, res) => {
   try {
+    // Capture WHO is generating + saving this decision letter. Optional
+    // for the rendering itself but stamped on the acc_decisions row so we
+    // know which staff member finalized each decision.
+    const actor = await getActingUser(req);
+
     const body = req.body || {};
     if (!body.body_text || !body.body_text.trim()) {
       return res.status(400).json({ error: 'body_text is required' });
@@ -1684,6 +1690,10 @@ app.post('/acc-review/letter', upload.any(), async (req, res) => {
           reference_number: body.reference_number || null,
           decision_type: body.decision_type || null,
           letter_body: body.body_text || null,
+          // Per-user audit attribution. Null if the caller wasn't signed
+          // in via Microsoft (legacy staff-password sessions). After the
+          // shared-password gate is killed, every row gets a real FK.
+          decided_by_user_id: actor?.id || null,
         })
         .select()
         .single();

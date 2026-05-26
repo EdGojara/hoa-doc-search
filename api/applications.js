@@ -30,6 +30,7 @@ const { createClient } = require('@supabase/supabase-js');
 const Anthropic = require('@anthropic-ai/sdk');
 const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
+const { requireActingUser, actorDisplayName } = require('./_acting_user');
 const { getRelevantChunks } = require('../lib/hybrid_retrieval');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
@@ -1228,11 +1229,23 @@ router.post('/:id/assess', async (req, res) => {
 // applications in the same community. THIS IS THE TYPE-B LEARNING LOOP.
 router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) => {
   try {
+    // Capture WHO is finalizing — required. The display name in the
+    // request body becomes a fallback for letter signatures but the
+    // canonical actor is the FK to user_profiles.
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+
     const { action, message_to_owner, internal_notes, decided_by_name, conditions, promote_to_history } = req.body || {};
     if (!action) return res.status(400).json({ error: 'action is required' });
 
     const validActions = ['approve', 'deny', 'approve_with_conditions', 'request_more_info'];
     if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
+
+    // Display name for the response record + downstream artifacts.
+    // Prefer the body field (lets the operator override for legibility,
+    // e.g., "M. Tisdale on behalf of the ACC"), then fall back to the
+    // actor's profile name from the user_profiles row.
+    const displayName = (decided_by_name && String(decided_by_name).trim()) || actorDisplayName(actor);
 
     const finalStatusMap = {
       approve: 'approved',
@@ -1264,19 +1277,22 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
       .single();
     if (updErr) throw updErr;
 
-    // Insert the response row
+    // Insert the response row. acted_by_user_id is the canonical actor;
+    // action_by_name is the display fallback shown on response history /
+    // letter signatures.
     await supabase.from('application_responses').insert({
       application_id: req.params.id,
       response_type: responseTypeMap[action],
       message_to_owner: message_to_owner || null,
       internal_notes: internal_notes || null,
-      action_by_name: decided_by_name || null,
+      acted_by_user_id: actor.id,
+      action_by_name: displayName,
       email_to: app.submitter_email,
       email_subject: action === 'approve' ? `Your application ${app.reference_number} has been approved`
                     : action === 'deny' ? `Update on your application ${app.reference_number}`
                     : action === 'approve_with_conditions' ? `Your application ${app.reference_number} — conditional approval`
                     : `We need a bit more information — application ${app.reference_number}`,
-      metadata: { final_status: finalStatus, action }
+      metadata: { final_status: finalStatus, action, actor_email: actor.email }
     });
 
     // ========================================================================
@@ -1318,7 +1334,7 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
             project_description: appData.project_description || null,
             decision_type: decisionType,
             decided_at: new Date().toISOString().slice(0, 10),
-            decided_by: decided_by_name || 'Bedrock manager',
+            decided_by: displayName,
             conditions: conditions || null,
             reasoning: reasoning,
             summary: summary,

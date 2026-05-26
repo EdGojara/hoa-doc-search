@@ -8989,13 +8989,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         ${appData.additional_notes ? `<div class="acc-field-pair"><div class="k">Notes</div><div style="white-space:pre-wrap;">${accEsc(appData.additional_notes)}</div></div>` : ''}
       </div>
 
-      <!-- Response history -->
+      <!-- Response history — shows WHO finalized each response. Newest
+           rows use the per-user FK (action_by_name reflects the actor
+           captured from the JWT). Legacy rows show whatever free-text
+           name was stored under the old code. -->
       ${accCurrent.responses.length > 0 ? `
         <div class="acc-card">
           <h3>📒 Response history</h3>
           ${accCurrent.responses.map(r => `
             <div style="padding:10px 0; border-bottom:1px solid #f0f2f5; font-size:13px;">
-              <div style="font-weight:600; color:#1a3a5c;">${accEsc(r.response_type)} ${r.action_at ? '<span style="font-weight:400; color:#888; font-size:11px;">' + new Date(r.action_at).toLocaleString() + '</span>' : ''}</div>
+              <div style="font-weight:600; color:#1a3a5c;">${accEsc(r.response_type)} ${r.action_at ? '<span style="font-weight:400; color:#888; font-size:11px;">' + new Date(r.action_at).toLocaleString() + '</span>' : ''}${r.action_by_name ? '<span style="font-weight:400; color:#5a7390; font-size:11px; margin-left:6px;">by ' + accEsc(r.action_by_name) + '</span>' : ''}</div>
               ${r.message_to_owner ? `<div style="white-space:pre-wrap; margin-top:5px; color:#444;">${accEsc(r.message_to_owner)}</div>` : ''}
               ${r.internal_notes ? `<div style="margin-top:5px; padding:6px 10px; background:#f5f8fc; border-radius:4px; font-size:11px; color:#5a7390;"><strong>Internal:</strong> ${accEsc(r.internal_notes)}</div>` : ''}
             </div>
@@ -9072,9 +9075,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const status = document.getElementById('acc-action-status');
     status.textContent = 'Saving…'; status.style.color = '#5a7390';
     try {
+      // Send the Bearer token — finalize now requires per-user auth so the
+      // FK (acted_by_user_id) gets stamped from the JWT instead of a free-
+      // text name in the body.
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) { /* no session — server will 401 and the catch below shows it */ }
       const r = await fetch('/api/applications/' + appId + '/finalize', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           action,
           message_to_owner: msg,
@@ -17583,7 +17594,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     btn.disabled = true; btn.textContent = '⏳ Generating + saving…';
     status.textContent = '';
     try {
-      const r = await fetch('/acc-review/letter', { method: 'POST', body: form });
+      // Bearer token lets the server stamp decided_by_user_id on the
+      // acc_decisions row so we know which staff member finalized this
+      // decision. Optional — endpoint still renders if missing.
+      const headers = {};
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) { /* no session */ }
+      const r = await fetch('/acc-review/letter', { method: 'POST', body: form, headers });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || ('HTTP ' + r.status));
