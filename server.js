@@ -1130,7 +1130,42 @@ app.post('/acc-review', upload.any(), async (req, res) => {
         console.warn('[acc-review] fallback extraction failed:', e.message);
       }
     }
-    const context = await getRelevantChunks(appDetails, community);
+    // ---- Focused retrieval query ------------------------------------------
+    // appDetails is a long blob (1.5k-5k words) from the vision extract.
+    // Hybrid retrieval's 8-keyword cap + ILIKE-then-filter pattern was tuned
+    // for short focused questions (askEd's "what's the quorum?"). Feeding it
+    // a giant blob made the keyword + title halves return noise, diluting
+    // the vector half's ranking. The fix: build a tight retrieval query from
+    // the project_summary + project type + community name, ~10 tokens, which
+    // is exactly the shape hybrid retrieval was tuned for.
+    const projectTypeRe = /Project type[^:]*:\s*([^\n]+)/i;
+    const projectTypeMatch = (appDetails || '').match(projectTypeRe);
+    const projectTypeText = projectTypeMatch ? projectTypeMatch[1].trim().slice(0, 120) : '';
+    const retrievalQuery = [
+      community,
+      extracted.project_summary,
+      projectTypeText,
+    ].filter(Boolean).join(' — ').slice(0, 400) ||
+      // Fallback only when we have absolutely nothing focused
+      (appDetails || '').slice(0, 400);
+    console.log(`[acc-review] retrieval query (focused): "${retrievalQuery}"`);
+    const context = await getRelevantChunks(retrievalQuery, community);
+
+    // ---- Diagnostic: what came back ---------------------------------------
+    // Pull the [From: filename - community ...] headers out so the server log
+    // shows exactly which chunks the model is about to reason from. If the
+    // community filter is leaking cross-community noise, this is where we see
+    // it. No UI exposure — server-side only.
+    try {
+      const headerRe2 = /\[From:\s*([^\]\n]+)\]/g;
+      const seen = [];
+      let h;
+      while ((h = headerRe2.exec(context || '')) !== null) {
+        seen.push(h[1].trim());
+      }
+      console.log(`[acc-review] community="${community}" retrieved ${seen.length} chunks:`);
+      seen.slice(0, 25).forEach((s, i) => console.log(`  ${i + 1}. ${s}`));
+    } catch (_) { /* logging only */ }
 
     // ---- Missing-CC&Rs guard ----------------------------------------------
     // getRelevantChunks tags each chunk with [From: filename - communityName].
@@ -1462,8 +1497,24 @@ Write LETTER_BODY in the warm, professional voice the homeowner will receive. Th
 
     res.json({ review: reviewText, extracted, letter_body: letterBody, letter_truncated: letterTruncated });
   } catch (err) {
-    console.error(err);
-    res.status(500).json({ error: 'Error processing ACC application: ' + err.message });
+    // Log the full error server-side for diagnostic. Surface a SHORT but
+    // SPECIFIC message to the UI so the operator can tell whether to retry,
+    // contact us, or fix an input problem (vs. the unhelpful "Something
+    // went wrong" the old handler produced).
+    console.error('[acc-review] FAILED:', err);
+    const msg = (err && err.message) ? String(err.message) : 'unknown error';
+    let userMessage = `ACC review failed: ${msg}`;
+    // Common upstream signals — rephrase to be operator-actionable
+    if (/anthropic|claude/i.test(msg) && /(429|rate|overload|capacity)/i.test(msg)) {
+      userMessage = 'AI service is at capacity right now. Click Review again in 30 seconds.';
+    } else if (/anthropic|claude/i.test(msg) && /(timeout|aborted|ETIMEDOUT|ECONNRESET)/i.test(msg)) {
+      userMessage = 'AI request timed out. Click Review again — this usually clears on retry.';
+    } else if (/supabase|postgres|relation|column/i.test(msg)) {
+      userMessage = `Database error during ACC review: ${msg.slice(0, 200)}`;
+    } else if (/openai|embedding/i.test(msg)) {
+      userMessage = 'Embedding service failed during document retrieval. Click Review again.';
+    }
+    res.status(500).json({ error: userMessage, debug_id: Date.now().toString(36) });
   }
 });
 
