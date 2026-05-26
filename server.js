@@ -413,6 +413,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/assets\//,
   // The login flow itself
   /^\/staff-login\.html$/,
+  /^\/login\.html$/,                        // Microsoft OAuth entry page
   /^\/api\/staff-login$/,
   /^\/api\/auth\/config$/,
   // External voice provider webhooks. These services can't authenticate
