@@ -67,8 +67,12 @@ const { getRelevantPlaybook, formatPlaybookContext, buildAppliedPlaybookSummary 
 const { screenForLeaks } = require('./lib/voice/leak_filter');
 
 // Resolve the requester's role from the Authorization Bearer JWT. Returns
-// 'admin' | 'staff' | 'unknown'. Used to gate workpaper output on surfaces
-// that ship customer-bound text mixed with internal analysis.
+// 'admin' | 'staff' | 'assistant' | 'inactive' | 'unknown'.
+// 'inactive' = the user has a profile but has been deactivated by an admin —
+//              treat as no-access. Endpoints can then refuse without leaking
+//              that the user actually exists.
+// 'unknown'  = no JWT, invalid JWT, or no profile yet (Microsoft sign-in but
+//              trigger hasn't fired or row deleted).
 async function resolveUserRole(req) {
   try {
     const auth = req.headers && req.headers.authorization || '';
@@ -78,10 +82,12 @@ async function resolveUserRole(req) {
     if (error || !user) return 'unknown';
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('role')
+      .select('role, is_active')
       .eq('id', user.id)
       .maybeSingle();
-    return profile?.role || 'staff';
+    if (!profile) return 'staff';
+    if (profile.is_active === false) return 'inactive';
+    return profile.role || 'staff';
   } catch (_) {
     return 'unknown';
   }
@@ -754,6 +760,9 @@ app.use('/api/calls', callsRouter);
 // in a follow-up commit; this admin layer is the input the auth needs.
 const { router: portalAdminRouter } = require('./api/portal_admin');
 app.use('/api/portal-admin', portalAdminRouter);
+
+const { router: usersRouter } = require('./api/users');
+app.use('/api/users', usersRouter);
 
 // ACC applications — public submission + AI assessment + manager queue
 const { router: applicationsRouter } = require('./api/applications');
@@ -7406,6 +7415,9 @@ app.get('/api/me', async (req, res) => {
       .eq('id', user.id)
       .maybeSingle();
     if (!profile) return res.json({ user: { id: user.id, email: user.email, full_name: null, role: 'staff', is_active: true, last_sign_in_at: null } });
+    // Return the profile even if inactive — the UI uses is_active to show
+    // a "deactivated" page. Downstream API endpoints enforce inactive
+    // refusal via resolveUserRole returning 'inactive'.
     res.json({ user: profile });
   } catch (err) {
     console.error('[/api/me]', err);

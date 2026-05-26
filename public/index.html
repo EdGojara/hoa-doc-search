@@ -257,6 +257,19 @@
       }
       const me = (await meRes.json()).user;
       window.currentUser = me;
+
+      // Inactive users are refused. An admin deactivated them — they
+      // can still authenticate with Microsoft but Bedrock refuses access.
+      if (me && me.is_active === false) {
+        await window.supa.auth.signOut();
+        document.body.innerHTML = '<div style="max-width:520px; margin:80px auto; padding:24px; font-family:Inter,sans-serif; text-align:center;">'
+          + '<h2 style="color:#1A3050;">Account deactivated</h2>'
+          + '<p style="color:#475569;">Your Bedrock access has been turned off by an administrator. If this looks wrong, contact your administrator.</p>'
+          + '<a href="/login.html" style="color:#1A3050; text-decoration:underline;">Sign in as a different user</a></div>';
+        document.body.style.visibility = 'visible';
+        return;
+      }
+
       // Populate the header pill
       const pill = document.getElementById('authPill');
       if (pill) {
@@ -407,6 +420,10 @@
   <!-- Portal Users — manage board + homeowner portal access. The 'Open ↗'
        buttons inside this tab launch the actual portals; no separate tab needed. -->
   <div class="tab" onclick="switchTab('portalusers')">🔐 Portal Users</div>
+  <!-- Bedrock team management — admin-only. Lets Ed see who has access and
+       at what role without writing SQL. Hidden for non-admin users via the
+       data-admin-only hook in the auth bootstrap. -->
+  <div class="tab" data-admin-only onclick="switchTab('team')">👥 Team</div>
   <!-- Bedrock University — how-to modules + role competency badges for operators.
        Help / Documents / Intake are reference surfaces that sit after University
        per Ed's nav order — operator does work in the front-of-nav tabs, looks
@@ -14457,6 +14474,206 @@ If you have questions or want to discuss alternatives, just reply or give us a c
      operators to track). Role badges aggregate modules into competencies
      visible on the user's profile — the franchise-asset framing.
      ============================================================================= -->
+<!-- =============================================================================
+     TEAM MANAGEMENT — admin-only surface for managing per-user access.
+     Lists everyone in user_profiles + lets Ed change role + activate /
+     deactivate. Replaces the prior "everyone shares one password" model.
+     ============================================================================= -->
+<div class="tab-content" id="tab-team" style="overflow-y: auto; padding: 24px; background: #f4f5f7;">
+  <div style="max-width: 1100px; margin: 0 auto;">
+    <h2 style="margin: 0 0 6px; color: #1A3050; font-size: 24px; font-weight: 600;">👥 Team management</h2>
+    <p style="margin: 0 0 18px; color: #5a7390; font-size: 14px;">
+      Manage who has access to Bedrock and at what role. The role decides what each person can see — admins see everything, staff see the customer-facing surfaces, assistants see a minimum slice.
+    </p>
+
+    <!-- Onboarding instructions -->
+    <div style="background: #fff; border: 1px solid #d9dfea; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px;">
+      <div style="font-weight: 600; color: #1A3050; margin-bottom: 8px;">🔑 How to add a team member</div>
+      <ol style="margin: 0 0 10px 18px; padding: 0; color: #475569; font-size: 13px; line-height: 1.7;">
+        <li>Send them this sign-in link: <code id="teamSigninUrl" style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; user-select: all;">/login.html</code> <button onclick="teamCopySigninUrl()" style="background: none; border: 1px solid #c0d0e0; color: #1E2761; border-radius: 4px; padding: 1px 8px; cursor: pointer; font-size: 11px;">Copy</button></li>
+        <li>They sign in with their Microsoft 365 account (whatever email you have on file for them).</li>
+        <li>They'll show up in the list below with role <strong>staff</strong> and active status.</li>
+        <li>Come back here and change their role to <strong>admin</strong> or <strong>assistant</strong> if needed.</li>
+        <li>When you want to revoke their access, toggle them to inactive here. Their Microsoft sign-in still works but Bedrock will refuse them.</li>
+      </ol>
+      <div style="font-size: 12px; color: #94A3B8; margin-top: 6px;">
+        Role guide — <strong>admin:</strong> full access including internal workpaper · <strong>staff:</strong> customer-facing surfaces + drafts + send · <strong>assistant:</strong> read-only / minimum slice (still being defined per module).
+      </div>
+    </div>
+
+    <!-- Team table -->
+    <div style="background: #fff; border: 1px solid #d9dfea; border-radius: 10px; padding: 0; overflow: hidden;">
+      <div style="padding: 14px 18px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between;">
+        <div style="font-weight: 600; color: #1A3050;">Current team <span id="teamCount" style="font-weight: 400; color: #94A3B8; font-size: 13px;"></span></div>
+        <button onclick="teamLoad()" style="background: none; border: 1px solid #c0d0e0; color: #1E2761; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px;">🔄 Refresh</button>
+      </div>
+      <div id="teamTableWrap" style="overflow-x: auto;">
+        <table id="teamTable" style="width: 100%; border-collapse: collapse; font-size: 13px;">
+          <thead style="background: #f8fafc; color: #475569; font-size: 11px; text-transform: uppercase; letter-spacing: 0.4px;">
+            <tr>
+              <th style="padding: 10px 14px; text-align: left;">Name</th>
+              <th style="padding: 10px 14px; text-align: left;">Email</th>
+              <th style="padding: 10px 14px; text-align: left;">Role</th>
+              <th style="padding: 10px 14px; text-align: left;">Last sign-in</th>
+              <th style="padding: 10px 14px; text-align: left;">Active</th>
+            </tr>
+          </thead>
+          <tbody id="teamRows">
+            <tr><td colspan="5" style="padding: 24px; text-align: center; color: #94A3B8;">Loading…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="teamStatus" style="margin-top: 12px; font-size: 13px;"></div>
+  </div>
+</div>
+
+<script>
+  // Team management — admin only. Hooks into the existing auth session
+  // (window.supa) to send Bearer tokens, since the API requires admin
+  // role resolved from the JWT.
+  function teamCopySigninUrl() {
+    const fullUrl = window.location.origin + '/login.html';
+    navigator.clipboard.writeText(fullUrl).then(() => {
+      const s = document.getElementById('teamStatus');
+      s.innerHTML = '<span style="color:#15803d;">Copied: ' + fullUrl + '</span>';
+      setTimeout(() => { if (s.innerHTML.includes('Copied:')) s.innerHTML = ''; }, 3000);
+    });
+  }
+
+  async function teamLoad() {
+    const rows = document.getElementById('teamRows');
+    const status = document.getElementById('teamStatus');
+    const count = document.getElementById('teamCount');
+    rows.innerHTML = '<tr><td colspan="5" style="padding: 24px; text-align: center; color: #94A3B8;">Loading…</td></tr>';
+    status.innerHTML = '';
+    try {
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (!session?.access_token) throw new Error('You need to sign in via Microsoft first.');
+      const r = await fetch('/api/users', { headers: { Authorization: 'Bearer ' + session.access_token } });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      const users = j.users || [];
+      count.textContent = users.length === 0 ? '· no users yet' : '· ' + users.length + ' members';
+      if (users.length === 0) {
+        rows.innerHTML = '<tr><td colspan="5" style="padding: 24px; text-align: center; color: #94A3B8;">No team members yet. Share the sign-in link above with your first team member.</td></tr>';
+        return;
+      }
+      const fmtDate = (s) => {
+        if (!s) return '—';
+        try { return new Date(s).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }); }
+        catch (_) { return s; }
+      };
+      const esc = (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+      rows.innerHTML = users.map((u) => `
+        <tr style="border-top: 1px solid #f1f5f9;${u.is_active === false ? ' opacity: 0.55;' : ''}">
+          <td style="padding: 10px 14px; color: #1E2761; font-weight: 500;">${esc(u.full_name) || '(no name)'}${(window.currentUser && u.id === window.currentUser.id) ? ' <span style="font-size:10px; padding:1px 6px; background:#fef3c7; color:#92400e; border-radius:3px; margin-left:4px;">YOU</span>' : ''}</td>
+          <td style="padding: 10px 14px; color: #475569;">${esc(u.email)}</td>
+          <td style="padding: 10px 14px;">
+            <select onchange="teamChangeRole('${esc(u.id)}', this.value, '${esc(u.role)}')" style="border: 1px solid #c0d0e0; border-radius: 5px; padding: 4px 8px; font-size: 12px; background: #fff;">
+              <option value="admin" ${u.role === 'admin' ? 'selected' : ''}>admin</option>
+              <option value="staff" ${u.role === 'staff' ? 'selected' : ''}>staff</option>
+              <option value="assistant" ${u.role === 'assistant' ? 'selected' : ''}>assistant</option>
+            </select>
+          </td>
+          <td style="padding: 10px 14px; color: #5a7390; font-size: 12px;">${fmtDate(u.last_sign_in_at)}</td>
+          <td style="padding: 10px 14px;">
+            <button onclick="teamToggleActive('${esc(u.id)}', ${u.is_active === false ? 'true' : 'false'})"
+                    style="background: ${u.is_active === false ? '#15803d' : '#fee2e2'}; color: ${u.is_active === false ? '#fff' : '#991b1b'}; border: 1px solid ${u.is_active === false ? '#15803d' : '#fca5a5'}; border-radius: 5px; padding: 3px 10px; font-size: 11px; font-weight: 600; cursor: pointer;">
+              ${u.is_active === false ? 'Activate' : 'Deactivate'}
+            </button>
+          </td>
+        </tr>
+      `).join('');
+    } catch (e) {
+      rows.innerHTML = '<tr><td colspan="5" style="padding: 24px; text-align: center; color: #b91c1c;">Failed to load: ' + (e.message || 'unknown error') + '</td></tr>';
+    }
+  }
+
+  async function teamChangeRole(userId, newRole, oldRole) {
+    if (newRole === oldRole) return;
+    const status = document.getElementById('teamStatus');
+    if (newRole !== 'admin' && oldRole === 'admin') {
+      if (!confirm('Demote this admin to ' + newRole + '? They will lose access to the workpaper and other admin-only surfaces.')) {
+        teamLoad();
+        return;
+      }
+    } else if (newRole === 'admin') {
+      if (!confirm('Promote this user to admin? They will see internal workpaper and have full access including this Team page.')) {
+        teamLoad();
+        return;
+      }
+    }
+    status.innerHTML = '<span style="color:#5a7390;">Saving…</span>';
+    try {
+      const { data: { session } } = await window.supa.auth.getSession();
+      const r = await fetch('/api/users/' + encodeURIComponent(userId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token },
+        body: JSON.stringify({ role: newRole }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      status.innerHTML = '<span style="color:#15803d;">Updated.</span>';
+      setTimeout(() => { status.innerHTML = ''; }, 2000);
+      teamLoad();
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">Error: ' + (e.message || 'unknown') + '</span>';
+      teamLoad();
+    }
+  }
+
+  async function teamToggleActive(userId, newActive) {
+    const status = document.getElementById('teamStatus');
+    if (!newActive) {
+      if (!confirm('Deactivate this user? They will be refused access on their next request, even though their Microsoft sign-in still works.')) return;
+    }
+    status.innerHTML = '<span style="color:#5a7390;">Saving…</span>';
+    try {
+      const { data: { session } } = await window.supa.auth.getSession();
+      const r = await fetch('/api/users/' + encodeURIComponent(userId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + session.access_token },
+        body: JSON.stringify({ is_active: newActive }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      status.innerHTML = '<span style="color:#15803d;">' + (newActive ? 'Reactivated.' : 'Deactivated.') + '</span>';
+      setTimeout(() => { status.innerHTML = ''; }, 2000);
+      teamLoad();
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">Error: ' + (e.message || 'unknown') + '</span>';
+      teamLoad();
+    }
+  }
+
+  // Auto-load when the Team tab is opened. Hook into switchTab via the
+  // same retry pattern documented in CLAUDE.md (IIFE script-wrap before
+  // dependency defined) — switchTab is defined later in the file.
+  (function wireTeamAutoload() {
+    function _wire() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'team') {
+          try { teamLoad(); } catch (e) { console.warn('[team] auto-load failed', e); }
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_wire()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wire);
+      } else {
+        setTimeout(_wire, 0);
+      }
+    }
+  })();
+</script>
+
 <div class="tab-content" id="tab-training" style="overflow-y: auto; padding: 0; background: #f4f5f7;">
 
   <!-- Curriculum index — left sidebar with module list -->
