@@ -9,7 +9,8 @@
 //      node scripts/test_extract_applications.js --persist   (writes to DB)
 // ----------------------------------------------------------------------------
 
-require('dotenv').config();
+// override:true so local shell's empty ANTHROPIC_API_KEY doesn't shadow .env value
+require('dotenv').config({ override: true });
 const fs = require('fs');
 const path = require('path');
 const { extractApplication } = require('../lib/applications/extraction');
