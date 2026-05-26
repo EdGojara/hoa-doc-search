@@ -416,6 +416,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/login\.html$/,                        // Microsoft OAuth entry page
   /^\/api\/staff-login$/,
   /^\/api\/auth\/config$/,
+  /^\/api\/auth\/exchange-supabase-session$/, // Microsoft-OAuth → gate-cookie exchange (validates JWT inside)
   // External voice provider webhooks. These services can't authenticate
   // with the staff-cookie session; each handler enforces its own auth
   // (Vapi: VAPI_WEBHOOK_SECRET bearer token when set; Twilio: signature
@@ -569,6 +570,82 @@ app.get('/staff-logout', (req, res) => {
     `${STAFF_GATE_COOKIE}=; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=0`
   );
   res.redirect('/staff-login.html');
+});
+
+// ============================================================================
+// POST /api/auth/exchange-supabase-session
+// ----------------------------------------------------------------------------
+// Microsoft-OAuth → staff-gate-cookie exchange. After a user completes the
+// Supabase OAuth flow (via /login.html → signInWithMicrosoft), the browser
+// has a valid Supabase session but no gate cookie. This endpoint:
+//
+//   1. Reads the Supabase JWT from the Authorization Bearer header
+//   2. Validates it via supabase.auth.getUser()
+//   3. Loads the user_profiles row and refuses inactive accounts
+//   4. Sets the gate HMAC cookie so the user can reach the rest of the app
+//
+// Endpoint is in the public allowlist (the JWT itself is the auth).
+// Defense in depth: this is the ONLY path that creates a gate cookie
+// without the shared password — it requires a Supabase JWT that Microsoft
+// just issued, and that we cross-reference against user_profiles. Anyone
+// without a valid Microsoft sign-in for an active Bedrock account gets 401.
+//
+// Once STAFF_PASSWORD is unset (the long-term plan), this endpoint becomes
+// a no-op — the gate is disabled. It stays in the codebase as the bridge
+// for the transition period.
+// ============================================================================
+app.post('/api/auth/exchange-supabase-session', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!token) return res.status(401).json({ error: 'missing_bearer_token' });
+
+    // Validate the Supabase JWT
+    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !user) return res.status(401).json({ error: 'invalid_supabase_session' });
+
+    // Confirm the user has an active profile. The handle_new_user trigger
+    // from migration 039 auto-creates this when someone signs in via
+    // Microsoft for the first time, so a missing profile means either:
+    //   - The trigger isn't installed (we should fail loudly)
+    //   - The row was manually deleted (treat as inactive)
+    const { data: profile, error: profileErr } = await supabase
+      .from('user_profiles')
+      .select('id, email, role, is_active')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (profileErr) {
+      console.error('[exchange-session] profile lookup failed:', profileErr.message);
+      return res.status(500).json({ error: 'profile_lookup_failed' });
+    }
+    if (!profile) {
+      console.warn(`[exchange-session] no user_profiles row for ${user.email} (id=${user.id}) — trigger 039 may not be installed`);
+      return res.status(403).json({ error: 'no_profile' });
+    }
+    if (profile.is_active === false) {
+      return res.status(403).json({ error: 'account_inactive' });
+    }
+
+    // Issue the gate cookie. If STAFF_PASSWORD is unset (gate disabled),
+    // we still issue the cookie so the same flow works after the kill-
+    // switch is flipped. Cookie expiry matches the staff-login flow.
+    const password = process.env.STAFF_PASSWORD;
+    if (!password) {
+      // Gate is disabled — nothing to do. Tell the client to proceed.
+      return res.json({ ok: true, gate_disabled: true });
+    }
+    const secret = process.env.STAFF_GATE_SECRET || password;
+    const cookieToken = _gateSign(secret);
+    const secure = req.secure || (req.headers['x-forwarded-proto'] === 'https');
+    res.setHeader('Set-Cookie',
+      `${STAFF_GATE_COOKIE}=${encodeURIComponent(cookieToken)}; HttpOnly;${secure ? ' Secure;' : ''} SameSite=Lax; Path=/; Max-Age=${STAFF_GATE_TTL_DAYS * 86400}`
+    );
+
+    res.json({ ok: true, role: profile.role, email: profile.email });
+  } catch (err) {
+    console.error('[exchange-session] failed:', err.message);
+    res.status(500).json({ error: 'exchange_failed' });
+  }
 });
 
 app.use(express.static('public'));

@@ -201,15 +201,23 @@
       const r = await fetch('/api/auth/config');
       const cfg = await r.json();
       if (!cfg.enabled) {
-        showErr('Authentication is not configured on this server yet. Ask Ed to set SUPABASE_URL and SUPABASE_ANON_KEY on Render and enable the Microsoft (Azure) provider in Supabase Auth.');
+        showErr('Sign-in is not configured on this server yet. Contact info@bedrocktx.com.');
         document.getElementById('msSignInBtn').disabled = true;
         return;
       }
       supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
 
+      // On page load, check if a Supabase session already exists. This
+      // catches two cases:
+      //   1. Fresh OAuth callback — Supabase JS parses the URL hash on
+      //      page load and stores the session. getSession() returns it.
+      //   2. User came back to /login.html with a still-valid session
+      //      already in localStorage (e.g., re-visited the page).
+      // Either way, exchange the Supabase JWT for a gate cookie and
+      // redirect into the app. No double sign-in required.
       const { data: { session } } = await supa.auth.getSession();
       if (session) {
-        window.location.replace('/');
+        await exchangeAndRedirect(session);
       }
     }
 
@@ -224,7 +232,12 @@
         const { error } = await supa.auth.signInWithOAuth({
           provider: 'azure',
           options: {
-            redirectTo: window.location.origin + '/',
+            // After Microsoft auth, Supabase redirects back to /login.html
+            // (not /) so our initAuth handler can run, validate the new
+            // session, and exchange it for a gate cookie BEFORE landing
+            // in the app. Sending directly to / would hit the staff-gate
+            // middleware before any JS could run.
+            redirectTo: window.location.origin + '/login.html',
             scopes: 'email openid profile'
           }
         });
@@ -233,6 +246,45 @@
         pending.classList.remove('show');
         btn.disabled = false;
         showErr(e.message || 'Could not start sign-in. Try again, or contact info@bedrocktx.com.');
+      }
+    }
+
+    // Exchange the Supabase JWT for a gate cookie, then drop the user into
+    // the app. If the user's account is deactivated, sign them out and
+    // show a clear message. Any other failure surfaces a sign-in error so
+    // the user isn't stuck in a redirect loop.
+    async function exchangeAndRedirect(session) {
+      const pending = document.getElementById('loginPending');
+      pending.classList.add('show');
+      try {
+        const r = await fetch('/api/auth/exchange-supabase-session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + session.access_token,
+          },
+        });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) {
+          if (r.status === 403 && j.error === 'account_inactive') {
+            await supa.auth.signOut();
+            pending.classList.remove('show');
+            showErr('Your account has been deactivated by an administrator. Contact info@bedrocktx.com if this looks wrong.');
+            return;
+          }
+          if (r.status === 403 && j.error === 'no_profile') {
+            await supa.auth.signOut();
+            pending.classList.remove('show');
+            showErr('Your account is not provisioned in this workspace. Contact info@bedrocktx.com to get added.');
+            return;
+          }
+          throw new Error(j.error || ('HTTP ' + r.status));
+        }
+        // Success — gate cookie is set, drop into the app
+        window.location.replace('/');
+      } catch (e) {
+        pending.classList.remove('show');
+        showErr('Microsoft sign-in worked, but the app could not finalize your session: ' + (e.message || 'unknown error') + '. Try again or contact info@bedrocktx.com.');
       }
     }
 
