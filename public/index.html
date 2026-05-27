@@ -379,11 +379,11 @@
        so they sit adjacent. -->
   <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
-  <div class="tab" data-group="annualmeeting" onclick="openTabGroup('annualmeeting')">🗳️ Annual Meeting</div>
+  <div class="tab" data-group="meetings" onclick="openTabGroup('meetings')">🗳️ Meetings</div>
   <!-- Community-wide reference data — Profile, Homes & Owners, Board Roster.
-       Distinct from the Board group below (workflow outputs only). -->
+       Board workflow outputs (packets, recaps, agenda) live inside the
+       Meetings group above alongside annual-meeting workflow. -->
   <div class="tab" data-group="community" onclick="openTabGroup('community')">🏘️ Community Profile</div>
-  <div class="tab" data-group="board" onclick="openTabGroup('board')">🏛️ Board</div>
   <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
   <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
   <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
@@ -23221,17 +23221,6 @@ ${questionsPage}
         { id: 'roster',  label: '👥 Board Roster' },
       ],
     },
-    board: {
-      // Narrowed: Roster moved to the Community Profile group (it's static
-      // community data, not a board workflow output). What's left here is
-      // the work product the board produces or consumes during meetings.
-      label: '🏛️ Board',
-      children: [
-        { id: 'packets', label: '📋 Board Packets' },
-        { id: 'recaps',  label: '📰 Recaps' },
-        { id: 'agenda',  label: '📋 Agenda Generator' },
-      ],
-    },
     office: {
       label: '💼 Bedrock Office',
       children: [
@@ -23239,13 +23228,22 @@ ${questionsPage}
         { id: 'presentations',  label: '🎬 Presentations' },
       ],
     },
-    annualmeeting: {
-      label: '🗳️ Annual Meeting',
+    // Unified meetings group — annual-members and board-meeting workflows
+    // both live here. Children carry a `section` tag so renderTabSubbar
+    // can show a small section header between the two clusters in the
+    // sub-toolbar. The underlying tab IDs are unchanged from the prior
+    // separate annualmeeting / board groups, so every existing
+    // switchTab(...) call + every tab-content element keeps working.
+    meetings: {
+      label: '🗳️ Meetings',
       children: [
-        { id: 'amschedule',  label: '📅 Schedule' },
-        { id: 'nominations', label: '📋 Call for Nominations' },
-        { id: 'ameetingnotice', label: '🗳️ Annual Meeting Notice' },
-        { id: 'mailing',     label: '📬 Mail Cover Sheets' },
+        { id: 'amschedule',     label: '📅 Schedule',                section: 'Annual Members' },
+        { id: 'nominations',    label: '📋 Call for Nominations',    section: 'Annual Members' },
+        { id: 'ameetingnotice', label: '🗳️ Annual Meeting Notice',   section: 'Annual Members' },
+        { id: 'mailing',        label: '📬 Mail Cover Sheets',       section: 'Annual Members' },
+        { id: 'packets',        label: '📋 Board Packets',           section: 'Board Meetings' },
+        { id: 'recaps',         label: '📰 Recaps',                  section: 'Board Meetings' },
+        { id: 'agenda',         label: '📋 Agenda Generator',        section: 'Board Meetings' },
       ],
     },
   };
@@ -23268,14 +23266,49 @@ ${questionsPage}
     const g = TAB_GROUPS[groupKey];
     if (!g) return;
     bar.style.display = 'flex';
-    bar.innerHTML = g.children.map(c => `
+
+    // Single-pill renderer (extracted so the sectioned + flat paths share it)
+    const pill = (c) => `
       <div class="tab-sub" data-tab="${c.id}" onclick="switchTab('${c.id}')"
            style="font-size:12px; padding:6px 12px; border-radius:6px; cursor:pointer;
                   background:${c.id === activeTabId ? '#1E2761' : '#fff'};
                   color:${c.id === activeTabId ? '#fff' : '#1E2761'};
                   border:1px solid ${c.id === activeTabId ? '#1E2761' : '#cbd5e1'};
                   font-weight:${c.id === activeTabId ? '600' : '500'};">${c.label}</div>
-    `).join('');
+    `;
+
+    // If any child carries a `section` tag, render section headers between
+    // groups. Otherwise fall back to the flat single-row layout so existing
+    // groups (vendor, community, office) render unchanged.
+    const hasSections = g.children.some((c) => c.section);
+    if (!hasSections) {
+      bar.innerHTML = g.children.map(pill).join('');
+      return;
+    }
+
+    // Group children by section preserving the order they appear in the
+    // TAB_GROUPS array. A "section" is a label + horizontal cluster of pills.
+    const sectionOrder = [];
+    const bySection = new Map();
+    for (const c of g.children) {
+      const key = c.section || '';
+      if (!bySection.has(key)) { bySection.set(key, []); sectionOrder.push(key); }
+      bySection.get(key).push(c);
+    }
+
+    // Flow layout: each section is a `<div>` with a small uppercase label
+    // and the pills next to it. Sections wrap if the viewport is narrow.
+    const sectionsHtml = sectionOrder.map((sec) => `
+      <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; padding:2px 0;">
+        ${sec ? `<span style="font-size:10px; font-weight:600; letter-spacing:0.6px; color:#64748b; text-transform:uppercase; padding-right:4px; white-space:nowrap;">${sec}</span>` : ''}
+        ${bySection.get(sec).map(pill).join('')}
+      </div>
+    `).join('<div style="width:1px; background:#d9dfea; align-self:stretch; margin:0 4px;"></div>');
+
+    // The outer flex direction stays row so sections sit side-by-side on
+    // wide screens and stack on narrow ones via flex-wrap.
+    bar.style.flexWrap = 'wrap';
+    bar.innerHTML = sectionsHtml;
   }
 
   function highlightParentGroup(groupKey) {
