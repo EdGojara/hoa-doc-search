@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Meeting Check-in · Bedrock</title>
 <link rel="stylesheet" href="/brand.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
   * { box-sizing: border-box; }
@@ -308,7 +309,17 @@
   <div class="search-card">
     <div class="search-row">
       <input type="text" id="search" placeholder="Name, property address, or lot # — start typing…" autocomplete="off" autofocus>
-      <input type="text" id="staffName" class="search-staff" placeholder="Your name (staff)" autocomplete="off">
+      <!--
+        staffName is the canonical "who's recording this check-in" field.
+        Before Microsoft OAuth, it was a free-text input the operator had
+        to type into. Now it's auto-populated from window.currentUser and
+        rendered read-only — the staff member's actual identity is captured
+        from their JWT, no spoofing possible. The element ID stays the
+        same so existing JS (line 364, 549, 668, 715-717) keeps working.
+        Falls back to a typeable input if no Supabase session is available
+        (transition period — staff still using STAFF_PASSWORD gate).
+      -->
+      <input type="text" id="staffName" class="search-staff" placeholder="Your name (loading…)" autocomplete="off" readonly>
     </div>
     <div class="hint">Search is live — matches name, property address, or lot #. <span class="kbd">Esc</span> to clear. Each check-in is timestamped and counts toward quorum evidence.</div>
   </div>
@@ -357,6 +368,56 @@ let currentSettings = null;
 let pendingWalkin = null; // { voter_id, name }
 let searchTimer = null;
 let attendanceLog = [];
+let bedrockSupa = null;
+let currentBedrockUser = null; // { id, full_name, email, role, is_active }
+
+// ---------------------------------------------------------------------------
+// Auth bootstrap — pulls the signed-in user from Supabase + /api/me so the
+// staff-name field auto-populates with their identity. Every check-in writes
+// the user's FK to acted_by_user_id (server-side) — no spoofing via typed
+// names. If no Supabase session is available (staff still on the shared-
+// password gate during transition), the page falls back to typeable input.
+// ---------------------------------------------------------------------------
+async function authedFetch(url, opts = {}) {
+  const headers = Object.assign({}, opts.headers || {});
+  try {
+    if (bedrockSupa) {
+      const { data: { session } } = await bedrockSupa.auth.getSession();
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+    }
+  } catch (_) { /* no session — server will accept legacy text path */ }
+  return fetch(url, Object.assign({}, opts, { headers }));
+}
+
+async function initBedrockAuth() {
+  try {
+    const cfgRes = await fetch('/api/auth/config');
+    const cfg = await cfgRes.json();
+    if (!cfg.enabled || !cfg.supabase_url || !cfg.supabase_anon_key) return;
+    bedrockSupa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    const { data: { session } } = await bedrockSupa.auth.getSession();
+    if (!session) return; // staff still on shared-password fallback
+    const meRes = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } });
+    if (!meRes.ok) return;
+    const me = (await meRes.json()).user;
+    if (!me || me.is_active === false) return;
+    currentBedrockUser = me;
+    // Populate the staff-name field (read-only) with the authenticated user.
+    const staff = document.getElementById('staffName');
+    if (staff) {
+      staff.value = me.full_name || me.email || '';
+      staff.readOnly = true;
+      staff.placeholder = '';
+      staff.title = 'Signed in as ' + (me.email || me.full_name) + ' — auto-attributed';
+      staff.style.background = '#f5f4ed';
+      staff.style.color = '#1a3050';
+      staff.style.fontWeight = '600';
+    }
+  } catch (e) {
+    console.warn('[meeting-checkin] auth bootstrap failed (non-fatal):', e.message);
+  }
+}
+initBedrockAuth();
 
 // DOM
 const $ = (id) => document.getElementById(id);
@@ -585,12 +646,14 @@ async function confirmWalkin(status) {
 
 async function doCheckIn(voter, staff, walkInStatus) {
   try {
-    const res = await fetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/checkin', {
+    const res = await authedFetch('/api/meeting-checkin/elections/' + currentElection.election_id + '/checkin', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         voter_id: voter.voter_id,
         community_id: currentSettings.community_id,
+        // Server prefers the JWT-resolved name when authed; this field is
+        // a display fallback for the legacy text path during transition.
         checked_in_by_staff: staff,
         walk_in_ballot_status: walkInStatus || undefined,
       }),
@@ -667,11 +730,14 @@ function renderLog() {
 async function markWalkinEntered(attendanceId) {
   const staff = staffEl.value.trim();
   try {
-    const res = await fetch('/api/meeting-checkin/attendance/' + attendanceId, {
+    const res = await authedFetch('/api/meeting-checkin/attendance/' + attendanceId, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         walk_in_ballot_status: 'entered',
+        // Display fallback only — when authed, the server stamps the
+        // walk_in_acted_by_user_id FK + uses the authenticated user's
+        // profile name as the canonical entered-by attribution.
         walk_in_ballot_entered_by: staff || null,
       }),
     });

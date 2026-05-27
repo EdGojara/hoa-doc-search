@@ -26,6 +26,7 @@
 const express = require('express');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
+const { getActingUser, actorDisplayName } = require('./_acting_user');
 const PDFDocument = require('pdfkit');
 const { BRAND } = require('../lib/brand');
 
@@ -337,6 +338,12 @@ router.get('/elections/:eid/voter/:vid', async (req, res) => {
 // ----------------------------------------------------------------------------
 router.post('/elections/:eid/checkin', async (req, res) => {
   try {
+    // Capture the staff member doing the check-in from the JWT. Optional
+    // for now (existing checked_in_by_staff text field still works during
+    // transition); after STAFF_PASSWORD is killed, every check-in carries
+    // a real FK to user_profiles.
+    const actor = await getActingUser(req);
+
     const eid = req.params.eid;
     const body = req.body || {};
     if (!body.voter_id) return res.status(400).json({ error: 'voter_id_required' });
@@ -356,6 +363,11 @@ router.post('/elections/:eid/checkin', async (req, res) => {
     const status = deriveVoteStatus(voterRow);
     const walkInDefault = status.status === 'not_voted' ? 'needed' : 'not_applicable';
 
+    // Display name on the quorum-evidence PDF: prefer the authenticated
+    // user's profile name (no spoofing possible). Fall back to whatever
+    // the client sent in checked_in_by_staff (legacy text path).
+    const displayName = actor ? actorDisplayName(actor) : (body.checked_in_by_staff || null);
+
     const payload = {
       community_id: body.community_id,
       external_election_id: eid,
@@ -367,7 +379,8 @@ router.post('/elections/:eid/checkin', async (req, res) => {
       vote_status_at_checkin: status.status,
       vote_method_at_checkin: voterRow.vote_method || null,
       ballot_cast_at: voterRow.token_used_at || null,
-      checked_in_by_staff: body.checked_in_by_staff || null,
+      checked_in_by_staff: displayName,
+      acted_by_user_id: actor?.id || null,
       attendance_note: body.attendance_note || body.note || null,
       walk_in_ballot_status: body.walk_in_ballot_status || walkInDefault,
     };
@@ -395,15 +408,22 @@ const ALLOWED_PATCH_FIELDS = [
 ];
 router.patch('/attendance/:aid', async (req, res) => {
   try {
+    const actor = await getActingUser(req);
     const aid = req.params.aid;
     const body = req.body || {};
     const patch = {};
     for (const f of ALLOWED_PATCH_FIELDS) {
       if (body[f] !== undefined) patch[f] = body[f];
     }
-    // Auto-set walk_in_ballot_entered_at when status transitions to 'entered'
+    // Auto-set walk_in_ballot_entered_at + actor FK when status transitions
+    // to 'entered'. Display name on walk_in_ballot_entered_by prefers the
+    // authenticated user's profile name over whatever the client typed.
     if (patch.walk_in_ballot_status === 'entered') {
       patch.walk_in_ballot_entered_at = new Date().toISOString();
+      if (actor) {
+        patch.walk_in_acted_by_user_id = actor.id;
+        patch.walk_in_ballot_entered_by = actorDisplayName(actor);
+      }
     }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'no_fields_to_update' });
 
