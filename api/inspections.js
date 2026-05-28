@@ -883,9 +883,15 @@ router.post('/inspections/geocode-community', express.json({ limit: '1mb' }), as
   // Throttle helper — 150ms between Mapbox calls = ~6.6 req/sec
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+  // Track which fallback chain step found each property — useful for ops
+  // visibility into "how dependent are we on Census today vs. Mapbox?"
+  results.by_source = { mapbox: 0, census: 0 };
+
   for (const p of properties) {
-    // Build a single address line. Mapbox handles partial addresses well; the
-    // street+state combo is usually enough for Texas residential.
+    // Build a single address line. Census handles unindexed-by-Mapbox newer
+    // subdivisions well because TIGER/Line data refreshes from county
+    // appraisal districts directly. Mapbox is faster + more permissive
+    // on partial addresses but has thinner coverage of new builds.
     if (!p.street_address) {
       results.skipped_no_address++;
       continue;
@@ -897,32 +903,80 @@ router.post('/inspections/geocode-community', express.json({ limit: '1mb' }), as
       p.zip || '',
     ].filter((s) => s && s.trim()).join(', ');
 
+    let lat = null;
+    let lng = null;
+    let lastError = null;
+    let usedSource = null;
+
+    // ----- 1) Mapbox (primary — fast, generous free tier) -----
     try {
       const url = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(addrParts)}.json?access_token=${encodeURIComponent(token)}&country=US&limit=1&types=address`;
       const r = await fetch(url);
       if (!r.ok) throw new Error(`mapbox http ${r.status}`);
       const j = await r.json();
-      if (!j.features || j.features.length === 0) {
-        results.failed++;
-        results.errors.push({ property_id: p.id, address: addrParts, error: 'no geocode results' });
-      } else {
-        const [lng, lat] = j.features[0].center;
-        const { error: updateErr } = await supabase
-          .from('properties')
-          .update({ latitude: lat, longitude: lng, updated_at: new Date().toISOString() })
-          .eq('id', p.id);
-        if (updateErr) {
-          results.failed++;
-          results.errors.push({ property_id: p.id, address: addrParts, error: `update: ${updateErr.message}` });
-        } else {
-          results.succeeded++;
+      if (j.features && j.features.length > 0) {
+        const center = j.features[0].center;
+        if (Array.isArray(center) && center.length === 2) {
+          lng = center[0]; lat = center[1];
+          usedSource = 'mapbox';
         }
+      } else {
+        lastError = 'mapbox: no match';
       }
     } catch (e) {
-      results.failed++;
-      results.errors.push({ property_id: p.id, address: addrParts, error: e.message || 'unknown' });
+      lastError = `mapbox: ${e.message || 'unknown'}`;
     }
 
+    // ----- 2) US Census Bureau (fallback — TIGER/Line data) -----
+    // Coverage of newer subdivisions in Texas (Waterview, Still Creek, parts
+    // of Eaglewood) is better than Mapbox because TIGER refreshes from FBCAD
+    // / HCAD / county appraisal districts directly. Slower (~600ms typical)
+    // and US-only, but free + no API key.
+    if (lat == null) {
+      try {
+        const censusUrl = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(addrParts)}&benchmark=Public_AR_Current&format=json`;
+        const r = await fetch(censusUrl);
+        if (!r.ok) throw new Error(`census http ${r.status}`);
+        const j = await r.json();
+        const matches = j && j.result && j.result.addressMatches;
+        if (Array.isArray(matches) && matches.length > 0) {
+          // Census uses x = lng, y = lat (WGS84). Same as everywhere else.
+          const coords = matches[0].coordinates;
+          if (coords && coords.x != null && coords.y != null) {
+            lng = Number(coords.x); lat = Number(coords.y);
+            usedSource = 'census';
+          }
+        } else if (!lastError) {
+          lastError = 'census: no match';
+        }
+      } catch (e) {
+        // Don't overwrite the Mapbox error if Mapbox was the real problem;
+        // append so the operator sees both failures.
+        lastError = lastError ? `${lastError}; census: ${e.message || 'unknown'}` : `census: ${e.message || 'unknown'}`;
+      }
+    }
+
+    // ----- 3) Persist or log failure -----
+    if (lat != null && lng != null) {
+      const { error: updateErr } = await supabase
+        .from('properties')
+        .update({ latitude: lat, longitude: lng, updated_at: new Date().toISOString() })
+        .eq('id', p.id);
+      if (updateErr) {
+        results.failed++;
+        results.errors.push({ property_id: p.id, address: addrParts, error: `update: ${updateErr.message}`, source: usedSource });
+      } else {
+        results.succeeded++;
+        if (usedSource && results.by_source[usedSource] != null) results.by_source[usedSource]++;
+      }
+    } else {
+      results.failed++;
+      results.errors.push({ property_id: p.id, address: addrParts, error: lastError || 'no result from any geocoder' });
+    }
+
+    // 150ms between Mapbox calls keeps us under their 600/min ceiling. Census
+    // has no documented rate limit but the same throttle is courteous + keeps
+    // the batch wall-clock predictable.
     await sleep(150);
   }
 
