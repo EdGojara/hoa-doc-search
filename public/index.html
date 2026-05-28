@@ -12557,17 +12557,27 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       legal_referral:'#5C0F0F',
       lien_filed:    '#5C0F0F',
     };
+    // Special-track colors — override the stage-based color when a property
+    // has an open violation in one of these categories. Different
+    // enforcement path (CC&R + §202.018, not the §209 ramp) so the visual
+    // language has to be distinct from the warm-color severity progression.
+    const SPECIAL_TRACK_COLORS = {
+      lawn_force_mow_10day: '#6B4C9A',  // purple — 10-day certified force-mow lawn notice
+    };
 
     // Add markers
-    let stageCounts = { no_violation: 0, courtesy_1: 0, courtesy_2: 0, certified_209: 0, fine_assessed: 0 };
+    let stageCounts = { no_violation: 0, courtesy_1: 0, courtesy_2: 0, certified_209: 0, fine_assessed: 0, lawn_force_mow_10day: 0 };
     for (const p of propsResp.properties) {
       const el = document.createElement('div');
       el.className = 'insp-prop-marker';
       const stage = p.worst_open_stage;
-      const color = STAGE_COLORS[stage] || '#1A3050';
+      const specialTrack = p.special_track;
+      // Special-track override wins over stage-based color — the operator
+      // needs to see "this needs force-mow action" before "this is at §209."
+      const color = (specialTrack && SPECIAL_TRACK_COLORS[specialTrack]) || STAGE_COLORS[stage] || '#1A3050';
       // Properties WITH open violations get a slightly bigger pin so they
       // pop visually when driving past — easy to spot at-a-glance.
-      const size = stage ? 22 : 18;
+      const size = (stage || specialTrack) ? 22 : 18;
       el.style.cssText = `width: ${size}px; height: ${size}px; background: ${color}; border: 2px solid #fff; border-radius: 50%; cursor: pointer; box-shadow: 0 1px 4px rgba(0,0,0,0.3); transition: all 0.15s;`;
       const label = (p.street_address || '') + (p.unit ? ' #' + p.unit : '');
       let title = label;
@@ -12588,8 +12598,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       m._el = el;
       inspState.propertyMarkers.push(m);
       // Tally for the status legend
-      if (stage && stageCounts[stage] !== undefined) stageCounts[stage]++;
-      else if (!stage) stageCounts.no_violation++;
+      if (specialTrack && stageCounts[specialTrack] !== undefined) {
+        stageCounts[specialTrack]++;
+      } else if (stage && stageCounts[stage] !== undefined) {
+        stageCounts[stage]++;
+      } else if (!stage && !specialTrack) {
+        stageCounts.no_violation++;
+      }
     }
     // Stash the counts so the status line below can surface them
     inspState._lastStageCounts = stageCounts;
@@ -12607,6 +12622,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (sc.courtesy_2)    legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#D97A2D; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.courtesy_2} c2`);
     if (sc.certified_209) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#C9514B; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.certified_209} §209`);
     if (sc.fine_assessed) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#8B1A1A; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.fine_assessed} fine`);
+    if (sc.lawn_force_mow_10day) legend.push(`<span style="display:inline-block; width:10px; height:10px; background:#6B4C9A; border-radius:50%; vertical-align:middle; margin-right:3px;"></span>${sc.lawn_force_mow_10day} force-mow`);
     const legendStr = legend.length > 0 ? ` · open: ${legend.join(' · ')}` : '';
 
     if (propsResp.properties.length === 0 && propsResp.missing_geo_count > 0) {

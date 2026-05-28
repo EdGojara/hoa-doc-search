@@ -1143,9 +1143,12 @@ router.get('/inspections/properties', async (req, res) => {
 
       const [vAllRes, vOpenRes, vYtdRes, insRes] = await Promise.all([
         supabase.from('violations').select('property_id').in('property_id', propIds),
-        // Include current_stage so we can compute the WORST open stage per
-        // property (used by the inspect map to color pins by severity).
-        supabase.from('violations').select('property_id, current_stage').in('property_id', propIds)
+        // Include current_stage AND category slug so we can compute the
+        // WORST open stage AND detect special categories (lawn force-mow)
+        // that get distinctive map coloring.
+        supabase.from('violations')
+          .select('property_id, current_stage, primary_category_id, enforcement_categories!inner(slug)')
+          .in('property_id', propIds)
           .not('current_stage', 'in', '("cured","closed","voided")'),
         supabase.from('violations').select('property_id').in('property_id', propIds)
           .gte('opened_at', yearStart),
@@ -1182,12 +1185,23 @@ router.get('/inspections/properties', async (req, res) => {
         fine_assessed: 4, hearing_notice: 5,
         legal_referral: 6, lien_filed: 7,
       };
+      // Special-track categories that override the stage-based coloring.
+      // 'lawn_force_mow_10day' = Lawn 10-Day Certified Force Mow Notice path;
+      // displays purple on the inspect map because it's a parallel enforcement
+      // track (governed by CC&R + §202.018) not the standard §209 ramp.
+      const SPECIAL_TRACK_SLUGS = new Set(['lawn_force_mow_10day']);
+
       const worstStageMap = new Map();
+      const specialTrackMap = new Map();   // property_id → slug
       for (const v of vOpen) {
         const rank = STAGE_RANK[v.current_stage] || 0;
         const prev = worstStageMap.get(v.property_id);
         if (!prev || rank > prev.rank) {
           worstStageMap.set(v.property_id, { stage: v.current_stage, rank });
+        }
+        const catSlug = v.enforcement_categories && v.enforcement_categories.slug;
+        if (catSlug && SPECIAL_TRACK_SLUGS.has(catSlug)) {
+          specialTrackMap.set(v.property_id, catSlug);
         }
       }
 
@@ -1197,6 +1211,7 @@ router.get('/inspections/properties', async (req, res) => {
         violation_count_ytd:      ytdMap.get(p.property_id) || 0,
         violation_count_lifetime: allMap.get(p.property_id) || 0,
         worst_open_stage:         (worstStageMap.get(p.property_id) || {}).stage || null,
+        special_track:            specialTrackMap.get(p.property_id) || null,
         last_inspected_at:        lastInsp.get(p.property_id) || null,
       }));
     }
