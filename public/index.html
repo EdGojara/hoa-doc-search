@@ -12596,6 +12596,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       m._propertyId = p.property_id;
       m._propertyLabel = label;
       m._el = el;
+      // Stash the original color/size so the click handler can RESTORE the
+      // stage-based coloring when the user selects a different pin. Without
+      // this, the "reset non-selected to navy" branch in inspMapHandleMarkerClick
+      // would permanently destroy the violation-stage coloring after the
+      // first click. (Bug surfaced 2026-05-28 during Canyon Gate prep.)
+      m._origColor = color;
+      m._origSize = size;
       inspState.propertyMarkers.push(m);
       // Tally for the status legend
       if (specialTrack && stageCounts[specialTrack] !== undefined) {
@@ -12888,7 +12895,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const labelEl = document.getElementById('inspSelectedPropLabel');
     if (chip) chip.style.display = 'inline-flex';
     if (labelEl) labelEl.textContent = label;
-    // Visually highlight: selected marker gold + larger, others reset
+    // Visually highlight: selected marker gold + larger, others reset to
+    // their ORIGINAL stage-based color/size (stored on the marker at render
+    // time as m._origColor / m._origSize). Falling back to navy here would
+    // erase the violation-stage coloring the moment the user clicks anything.
     for (const m of inspState.propertyMarkers) {
       const el = m._el;
       if (!el) continue;
@@ -12898,9 +12908,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         el.style.height = '24px';
         el.style.boxShadow = '0 2px 8px rgba(212,175,55,0.5)';
       } else {
-        el.style.background = '#1A3050';
-        el.style.width = '18px';
-        el.style.height = '18px';
+        const oc = m._origColor || '#1A3050';
+        const os = m._origSize || 18;
+        el.style.background = oc;
+        el.style.width = os + 'px';
+        el.style.height = os + 'px';
         el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
       }
     }
@@ -12913,12 +12925,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspState.selectedPropertyLabel = null;
     const chip = document.getElementById('inspSelectedPropChip');
     if (chip) chip.style.display = 'none';
+    // Restore each pin to its ORIGINAL stage-based color/size — not navy.
     for (const m of inspState.propertyMarkers) {
       const el = m._el;
       if (!el) continue;
-      el.style.background = '#1A3050';
-      el.style.width = '18px';
-      el.style.height = '18px';
+      const oc = m._origColor || '#1A3050';
+      const os = m._origSize || 18;
+      el.style.background = oc;
+      el.style.width = os + 'px';
+      el.style.height = os + 'px';
       el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
     }
   }
