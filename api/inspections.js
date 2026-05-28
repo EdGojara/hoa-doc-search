@@ -844,6 +844,76 @@ router.delete('/inspections/:id', async (req, res) => {
 // 3500-property book is one-time ~3500 requests + occasional re-geocodes,
 // well within free tier.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// GET /api/inspections/geocode-debug?address=<full address line>
+// ---------------------------------------------------------------------------
+// Diagnostic endpoint — bypasses the bulk loop, runs ONE address through
+// both Mapbox and Census and returns the raw responses. Surfaces what the
+// vendors actually return so we can stop guessing at "no match" failures.
+//
+// Usage from browser console (already inside the staff gate):
+//   fetch('/api/inspections/geocode-debug?address=20010+Cape+Clover+Trail,+Richmond,+TX,+77407')
+//     .then(r => r.json()).then(j => console.log(j))
+// ---------------------------------------------------------------------------
+router.get('/inspections/geocode-debug', async (req, res) => {
+  const address = (req.query.address || '').toString().trim();
+  if (!address) return res.status(400).json({ error: 'address query param required' });
+
+  const out = {
+    address,
+    mapbox: { tried: false, status: null, error: null, raw: null, count: 0 },
+    mapbox_no_filter: { tried: false, status: null, error: null, raw: null, count: 0 },
+    census: { tried: false, status: null, error: null, raw: null, count: 0 },
+  };
+
+  // --- Mapbox WITH the original types=address filter (what bulk geocoder uses) ---
+  const token = process.env.MAPBOX_TOKEN;
+  if (!token) {
+    out.mapbox.error = 'MAPBOX_TOKEN not set in Render environment';
+    out.mapbox_no_filter.error = 'MAPBOX_TOKEN not set in Render environment';
+  } else {
+    out.mapbox.tried = true;
+    try {
+      const u = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${encodeURIComponent(token)}&country=US&limit=5&types=address`;
+      const r = await fetch(u);
+      out.mapbox.status = r.status;
+      const j = await r.json();
+      out.mapbox.raw = j;
+      out.mapbox.count = Array.isArray(j.features) ? j.features.length : 0;
+    } catch (e) {
+      out.mapbox.error = e.message || 'unknown';
+    }
+
+    // --- Mapbox WITHOUT the types=address filter (broader match) ---
+    out.mapbox_no_filter.tried = true;
+    try {
+      const u = `https://api.mapbox.com/geocoding/v5/mapbox.places/${encodeURIComponent(address)}.json?access_token=${encodeURIComponent(token)}&country=US&limit=5`;
+      const r = await fetch(u);
+      out.mapbox_no_filter.status = r.status;
+      const j = await r.json();
+      out.mapbox_no_filter.raw = j;
+      out.mapbox_no_filter.count = Array.isArray(j.features) ? j.features.length : 0;
+    } catch (e) {
+      out.mapbox_no_filter.error = e.message || 'unknown';
+    }
+  }
+
+  // --- Census Bureau geocoder ---
+  out.census.tried = true;
+  try {
+    const u = `https://geocoding.geo.census.gov/geocoder/locations/onelineaddress?address=${encodeURIComponent(address)}&benchmark=Public_AR_Current&format=json`;
+    const r = await fetch(u);
+    out.census.status = r.status;
+    const j = await r.json();
+    out.census.raw = j;
+    out.census.count = (j && j.result && Array.isArray(j.result.addressMatches)) ? j.result.addressMatches.length : 0;
+  } catch (e) {
+    out.census.error = e.message || 'unknown';
+  }
+
+  res.json(out);
+});
+
 router.post('/inspections/geocode-community', express.json({ limit: '1mb' }), async (req, res) => {
   const token = process.env.MAPBOX_TOKEN;
   if (!token) return res.status(400).json({ error: 'MAPBOX_TOKEN not set in Render environment' });
