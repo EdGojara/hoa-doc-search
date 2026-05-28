@@ -383,6 +383,230 @@ router.get('/community/:id/at-legal', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/owner-ar/community/:id/as-of?date=YYYY-MM-DD
+// Period-locked AR snapshot for board packets and historical reports.
+//
+// Returns one row per property in the community — the snapshot closest to
+// (but not after) the target date. If a property has no snapshot on/before
+// that date, it's omitted (no fabricated data).
+//
+// Required for the "May board package uses 5/31 even if I uploaded 6/5
+// after" workflow. The /latest view always shows the most-recent regardless
+// of date; this endpoint locks to a specific period.
+// ----------------------------------------------------------------------------
+router.get('/community/:id/as-of', async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    const target = (req.query.date || '').toString().trim();
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    if (!target || !/^\d{4}-\d{2}-\d{2}$/.test(target)) {
+      return res.status(400).json({ error: 'date_required (YYYY-MM-DD)' });
+    }
+
+    // Pull every approved snapshot for this community on/before the target.
+    // Bounded: ~12 months × ~1200 properties max = ~14k rows worst case.
+    // Hard cap is the safety net.
+    const { data, error } = await supabase
+      .from('owner_ar_snapshots')
+      .select('property_id, snapshot_date, balance_total, bucket_0_30, bucket_31_60, bucket_61_90, bucket_91_120, bucket_over_120, at_legal, in_collections, payment_plan_active, payment_plan_terms_text, enforcement_stage')
+      .eq('community_id', communityId)
+      .not('approved_at', 'is', null)
+      .lte('snapshot_date', target)
+      .order('property_id', { ascending: true })
+      .order('snapshot_date', { ascending: false })
+      .limit(20000);
+    if (error) throw error;
+
+    // Pick the latest snapshot per property (the first one we encounter
+    // after the DESC order on snapshot_date).
+    const seen = new Set();
+    const rows = [];
+    for (const r of (data || [])) {
+      if (seen.has(r.property_id)) continue;
+      seen.add(r.property_id);
+      rows.push(r);
+    }
+
+    res.json({
+      community_id: communityId,
+      as_of: target,
+      property_count: rows.length,
+      snapshots: rows,
+    });
+  } catch (err) {
+    console.error('[owner_ar] as-of failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/owner-ar/staleness
+// Per-community last-snapshot-date age. Powers the Owner AR tab banner that
+// nudges "Canyon Gate is 47 days stale — refresh" so no community drops out
+// of the monthly cadence by accident.
+//
+// Returns array sorted by oldest first (the ones that need attention).
+// Communities with NO snapshots at all surface with last_snapshot_date=null
+// so they're surfaced for first-time ingest.
+// ----------------------------------------------------------------------------
+router.get('/staleness', async (req, res) => {
+  try {
+    const { data: communities, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('active', true)
+      .order('name');
+    if (cErr) throw cErr;
+
+    // Pull the MAX(snapshot_date) per community in one round trip. We
+    // can't use group-by directly via the Supabase JS client, so fetch
+    // all relevant snapshot rows (one quick scalar per community)
+    // through a single grouped pass. Approved-only.
+    const { data: snaps, error: sErr } = await supabase
+      .from('owner_ar_snapshots')
+      .select('community_id, snapshot_date')
+      .not('approved_at', 'is', null)
+      .order('snapshot_date', { ascending: false })
+      .limit(50000);
+    if (sErr) throw sErr;
+
+    const latestByCommunity = new Map();
+    for (const s of (snaps || [])) {
+      if (!latestByCommunity.has(s.community_id)) {
+        latestByCommunity.set(s.community_id, s.snapshot_date);
+      }
+    }
+
+    const today = new Date();
+    const todayStr = today.toISOString().slice(0, 10);
+    const rows = (communities || []).map((c) => {
+      const last = latestByCommunity.get(c.id) || null;
+      let daysSince = null;
+      if (last) {
+        const lastDt = new Date(last + 'T00:00:00Z');
+        daysSince = Math.floor((Date.parse(todayStr + 'T00:00:00Z') - lastDt.getTime()) / 86400000);
+      }
+      // Severity buckets so the UI doesn't have to re-implement the policy:
+      //   current  : <= 35 days
+      //   stale    : 36-60 days
+      //   very_stale: > 60 days, OR never ingested
+      let severity;
+      if (daysSince == null) severity = 'never_ingested';
+      else if (daysSince <= 35) severity = 'current';
+      else if (daysSince <= 60) severity = 'stale';
+      else severity = 'very_stale';
+
+      return {
+        community_id: c.id,
+        community_name: c.name,
+        last_snapshot_date: last,
+        days_since: daysSince,
+        severity,
+      };
+    });
+
+    // Sort: never_ingested + very_stale first, then by descending days_since.
+    rows.sort((a, b) => {
+      const sevRank = { never_ingested: 0, very_stale: 1, stale: 2, current: 3 };
+      if (sevRank[a.severity] !== sevRank[b.severity]) return sevRank[a.severity] - sevRank[b.severity];
+      return (b.days_since || -1) - (a.days_since || -1);
+    });
+
+    res.json({ communities: rows, computed_at: today.toISOString() });
+  } catch (err) {
+    console.error('[owner_ar] staleness failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/owner-ar/portfolio/trend?months=12&community_id=<optional>
+// Month-by-month totals across the portfolio (or one community).
+//
+// Each month uses the as-of-month-end snapshot per property (closest snapshot
+// on/before the last day of that month). Returns:
+//   month_end, total_outstanding, at_legal_count, in_collections_count,
+//   property_count, plan_active_count
+//
+// Used by the Owner AR tab headline trend chart.
+// ----------------------------------------------------------------------------
+router.get('/portfolio/trend', async (req, res) => {
+  try {
+    const months = Math.max(1, Math.min(36, Number(req.query.months || 12)));
+    const communityId = req.query.community_id || null;
+
+    // Generate the last N month-end dates in UTC. Month-ends are "last day of
+    // month" — we use these because Ed's policy is month-end snapshots align
+    // with monthly financials.
+    const today = new Date();
+    const monthEnds = [];
+    for (let i = months - 1; i >= 0; i--) {
+      const d = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - i + 1, 0)); // last day of (current - i)
+      monthEnds.push(d.toISOString().slice(0, 10));
+    }
+    const earliest = monthEnds[0];
+
+    // Pull all approved snapshots in the timeframe. Bounded: ~12 months × ~5000
+    // properties × ~1-2 snapshots/month = ~120k rows worst case. Hard cap at 200k.
+    let q = supabase
+      .from('owner_ar_snapshots')
+      .select('property_id, community_id, snapshot_date, balance_total, at_legal, in_collections, payment_plan_active')
+      .not('approved_at', 'is', null)
+      .gte('snapshot_date', earliest)
+      .order('property_id', { ascending: true })
+      .order('snapshot_date', { ascending: true })
+      .limit(200000);
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: snaps, error } = await q;
+    if (error) throw error;
+
+    // Bucketize per (month_end, property_id) — keep the latest snapshot on/before each month_end.
+    // Build a map: property_id -> [{date, ...}] ascending.
+    const byProperty = new Map();
+    for (const s of (snaps || [])) {
+      if (!byProperty.has(s.property_id)) byProperty.set(s.property_id, []);
+      byProperty.get(s.property_id).push(s);
+    }
+
+    const trend = monthEnds.map((me) => {
+      let totalOutstanding = 0;
+      let propCount = 0;
+      let atLegal = 0;
+      let inCollections = 0;
+      let planActive = 0;
+      for (const [, list] of byProperty) {
+        // Find latest snapshot <= me. List is ascending by snapshot_date.
+        let chosen = null;
+        for (const s of list) {
+          if (s.snapshot_date <= me) chosen = s;
+          else break;
+        }
+        if (!chosen) continue;
+        propCount += 1;
+        if ((chosen.balance_total || 0) > 0) totalOutstanding += Number(chosen.balance_total);
+        if (chosen.at_legal) atLegal += 1;
+        if (chosen.in_collections) inCollections += 1;
+        if (chosen.payment_plan_active) planActive += 1;
+      }
+      return {
+        month_end: me,
+        total_outstanding: Number(totalOutstanding.toFixed(2)),
+        property_count: propCount,
+        at_legal_count: atLegal,
+        in_collections_count: inCollections,
+        plan_active_count: planActive,
+      };
+    });
+
+    res.json({ months, community_id: communityId, trend });
+  } catch (err) {
+    console.error('[owner_ar] portfolio trend failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/owner-ar/portfolio/at-legal
 // Cross-community at-legal list — the boardroom-money portfolio view.
 // ----------------------------------------------------------------------------

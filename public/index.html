@@ -9935,6 +9935,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </p>
     </div>
 
+    <!-- Staleness banner — shows last AR snapshot age per community.
+         Yellow at >35d, red at >60d, dotted-circle for never-ingested.
+         Click any row to jump straight to upload-this-community.
+         Populated by /api/owner-ar/staleness on tab open. -->
+    <div class="panel" id="ar-staleness-panel" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="margin: 0;">📅 Cadence status — last AR snapshot per community</h3>
+        <button class="secondary-btn" onclick="arLoadStaleness()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+      <div id="ar-staleness-list" style="font-size:13px; color:#6B7280;">Loading…</div>
+      <div style="font-size:11.5px; color:#94a3b8; margin-top:10px; line-height:1.5;">
+        Cadence: month-end Vantaca AR for each community on the 3rd–5th of the next month. Reminder fires monthly. Ad-hoc mid-month uploads are welcome — both versions coexist and each board package pulls its own period.
+      </div>
+    </div>
+
+    <!-- Portfolio trend — 12-month $ outstanding across the book.
+         Inline SVG sparkline + month-end totals. Populated by
+         /api/owner-ar/portfolio/trend on tab open. -->
+    <div class="panel" id="ar-trend-panel" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="margin: 0;">📈 Portfolio AR trend (12 months)</h3>
+        <div id="ar-trend-current" style="font-size:11.5px; color:#64748b;"></div>
+      </div>
+      <div id="ar-trend-chart" style="width:100%; height:140px;"></div>
+      <div id="ar-trend-meta" style="font-size:11px; color:#94a3b8; margin-top:8px;"></div>
+    </div>
+
     <!-- Upload area -->
     <div class="panel" style="margin-bottom: 16px;">
       <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -10197,6 +10224,149 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
     }
 
+    // -------------- Staleness banner --------------
+    // Fetches /api/owner-ar/staleness and renders one row per community.
+    // Click any row to pre-select that community in the upload area.
+    async function arLoadStaleness() {
+      const wrap = document.getElementById('ar-staleness-list');
+      if (!wrap) return;
+      wrap.innerHTML = '<div style="color:#6B7280;">Loading…</div>';
+      try {
+        const r = await fetch('/api/owner-ar/staleness');
+        const j = await r.json();
+        const rows = j.communities || [];
+        if (!rows.length) {
+          wrap.innerHTML = '<div style="color:#6B7280; font-style:italic;">No communities found.</div>';
+          return;
+        }
+        const sevStyle = (sev) => {
+          if (sev === 'current') return { bg: '#dcfce7', fg: '#166534', icon: '✓', label: 'Current' };
+          if (sev === 'stale') return { bg: '#fef3c7', fg: '#78350f', icon: '⚠️', label: 'Stale (35-60d)' };
+          if (sev === 'very_stale') return { bg: '#fee2e2', fg: '#7f1d1d', icon: '❌', label: 'Very stale (>60d)' };
+          return { bg: '#f1f5f9', fg: '#475569', icon: '○', label: 'Never ingested' };
+        };
+        wrap.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <tbody>
+              ${rows.map((c) => {
+                const s = sevStyle(c.severity);
+                const ageStr = c.last_snapshot_date
+                  ? `last as-of ${c.last_snapshot_date} · ${c.days_since}d ago`
+                  : 'never uploaded';
+                return `<tr style="border-bottom:1px solid #f1f5f9;">
+                  <td style="padding:8px 10px; width:38px;">
+                    <span style="display:inline-block; background:${s.bg}; color:${s.fg}; border-radius:99px; padding:3px 8px; font-size:11px; font-weight:600;">${s.icon}</span>
+                  </td>
+                  <td style="padding:8px 10px; font-weight:600; color:#1A3050;">${escapeHtml(c.community_name)}</td>
+                  <td style="padding:8px 10px; color:#475569;">${ageStr}</td>
+                  <td style="padding:8px 10px; text-align:right;">
+                    <button class="secondary-btn" onclick="arJumpToUpload('${escapeHtml(c.community_id)}')"
+                            style="font-size:11px; padding:3px 10px;"
+                            title="Pre-select this community and scroll to the upload area">
+                      Upload →
+                    </button>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        console.warn('[ar] staleness load failed', e);
+        wrap.innerHTML = `<div style="color:#b91c1c;">Failed to load: ${escapeHtml(e.message || 'unknown')}</div>`;
+      }
+    }
+
+    function arJumpToUpload(communityId) {
+      const sel = document.getElementById('ar-community-select');
+      if (sel) {
+        sel.value = communityId;
+        if (typeof sel.onchange === 'function') sel.onchange();
+        arCurrentCommunityId = communityId;
+      }
+      const dropzone = document.getElementById('ar-dropzone');
+      if (dropzone && typeof dropzone.scrollIntoView === 'function') {
+        dropzone.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
+    }
+
+    // -------------- Portfolio trend chart --------------
+    // Inline SVG sparkline matching existing codebase style. No Chart.js
+    // dependency — hand-rolled keeps payload small and gives full control.
+    async function arLoadTrend() {
+      const chartEl = document.getElementById('ar-trend-chart');
+      const headerEl = document.getElementById('ar-trend-current');
+      const metaEl = document.getElementById('ar-trend-meta');
+      if (!chartEl) return;
+      chartEl.innerHTML = '<div style="color:#6B7280; font-size:12px; padding:18px;">Loading trend…</div>';
+      try {
+        const r = await fetch('/api/owner-ar/portfolio/trend?months=12');
+        const j = await r.json();
+        const trend = j.trend || [];
+        if (trend.length === 0) {
+          chartEl.innerHTML = '<div style="color:#94a3b8; font-size:12px; padding:18px; text-align:center;">No AR data yet. Upload your first Vantaca AR report below to start the trend.</div>';
+          return;
+        }
+        const fmtMoney = (v) => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+        const latest = trend[trend.length - 1];
+        if (headerEl) {
+          headerEl.innerHTML = `<strong style="color:#1A3050; font-size:13px;">${fmtMoney(latest.total_outstanding)}</strong> outstanding as of ${latest.month_end}`;
+        }
+        // Build sparkline
+        const W = chartEl.clientWidth || 600;
+        const H = 140;
+        const P = 22; // padding for axis labels
+        const values = trend.map((t) => Number(t.total_outstanding || 0));
+        const maxV = Math.max(...values, 1);
+        const minV = 0;
+        const xStep = (W - P * 2) / Math.max(1, trend.length - 1);
+        const yScale = (v) => H - P - ((v - minV) / (maxV - minV)) * (H - P * 2);
+        const points = trend.map((t, i) => [P + i * xStep, yScale(Number(t.total_outstanding || 0))]);
+        const pathD = points.map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`)).join(' ');
+        const areaD = `${pathD} L ${points[points.length - 1][0]} ${H - P} L ${points[0][0]} ${H - P} Z`;
+        const labels = trend.map((t) => t.month_end.slice(0, 7)); // YYYY-MM
+
+        chartEl.innerHTML = `
+          <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none" style="overflow:visible;">
+            <!-- Gradient fill under the line -->
+            <defs>
+              <linearGradient id="arTrendGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stop-color="#1A3050" stop-opacity="0.18"/>
+                <stop offset="100%" stop-color="#1A3050" stop-opacity="0"/>
+              </linearGradient>
+            </defs>
+            <!-- Horizontal grid lines (4 lines at 0/25/50/75% of max) -->
+            ${[0, 0.25, 0.5, 0.75, 1].map((f) => {
+              const y = yScale(maxV * f);
+              return `<line x1="${P}" y1="${y}" x2="${W - P}" y2="${y}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2,3"/>`;
+            }).join('')}
+            <path d="${areaD}" fill="url(#arTrendGrad)"/>
+            <path d="${pathD}" fill="none" stroke="#1A3050" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            ${points.map((p, i) => `
+              <circle cx="${p[0]}" cy="${p[1]}" r="3" fill="#1A3050" stroke="#fff" stroke-width="1.5">
+                <title>${labels[i]}: ${fmtMoney(trend[i].total_outstanding)} · ${trend[i].at_legal_count} at legal · ${trend[i].in_collections_count} collections</title>
+              </circle>
+            `).join('')}
+            ${labels.map((l, i) => {
+              if (labels.length > 8 && i % 2 === 1) return ''; // thin labels for narrow charts
+              return `<text x="${points[i][0]}" y="${H - 6}" text-anchor="middle" font-size="9.5" fill="#94a3b8" font-family="-apple-system, sans-serif">${l}</text>`;
+            }).join('')}
+            <!-- Y-axis labels (just min/max) -->
+            <text x="${P - 4}" y="${yScale(maxV)}" text-anchor="end" font-size="9" fill="#94a3b8" font-family="-apple-system, sans-serif" dominant-baseline="middle">${fmtMoney(maxV)}</text>
+            <text x="${P - 4}" y="${yScale(0)}" text-anchor="end" font-size="9" fill="#94a3b8" font-family="-apple-system, sans-serif" dominant-baseline="middle">$0</text>
+          </svg>
+        `;
+
+        if (metaEl) {
+          const monthsWithData = trend.filter((t) => t.property_count > 0).length;
+          metaEl.textContent = `${monthsWithData} of ${trend.length} months have data · hover dots for details · total $ outstanding sums all property balances > 0 at month-end`;
+        }
+      } catch (e) {
+        console.warn('[ar] trend load failed', e);
+        chartEl.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:18px;">Failed to load: ${escapeHtml(e.message || 'unknown')}</div>`;
+      }
+    }
+
     // Auto-load communities when the Owner AR tab opens.
     // FIX 2026-05-24: switchTab is defined ~6,000 lines below this script tag.
     // The original IIFE ran during parse, found switchTab undefined, bailed
@@ -10210,6 +10380,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         if (tab === 'ownerar') {
           arLoadCommunities();
           arLoadBatches();
+          arLoadStaleness();
+          arLoadTrend();
         }
         return r;
       };
@@ -26877,11 +27049,78 @@ ${questionsPage}
       </div>
       ${section('Owner', ownerBlock)}
       ${section('Occupancy', `<div style="font-size:13px; color:#1a1a1a;">${escapeHtml(occLine)}</div>`)}
-      ${section('Accounts receivable', arBlock)}
+      ${section('Accounts receivable', arBlock + '<div id="cmapArSparkline" style="margin-top:10px; height:48px;"></div>')}
       ${section('Open violations', violationsBlock)}
       ${section('ARC history', `<div style="font-size:12.5px; color:#475569;">${escapeHtml(accLine)}${p.last_arc_decided_at ? ` · last ${fmtDate(p.last_arc_decided_at)}` : ''}</div>`)}
       ${section('Recent interactions', interactionsBlock)}
     `;
+
+    // Fetch and render the 12-month AR history sparkline. Non-blocking — the
+    // side panel renders immediately; the sparkline fills in when the
+    // history endpoint returns. If the property has 0 or 1 snapshot, we
+    // skip the chart (no trend to show).
+    cmapRenderArSparkline(p.property_id);
+  }
+
+  async function cmapRenderArSparkline(propertyId) {
+    const el = document.getElementById('cmapArSparkline');
+    if (!el) return;
+    try {
+      const r = await fetch(`/api/owner-ar/property/${encodeURIComponent(propertyId)}/history`);
+      const j = await r.json();
+      const history = (j.history || []).slice().reverse(); // server returns DESC; reverse for ASC plotting
+      if (history.length < 2) {
+        el.innerHTML = history.length === 1
+          ? '<div style="font-size:10.5px; color:#94a3b8;">Only one AR snapshot on file — need 2+ for trend.</div>'
+          : '';
+        return;
+      }
+      const last12 = history.slice(-12);
+      const W = el.clientWidth || 320;
+      const H = 48;
+      const P = 4;
+      const values = last12.map((h) => Math.max(0, Number(h.balance_total || 0)));
+      const maxV = Math.max(...values, 1);
+      const xStep = (W - P * 2) / Math.max(1, last12.length - 1);
+      const yScale = (v) => H - P - (v / maxV) * (H - P * 2);
+      const points = last12.map((h, i) => [P + i * xStep, yScale(Math.max(0, Number(h.balance_total || 0)))]);
+      const pathD = points.map((p, i) => (i === 0 ? `M ${p[0]} ${p[1]}` : `L ${p[0]} ${p[1]}`)).join(' ');
+      const areaD = `${pathD} L ${points[points.length - 1][0]} ${H - P} L ${points[0][0]} ${H - P} Z`;
+
+      // Color the line by trend direction (last 3 vs prior 3)
+      const tail = values.slice(-3).reduce((s, v) => s + v, 0) / 3;
+      const head = values.slice(0, 3).reduce((s, v) => s + v, 0) / 3;
+      const trendUp = tail > head * 1.1;
+      const trendDown = tail < head * 0.9;
+      const lineColor = trendUp ? '#C9514B' : trendDown ? '#4FA37A' : '#6B7B92';
+
+      const fmtMoney = (v) => '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+
+      el.innerHTML = `
+        <div style="font-size:10.5px; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px;">
+          ${last12.length}-month balance trend
+          <span style="float:right; color:${lineColor}; font-weight:600;">${trendUp ? '↑ climbing' : trendDown ? '↓ improving' : '→ stable'}</span>
+        </div>
+        <svg viewBox="0 0 ${W} ${H}" width="100%" height="${H}" preserveAspectRatio="none">
+          <defs>
+            <linearGradient id="cmapArSparkGrad" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0%" stop-color="${lineColor}" stop-opacity="0.22"/>
+              <stop offset="100%" stop-color="${lineColor}" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <path d="${areaD}" fill="url(#cmapArSparkGrad)"/>
+          <path d="${pathD}" fill="none" stroke="${lineColor}" stroke-width="1.5"/>
+          ${points.map((p, i) => `<circle cx="${p[0]}" cy="${p[1]}" r="2" fill="${lineColor}"><title>${last12[i].snapshot_date}: ${fmtMoney(last12[i].balance_total)}</title></circle>`).join('')}
+        </svg>
+        <div style="font-size:10px; color:#94a3b8; display:flex; justify-content:space-between; margin-top:2px;">
+          <span>${last12[0].snapshot_date}</span>
+          <span>${last12[last12.length - 1].snapshot_date}</span>
+        </div>
+      `;
+    } catch (e) {
+      console.warn('[cmap] ar sparkline fetch failed', e);
+      el.innerHTML = '';
+    }
   }
 
   // ---- Safe switchTab wrapper (per IIFE scar) ----
