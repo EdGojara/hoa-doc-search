@@ -3208,7 +3208,7 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
 
     const resolved = [];
     const unresolved_property = [];
-    const unresolved_category = [];
+    let unresolved_category = [];
     const duplicates = [];
 
     for (const row of rows) {
@@ -3229,6 +3229,99 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
       });
     }
 
+    // ---- AI auto-mapping for unmatched categories ----
+    // Vantaca's category labels are usually MORE specific than trustEd's
+    // canonical enforcement_categories (e.g., 'Mildew - Landscape brick' vs
+    // 'landscape_maintenance'). Substring fuzzy-match can't bridge that gap
+    // reliably, so we send the unique unmatched labels + the canonical list
+    // to Haiku and ask for a best-fit JSON mapping. Cheap (~$0.001) and
+    // typically resolves 90%+ of the remaining unmatched rows.
+    let aiMappingApplied = null;
+    if (unresolved_category.length > 0 && process.env.ANTHROPIC_API_KEY) {
+      try {
+        job.progress = `AI-mapping ${unresolved_category.length} unmatched category labels`;
+        const uniqueLabels = [...new Set(unresolved_category.map((r) => r.category_label).filter(Boolean))];
+        const canonicalList = (cats || []).map((c) => `${c.slug} — "${c.label}"`).join('\n');
+
+        const Anthropic = require('@anthropic-ai/sdk');
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+        const prompt = `You are mapping Vantaca HOA violation category labels to trustEd's canonical enforcement category slugs.
+
+Canonical trustEd categories (slug — "label"):
+${canonicalList}
+
+Unmatched Vantaca labels to map:
+${uniqueLabels.map((l, i) => `${i + 1}. "${l}"`).join('\n')}
+
+Return ONLY a JSON object — no preamble, no markdown:
+{
+  "mapping": {
+    "<exact Vantaca label>": "<canonical slug from the list above>",
+    ...
+  }
+}
+
+RULES:
+- Use ONLY the slugs from the canonical list above. Never invent a new slug.
+- If a Vantaca label truly has no good canonical fit, OMIT it from the mapping (don't force a bad match).
+- Be permissive but accurate — 'Mow and Edge' fits 'lawn_maintenance' even though it doesn't say 'lawn'.
+- Vantaca labels often have suffixes/prefixes like 'Brick' or 'Landscape' that hint at the broader category.
+
+Return ONLY the JSON object.`;
+
+        const stream = anthropic.messages.stream({
+          model: 'claude-haiku-4-5-20251001',
+          max_tokens: 4000,
+          messages: [{ role: 'user', content: prompt }],
+        });
+        const completion = await stream.finalMessage();
+        const text = (completion.content?.[0]?.text || '').trim();
+        const cleaned = text.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '').trim();
+        let aiParsed;
+        try {
+          const m = cleaned.match(/\{[\s\S]*\}/);
+          aiParsed = JSON.parse(m ? m[0] : cleaned);
+        } catch (parseErr) {
+          console.warn(`[vantaca-violations.preview job ${jobId}] AI category mapping JSON parse failed:`, parseErr.message);
+          aiParsed = { mapping: {} };
+        }
+        const aiMapping = aiParsed.mapping || {};
+
+        // Re-classify unresolved_category using the AI mapping
+        const stillUnresolved = [];
+        let aiResolvedCount = 0;
+        for (const row of unresolved_category) {
+          const slug = aiMapping[row.category_label];
+          if (!slug) { stillUnresolved.push(row); continue; }
+          const cat = catBySlug.get(slug.toLowerCase());
+          if (!cat) { stillUnresolved.push(row); continue; }
+          const dedupKey = `${row.property_id}::${cat.id}::${row.opened_at}`;
+          if (existingKeys.has(dedupKey)) {
+            duplicates.push({ ...row, category_id: cat.id, ai_mapped_from: row.category_label });
+            continue;
+          }
+          resolved.push({
+            ...row,
+            category_id: cat.id,
+            category_resolved_label: cat.label,
+            category_ai_mapped: true,
+            ai_mapped_from: row.category_label,
+          });
+          aiResolvedCount++;
+        }
+        unresolved_category = stillUnresolved;
+        aiMappingApplied = {
+          unique_label_count: uniqueLabels.length,
+          mapping: aiMapping,
+          resolved_count: aiResolvedCount,
+        };
+        console.log(`[vantaca-violations.preview job ${jobId}] AI mapped ${aiResolvedCount} rows from ${uniqueLabels.length} unique labels`);
+      } catch (aiErr) {
+        console.warn(`[vantaca-violations.preview job ${jobId}] AI category mapping failed (non-fatal):`, aiErr.message);
+      }
+    }
+
     job.status = 'complete';
     job.result = {
       total_rows: rows.length,
@@ -3243,9 +3336,10 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
       unresolved_property: unresolved_property.slice(0, 50),
       unresolved_category: unresolved_category.slice(0, 50),
       duplicates: duplicates.slice(0, 20),
+      ai_category_mapping: aiMappingApplied,
       raw_extracted: rawExtracted,
     };
-    job.progress = `done — ${resolved.length} matched · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`;
+    job.progress = `done — ${resolved.length} matched${aiMappingApplied ? ` (${aiMappingApplied.resolved_count} via AI mapping)` : ''} · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`;
   } catch (err) {
     console.error(`[vantaca-violations.preview job ${jobId}]`, err);
     job.status = 'error';
