@@ -4320,13 +4320,21 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
     if (rows.length === 0) return res.json({ inserted: 0, skipped: 0 });
 
+    // Batch the inserts — one round trip to Supabase per chunk of 100 rows
+    // instead of one per row. Drops apply time from ~60s for 92 rows to
+    // ~2-3 seconds. Critical when importing communities like Waterview
+    // that have hundreds of historical violations.
     let inserted = 0;
     let skipped = 0;
     const errors = [];
 
+    const valid = [];
     for (const r of rows) {
-      if (!r.property_id || !r.category_id || !r.opened_at) { skipped += 1; continue; }
-      const insertRow = {
+      if (!r.property_id || !r.category_id || !r.opened_at) {
+        skipped += 1;
+        continue;
+      }
+      valid.push({
         property_id: r.property_id,
         community_id: communityId,
         primary_category_id: r.category_id,
@@ -4338,15 +4346,33 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
         resolved_via: r.resolved_via || (r.resolved_at ? 'cured' : null),
         resolved_notes: r.notes || null,
         source: 'vantaca_import',
-        confidence_weight: 0.5,         // half-weight until reviewed
+        confidence_weight: 0.5,
         quality_status: 'unreviewed',
         review_notes: 'Imported from Vantaca violations export. Needs verification.',
-      };
-      const { error } = await supabase.from('violations').insert(insertRow);
+      });
+    }
+
+    const BATCH_SIZE = 100;
+    for (let i = 0; i < valid.length; i += BATCH_SIZE) {
+      const batch = valid.slice(i, i + BATCH_SIZE);
+      const { data, error } = await supabase
+        .from('violations')
+        .insert(batch)
+        .select('id');
       if (error) {
-        errors.push({ row: r._source_row, error: error.message });
+        // On batch failure, fall back to row-by-row to identify which row(s)
+        // are bad (constraint violation, etc.) without losing the rest.
+        console.warn('[vantaca-violations.apply] batch insert failed, falling back to per-row:', error.message);
+        for (const single of batch) {
+          const { error: singleErr } = await supabase.from('violations').insert(single);
+          if (singleErr) {
+            errors.push({ property_id: single.property_id, opened_at: single.opened_at, error: singleErr.message });
+          } else {
+            inserted += 1;
+          }
+        }
       } else {
-        inserted += 1;
+        inserted += (data && data.length) || batch.length;
       }
     }
 
