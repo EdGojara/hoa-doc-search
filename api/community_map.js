@@ -51,7 +51,7 @@ const router = express.Router();
 // Layer keys recognized by GET /:communityId/layers. Unknown keys are
 // silently dropped (forgiving rather than 400 — the frontend may be ahead
 // of the backend on a deploy).
-const VALID_LAYERS = new Set(['occupancy', 'ar', 'drv', 'acc', 'tenure', 'investor', 'value', 'recent_sale']);
+const VALID_LAYERS = new Set(['occupancy', 'ar', 'drv', 'acc', 'tenure', 'investor', 'value', 'recent_sale', 'yoy']);
 
 // Acknowledgment policy. Bumping ACK_VERSION forces every user to re-ack
 // before the next access (frontend reads /acknowledge/status, sees expired,
@@ -240,7 +240,7 @@ router.get('/:communityId/layers', async (req, res) => {
     // approved record yet for that property (graceful — UI shows grey pins).
     const { data: apprRows, error: apErr } = await supabase
       .from('v_appraisal_property_summary')
-      .select('property_id, county_source, parcel_number, owner_name_appraisal, owner_mailing_address, acquisition_date, sale_price, assessed_value_current, tenure_years, tenure_bucket, investor_flag, recently_sold, pull_date, days_since_pull')
+      .select('property_id, county_source, parcel_number, owner_name_appraisal, owner_mailing_address, acquisition_date, sale_price, assessed_value_current, assessed_value_prior, yoy_change_pct, yoy_change_dollars, tenure_years, tenure_bucket, investor_flag, recently_sold, pull_date, days_since_pull')
       .eq('community_id', communityId)
       .limit(5000);
     // Non-fatal — appraisal data may not exist yet. Log + continue.
@@ -266,6 +266,21 @@ router.get('/:communityId/layers', async (req, res) => {
       if (v < valueLowerTertile) return 'low';
       if (v > valueUpperTertile) return 'high';
       return 'mid';
+    }
+
+    // YoY change buckets. Fixed-percent thresholds (not tertiles) because the
+    // semantic — "is the property appreciating, holding, or depreciating" —
+    // is meaningful in absolute terms, not relative-to-community. A 12%
+    // appreciation is a strong year everywhere in Texas.
+    function bucketYoy(pct) {
+      if (pct == null) return null;
+      const p = Number(pct);
+      if (p <= -10)  return 'down_strong';   // -10% or worse
+      if (p <  -3)   return 'down';          // -3% to -10%
+      if (p <=  3)   return 'flat';          // -3% to +3%
+      if (p <  10)   return 'up';            // +3% to +10%
+      if (p <  20)   return 'up_strong';     // +10% to +20%
+      return            'up_exceptional';    // 20%+
     }
 
     // Newest AR snapshot date across the community — the UI surfaces this
@@ -328,9 +343,29 @@ router.get('/:communityId/layers', async (req, res) => {
         recently_sold: appr.recently_sold,                 // sold in last 365d
         value_bucket: bucketValue(appr.assessed_value_current),
         assessed_value: appr.assessed_value_current != null ? Number(appr.assessed_value_current) : null,
+        assessed_value_prior: appr.assessed_value_prior != null ? Number(appr.assessed_value_prior) : null,
+        // YoY value change (the "is the HOA actually preserving values" layer)
+        yoy_change_pct: appr.yoy_change_pct != null ? Number(appr.yoy_change_pct) : null,
+        yoy_change_dollars: appr.yoy_change_dollars != null ? Number(appr.yoy_change_dollars) : null,
+        yoy_bucket: bucketYoy(appr.yoy_change_pct),
         county_source: appr.county_source || null,
         appraisal_pull_date: appr.pull_date || null,
       });
+    }
+
+    // Community-level YoY summary — averaged change across all properties
+    // that have both years' data. Boards genuinely want "what's our portfolio
+    // doing on average" as a headline alongside the per-pin breakdown.
+    let communityYoyAvg = null;
+    let communityYoyMedian = null;
+    const yoyValues = (apprRows || [])
+      .map((r) => r.yoy_change_pct)
+      .filter((v) => v != null)
+      .map((v) => Number(v));
+    if (yoyValues.length >= 5) {
+      communityYoyAvg = Number((yoyValues.reduce((s, v) => s + v, 0) / yoyValues.length).toFixed(2));
+      const sorted = [...yoyValues].sort((a, b) => a - b);
+      communityYoyMedian = Number(sorted[Math.floor(sorted.length / 2)].toFixed(2));
     }
 
     // Fire-and-forget audit row. Don't await — keep the user-facing latency low.
@@ -353,6 +388,13 @@ router.get('/:communityId/layers', async (req, res) => {
       as_of: new Date().toISOString(),
       ar_snapshot_date: arSnapshotDate,
       ar_days_since_snapshot: arDaysOld,
+      // Portfolio-level appraisal aggregates — boards want the headline
+      // ("our community appreciated 8.4% on average") alongside the map.
+      yoy_summary: {
+        average_pct: communityYoyAvg,
+        median_pct: communityYoyMedian,
+        property_count: yoyValues.length,
+      },
       counts: {
         total: properties.length,
         ungeocoded: propertiesWithoutGeo,

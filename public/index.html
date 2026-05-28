@@ -11451,6 +11451,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <button class="cmap-chip"        data-layer="investor"    onclick="cmapSetActiveLayer('investor')"    type="button">🏢 Investor</button>
       <button class="cmap-chip"        data-layer="value"       onclick="cmapSetActiveLayer('value')"       type="button">💎 Value</button>
       <button class="cmap-chip"        data-layer="recent_sale" onclick="cmapSetActiveLayer('recent_sale')" type="button">🔄 Recent sale</button>
+      <button class="cmap-chip"        data-layer="yoy"         onclick="cmapSetActiveLayer('yoy')"         type="button">📈 YoY change</button>
 
       <!-- Basemap toggle — canonical 3-button pattern matching reserve-map.html -->
       <div id="cmapBasemapToggle" style="margin-left:auto; display:flex; gap:4px; background:#f1f5f9; padding:3px; border-radius:6px;">
@@ -27017,6 +27018,19 @@ ${questionsPage}
     no:      { color: '#94B3C7', label: 'Same owner 12+ months' },
     unknown: { color: '#cbd5e1', label: 'No county data' },
   };
+  // ---- Year-over-year value change ----
+  // The "is the HOA actually preserving property values" layer. Buckets are
+  // absolute percentages (not per-community tertiles) because the semantic
+  // is meaningful as-is: 12% appreciation is strong everywhere in TX.
+  const CMAP_YOY_COLORS = {
+    down_strong:    { color: '#8B1A1A', label: 'Down 10%+' },
+    down:           { color: '#C9514B', label: 'Down 3–10%' },
+    flat:           { color: '#94B3C7', label: 'Flat (±3%)' },
+    up:             { color: '#7DB89C', label: 'Up 3–10%' },
+    up_strong:      { color: '#4FA37A', label: 'Up 10–20%' },
+    up_exceptional: { color: '#1E6F45', label: 'Up 20%+' },
+    unknown:        { color: '#cbd5e1', label: 'No prior-year data' },
+  };
 
   function cmapInvestorBucket(p) {
     if (p.investor_flag === true) return 'investor';
@@ -27047,6 +27061,8 @@ ${questionsPage}
         return (CMAP_VALUE_COLORS[p.value_bucket || 'unknown']).color;
       case 'recent_sale':
         return CMAP_RECENT_SALE_COLORS[cmapRecentSaleBucket(p)].color;
+      case 'yoy':
+        return (CMAP_YOY_COLORS[p.yoy_bucket || 'unknown']).color;
       default:
         return '#94a3b8';
     }
@@ -27221,7 +27237,7 @@ ${questionsPage}
         wm.textContent = j.watermark + ' · confidential';
       }
 
-      // Header meta — AR snapshot freshness + counts
+      // Header meta — AR snapshot freshness + counts + YoY portfolio average
       if (headerMeta) {
         const arBits = j.ar_snapshot_date
           ? `AR data as of ${j.ar_snapshot_date}` + (j.ar_days_since_snapshot != null && j.ar_days_since_snapshot > 35 ? ` (${j.ar_days_since_snapshot}d old — stale)` : '')
@@ -27229,7 +27245,18 @@ ${questionsPage}
         const ungeoBits = (j.counts && j.counts.ungeocoded > 0)
           ? ` · ${j.counts.ungeocoded} ungeocoded property${j.counts.ungeocoded === 1 ? '' : 'ies'} not shown`
           : '';
-        headerMeta.textContent = `${j.counts.total} propert${j.counts.total === 1 ? 'y' : 'ies'} on map · ${arBits}${ungeoBits}`;
+        // Portfolio YoY headline — boards genuinely want this number.
+        // Color-tag the % so it reads at-a-glance: green = appreciating,
+        // red = depreciating, grey = flat-or-no-data.
+        let yoyBits = '';
+        const yoyAvg = j.yoy_summary && j.yoy_summary.average_pct;
+        if (yoyAvg != null) {
+          const yoyColor = yoyAvg >= 3 ? '#4FA37A' : (yoyAvg <= -3 ? '#C9514B' : '#94a3b8');
+          const arrow = yoyAvg >= 3 ? '↑' : (yoyAvg <= -3 ? '↓' : '→');
+          const sign = yoyAvg > 0 ? '+' : '';
+          yoyBits = ` · <span style="color:${yoyColor}; font-weight:600;">${arrow} avg value ${sign}${yoyAvg}%</span> YoY (${j.yoy_summary.property_count} props)`;
+        }
+        headerMeta.innerHTML = `${j.counts.total} propert${j.counts.total === 1 ? 'y' : 'ies'} on map · ${arBits}${ungeoBits}${yoyBits}`;
       }
 
       cmapRenderPins();
@@ -27304,6 +27331,8 @@ ${questionsPage}
       entries = Object.entries(CMAP_VALUE_COLORS);
     } else if (cmapState.activeLayer === 'recent_sale') {
       entries = Object.entries(CMAP_RECENT_SALE_COLORS);
+    } else if (cmapState.activeLayer === 'yoy') {
+      entries = Object.entries(CMAP_YOY_COLORS);
     } else {
       entries = [];
     }
@@ -27326,6 +27355,7 @@ ${questionsPage}
       else if (cmapState.activeLayer === 'investor')    key = cmapInvestorBucket(p);
       else if (cmapState.activeLayer === 'value')       key = p.value_bucket || 'unknown';
       else if (cmapState.activeLayer === 'recent_sale') key = cmapRecentSaleBucket(p);
+      else if (cmapState.activeLayer === 'yoy')         key = p.yoy_bucket || 'unknown';
       if (key) countsByKey.set(key, (countsByKey.get(key) || 0) + 1);
     }
 
@@ -27506,7 +27536,18 @@ ${questionsPage}
             <div><strong>Per county owner:</strong> ${escapeHtml(latest.owner_name_appraisal || '—')}${investorBadge}</div>
             ${latest.parcel_number ? `<div style="font-size:11.5px; color:#94a3b8;">Parcel ${escapeHtml(latest.parcel_number)}</div>` : ''}
             ${latest.acquisition_date ? `<div>Acquired ${fmtDate(latest.acquisition_date)}${tenureYrs != null ? ` · ${tenureYrs} years` : ''}${latest.sale_price ? ` for ${fmtMoney(latest.sale_price)}` : ''}</div>` : ''}
-            ${latest.assessed_value_current ? `<div>Assessed value: <strong>${fmtMoney(latest.assessed_value_current)}</strong></div>` : ''}
+            ${latest.assessed_value_current ? `<div>Assessed value: <strong>${fmtMoney(latest.assessed_value_current)}</strong>${
+              propRecord && propRecord.yoy_change_pct != null
+                ? (() => {
+                    const pct = Number(propRecord.yoy_change_pct);
+                    const yoyColor = pct >= 3 ? '#4FA37A' : (pct <= -3 ? '#C9514B' : '#94a3b8');
+                    const arrow = pct >= 3 ? '↑' : (pct <= -3 ? '↓' : '→');
+                    const sign = pct > 0 ? '+' : '';
+                    const dollars = propRecord.yoy_change_dollars != null ? ` (${propRecord.yoy_change_dollars > 0 ? '+' : ''}${fmtMoney(propRecord.yoy_change_dollars)})` : '';
+                    return ` <span style="margin-left:6px; color:${yoyColor}; font-weight:600;">${arrow} ${sign}${pct}% YoY${dollars}</span>`;
+                  })()
+                : ''
+            }</div>` : ''}
             ${latest.year_built || latest.building_sqft || latest.lot_sqft ? `
               <div style="font-size:11.5px; color:#475569; margin-top:2px;">
                 ${latest.year_built ? `Built ${latest.year_built}` : ''}${latest.year_built && (latest.building_sqft || latest.lot_sqft) ? ' · ' : ''}
