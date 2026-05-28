@@ -15387,12 +15387,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
       // If PDF, the server returned a job_id and is processing in the
       // background. Poll preview-status until done.
+      let stashedJobId = null;
       if (j.job_id && j.status === 'running') {
+        stashedJobId = j.job_id;
+        window._inspVViLastJobId = stashedJobId;  // for the bulk-add-categories re-resolve path
         status.innerHTML = '⏳ PDF processing started — extracting violation rows in the background…';
         const finalJob = await _inspVViPollJob(j.job_id, status);
         if (finalJob.status === 'error') throw new Error(finalJob.error || 'extraction failed');
         if (!finalJob.result) throw new Error('extraction completed but no result available');
         j = finalJob.result;
+        j.job_id = stashedJobId;  // preserve through render so re-resolve can find the cached rows
       }
 
       _inspVViPreviewData = j;
@@ -15489,8 +15493,67 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </div>
       ${j.unresolved_property_count > 0 ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved properties (${j.unresolved_property_count}) — accounts or addresses we couldn't match</summary><div style="font-size:11.5px; color:#475569; padding:8px;">${j.unresolved_property.slice(0,20).map((r) => `<div>Row ${r._source_row}: account=${escapeHtml(r.vantaca_account_id || '—')}, addr=${escapeHtml(r.street_address || '—')}</div>`).join('')}${j.unresolved_property_count > 20 ? `<div style="color:#94a3b8;">…and ${j.unresolved_property_count - 20} more</div>` : ''}</div></details>` : ''}
-      ${j.unresolved_category_count > 0 ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved categories (${j.unresolved_category_count}) — category labels we couldn't match to canonical slugs</summary><div style="font-size:11.5px; color:#475569; padding:8px;">${j.unresolved_category.slice(0,20).map((r) => `<div>Row ${r._source_row}: "${escapeHtml(r.category_label || '')}"</div>`).join('')}${j.unresolved_category_count > 20 ? `<div style="color:#94a3b8;">…and ${j.unresolved_category_count - 20} more</div>` : ''}</div></details>` : ''}
+      ${j.unresolved_category_count > 0 ? `<details style="margin-bottom:10px;" open><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved categories (${j.unresolved_category_count}) — category labels we couldn't match to canonical slugs</summary>
+        <div style="padding:10px 12px; background:#fef9e7; border:1px solid #fde68a; border-radius:6px; margin-top:6px;">
+          <div style="font-size:12px; color:#78350f; margin-bottom:8px; line-height:1.5;">
+            These Vantaca categories don't exist in trustEd's canonical list. Click the button below to add them as new canonical categories (one-time setup per community batch), then re-resolve to import.
+          </div>
+          <button onclick="inspVViBulkAddCategories()" type="button"
+                  style="background:#1A3050; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">
+            + Add ${j.unresolved_category_count} as new canonical categories &amp; re-resolve
+          </button>
+        </div>
+        <div style="font-size:11.5px; color:#475569; padding:8px;">
+          ${j.unresolved_category.slice(0,30).map((r) => `<div>Row ${r._source_row}: "${escapeHtml(r.category_label || '')}"</div>`).join('')}${j.unresolved_category_count > 30 ? `<div style="color:#94a3b8;">…and ${j.unresolved_category_count - 30} more</div>` : ''}
+        </div>
+      </details>` : ''}
     `;
+  }
+
+  // Bulk-create canonical enforcement_categories from the unresolved Vantaca
+  // labels, then re-resolve the cached preview against the updated category
+  // list. Saves the operator from having to re-upload the PDF.
+  async function inspVViBulkAddCategories() {
+    if (!_inspVViPreviewData || !_inspVViPreviewData.unresolved_category) return;
+    const status = document.getElementById('inspVViStatus');
+    const labels = [...new Set((_inspVViPreviewData.unresolved_category || []).map((r) => r.category_label).filter(Boolean))];
+    if (labels.length === 0) return;
+    if (!confirm(`Add ${labels.length} new canonical categories to trustEd?\n\nLabels:\n${labels.slice(0, 15).join('\n')}${labels.length > 15 ? `\n…and ${labels.length - 15} more` : ''}\n\nEach gets a slug auto-generated from the label (e.g. "Mow and Edge" → "mow_and_edge"). Re-uses existing slugs if they collide.`)) return;
+
+    status.innerHTML = '⏳ Adding categories…';
+    try {
+      const r = await fetch('/api/enforcement/categories/bulk-add', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ labels }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = `<span style="color:#15803d;">✓ Added ${j.inserted_count} new categories${j.skipped_existing_count > 0 ? ` (${j.skipped_existing_count} already existed)` : ''}. Re-resolving…</span>`;
+
+      // Re-resolve the cached preview against the updated category list
+      const jobId = _inspVViPreviewData.job_id || window._inspVViLastJobId;
+      if (!jobId) {
+        status.innerHTML = '<span style="color:#b91c1c;">Categories added, but the job ID is lost. Re-upload the PDF to see the updated preview.</span>';
+        return;
+      }
+      const rr = await fetch(`/api/enforcement/vantaca-violations/preview/${encodeURIComponent(jobId)}/re-resolve`, { method: 'POST' });
+      const rj = await rr.json();
+      if (!rr.ok) throw new Error(rj.error || `HTTP ${rr.status}`);
+
+      _inspVViPreviewData = rj;
+      _inspVViPreviewData.job_id = jobId;
+      status.innerHTML = `<span style="color:#15803d;">✓ Re-resolved: ${rj.total_rows} rows · ${rj.resolved_count} matched · ${rj.unresolved_category_count} still unmatched · ${rj.duplicate_count} duplicates.</span>`;
+      inspVViRenderDiff(rj);
+      const applyBtn = document.getElementById('inspVViApplyBtn');
+      if (rj.resolved_count > 0) {
+        applyBtn.disabled = false;
+        applyBtn.style.opacity = '1';
+        applyBtn.textContent = `✓ Import ${rj.resolved_count} resolved row${rj.resolved_count === 1 ? '' : 's'}`;
+      }
+    } catch (e) {
+      status.innerHTML = '<span style="color:#b91c1c;">' + escapeHtml(e.message) + '</span>';
+    }
   }
 
   async function inspVViApply() {

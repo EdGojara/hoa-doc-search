@@ -3161,6 +3161,12 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
       return;
     }
 
+    // Cache the raw extracted rows + community on the job so the
+    // re-resolve endpoint can re-run resolution against updated
+    // enforcement_categories without re-extracting the PDF.
+    job.cachedRows = rows;
+    job.communityId = communityId;
+
     job.progress = `matching ${rows.length} rows to properties + categories`;
 
     // ---- existing resolution logic (property + category match + dedup) ----
@@ -3346,6 +3352,178 @@ Return ONLY the JSON object.`;
     job.error = err.message || 'unknown error';
   }
 }
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/categories/bulk-add
+// ---------------------------------------------------------------------------
+// Bulk-create enforcement_categories from a list of free-text labels (the
+// typical case: unresolved Vantaca category labels during import). Auto-
+// generates a snake_case slug per label, skips inserts where the slug
+// already exists.
+//
+// Body: { labels: [string], default_priority_weight?: 'standard' }
+// ---------------------------------------------------------------------------
+function _slugifyLabel(label) {
+  return String(label).toLowerCase()
+    .replace(/[^a-z0-9\s_\-]/g, ' ')
+    .replace(/\s+/g, '_')
+    .replace(/_+/g, '_')
+    .replace(/^_|_$/g, '')
+    .slice(0, 60) || 'unnamed_category';
+}
+
+router.post('/categories/bulk-add', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const labels = Array.isArray(req.body && req.body.labels) ? req.body.labels : [];
+    if (labels.length === 0) return res.status(400).json({ error: 'labels array required' });
+    const defaultPriority = (req.body && req.body.default_priority_weight) || 'standard';
+
+    // Dedup the input labels + their slugs
+    const uniqueLabels = [...new Set(labels.map((l) => String(l).trim()).filter(Boolean))];
+    const proposed = uniqueLabels.map((label) => ({ slug: _slugifyLabel(label), label }));
+
+    // Check existing slugs to avoid the ON CONFLICT noise
+    const slugs = proposed.map((p) => p.slug);
+    const { data: existing } = await supabase
+      .from('enforcement_categories')
+      .select('slug')
+      .in('slug', slugs);
+    const existingSet = new Set((existing || []).map((r) => r.slug));
+
+    const toInsert = proposed.filter((p) => !existingSet.has(p.slug)).map((p) => ({
+      slug: p.slug,
+      label: p.label,
+      description: `Auto-added from Vantaca violation import on ${new Date().toISOString().slice(0, 10)}`,
+      default_priority_weight: defaultPriority,
+      display_order: 999,
+    }));
+
+    let inserted = [];
+    if (toInsert.length > 0) {
+      const { data, error } = await supabase
+        .from('enforcement_categories')
+        .insert(toInsert)
+        .select('id, slug, label');
+      if (error) throw error;
+      inserted = data || [];
+    }
+
+    res.json({
+      proposed_count: uniqueLabels.length,
+      inserted_count: inserted.length,
+      skipped_existing_count: uniqueLabels.length - inserted.length,
+      inserted,
+      skipped_existing: proposed.filter((p) => existingSet.has(p.slug)),
+    });
+  } catch (err) {
+    console.error('[categories.bulk-add]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/vantaca-violations/preview/:jobId/re-resolve
+// ---------------------------------------------------------------------------
+// Re-runs property + category resolution against the cached rows in an
+// existing preview job. Used after bulk-adding categories so we don't have
+// to re-upload + re-extract the PDF.
+// ---------------------------------------------------------------------------
+router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) => {
+  try {
+    const jobId = req.params.jobId;
+    const job = _vvPreviewJobs.get(jobId);
+    if (!job) return res.status(404).json({ error: 'job_not_found_or_expired' });
+    if (!job.cachedRows || !Array.isArray(job.cachedRows)) {
+      return res.status(409).json({ error: 'job has no cached rows; re-upload the PDF instead' });
+    }
+    if (!job.communityId) {
+      return res.status(409).json({ error: 'job is missing community_id; re-upload the PDF instead' });
+    }
+
+    job.status = 'running';
+    job.progress = 're-resolving against updated categories';
+
+    // Re-pull properties + categories (categories may have been bulk-added
+    // since the original run — that's the whole point of re-resolve).
+    const [{ data: props }, { data: cats }, { data: existingV }] = await Promise.all([
+      supabase.from('properties').select('id, street_address, unit, vantaca_account_id').eq('community_id', job.communityId),
+      supabase.from('enforcement_categories').select('id, slug, label'),
+      supabase.from('violations').select('property_id, primary_category_id, opened_at').eq('community_id', job.communityId).eq('source', 'vantaca_import'),
+    ]);
+
+    const byAcct = new Map();
+    const byStreet = new Map();
+    (props || []).forEach((p) => {
+      if (p.vantaca_account_id) byAcct.set(String(p.vantaca_account_id), p);
+      if (p.street_address) byStreet.set(p.street_address.toLowerCase().trim(), p);
+    });
+    const catBySlug = new Map();
+    const catByLabel = new Map();
+    (cats || []).forEach((c) => {
+      catBySlug.set(c.slug.toLowerCase(), c);
+      catByLabel.set(c.label.toLowerCase(), c);
+    });
+    const resolveCategory = (rawLabel) => {
+      if (!rawLabel) return null;
+      const s = String(rawLabel).toLowerCase().trim();
+      if (catByLabel.has(s)) return catByLabel.get(s);
+      for (const [label, c] of catByLabel) {
+        if (label.includes(s) || s.includes(label)) return c;
+      }
+      for (const [slug, c] of catBySlug) {
+        if (slug.replace(/_/g, ' ').includes(s) || s.includes(slug.replace(/_/g, ' '))) return c;
+      }
+      return null;
+    };
+    const existingKeys = new Set((existingV || []).map((v) =>
+      `${v.property_id}::${v.primary_category_id}::${(v.opened_at || '').slice(0, 10)}`));
+
+    const resolved = [];
+    const unresolved_property = [];
+    const unresolved_category = [];
+    const duplicates = [];
+
+    for (const row of job.cachedRows) {
+      let prop = null;
+      if (row.vantaca_account_id) prop = byAcct.get(String(row.vantaca_account_id));
+      if (!prop && row.street_address) prop = byStreet.get(row.street_address.toLowerCase().trim());
+      if (!prop) { unresolved_property.push(row); continue; }
+      const cat = resolveCategory(row.category_label);
+      if (!cat) { unresolved_category.push({ ...row, property_id: prop.id }); continue; }
+      const dedupKey = `${prop.id}::${cat.id}::${row.opened_at}`;
+      if (existingKeys.has(dedupKey)) {
+        duplicates.push({ ...row, property_id: prop.id, category_id: cat.id });
+        continue;
+      }
+      resolved.push({
+        ...row, property_id: prop.id, property_street: prop.street_address,
+        category_id: cat.id, category_resolved_label: cat.label,
+      });
+    }
+
+    job.status = 'complete';
+    job.result = {
+      total_rows: job.cachedRows.length,
+      mapping: job.result ? job.result.mapping : null,
+      headers: job.result ? job.result.headers : [],
+      sample_rows: job.cachedRows.slice(0, 5),
+      resolved_count: resolved.length,
+      unresolved_property_count: unresolved_property.length,
+      unresolved_category_count: unresolved_category.length,
+      duplicate_count: duplicates.length,
+      resolved,
+      unresolved_property: unresolved_property.slice(0, 50),
+      unresolved_category: unresolved_category.slice(0, 50),
+      duplicates: duplicates.slice(0, 20),
+      re_resolved: true,
+    };
+    job.progress = `re-resolved — ${resolved.length} matched · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`;
+    res.json(job.result);
+  } catch (err) {
+    console.error('[vantaca-violations.re-resolve]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ---------------------------------------------------------------------------
 // GET /api/enforcement/vantaca-violations/preview-status/:jobId
