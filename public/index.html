@@ -12514,8 +12514,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // own status line (the per-community case uses inspMapStatus; the bulk case
   // uses inspGeocodeAllStatus).
   async function _inspGeocodeCommunityBatched(communityId, onProgress) {
-    const BATCH_SIZE = 400;
-    const SAFETY_MAX_BATCHES = 20; // covers up to 8000 properties — bigger than any community
+    // 2026-05-28 fix — confirmed via /api/inspections/geocode-debug that
+    // Mapbox returns rooftop-accuracy hits on Waterview/Eaglewood addresses.
+    // So previous "no match" failures weren't real geocode failures — they
+    // were Render's ~100s HTTP timeout killing batches mid-flight. Each
+    // property = ~150ms sleep + ~50-200ms API call = 200-350ms wall clock.
+    // At BATCH_SIZE=400 that's 80-140s per batch, sometimes over the cliff.
+    // Drop to 200 → reliably under 40s per batch with API jitter headroom.
+    const BATCH_SIZE = 200;
+    const SAFETY_MAX_BATCHES = 40;  // 200 × 40 = 8000-property ceiling
+    const PER_BATCH_RETRIES = 1;    // transient errors no longer abort the run
+
     let totalSucceeded = 0;
     let totalFailed = 0;
     let totalSkipped = 0;
@@ -12523,19 +12532,64 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     let batchNum = 0;
     const allErrors = [];
 
-    while (true) {
-      batchNum++;
-      if (typeof onProgress === 'function') {
-        onProgress({ batchNum, totalSucceeded, totalFailed, totalSkipped });
-      }
-
+    async function runOneBatch(attempt) {
       const r = await fetch('/api/inspections/geocode-community', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ community_id: communityId, limit: BATCH_SIZE }),
       });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `geocode failed (${r.status})`);
+      if (!r.ok) {
+        const err = new Error(j.error || `geocode failed (${r.status})`);
+        err.httpStatus = r.status;
+        throw err;
+      }
+      return j;
+    }
+
+    while (true) {
+      batchNum++;
+      if (typeof onProgress === 'function') {
+        onProgress({ batchNum, totalSucceeded, totalFailed, totalSkipped });
+      }
+
+      let j;
+      let lastErr = null;
+      for (let attempt = 0; attempt <= PER_BATCH_RETRIES; attempt++) {
+        try {
+          j = await runOneBatch(attempt);
+          lastErr = null;
+          break;
+        } catch (e) {
+          lastErr = e;
+          // 5xx (server-side) and aborts are worth retrying once; 4xx isn't.
+          const status = e.httpStatus || 0;
+          const retryable = !status || status >= 500;
+          if (!retryable || attempt >= PER_BATCH_RETRIES) break;
+          if (typeof onProgress === 'function') {
+            onProgress({ batchNum, totalSucceeded, totalFailed, totalSkipped, retryAttempt: attempt + 1 });
+          }
+          // brief backoff before retry
+          await new Promise((r) => setTimeout(r, 1500));
+        }
+      }
+      if (lastErr) {
+        // Mark this batch as failed but keep going — the next iteration
+        // will re-query (server returns whatever's still NULL on lat/lng)
+        // so a retried batch can recover what this one missed.
+        allErrors.push({ batchNum, error: lastErr.message });
+        // If two consecutive batches fail, bail to avoid infinite-fail loops.
+        if (allErrors.length >= 2 && allErrors[allErrors.length - 1].batchNum === allErrors[allErrors.length - 2].batchNum + 1) {
+          throw lastErr;
+        }
+        // Force a small inter-batch delay so we don't hammer a stressed server
+        await new Promise((r) => setTimeout(r, 2500));
+        if (batchNum >= SAFETY_MAX_BATCHES) {
+          console.warn('[inspect/geocode] hit safety batch cap during retries for community', communityId);
+          break;
+        }
+        continue;
+      }
 
       totalSucceeded   += j.succeeded || 0;
       totalFailed      += j.failed || 0;
