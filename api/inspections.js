@@ -1143,7 +1143,9 @@ router.get('/inspections/properties', async (req, res) => {
 
       const [vAllRes, vOpenRes, vYtdRes, insRes] = await Promise.all([
         supabase.from('violations').select('property_id').in('property_id', propIds),
-        supabase.from('violations').select('property_id').in('property_id', propIds)
+        // Include current_stage so we can compute the WORST open stage per
+        // property (used by the inspect map to color pins by severity).
+        supabase.from('violations').select('property_id, current_stage').in('property_id', propIds)
           .not('current_stage', 'in', '("cured","closed","voided")'),
         supabase.from('violations').select('property_id').in('property_id', propIds)
           .gte('opened_at', yearStart),
@@ -1173,11 +1175,28 @@ router.get('/inspections/properties', async (req, res) => {
         if (!cur || new Date(t) > new Date(cur)) lastInsp.set(o.property_id, t);
       });
 
+      // Worst open stage per property — for map pin coloring during inspection.
+      // Higher rank = more severe enforcement progression.
+      const STAGE_RANK = {
+        courtesy_1: 1, courtesy_2: 2, certified_209: 3,
+        fine_assessed: 4, hearing_notice: 5,
+        legal_referral: 6, lien_filed: 7,
+      };
+      const worstStageMap = new Map();
+      for (const v of vOpen) {
+        const rank = STAGE_RANK[v.current_stage] || 0;
+        const prev = worstStageMap.get(v.property_id);
+        if (!prev || rank > prev.rank) {
+          worstStageMap.set(v.property_id, { stage: v.current_stage, rank });
+        }
+      }
+
       properties = properties.map((p) => ({
         ...p,
         violation_count_open:     openMap.get(p.property_id) || 0,
         violation_count_ytd:      ytdMap.get(p.property_id) || 0,
         violation_count_lifetime: allMap.get(p.property_id) || 0,
+        worst_open_stage:         (worstStageMap.get(p.property_id) || {}).stage || null,
         last_inspected_at:        lastInsp.get(p.property_id) || null,
       }));
     }
