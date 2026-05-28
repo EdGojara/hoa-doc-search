@@ -11709,38 +11709,80 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Triggers the server-side geocoder to backfill lat/lng for every property
   // in the active community that doesn't have coordinates yet. Mapbox-API-rate-
   // limited at ~6 req/sec; expect ~10-15 seconds per 100 properties.
+  //
+  // Render has a ~100s HTTP timeout, so a community with more than ~600
+  // properties (Eaglewood ~870, Canyon Gate ~720, Waterview ~1170) would
+  // silently 504 partway through if we tried to do it in one request. We
+  // chunk into batches of 400 (= ~60s wall clock per batch, safe under the
+  // timeout) and loop until the server reports 0 remaining ungeo'd properties.
   async function inspRunGeocoder() {
     if (!inspState.communityId) return;
     if (!confirm(
       'Run geocoder for this community?\n\n' +
-      'This will look up the GPS coordinates for every property that doesn\'t have them yet, using Mapbox\'s geocoding service. It takes about 10-15 seconds per 100 properties.\n\n' +
+      'This will look up the GPS coordinates for every property that doesn\'t have them yet, using Mapbox\'s geocoding service. It takes about 10-15 seconds per 100 properties — larger communities run in multiple batches.\n\n' +
       'You can keep using List mode while this runs. The map will refresh when finished.'
     )) return;
 
     const btn = document.getElementById('inspRunGeocoderBtn');
     const statusEl = document.getElementById('inspMapStatus');
     if (btn) { btn.disabled = true; btn.textContent = 'Geocoding…'; }
-    if (statusEl) statusEl.innerHTML = '⏳ Geocoding properties — this may take 30-90 seconds. You can keep working in List mode.';
+
+    const BATCH_SIZE = 400;
+    const SAFETY_MAX_BATCHES = 20; // covers up to 8000 properties, more than any community
+    let totalSucceeded = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    let totalDurationMs = 0;
+    let batchNum = 0;
+    const allErrors = [];
 
     try {
-      const r = await fetch('/api/inspections/geocode-community', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ community_id: inspState.communityId }),
-      });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `geocode failed (${r.status})`);
-      // Reload markers
-      await inspMapLoadProperties();
-      // Show a brief toast-style success line above the regular status
-      if (statusEl) {
-        const failed = j.failed || 0;
-        const failedNote = failed > 0 ? ` (${failed} couldn't be geocoded — check addresses)` : '';
-        const original = statusEl.innerHTML;
-        statusEl.innerHTML = `✅ Geocoded ${j.succeeded} of ${j.total} properties in ${Math.round((j.duration_ms || 0) / 1000)}s${failedNote}. ${original}`;
+      while (true) {
+        batchNum++;
+        if (statusEl) {
+          const sofar = totalSucceeded > 0 ? ` · ${totalSucceeded} done so far` : '';
+          statusEl.innerHTML = `⏳ Geocoding batch ${batchNum}${sofar} — this may take ~60s per batch. You can keep working in List mode.`;
+        }
+
+        const r = await fetch('/api/inspections/geocode-community', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ community_id: inspState.communityId, limit: BATCH_SIZE }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `geocode failed (${r.status})`);
+
+        totalSucceeded   += j.succeeded || 0;
+        totalFailed      += j.failed || 0;
+        totalSkipped     += j.skipped_no_address || 0;
+        totalDurationMs  += j.duration_ms || 0;
+        if (Array.isArray(j.errors)) allErrors.push(...j.errors);
+
+        // Server tells us how many properties it found NEEDING geocoding for
+        // this batch. When that hits 0, we're done.
+        if ((j.total || 0) === 0) break;
+        // Safety cap so a bug in the server-side filter can't loop forever.
+        if (batchNum >= SAFETY_MAX_BATCHES) {
+          console.warn('[inspect/geocode] hit safety batch cap', SAFETY_MAX_BATCHES);
+          break;
+        }
       }
+
+      // Reload markers from the updated table
+      await inspMapLoadProperties();
+
+      if (statusEl) {
+        const failedNote = totalFailed > 0 ? ` (${totalFailed} couldn't be geocoded — check addresses)` : '';
+        const skippedNote = totalSkipped > 0 ? ` (${totalSkipped} had no street address)` : '';
+        const batchNote = batchNum > 1 ? ` across ${batchNum} batches` : '';
+        statusEl.innerHTML = `✅ Geocoded ${totalSucceeded} propert${totalSucceeded === 1 ? 'y' : 'ies'} in ${Math.round(totalDurationMs / 1000)}s${batchNote}${failedNote}${skippedNote}.`;
+      }
+      if (allErrors.length > 0) console.warn('[inspect/geocode] errors:', allErrors);
     } catch (e) {
-      if (statusEl) statusEl.innerHTML = `❌ Geocoder failed: ${e.message}. ${statusEl.innerHTML}`;
+      if (statusEl) {
+        const partialNote = totalSucceeded > 0 ? ` (${totalSucceeded} succeeded before the error — click again to resume)` : '';
+        statusEl.innerHTML = `❌ Geocoder failed: ${e.message}${partialNote}.`;
+      }
       if (btn) { btn.disabled = false; btn.textContent = '🌐 Run geocoder'; }
     }
   }
