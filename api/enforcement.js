@@ -3118,56 +3118,91 @@ router.post('/cure-lapse/process', express.json(), async (req, res) => {
 //   resolved_at + resolved_via set. Skips rows already imported (dedup on
 //   (property_id, primary_category_id, opened_at)).
 // ===========================================================================
-// In-memory job store for async PDF preview. Single-instance Render setup
-// (Bedrock's tier) is fine for now; if we move multi-instance later, lift
-// this into a Postgres job table. Jobs auto-cleanup after 1 hour.
-const _vvPreviewJobs = new Map();
-const _VV_JOB_TTL_MS = 60 * 60 * 1000;
-function _cleanupOldJobs() {
-  const now = Date.now();
-  for (const [id, job] of _vvPreviewJobs) {
-    if (now - (job.createdAt || 0) > _VV_JOB_TTL_MS) _vvPreviewJobs.delete(id);
+// Persisted job store backed by Postgres (table vantaca_preview_jobs,
+// migration 125). Previously this was an in-memory Map which got wiped on
+// every Render deploy / process restart / OOM, killing in-flight imports
+// mid-extraction. With persistence, deploys are no longer destructive —
+// the job runner picks up where the request left off (well, the chunk
+// processing is already async/awaited so the next poll just sees the
+// finished result row).
+//
+// Note: the actual extraction work happens INSIDE the Node process, so a
+// hard restart still kills the model calls in flight. But after restart,
+// the polling client sees the persisted job state (most recent progress
+// + any partial result) and can decide whether to retry. Most deploys
+// finish within seconds, so the window for catastrophic loss is small.
+//
+// Old jobs (>24h) are pruned at job creation time below.
+async function _vvJobCreate(jobId, communityId) {
+  await supabase.from('vantaca_preview_jobs').insert({
+    id: jobId,
+    community_id: communityId,
+    status: 'running',
+    progress: 'queued',
+  });
+  // Opportunistic cleanup of stale jobs
+  try {
+    const dayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from('vantaca_preview_jobs').delete().lt('created_at', dayAgo);
+  } catch (_) { /* non-fatal */ }
+}
+
+async function _vvJobGet(jobId) {
+  const { data } = await supabase
+    .from('vantaca_preview_jobs')
+    .select('*')
+    .eq('id', jobId)
+    .maybeSingle();
+  return data;
+}
+
+async function _vvJobUpdate(jobId, patch) {
+  try {
+    await supabase
+      .from('vantaca_preview_jobs')
+      .update(patch)
+      .eq('id', jobId);
+  } catch (e) {
+    console.warn(`[vvJobUpdate ${jobId}]`, e.message);
   }
 }
-setInterval(_cleanupOldJobs, 10 * 60 * 1000).unref();
+
+async function _vvJobSetError(jobId, errMsg) {
+  await _vvJobUpdate(jobId, { status: 'error', error: errMsg, progress: null });
+}
 
 // Heavy processing — runs in the background after /preview returns the job_id.
-// Mutates the job record in _vvPreviewJobs as it progresses so the polling
-// endpoint can report status. Catches its own errors → never crashes the
-// process if a chunk throws.
+// Updates the persisted vantaca_preview_jobs row as it progresses so the
+// polling endpoint can report status. Catches its own errors → never crashes
+// the process if a chunk throws.
 async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId) {
-  const job = _vvPreviewJobs.get(jobId);
-  if (!job) return;
   try {
     const isPdf = (mimetype === 'application/pdf') || (filename || '').toLowerCase().endsWith('.pdf');
 
     let rows, mapping, headers, errors, rawExtracted = null;
     if (isPdf) {
-      job.progress = 'extracting from PDF — this can take 30-120 seconds depending on size';
+      await _vvJobUpdate(jobId, { progress: 'extracting from PDF — this can take 30-120 seconds depending on size' });
       const result = await parseVantacaViolationsPdf(fileBuffer, filename);
       rows = result.rows; mapping = result.mapping; headers = result.headers;
       errors = result.errors; rawExtracted = result.raw_extracted;
     } else {
-      job.progress = 'parsing CSV/Excel';
+      await _vvJobUpdate(jobId, { progress: 'parsing CSV/Excel' });
       const result = parseVantacaViolations(fileBuffer, filename);
       rows = result.rows; mapping = result.mapping; headers = result.headers; errors = result.errors;
     }
 
     if ((!rows || rows.length === 0) && errors && errors.length > 0) {
-      job.status = 'error';
-      job.error = errors.join(' ');
-      job.raw_extracted = rawExtracted;
-      job.headers = headers; job.mapping = mapping;
+      await _vvJobSetError(jobId, errors.join(' '));
       return;
     }
 
-    // Cache the raw extracted rows + community on the job so the
-    // re-resolve endpoint can re-run resolution against updated
-    // enforcement_categories without re-extracting the PDF.
-    job.cachedRows = rows;
-    job.communityId = communityId;
-
-    job.progress = `matching ${rows.length} rows to properties + categories`;
+    // Cache the raw extracted rows on the job so the re-resolve endpoint
+    // can re-run resolution against updated enforcement_categories without
+    // re-extracting the PDF.
+    await _vvJobUpdate(jobId, {
+      cached_rows: rows,
+      progress: `matching ${rows.length} rows to properties + categories`,
+    });
 
     // ---- existing resolution logic (property + category match + dedup) ----
     const { data: props } = await supabase
@@ -3245,7 +3280,7 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
     let aiMappingApplied = null;
     if (unresolved_category.length > 0 && process.env.ANTHROPIC_API_KEY) {
       try {
-        job.progress = `AI-mapping ${unresolved_category.length} unmatched category labels`;
+        await _vvJobUpdate(jobId, { progress: `AI-mapping ${unresolved_category.length} unmatched category labels` });
         const uniqueLabels = [...new Set(unresolved_category.map((r) => r.category_label).filter(Boolean))];
         const canonicalList = (cats || []).map((c) => `${c.slug} — "${c.label}"`).join('\n');
 
@@ -3328,8 +3363,7 @@ Return ONLY the JSON object.`;
       }
     }
 
-    job.status = 'complete';
-    job.result = {
+    const finalResult = {
       total_rows: rows.length,
       mapping,
       headers,
@@ -3345,11 +3379,14 @@ Return ONLY the JSON object.`;
       ai_category_mapping: aiMappingApplied,
       raw_extracted: rawExtracted,
     };
-    job.progress = `done — ${resolved.length} matched${aiMappingApplied ? ` (${aiMappingApplied.resolved_count} via AI mapping)` : ''} · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`;
+    await _vvJobUpdate(jobId, {
+      status: 'complete',
+      result: finalResult,
+      progress: `done — ${resolved.length} matched${aiMappingApplied ? ` (${aiMappingApplied.resolved_count} via AI mapping)` : ''} · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`,
+    });
   } catch (err) {
     console.error(`[vantaca-violations.preview job ${jobId}]`, err);
-    job.status = 'error';
-    job.error = err.message || 'unknown error';
+    await _vvJobSetError(jobId, err.message || 'unknown error');
   }
 }
 
@@ -3431,24 +3468,25 @@ router.post('/categories/bulk-add', express.json({ limit: '256kb' }), async (req
 router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) => {
   try {
     const jobId = req.params.jobId;
-    const job = _vvPreviewJobs.get(jobId);
+    const job = await _vvJobGet(jobId);
     if (!job) return res.status(404).json({ error: 'job_not_found_or_expired' });
-    if (!job.cachedRows || !Array.isArray(job.cachedRows)) {
+    const cachedRows = job.cached_rows;
+    if (!cachedRows || !Array.isArray(cachedRows)) {
       return res.status(409).json({ error: 'job has no cached rows; re-upload the PDF instead' });
     }
-    if (!job.communityId) {
+    const communityId = job.community_id;
+    if (!communityId) {
       return res.status(409).json({ error: 'job is missing community_id; re-upload the PDF instead' });
     }
 
-    job.status = 'running';
-    job.progress = 're-resolving against updated categories';
+    await _vvJobUpdate(jobId, { status: 'running', progress: 're-resolving against updated categories' });
 
     // Re-pull properties + categories (categories may have been bulk-added
     // since the original run — that's the whole point of re-resolve).
     const [{ data: props }, { data: cats }, { data: existingV }] = await Promise.all([
-      supabase.from('properties').select('id, street_address, unit, vantaca_account_id').eq('community_id', job.communityId),
+      supabase.from('properties').select('id, street_address, unit, vantaca_account_id').eq('community_id', communityId),
       supabase.from('enforcement_categories').select('id, slug, label'),
-      supabase.from('violations').select('property_id, primary_category_id, opened_at').eq('community_id', job.communityId).eq('source', 'vantaca_import'),
+      supabase.from('violations').select('property_id, primary_category_id, opened_at').eq('community_id', communityId).eq('source', 'vantaca_import'),
     ]);
 
     const byAcct = new Map();
@@ -3483,7 +3521,7 @@ router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) =>
     const unresolved_category = [];
     const duplicates = [];
 
-    for (const row of job.cachedRows) {
+    for (const row of cachedRows) {
       let prop = null;
       if (row.vantaca_account_id) prop = byAcct.get(String(row.vantaca_account_id));
       if (!prop && row.street_address) prop = byStreet.get(row.street_address.toLowerCase().trim());
@@ -3501,12 +3539,12 @@ router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) =>
       });
     }
 
-    job.status = 'complete';
-    job.result = {
-      total_rows: job.cachedRows.length,
-      mapping: job.result ? job.result.mapping : null,
-      headers: job.result ? job.result.headers : [],
-      sample_rows: job.cachedRows.slice(0, 5),
+    const priorResult = job.result || {};
+    const finalResult = {
+      total_rows: cachedRows.length,
+      mapping: priorResult.mapping || null,
+      headers: priorResult.headers || [],
+      sample_rows: cachedRows.slice(0, 5),
       resolved_count: resolved.length,
       unresolved_property_count: unresolved_property.length,
       unresolved_category_count: unresolved_category.length,
@@ -3517,8 +3555,12 @@ router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) =>
       duplicates: duplicates.slice(0, 20),
       re_resolved: true,
     };
-    job.progress = `re-resolved — ${resolved.length} matched · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`;
-    res.json(job.result);
+    await _vvJobUpdate(jobId, {
+      status: 'complete',
+      result: finalResult,
+      progress: `re-resolved — ${resolved.length} matched · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`,
+    });
+    res.json(finalResult);
   } catch (err) {
     console.error('[vantaca-violations.re-resolve]', err);
     res.status(500).json({ error: err.message });
@@ -3529,12 +3571,18 @@ router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) =>
 // GET /api/enforcement/vantaca-violations/preview-status/:jobId
 // Polled by the frontend after a PDF upload kicks off async processing.
 // ---------------------------------------------------------------------------
-router.get('/vantaca-violations/preview-status/:jobId', (req, res) => {
-  const job = _vvPreviewJobs.get(req.params.jobId);
-  if (!job) return res.status(404).json({ error: 'job_not_found_or_expired' });
-  // Don't return the raw file buffer in status responses; only metadata.
-  const { fileBuffer, ...safe } = job;
-  res.json(safe);
+router.get('/vantaca-violations/preview-status/:jobId', async (req, res) => {
+  try {
+    const job = await _vvJobGet(req.params.jobId);
+    if (!job) return res.status(404).json({ error: 'job_not_found_or_expired' });
+    // Don't return the cached_rows JSONB (can be large; not needed by polling
+    // UI). The /re-resolve endpoint reads them directly from DB.
+    const { cached_rows, ...safe } = job;
+    res.json(safe);
+  } catch (err) {
+    console.error('[vantaca-violations.preview-status]', err);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 router.post('/vantaca-violations/preview', upload.single('file'), async (req, res) => {
@@ -3548,22 +3596,16 @@ router.post('/vantaca-violations/preview', upload.single('file'), async (req, re
 
     // PDFs go async — Claude PDF extraction on a multi-page report can exceed
     // Render's 100s HTTP timeout. Return a job_id and process in the
-    // background; frontend polls preview-status to get the result.
+    // background; frontend polls preview-status to get the result. Job state
+    // is persisted in vantaca_preview_jobs (migration 125) so it survives
+    // deploys + Node process restarts.
     if (isPdf) {
       const jobId = require('crypto').randomBytes(8).toString('hex');
-      _vvPreviewJobs.set(jobId, {
-        id: jobId,
-        status: 'running',
-        progress: 'queued',
-        result: null,
-        error: null,
-        createdAt: Date.now(),
-      });
-      // Fire and forget — _runPreviewJob mutates the job record as it goes
+      await _vvJobCreate(jobId, communityId);
+      // Fire and forget — _runPreviewJob updates the job row as it goes
       _runPreviewJob(jobId, req.file.buffer, req.file.originalname, req.file.mimetype, communityId)
-        .catch((err) => {
-          const j = _vvPreviewJobs.get(jobId);
-          if (j) { j.status = 'error'; j.error = err.message; }
+        .catch(async (err) => {
+          await _vvJobSetError(jobId, err.message);
         });
       return res.json({
         job_id: jobId,
