@@ -3419,7 +3419,7 @@ router.post('/categories/bulk-add', express.json({ limit: '256kb' }), async (req
     const uniqueLabels = [...new Set(labels.map((l) => String(l).trim()).filter(Boolean))];
     const proposed = uniqueLabels.map((label) => ({ slug: _slugifyLabel(label), label }));
 
-    // Check existing slugs to avoid the ON CONFLICT noise
+    // Check existing slugs to avoid conflicts
     const slugs = proposed.map((p) => p.slug);
     const { data: existing } = await supabase
       .from('enforcement_categories')
@@ -3427,19 +3427,32 @@ router.post('/categories/bulk-add', express.json({ limit: '256kb' }), async (req
       .in('slug', slugs);
     const existingSet = new Set((existing || []).map((r) => r.slug));
 
-    const toInsert = proposed.filter((p) => !existingSet.has(p.slug)).map((p) => ({
-      slug: p.slug,
-      label: p.label,
-      description: `Auto-added from Vantaca violation import on ${new Date().toISOString().slice(0, 10)}`,
-      default_priority_weight: defaultPriority,
-      display_order: 999,
-    }));
+    // Dedup the proposed list by slug — two different input labels can
+    // slugify to the same string after lowercasing/normalizing (e.g.
+    // "Mulch Bags" vs "Mulch bags"). Keep first occurrence of each slug.
+    const seenSlugs = new Set();
+    const toInsert = [];
+    for (const p of proposed) {
+      if (existingSet.has(p.slug)) continue;
+      if (seenSlugs.has(p.slug)) continue;
+      seenSlugs.add(p.slug);
+      toInsert.push({
+        slug: p.slug,
+        label: p.label,
+        description: `Auto-added from Vantaca violation import on ${new Date().toISOString().slice(0, 10)}`,
+        default_priority_weight: defaultPriority,
+        display_order: 999,
+      });
+    }
 
     let inserted = [];
     if (toInsert.length > 0) {
+      // Use upsert with onConflict ignore as belt-and-suspenders in case
+      // of any race or edge case the dedup didn't catch. Returns just the
+      // newly-inserted rows.
       const { data, error } = await supabase
         .from('enforcement_categories')
-        .insert(toInsert)
+        .upsert(toInsert, { onConflict: 'slug', ignoreDuplicates: true })
         .select('id, slug, label');
       if (error) throw error;
       inserted = data || [];
