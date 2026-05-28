@@ -11302,6 +11302,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">💰 Fine Queue <span style="color:#64748b; font-weight:500;">— assessed, awaiting posting to Vantaca</span></h3>
         <div>
           <button class="secondary-btn" onclick="inspVViOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;" title="Import historical violations from a Vantaca export">📥 Import Vantaca history</button>
+          <button class="secondary-btn" onclick="inspBulkLetterAttachOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;" title="Bulk-attach Vantaca letter PDFs to existing imported violations">📎 Bulk attach letters</button>
           <button class="secondary-btn" onclick="inspFineScheduleOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;">⚙ Fine schedule</button>
           <button class="secondary-btn" onclick="inspFineQueueLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
         </div>
@@ -11357,6 +11358,80 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </div>
           <div id="inspVViStatus" style="font-size:12.5px; margin-top:10px;"></div>
           <div id="inspVViDiff" style="margin-top:16px;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- BULK LETTER ATTACH MODAL -->
+    <div id="inspBulkLAModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:flex-start; justify-content:center;">
+      <div style="background:#fff; border-radius:14px; max-width:700px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column; margin-top:4vh;">
+        <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">📎 Bulk attach Vantaca letter PDFs</div>
+            <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px;">Files all letter PDFs to their violations in one batch</div>
+          </div>
+          <button onclick="inspBulkLetterAttachClose()" style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:13px; cursor:pointer;">✕ Close</button>
+        </div>
+        <div style="padding:18px; overflow-y:auto; flex:1;">
+          <div style="font-size:12.5px; color:#475569; margin-bottom:14px; line-height:1.6;">
+            <strong>Before using this:</strong> the violations must already exist in trustEd (via the <strong>📥 Import Vantaca history</strong> button). This step ATTACHES the PDF letters to those existing violations.
+            <br><br>
+            <strong>Filename matching:</strong> the system reads each PDF's filename and tries to match it to a property by Vantaca account ID → lot number → street-number prefix. Best results when filenames contain identifiable property info (e.g., <code>VAN12345-letter-courtesy1.pdf</code> or <code>15711-Crooked-Arrow-2026-03-15.pdf</code>).
+          </div>
+
+          <div style="margin-bottom:12px;">
+            <label style="display:block; font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:4px;">Community</label>
+            <select id="inspBulkLACommunity" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13.5px;">
+              <option value="">— pick a community —</option>
+            </select>
+          </div>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px; margin-bottom:14px;">
+            <div>
+              <label style="display:block; font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:4px;">Default stage</label>
+              <select id="inspBulkLAStage" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                <option value="courtesy_1">Courtesy notice 1</option>
+                <option value="courtesy_2">Courtesy notice 2</option>
+                <option value="certified_209">Certified §209</option>
+                <option value="fine_assessed">Fine assessed</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:4px;">Sent via</label>
+              <select id="inspBulkLAVia" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                <option value="vantaca">Vantaca</option>
+                <option value="manual">Manual</option>
+                <option value="trusted">trustEd</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:4px;">Source tag</label>
+              <select id="inspBulkLASource" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                <option value="vantaca_import">Vantaca import</option>
+                <option value="manual_entry">Manual entry</option>
+                <option value="trusted">trustEd</option>
+              </select>
+            </div>
+          </div>
+
+          <div id="inspBulkLADropZone"
+               style="border:2px dashed #d0d7de; border-radius:8px; padding:28px; text-align:center; background:#fafafa; cursor:pointer; margin-bottom:14px;"
+               onclick="document.getElementById('inspBulkLAFiles').click()"
+               ondragover="event.preventDefault(); this.style.borderColor='#1A3050'; this.style.background='#eef3f9';"
+               ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#fafafa';"
+               ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#fafafa'; const dt=new DataTransfer(); for (const f of event.dataTransfer.files) dt.items.add(f); document.getElementById('inspBulkLAFiles').files=dt.files; inspBulkLetterAttachUpdateFileList();">
+            <div style="font-size:26px;">📄📄📄</div>
+            <div style="font-size:13.5px; font-weight:600; color:#1A3050; margin-top:6px;">Drag &amp; drop ALL Vantaca letter PDFs here</div>
+            <div style="font-size:11.5px; color:#6B7280; margin-top:4px;">Or click to multi-select (Ctrl+A in the file dialog). Up to 50 PDFs per batch.</div>
+            <input type="file" id="inspBulkLAFiles" accept="application/pdf" multiple style="display:none;" onchange="inspBulkLetterAttachUpdateFileList()">
+          </div>
+
+          <div id="inspBulkLAFileList" style="margin-bottom:14px; font-size:12px; color:#475569;"></div>
+
+          <button id="inspBulkLASubmit" class="action-btn" onclick="inspBulkLetterAttachSubmit()" style="width:100%;" disabled>Upload &amp; auto-match</button>
+
+          <div id="inspBulkLAStatus" style="margin-top:14px; font-size:12.5px;"></div>
+          <div id="inspBulkLAResults" style="margin-top:14px;"></div>
         </div>
       </div>
     </div>
@@ -15103,6 +15178,161 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // VANTACA HISTORICAL VIOLATION IMPORT (Bundle 4)
   // ============================================================
   let _inspVViPreviewData = null;
+
+  // ============================================================
+  // Bulk letter attach — multi-file PDF upload that auto-matches
+  // each file to a violation by filename. Used to back-fill Vantaca
+  // letter history into trustEd at scale during the enforcement
+  // transition.
+  // ============================================================
+  function inspBulkLetterAttachOpen() {
+    document.getElementById('inspBulkLAModal').style.display = 'flex';
+    // Populate community dropdown — borrow from main inspect dropdown
+    const sel = document.getElementById('inspCommunity');
+    const dst = document.getElementById('inspBulkLACommunity');
+    dst.innerHTML = '<option value="">— pick a community —</option>';
+    if (sel) {
+      Array.from(sel.options).forEach((o) => {
+        if (o.value) {
+          const opt = document.createElement('option');
+          opt.value = o.value; opt.textContent = o.textContent;
+          dst.appendChild(opt);
+        }
+      });
+    }
+    document.getElementById('inspBulkLAFiles').value = '';
+    document.getElementById('inspBulkLAFileList').innerHTML = '';
+    document.getElementById('inspBulkLAStatus').innerHTML = '';
+    document.getElementById('inspBulkLAResults').innerHTML = '';
+    document.getElementById('inspBulkLASubmit').disabled = true;
+  }
+
+  function inspBulkLetterAttachClose() {
+    document.getElementById('inspBulkLAModal').style.display = 'none';
+  }
+
+  function inspBulkLetterAttachUpdateFileList() {
+    const files = document.getElementById('inspBulkLAFiles').files;
+    const wrap = document.getElementById('inspBulkLAFileList');
+    const submit = document.getElementById('inspBulkLASubmit');
+    if (!files || files.length === 0) {
+      wrap.innerHTML = '';
+      submit.disabled = true;
+      return;
+    }
+    const totalBytes = Array.from(files).reduce((s, f) => s + f.size, 0);
+    const mb = (totalBytes / (1024 * 1024)).toFixed(1);
+    wrap.innerHTML = `
+      <strong style="color:#1A3050;">${files.length} PDF${files.length === 1 ? '' : 's'} selected</strong> (${mb} MB total)
+      <div style="font-size:11px; color:#94a3b8; margin-top:4px; max-height:80px; overflow-y:auto;">
+        ${Array.from(files).slice(0, 20).map((f) => escapeHtml(f.name)).join(' · ')}
+        ${files.length > 20 ? ` ...and ${files.length - 20} more` : ''}
+      </div>
+    `;
+    submit.disabled = files.length === 0 || files.length > 50;
+    if (files.length > 50) {
+      wrap.innerHTML += '<div style="color:#b91c1c; margin-top:6px;">Limit is 50 per batch. Upload in smaller groups.</div>';
+    }
+  }
+
+  async function inspBulkLetterAttachSubmit() {
+    const communityId = document.getElementById('inspBulkLACommunity').value;
+    const stage = document.getElementById('inspBulkLAStage').value;
+    const sentVia = document.getElementById('inspBulkLAVia').value;
+    const source = document.getElementById('inspBulkLASource').value;
+    const files = document.getElementById('inspBulkLAFiles').files;
+    const statusEl = document.getElementById('inspBulkLAStatus');
+    const resultsEl = document.getElementById('inspBulkLAResults');
+    const submitBtn = document.getElementById('inspBulkLASubmit');
+
+    if (!communityId) { statusEl.innerHTML = '<span style="color:#b91c1c;">Pick a community first.</span>'; return; }
+    if (!files || files.length === 0) { statusEl.innerHTML = '<span style="color:#b91c1c;">Select files first.</span>'; return; }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = `⏳ Uploading ${files.length} PDF${files.length === 1 ? '' : 's'}…`;
+    statusEl.innerHTML = '⏳ Uploading and matching — this can take 10-30 seconds for a large batch.';
+    resultsEl.innerHTML = '';
+
+    const fd = new FormData();
+    fd.append('community_id', communityId);
+    fd.append('default_stage', stage);
+    fd.append('default_sent_via', sentVia);
+    fd.append('default_source', source);
+    for (const f of files) fd.append('pdfs', f);
+
+    try {
+      const r = await fetch('/api/enforcement/violations/bulk-attach-letters', {
+        method: 'POST',
+        body: fd,
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+      statusEl.innerHTML = `<span style="color:#15803d;">✓ Processed ${j.processed} files · ${j.matched_count} attached · ${j.unmatched_count} unmatched · ${j.error_count} errors</span>`;
+
+      let html = '';
+      if (j.matched_count > 0) {
+        html += `
+          <div style="margin-bottom:14px;">
+            <div style="font-size:11.5px; color:#15803d; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">✓ Attached (${j.matched_count})</div>
+            <div style="max-height:220px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
+              <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
+                <thead><tr style="background:#f1f5fb;">
+                  <th style="text-align:left; padding:5px 8px;">File</th>
+                  <th style="text-align:left; padding:5px 8px;">Property</th>
+                  <th style="text-align:left; padding:5px 8px;">Stage</th>
+                  <th style="text-align:left; padding:5px 8px;">Sent</th>
+                  <th style="text-align:left; padding:5px 8px;">Matched via</th>
+                </tr></thead>
+                <tbody>
+                  ${j.matched.map((m) => `<tr style="border-top:1px solid #f1f5f9;">
+                    <td style="padding:4px 8px; color:#475569;">${escapeHtml(m.filename)}</td>
+                    <td style="padding:4px 8px; color:#1A3050;">${escapeHtml(m.property_address || m.property_id)}</td>
+                    <td style="padding:4px 8px;">${escapeHtml(m.stage_at_send)}</td>
+                    <td style="padding:4px 8px;">${escapeHtml(m.sent_at)}</td>
+                    <td style="padding:4px 8px; color:#94a3b8;">${escapeHtml(m.matched_via)}</td>
+                  </tr>`).join('')}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        `;
+      }
+      if (j.unmatched_count > 0) {
+        html += `
+          <div style="margin-bottom:14px;">
+            <div style="font-size:11.5px; color:#78350f; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">⚠ Unmatched — need manual attach (${j.unmatched_count})</div>
+            <div style="max-height:160px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px; padding:8px;">
+              ${j.unmatched.map((u) => `<div style="padding:3px 0; font-size:11.5px; border-top:1px solid #f1f5f9;">
+                <strong style="color:#1A3050;">${escapeHtml(u.filename)}</strong>
+                <span style="color:#78350f; margin-left:6px;">${escapeHtml(u.reason)}</span>
+              </div>`).join('')}
+            </div>
+            <div style="font-size:11px; color:#94a3b8; margin-top:6px;">Rename these files to include the property's Vantaca account ID, lot number, or street number, then re-upload — or attach individually via Community Map → property pin → "+ Attach letter".</div>
+          </div>
+        `;
+      }
+      if (j.error_count > 0) {
+        html += `
+          <div style="margin-bottom:14px;">
+            <div style="font-size:11.5px; color:#7f1d1d; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">✗ Errors (${j.error_count})</div>
+            <div style="max-height:160px; overflow-y:auto; border:1px solid #fecaca; border-radius:6px; padding:8px; background:#fef2f2;">
+              ${j.errors.map((e) => `<div style="padding:3px 0; font-size:11.5px;">
+                <strong style="color:#7f1d1d;">${escapeHtml(e.filename)}</strong>:
+                <span>${escapeHtml(e.error)}</span>
+              </div>`).join('')}
+            </div>
+          </div>
+        `;
+      }
+      resultsEl.innerHTML = html;
+    } catch (e) {
+      statusEl.innerHTML = `<span style="color:#b91c1c;">Failed: ${escapeHtml(e.message)}</span>`;
+    } finally {
+      submitBtn.disabled = false;
+      submitBtn.textContent = 'Upload & auto-match';
+    }
+  }
 
   function inspVViOpen() {
     document.getElementById('inspVViModal').style.display = 'flex';

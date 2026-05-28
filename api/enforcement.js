@@ -3592,6 +3592,268 @@ router.get('/property/:propertyId/violation-summary', async (req, res) => {
 });
 
 // ===========================================================================
+// POST /api/enforcement/violations/bulk-attach-letters
+// ---------------------------------------------------------------------------
+// Multi-file PDF upload for back-filling Vantaca letters at scale. Operator
+// picks all PDFs in one OS file-picker selection (multi-select supported in
+// every modern browser); the system tries to auto-match each filename to a
+// property + violation, files matched PDFs, reports unmatched ones for
+// manual cleanup via the per-violation "+ Attach letter" path.
+//
+// Filename matching heuristics (tried in order):
+//   1. Vantaca account ID embedded in filename → properties.vantaca_account_id
+//   2. Lot number embedded in filename → properties.lot_number
+//   3. Street-number prefix (e.g., "15711_..." or "15711 Crooked Arrow...") →
+//      properties.street_address starts with that number
+//
+// Once matched to a property, pick the most-recent open violation (or the
+// most recent regardless if none open). Operator can specify a target stage
+// via form field `default_stage` (default: courtesy_1, which is the most
+// common back-fill case). sent_at defaults to today unless the filename
+// has a YYYY-MM-DD or MM-DD-YYYY date that we can parse.
+//
+// Body (multipart):
+//   pdfs (multiple files, up to 50 per request, 25MB each)
+//   community_id (required) — scopes the property lookup
+//   default_stage? (default 'courtesy_1')
+//   default_sent_via? (default 'vantaca')
+//   default_source? (default 'vantaca_import')
+//
+// Returns:
+//   {
+//     processed: N,
+//     matched: [{filename, property_id, violation_id, library_document_id, stage_at_send, sent_at}],
+//     unmatched: [{filename, reason}],
+//     errors: [{filename, error}]
+//   }
+// ===========================================================================
+router.post('/violations/bulk-attach-letters', upload.array('pdfs', 50), async (req, res) => {
+  try {
+    const communityId = req.body && req.body.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    if (!req.files || req.files.length === 0) return res.status(400).json({ error: 'No PDFs uploaded' });
+
+    const defaultStage = (req.body.default_stage || 'courtesy_1');
+    const defaultSentVia = (req.body.default_sent_via || 'vantaca');
+    const defaultSource = (req.body.default_source || 'vantaca_import');
+
+    // Pull properties + violations for this community in one shot so we can
+    // match in JS without N+1 queries.
+    const { data: properties, error: pErr } = await supabase
+      .from('properties')
+      .select('id, street_address, lot_number, vantaca_account_id')
+      .eq('community_id', communityId)
+      .limit(5000);
+    if (pErr) throw pErr;
+
+    const { data: violations, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, current_stage, opened_at, source')
+      .eq('community_id', communityId)
+      .order('opened_at', { ascending: false })
+      .limit(10000);
+    if (vErr) throw vErr;
+
+    // Build lookup tables
+    const propByVantacaId = new Map();
+    const propByLot = new Map();
+    const propByStreetNumStart = new Map(); // first numeric token → array of properties
+    for (const p of properties) {
+      if (p.vantaca_account_id) propByVantacaId.set(String(p.vantaca_account_id), p);
+      if (p.lot_number) propByLot.set(String(p.lot_number).toLowerCase(), p);
+      const m = (p.street_address || '').match(/^\s*(\d+)/);
+      if (m) {
+        if (!propByStreetNumStart.has(m[1])) propByStreetNumStart.set(m[1], []);
+        propByStreetNumStart.get(m[1]).push(p);
+      }
+    }
+
+    // For each property, the most recent violation (preference: most recent
+    // OPEN, fallback: most recent regardless). Used as the auto-target for
+    // letter attachment.
+    const violationsByProperty = new Map();
+    for (const v of violations) {
+      if (!violationsByProperty.has(v.property_id)) violationsByProperty.set(v.property_id, []);
+      violationsByProperty.get(v.property_id).push(v);
+    }
+    function pickTargetViolation(propertyId) {
+      const list = violationsByProperty.get(propertyId) || [];
+      if (list.length === 0) return null;
+      const open = list.find((v) => !['cured', 'closed', 'voided'].includes(v.current_stage));
+      return open || list[0];
+    }
+
+    // Date parser — look for YYYY-MM-DD, YYYY_MM_DD, or MM-DD-YYYY in filename
+    function parseDateFromFilename(filename) {
+      const m1 = filename.match(/(\d{4})[-_](\d{2})[-_](\d{2})/);
+      if (m1) return `${m1[1]}-${m1[2]}-${m1[3]}`;
+      const m2 = filename.match(/(\d{2})[-_](\d{2})[-_](\d{4})/);
+      if (m2) return `${m2[3]}-${m2[1]}-${m2[2]}`;
+      return null;
+    }
+
+    function matchProperty(filename) {
+      const base = filename.replace(/\.[a-z]+$/i, '');
+      const lower = base.toLowerCase();
+
+      // 1. Vantaca account ID — look for sequences of digits/letters typical
+      //    of Vantaca account formats. We try every plausible token.
+      const tokens = base.split(/[\s_\-\.]+/).filter(Boolean);
+      for (const t of tokens) {
+        if (propByVantacaId.has(t)) {
+          return { property: propByVantacaId.get(t), via: 'vantaca_account_id', token: t };
+        }
+      }
+      // 2. Lot number
+      for (const t of tokens) {
+        const lk = t.toLowerCase();
+        if (propByLot.has(lk)) {
+          return { property: propByLot.get(lk), via: 'lot_number', token: t };
+        }
+      }
+      // 3. Street-number prefix — first numeric token in the filename
+      //    matched against properties whose street_address starts with that
+      //    number. Disambiguate by street-name substring if multiple match.
+      const numToken = tokens.find((t) => /^\d{3,6}$/.test(t));
+      if (numToken && propByStreetNumStart.has(numToken)) {
+        const candidates = propByStreetNumStart.get(numToken);
+        if (candidates.length === 1) {
+          return { property: candidates[0], via: 'street_num', token: numToken };
+        }
+        // Multiple — try to match by street-name substring in filename
+        const lowerRest = lower.replace(numToken, '');
+        for (const cand of candidates) {
+          const streetWords = (cand.street_address || '').toLowerCase().split(/\s+/).filter((w) => w.length > 3);
+          if (streetWords.some((w) => lowerRest.includes(w))) {
+            return { property: cand, via: 'street_num+name', token: numToken };
+          }
+        }
+        // Still ambiguous — return null to surface for operator
+        return { ambiguous: true, candidates, via: 'street_num_ambiguous', token: numToken };
+      }
+      return null;
+    }
+
+    // Lazy bucket creation
+    try { await _ensureLettersBucket(); } catch (_) {}
+    const crypto = require('crypto');
+
+    const matched = [];
+    const unmatched = [];
+    const errors = [];
+
+    for (const file of req.files) {
+      try {
+        const fname = file.originalname || 'letter.pdf';
+        const m = matchProperty(fname);
+        if (!m || m.ambiguous) {
+          unmatched.push({
+            filename: fname,
+            reason: m && m.ambiguous
+              ? `ambiguous: street# ${m.token} matched ${m.candidates.length} properties`
+              : 'no property match in filename',
+          });
+          continue;
+        }
+        const targetViolation = pickTargetViolation(m.property.id);
+        if (!targetViolation) {
+          unmatched.push({
+            filename: fname,
+            reason: `property matched (${m.property.street_address}) but no violations exist for it yet — import the CSV first`,
+          });
+          continue;
+        }
+
+        const sentAt = parseDateFromFilename(fname) || new Date().toISOString().slice(0, 10);
+
+        // File to storage
+        const hash = crypto.createHash('sha256').update(file.buffer).digest('hex').slice(0, 16);
+        const safeName = fname.replace(/[^a-zA-Z0-9._\-]/g, '_');
+        const storagePath = `${LETTERS_BUCKET}/${communityId}/${m.property.id}/${hash}-${safeName}`;
+        const { error: upErr } = await supabase.storage
+          .from(LETTERS_BUCKET)
+          .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: true });
+        if (upErr && !String(upErr.message || '').includes('already exists')) {
+          console.warn('[bulk-attach] storage warn for', fname, ':', upErr.message);
+        }
+
+        // library_documents row
+        const { data: libDoc, error: ldErr } = await supabase
+          .from('library_documents')
+          .insert({
+            management_company_id: BEDROCK_MGMT_CO_ID,
+            community_id: communityId,
+            property_id: m.property.id,
+            category: 'violation_letter',
+            title: `Violation letter — ${defaultStage} (${sentAt}) — ${fname}`,
+            file_path: storagePath,
+            file_size_bytes: file.size || null,
+            metadata: {
+              violation_id: targetViolation.id,
+              stage_at_send: defaultStage,
+              sent_at: sentAt,
+              sent_via: defaultSentVia,
+              source: defaultSource,
+              matched_via: m.via,
+              original_filename: fname,
+            },
+          })
+          .select('id')
+          .single();
+        if (ldErr) {
+          errors.push({ filename: fname, error: `library_documents: ${ldErr.message}` });
+          continue;
+        }
+
+        // violation_letters row
+        const { error: vlErr } = await supabase
+          .from('violation_letters')
+          .insert({
+            violation_id: targetViolation.id,
+            library_document_id: libDoc.id,
+            stage_at_send: defaultStage,
+            sent_at: sentAt,
+            sent_via: defaultSentVia,
+            source: defaultSource,
+            notes: `Bulk-imported from ${fname}; matched_via=${m.via}`,
+          });
+        if (vlErr) {
+          errors.push({ filename: fname, error: `violation_letters: ${vlErr.message}` });
+          continue;
+        }
+
+        matched.push({
+          filename: fname,
+          property_id: m.property.id,
+          property_address: m.property.street_address,
+          violation_id: targetViolation.id,
+          violation_current_stage: targetViolation.current_stage,
+          library_document_id: libDoc.id,
+          stage_at_send: defaultStage,
+          sent_at: sentAt,
+          matched_via: m.via,
+        });
+      } catch (e) {
+        errors.push({ filename: file.originalname, error: e.message });
+      }
+    }
+
+    res.json({
+      processed: req.files.length,
+      matched_count: matched.length,
+      unmatched_count: unmatched.length,
+      error_count: errors.length,
+      matched,
+      unmatched,
+      errors,
+    });
+  } catch (err) {
+    console.error('[bulk-attach-letters] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
 // END violation-letters endpoints
 // ===========================================================================
 
