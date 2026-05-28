@@ -10591,6 +10591,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
       <button class="action-btn" id="inspStartBtn" onclick="inspStart()" style="width: 100%;">Start inspection</button>
       <div id="inspStartError" style="display:none; color:#b91c1c; font-size: 13px; margin-top: 8px;"></div>
+
+      <!-- Map setup admin row — one-time-per-community operation. Bulk
+           geocoder checks every community in the portfolio and runs Mapbox
+           lookups only on the ones still missing lat/lng. Used during new-
+           community onboarding so the inspection map populates the first
+           time you pick that community. Idempotent and safe to re-run. -->
+      <div style="margin-top: 14px; padding-top: 12px; border-top: 1px dashed #e2e8f0;">
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap;">
+          <div style="font-size: 11px; color: #64748b; line-height: 1.4;">
+            <strong style="color:#475569;">Map setup</strong> · new community? Geocode every community in the portfolio that's missing lat/lng coordinates.
+          </div>
+          <button type="button" id="inspGeocodeAllBtn" onclick="inspGeocodeAllCommunities()"
+                  style="padding: 6px 12px; background: #fff; color: var(--navy, #1A3050); border: 1px solid var(--gold, #D4AF37); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+            🌍 Geocode all communities
+          </button>
+        </div>
+        <div id="inspGeocodeAllStatus" style="display:none; margin-top: 10px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; color: #1a3a5c; line-height: 1.5;"></div>
+      </div>
     </div>
 
     <!-- Active-session panel (visible when session is in progress) -->
@@ -11706,15 +11724,58 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // Core batched-geocode helper — used by BOTH the per-community button
+  // (inspRunGeocoder) and the bulk admin button (inspGeocodeAllCommunities).
+  // Chunks at 400 properties per request to stay safely under Render's ~100s
+  // HTTP timeout (150ms/property × 400 = 60s wall-clock per batch).
+  //
+  // onProgress(msg) is called between batches so the caller can update its
+  // own status line (the per-community case uses inspMapStatus; the bulk case
+  // uses inspGeocodeAllStatus).
+  async function _inspGeocodeCommunityBatched(communityId, onProgress) {
+    const BATCH_SIZE = 400;
+    const SAFETY_MAX_BATCHES = 20; // covers up to 8000 properties — bigger than any community
+    let totalSucceeded = 0;
+    let totalFailed = 0;
+    let totalSkipped = 0;
+    let totalDurationMs = 0;
+    let batchNum = 0;
+    const allErrors = [];
+
+    while (true) {
+      batchNum++;
+      if (typeof onProgress === 'function') {
+        onProgress({ batchNum, totalSucceeded, totalFailed, totalSkipped });
+      }
+
+      const r = await fetch('/api/inspections/geocode-community', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: communityId, limit: BATCH_SIZE }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `geocode failed (${r.status})`);
+
+      totalSucceeded   += j.succeeded || 0;
+      totalFailed      += j.failed || 0;
+      totalSkipped     += j.skipped_no_address || 0;
+      totalDurationMs  += j.duration_ms || 0;
+      if (Array.isArray(j.errors)) allErrors.push(...j.errors);
+
+      // Server tells us how many properties it FOUND in this batch (i.e. were
+      // still needing geocoding). When that hits 0, the community is done.
+      if ((j.total || 0) === 0) break;
+      if (batchNum >= SAFETY_MAX_BATCHES) {
+        console.warn('[inspect/geocode] hit safety batch cap for community', communityId);
+        break;
+      }
+    }
+    return { totalSucceeded, totalFailed, totalSkipped, totalDurationMs, batchNum, errors: allErrors };
+  }
+
   // Triggers the server-side geocoder to backfill lat/lng for every property
   // in the active community that doesn't have coordinates yet. Mapbox-API-rate-
   // limited at ~6 req/sec; expect ~10-15 seconds per 100 properties.
-  //
-  // Render has a ~100s HTTP timeout, so a community with more than ~600
-  // properties (Eaglewood ~870, Canyon Gate ~720, Waterview ~1170) would
-  // silently 504 partway through if we tried to do it in one request. We
-  // chunk into batches of 400 (= ~60s wall clock per batch, safe under the
-  // timeout) and loop until the server reports 0 remaining ungeo'd properties.
   async function inspRunGeocoder() {
     if (!inspState.communityId) return;
     if (!confirm(
@@ -11727,63 +11788,127 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const statusEl = document.getElementById('inspMapStatus');
     if (btn) { btn.disabled = true; btn.textContent = 'Geocoding…'; }
 
-    const BATCH_SIZE = 400;
-    const SAFETY_MAX_BATCHES = 20; // covers up to 8000 properties, more than any community
-    let totalSucceeded = 0;
-    let totalFailed = 0;
-    let totalSkipped = 0;
-    let totalDurationMs = 0;
-    let batchNum = 0;
-    const allErrors = [];
-
     try {
-      while (true) {
-        batchNum++;
-        if (statusEl) {
-          const sofar = totalSucceeded > 0 ? ` · ${totalSucceeded} done so far` : '';
-          statusEl.innerHTML = `⏳ Geocoding batch ${batchNum}${sofar} — this may take ~60s per batch. You can keep working in List mode.`;
-        }
+      const onProgress = ({ batchNum, totalSucceeded }) => {
+        if (!statusEl) return;
+        const sofar = totalSucceeded > 0 ? ` · ${totalSucceeded} done so far` : '';
+        statusEl.innerHTML = `⏳ Geocoding batch ${batchNum}${sofar} — this may take ~60s per batch. You can keep working in List mode.`;
+      };
+      const result = await _inspGeocodeCommunityBatched(inspState.communityId, onProgress);
 
-        const r = await fetch('/api/inspections/geocode-community', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ community_id: inspState.communityId, limit: BATCH_SIZE }),
-        });
-        const j = await r.json();
-        if (!r.ok) throw new Error(j.error || `geocode failed (${r.status})`);
-
-        totalSucceeded   += j.succeeded || 0;
-        totalFailed      += j.failed || 0;
-        totalSkipped     += j.skipped_no_address || 0;
-        totalDurationMs  += j.duration_ms || 0;
-        if (Array.isArray(j.errors)) allErrors.push(...j.errors);
-
-        // Server tells us how many properties it found NEEDING geocoding for
-        // this batch. When that hits 0, we're done.
-        if ((j.total || 0) === 0) break;
-        // Safety cap so a bug in the server-side filter can't loop forever.
-        if (batchNum >= SAFETY_MAX_BATCHES) {
-          console.warn('[inspect/geocode] hit safety batch cap', SAFETY_MAX_BATCHES);
-          break;
-        }
-      }
-
-      // Reload markers from the updated table
       await inspMapLoadProperties();
 
       if (statusEl) {
-        const failedNote = totalFailed > 0 ? ` (${totalFailed} couldn't be geocoded — check addresses)` : '';
-        const skippedNote = totalSkipped > 0 ? ` (${totalSkipped} had no street address)` : '';
-        const batchNote = batchNum > 1 ? ` across ${batchNum} batches` : '';
-        statusEl.innerHTML = `✅ Geocoded ${totalSucceeded} propert${totalSucceeded === 1 ? 'y' : 'ies'} in ${Math.round(totalDurationMs / 1000)}s${batchNote}${failedNote}${skippedNote}.`;
+        const failedNote  = result.totalFailed > 0  ? ` (${result.totalFailed} couldn't be geocoded — check addresses)` : '';
+        const skippedNote = result.totalSkipped > 0 ? ` (${result.totalSkipped} had no street address)` : '';
+        const batchNote   = result.batchNum > 1     ? ` across ${result.batchNum} batches` : '';
+        statusEl.innerHTML = `✅ Geocoded ${result.totalSucceeded} propert${result.totalSucceeded === 1 ? 'y' : 'ies'} in ${Math.round(result.totalDurationMs / 1000)}s${batchNote}${failedNote}${skippedNote}.`;
       }
-      if (allErrors.length > 0) console.warn('[inspect/geocode] errors:', allErrors);
+      if (result.errors.length > 0) console.warn('[inspect/geocode] errors:', result.errors);
     } catch (e) {
-      if (statusEl) {
-        const partialNote = totalSucceeded > 0 ? ` (${totalSucceeded} succeeded before the error — click again to resume)` : '';
-        statusEl.innerHTML = `❌ Geocoder failed: ${e.message}${partialNote}.`;
-      }
+      if (statusEl) statusEl.innerHTML = `❌ Geocoder failed: ${e.message}. Click 🌐 Run geocoder to resume.`;
       if (btn) { btn.disabled = false; btn.textContent = '🌐 Run geocoder'; }
+    }
+  }
+
+  // ----- BULK GEOCODER (portfolio-wide admin action) -----
+  // Used during new-community onboarding. Hits the geocode-status endpoint to
+  // see which communities have un-geocoded properties, shows a confirmation
+  // listing exactly what will run, then geocodes them sequentially using the
+  // same batched helper as the per-community path. Streams per-community
+  // progress to the admin status line. Safe to keep tab open and walk away —
+  // a 3500-property full-portfolio run takes ~10 minutes wall-clock.
+  async function inspGeocodeAllCommunities() {
+    const btn = document.getElementById('inspGeocodeAllBtn');
+    const statusEl = document.getElementById('inspGeocodeAllStatus');
+    if (!statusEl) return;
+
+    statusEl.style.display = 'block';
+    statusEl.innerHTML = '⏳ Checking which communities need geocoding…';
+
+    let status;
+    try {
+      const r = await fetch('/api/inspections/geocode-status');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `status check failed (${r.status})`);
+      status = j.communities || [];
+    } catch (e) {
+      statusEl.innerHTML = `❌ Couldn't load geocode status: ${e.message}`;
+      return;
+    }
+
+    const needsWork = status.filter((c) => c.missing_geo > 0);
+    const noProps   = status.filter((c) => c.total_properties === 0);
+    const allDone   = status.filter((c) => c.total_properties > 0 && c.missing_geo === 0);
+
+    if (needsWork.length === 0) {
+      const doneList = allDone.map((c) => `${c.community_name} (${c.geocoded})`).join(', ');
+      const noPropsNote = noProps.length > 0 ? ` · ${noProps.length} communit${noProps.length === 1 ? 'y' : 'ies'} have no properties imported yet` : '';
+      statusEl.innerHTML = `✅ Every community with properties is already geocoded.${noPropsNote}<br><span style="font-size:11px;color:#64748b;">${doneList || '—'}</span>`;
+      return;
+    }
+
+    const totalToGeocode = needsWork.reduce((s, c) => s + c.missing_geo, 0);
+    const estMinutes = Math.ceil((totalToGeocode * 0.15) / 60);
+    const summaryLines = needsWork.map((c) => `  • ${c.community_name}: ${c.missing_geo} properties`).join('\n');
+    const noPropsLines = noProps.length > 0
+      ? '\n\nSkipping (no properties imported yet):\n' + noProps.map((c) => `  • ${c.community_name}`).join('\n')
+      : '';
+
+    if (!confirm(
+      `Geocode ${totalToGeocode} properties across ${needsWork.length} communit${needsWork.length === 1 ? 'y' : 'ies'}?\n\n` +
+      summaryLines + noPropsLines +
+      `\n\nEstimated time: ~${estMinutes} minute${estMinutes === 1 ? '' : 's'} (Mapbox-rate-limited).\n\n` +
+      'You can keep working in other tabs while this runs. Status updates will appear below the button.'
+    )) {
+      statusEl.innerHTML = '';
+      statusEl.style.display = 'none';
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Geocoding portfolio…'; }
+    const startedAt = Date.now();
+    let portfolioSucceeded = 0;
+    let portfolioFailed = 0;
+    const perCommunityResults = [];
+
+    for (let i = 0; i < needsWork.length; i++) {
+      const c = needsWork[i];
+      const prefix = `[${i + 1}/${needsWork.length}] ${c.community_name}`;
+      statusEl.innerHTML = `⏳ ${prefix} · starting (${c.missing_geo} properties)…`;
+
+      try {
+        const onProgress = ({ batchNum, totalSucceeded }) => {
+          statusEl.innerHTML = `⏳ ${prefix} · batch ${batchNum} (${totalSucceeded}/${c.missing_geo} done) · ${portfolioSucceeded} done across portfolio`;
+        };
+        const result = await _inspGeocodeCommunityBatched(c.community_id, onProgress);
+        portfolioSucceeded += result.totalSucceeded;
+        portfolioFailed    += result.totalFailed;
+        perCommunityResults.push({ name: c.community_name, ...result });
+      } catch (e) {
+        perCommunityResults.push({ name: c.community_name, error: e.message });
+        statusEl.innerHTML = `⚠️ ${prefix} failed mid-run: ${e.message}. Continuing with next community…`;
+        // Don't abort the whole portfolio — log it and move on.
+      }
+    }
+
+    const totalSeconds = Math.round((Date.now() - startedAt) / 1000);
+    const lines = perCommunityResults.map((r) => {
+      if (r.error) return `  ⚠️ ${r.name}: ${r.error}`;
+      const failNote = r.totalFailed > 0 ? ` (${r.totalFailed} failed)` : '';
+      return `  ✓ ${r.name}: ${r.totalSucceeded} geocoded${failNote}`;
+    }).join('<br>');
+    statusEl.innerHTML =
+      `✅ Portfolio geocode complete: ${portfolioSucceeded} properties in ${totalSeconds}s` +
+      (portfolioFailed > 0 ? ` · ${portfolioFailed} couldn't be geocoded — check addresses` : '') +
+      `<br><span style="font-size:11px;color:#64748b;">${lines}</span>`;
+
+    if (btn) { btn.disabled = false; btn.textContent = '🌍 Geocode all communities'; }
+
+    // If the user has a community currently selected, refresh its map markers
+    // so they see the new pins immediately.
+    if (inspState.communityId && typeof inspMapLoadProperties === 'function') {
+      try { await inspMapLoadProperties(); } catch (_) {}
     }
   }
 

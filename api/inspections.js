@@ -31,6 +31,11 @@ const { categorizePhoto } = require('../lib/enforcement/ai_vision');
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// Bedrock management company id — matches the seed in 001_foundation.sql and
+// the constant used in lib/askEdTools.js, api/contacts.js, etc. Used to scope
+// portfolio-wide queries (e.g., the bulk-geocode admin endpoint).
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+
 // Photos can be large from modern phones — 25MB ceiling matches existing
 // AI vision pipelines elsewhere in the codebase.
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
@@ -923,6 +928,65 @@ router.post('/inspections/geocode-community', express.json({ limit: '1mb' }), as
 
   results.duration_ms = Date.now() - startMs;
   res.json(results);
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/geocode-status — per-community geocode coverage
+// ---------------------------------------------------------------------------
+// Powers the "Geocode all ungeocoded communities" admin button. Returns one
+// row per active community with total_properties, geocoded, missing_geo. Lets
+// the frontend show a confirmation listing exactly what will run and skip
+// communities that are already done.
+//
+// Uses two grouped queries instead of a join so it stays under Supabase's
+// implicit row caps even at full franchise scale (50+ communities × 1000+
+// properties each).
+// ---------------------------------------------------------------------------
+router.get('/inspections/geocode-status', async (req, res) => {
+  try {
+    const { data: communities, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('active', true)
+      .order('name');
+    if (cErr) return res.status(500).json({ error: cErr.message });
+
+    const ids = (communities || []).map((c) => c.id);
+    if (ids.length === 0) return res.json({ communities: [] });
+
+    // Pull just the geo flags we need — id + latitude — for every property
+    // in scope. With a portfolio of 3500 properties this is ~3500 rows of
+    // (uuid, numeric) which is well under any payload concern.
+    const { data: props, error: pErr } = await supabase
+      .from('properties')
+      .select('community_id, latitude')
+      .in('community_id', ids);
+    if (pErr) return res.status(500).json({ error: pErr.message });
+
+    const byCommunity = new Map(ids.map((id) => [id, { total: 0, geocoded: 0 }]));
+    for (const p of (props || [])) {
+      const bucket = byCommunity.get(p.community_id);
+      if (!bucket) continue;
+      bucket.total += 1;
+      if (p.latitude !== null && p.latitude !== undefined) bucket.geocoded += 1;
+    }
+
+    const rows = communities.map((c) => {
+      const b = byCommunity.get(c.id) || { total: 0, geocoded: 0 };
+      return {
+        community_id: c.id,
+        community_name: c.name,
+        total_properties: b.total,
+        geocoded: b.geocoded,
+        missing_geo: b.total - b.geocoded,
+      };
+    });
+    res.json({ communities: rows });
+  } catch (err) {
+    console.error('[inspections/geocode-status]', err);
+    res.status(500).json({ error: err.message || 'failed to compute geocode status' });
+  }
 });
 
 router.get('/inspections/properties', async (req, res) => {
