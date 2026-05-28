@@ -32,7 +32,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
-const { parseVantacaViolations } = require('../lib/enforcement/vantaca_violation_import');
+const { parseVantacaViolations, parseVantacaViolationsPdf } = require('../lib/enforcement/vantaca_violation_import');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
 const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
 
@@ -3123,9 +3123,36 @@ router.post('/vantaca-violations/preview', upload.single('file'), async (req, re
     if (!req.file) return res.status(400).json({ error: 'file required' });
     const communityId = req.body.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
-    const { rows, mapping, headers, errors } = parseVantacaViolations(req.file.buffer, req.file.originalname);
+
+    // Detect PDF vs CSV/Excel and route to the right parser. PDF goes
+    // through Claude PDF-direct extraction (per CLAUDE.md, never pdf-parse
+    // on Vantaca PDFs — form-field overlay scar). CSV/Excel uses the
+    // existing column-detection path.
+    const isPdf = (req.file.mimetype === 'application/pdf') ||
+                  (req.file.originalname || '').toLowerCase().endsWith('.pdf');
+
+    let rows, mapping, headers, errors, rawExtracted = null;
+    if (isPdf) {
+      const result = await parseVantacaViolationsPdf(req.file.buffer, req.file.originalname);
+      rows = result.rows;
+      mapping = result.mapping;
+      headers = result.headers;
+      errors = result.errors;
+      rawExtracted = result.raw_extracted;
+    } else {
+      const result = parseVantacaViolations(req.file.buffer, req.file.originalname);
+      rows = result.rows;
+      mapping = result.mapping;
+      headers = result.headers;
+      errors = result.errors;
+    }
+
     if ((!rows || rows.length === 0) && errors && errors.length > 0) {
-      return res.status(400).json({ error: errors.join(' '), headers, mapping });
+      return res.status(400).json({
+        error: errors.join(' '),
+        headers, mapping,
+        raw_extracted: rawExtracted, // diagnostic — what the model returned
+      });
     }
 
     // Fetch properties + categories for this community to resolve refs

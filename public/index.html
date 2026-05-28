@@ -11347,10 +11347,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                  ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('inspVViFile').files=dt.files; }">
               <div style="font-size:20px; color:#5a7390;">📥</div>
               <div style="font-size:12px; font-weight:600; color:#1a3a5c; margin-top:4px;">Drop the Vantaca violations export here</div>
-              <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file (.csv / .xlsx / .xls)</div>
+              <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file — supports <strong>PDF</strong> (AI extracts the rows automatically) or .csv / .xlsx / .xls</div>
             </div>
-            <input type="file" id="inspVViFile" accept=".csv,.xlsx,.xls" style="display:none;">
-            <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Expected columns: Account # / Property Address · Violation Type · Violation Date · Status/Stage (optional) · Resolved Date (optional)</div>
+            <input type="file" id="inspVViFile" accept=".csv,.xlsx,.xls,.pdf,application/pdf" style="display:none;">
+            <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">PDF: any Vantaca violation history report. CSV/Excel expected columns: Account # / Property Address · Violation Type · Violation Date · Status/Stage (optional) · Resolved Date (optional)</div>
           </div>
           <div style="display:flex; gap:8px;">
             <button id="inspVViPreviewBtn" onclick="inspVViPreview()" style="background:#1A3050; color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">🔍 Preview diff</button>
