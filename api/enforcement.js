@@ -40,6 +40,12 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
+// Bedrock management company id — matches the seed in 001_foundation.sql
+// and the constant used elsewhere. Scoped here so violation-letter endpoints
+// can stamp library_documents with the right management_company_id without
+// trusting client input.
+const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
+
 // Supabase storage bucket for generated violation letters. Created lazily —
 // we attempt creation on first letter generation if missing.
 const LETTERS_BUCKET = 'violation-letters';
@@ -3212,6 +3218,382 @@ router.post('/vantaca-violations/preview', upload.single('file'), async (req, re
     res.status(500).json({ error: err.message });
   }
 });
+
+// ===========================================================================
+// POST /api/enforcement/violations/:violationId/letters
+// ---------------------------------------------------------------------------
+// Attach a letter PDF to a violation. Files the PDF to Supabase storage,
+// creates a library_documents row (category='violation_letter') scoped to
+// the property, and creates a violation_letters junction row that links
+// violation → library_document → stage.
+//
+// Used by:
+//   - The Vantaca historical import workflow (per-row PDF attach during
+//     preview, source='vantaca_import')
+//   - The trustEd letter pipeline going forward (after a courtesy/§209/fine
+//     letter is generated, source='trusted')
+//   - Manual entry by staff (typing a record post-hoc, source='manual_entry')
+//
+// Body (multipart):
+//   pdf            — the letter file (PDF, up to 25MB)
+//   stage_at_send  — courtesy_1 | courtesy_2 | certified_209 | fine_assessed |
+//                    hearing_notice | legal_referral | lien_filed | other
+//   sent_at        — YYYY-MM-DD
+//   sent_via       — vantaca | trusted | manual | other (default: 'trusted')
+//   source         — vantaca_import | trusted | manual_entry (default: 'trusted')
+//   delivery_method?       — mail | certified_mail | email | hand_delivery | postcard
+//   tracking_number?
+//   notes?
+// ===========================================================================
+router.post('/violations/:violationId/letters', upload.single('pdf'), async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+
+    const body = req.body || {};
+    if (!body.stage_at_send) return res.status(400).json({ error: 'stage_at_send required' });
+    if (!body.sent_at || !/^\d{4}-\d{2}-\d{2}$/.test(body.sent_at)) {
+      return res.status(400).json({ error: 'sent_at required (YYYY-MM-DD)' });
+    }
+
+    // Pull the violation to get property_id + community_id (don't trust client)
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr) throw vErr;
+    if (!violation) return res.status(404).json({ error: 'violation_not_found' });
+
+    let libraryDocumentId = null;
+    let storagePath = null;
+
+    if (req.file) {
+      // Lazy bucket creation
+      try { await _ensureLettersBucket(); } catch (_) {}
+      const crypto = require('crypto');
+      const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
+      const safeName = (req.file.originalname || `letter-${body.stage_at_send}.pdf`).replace(/[^a-zA-Z0-9._\-]/g, '_');
+      storagePath = `${LETTERS_BUCKET}/${violation.community_id}/${violation.property_id}/${hash}-${safeName}`;
+
+      const { error: upErr } = await supabase.storage
+        .from(LETTERS_BUCKET)
+        .upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
+      if (upErr && upErr.message && !upErr.message.includes('already exists')) {
+        console.warn('[violation_letters] storage upload warn:', upErr.message);
+      }
+
+      // Create library_documents row (the homeowner-folder canonical record)
+      const { data: libDoc, error: ldErr } = await supabase
+        .from('library_documents')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          community_id: violation.community_id,
+          property_id: violation.property_id,
+          category: 'violation_letter',
+          title: `Violation letter — ${body.stage_at_send} (${body.sent_at})`,
+          file_path: storagePath,
+          file_size_bytes: req.file.size || null,
+          metadata: {
+            violation_id: violationId,
+            stage_at_send: body.stage_at_send,
+            sent_at: body.sent_at,
+            sent_via: body.sent_via || 'trusted',
+            source: body.source || 'trusted',
+          },
+        })
+        .select('id')
+        .single();
+      if (ldErr) {
+        console.warn('[violation_letters] library_documents insert failed:', ldErr.message);
+      } else {
+        libraryDocumentId = libDoc.id;
+      }
+    }
+
+    // Create violation_letters row regardless of whether PDF was supplied —
+    // some letters are recorded after the fact without an artifact (e.g.,
+    // operator knows Vantaca sent something on a date but the PDF is lost).
+    const { data: vlRow, error: vlErr } = await supabase
+      .from('violation_letters')
+      .insert({
+        violation_id: violationId,
+        library_document_id: libraryDocumentId,
+        stage_at_send: body.stage_at_send,
+        sent_at: body.sent_at,
+        sent_via: body.sent_via || 'trusted',
+        delivery_method: body.delivery_method || null,
+        tracking_number: body.tracking_number || null,
+        notes: body.notes || null,
+        source: body.source || 'trusted',
+      })
+      .select()
+      .single();
+    if (vlErr) throw vlErr;
+
+    res.json({
+      ok: true,
+      violation_letter: vlRow,
+      library_document_id: libraryDocumentId,
+      storage_path: storagePath,
+    });
+  } catch (err) {
+    console.error('[violations/letters POST] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// GET /api/enforcement/violations/:violationId/letters
+// ---------------------------------------------------------------------------
+// Returns the chronological letter history for a violation, with signed
+// download URLs for the PDFs (15-minute expiry). Powers the side-panel
+// letter timeline + "next stage" continuation logic.
+// ===========================================================================
+router.get('/violations/:violationId/letters', async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    const { data, error } = await supabase
+      .from('violation_letters')
+      .select('id, library_document_id, stage_at_send, sent_at, sent_via, delivery_method, tracking_number, notes, source, created_at')
+      .eq('violation_id', violationId)
+      .order('sent_at', { ascending: false })
+      .order('created_at', { ascending: false });
+    if (error) throw error;
+
+    const rows = data || [];
+    // Hydrate signed URLs for the PDFs
+    for (const r of rows) {
+      if (r.library_document_id) {
+        try {
+          const { data: doc } = await supabase
+            .from('library_documents')
+            .select('file_path, title')
+            .eq('id', r.library_document_id)
+            .maybeSingle();
+          if (doc && doc.file_path) {
+            // Bucket is encoded in the file_path prefix; strip it for the signed URL call
+            const parts = doc.file_path.split('/');
+            const bucket = parts[0];
+            const pathInBucket = parts.slice(1).join('/');
+            const { data: signed } = await supabase.storage
+              .from(bucket)
+              .createSignedUrl(pathInBucket, 60 * 15);
+            r.pdf_url = signed && signed.signedUrl ? signed.signedUrl : null;
+            r.pdf_title = doc.title || null;
+          }
+        } catch (e) {
+          console.warn('[violations/letters signed-url]', e.message);
+        }
+      }
+    }
+
+    res.json({ letters: rows });
+  } catch (err) {
+    console.error('[violations/letters GET] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// POST /api/enforcement/violations/:violationId/advance-stage
+// ---------------------------------------------------------------------------
+// One-click stage advance for the continuation workflow. When an operator
+// confirms during inspection that a Vantaca-imported (or any) open
+// violation is still uncured, this advances current_stage to the next
+// conventional stage and (optionally) attaches a follow-up letter PDF.
+//
+// Body (JSON or multipart):
+//   override_stage?   — operator override (default: use the conventional
+//                       next stage from v_violation_latest_letter)
+//   note?             — context for the advance ("trash bins still out
+//                       after inspection 2026-05-28")
+//   record_letter?    — if true (multipart only), also creates a
+//                       violation_letters row for the new stage with the
+//                       attached PDF (uses the /letters endpoint logic)
+// ===========================================================================
+router.post('/violations/:violationId/advance-stage', upload.single('pdf'), async (req, res) => {
+  try {
+    const violationId = req.params.violationId;
+    if (!violationId) return res.status(400).json({ error: 'violation_id required' });
+
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr) throw vErr;
+    if (!violation) return res.status(404).json({ error: 'violation_not_found' });
+    if (['cured', 'closed', 'voided'].includes(violation.current_stage)) {
+      return res.status(409).json({ error: `violation is already ${violation.current_stage}; cannot advance` });
+    }
+
+    // Determine the next stage. Operator override wins; otherwise use the
+    // conventional progression based on current_stage (NOT based on the
+    // latest letter, because we want to allow advancing even when no letter
+    // was previously recorded — common during Vantaca transition).
+    const conventionalNext = {
+      'courtesy_1':    'courtesy_2',
+      'courtesy_2':    'certified_209',
+      'certified_209': 'fine_assessed',
+      'fine_assessed': 'hearing_notice',
+      'hearing_notice': 'legal_referral',
+      'legal_referral': 'lien_filed',
+    };
+    const nextStage = (req.body && req.body.override_stage)
+      || conventionalNext[violation.current_stage]
+      || 'other';
+    const note = (req.body && req.body.note) || null;
+
+    // Update the violation row
+    const { error: upErr } = await supabase
+      .from('violations')
+      .update({
+        current_stage: nextStage,
+        current_stage_started_at: new Date().toISOString(),
+        last_action_at: new Date().toISOString(),
+        notes: note ? `${note}\n---\n(previous notes preserved on history table)` : undefined,
+      })
+      .eq('id', violationId);
+    if (upErr) throw upErr;
+
+    // Optionally record the new letter at the same time
+    let letterResult = null;
+    if (req.file && req.body && (req.body.record_letter === 'true' || req.body.record_letter === true)) {
+      try { await _ensureLettersBucket(); } catch (_) {}
+      const crypto = require('crypto');
+      const hash = crypto.createHash('sha256').update(req.file.buffer).digest('hex').slice(0, 16);
+      const safeName = (req.file.originalname || `letter-${nextStage}.pdf`).replace(/[^a-zA-Z0-9._\-]/g, '_');
+      const storagePath = `${LETTERS_BUCKET}/${violation.community_id}/${violation.property_id}/${hash}-${safeName}`;
+      await supabase.storage.from(LETTERS_BUCKET).upload(storagePath, req.file.buffer, { contentType: 'application/pdf', upsert: true });
+      const { data: libDoc } = await supabase
+        .from('library_documents')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          community_id: violation.community_id,
+          property_id: violation.property_id,
+          category: 'violation_letter',
+          title: `Violation letter — ${nextStage} (${new Date().toISOString().slice(0, 10)})`,
+          file_path: storagePath,
+          metadata: { violation_id: violationId, stage_at_send: nextStage, source: 'trusted' },
+        })
+        .select('id')
+        .single();
+      const { data: vl } = await supabase
+        .from('violation_letters')
+        .insert({
+          violation_id: violationId,
+          library_document_id: libDoc ? libDoc.id : null,
+          stage_at_send: nextStage,
+          sent_at: new Date().toISOString().slice(0, 10),
+          sent_via: 'trusted',
+          source: 'trusted',
+          notes: note,
+        })
+        .select()
+        .single();
+      letterResult = { library_document_id: libDoc?.id, violation_letter: vl };
+    }
+
+    res.json({
+      ok: true,
+      previous_stage: violation.current_stage,
+      new_stage: nextStage,
+      letter_recorded: !!letterResult,
+      letter: letterResult,
+    });
+  } catch (err) {
+    console.error('[violations/advance-stage] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// GET /api/enforcement/property/:propertyId/violation-summary
+// ---------------------------------------------------------------------------
+// Returns all violations + their letter history for a property. Powers the
+// Community Map side panel violation section and the inspection continuation
+// flow. Includes the suggested-next-stage hint for each open violation.
+// ===========================================================================
+router.get('/property/:propertyId/violation-summary', async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    const { data: violations, error } = await supabase
+      .from('violations')
+      .select(`
+        id, property_id, community_id, primary_category_id,
+        current_stage, current_stage_started_at,
+        opened_at, last_action_at, resolved_at, resolved_via,
+        source, confidence_weight, summary
+      `)
+      .eq('property_id', propertyId)
+      .order('opened_at', { ascending: false })
+      .limit(100);
+    if (error) throw error;
+
+    // Resolve category labels in one round trip
+    const catIds = Array.from(new Set((violations || []).map((v) => v.primary_category_id).filter(Boolean)));
+    let catLabels = new Map();
+    if (catIds.length > 0) {
+      const { data: cats } = await supabase
+        .from('enforcement_categories')
+        .select('id, label')
+        .in('id', catIds);
+      catLabels = new Map((cats || []).map((c) => [c.id, c.label]));
+    }
+
+    // Pull letters for these violations
+    const violationIds = (violations || []).map((v) => v.id);
+    let lettersByViolation = new Map();
+    if (violationIds.length > 0) {
+      const { data: letters } = await supabase
+        .from('violation_letters')
+        .select('id, violation_id, library_document_id, stage_at_send, sent_at, sent_via, source')
+        .in('violation_id', violationIds)
+        .order('sent_at', { ascending: false });
+      for (const l of (letters || [])) {
+        if (!lettersByViolation.has(l.violation_id)) lettersByViolation.set(l.violation_id, []);
+        lettersByViolation.get(l.violation_id).push(l);
+      }
+    }
+
+    const conventionalNext = {
+      'courtesy_1':    'courtesy_2',
+      'courtesy_2':    'certified_209',
+      'certified_209': 'fine_assessed',
+      'fine_assessed': 'hearing_notice',
+      'hearing_notice': 'legal_referral',
+      'legal_referral': 'lien_filed',
+    };
+
+    const result = (violations || []).map((v) => {
+      const letters = lettersByViolation.get(v.id) || [];
+      const isOpen = !['cured', 'closed', 'voided'].includes(v.current_stage);
+      return {
+        ...v,
+        category_label: catLabels.get(v.primary_category_id) || null,
+        is_open: isOpen,
+        letter_count: letters.length,
+        letters,
+        suggested_next_stage: isOpen ? conventionalNext[v.current_stage] || 'other' : null,
+      };
+    });
+
+    res.json({
+      property_id: propertyId,
+      total_violations: result.length,
+      open_count: result.filter((v) => v.is_open).length,
+      violations: result,
+    });
+  } catch (err) {
+    console.error('[violation-summary] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ===========================================================================
+// END violation-letters endpoints
+// ===========================================================================
 
 router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async (req, res) => {
   try {

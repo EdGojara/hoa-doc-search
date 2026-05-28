@@ -27664,6 +27664,269 @@ ${questionsPage}
     // history endpoint returns. If the property has 0 or 1 snapshot, we
     // skip the chart (no trend to show).
     cmapRenderArSparkline(p.property_id);
+
+    // Fetch + render the rich violation history (letters + suggested next
+    // stage). Replaces the basic Open Violations section with the full
+    // letter timeline once it loads.
+    cmapRenderViolationHistory(p.property_id);
+  }
+
+  async function cmapRenderViolationHistory(propertyId) {
+    // The basic "Open violations" section already rendered from the
+    // /api/community-map/property/:id payload. This enriches it with the
+    // full letter history + continuation actions from the dedicated
+    // enforcement endpoint.
+    try {
+      const r = await fetch(`/api/enforcement/property/${encodeURIComponent(propertyId)}/violation-summary`);
+      const j = await r.json();
+      const violations = j.violations || [];
+      if (violations.length === 0) return;
+
+      // Find the Open Violations section in the side panel (rendered above
+      // by cmapRenderSidePanel) and replace it.
+      const body = document.getElementById('cmapSPBody');
+      if (!body) return;
+
+      // Build the enriched rendering
+      const fmtDate = (v) => v ? new Date(v).toLocaleDateString('en-US') : '—';
+      const stageLabel = {
+        'courtesy_1': 'Courtesy notice 1',
+        'courtesy_2': 'Courtesy notice 2',
+        'certified_209': 'Certified §209 notice',
+        'fine_assessed': 'Fine assessed',
+        'hearing_notice': 'Hearing notice',
+        'legal_referral': 'Legal referral',
+        'lien_filed': 'Lien filed',
+        'cured': 'Cured',
+        'closed': 'Closed',
+        'voided': 'Voided',
+      };
+      const stageColor = {
+        'courtesy_1':    '#C9A53A',
+        'courtesy_2':    '#D97A2D',
+        'certified_209': '#C9514B',
+        'fine_assessed': '#8B1A1A',
+        'cured':         '#4FA37A',
+        'closed':        '#94a3b8',
+        'voided':        '#cbd5e1',
+      };
+
+      const renderViolation = (v) => {
+        const lettersHtml = (v.letters || []).map((l) => {
+          const downloadLink = l.library_document_id
+            ? `<a href="#" onclick="event.preventDefault(); cmapDownloadLetter('${l.id}', this)" style="color:#1A3050; text-decoration:underline;">📄 PDF</a>`
+            : '<span style="color:#94a3b8;">no PDF on file</span>';
+          const sourceBadge = l.source === 'vantaca_import'
+            ? '<span style="background:#fef3c7; color:#78350f; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:600; margin-left:4px;">Vantaca</span>'
+            : (l.source === 'trusted' ? '<span style="background:#dcfce7; color:#166534; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:600; margin-left:4px;">trustEd</span>' : '');
+          return `
+            <div style="display:flex; justify-content:space-between; align-items:center; padding:4px 0; font-size:11.5px; border-top:1px dashed #f1f5f9;">
+              <div>
+                <span style="color:#475569; font-weight:600;">${escapeHtml(stageLabel[l.stage_at_send] || l.stage_at_send)}</span>
+                ${sourceBadge}
+                <span style="color:#94a3b8; margin-left:6px;">${fmtDate(l.sent_at)}</span>
+              </div>
+              <div>${downloadLink}</div>
+            </div>
+          `;
+        }).join('');
+
+        const continuationBtn = v.is_open && v.suggested_next_stage
+          ? `<button onclick="cmapAdvanceStage('${v.id}', '${v.suggested_next_stage}', '${escapeHtml(v.category_label || 'violation')}')" type="button"
+                     style="background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
+              → ${escapeHtml(stageLabel[v.suggested_next_stage] || v.suggested_next_stage)}
+            </button>`
+          : '';
+        const addLetterBtn = `<button onclick="cmapAttachLetter('${v.id}', '${escapeHtml(v.current_stage)}')" type="button"
+                     style="background:#fff; color:#1A3050; border:1px solid #d0d7de; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
+              + Attach letter
+            </button>`;
+
+        const color = stageColor[v.current_stage] || '#475569';
+        return `
+          <div data-violation-id="${escapeHtml(v.id)}" data-property-id="${escapeHtml(propertyId)}"
+               style="padding:10px; margin-bottom:8px; background:#fafafa; border:1px solid #e2e8f0; border-radius:6px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+              <div>
+                <span style="font-weight:600; color:#1A3050;">${escapeHtml(v.category_label || 'Violation')}</span>
+                <span style="background:${color}; color:#fff; padding:2px 8px; border-radius:99px; font-size:10px; font-weight:600; margin-left:6px;">
+                  ${escapeHtml(stageLabel[v.current_stage] || v.current_stage)}
+                </span>
+                ${v.source === 'vantaca_import' ? '<span style="background:#fef3c7; color:#78350f; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:600; margin-left:4px;">imported</span>' : ''}
+              </div>
+              <div style="font-size:10.5px; color:#94a3b8;">opened ${fmtDate(v.opened_at)}</div>
+            </div>
+            ${v.summary ? `<div style="font-size:11.5px; color:#64748b; margin-bottom:6px;">${escapeHtml(v.summary).slice(0, 200)}</div>` : ''}
+
+            <div style="margin-top:6px;">
+              <div style="font-size:10.5px; color:#94a3b8; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:3px;">
+                Letter history (${(v.letters || []).length})
+              </div>
+              ${lettersHtml || '<div style="font-size:11.5px; color:#94a3b8;">No letters on file yet.</div>'}
+            </div>
+
+            ${v.is_open ? `
+              <div style="margin-top:8px; display:flex; align-items:center; justify-content:flex-end;">
+                ${addLetterBtn}
+                ${continuationBtn}
+              </div>` : ''}
+          </div>
+        `;
+      };
+
+      // Replace the existing "Open violations" section heading + body.
+      // Find by text content of the uppercase heading.
+      const sections = body.querySelectorAll('div');
+      let openViolationsHeadingDiv = null;
+      for (const div of sections) {
+        if (div.style.textTransform === 'uppercase' && div.textContent.trim() === 'Open violations') {
+          openViolationsHeadingDiv = div.parentElement;
+          break;
+        }
+      }
+      const replacementHtml = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">
+            Violations (${j.open_count} open · ${j.total_violations} total)
+          </div>
+          ${violations.map(renderViolation).join('')}
+        </div>
+      `;
+      if (openViolationsHeadingDiv) {
+        openViolationsHeadingDiv.outerHTML = replacementHtml;
+      }
+    } catch (e) {
+      console.warn('[cmap] violation history fetch failed', e);
+    }
+  }
+
+  async function cmapDownloadLetter(letterId, anchor) {
+    // The /violations/:id/letters endpoint already returns signed URLs.
+    // We don't have the URL cached per letter on the rendered chip; fetch
+    // it fresh on click so the 15-min signed URL is current.
+    try {
+      // Find the violation_id from the rendered DOM (the letter is rendered
+      // inside its violation card). Simplest: hit the dedicated single-
+      // letter signed-url endpoint. For now, we re-fetch the full property
+      // violation summary and find the letter. Fast enough at single-property
+      // scale and avoids a new endpoint.
+      anchor.textContent = '⏳';
+      // Walk up to find violation card and its data
+      let card = anchor.closest('[data-violation-id]');
+      let violationId = card ? card.getAttribute('data-violation-id') : null;
+      if (!violationId) {
+        // Fallback: re-fetch by hitting the violation-summary on the current property
+        // We don't store property id on the letter row, so the simplest path is the
+        // /letters endpoint which returns signed URLs by violation_id. We need to
+        // find the violation_id by searching ancestors that have it.
+        const allCards = document.querySelectorAll('[data-violation-id]');
+        for (const c of allCards) {
+          if (c.contains(anchor)) { violationId = c.getAttribute('data-violation-id'); break; }
+        }
+      }
+      if (!violationId) {
+        anchor.textContent = '📄 PDF';
+        alert('Could not locate violation for this letter.');
+        return;
+      }
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/letters`);
+      const j = await r.json();
+      const letter = (j.letters || []).find((l) => l.id === letterId);
+      anchor.textContent = '📄 PDF';
+      if (letter && letter.pdf_url) {
+        window.open(letter.pdf_url, '_blank');
+      } else {
+        alert('No PDF available for this letter.');
+      }
+    } catch (e) {
+      anchor.textContent = '📄 PDF';
+      alert('Download failed: ' + e.message);
+    }
+  }
+
+  function cmapAdvanceStage(violationId, suggestedNextStage, categoryLabel) {
+    const stageLabels = {
+      'courtesy_2': 'Courtesy notice 2', 'certified_209': 'Certified §209 notice',
+      'fine_assessed': 'Fine assessed', 'hearing_notice': 'Hearing notice',
+      'legal_referral': 'Legal referral', 'lien_filed': 'Lien filed', 'other': 'Other stage',
+    };
+    const label = stageLabels[suggestedNextStage] || suggestedNextStage;
+    if (!confirm(`Advance "${categoryLabel}" to ${label}?\n\nThis records that the violation is continuing and the next letter will go out at this stage. Trustfully advance only if you've verified the violation is uncured.`)) return;
+
+    const note = prompt('Optional note (e.g., "Inspected 2026-05-28, trash bins still out"):', '');
+
+    fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/advance-stage`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ note: note || null }),
+    })
+      .then((r) => r.json())
+      .then((j) => {
+        if (j.ok) {
+          // Refresh the violation history section
+          const propertyId = (cmapState.properties.find((p) =>
+            cmapState.pinsByPropertyId.get(p.property_id))
+          ) || null;
+          // Simpler: just refresh the entire side panel by re-fetching
+          const card = document.querySelector(`[data-violation-id="${violationId}"]`);
+          // Re-fetch the rich history
+          const pid = card && card.getAttribute('data-property-id');
+          if (pid) cmapRenderViolationHistory(pid);
+          else {
+            // fallback — find via active panel
+            const titleEl = document.getElementById('cmapSPTitle');
+            alert(`✓ Advanced to ${label}. Refresh the panel to see the update.`);
+          }
+        } else {
+          alert('Advance failed: ' + (j.error || 'unknown error'));
+        }
+      })
+      .catch((e) => alert('Advance failed: ' + e.message));
+  }
+
+  function cmapAttachLetter(violationId, currentStage) {
+    // Prompt for letter details + file picker. Keep it lightweight — full
+    // modal would be nicer but a 3-prompt sequence works.
+    const stage = prompt('Letter stage (courtesy_1, courtesy_2, certified_209, fine_assessed, hearing_notice, legal_referral, lien_filed):', currentStage || 'courtesy_1');
+    if (!stage) return;
+    const sentAt = prompt('Sent date (YYYY-MM-DD):', new Date().toISOString().slice(0, 10));
+    if (!sentAt) return;
+    const sentVia = prompt('Sent via (vantaca, trusted, manual):', 'vantaca');
+    if (!sentVia) return;
+
+    // Open a file picker for the PDF
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = 'application/pdf';
+    input.onchange = async (ev) => {
+      const file = ev.target.files[0];
+      if (!file) return;
+      const fd = new FormData();
+      fd.append('pdf', file);
+      fd.append('stage_at_send', stage);
+      fd.append('sent_at', sentAt);
+      fd.append('sent_via', sentVia);
+      fd.append('source', sentVia === 'vantaca' ? 'vantaca_import' : (sentVia === 'manual' ? 'manual_entry' : 'trusted'));
+      try {
+        const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/letters`, {
+          method: 'POST',
+          body: fd,
+        });
+        const j = await r.json();
+        if (j.ok) {
+          alert('✓ Letter attached.');
+          // Find the active property and refresh the side panel
+          const card = document.querySelector(`[data-violation-id="${violationId}"]`);
+          const pid = card && card.getAttribute('data-property-id');
+          if (pid) cmapRenderViolationHistory(pid);
+        } else {
+          alert('Upload failed: ' + (j.error || 'unknown'));
+        }
+      } catch (e) {
+        alert('Upload failed: ' + e.message);
+      }
+    };
+    input.click();
   }
 
   async function cmapRenderAppraisalSection(propertyId) {
