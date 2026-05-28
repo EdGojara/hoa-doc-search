@@ -28161,6 +28161,14 @@ ${questionsPage}
                      style="background:#fff; color:#1A3050; border:1px solid #d0d7de; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
               + Attach letter
             </button>`;
+        // Special-category renderer: lawn 10-day certified force-mow path
+        // gets its own draft-letter button using the gold-standard template.
+        const forceMowBtn = v.is_open && v.category_slug === 'lawn_force_mow_10day'
+          ? `<button onclick="cmapDraftForceMowLetter('${v.id}', '${escapeHtml(v.category_label || 'lawn violation')}')" type="button"
+                     style="background:#6B4C9A; color:#fff; border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
+              📄 Draft 10-day force-mow letter
+            </button>`
+          : '';
 
         const color = stageColor[v.current_stage] || '#475569';
         return `
@@ -28186,8 +28194,9 @@ ${questionsPage}
             </div>
 
             ${v.is_open ? `
-              <div style="margin-top:8px; display:flex; align-items:center; justify-content:flex-end;">
+              <div style="margin-top:8px; display:flex; align-items:center; justify-content:flex-end; flex-wrap:wrap; gap:6px;">
                 ${addLetterBtn}
+                ${forceMowBtn}
                 ${continuationBtn}
               </div>` : ''}
           </div>
@@ -28302,6 +28311,56 @@ ${questionsPage}
         }
       })
       .catch((e) => alert('Advance failed: ' + e.message));
+  }
+
+  // Draft a 10-day certified force-mow letter for a violation using the
+  // gold-standard template. Opens the rendered PDF in a new tab for the
+  // operator to review, print, and certified-mail.
+  async function cmapDraftForceMowLetter(violationId, categoryLabel) {
+    const observedCondition = prompt(
+      `Observed condition for ${categoryLabel}:\n\n` +
+      '(This text appears in the letter as "Observed condition: ..." — be specific. ' +
+      'Examples: "Lawn in excess of 8 inches throughout front yard", "Grass into expansion joints of driveway and sidewalk", "Front yard not mowed; weeds visible from street")',
+      'Lawn in need of mowing, edging, and weed control'
+    );
+    if (!observedCondition || observedCondition.trim().length === 0) return;
+
+    const certifiedMailNumber = prompt(
+      'Certified Mail tracking number (optional — leave blank to fill in later):',
+      ''
+    );
+
+    try {
+      const r = await fetch(`/api/enforcement/violations/${encodeURIComponent(violationId)}/draft-force-mow-letter`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          observed_condition: observedCondition.trim(),
+          certified_mail_number: certifiedMailNumber ? certifiedMailNumber.trim() : null,
+        }),
+      });
+      if (!r.ok) {
+        const errText = await r.text();
+        let errJson; try { errJson = JSON.parse(errText); } catch (_) { errJson = { error: errText }; }
+        if (errJson.error === 'community_force_mow_config_missing') {
+          alert(`Community force-mow config is not set up yet. ${errJson.message}\n\nIn Supabase SQL editor, run:\n\nUPDATE communities SET\n  declaration_doc_number = '<recording doc #>',\n  declaration_county = '<county>',\n  declaration_short_name = '<short name>',\n  force_mow_section_full = 'Article X.Y of the Declaration'\nWHERE id = '<community_id>';`);
+          return;
+        }
+        if (errJson.error === 'schema_validation_failed') {
+          alert(`Schema validation failed:\n${(errJson.details || []).map((d) => d.instancePath + ' ' + d.message).join('\n')}`);
+          return;
+        }
+        throw new Error(errJson.error || `HTTP ${r.status}`);
+      }
+      // The response is a PDF blob — open in a new tab
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      window.open(url, '_blank');
+      // Don't revoke URL immediately — give the new tab time to load
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (e) {
+      alert('Draft failed: ' + e.message);
+    }
   }
 
   function cmapAttachLetter(violationId, currentStage) {
