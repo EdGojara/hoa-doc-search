@@ -15423,6 +15423,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const MAX_POLL_MS = 10 * 60 * 1000;  // 10-minute safety cap
     const started = Date.now();
     let attempt = 0;
+    let consecutive404s = 0;  // tolerate brief 404 (job not yet committed) but bail if persistent
     while (true) {
       if (Date.now() - started > MAX_POLL_MS) {
         return { status: 'error', error: 'Polling timed out after 10 minutes.' };
@@ -15431,6 +15432,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       await new Promise((r) => setTimeout(r, POLL_INTERVAL_MS));
       try {
         const r = await fetch(`/api/enforcement/vantaca-violations/preview-status/${encodeURIComponent(jobId)}`);
+        // 404 = job was lost (in-memory store wiped by deploy/restart/TTL).
+        // Tolerate 1-2 transient 404s but bail after 3 in a row — the job
+        // is genuinely gone, no point polling forever.
+        if (r.status === 404) {
+          consecutive404s++;
+          if (consecutive404s >= 3) {
+            return {
+              status: 'error',
+              error: 'Job was lost (likely a server restart or deploy fired during processing). Refresh and re-upload — your previously imported rows are still in the database, dedup will skip them on retry.',
+            };
+          }
+          if (statusEl) statusEl.innerHTML = `⏳ Server may have restarted (${consecutive404s}/3) — retrying…`;
+          continue;
+        }
+        consecutive404s = 0;
         const text = await r.text();
         let j;
         try { j = JSON.parse(text); }
