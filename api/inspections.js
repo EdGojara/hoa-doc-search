@@ -1138,23 +1138,29 @@ router.get('/inspections/properties', async (req, res) => {
     // Per-property history aggregates: violations (open/ytd/lifetime) + last inspected.
     // One query per aggregate, grouped by property_id in JS — cheaper than N+1.
     if (includeHistory && properties.length > 0) {
-      const propIds = properties.map((p) => p.property_id);
       const yearStart = `${new Date().getFullYear()}-01-01T00:00:00Z`;
 
+      // NOTE: filter by community_id (NOT .in('property_id', [721 UUIDs])).
+      // Scar: a 700+ property .in() list builds a ~30KB URL that exceeds the
+      // PostgREST HTTP limit and silently returns 0 rows — every pin shows
+      // navy, every history aggregate shows 0. Filtering by community_id is
+      // an indexed equality and produces identical results because every
+      // violation/observation row carries community_id by schema.
       const [vAllRes, vOpenRes, vYtdRes, insRes] = await Promise.all([
-        supabase.from('violations').select('property_id').in('property_id', propIds),
+        supabase.from('violations').select('property_id').eq('community_id', communityId),
         // Include current_stage AND category slug so we can compute the
         // WORST open stage AND detect special categories (lawn force-mow)
         // that get distinctive map coloring.
         supabase.from('violations')
           .select('property_id, current_stage, primary_category_id, enforcement_categories!inner(slug)')
-          .in('property_id', propIds)
+          .eq('community_id', communityId)
           .not('current_stage', 'in', '("cured","closed","voided")'),
-        supabase.from('violations').select('property_id').in('property_id', propIds)
+        supabase.from('violations').select('property_id')
+          .eq('community_id', communityId)
           .gte('opened_at', yearStart),
         // Last-inspected = max(inspection.ended_at) across observations that touched the property.
         supabase.from('property_observations').select('property_id, inspections!inner(ended_at)')
-          .in('property_id', propIds)
+          .eq('community_id', communityId)
           .not('inspections.ended_at', 'is', null),
       ]);
       const vAll = vAllRes.data || [];
