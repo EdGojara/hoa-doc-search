@@ -3118,41 +3118,197 @@ router.post('/cure-lapse/process', express.json(), async (req, res) => {
 //   resolved_at + resolved_via set. Skips rows already imported (dedup on
 //   (property_id, primary_category_id, opened_at)).
 // ===========================================================================
+// In-memory job store for async PDF preview. Single-instance Render setup
+// (Bedrock's tier) is fine for now; if we move multi-instance later, lift
+// this into a Postgres job table. Jobs auto-cleanup after 1 hour.
+const _vvPreviewJobs = new Map();
+const _VV_JOB_TTL_MS = 60 * 60 * 1000;
+function _cleanupOldJobs() {
+  const now = Date.now();
+  for (const [id, job] of _vvPreviewJobs) {
+    if (now - (job.createdAt || 0) > _VV_JOB_TTL_MS) _vvPreviewJobs.delete(id);
+  }
+}
+setInterval(_cleanupOldJobs, 10 * 60 * 1000).unref();
+
+// Heavy processing — runs in the background after /preview returns the job_id.
+// Mutates the job record in _vvPreviewJobs as it progresses so the polling
+// endpoint can report status. Catches its own errors → never crashes the
+// process if a chunk throws.
+async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId) {
+  const job = _vvPreviewJobs.get(jobId);
+  if (!job) return;
+  try {
+    const isPdf = (mimetype === 'application/pdf') || (filename || '').toLowerCase().endsWith('.pdf');
+
+    let rows, mapping, headers, errors, rawExtracted = null;
+    if (isPdf) {
+      job.progress = 'extracting from PDF — this can take 30-120 seconds depending on size';
+      const result = await parseVantacaViolationsPdf(fileBuffer, filename);
+      rows = result.rows; mapping = result.mapping; headers = result.headers;
+      errors = result.errors; rawExtracted = result.raw_extracted;
+    } else {
+      job.progress = 'parsing CSV/Excel';
+      const result = parseVantacaViolations(fileBuffer, filename);
+      rows = result.rows; mapping = result.mapping; headers = result.headers; errors = result.errors;
+    }
+
+    if ((!rows || rows.length === 0) && errors && errors.length > 0) {
+      job.status = 'error';
+      job.error = errors.join(' ');
+      job.raw_extracted = rawExtracted;
+      job.headers = headers; job.mapping = mapping;
+      return;
+    }
+
+    job.progress = `matching ${rows.length} rows to properties + categories`;
+
+    // ---- existing resolution logic (property + category match + dedup) ----
+    const { data: props } = await supabase
+      .from('properties')
+      .select('id, street_address, unit, vantaca_account_id')
+      .eq('community_id', communityId);
+    const byAcct = new Map();
+    const byStreet = new Map();
+    (props || []).forEach((p) => {
+      if (p.vantaca_account_id) byAcct.set(String(p.vantaca_account_id), p);
+      if (p.street_address) byStreet.set(p.street_address.toLowerCase().trim(), p);
+    });
+
+    const { data: cats } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug, label');
+    const catBySlug = new Map();
+    const catByLabel = new Map();
+    (cats || []).forEach((c) => {
+      catBySlug.set(c.slug.toLowerCase(), c);
+      catByLabel.set(c.label.toLowerCase(), c);
+    });
+    const resolveCategory = (rawLabel) => {
+      if (!rawLabel) return null;
+      const s = String(rawLabel).toLowerCase().trim();
+      if (catByLabel.has(s)) return catByLabel.get(s);
+      for (const [label, c] of catByLabel) {
+        if (label.includes(s) || s.includes(label)) return c;
+      }
+      for (const [slug, c] of catBySlug) {
+        if (slug.replace(/_/g, ' ').includes(s) || s.includes(slug.replace(/_/g, ' '))) return c;
+      }
+      return null;
+    };
+
+    const { data: existingV } = await supabase
+      .from('violations')
+      .select('property_id, primary_category_id, opened_at')
+      .eq('community_id', communityId)
+      .eq('source', 'vantaca_import');
+    const existingKeys = new Set((existingV || []).map((v) =>
+      `${v.property_id}::${v.primary_category_id}::${(v.opened_at || '').slice(0, 10)}`
+    ));
+
+    const resolved = [];
+    const unresolved_property = [];
+    const unresolved_category = [];
+    const duplicates = [];
+
+    for (const row of rows) {
+      let prop = null;
+      if (row.vantaca_account_id) prop = byAcct.get(String(row.vantaca_account_id));
+      if (!prop && row.street_address) prop = byStreet.get(row.street_address.toLowerCase().trim());
+      if (!prop) { unresolved_property.push(row); continue; }
+      const cat = resolveCategory(row.category_label);
+      if (!cat) { unresolved_category.push({ ...row, property_id: prop.id }); continue; }
+      const dedupKey = `${prop.id}::${cat.id}::${row.opened_at}`;
+      if (existingKeys.has(dedupKey)) { duplicates.push({ ...row, property_id: prop.id, category_id: cat.id }); continue; }
+      resolved.push({
+        ...row,
+        property_id: prop.id,
+        property_street: prop.street_address,
+        category_id: cat.id,
+        category_resolved_label: cat.label,
+      });
+    }
+
+    job.status = 'complete';
+    job.result = {
+      total_rows: rows.length,
+      mapping,
+      headers,
+      sample_rows: rows.slice(0, 5),
+      resolved_count: resolved.length,
+      unresolved_property_count: unresolved_property.length,
+      unresolved_category_count: unresolved_category.length,
+      duplicate_count: duplicates.length,
+      resolved,
+      unresolved_property: unresolved_property.slice(0, 50),
+      unresolved_category: unresolved_category.slice(0, 50),
+      duplicates: duplicates.slice(0, 20),
+      raw_extracted: rawExtracted,
+    };
+    job.progress = `done — ${resolved.length} matched · ${unresolved_property.length} unmatched property · ${unresolved_category.length} unmatched category · ${duplicates.length} duplicates`;
+  } catch (err) {
+    console.error(`[vantaca-violations.preview job ${jobId}]`, err);
+    job.status = 'error';
+    job.error = err.message || 'unknown error';
+  }
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/vantaca-violations/preview-status/:jobId
+// Polled by the frontend after a PDF upload kicks off async processing.
+// ---------------------------------------------------------------------------
+router.get('/vantaca-violations/preview-status/:jobId', (req, res) => {
+  const job = _vvPreviewJobs.get(req.params.jobId);
+  if (!job) return res.status(404).json({ error: 'job_not_found_or_expired' });
+  // Don't return the raw file buffer in status responses; only metadata.
+  const { fileBuffer, ...safe } = job;
+  res.json(safe);
+});
+
 router.post('/vantaca-violations/preview', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'file required' });
     const communityId = req.body.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
 
-    // Detect PDF vs CSV/Excel and route to the right parser. PDF goes
-    // through Claude PDF-direct extraction (per CLAUDE.md, never pdf-parse
-    // on Vantaca PDFs — form-field overlay scar). CSV/Excel uses the
-    // existing column-detection path.
     const isPdf = (req.file.mimetype === 'application/pdf') ||
                   (req.file.originalname || '').toLowerCase().endsWith('.pdf');
 
-    let rows, mapping, headers, errors, rawExtracted = null;
+    // PDFs go async — Claude PDF extraction on a multi-page report can exceed
+    // Render's 100s HTTP timeout. Return a job_id and process in the
+    // background; frontend polls preview-status to get the result.
     if (isPdf) {
-      const result = await parseVantacaViolationsPdf(req.file.buffer, req.file.originalname);
-      rows = result.rows;
-      mapping = result.mapping;
-      headers = result.headers;
-      errors = result.errors;
-      rawExtracted = result.raw_extracted;
-    } else {
-      const result = parseVantacaViolations(req.file.buffer, req.file.originalname);
-      rows = result.rows;
-      mapping = result.mapping;
-      headers = result.headers;
-      errors = result.errors;
+      const jobId = require('crypto').randomBytes(8).toString('hex');
+      _vvPreviewJobs.set(jobId, {
+        id: jobId,
+        status: 'running',
+        progress: 'queued',
+        result: null,
+        error: null,
+        createdAt: Date.now(),
+      });
+      // Fire and forget — _runPreviewJob mutates the job record as it goes
+      _runPreviewJob(jobId, req.file.buffer, req.file.originalname, req.file.mimetype, communityId)
+        .catch((err) => {
+          const j = _vvPreviewJobs.get(jobId);
+          if (j) { j.status = 'error'; j.error = err.message; }
+        });
+      return res.json({
+        job_id: jobId,
+        status: 'running',
+        message: 'PDF processing started. Poll preview-status for progress + result.',
+      });
     }
 
+    // CSV / Excel — fast enough to do synchronously
+    const result = parseVantacaViolations(req.file.buffer, req.file.originalname);
+    const rows = result.rows;
+    const mapping = result.mapping;
+    const headers = result.headers;
+    const errors = result.errors;
+
     if ((!rows || rows.length === 0) && errors && errors.length > 0) {
-      return res.status(400).json({
-        error: errors.join(' '),
-        headers, mapping,
-        raw_extracted: rawExtracted, // diagnostic — what the model returned
-      });
+      return res.status(400).json({ error: errors.join(' '), headers, mapping });
     }
 
     // Fetch properties + categories for this community to resolve refs
