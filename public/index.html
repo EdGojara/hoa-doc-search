@@ -11173,6 +11173,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="background:#fff; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 12px 12px; padding:8px 12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
           <button type="button" id="inspCoverageBtn" onclick="inspToggleCoverage()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">🗺️ Show coverage</button>
           <button type="button" id="inspBoundaryBtn" onclick="inspBoundaryToggle()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Draw or redraw the community perimeter">✏️ Draw boundary</button>
+          <button type="button" onclick="inspDiagnoseDetailMismatch()" style="background:#fef9c3; border:1px solid #fde047; color:#854d0e; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Diagnose why violation count differs between hover and detail panel">🐛 Diagnose detail</button>
           <div id="inspBoundaryHint" style="display:none; flex:1; min-width:240px; font-size:11.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:5px 10px;"></div>
           <div id="inspCoverageBanner" style="display:none; flex:1; min-width:200px; font-size:12px; color:#475569; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:5px 10px;"></div>
         </div>
@@ -12935,6 +12936,49 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       el.style.width = os + 'px';
       el.style.height = os + 'px';
       el.style.boxShadow = '0 1px 4px rgba(0,0,0,0.3)';
+    }
+  }
+
+  // Temporary diagnostic — picks a property the list endpoint says has open
+  // violations, fetches the same property's detail endpoint, and shows the
+  // mismatch (if any) in a popup. Ship this until the underlying bug is fixed,
+  // then strip the button + this function.
+  async function inspDiagnoseDetailMismatch() {
+    try {
+      const props = window.inspProperties || [];
+      const withViolations = props.filter((p) => (p.violation_count_open || 0) > 0);
+      if (withViolations.length === 0) {
+        alert('No properties on this map have open violations per the list endpoint.\nNothing to diagnose.');
+        return;
+      }
+      const sample = withViolations.slice(0, 3);
+      const results = [];
+      for (const p of sample) {
+        try {
+          const r = await fetch('/api/inspections/property-detail/' + encodeURIComponent(p.property_id));
+          const j = await r.json().catch(() => ({ _parse_error: true }));
+          results.push({
+            addr: p.street_address,
+            property_id: p.property_id,
+            list_open: p.violation_count_open,
+            list_ytd: p.violation_count_ytd,
+            list_lifetime: p.violation_count_lifetime,
+            list_worst_stage: p.worst_open_stage,
+            http_status: r.status,
+            detail_open: j && j.counts && j.counts.violations_open,
+            detail_lifetime: j && j.counts && j.counts.violations_lifetime,
+            detail_arr_len: j && j.violations ? j.violations.length : null,
+            detail_error: j && j.error,
+          });
+        } catch (e) {
+          results.push({ addr: p.street_address, property_id: p.property_id, fetch_error: e.message });
+        }
+      }
+      const lines = results.map((r) => JSON.stringify(r, null, 2)).join('\n\n');
+      alert('DETAIL MISMATCH DIAGNOSIS (3 properties)\n\n' + lines);
+      console.log('[diagnose] results:', results);
+    } catch (e) {
+      alert('Diagnostic failed: ' + e.message);
     }
   }
 
