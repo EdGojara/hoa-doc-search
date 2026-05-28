@@ -128,9 +128,13 @@ CREATE INDEX IF NOT EXISTS idx_cmack_user_acked
 CREATE INDEX IF NOT EXISTS idx_cmack_user_community
   ON community_map_acknowledgments (user_id, community_id, acked_at DESC);
 -- Hot path: "does this user have an unexpired ack right now?"
+-- NOTE: Postgres doesn't allow NOW() in an index predicate (functions in
+-- index predicates must be IMMUTABLE; NOW() is STABLE). We use a plain
+-- composite index — the expires_at filter happens at view-SELECT time
+-- in v_active_community_map_acks, and the planner still picks this index
+-- for those reads.
 CREATE INDEX IF NOT EXISTS idx_cmack_active
-  ON community_map_acknowledgments (user_id, community_id, expires_at)
-  WHERE expires_at IS NULL OR expires_at > NOW();
+  ON community_map_acknowledgments (user_id, community_id, expires_at);
 
 COMMENT ON TABLE community_map_acknowledgments IS
   'Workpaper. Confidentiality acknowledgments captured at Community Map access time. Documents existing fiduciary duty — does not create new duty. A user''s own ack history is inspectable on request.';
