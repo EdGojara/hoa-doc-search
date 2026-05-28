@@ -895,6 +895,14 @@ app.use('/api/community-contacts', communityContactsRouter);
 const { router: meetingCheckinRouter } = require('./api/meeting_checkin');
 app.use('/api/meeting-checkin', meetingCheckinRouter);
 
+// Community Map — per-community geographic view with layers (occupancy,
+// AR, DRV, ACC). Staff-gated for now via the global STAFF_GATE middleware;
+// board-portal auth + role-gated property panel ships in Phase 4. Every
+// request writes to community_map_access_log so the audit trail exists
+// from request #1. See migration 121.
+const { router: communityMapRouter } = require('./api/community_map');
+app.use('/api/community-map', communityMapRouter);
+
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));
