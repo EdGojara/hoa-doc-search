@@ -6451,6 +6451,342 @@
 </div>
 
 <!-- =========================================================================
+     APPRAISAL TAB — FBCAD / HCAD bulk import + cross-reference
+     Drop a county property roll CSV → AI detects column mapping → preview
+     match diff → approve → snapshot persists to appraisal_records. New
+     records light up the Community Map's tenure / investor / value /
+     recent_sale layers automatically. See migration 122 + api/appraisal.js.
+     ========================================================================= -->
+<div class="tab-content" id="tab-appraisal" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+  <div style="max-width: 1080px; margin: 0 auto;">
+    <div style="margin-bottom: 18px;">
+      <h2 style="margin: 0; font-size: 22px; color: #1A3050;">🏛️ County Appraisal Records</h2>
+      <p style="margin: 6px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
+        Drop a FBCAD or HCAD property roll CSV for a community — the system AI-detects the column mapping, matches each row to a property in the spine, and shows you the preview before anything persists. Approved records light up the Community Map's <strong>tenure / investor / value / recent-sale</strong> layers and surface "per county" ownership for cross-reference against Vantaca. County records are CANONICAL for legal ownership; Vantaca is canonical for the assessment payer.
+      </p>
+    </div>
+
+    <!-- Coverage banner — how much of each community has appraisal data -->
+    <div class="panel" id="appraisal-coverage-panel" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="margin: 0;">📊 Coverage by community</h3>
+        <button class="secondary-btn" onclick="apprLoadCoverage()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+      <div id="appraisal-coverage-list" style="font-size:13px; color:#6B7280;">Loading…</div>
+    </div>
+
+    <!-- Upload area -->
+    <div class="panel" style="margin-bottom: 16px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+        <h3 style="margin: 0;">📥 Upload county roll</h3>
+      </div>
+      <div style="display: flex; gap: 10px; align-items: center; margin-bottom: 10px; flex-wrap: wrap;">
+        <label style="font-size: 12px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Community</label>
+        <select id="appraisal-community-select" style="flex: 1; min-width: 220px; padding: 8px 10px; font-size: 14px; border: 1px solid #d0d7de; border-radius: 6px;">
+          <option value="">Loading…</option>
+        </select>
+        <label style="font-size: 12px; color: #6B7280; font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em;">Pull date</label>
+        <input type="date" id="appraisal-pull-date-override" style="padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;" title="As-of date for the county roll. Auto-detected when possible; override here if needed.">
+      </div>
+      <div id="appraisal-dropzone"
+           ondrop="apprHandleDrop(event)"
+           ondragover="event.preventDefault(); this.style.borderColor='#1A3050'; this.style.background='#eef3f9';"
+           ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#fafafa';"
+           style="border: 2px dashed #d0d7de; border-radius: 8px; padding: 28px; text-align: center; background: #fafafa; cursor: pointer; transition: all 120ms;"
+           onclick="document.getElementById('appraisal-file-input').click();">
+        <div style="font-size: 26px;">🏛️</div>
+        <div style="font-size: 13.5px; font-weight: 600; color: #1A3050; margin-top: 6px;">Drop a FBCAD / HCAD property roll CSV here</div>
+        <div style="font-size: 12px; color: #6B7280; margin-top: 4px;">
+          or click to pick a file · <strong>tip:</strong> filter the full county roll to your community's ZIP in Excel before uploading
+        </div>
+        <input type="file" id="appraisal-file-input" accept=".csv,text/csv" style="display:none;" onchange="apprHandleFile(this.files[0])">
+      </div>
+      <div id="appraisal-upload-status" style="margin-top: 10px; font-size: 12.5px;"></div>
+    </div>
+
+    <!-- Preview panel: rendered after a successful /ingest -->
+    <div class="panel" id="appraisal-preview-panel" style="display:none; margin-bottom: 16px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; flex-wrap:wrap;">
+        <div>
+          <h3 style="margin:0;">Review extraction</h3>
+          <div id="appraisal-preview-summary" style="font-size:13px; color:#6B7280; margin-top:4px;"></div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button class="secondary-btn" onclick="apprDiscardBatch()">✕ Discard</button>
+          <button class="action-btn" onclick="apprApproveBatch()">✓ Approve &amp; publish</button>
+        </div>
+      </div>
+      <div id="appraisal-mapping-display" style="margin-top:10px; font-size:11px; color:#64748b; font-family:monospace;"></div>
+      <div id="appraisal-preview-table-wrap" style="margin-top:12px; overflow-x:auto;"></div>
+    </div>
+
+    <!-- Ingest history -->
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <h3 style="margin:0;">📋 Ingest history</h3>
+        <button class="secondary-btn" onclick="apprLoadBatches()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+      <div id="appraisal-batches-list" style="font-size:13px; color:#6B7280;">Loading…</div>
+    </div>
+  </div>
+
+  <script>
+    let apprCurrentBatchId = null;
+    let apprCurrentCommunityId = null;
+
+    async function apprLoadCommunities() {
+      try {
+        const r = await fetch('/api/communities');
+        const j = await r.json();
+        const list = (j.communities || []).filter(Boolean);
+        const sel = document.getElementById('appraisal-community-select');
+        sel.innerHTML = '<option value="">— pick a community —</option>' +
+          list.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+        sel.onchange = () => {
+          apprCurrentCommunityId = sel.value || null;
+          apprLoadBatches();
+        };
+      } catch (e) { console.warn('[appraisal] communities load', e); }
+    }
+
+    async function apprLoadCoverage() {
+      const wrap = document.getElementById('appraisal-coverage-list');
+      if (!wrap) return;
+      wrap.innerHTML = '<div style="color:#6B7280;">Loading…</div>';
+      try {
+        // Pull community list, then coverage stats per community
+        const cr = await fetch('/api/communities');
+        const cj = await cr.json();
+        const comms = (cj.communities || []).filter(Boolean);
+        const stats = await Promise.all(comms.map(async (c) => {
+          try {
+            const r = await fetch(`/api/appraisal/community/${encodeURIComponent(c.id)}/coverage`);
+            const j = await r.json();
+            return { ...c, ...j };
+          } catch (_) { return { ...c, total_properties: 0, with_appraisal_data: 0, coverage_pct: 0, latest_pull_date: null }; }
+        }));
+        wrap.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <tbody>
+              ${stats.map((c) => {
+                const pct = c.coverage_pct || 0;
+                let badge;
+                if (c.total_properties === 0) badge = { bg: '#f1f5f9', fg: '#475569', txt: 'No properties' };
+                else if (pct === 0)           badge = { bg: '#f1f5f9', fg: '#475569', txt: 'No county data yet' };
+                else if (pct < 80)            badge = { bg: '#fef3c7', fg: '#78350f', txt: `${pct}% coverage` };
+                else                          badge = { bg: '#dcfce7', fg: '#166534', txt: `${pct}% coverage` };
+                const dateStr = c.latest_pull_date ? `last pull ${c.latest_pull_date}` : '';
+                return `<tr style="border-bottom:1px solid #f1f5f9;">
+                  <td style="padding:8px 10px; font-weight:600; color:#1A3050;">${escapeHtml(c.name)}</td>
+                  <td style="padding:8px 10px; color:#475569;">${c.with_appraisal_data} of ${c.total_properties} properties · ${dateStr}</td>
+                  <td style="padding:8px 10px; text-align:right;">
+                    <span style="background:${badge.bg}; color:${badge.fg}; padding:3px 10px; border-radius:99px; font-size:11px; font-weight:600;">${badge.txt}</span>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+          <div style="font-size:11px; color:#94a3b8; margin-top:10px; line-height:1.5;">
+            Cadence: county certified rolls publish annually (FBCAD ~July, HCAD ~May). Re-pull quarterly if you want to catch mid-year deed transfers earlier. Pull filtered CSVs from <a href="https://fbcad.org/" target="_blank" style="color:#1A3050;">FBCAD</a> and <a href="https://hcad.org/" target="_blank" style="color:#1A3050;">HCAD</a> open-data portals.
+          </div>
+        `;
+      } catch (e) {
+        wrap.innerHTML = `<div style="color:#b91c1c;">Failed to load: ${escapeHtml(e.message || 'unknown')}</div>`;
+      }
+    }
+
+    function apprHandleDrop(e) {
+      e.preventDefault();
+      const dropzone = document.getElementById('appraisal-dropzone');
+      dropzone.style.borderColor = '#d0d7de';
+      dropzone.style.background = '#fafafa';
+      const file = e.dataTransfer.files[0];
+      if (file) apprHandleFile(file);
+    }
+
+    async function apprHandleFile(file) {
+      if (!file) return;
+      const statusEl = document.getElementById('appraisal-upload-status');
+      const sel = document.getElementById('appraisal-community-select');
+      const pullDateEl = document.getElementById('appraisal-pull-date-override');
+      if (!sel.value) {
+        statusEl.innerHTML = '<span style="color:#b91c1c;">Pick a community first.</span>';
+        return;
+      }
+      apprCurrentCommunityId = sel.value;
+
+      statusEl.innerHTML = '⏳ Parsing CSV + detecting column mapping…';
+      const fd = new FormData();
+      fd.append('csv', file);
+      fd.append('community_id', sel.value);
+      if (pullDateEl.value) fd.append('pull_date', pullDateEl.value);
+
+      try {
+        const r = await fetch('/api/appraisal/ingest', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        apprCurrentBatchId = j.batch_id;
+        statusEl.innerHTML = `<span style="color:#15803d;">✓ Parsed ${j.total_rows} rows · ${j.rows_matched_property} matched · ${j.rows_unmatched} unmatched · county detected as ${j.county_source}.</span>`;
+        apprRenderPreview(j);
+      } catch (e) {
+        statusEl.innerHTML = `<span style="color:#b91c1c;">Failed: ${escapeHtml(e.message)}</span>`;
+      }
+    }
+
+    function apprRenderPreview(j) {
+      const panel = document.getElementById('appraisal-preview-panel');
+      const summary = document.getElementById('appraisal-preview-summary');
+      const mappingDiv = document.getElementById('appraisal-mapping-display');
+      const wrap = document.getElementById('appraisal-preview-table-wrap');
+      panel.style.display = 'block';
+      summary.innerHTML = `<strong>${j.county_source}</strong> · pull date ${j.pull_date} · ${j.total_rows} rows · ${j.rows_matched_property} match property spine`;
+      mappingDiv.textContent = 'Column mapping: ' + Object.entries(j.column_mapping || {}).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(' · ');
+
+      const rows = j.preview_rows || [];
+      wrap.innerHTML = `
+        <table style="width:100%; border-collapse:collapse; font-size:12px;">
+          <thead>
+            <tr style="background:#f1f5fb;">
+              <th style="text-align:left; padding:6px 8px;">Match</th>
+              <th style="text-align:left; padding:6px 8px;">Property address (CSV)</th>
+              <th style="text-align:left; padding:6px 8px;">Spine match</th>
+              <th style="text-align:left; padding:6px 8px;">Owner (county)</th>
+              <th style="text-align:left; padding:6px 8px;">Acquired</th>
+              <th style="text-align:right; padding:6px 8px;">Assessed</th>
+              <th style="text-align:left; padding:6px 8px;">Parcel</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((r) => {
+              const matchedBadge = r.property_id
+                ? '<span style="background:#dcfce7; color:#166534; padding:1px 7px; border-radius:99px; font-size:10px;">✓</span>'
+                : '<span style="background:#fee2e2; color:#7f1d1d; padding:1px 7px; border-radius:99px; font-size:10px;">✕</span>';
+              return `<tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:5px 8px;">${matchedBadge}</td>
+                <td style="padding:5px 8px;">${escapeHtml(r.property_address || '—')}</td>
+                <td style="padding:5px 8px; color:#475569;">${escapeHtml(r.matched_address || '—')}</td>
+                <td style="padding:5px 8px;">${escapeHtml(r.owner_name || '—')}</td>
+                <td style="padding:5px 8px;">${escapeHtml(r.acquisition_date || '—')}</td>
+                <td style="padding:5px 8px; text-align:right;">${r.assessed_value_current ? '$' + Number(r.assessed_value_current).toLocaleString() : '—'}</td>
+                <td style="padding:5px 8px; color:#94a3b8;">${escapeHtml(r.parcel_number || '—')}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        ${j.preview_truncated ? '<div style="font-size:11px; color:#94a3b8; margin-top:6px;">Preview limited to first 50 rows. The full batch will commit on approve.</div>' : ''}
+      `;
+    }
+
+    async function apprApproveBatch() {
+      if (!apprCurrentBatchId) return;
+      try {
+        const r = await fetch(`/api/appraisal/ingest/${apprCurrentBatchId}/approve`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({}),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        alert(`✓ Approved — ${j.records_written} records written. Community Map's tenure/investor/value layers will now show real data.`);
+        document.getElementById('appraisal-preview-panel').style.display = 'none';
+        document.getElementById('appraisal-upload-status').innerHTML = '';
+        apprCurrentBatchId = null;
+        apprLoadBatches();
+        apprLoadCoverage();
+      } catch (e) { alert('Approve failed: ' + e.message); }
+    }
+
+    async function apprDiscardBatch() {
+      if (!apprCurrentBatchId) return;
+      try {
+        await fetch(`/api/appraisal/ingest/${apprCurrentBatchId}/discard`, { method: 'POST' });
+        document.getElementById('appraisal-preview-panel').style.display = 'none';
+        document.getElementById('appraisal-upload-status').innerHTML = '';
+        apprCurrentBatchId = null;
+        apprLoadBatches();
+      } catch (e) { alert('Discard failed: ' + e.message); }
+    }
+
+    async function apprLoadBatches() {
+      const wrap = document.getElementById('appraisal-batches-list');
+      if (!wrap) return;
+      wrap.innerHTML = '<div style="color:#6B7280;">Loading…</div>';
+      try {
+        const url = apprCurrentCommunityId
+          ? `/api/appraisal/batches?community_id=${encodeURIComponent(apprCurrentCommunityId)}`
+          : '/api/appraisal/batches';
+        const r = await fetch(url);
+        const j = await r.json();
+        const batches = j.batches || [];
+        if (!batches.length) {
+          wrap.innerHTML = '<div style="color:#6B7280; font-style:italic;">No imports yet. Upload your first FBCAD/HCAD CSV above.</div>';
+          return;
+        }
+        wrap.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead>
+              <tr style="background:#f1f5fb;">
+                <th style="text-align:left; padding:6px 10px;">Uploaded</th>
+                <th style="text-align:left; padding:6px 10px;">County</th>
+                <th style="text-align:left; padding:6px 10px;">Pull date</th>
+                <th style="text-align:left; padding:6px 10px;">File</th>
+                <th style="text-align:right; padding:6px 10px;">Rows</th>
+                <th style="text-align:right; padding:6px 10px;">Matched</th>
+                <th style="text-align:left; padding:6px 10px;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${batches.map((b) => {
+                const statusBg = b.status === 'approved' ? '#dcfce7' : b.status === 'discarded' ? '#fee2e2' : '#fef3c7';
+                const statusFg = b.status === 'approved' ? '#166534' : b.status === 'discarded' ? '#7f1d1d' : '#78350f';
+                return `<tr style="border-bottom:1px solid #f1f5f9;">
+                  <td style="padding:5px 10px;">${new Date(b.uploaded_at).toLocaleString('en-US')}</td>
+                  <td style="padding:5px 10px;">${escapeHtml(b.county_source || '—')}</td>
+                  <td style="padding:5px 10px;">${escapeHtml(b.pull_date || '—')}</td>
+                  <td style="padding:5px 10px;">${escapeHtml(b.source_filename || '—')}</td>
+                  <td style="padding:5px 10px; text-align:right;">${b.total_rows}</td>
+                  <td style="padding:5px 10px; text-align:right;">${b.rows_matched_property} / ${b.total_rows}</td>
+                  <td style="padding:5px 10px;">
+                    <span style="background:${statusBg}; color:${statusFg}; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:600;">${b.status}</span>
+                  </td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        wrap.innerHTML = `<div style="color:#b91c1c;">Failed to load: ${escapeHtml(e.message || 'unknown')}</div>`;
+      }
+    }
+
+    // Auto-load on tab open. Same safe pattern as other tabs.
+    function _apprWireSwitchTabHook() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      if (window._apprSwitchTabPatched) return true;
+      window._apprSwitchTabPatched = true;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'appraisal') {
+          try { apprLoadCommunities(); } catch (e) { console.warn('[appraisal] load communities', e); }
+          try { apprLoadCoverage(); }    catch (e) { console.warn('[appraisal] load coverage', e); }
+          try { apprLoadBatches(); }     catch (e) { console.warn('[appraisal] load batches', e); }
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_apprWireSwitchTabHook()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _apprWireSwitchTabHook);
+      } else {
+        setTimeout(_apprWireSwitchTabHook, 0);
+      }
+    }
+  </script>
+</div>
+
+<!-- =========================================================================
      BOARD PACKETS TAB — Bedrock board packet generator
      Pick community + period, fill 11 canonical sections via manual / upload /
      auto-from-trustEd, render as a branded packet for board meetings.
@@ -11107,10 +11443,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:14px 18px; margin-bottom:14px;">
     <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
       <span style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; margin-right:4px;">Color by</span>
-      <button class="cmap-chip active" data-layer="occupancy" onclick="cmapSetActiveLayer('occupancy')" type="button">🏠 Occupancy</button>
-      <button class="cmap-chip"        data-layer="ar"        onclick="cmapSetActiveLayer('ar')"        type="button">💵 AR</button>
-      <button class="cmap-chip"        data-layer="drv"       onclick="cmapSetActiveLayer('drv')"       type="button">⚠️ DRV</button>
-      <button class="cmap-chip"        data-layer="acc"       onclick="cmapSetActiveLayer('acc')"       type="button">🏗️ ACC</button>
+      <button class="cmap-chip active" data-layer="occupancy"   onclick="cmapSetActiveLayer('occupancy')"   type="button">🏠 Occupancy</button>
+      <button class="cmap-chip"        data-layer="ar"          onclick="cmapSetActiveLayer('ar')"          type="button">💵 AR</button>
+      <button class="cmap-chip"        data-layer="drv"         onclick="cmapSetActiveLayer('drv')"         type="button">⚠️ DRV</button>
+      <button class="cmap-chip"        data-layer="acc"         onclick="cmapSetActiveLayer('acc')"         type="button">🏗️ ACC</button>
+      <button class="cmap-chip"        data-layer="tenure"      onclick="cmapSetActiveLayer('tenure')"      type="button">📅 Tenure</button>
+      <button class="cmap-chip"        data-layer="investor"    onclick="cmapSetActiveLayer('investor')"    type="button">🏢 Investor</button>
+      <button class="cmap-chip"        data-layer="value"       onclick="cmapSetActiveLayer('value')"       type="button">💎 Value</button>
+      <button class="cmap-chip"        data-layer="recent_sale" onclick="cmapSetActiveLayer('recent_sale')" type="button">🔄 Recent sale</button>
 
       <!-- Basemap toggle — canonical 3-button pattern matching reserve-map.html -->
       <div id="cmapBasemapToggle" style="margin-left:auto; display:flex; gap:4px; background:#f1f5f9; padding:3px; border-radius:6px;">
@@ -23751,9 +24091,10 @@ ${questionsPage}
       // which is for board workflow outputs (packets, recaps, agendas).
       label: '🏘️ Community Profile',
       children: [
-        { id: 'profile', label: '🏘️ Profile' },
-        { id: 'homes',   label: '🏠 Homes & Owners' },
-        { id: 'roster',  label: '👥 Board Roster' },
+        { id: 'profile',   label: '🏘️ Profile' },
+        { id: 'homes',     label: '🏠 Homes & Owners' },
+        { id: 'roster',    label: '👥 Board Roster' },
+        { id: 'appraisal', label: '🏛️ Appraisal' },
       ],
     },
     office: {
@@ -26644,6 +26985,50 @@ ${questionsPage}
     return                       { color: '#1A3050', label: '8+ decisions' };
   }
 
+  // ---- Tenure: how long the current owner has held the property ----
+  // Pulled from FBCAD/HCAD acquisition_date in v_appraisal_property_summary.
+  // NULL when no county data yet — grey pin.
+  const CMAP_TENURE_COLORS = {
+    new:        { color: '#E0844B', label: '< 1 year' },
+    short:      { color: '#C9A53A', label: '1–3 years' },
+    medium:     { color: '#94B3C7', label: '4–7 years' },
+    long:       { color: '#5A7FA0', label: '8–14 years' },
+    very_long:  { color: '#1A3050', label: '15+ years' },
+    unknown:    { color: '#cbd5e1', label: 'No county data' },
+  };
+  // ---- Investor flag: county records show owner mailing ≠ property address ----
+  // Cleaner than the Vantaca-inferred renter flag because the county has the
+  // actual statutory mailing address on file.
+  const CMAP_INVESTOR_COLORS = {
+    owner_at_property: { color: '#4FA37A', label: 'Owner lives at property' },
+    investor:          { color: '#D97A2D', label: 'Mailing address elsewhere (investor likely)' },
+    unknown:           { color: '#cbd5e1', label: 'No county data' },
+  };
+  // ---- Value: assessed value bucket (per-community tertiles) ----
+  const CMAP_VALUE_COLORS = {
+    low:     { color: '#94B3C7', label: 'Lower third' },
+    mid:     { color: '#5A7FA0', label: 'Middle third' },
+    high:    { color: '#1A3050', label: 'Upper third' },
+    unknown: { color: '#cbd5e1', label: 'No county data' },
+  };
+  // ---- Recent sale: changed hands within last 365 days ----
+  const CMAP_RECENT_SALE_COLORS = {
+    yes:     { color: '#D97A2D', label: 'Sold in last 12 months' },
+    no:      { color: '#94B3C7', label: 'Same owner 12+ months' },
+    unknown: { color: '#cbd5e1', label: 'No county data' },
+  };
+
+  function cmapInvestorBucket(p) {
+    if (p.investor_flag === true) return 'investor';
+    if (p.investor_flag === false) return 'owner_at_property';
+    return 'unknown';
+  }
+  function cmapRecentSaleBucket(p) {
+    if (p.recently_sold === true) return 'yes';
+    if (p.recently_sold === false) return 'no';
+    return 'unknown';
+  }
+
   function cmapPinColor(p) {
     switch (cmapState.activeLayer) {
       case 'occupancy':
@@ -26654,6 +27039,14 @@ ${questionsPage}
         return (CMAP_DRV_COLORS[p.drv_status] || CMAP_DRV_COLORS.none).color;
       case 'acc':
         return cmapAccColor(p.acc_decisions_count).color;
+      case 'tenure':
+        return (CMAP_TENURE_COLORS[p.tenure_bucket || 'unknown']).color;
+      case 'investor':
+        return CMAP_INVESTOR_COLORS[cmapInvestorBucket(p)].color;
+      case 'value':
+        return (CMAP_VALUE_COLORS[p.value_bucket || 'unknown']).color;
+      case 'recent_sale':
+        return CMAP_RECENT_SALE_COLORS[cmapRecentSaleBucket(p)].color;
       default:
         return '#94a3b8';
     }
@@ -26903,6 +27296,14 @@ ${questionsPage}
         ['some',  cmapAccColor(5)],
         ['many',  cmapAccColor(10)],
       ];
+    } else if (cmapState.activeLayer === 'tenure') {
+      entries = Object.entries(CMAP_TENURE_COLORS);
+    } else if (cmapState.activeLayer === 'investor') {
+      entries = Object.entries(CMAP_INVESTOR_COLORS);
+    } else if (cmapState.activeLayer === 'value') {
+      entries = Object.entries(CMAP_VALUE_COLORS);
+    } else if (cmapState.activeLayer === 'recent_sale') {
+      entries = Object.entries(CMAP_RECENT_SALE_COLORS);
     } else {
       entries = [];
     }
@@ -26921,6 +27322,10 @@ ${questionsPage}
         else if (c <= 7)  key = 'some';
         else              key = 'many';
       }
+      else if (cmapState.activeLayer === 'tenure')      key = p.tenure_bucket || 'unknown';
+      else if (cmapState.activeLayer === 'investor')    key = cmapInvestorBucket(p);
+      else if (cmapState.activeLayer === 'value')       key = p.value_bucket || 'unknown';
+      else if (cmapState.activeLayer === 'recent_sale') key = cmapRecentSaleBucket(p);
       if (key) countsByKey.set(key, (countsByKey.get(key) || 0) + 1);
     }
 
@@ -27049,17 +27454,72 @@ ${questionsPage}
       </div>
       ${section('Owner', ownerBlock)}
       ${section('Occupancy', `<div style="font-size:13px; color:#1a1a1a;">${escapeHtml(occLine)}</div>`)}
+      <div id="cmapAppraisalSection"></div>
       ${section('Accounts receivable', arBlock + '<div id="cmapArSparkline" style="margin-top:10px; height:48px;"></div>')}
       ${section('Open violations', violationsBlock)}
       ${section('ARC history', `<div style="font-size:12.5px; color:#475569;">${escapeHtml(accLine)}${p.last_arc_decided_at ? ` · last ${fmtDate(p.last_arc_decided_at)}` : ''}</div>`)}
       ${section('Recent interactions', interactionsBlock)}
     `;
 
+    // Fetch and render the latest appraisal record. Non-blocking — section
+    // stays empty if no county data exists for this property yet.
+    cmapRenderAppraisalSection(p.property_id);
+
     // Fetch and render the 12-month AR history sparkline. Non-blocking — the
     // side panel renders immediately; the sparkline fills in when the
     // history endpoint returns. If the property has 0 or 1 snapshot, we
     // skip the chart (no trend to show).
     cmapRenderArSparkline(p.property_id);
+  }
+
+  async function cmapRenderAppraisalSection(propertyId) {
+    const el = document.getElementById('cmapAppraisalSection');
+    if (!el) return;
+    try {
+      const r = await fetch(`/api/appraisal/property/${encodeURIComponent(propertyId)}/history`);
+      const j = await r.json();
+      const history = j.history || [];
+      if (history.length === 0) {
+        // No county data — render nothing (graceful empty state)
+        el.innerHTML = '';
+        return;
+      }
+      const latest = history[0];
+      const fmtMoney = (v) => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
+      const fmtDate = (v) => v ? new Date(v).toLocaleDateString('en-US') : '—';
+      const tenureYrs = latest.acquisition_date
+        ? Math.floor((Date.now() - Date.parse(latest.acquisition_date)) / (365.25 * 86400000))
+        : null;
+      // Look up the property from the cached layer data to get the address
+      // for the investor-flag badge — avoids a second fetch.
+      const propRecord = cmapState.properties.find((x) => x.property_id === propertyId);
+      const investorBadge = (propRecord && propRecord.investor_flag === true)
+        ? '<span style="background:#fef3c7; color:#78350f; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:600; margin-left:6px;">Mailing address elsewhere</span>'
+        : '';
+      el.innerHTML = `
+        <div style="margin-bottom:16px;">
+          <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">
+            County appraisal (${escapeHtml(latest.county_source || 'OTHER')})
+            <span style="font-weight:400; text-transform:none; color:#94a3b8;"> · as of ${fmtDate(latest.pull_date)}</span>
+          </div>
+          <div style="font-size:13px; color:#1a1a1a; line-height:1.7;">
+            <div><strong>Per county owner:</strong> ${escapeHtml(latest.owner_name_appraisal || '—')}${investorBadge}</div>
+            ${latest.parcel_number ? `<div style="font-size:11.5px; color:#94a3b8;">Parcel ${escapeHtml(latest.parcel_number)}</div>` : ''}
+            ${latest.acquisition_date ? `<div>Acquired ${fmtDate(latest.acquisition_date)}${tenureYrs != null ? ` · ${tenureYrs} years` : ''}${latest.sale_price ? ` for ${fmtMoney(latest.sale_price)}` : ''}</div>` : ''}
+            ${latest.assessed_value_current ? `<div>Assessed value: <strong>${fmtMoney(latest.assessed_value_current)}</strong></div>` : ''}
+            ${latest.year_built || latest.building_sqft || latest.lot_sqft ? `
+              <div style="font-size:11.5px; color:#475569; margin-top:2px;">
+                ${latest.year_built ? `Built ${latest.year_built}` : ''}${latest.year_built && (latest.building_sqft || latest.lot_sqft) ? ' · ' : ''}
+                ${latest.building_sqft ? `${Number(latest.building_sqft).toLocaleString()} sqft building` : ''}${latest.building_sqft && latest.lot_sqft ? ' · ' : ''}
+                ${latest.lot_sqft ? `${Number(latest.lot_sqft).toLocaleString()} sqft lot` : ''}
+              </div>` : ''}
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      console.warn('[cmap] appraisal fetch failed', e);
+      el.innerHTML = '';
+    }
   }
 
   async function cmapRenderArSparkline(propertyId) {

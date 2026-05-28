@@ -903,6 +903,14 @@ app.use('/api/meeting-checkin', meetingCheckinRouter);
 const { router: communityMapRouter } = require('./api/community_map');
 app.use('/api/community-map', communityMapRouter);
 
+// Appraisal Records — FBCAD/HCAD bulk import + cross-reference. Imports
+// county appraisal data (acquisition dates, sale prices, assessed values,
+// owner mailing address) keyed to the property spine. Powers new map
+// layers (tenure, investor flag, assessed value, recent sale) and catches
+// missed deed transfers Vantaca didn't pick up. See migration 122.
+const { router: appraisalRouter } = require('./api/appraisal');
+app.use('/api/appraisal', appraisalRouter);
+
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'clubhouse.html'));

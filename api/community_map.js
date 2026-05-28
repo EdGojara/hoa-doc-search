@@ -51,7 +51,7 @@ const router = express.Router();
 // Layer keys recognized by GET /:communityId/layers. Unknown keys are
 // silently dropped (forgiving rather than 400 — the frontend may be ahead
 // of the backend on a deploy).
-const VALID_LAYERS = new Set(['occupancy', 'ar', 'drv', 'acc']);
+const VALID_LAYERS = new Set(['occupancy', 'ar', 'drv', 'acc', 'tenure', 'investor', 'value', 'recent_sale']);
 
 // Acknowledgment policy. Bumping ACK_VERSION forces every user to re-ack
 // before the next access (frontend reads /acknowledge/status, sees expired,
@@ -234,6 +234,40 @@ router.get('/:communityId/layers', async (req, res) => {
     if (pErr) throw pErr;
     const coordsById = new Map((coordRows || []).map((r) => [r.id, { lat: r.latitude, lng: r.longitude }]));
 
+    // Appraisal layer data — comes from v_appraisal_property_summary, which
+    // joins properties + latest appraisal + computed tenure_bucket +
+    // investor_flag + recently_sold. NULL appraisal columns indicate no
+    // approved record yet for that property (graceful — UI shows grey pins).
+    const { data: apprRows, error: apErr } = await supabase
+      .from('v_appraisal_property_summary')
+      .select('property_id, county_source, parcel_number, owner_name_appraisal, owner_mailing_address, acquisition_date, sale_price, assessed_value_current, tenure_years, tenure_bucket, investor_flag, recently_sold, pull_date, days_since_pull')
+      .eq('community_id', communityId)
+      .limit(5000);
+    // Non-fatal — appraisal data may not exist yet. Log + continue.
+    if (apErr) console.warn('[community-map] appraisal join failed (non-fatal):', apErr.message);
+    const apprById = new Map((apprRows || []).map((r) => [r.property_id, r]));
+
+    // Pre-compute the assessed-value bucket per community. We bucket relative
+    // to the community's own median, not an absolute dollar threshold, because
+    // "expensive" in LPF ≠ "expensive" in Waterview. Tertiles: bottom / middle / top.
+    const valuesInCommunity = (apprRows || [])
+      .map((r) => r.assessed_value_current)
+      .filter((v) => v != null && v > 0)
+      .sort((a, b) => Number(a) - Number(b));
+    let valueLowerTertile = null;
+    let valueUpperTertile = null;
+    if (valuesInCommunity.length >= 6) {
+      valueLowerTertile = valuesInCommunity[Math.floor(valuesInCommunity.length / 3)];
+      valueUpperTertile = valuesInCommunity[Math.floor((valuesInCommunity.length * 2) / 3)];
+    }
+    function bucketValue(v) {
+      if (v == null) return null;
+      if (valueLowerTertile == null) return 'mid'; // not enough data to tertile
+      if (v < valueLowerTertile) return 'low';
+      if (v > valueUpperTertile) return 'high';
+      return 'mid';
+    }
+
     // Newest AR snapshot date across the community — the UI surfaces this
     // ('AR data as of 2026-04-30') so no one mistakes a stale snapshot for
     // live ledger state. Per single-source-of-truth discipline in
@@ -255,6 +289,7 @@ router.get('/:communityId/layers', async (req, res) => {
       if (!hasGeo) propertiesWithoutGeo++;
       if (!hasGeo && !includeUngeocoded) continue;
 
+      const appr = apprById.get(r.property_id) || {};
       properties.push({
         property_id: r.property_id,
         street_address: r.street_address,
@@ -284,6 +319,17 @@ router.get('/:communityId/layers', async (req, res) => {
 
         acc_decisions_count: r.arc_decisions_count || 0,
         acc_last_decided_at: r.last_arc_decided_at || null,
+
+        // Appraisal-derived layer flags (NULL when no county data yet)
+        tenure_bucket: appr.tenure_bucket || null,
+        tenure_years: appr.tenure_years != null ? Number(appr.tenure_years) : null,
+        acquisition_date: appr.acquisition_date || null,
+        investor_flag: appr.investor_flag,                 // true/false/null
+        recently_sold: appr.recently_sold,                 // sold in last 365d
+        value_bucket: bucketValue(appr.assessed_value_current),
+        assessed_value: appr.assessed_value_current != null ? Number(appr.assessed_value_current) : null,
+        county_source: appr.county_source || null,
+        appraisal_pull_date: appr.pull_date || null,
       });
     }
 
