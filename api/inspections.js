@@ -1496,7 +1496,14 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
 
     // Run all the history queries in parallel
     const [violationsRes, interactionsRes, inspectionsRes, observationsRes] = await Promise.all([
-      // Violations with category name joined
+      // Violations with category name joined.
+      // NOTE: this select pulls Phase 7b quality columns (quality_status,
+      // confidence_weight, source, reviewed_at, review_notes) from migration
+      // 057. If 057 hasn't been applied to the live DB, PostgREST returns
+      // an error and violationsRes.data falls to null → empty array → silent
+      // "0 violations" on the detail panel. Diagnostic-first scar 2026-05-28.
+      // The fallback path below catches that and re-runs with the minimal
+      // (pre-057) column set so the panel still works.
       supabase.from('violations')
         .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, enforcement_categories(id, code, label)')
         .eq('property_id', propertyId)
@@ -1520,7 +1527,39 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         .limit(20),
     ]);
 
-    const violations = violationsRes.data || [];
+    let violations = violationsRes.data || [];
+    // Silent-failure guard: if the full select errored (most likely cause:
+    // migration 057 hasn't been applied so the Phase 7b columns are missing),
+    // log it loud and fall back to the minimal pre-057 select so the panel
+    // still surfaces the violation history. Without this fallback, the panel
+    // shows "No violations on record" while the list endpoint correctly
+    // tallies them — exactly the mismatch surfaced 2026-05-28 during
+    // Canyon Gate prep.
+    if (violationsRes.error || (violationsRes.data === null)) {
+      console.error('[inspections.property-detail] full violations select failed:', violationsRes.error && violationsRes.error.message, '— falling back to minimal select');
+      const fallback = await supabase.from('violations')
+        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, enforcement_categories(id, code, label)')
+        .eq('property_id', propertyId)
+        .order('opened_at', { ascending: false });
+      if (fallback.error) {
+        console.error('[inspections.property-detail] fallback violations select ALSO failed:', fallback.error.message);
+        return res.status(500).json({
+          error: 'violations query failed',
+          detail: fallback.error.message,
+          full_select_error: violationsRes.error && violationsRes.error.message,
+        });
+      }
+      violations = (fallback.data || []).map((v) => ({
+        ...v,
+        // Fill defaults for the Phase 7b fields the renderer expects so the
+        // UI doesn't blow up on missing properties.
+        quality_status:    'unreviewed',
+        confidence_weight: 1.0,
+        source:            'trustEd_native',
+        reviewed_at:       null,
+        review_notes:      null,
+      }));
+    }
     const interactions = interactionsRes.data || [];
     const obsRows = observationsRes.data || [];
 
