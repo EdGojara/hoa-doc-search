@@ -11548,6 +11548,116 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       width: 18px; height: 18px;
     }
   </style>
+
+  <!-- Appraisal-edit modal — per-property manual entry for the steady-state
+       workflow (Vantaca sale closes → staff verifies against FBCAD/HCAD).
+       Pre-fills with the existing record if one exists; otherwise blank. -->
+  <div id="cmapAppraisalModal"
+       style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9000; align-items:flex-start; justify-content:center; padding-top:5vh;">
+    <div style="background:#fff; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto;
+                border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,0.25);">
+      <div style="background:var(--navy, #1A3050); color:#fff; padding:14px 20px; border-radius:12px 12px 0 0;
+                  display:flex; justify-content:space-between; align-items:center;">
+        <div style="font-weight:600;">Verify / update county appraisal</div>
+        <button type="button" onclick="cmapCloseAppraisalEditor()"
+                style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer;">✕ Close</button>
+      </div>
+      <div style="padding:18px 22px;">
+        <div id="cmapAprModalAddress" style="font-size:14px; font-weight:600; color:#1A3050; margin-bottom:4px;">—</div>
+        <div style="font-size:11.5px; color:#64748b; margin-bottom:14px; line-height:1.5;">
+          Open the county's property search in a new tab and copy the values over. Pull date defaults to today; back-date if you're recording an earlier snapshot.
+        </div>
+
+        <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
+          <a id="cmapAprLookupLink" href="#" target="_blank" rel="noopener"
+             style="background:#f5f0e1; color:#1a3a5c; border:1px solid var(--gold, #D4AF37); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">
+            🔗 Look up on FBCAD
+          </a>
+          <a id="cmapAprLookupLinkHcad" href="#" target="_blank" rel="noopener"
+             style="background:#f5f0e1; color:#1a3a5c; border:1px solid var(--gold, #D4AF37); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">
+            🔗 Look up on HCAD
+          </a>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px;">
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">County</label>
+            <select id="cmapAprCounty" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+              <option value="FBCAD">FBCAD (Fort Bend)</option>
+              <option value="HCAD">HCAD (Harris)</option>
+              <option value="OTHER">OTHER</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Pull date</label>
+            <input type="date" id="cmapAprPullDate" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Parcel / account number</label>
+            <input type="text" id="cmapAprParcel" placeholder="e.g. PIDN or account #" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Owner per county</label>
+            <input type="text" id="cmapAprOwnerName" placeholder="Owner name from county records" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Owner mailing address (per county)</label>
+            <input type="text" id="cmapAprOwnerMailing" placeholder="Where the tax bill mails" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+            <div style="font-size:10.5px; color:#94a3b8; margin-top:3px;">If this differs from the property address, the investor flag fires automatically.</div>
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Acquisition date</label>
+            <input type="date" id="cmapAprAcqDate" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Sale price ($)</label>
+            <input type="number" id="cmapAprSalePrice" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Assessed value — current ($)</label>
+            <input type="number" id="cmapAprValueCurr" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Assessed value — prior year ($)</label>
+            <input type="number" id="cmapAprValuePrior" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Land value ($)</label>
+            <input type="number" id="cmapAprLandValue" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Improvement value ($)</label>
+            <input type="number" id="cmapAprImprValue" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Year built</label>
+            <input type="number" id="cmapAprYearBuilt" step="1" min="1900" max="2100" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Building sqft</label>
+            <input type="number" id="cmapAprBldgSqft" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Lot sqft</label>
+            <input type="number" id="cmapAprLotSqft" step="1" min="0" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+          <div style="grid-column: span 2;">
+            <label style="display:block; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em; font-weight:600; margin-bottom:3px;">Notes (optional)</label>
+            <input type="text" id="cmapAprNotes" placeholder="e.g. 'verified after sale close 2026-04-15'" style="width:100%; padding:7px 9px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+          </div>
+        </div>
+
+        <div id="cmapAprModalStatus" style="margin-top:14px; font-size:12px;"></div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+          <button type="button" onclick="cmapCloseAppraisalEditor()"
+                  style="background:#fff; color:#475569; border:1px solid #d0d7de; padding:7px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Cancel</button>
+          <button type="button" onclick="cmapSaveAppraisalRecord()" id="cmapAprSaveBtn"
+                  style="background:#1A3050; color:#fff; border:none; padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Save record</button>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 
 <script>
@@ -27510,8 +27620,22 @@ ${questionsPage}
       const j = await r.json();
       const history = j.history || [];
       if (history.length === 0) {
-        // No county data — render nothing (graceful empty state)
-        el.innerHTML = '';
+        // No county data — show an "Add manually" affordance so staff can
+        // populate one-property-at-a-time as ownership changes hit the desk.
+        el.innerHTML = `
+          <div style="margin-bottom:16px; padding:12px; background:#f8fafc; border:1px dashed #d0d7de; border-radius:6px;">
+            <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">
+              County appraisal
+            </div>
+            <div style="font-size:12.5px; color:#64748b; margin-bottom:8px;">
+              No county data yet for this property.
+            </div>
+            <button onclick="cmapOpenAppraisalEditor('${escapeHtml(propertyId)}', null)" type="button"
+                    style="background:#1A3050; color:#fff; border:none; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">
+              + Verify / add from county
+            </button>
+          </div>
+        `;
         return;
       }
       const latest = history[0];
@@ -27528,9 +27652,15 @@ ${questionsPage}
         : '';
       el.innerHTML = `
         <div style="margin-bottom:16px;">
-          <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">
-            County appraisal (${escapeHtml(latest.county_source || 'OTHER')})
-            <span style="font-weight:400; text-transform:none; color:#94a3b8;"> · as of ${fmtDate(latest.pull_date)}</span>
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+            <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em;">
+              County appraisal (${escapeHtml(latest.county_source || 'OTHER')})
+              <span style="font-weight:400; text-transform:none; color:#94a3b8;"> · as of ${fmtDate(latest.pull_date)}</span>
+            </div>
+            <button onclick='cmapOpenAppraisalEditor(${JSON.stringify(propertyId)}, ${JSON.stringify(latest)})' type="button"
+                    style="background:transparent; color:#1A3050; border:1px solid #d0d7de; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">
+              ✎ Verify / update
+            </button>
           </div>
           <div style="font-size:13px; color:#1a1a1a; line-height:1.7;">
             <div><strong>Per county owner:</strong> ${escapeHtml(latest.owner_name_appraisal || '—')}${investorBadge}</div>
@@ -27621,6 +27751,135 @@ ${questionsPage}
     } catch (e) {
       console.warn('[cmap] ar sparkline fetch failed', e);
       el.innerHTML = '';
+    }
+  }
+
+  // ---- Per-property appraisal editor (steady-state workflow) ----
+  // Opens a modal pre-filled with the existing record (or blank for first-
+  // time entry). Auto-detects FBCAD vs HCAD based on community zip + a
+  // simple Fort-Bend/Harris heuristic. The "🔗 Look up on FBCAD/HCAD"
+  // buttons open the county's esearch in a new tab with the property
+  // address pre-filled so operator can copy values across.
+  function cmapOpenAppraisalEditor(propertyId, existingLatest) {
+    const modal = document.getElementById('cmapAppraisalModal');
+    if (!modal) return;
+    window._cmapAprActivePropertyId = propertyId;
+
+    const propRecord = cmapState.properties.find((x) => x.property_id === propertyId);
+    const addr = propRecord
+      ? `${propRecord.street_address || ''}${propRecord.unit ? ' #' + propRecord.unit : ''}`
+      : '(unknown)';
+    document.getElementById('cmapAprModalAddress').textContent = addr;
+
+    // Default county: prefer existing, else derive from community (Canyon
+    // Gate / LPF / Quail Ridge / Still Creek = Fort Bend; Waterview /
+    // Eaglewood / August Meadows = Harris). Operator can override.
+    const communityName = (cmapState.properties[0] && cmapState.properties[0].community_name) || '';
+    const fortBend = ['Canyon Gate', 'Lakes of Pine Forest', 'Quail Ridge', 'Still Creek'];
+    const probablyFortBend = fortBend.some((s) => communityName.includes(s)) || (propRecord && propRecord.county_source === 'FBCAD');
+    const probablyHarris = !probablyFortBend && (propRecord && propRecord.county_source === 'HCAD');
+    const defaultCounty = (existingLatest && existingLatest.county_source)
+      ? existingLatest.county_source
+      : (probablyFortBend ? 'FBCAD' : (probablyHarris ? 'HCAD' : 'OTHER'));
+
+    // Fill / clear all fields
+    document.getElementById('cmapAprCounty').value = defaultCounty;
+    document.getElementById('cmapAprPullDate').value = (existingLatest && existingLatest.pull_date) || new Date().toISOString().slice(0, 10);
+    document.getElementById('cmapAprParcel').value = (existingLatest && existingLatest.parcel_number) || '';
+    document.getElementById('cmapAprOwnerName').value = (existingLatest && existingLatest.owner_name_appraisal) || '';
+    document.getElementById('cmapAprOwnerMailing').value = (existingLatest && existingLatest.owner_mailing_address) || '';
+    document.getElementById('cmapAprAcqDate').value = (existingLatest && existingLatest.acquisition_date) || '';
+    document.getElementById('cmapAprSalePrice').value = (existingLatest && existingLatest.sale_price != null) ? existingLatest.sale_price : '';
+    document.getElementById('cmapAprValueCurr').value = (existingLatest && existingLatest.assessed_value_current != null) ? existingLatest.assessed_value_current : '';
+    document.getElementById('cmapAprValuePrior').value = '';   // prior is not in /history's projection — operator re-enters if updating
+    document.getElementById('cmapAprLandValue').value = '';
+    document.getElementById('cmapAprImprValue').value = '';
+    document.getElementById('cmapAprYearBuilt').value = (existingLatest && existingLatest.year_built) || '';
+    document.getElementById('cmapAprBldgSqft').value = (existingLatest && existingLatest.building_sqft) || '';
+    document.getElementById('cmapAprLotSqft').value = (existingLatest && existingLatest.lot_sqft) || '';
+    document.getElementById('cmapAprNotes').value = '';
+    document.getElementById('cmapAprModalStatus').innerHTML = '';
+
+    // County lookup links — open county's esearch with the address prefilled.
+    // FBCAD esearch supports ?searchType=Address&value=...
+    // HCAD's quick search accepts ?ssa=<address>
+    const fbcadUrl = `https://esearch.fbcad.org/?searchType=Address&value=${encodeURIComponent(propRecord ? propRecord.street_address || '' : '')}`;
+    const hcadUrl  = `https://public.hcad.org/records/quicksearch.asp?searchval=${encodeURIComponent(propRecord ? propRecord.street_address || '' : '')}`;
+    document.getElementById('cmapAprLookupLink').href = fbcadUrl;
+    document.getElementById('cmapAprLookupLinkHcad').href = hcadUrl;
+
+    modal.style.display = 'flex';
+  }
+
+  function cmapCloseAppraisalEditor() {
+    const modal = document.getElementById('cmapAppraisalModal');
+    if (modal) modal.style.display = 'none';
+    window._cmapAprActivePropertyId = null;
+  }
+
+  async function cmapSaveAppraisalRecord() {
+    const propertyId = window._cmapAprActivePropertyId;
+    if (!propertyId) return;
+    const statusEl = document.getElementById('cmapAprModalStatus');
+    const btn = document.getElementById('cmapAprSaveBtn');
+
+    // Read + cast all field values. Empty string → null so we don't send 0s
+    // for fields the operator didn't touch.
+    const numOrNull = (id) => {
+      const v = document.getElementById(id).value;
+      return (v === '' || v == null) ? null : Number(v);
+    };
+    const strOrNull = (id) => {
+      const v = document.getElementById(id).value;
+      return (v == null || v.trim() === '') ? null : v.trim();
+    };
+    const body = {
+      county_source:           document.getElementById('cmapAprCounty').value,
+      pull_date:               document.getElementById('cmapAprPullDate').value || null,
+      parcel_number:           strOrNull('cmapAprParcel'),
+      owner_name_appraisal:    strOrNull('cmapAprOwnerName'),
+      owner_mailing_address:   strOrNull('cmapAprOwnerMailing'),
+      acquisition_date:        strOrNull('cmapAprAcqDate'),
+      sale_price:              numOrNull('cmapAprSalePrice'),
+      assessed_value_current:  numOrNull('cmapAprValueCurr'),
+      assessed_value_prior:    numOrNull('cmapAprValuePrior'),
+      land_value:              numOrNull('cmapAprLandValue'),
+      improvement_value:       numOrNull('cmapAprImprValue'),
+      year_built:              numOrNull('cmapAprYearBuilt'),
+      building_sqft:           numOrNull('cmapAprBldgSqft'),
+      lot_sqft:                numOrNull('cmapAprLotSqft'),
+      notes:                   strOrNull('cmapAprNotes'),
+    };
+
+    btn.disabled = true; btn.textContent = 'Saving…';
+    statusEl.innerHTML = '';
+
+    try {
+      const r = await fetch(`/api/appraisal/property/${encodeURIComponent(propertyId)}/manual-record`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+      statusEl.innerHTML = '<span style="color:#15803d;">✓ Saved. Map + side panel will refresh.</span>';
+      // Refresh the underlying layer data so the new values flow into the
+      // map's pin coloring + the side panel's appraisal section. Small
+      // delay so the user sees the success confirmation.
+      setTimeout(async () => {
+        try {
+          await cmapFetchAndRenderLayers();
+          // Re-render the side panel with fresh data
+          if (typeof cmapRenderAppraisalSection === 'function') {
+            cmapRenderAppraisalSection(propertyId);
+          }
+        } catch (_) {}
+        cmapCloseAppraisalEditor();
+      }, 700);
+    } catch (e) {
+      statusEl.innerHTML = `<span style="color:#b91c1c;">Save failed: ${escapeHtml(e.message)}</span>`;
+      btn.disabled = false; btn.textContent = 'Save record';
     }
   }
 

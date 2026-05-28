@@ -471,6 +471,116 @@ router.get('/batches', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/appraisal/property/:propertyId/manual-record
+// ----------------------------------------------------------------------------
+// Per-property manual entry — for the steady-state workflow where staff
+// looks up an individual property on FBCAD/HCAD esearch and enters the
+// values into trustEd. Used when a home sale closes and Vantaca updates
+// the owner — staff verifies against the county same day, no bulk roll
+// needed.
+//
+// Body: {
+//   county_source: 'FBCAD' | 'HCAD' | 'OTHER',
+//   parcel_number?: string,
+//   owner_name_appraisal?: string,
+//   owner_mailing_address?: string,
+//   acquisition_date?: 'YYYY-MM-DD',
+//   sale_price?: number,
+//   assessed_value_current?: number,
+//   assessed_value_prior?: number,
+//   land_value?: number,
+//   improvement_value?: number,
+//   year_built?: number,
+//   building_sqft?: number,
+//   lot_sqft?: number,
+//   pull_date?: 'YYYY-MM-DD' (defaults to today),
+//   notes?: string
+// }
+//
+// Behavior:
+//   - Looks up community_id from properties (no client-supplied trust)
+//   - Upserts on (property_id, pull_date) — same constraint as bulk path
+//   - Auto-approved with the acting user stamped as approved_by_user_id
+//   - Returns the saved row so the UI can refresh in place
+// ----------------------------------------------------------------------------
+const ALLOWED_MANUAL_FIELDS = [
+  'county_source', 'parcel_number',
+  'owner_name_appraisal', 'owner_mailing_address',
+  'acquisition_date', 'sale_price',
+  'assessed_value_current', 'assessed_value_prior',
+  'land_value', 'improvement_value',
+  'year_built', 'building_sqft', 'lot_sqft',
+  'notes',
+];
+router.post('/property/:propertyId/manual-record', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
+
+    const actor = await getActingUser(req);
+    const body = req.body || {};
+
+    // Look up the property to get community_id + validate it's ours
+    const { data: prop, error: pErr } = await supabase
+      .from('properties')
+      .select('id, community_id, street_address')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+
+    // Validate county_source if provided
+    const county = body.county_source && ['FBCAD', 'HCAD', 'OTHER'].includes(body.county_source)
+      ? body.county_source : 'OTHER';
+
+    // Pull date defaults to today (Central). Operator can override for
+    // back-dating a snapshot they're recording after the fact (e.g., "this
+    // is the value as of when the sale closed last month").
+    const pullDate = body.pull_date && /^\d{4}-\d{2}-\d{2}$/.test(body.pull_date)
+      ? body.pull_date
+      : new Date().toISOString().slice(0, 10);
+
+    // Build the row using only allowlisted fields — never spread req.body raw
+    const row = {
+      management_company_id: BEDROCK_MGMT_CO_ID,
+      community_id:          prop.community_id,
+      property_id:           propertyId,
+      county_source:         county,
+      pull_date:             pullDate,
+      source_filename:       null,                 // manual entry has no source file
+      source_storage_path:   null,
+      ingest_batch_id:       null,                 // manual entries are batch-less
+      raw_extraction:        { source: 'manual_entry', entered_by: actor ? actor.id : null },
+      approved_at:           new Date().toISOString(),
+      approved_by_user_id:   actor ? actor.id : null,
+    };
+    for (const field of ALLOWED_MANUAL_FIELDS) {
+      if (field === 'county_source') continue; // handled above
+      if (body[field] !== undefined) row[field] = body[field];
+    }
+
+    // Upsert on the same (property_id, pull_date) constraint the bulk path uses.
+    // Two manual edits on the same day = the second one wins (operator
+    // correcting their own entry). Different days = new snapshot row.
+    const { data, error } = await supabase
+      .from('appraisal_records')
+      .upsert(row, { onConflict: 'property_id,pull_date' })
+      .select()
+      .single();
+    if (error) throw error;
+
+    res.json({
+      ok: true,
+      record: data,
+      property: { id: prop.id, street_address: prop.street_address, community_id: prop.community_id },
+    });
+  } catch (err) {
+    console.error('[appraisal] manual-record failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/appraisal/property/:id/history — per-property snapshot timeline
 // ----------------------------------------------------------------------------
 router.get('/property/:id/history', async (req, res) => {
