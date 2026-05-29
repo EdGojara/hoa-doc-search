@@ -12190,8 +12190,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                                 : stage === 'voided' || stage === 'superseded' ? '#94a3b8' : '#1A3050';
                const showLetterBtn = isOpenStage(stage) && v.quality_status !== 'superseded';
                const showQualityActions = v.quality_status !== 'superseded' && v.quality_status !== 'verified';
+               // Show review notes inline under the row when this violation
+               // has been flagged (e.g., AI cross-check disagreement on a
+               // manual entry). Surfaces the AI's reasoning so the operator
+               // can decide whether to act or dismiss without expanding a
+               // separate modal.
+               const showReviewNotes = (v.quality_status === 'flagged_internal' || v.quality_status === 'disputed_by_owner')
+                 && v.review_notes;
+               const reviewNotesRow = showReviewNotes ? `
+                 <tr><td colspan="5" style="padding:0 8px 8px 8px;">
+                   <div style="padding:8px 10px; background:#fffbeb; border-left:3px solid #f59e0b; border-radius:0 4px 4px 0; font-size:11.5px; color:#78350f; line-height:1.5;">
+                     <strong style="color:#92400e;">Review note:</strong> ${escapeHtml(v.review_notes).replace(/\n/g, '<br>')}
+                   </div>
+                 </td></tr>` : '';
                return `
-                 <tr style="border-bottom:1px solid #f1f5f9;">
+                 <tr style="border-bottom:${showReviewNotes ? 'none' : '1px solid #f1f5f9'};">
                    <td style="padding:6px 8px;">${v.opened_at ? new Date(v.opened_at).toLocaleDateString() : '—'}</td>
                    <td style="padding:6px 8px;">${escapeHtml(v.category_label || v.category_code || '—')}</td>
                    <td style="padding:6px 8px; color:${stageColor}; font-weight:600;">${escapeHtml(stage.replace(/_/g, ' '))}</td>
@@ -12201,7 +12214,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
                      ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#1A3050; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
-                 </tr>`;
+                 </tr>${reviewNotesRow}`;
              }).join('')}
            </tbody>
          </table>

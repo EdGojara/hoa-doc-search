@@ -553,6 +553,10 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
     let firstObservationId = null;
     const uploadedPhotoCount = { ok: 0, failed: 0 };
     const uploadedPaths = []; // track for rollback on hard failure
+    // For each successful upload, capture what we need to run the async AI
+    // cross-check after the response is sent. We keep the buffer in scope
+    // so the AI doesn't have to re-fetch from storage.
+    const photoWork = []; // [{ observation_id, buffer, mime_type }, ...]
 
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
@@ -618,6 +622,12 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
 
       if (!firstObservationId) firstObservationId = obsRow.id;
       uploadedPhotoCount.ok++;
+      // Stash for the async AI cross-check below
+      photoWork.push({
+        observation_id: obsRow.id,
+        buffer: file.buffer,
+        mime_type: file.mimetype || 'image/jpeg',
+      });
     }
 
     // ---- Fallback observation when no photos uploaded -------------------
@@ -719,7 +729,139 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
       photos_failed: uploadedPhotoCount.failed,
       observation_id: firstObservationId,
       board_priority: priorityWeight,
+      ai_review_pending: photoWork.length > 0,
     });
+
+    // ---- 6) Async AI cross-check (fire-and-forget) ----------------------
+    // Runs AFTER the response is sent so the operator sees the violation
+    // create immediately. For each manual photo: re-run categorizePhoto,
+    // record AI's view alongside staff's, flag the violation if AI sees a
+    // different category OR no violation at all. Low-confidence AI is
+    // logged but doesn't flag (uncertain ≠ wrong).
+    //
+    // Errors here NEVER throw the response — we already returned. They
+    // log + skip and the next photo is processed.
+    if (photoWork.length > 0) {
+      (async () => {
+        try {
+          // Load the full category list once so each call shares it
+          const { data: catRows } = await supabase
+            .from('enforcement_categories')
+            .select('slug, label, description');
+          const categories = (catRows || []).filter((c) => c.slug);
+
+          // The staff's category in slug form — for the agree/disagree compare
+          const staffCatRow = categories.find((c) => {
+            // We have categoryId (UUID); look up its slug by re-fetching once
+            return false; // placeholder; we'll resolve below
+          });
+          let staffCategorySlug = null;
+          try {
+            const { data: cRow } = await supabase
+              .from('enforcement_categories')
+              .select('slug')
+              .eq('id', categoryId)
+              .maybeSingle();
+            staffCategorySlug = cRow && cRow.slug;
+          } catch (_) {}
+
+          // Pull community + property context for richer AI prompting
+          let context = {};
+          try {
+            const [{ data: comm }, { data: prop }] = await Promise.all([
+              supabase.from('communities').select('name').eq('id', communityId).maybeSingle(),
+              supabase.from('properties').select('street_address').eq('id', propertyId).maybeSingle(),
+            ]);
+            if (comm) context.community_name = comm.name;
+            if (prop) context.property_address = prop.street_address;
+          } catch (_) {}
+
+          let disagreementCount = 0;
+          const disagreementNotes = [];
+
+          for (const p of photoWork) {
+            try {
+              const ai = await categorizePhoto({
+                image_buffer: p.buffer,
+                image_media_type: p.mime_type,
+                categories,
+                context,
+              });
+              if (!ai) {
+                console.warn('[enforcement.manual] AI returned null for obs', p.observation_id);
+                continue;
+              }
+
+              // Persist AI's view onto the observation alongside staff's
+              await supabase
+                .from('property_observations')
+                .update({
+                  ai_description: ai.description || null,
+                  ai_recommended_action: ai.recommended_action || null,
+                  ai_confidence: ai.confidence || null,
+                })
+                .eq('id', p.observation_id);
+
+              // Agree/disagree analysis. Only treat as disagreement when AI
+              // confidence is medium or high — low-confidence AI = "I'm not
+              // sure" which doesn't override staff judgment.
+              if (ai.confidence === 'low') continue;
+
+              if (ai.is_violation === false || ai.severity === 'clean') {
+                disagreementCount++;
+                disagreementNotes.push(
+                  `AI (${ai.confidence}) doesn't see a violation in this photo: "${(ai.description || '').slice(0, 120)}"`
+                );
+                continue;
+              }
+
+              if (staffCategorySlug && ai.category_slug && ai.category_slug !== staffCategorySlug) {
+                disagreementCount++;
+                disagreementNotes.push(
+                  `AI (${ai.confidence}) sees ${ai.category_slug} not ${staffCategorySlug}: "${(ai.description || '').slice(0, 120)}"`
+                );
+              }
+            } catch (perPhotoErr) {
+              console.warn('[enforcement.manual] AI cross-check failed for obs', p.observation_id, perPhotoErr.message);
+            }
+          }
+
+          // If ANY photo had a real disagreement, flag the violation for
+          // re-review and append AI's view to review_notes. Staff's
+          // assessment is preserved (we never overwrite their category or
+          // current_stage) — we just surface the disagreement.
+          if (disagreementCount > 0) {
+            try {
+              const { data: existing } = await supabase
+                .from('violations')
+                .select('review_notes')
+                .eq('id', violation.id)
+                .maybeSingle();
+              const priorNotes = (existing && existing.review_notes) || '';
+              const aiSummary = `[AI cross-check ${new Date().toISOString().slice(0, 10)}] `
+                + `${disagreementCount}/${photoWork.length} photo${photoWork.length === 1 ? '' : 's'} `
+                + `flagged disagreement. ${disagreementNotes.join(' · ')}`;
+              const newNotes = priorNotes ? `${priorNotes}\n\n${aiSummary}` : aiSummary;
+              await supabase
+                .from('violations')
+                .update({
+                  quality_status: 'flagged_internal',
+                  review_notes: newNotes.slice(0, 3000), // cap to avoid runaway
+                })
+                .eq('id', violation.id);
+              console.log('[enforcement.manual] AI flagged violation', violation.id,
+                'with', disagreementCount, 'disagreement(s)');
+            } catch (flagErr) {
+              console.error('[enforcement.manual] failed to flag violation', violation.id, flagErr.message);
+            }
+          } else {
+            console.log('[enforcement.manual] AI agrees with staff on violation', violation.id);
+          }
+        } catch (asyncErr) {
+          console.error('[enforcement.manual] async AI cross-check failed:', asyncErr.message);
+        }
+      })();
+    }
   } catch (err) {
     console.error('[enforcement.manual] failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
