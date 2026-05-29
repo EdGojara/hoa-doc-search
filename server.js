@@ -449,6 +449,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
   /^\/portal-login\.html$/,                 // magic-link entry page
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)
+  /^\/builder-dashboard\.html$/,            // DRB Group-facing portal — auth checked via portal cookie inside the page
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
   // Public API endpoints these pages call. Each verified against the
   // actual fetch() calls in the homeowner-facing HTML files.
@@ -460,6 +461,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/builder-applications\/public\b/,    // builders/:slug — community lookup + status check
   /^\/api\/builder-applications$/,             // POST intake (kill-switched per community)
   /^\/api\/builder-applications\/[0-9a-f-]+\/attachments$/, // file uploads tied to a submission id
+  /^\/api\/builder-applications\/portal\/my-submissions$/,  // builder-dashboard.html bootstrap; auth via portal cookie inside
   /^\/api\/portal\/request-link$/,             // POST magic-link send (anti-enumeration)
   /^\/api\/portal\/consume$/,                  // POST magic-link consume + cookie set
   /^\/api\/portal\/me$/,                       // GET portal context (gated by cookie, not staff)
