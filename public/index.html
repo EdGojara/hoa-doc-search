@@ -11113,6 +11113,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <button class="action-btn" id="inspStartBtn" onclick="inspStart()" style="width: 100%;">Start inspection</button>
       <div id="inspStartError" style="display:none; color:#b91c1c; font-size: 13px; margin-top: 8px;"></div>
 
+      <!-- Manual violation entry — for neighbor reports, board reports,
+           force-mow walk-ups, anything that needs to land as a violation
+           without a full drive-by inspection session. Opens a modal so the
+           start-inspection panel stays uncluttered. -->
+      <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #e2e8f0;">
+        <button type="button" id="manualVioOpenBtn" onclick="manualVioOpen()"
+                style="width: 100%; padding: 12px; background: #fff; border: 1px dashed #cbd5e1; color: var(--navy, #1A3050); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+          📥 Add manual violation
+        </button>
+        <div style="font-size: 11.5px; color: #64748b; margin-top: 6px; text-align: center; line-height: 1.4;">
+          Neighbor or board reports · force-mow walk-ups · phoned-in issues
+        </div>
+      </div>
+
       <!-- Map setup admin row — one-time-per-community operation. Bulk
            geocoder checks every community in the portfolio and runs Mapbox
            lookups only on the ones still missing lat/lng. Used during new-
@@ -11475,6 +11489,117 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+  </div>
+
+  <!-- Manual violation entry modal — neighbor/board reports, force-mow walk-ups.
+       Hidden by default; opened by manualVioOpen(). Reuses the same iOS
+       <label for=> bridge pattern that fixed the iPhone camera capture
+       2026-05-28. -->
+  <div id="manualVioModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center; overflow-y:auto;">
+    <div style="background:#fff; border-radius:14px; max-width:640px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
+      <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div>
+          <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">Add manual violation</div>
+          <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">Neighbor or board report · force-mow walk-up</div>
+        </div>
+        <button type="button" onclick="manualVioClose()"
+                style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✕ Close</button>
+      </div>
+
+      <div id="manualVioBody" style="padding:18px; overflow-y:auto;">
+        <!-- Force-mow warning banner — surfaces only when force-mow category picked -->
+        <div id="manualVioForceMowWarn" style="display:none; padding:10px 12px; background:#fef3c7; border:1px solid #fde047; border-radius:8px; margin-bottom:12px; font-size:12.5px; color:#92400e; line-height:1.5;">
+          ⚠️ <strong>Force-mow 10-day certified track</strong> — confirm CC&R and §202.018 authority before submitting. This creates the violation only; the certified letter is generated separately via the Drafts queue.
+        </div>
+
+        <!-- Community -->
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Community *</label>
+          <select id="manualVioCommunity" onchange="manualVioCommunityChanged()"
+                  style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+            <option value="">— pick a community —</option>
+          </select>
+        </div>
+
+        <!-- Property -->
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Property *</label>
+          <input type="search" id="manualVioPropertySearch" placeholder="Type address to filter…"
+                 oninput="manualVioPropertyFilter()"
+                 style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; margin-bottom: 6px;">
+          <select id="manualVioProperty"
+                  style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+            <option value="">— pick a community first —</option>
+          </select>
+        </div>
+
+        <!-- Category -->
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Violation category *</label>
+          <select id="manualVioCategory" onchange="manualVioCategoryChanged()"
+                  style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+            <option value="">— pick a category —</option>
+          </select>
+        </div>
+
+        <!-- Severity + Source side by side -->
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px;">
+          <div>
+            <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Severity</label>
+            <select id="manualVioSeverity"
+                    style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+              <option value="minor">Minor</option>
+              <option value="moderate" selected>Moderate</option>
+              <option value="severe">Severe</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Source</label>
+            <select id="manualVioSource"
+                    style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+              <option value="neighbor_report">Neighbor report</option>
+              <option value="board_report">Board report</option>
+              <option value="force_mow_observation">Force-mow walk-up</option>
+              <option value="phone_report">Phone report</option>
+              <option value="email_report">Email report</option>
+              <option value="manual_entry">Other</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Description -->
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Description / notes</label>
+          <textarea id="manualVioDescription" rows="3" placeholder="What's the violation? Who reported it? Any context…"
+                    style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:13.5px; font-family:inherit; resize:vertical;"></textarea>
+        </div>
+
+        <!-- Photos — same iOS label-bridge pattern as Take photo on the
+             inspection capture flow. Multiple files allowed. -->
+        <div style="margin-bottom: 14px;">
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Photos (optional · up to 6)</label>
+          <!-- Off-screen file input — see iOS Safari notes in inspPhotoInput -->
+          <input type="file" id="manualVioPhotoInput" accept="image/*" capture="environment" multiple
+                 onchange="manualVioPhotoSelected(this)"
+                 style="position:absolute; left:-9999px; top:0; width:1px; height:1px; opacity:0;">
+          <label for="manualVioPhotoInput" id="manualVioAddPhotoBtn"
+                 style="display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px; background:#f8fafc; border:1px dashed #94a3b8; color:var(--navy, #1A3050); border-radius:10px; font-size:14px; font-weight:600; cursor:pointer;">
+            📸 Add photos
+          </label>
+          <div id="manualVioPhotoList" style="display:none; margin-top:8px; display:grid; grid-template-columns:repeat(auto-fill, minmax(80px, 1fr)); gap:6px;"></div>
+          <div style="font-size:11px; color:#64748b; margin-top:5px; line-height:1.4;">
+            Tap to take photo with rear camera on iPhone/iPad, or pick existing photos from camera roll.
+          </div>
+        </div>
+
+        <!-- Submit + error -->
+        <div id="manualVioError" style="display:none; padding:8px 12px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; font-size:13px; margin-bottom:12px;"></div>
+        <button type="button" id="manualVioSubmitBtn" onclick="manualVioSubmit()"
+                style="width:100%; padding:14px; background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; border-radius:10px; font-size:15px; font-weight:700; cursor:pointer;">
+          Create violation
+        </button>
+      </div>
+    </div>
   </div>
 
   <!-- Property detail modal — opens from list-row tap or map-marker tap.
@@ -13045,6 +13170,248 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         sel.appendChild(opt);
       }
     } catch (_) { /* leave default */ }
+  }
+
+  // ===================================================================
+  // MANUAL VIOLATION ENTRY MODAL
+  // -------------------------------------------------------------------
+  // Opens from the "📥 Add manual violation" button under Start
+  // inspection. Creates a violation via POST /api/enforcement/violations
+  // /manual which wraps it in a synthetic spot_check inspection so the
+  // schema's NOT NULL inspection_id constraint is satisfied.
+  //
+  // Photo capture uses the same <label for=> iOS bridge pattern that
+  // fixed Ed's iPhone camera 2026-05-28 — same off-screen file input,
+  // same `capture="environment"`, multiple file support added.
+  // ===================================================================
+
+  // State for the modal — list of photos staged for upload, cached
+  // properties + categories so re-opening doesn't refetch every time.
+  let _mvPhotos = [];            // [{ file, dataUrl, role }]
+  let _mvProperties = [];        // properties for currently-selected community
+  let _mvCategories = [];        // enforcement categories (global)
+  let _mvCommunitiesLoaded = false;
+
+  async function manualVioOpen() {
+    // Reset state when re-opening so a previous draft doesn't leak
+    _mvPhotos = [];
+    document.getElementById('manualVioPhotoList').innerHTML = '';
+    document.getElementById('manualVioPhotoList').style.display = 'none';
+    document.getElementById('manualVioDescription').value = '';
+    document.getElementById('manualVioPropertySearch').value = '';
+    document.getElementById('manualVioError').style.display = 'none';
+    document.getElementById('manualVioForceMowWarn').style.display = 'none';
+
+    // Show modal
+    document.getElementById('manualVioModal').style.display = 'flex';
+
+    // Default the community to whatever's selected in the Start Inspection
+    // card above — saves a step for the common case where staff is
+    // already focused on one community.
+    const inspCommunitySel = document.getElementById('inspCommunity');
+    const mvCommunitySel = document.getElementById('manualVioCommunity');
+
+    // Populate community dropdown (clone options from Start Inspection
+    // dropdown — same source, no need to refetch)
+    if (mvCommunitySel.options.length <= 1 && inspCommunitySel.options.length > 1) {
+      mvCommunitySel.innerHTML = '';
+      for (const opt of inspCommunitySel.options) {
+        mvCommunitySel.appendChild(opt.cloneNode(true));
+      }
+    }
+    if (inspCommunitySel.value) mvCommunitySel.value = inspCommunitySel.value;
+
+    // Load categories once
+    if (_mvCategories.length === 0) {
+      try {
+        const r = await fetch('/api/enforcement/categories');
+        if (r.ok) {
+          const j = await r.json();
+          _mvCategories = j.categories || [];
+          const catSel = document.getElementById('manualVioCategory');
+          catSel.innerHTML = '<option value="">— pick a category —</option>';
+          for (const c of _mvCategories) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.dataset.slug = c.slug || '';
+            const isSpecial = c.slug === 'lawn_force_mow_10day';
+            opt.textContent = (isSpecial ? '🟪 ' : '') + (c.label || c.slug);
+            catSel.appendChild(opt);
+          }
+        }
+      } catch (_) { /* tolerate — staff can still type-in below */ }
+    }
+
+    // Load property list for the selected community
+    if (mvCommunitySel.value) {
+      manualVioCommunityChanged();
+    }
+  }
+
+  function manualVioClose() {
+    document.getElementById('manualVioModal').style.display = 'none';
+  }
+
+  async function manualVioCommunityChanged() {
+    const communityId = document.getElementById('manualVioCommunity').value;
+    const propSel = document.getElementById('manualVioProperty');
+    if (!communityId) {
+      propSel.innerHTML = '<option value="">— pick a community first —</option>';
+      _mvProperties = [];
+      return;
+    }
+    propSel.innerHTML = '<option value="">Loading properties…</option>';
+    try {
+      const r = await fetch(`/api/inspections/properties?community_id=${encodeURIComponent(communityId)}&include_no_geo=1`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      _mvProperties = (j.properties || []).map((p) => ({
+        id: p.property_id,
+        label: (p.street_address || '') + (p.unit ? ' #' + p.unit : '') + (p.owner_name ? ' · ' + p.owner_name : ''),
+      }));
+      manualVioPropertyFilter();
+    } catch (e) {
+      propSel.innerHTML = `<option value="">Failed to load properties: ${escapeHtml(e.message)}</option>`;
+    }
+  }
+
+  function manualVioPropertyFilter() {
+    const q = String(document.getElementById('manualVioPropertySearch').value || '').toLowerCase().trim();
+    const propSel = document.getElementById('manualVioProperty');
+    const filtered = q
+      ? _mvProperties.filter((p) => p.label.toLowerCase().includes(q))
+      : _mvProperties;
+    propSel.innerHTML = '<option value="">— pick a property —</option>'
+      + filtered.slice(0, 200).map((p) => `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label)}</option>`).join('');
+    if (filtered.length > 200) {
+      propSel.innerHTML += `<option value="" disabled>(${filtered.length - 200} more — refine search)</option>`;
+    }
+  }
+
+  function manualVioCategoryChanged() {
+    const sel = document.getElementById('manualVioCategory');
+    const selectedOpt = sel.options[sel.selectedIndex];
+    const slug = selectedOpt ? selectedOpt.dataset.slug : '';
+    document.getElementById('manualVioForceMowWarn').style.display =
+      (slug === 'lawn_force_mow_10day') ? 'block' : 'none';
+  }
+
+  function manualVioPhotoSelected(input) {
+    const files = Array.from(input.files || []);
+    if (files.length === 0) return;
+    const remainingSlots = 6 - _mvPhotos.length;
+    if (remainingSlots <= 0) {
+      alert('Max 6 photos. Remove one to add another.');
+      input.value = '';
+      return;
+    }
+    const toAdd = files.slice(0, remainingSlots);
+    toAdd.forEach((file) => {
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        _mvPhotos.push({ file, dataUrl: e.target.result });
+        manualVioRenderPhotos();
+      };
+      reader.readAsDataURL(file);
+    });
+    input.value = ''; // reset so same file can be re-added if needed
+  }
+
+  function manualVioRenderPhotos() {
+    const wrap = document.getElementById('manualVioPhotoList');
+    if (_mvPhotos.length === 0) {
+      wrap.style.display = 'none';
+      wrap.innerHTML = '';
+      return;
+    }
+    wrap.style.display = 'grid';
+    wrap.innerHTML = _mvPhotos.map((p, i) => `
+      <div style="position:relative; aspect-ratio:1; border-radius:8px; overflow:hidden; background:#000;">
+        <img src="${escapeHtml(p.dataUrl)}" style="width:100%; height:100%; object-fit:cover;">
+        <button type="button" onclick="manualVioRemovePhoto(${i})"
+                style="position:absolute; top:2px; right:2px; background:rgba(220,38,38,0.95); color:#fff; border:none; border-radius:4px; padding:2px 6px; font-size:10px; cursor:pointer;">✕</button>
+      </div>
+    `).join('');
+  }
+
+  function manualVioRemovePhoto(idx) {
+    _mvPhotos.splice(idx, 1);
+    manualVioRenderPhotos();
+  }
+
+  async function manualVioSubmit() {
+    const errEl = document.getElementById('manualVioError');
+    errEl.style.display = 'none';
+    const showErr = (msg) => { errEl.textContent = msg; errEl.style.display = 'block'; };
+
+    const communityId = document.getElementById('manualVioCommunity').value;
+    const propertyId = document.getElementById('manualVioProperty').value;
+    const categoryId = document.getElementById('manualVioCategory').value;
+    const severity = document.getElementById('manualVioSeverity').value;
+    const source = document.getElementById('manualVioSource').value;
+    const description = document.getElementById('manualVioDescription').value;
+
+    if (!communityId) return showErr('Pick a community.');
+    if (!propertyId)  return showErr('Pick a property.');
+    if (!categoryId)  return showErr('Pick a violation category.');
+
+    const btn = document.getElementById('manualVioSubmitBtn');
+    btn.disabled = true;
+    btn.textContent = 'Submitting…';
+
+    const fd = new FormData();
+    fd.append('community_id', communityId);
+    fd.append('property_id', propertyId);
+    fd.append('primary_category_id', categoryId);
+    fd.append('severity', severity);
+    fd.append('source', source);
+    fd.append('description', description);
+    _mvPhotos.forEach((p) => fd.append('photos', p.file, p.file.name));
+
+    try {
+      // requireActingUser on the backend reads the Bearer JWT from
+      // Authorization. Without this header we'd get 401 'authentication
+      // required' before reaching the route handler.
+      const headers = {};
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session && session.access_token) {
+          headers.Authorization = 'Bearer ' + session.access_token;
+        }
+      } catch (_) { /* fall through — 401 will surface clearly */ }
+
+      const r = await fetch('/api/enforcement/violations/manual', {
+        method: 'POST',
+        body: fd,
+        credentials: 'same-origin',
+        headers,
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) {
+        showErr(j.error || ('Failed to create violation (HTTP ' + r.status + ')'));
+        return;
+      }
+      // Success
+      manualVioClose();
+      // Light toast — reuse the inspect status banner if available, else alert
+      try {
+        const statusEl = document.getElementById('inspMapStatus');
+        if (statusEl) {
+          const orig = statusEl.innerHTML;
+          statusEl.innerHTML = `✅ Manual violation created · stage <strong>${escapeHtml(j.current_stage || '—')}</strong> · ${j.photos_uploaded || 0} photo${(j.photos_uploaded || 0) === 1 ? '' : 's'}`;
+          setTimeout(() => { statusEl.innerHTML = orig; }, 6000);
+        } else {
+          alert('Manual violation created. Stage: ' + (j.current_stage || '—') + ' · Photos: ' + (j.photos_uploaded || 0));
+        }
+      } catch (_) {
+        alert('Manual violation created.');
+      }
+    } catch (e) {
+      showErr('Network error: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Create violation';
+    }
   }
 
   async function inspStart() {

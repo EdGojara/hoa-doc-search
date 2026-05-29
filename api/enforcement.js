@@ -35,6 +35,7 @@ const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_remin
 const { parseVantacaViolations, parseVantacaViolationsPdf } = require('../lib/enforcement/vantaca_violation_import');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
 const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
+const { safeErrorMessage } = require('./_safe_error');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
@@ -446,6 +447,285 @@ router.post('/open-violation', express.json(), async (req, res) => {
 // On force_regenerate, the prior interaction row is deleted so the audit
 // trail reflects only the latest letter.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/manual
+// Multipart form endpoint that creates a manual-entry violation outside the
+// normal drive-by inspection capture flow. Used for:
+//   - Neighbor-reported issues (photos forwarded via email)
+//   - Board-reported issues (board sends "look at 123 Main")
+//   - Force-mow walk-up observations that can't wait for a full inspection
+//
+// Architecture: we don't have a "violation without observation" path; the
+// schema requires every property_observation to have an inspection_id +
+// inspection_photo_id, and every violation gets its evidence trail from
+// observations. So this endpoint constructs a SYNTHETIC spot_check
+// inspection that wraps the manual entry:
+//   inspections (mode='spot_check', status='closed')
+//     └─ inspection_photos (one per uploaded photo)
+//         └─ property_observations (one per photo, reviewer_status='confirmed')
+//             └─ violations (one, linked via opened_from_observation_id)
+//
+// Photos are optional — some manual entries are phoned in with description
+// only. If zero photos, we still create the inspection + one observation
+// (no inspection_photo_id link — handled below) and the violation. Letter
+// generation is decoupled (manual approval step, per Ed 2026-05-29).
+// ---------------------------------------------------------------------------
+router.post('/violations/manual', upload.array('photos', 6), async (req, res) => {
+  try {
+    const { requireActingUser } = require('./_acting_user');
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+
+    // Multipart fields come through as strings on req.body. multer.array()
+    // attaches files as req.files.
+    const body = req.body || {};
+    const communityId = body.community_id;
+    const propertyId = body.property_id;
+    const categoryId = body.primary_category_id;
+    const source = body.source || 'manual_entry'; // subtype label for notes
+    const severity = body.severity || 'moderate'; // ['clean','minor','moderate','severe']
+    const description = body.description || '';
+    const files = req.files || [];
+
+    // ---- Validation ------------------------------------------------------
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    if (!propertyId)  return res.status(400).json({ error: 'property_id required' });
+    if (!categoryId)  return res.status(400).json({ error: 'primary_category_id required' });
+    if (!['clean', 'minor', 'moderate', 'severe'].includes(severity)) {
+      return res.status(400).json({ error: 'invalid severity (allowed: clean|minor|moderate|severe)' });
+    }
+    if (files.length > 6) {
+      return res.status(400).json({ error: 'max 6 photos per manual violation' });
+    }
+
+    // Verify the property actually belongs to the named community — never
+    // trust client-provided community_id without cross-check. This stops a
+    // staff member from accidentally (or maliciously) filing a violation
+    // against the wrong community's property.
+    const { data: propRow, error: propErr } = await supabase
+      .from('properties')
+      .select('id, community_id')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (propErr) {
+      console.error('[enforcement.manual] property lookup failed:', propErr.message);
+      return res.status(500).json({ error: safeErrorMessage(propErr) });
+    }
+    if (!propRow) return res.status(404).json({ error: 'property not found' });
+    if (propRow.community_id !== communityId) {
+      return res.status(400).json({ error: 'property does not belong to specified community' });
+    }
+
+    // Resolve board priority for the (community, category) — same engine
+    // path the inspection-driven flow uses. Falls back to 'standard' when
+    // no row is configured.
+    const priorityWeight = await _getPriorityWeight(communityId, categoryId);
+
+    // ---- 1) Synthetic spot_check inspection -----------------------------
+    const inspectionRouteLabel = `Manual entry: ${source.replace(/_/g, ' ')}`
+      + (description ? ` — ${description.slice(0, 60)}` : '');
+    const { data: inspection, error: insErr } = await supabase
+      .from('inspections')
+      .insert({
+        community_id: communityId,
+        operator_id: actor.id || null,
+        mode: 'spot_check',
+        route_label: inspectionRouteLabel.slice(0, 200),
+        status: 'closed',                              // closes immediately
+        started_at: new Date().toISOString(),
+        ended_at:   new Date().toISOString(),
+        notes: description || null,
+      })
+      .select('id')
+      .single();
+    if (insErr) {
+      console.error('[enforcement.manual] inspection insert failed:', insErr.message);
+      return res.status(500).json({ error: safeErrorMessage(insErr) });
+    }
+    const inspectionId = inspection.id;
+
+    // ---- 2) Upload photos + 3) create photo rows + 4) observations ------
+    // We collect observation ids so the violation can be linked to the
+    // first one as the "opened_from_observation_id" anchor. Upload errors
+    // are non-fatal IF at least one observation lands — manual violations
+    // shouldn't be blocked by a single bad-camera-orientation photo.
+    let firstObservationId = null;
+    const uploadedPhotoCount = { ok: 0, failed: 0 };
+    const uploadedPaths = []; // track for rollback on hard failure
+
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const safeName = String(file.originalname || `photo_${i}.jpg`).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+      const storagePath = `inspections/${inspectionId}/${Date.now()}_${i}_${safeName}`;
+
+      const { error: stErr } = await supabase.storage
+        .from('documents')
+        .upload(storagePath, file.buffer, {
+          contentType: file.mimetype || 'image/jpeg',
+          upsert: false,
+        });
+      if (stErr) {
+        console.warn('[enforcement.manual] storage upload failed for photo', i, stErr.message);
+        uploadedPhotoCount.failed++;
+        continue;
+      }
+      uploadedPaths.push(storagePath);
+
+      const { data: photoRow, error: phErr } = await supabase
+        .from('inspection_photos')
+        .insert({
+          inspection_id: inspectionId,
+          storage_path: storagePath,
+          captured_at: new Date().toISOString(),
+          // GPS / heading intentionally NULL — manual entries didn't capture
+          // them and we don't want to fake values
+          reviewer_confirmed_property_id: propertyId,
+          reviewer_user_id: actor.id || null,
+          reviewed_at: new Date().toISOString(),
+          notes: 'Manual entry — staff-confirmed property',
+        })
+        .select('id')
+        .single();
+      if (phErr || !photoRow) {
+        console.warn('[enforcement.manual] inspection_photo insert failed:', phErr && phErr.message);
+        uploadedPhotoCount.failed++;
+        continue;
+      }
+
+      const { data: obsRow, error: obsErr } = await supabase
+        .from('property_observations')
+        .insert({
+          inspection_id: inspectionId,
+          inspection_photo_id: photoRow.id,
+          property_id: propertyId,
+          community_id: communityId,
+          category_id: categoryId,
+          severity: severity,
+          ai_description: null,
+          reviewer_status: 'confirmed',                // staff entered it directly
+          reviewer_user_id: actor.id || null,
+          reviewer_notes: description || null,
+          reviewed_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+      if (obsErr || !obsRow) {
+        console.warn('[enforcement.manual] property_observation insert failed:', obsErr && obsErr.message);
+        uploadedPhotoCount.failed++;
+        continue;
+      }
+
+      if (!firstObservationId) firstObservationId = obsRow.id;
+      uploadedPhotoCount.ok++;
+    }
+
+    // ---- Fallback observation when no photos uploaded -------------------
+    // Manual violations CAN be filed with description only (phone-in case).
+    // In that case we create one observation without an inspection_photo_id.
+    // Schema requires inspection_photo_id NOT NULL, so we have to create a
+    // placeholder photo row with no storage_path... actually
+    // inspection_photos.storage_path is NOT NULL too. So if no photos
+    // uploaded, we MUST create at least a stub photo. We use a placeholder
+    // path that we'll never actually fetch from storage.
+    if (!firstObservationId) {
+      const placeholderPath = `inspections/${inspectionId}/_no_photo_placeholder.txt`;
+      const { data: stubPhoto, error: stubErr } = await supabase
+        .from('inspection_photos')
+        .insert({
+          inspection_id: inspectionId,
+          storage_path: placeholderPath,
+          captured_at: new Date().toISOString(),
+          reviewer_confirmed_property_id: propertyId,
+          reviewer_user_id: actor.id || null,
+          reviewed_at: new Date().toISOString(),
+          notes: 'Manual entry without photo — description only',
+        })
+        .select('id')
+        .single();
+      if (stubErr || !stubPhoto) {
+        console.error('[enforcement.manual] stub photo insert failed:', stubErr && stubErr.message);
+        return res.status(500).json({ error: 'failed to record observation' });
+      }
+      const { data: stubObs, error: stubObsErr } = await supabase
+        .from('property_observations')
+        .insert({
+          inspection_id: inspectionId,
+          inspection_photo_id: stubPhoto.id,
+          property_id: propertyId,
+          community_id: communityId,
+          category_id: categoryId,
+          severity: severity,
+          ai_description: null,
+          reviewer_status: 'confirmed',
+          reviewer_user_id: actor.id || null,
+          reviewer_notes: description || 'Manual entry, no photo provided',
+          reviewed_at: new Date().toISOString(),
+        })
+        .select('id')
+        .single();
+      if (stubObsErr || !stubObs) {
+        console.error('[enforcement.manual] stub observation insert failed:', stubObsErr && stubObsErr.message);
+        return res.status(500).json({ error: 'failed to record observation' });
+      }
+      firstObservationId = stubObs.id;
+    }
+
+    // ---- 5) Insert the violation ----------------------------------------
+    // current_stage='courtesy_1' is the default starting point for manual
+    // entries unless the staff explicitly overrides via body.override_stage.
+    // quality_status='verified' — full weight, staff put eyes on it.
+    const overrideStage = body.override_stage;
+    const validStages = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
+    const stage = (overrideStage && validStages.includes(overrideStage)) ? overrideStage : 'courtesy_1';
+
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .insert({
+        property_id: propertyId,
+        community_id: communityId,
+        opened_from_observation_id: firstObservationId,
+        primary_category_id: categoryId,
+        board_priority_at_open: (priorityWeight === 'disabled' || !priorityWeight) ? 'standard' : priorityWeight,
+        current_stage: stage,
+        current_stage_started_at: new Date().toISOString(),
+        opened_at: new Date().toISOString(),
+        opened_by_user_id: actor.id || null,
+        source: 'manual_entry',
+        quality_status: 'verified',          // staff entered directly = full weight
+        confidence_weight: 1.0,
+        reviewed_by_user_id: actor.id || null,
+        reviewed_at: new Date().toISOString(),
+        review_notes: description || `Manual entry via ${source}`,
+      })
+      .select('id, current_stage, opened_at')
+      .single();
+    if (vErr) {
+      console.error('[enforcement.manual] violation insert failed:', vErr.message);
+      // Roll back uploaded storage so we don't leak orphan files
+      if (uploadedPaths.length > 0) {
+        try { await supabase.storage.from('documents').remove(uploadedPaths); } catch (_) {}
+      }
+      return res.status(500).json({ error: safeErrorMessage(vErr) });
+    }
+
+    res.json({
+      ok: true,
+      violation_id: violation.id,
+      current_stage: violation.current_stage,
+      opened_at: violation.opened_at,
+      inspection_id: inspectionId,
+      photos_uploaded: uploadedPhotoCount.ok,
+      photos_failed: uploadedPhotoCount.failed,
+      observation_id: firstObservationId,
+      board_priority: priorityWeight,
+    });
+  } catch (err) {
+    console.error('[enforcement.manual] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/generate-letter', express.json(), async (req, res) => {
   try {
     const body = req.body || {};
