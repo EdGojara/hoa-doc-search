@@ -11212,8 +11212,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <!-- Hidden file input — uses device camera via capture="environment".
              NOTE: positioned off-screen instead of display:none because iOS
              Safari can silently refuse to interact with display:none file
-             inputs (scar 2026-05-28 — Ed's iPhone Canyon Gate prep). -->
-        <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none;" onchange="inspOnPhotoSelected(this)">
+             inputs. pointer-events:none REMOVED — iOS needs the input to be
+             pointer-interactive for the <label for=> click bridge to fire.
+             (Scar 2026-05-28 — Canyon Gate prep, Ed's iPhone). -->
+        <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="position:absolute; left:-9999px; top:0; width:1px; height:1px; opacity:0;" onchange="inspOnPhotoSelected(this)">
 
         <!-- Staged-wide chip (shown only after a wide is staged) -->
         <div id="inspWidePairChip" style="display:none; background:#fff; border:1px solid #d8e2ed; border-radius:10px; padding:8px 10px; margin-bottom: 8px; display:flex; align-items:center; gap:10px;">
@@ -11225,11 +11227,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <button type="button" onclick="inspEndPropertyPair()" style="background:#f8fafc; border:1px solid #cbd5e1; color:#475569; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">Done with property</button>
         </div>
 
-        <button id="inspCaptureBtn" onclick="inspTriggerCapture()"
-                style="width: 100%; padding: 22px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px;">
+        <!-- iOS-bulletproof pattern: <label for=> bridges directly to the
+             file input at the browser level — no JS .click() required. iOS
+             Safari sometimes refuses the programmatic .click() approach
+             (scar 2026-05-28). The label fires the input natively in the
+             same user gesture, every time. The onclick still calls
+             inspTriggerCapture() to manage pair-shot mode + orientation
+             permission, but iOS opens the camera regardless of whether
+             that JS runs successfully. -->
+        <label for="inspPhotoInput" id="inspCaptureBtn" onclick="inspTriggerCaptureNoClick()"
+                style="width: 100%; padding: 22px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box;">
           <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
           <span id="inspCaptureLabel">Take photo</span>
-        </button>
+        </label>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:10px;">
           <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; flex:1;">Tap once to enable GPS + compass for accurate tagging</div>
           <a href="#" onclick="event.preventDefault(); inspTriggerCapture('pair')" title="Wide shot first (identifies the house), then close-up — pair travels onto the letter as wrong-house insurance. Useful for §209 certified letters." style="font-size: 10.5px; color: #64748b; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">Pair shot (advanced)</a>
@@ -13461,22 +13471,32 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Pair mode stays available for high-stakes certified §209 letters.
   let inspNextCaptureOverride = null; // 'pair_wide' | 'pair_closeup' | null
 
+  // Called by the <label for="inspPhotoInput"> click — iOS opens the camera
+  // natively via the label→input bridge regardless of what this function
+  // does, so we just use this hook to handle orientation permission
+  // (deferred so it doesn't break the gesture chain).
+  function inspTriggerCaptureNoClick() {
+    if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
+        typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission().then((perm) => {
+        if (perm === 'granted' && inspState._attachOrientationListener) inspState._attachOrientationListener();
+        inspState._needsOrientationPermission = false;
+      }).catch(() => { inspState._needsOrientationPermission = false; });
+    }
+  }
+
   function inspTriggerCapture(modeOverride) {
-    // 'pair' kicks off the wide → close-up sequence. Subsequent taps stay
-    // in pair mode until the close-up lands or the user resets.
+    // Programmatic entry — used by the "Pair shot (advanced)" link.
+    // Less reliable on iOS than the <label> bridge but acceptable for the
+    // advanced flow that Ed will not use during typical drives.
     if (modeOverride === 'pair') inspNextCaptureOverride = 'pair_wide';
 
     // CRITICAL on iOS Safari: the file input click MUST be the first
     // synchronous action inside the user-gesture handler. Any async work
-    // (DeviceOrientationEvent.requestPermission, fetch, await) BEFORE this
-    // line breaks the gesture chain and iOS silently refuses to open the
-    // camera. Scar 2026-05-28: Canyon Gate inspection prep, Ed's iPhone
-    // gave "nothing happens" because orientation permission was running first.
+    // BEFORE this line breaks the gesture chain and iOS silently refuses
+    // to open the camera.
     document.getElementById('inspPhotoInput').click();
 
-    // Defer the orientation permission request to AFTER the file input has
-    // already been triggered. iOS will queue both — the camera opens, the
-    // permission popup appears underneath or after.
     if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       DeviceOrientationEvent.requestPermission().then((perm) => {
