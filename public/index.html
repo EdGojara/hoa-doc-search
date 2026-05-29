@@ -12592,10 +12592,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!violationId) return;
     if (btn) { btn.disabled = true; btn.textContent = '⏳ Generating…'; }
     try {
+      // force_regenerate=true ensures the dispatch in /generate-letter
+      // re-runs every time. Without this, a previously-cached letter is
+      // returned even if the category's renderer has since changed
+      // (e.g., the force-mow dispatch added 2026-05-29 — old cached
+      // letters were rendered by the standard pipeline and would never
+      // re-route to the force-mow renderer otherwise). Slightly more
+      // server work per click; consistency win outweighs it at our
+      // letter volume.
       const r = await fetch('/api/enforcement/generate-letter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ violation_id: violationId }),
+        body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
