@@ -908,6 +908,71 @@ async function drainUnindexedQueue({ supabase, openai, maxDocs = 50, budgetMs = 
   return summary;
 }
 
+// ----------------------------------------------------------------------------
+// POST /api/documents/queue-thin-extraction-reindex
+// Backlog catch-up for docs that were uploaded BEFORE the OCR pipeline existed.
+//
+// Migration 104's backfill promoted every doc with chunks to index_status=
+// 'indexed' — including docs where pdf-parse only got header noise off a
+// scanned PDF. Those rows then never re-enter the reindex queue because
+// _findUnindexedDocs only looks at 'pending' / 'failed'.
+//
+// This endpoint calls the queue_thin_extraction_reindex() function
+// (migration 130) to flip the suspect 'indexed' rows back to 'pending' so
+// the existing /reindex-all flow + scheduler process them through the OCR
+// fallback automatically. No new chunking code; reuses everything in
+// lib/library_reindex.js and lib/ocr_pdf.js.
+//
+// Body / query (all optional):
+//   min_chunks  — chunk-count threshold (default 5)
+//   min_chars   — total-content-length threshold (default 1000)
+//   max_requeue — safety cap per call (default 500)
+//
+// Returns:
+//   {
+//     requeued_count: 12,
+//     sample_titles: ['Quail Ridge - R&P 2021', ...],
+//     threshold_used: { chunks: 5, chars: 1000 },
+//     next_step: 'Run /reindex-all to process the queue, or wait for scheduler'
+//   }
+// ----------------------------------------------------------------------------
+router.post('/queue-thin-extraction-reindex', async (req, res) => {
+  try {
+    const minChunks = Math.max(1, parseInt(req.body?.min_chunks || req.query.min_chunks || '5', 10));
+    const minChars  = Math.max(1, parseInt(req.body?.min_chars  || req.query.min_chars  || '1000', 10));
+    const maxRequeue = Math.max(1, Math.min(2000, parseInt(req.body?.max_requeue || req.query.max_requeue || '500', 10)));
+
+    const { data, error } = await supabase.rpc('queue_thin_extraction_reindex', {
+      min_chunk_count: minChunks,
+      min_total_chars: minChars,
+      max_requeue:     maxRequeue,
+    });
+    if (error) {
+      console.error('[documents/queue-thin-extraction-reindex] rpc failed:', error.message);
+      return res.status(500).json({ error: error.message });
+    }
+
+    // The function returns a single row (RETURNS TABLE with one tuple).
+    const row = Array.isArray(data) && data.length > 0 ? data[0] : null;
+    const requeuedCount = (row && row.requeued_count) || 0;
+    const sampleTitles  = (row && row.sample_titles) || [];
+
+    res.json({
+      ok: true,
+      requeued_count: requeuedCount,
+      sample_titles: sampleTitles,
+      threshold_used: { chunks: minChunks, chars: minChars },
+      max_requeue: maxRequeue,
+      next_step: requeuedCount > 0
+        ? 'The flagged docs are now back in the reindex queue. Click "Reindex all" to process now, or the scheduler will pick them up on its next run.'
+        : 'No suspect docs found — every indexed doc has at least the minimum chunks and content length.',
+    });
+  } catch (err) {
+    console.error('[documents/queue-thin-extraction-reindex]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/reindex-all', async (req, res) => {
   try {
     const communityFilter = (req.query.community || req.body?.community || '').trim();
