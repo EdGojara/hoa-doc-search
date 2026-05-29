@@ -7008,6 +7008,26 @@
           <div style="font-size:11px; color:#64748b; margin-top:6px;">Counted from the postmark date (stamped at Mail Queue lock time). Certified §209 should stay at 30 days unless counsel approves otherwise — it aligns with the statutory hearing-request window in Tex. Prop. Code §209.006.</div>
         </div>
 
+        <!-- Force-mow Declaration citation (per-community) — required for the
+             10-day certified lawn force-mow letter renderer. Different
+             Declarations have different recording info, different Article
+             references, different administrative fees. Without this set
+             per-community, the force-mow dispatch returns a config error
+             rather than risk citing the wrong Article. -->
+        <div style="background:#f3e8ff; border:1px solid #d8b4fe; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:12px; font-weight:700; color:#581c87; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🟪 Force-mow letter — Declaration citation</div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 18px; margin-bottom:8px;">
+            <label class="prof-fld"><span>Declaration document number</span><input id="lc-decl-doc-number" placeholder="e.g., 1999106014" /></label>
+            <label class="prof-fld"><span>County (where recorded)</span><input id="lc-decl-county" placeholder="e.g., Fort Bend" /></label>
+            <label class="prof-fld"><span>Subdivision name as cited in Declaration</span><input id="lc-decl-short-name" placeholder="e.g., Eaglewood (falls back to community name)" /></label>
+            <label class="prof-fld"><span>Force-mow admin fee (dollars)</span><input id="lc-fm-fee" type="number" step="1" min="0" placeholder="25" /></label>
+            <label class="prof-fld" style="grid-column: 1 / -1;"><span>Article / section authorizing force-mow + self-help</span><input id="lc-fm-section" placeholder='e.g., "Article 6.16 of the Declaration"' /></label>
+          </div>
+          <div style="font-size:11px; color:#581c87; line-height:1.5;">
+            These four fields cite the legal authority for the 10-day certified force-mow notice (TX §202.018 + Declaration self-help). Letter dispatch refuses to render without doc number + county + Article — too risky to use placeholders on a certified §202.018 notice that ends up in court. Pull from your Declaration's first page (recording stamp) and the table of contents.
+          </div>
+        </div>
+
         <!-- Payment routing (lockbox) -->
         <div style="background:#fffbeb; border:1px solid #f3d894; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
           <div style="font-size:12px; font-weight:700; color:#78350f; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🏦 Payment routing (lockbox)</div>
@@ -18129,6 +18149,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     set('lc-payment-url',    c.letter_payment_url);
     set('lc-pay-to-name',    c.letter_pay_to_name);
     set('lc-pay-to-address', c.letter_pay_to_address);
+
+    // Force-mow Declaration citation (migration 126 columns)
+    set('lc-decl-doc-number',  c.declaration_doc_number);
+    set('lc-decl-county',      c.declaration_county);
+    set('lc-decl-short-name',  c.declaration_short_name);
+    set('lc-fm-section',       c.force_mow_section_full);
+    set('lc-fm-fee',           c.force_mow_admin_fee_cents != null ? (c.force_mow_admin_fee_cents / 100) : '');
   }
 
   async function lcSaveLetterConfig() {
@@ -18156,6 +18183,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       letter_payment_url:                val('lc-payment-url')    || null,
       letter_pay_to_name:                val('lc-pay-to-name')    || null,
       letter_pay_to_address:             val('lc-pay-to-address') || null,
+      // Force-mow Declaration citation
+      declaration_doc_number:            val('lc-decl-doc-number') || null,
+      declaration_county:                val('lc-decl-county') || null,
+      declaration_short_name:            val('lc-decl-short-name') || null,
+      force_mow_section_full:            val('lc-fm-section') || null,
+      force_mow_admin_fee_cents:         dollarsToCents('lc-fm-fee'),
     };
     // Drop nulls so the endpoint only patches what's actually provided
     Object.keys(updates).forEach((k) => { if (updates[k] === null || updates[k] === undefined) delete updates[k]; });
