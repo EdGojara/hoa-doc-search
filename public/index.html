@@ -13204,8 +13204,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   let _mvProperties = [];        // properties for currently-selected community
   let _mvCategories = [];        // enforcement categories (global)
   let _mvCommunitiesLoaded = false;
+  // Cache the original form HTML on first open. After a successful submit
+  // we replace the modal body with a success view; "Add another" needs to
+  // restore the form. Without this, the IDs the rest of the JS expects
+  // (manualVioPhotoList, manualVioDescription, etc.) won't exist and the
+  // next open throws "Cannot read property of null."
+  let _mvOriginalBodyHTML = null;
 
   async function manualVioOpen() {
+    const bodyEl = document.getElementById('manualVioBody');
+    // First-open: capture the pristine form HTML for later restoration.
+    if (_mvOriginalBodyHTML === null && bodyEl) {
+      _mvOriginalBodyHTML = bodyEl.innerHTML;
+    }
+    // If the body was replaced (post-success), restore the form before
+    // doing anything else — otherwise the field lookups below will null.
+    if (bodyEl && _mvOriginalBodyHTML && !document.getElementById('manualVioDescription')) {
+      bodyEl.innerHTML = _mvOriginalBodyHTML;
+    }
     // Reset state when re-opening so a previous draft doesn't leak
     _mvPhotos = [];
     document.getElementById('manualVioPhotoList').innerHTML = '';
@@ -13263,6 +13279,43 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   function manualVioClose() {
     document.getElementById('manualVioModal').style.display = 'none';
+  }
+
+  // Open the property detail panel for the property the violation just
+  // landed on. The panel pulls violation history fresh so the new row
+  // shows up immediately. Closes the manual entry modal first so the
+  // detail modal isn't stacked beneath it.
+  function manualVioViewProperty(propertyId, propertyLabel) {
+    manualVioClose();
+    if (typeof inspOpenPropertyDetail === 'function') {
+      try { inspOpenPropertyDetail(propertyId); }
+      catch (e) { console.warn('[manualVio] inspOpenPropertyDetail failed:', e.message); }
+    }
+  }
+
+  // Reset the modal to a fresh form (for "Add another" after a success).
+  // Re-renders the full form body and pre-fills the community + property
+  // that the prior entry used — most repeat manual entries are for the
+  // same community, often the same property (e.g., multiple force-mow
+  // observations down a street).
+  function manualVioReset() {
+    const priorCommunity = document.getElementById('manualVioCommunity').value;
+    const priorProperty = document.getElementById('manualVioProperty').value;
+    // Closing + reopening re-renders the body cleanly
+    manualVioClose();
+    manualVioOpen();
+    setTimeout(() => {
+      // Restore prior community + property selection
+      const commSel = document.getElementById('manualVioCommunity');
+      if (commSel && priorCommunity) {
+        commSel.value = priorCommunity;
+        manualVioCommunityChanged();
+        setTimeout(() => {
+          const propSel = document.getElementById('manualVioProperty');
+          if (propSel && priorProperty) propSel.value = priorProperty;
+        }, 250);
+      }
+    }, 50);
   }
 
   async function manualVioCommunityChanged() {
@@ -13404,20 +13457,51 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         showErr(j.error || ('Failed to create violation (HTTP ' + r.status + ')'));
         return;
       }
-      // Success
-      manualVioClose();
-      // Light toast — reuse the inspect status banner if available, else alert
-      try {
-        const statusEl = document.getElementById('inspMapStatus');
-        if (statusEl) {
-          const orig = statusEl.innerHTML;
-          statusEl.innerHTML = `✅ Manual violation created · stage <strong>${escapeHtml(j.current_stage || '—')}</strong> · ${j.photos_uploaded || 0} photo${(j.photos_uploaded || 0) === 1 ? '' : 's'}`;
-          setTimeout(() => { statusEl.innerHTML = orig; }, 6000);
-        } else {
-          alert('Manual violation created. Stage: ' + (j.current_stage || '—') + ' · Photos: ' + (j.photos_uploaded || 0));
-        }
-      } catch (_) {
-        alert('Manual violation created.');
+      // Success — replace modal body with a confirmation view that links
+      // through to the property detail panel. Without this, the staff loses
+      // the trail after submit and has to manually navigate to the property
+      // to see what they just created.
+      const propLabel = (function () {
+        const sel = document.getElementById('manualVioProperty');
+        const opt = sel.options[sel.selectedIndex];
+        return opt ? opt.textContent : '';
+      })();
+      const photosLine = (j.photos_uploaded || 0) > 0
+        ? `${j.photos_uploaded} photo${j.photos_uploaded === 1 ? '' : 's'} uploaded · AI cross-check running in background (3–6 sec)`
+        : 'No photos attached.';
+      const body = document.getElementById('manualVioBody');
+      if (body) {
+        body.innerHTML = `
+          <div style="text-align:center; padding:14px 6px;">
+            <div style="font-size:42px; line-height:1; margin-bottom:8px;">✅</div>
+            <div style="font-family:var(--font-serif, Georgia); font-size:19px; color:var(--navy, #1A3050); font-weight:600; margin-bottom:6px;">Violation created</div>
+            <div style="color:#475569; font-size:13.5px; margin-bottom:14px; line-height:1.5;">
+              <strong>${escapeHtml(propLabel)}</strong><br>
+              Stage <strong>${escapeHtml((j.current_stage || '').replace(/_/g, ' '))}</strong> · ${escapeHtml(photosLine)}
+            </div>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; font-size:11.5px; color:#64748b; margin-bottom:16px; line-height:1.5; text-align:left;">
+              <strong style="color:#1A3050;">What happens next:</strong><br>
+              • The violation is now on the property's record (quality: verified)<br>
+              • AI is reviewing the photo${(j.photos_uploaded || 0) === 1 ? '' : 's'} — if it disagrees, the violation will be re-flagged for your review<br>
+              • You can draft the certified force-mow letter from the Drafts queue when ready
+            </div>
+            <div style="display:flex; gap:8px; flex-wrap:wrap;">
+              <button type="button" onclick="manualVioViewProperty('${escapeHtml(propertyId)}', '${escapeHtml(propLabel.replace(/'/g, '&apos;'))}')"
+                      style="flex:1; min-width:140px; padding:12px 14px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">
+                🏠 View property
+              </button>
+              <button type="button" onclick="manualVioReset()"
+                      style="flex:1; min-width:140px; padding:12px 14px; background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer;">
+                ➕ Add another
+              </button>
+              <button type="button" onclick="manualVioClose()"
+                      style="flex:1; min-width:120px; padding:12px 14px; background:#fff; color:#475569; border:1px solid #d0d7de; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">
+                Done
+              </button>
+            </div>
+          </div>`;
+      } else {
+        alert('Manual violation created. Stage: ' + (j.current_stage || '—') + ' · Photos: ' + (j.photos_uploaded || 0));
       }
     } catch (e) {
       showErr('Network error: ' + e.message);
