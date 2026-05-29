@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DRB Group · August Meadows · New Construction Submission</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --cream: #FAFAF6;
+    --rule: #d8d6cd;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #6a6a6a;
+    --drb-blue: #003E7E;     /* DRB Group brand blue */
+    --drb-red:  #BE1E2D;     /* DRB Group brand red */
+    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 14.5px;
+    line-height: 1.5;
+    min-height: 100vh;
+  }
+
+  /* ---- Top co-branded header ---- */
+  header.page {
+    background: #fff;
+    border-bottom: 4px solid var(--gold);
+    padding: 26px 0 22px;
+  }
+  .container { max-width: 920px; margin: 0 auto; padding: 0 32px; }
+
+  .co-brand {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 24px;
+    margin-bottom: 22px;
+    padding-bottom: 18px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .co-brand .left, .co-brand .right { display: flex; align-items: center; gap: 14px; }
+  .co-brand .x { color: var(--ink-faint); font-size: 13px; letter-spacing: 0.12em; }
+
+  /* DRB Group logo treatment — inline SVG, no external file required */
+  .drb-mark {
+    display: flex; align-items: center; gap: 10px;
+  }
+  .drb-mark .mark {
+    width: 42px; height: 42px; border-radius: 4px;
+    background: var(--drb-blue);
+    display: flex; align-items: center; justify-content: center;
+    color: #fff;
+    font-family: var(--font-sans);
+    font-weight: 700; font-size: 17px;
+    letter-spacing: 0.04em;
+    position: relative;
+  }
+  .drb-mark .mark::after {
+    content: "";
+    position: absolute;
+    right: -3px; top: -3px;
+    width: 10px; height: 10px;
+    background: var(--drb-red);
+    border-radius: 2px;
+  }
+  .drb-mark .name {
+    font-family: var(--font-serif);
+    font-size: 19px;
+    font-weight: 500;
+    color: var(--navy);
+    letter-spacing: -0.005em;
+  }
+  .drb-mark .sub {
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-top: 2px;
+  }
+
+  /* Bedrock wordmark */
+  .bdrk {
+    text-align: right;
+  }
+  .bdrk .wm {
+    font-family: var(--font-serif);
+    font-size: 18px;
+    color: var(--navy);
+    line-height: 1;
+  }
+  .bdrk .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .bdrk .sub {
+    font-size: 10px;
+    color: var(--ink-faint);
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    margin-top: 4px;
+  }
+
+  h1 {
+    font-family: var(--font-serif);
+    font-size: 30px;
+    font-weight: 500;
+    margin: 0 0 4px;
+    color: var(--navy);
+    letter-spacing: -0.01em;
+  }
+  h1 em { color: var(--gold); font-style: italic; }
+  .subtitle {
+    font-size: 14.5px;
+    color: var(--ink-soft);
+    margin: 0;
+  }
+
+  .meta-strip {
+    display: flex; gap: 36px; flex-wrap: wrap;
+    margin-top: 22px;
+    padding-top: 18px;
+    border-top: 1px solid var(--rule);
+    font-size: 13px;
+  }
+  .meta-strip .item .label {
+    display: block;
+    font-size: 10.5px;
+    color: var(--ink-faint);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+    font-weight: 600;
+  }
+  .meta-strip .item .value { color: var(--navy); font-weight: 600; }
+  .meta-strip .item a {
+    color: var(--drb-blue);
+    text-decoration: none;
+    border-bottom: 1px dotted var(--drb-blue);
+  }
+
+  /* ---- Form layout ---- */
+  main { padding: 36px 0 80px; }
+  section.card {
+    background: #fff;
+    border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 24px 28px;
+    margin-bottom: 20px;
+  }
+  section.card .head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 18px; padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+  section.card h2 {
+    font-family: var(--font-serif);
+    font-size: 19px; font-weight: 500;
+    margin: 0;
+    color: var(--navy);
+  }
+  section.card .hint {
+    font-size: 12px;
+    color: var(--ink-faint);
+    font-style: italic;
+  }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid-3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 14px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  @media (max-width: 680px) {
+    .grid-2, .grid-3, .grid-4 { grid-template-columns: 1fr; }
+    .container { padding: 0 18px; }
+    .co-brand { flex-direction: column; align-items: flex-start; }
+    .bdrk { text-align: left; }
+  }
+
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field label {
+    font-size: 11px;
+    color: var(--ink-faint);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    font-weight: 600;
+  }
+  .field label .req { color: var(--drb-red); margin-left: 2px; }
+  .field input,
+  .field select,
+  .field textarea {
+    background: #fff;
+    border: 1px solid var(--rule);
+    color: var(--ink);
+    padding: 10px 12px;
+    font-family: var(--font-sans);
+    font-size: 14px;
+    border-radius: 5px;
+    transition: border-color 0.15s, box-shadow 0.15s;
+  }
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--gold);
+    box-shadow: 0 0 0 3px rgba(212, 175, 55, 0.18);
+  }
+  .field input[readonly] {
+    background: #f8f7f1;
+    color: var(--ink-soft);
+    cursor: not-allowed;
+  }
+  .field .helper {
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin-top: 2px;
+    font-style: italic;
+  }
+  .field.error input,
+  .field.error select { border-color: var(--drb-red); }
+
+  /* ---- PDF dropzone (the AI-extraction hero element) ---- */
+  .dropzone {
+    border: 2px dashed var(--gold);
+    border-radius: 8px;
+    padding: 28px;
+    text-align: center;
+    background: #fbf9ec;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .dropzone:hover { background: #f8f3d8; border-color: var(--drb-blue); }
+  .dropzone.has-file {
+    background: #f0f7f0;
+    border-color: #2e7d32;
+    border-style: solid;
+  }
+  .dropzone .big-text {
+    font-size: 16px;
+    color: var(--navy);
+    font-weight: 600;
+    margin-bottom: 4px;
+  }
+  .dropzone .small-text {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+  }
+  .dropzone .ai-pitch {
+    margin-top: 14px;
+    padding-top: 12px;
+    border-top: 1px dashed rgba(212, 175, 55, 0.5);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    line-height: 1.55;
+  }
+  .dropzone .ai-pitch strong {
+    color: var(--navy);
+    font-weight: 600;
+  }
+  input[type=file] { display: none; }
+
+  /* ---- Acknowledgments ---- */
+  .ack {
+    display: flex; align-items: flex-start; gap: 10px;
+    padding: 12px 14px;
+    background: #fbf9ec;
+    border-left: 3px solid var(--gold);
+    border-radius: 4px;
+    margin-bottom: 10px;
+  }
+  .ack input[type=checkbox] {
+    width: 17px; height: 17px;
+    accent-color: var(--drb-blue);
+    flex-shrink: 0;
+    margin-top: 2px;
+  }
+  .ack label {
+    font-size: 12.5px;
+    color: var(--ink-soft);
+    line-height: 1.45;
+  }
+  .ack label strong { color: var(--navy); }
+
+  /* ---- Submit footer ---- */
+  .submit-row {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-top: 24px;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  .submit-note {
+    font-size: 12px;
+    color: var(--ink-faint);
+    flex: 1;
+    min-width: 220px;
+  }
+  button.submit-btn {
+    background: var(--drb-blue);
+    color: #fff;
+    border: none;
+    padding: 14px 32px;
+    font-family: var(--font-sans);
+    font-size: 14.5px;
+    font-weight: 600;
+    border-radius: 6px;
+    cursor: pointer;
+    letter-spacing: 0.02em;
+    transition: background 0.15s;
+  }
+  button.submit-btn:hover { background: #002a5a; }
+  button.submit-btn:disabled {
+    background: var(--ink-faint);
+    cursor: not-allowed;
+  }
+  .loader {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border: 2px solid #fff;
+    border-top-color: transparent;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-right: 6px;
+    vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast {
+    position: fixed; top: 18px; right: 18px;
+    background: var(--navy); color: #fff;
+    padding: 12px 18px; border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+    z-index: 1000;
+    font-size: 13px;
+    max-width: 360px;
+  }
+  .toast.error { background: var(--drb-red); }
+  .toast.success { background: #2e7d32; }
+
+  .success-panel {
+    background: #fff;
+    border: 1px solid var(--rule);
+    border-top: 4px solid #2e7d32;
+    border-radius: 8px;
+    padding: 36px;
+    text-align: center;
+    margin: 30px 0;
+  }
+  .success-panel h2 {
+    font-family: var(--font-serif);
+    font-size: 28px;
+    color: var(--navy);
+    margin: 0 0 10px;
+  }
+  .success-panel .ref {
+    display: inline-block;
+    background: #fbf9ec;
+    border: 1px solid var(--gold);
+    padding: 8px 18px;
+    border-radius: 6px;
+    font-family: ui-monospace, 'JetBrains Mono', monospace;
+    color: var(--navy);
+    font-size: 17px;
+    letter-spacing: 0.04em;
+    margin: 14px 0 18px;
+    font-weight: 600;
+  }
+  .success-panel p { color: var(--ink-soft); margin: 8px 0; }
+  .success-panel .portal-cta {
+    display: inline-block;
+    margin-top: 18px;
+    background: var(--navy);
+    color: #fff;
+    text-decoration: none;
+    padding: 11px 22px;
+    border-radius: 6px;
+    font-weight: 600;
+    font-size: 13.5px;
+  }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="container">
+    <div class="co-brand">
+      <div class="left">
+        <div class="drb-mark">
+          <div class="mark">DRB</div>
+          <div>
+            <div class="name">DRB Group</div>
+            <div class="sub">Builder Portal · August Meadows</div>
+          </div>
+        </div>
+      </div>
+      <div class="bdrk">
+        <div class="wm">Bedrock <em>Association Management</em></div>
+        <div class="sub">Reviewed by Bedrock</div>
+      </div>
+    </div>
+
+    <h1>New Construction <em>Submission</em></h1>
+    <p class="subtitle">Submit a new home plan at August Meadows for ARC review.</p>
+
+    <div class="meta-strip">
+      <div class="item">
+        <span class="label">Builder</span>
+        <span class="value">DRB Group</span>
+      </div>
+      <div class="item">
+        <span class="label">Community</span>
+        <span class="value">August Meadows</span>
+      </div>
+      <div class="item">
+        <span class="label">Review fee</span>
+        <span class="value" id="metaFee">$150</span>
+      </div>
+      <div class="item" id="guidelinesItem" style="display:none;">
+        <span class="label">Design guidelines</span>
+        <span class="value"><a id="guidelinesLink" href="#" target="_blank" rel="noopener">Open ↗</a></span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <!-- Standby placeholder for the success state -->
+    <div id="successWrap" style="display:none;"></div>
+
+    <form id="submitForm" novalidate>
+      <!-- SECTION 1 — Builder & submitter -->
+      <section class="card">
+        <div class="head">
+          <h2>Builder &amp; Submitter</h2>
+          <span class="hint">Who is filing this submission</span>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Builder Company<span class="req">*</span></label>
+            <input type="text" name="builder_company_name" value="DRB Group" readonly>
+          </div>
+          <div class="field">
+            <label>Submitter Name <span class="hint" style="font-style:italic;">— purchasing coordinator</span></label>
+            <input type="text" name="submitter_name" placeholder="Karla Rutan" autocomplete="name">
+          </div>
+          <div class="field">
+            <label>Submitter Email<span class="req">*</span></label>
+            <input type="email" name="submitter_email" placeholder="krutan@drbgroup.com" autocomplete="email" required>
+          </div>
+          <div class="field">
+            <label>Submitter Phone</label>
+            <input type="tel" name="submitter_phone" placeholder="(xxx) xxx-xxxx" autocomplete="tel">
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 2 — Property -->
+      <section class="card">
+        <div class="head">
+          <h2>Property</h2>
+          <span class="hint">Where the home will be built</span>
+        </div>
+        <div class="grid-4">
+          <div class="field">
+            <label>Lot<span class="req">*</span></label>
+            <input type="text" name="lot_number" placeholder="42" required>
+          </div>
+          <div class="field">
+            <label>Block</label>
+            <input type="text" name="block_number" placeholder="3">
+          </div>
+          <div class="field">
+            <label>Section</label>
+            <input type="text" name="section_number" placeholder="2">
+          </div>
+          <div class="field">
+            <label>Lot Type</label>
+            <select name="lot_type">
+              <option value="">—</option>
+              <option value="interior">Interior</option>
+              <option value="corner">Corner</option>
+              <option value="cul_de_sac">Cul-de-sac</option>
+              <option value="backs_to_common_area">Backs to common area</option>
+              <option value="backs_to_thoroughfare">Backs to thoroughfare</option>
+              <option value="flag_lot">Flag lot</option>
+            </select>
+          </div>
+        </div>
+        <div class="field">
+          <label>Street Address<span class="req">*</span></label>
+          <input type="text" name="street_address" placeholder="502 Meadow Knoll Drive" required>
+        </div>
+      </section>
+
+      <!-- SECTION 3 — Plan selection (dropdown of DRB plans) -->
+      <section class="card">
+        <div class="head">
+          <h2>Plan</h2>
+          <span class="hint">Pick your DRB plan — details auto-fill</span>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>DRB Plan<span class="req">*</span></label>
+            <select name="plan_number" id="planSelect" required>
+              <option value="">— Select a plan —</option>
+              <!-- Placeholder DRB plans. Once Karla shares the full plan
+                   inventory we'll seed master_plans rows and load these
+                   from the API. For the demo today, three representative
+                   entries so the UX is clear. -->
+              <option value="6512-A" data-name="The Belmont" data-sqft="2418" data-stories="2">DRB 6512-A · The Belmont · 2,418 sq ft · 2 story</option>
+              <option value="5839-B" data-name="The Carrington" data-sqft="2014" data-stories="1">DRB 5839-B · The Carrington · 2,014 sq ft · 1 story</option>
+              <option value="7140-C" data-name="The Hawthorne" data-sqft="2786" data-stories="2">DRB 7140-C · The Hawthorne · 2,786 sq ft · 2 story</option>
+            </select>
+            <div class="helper">Don't see your plan? Email <a href="mailto:builders@bedrocktx.com" style="color:var(--drb-blue);">builders@bedrocktx.com</a> and we'll add it.</div>
+          </div>
+          <div class="field">
+            <label>Elevation<span class="req">*</span></label>
+            <select name="elevation" required>
+              <option value="">—</option>
+              <option value="A">Elevation A</option>
+              <option value="B">Elevation B</option>
+              <option value="C">Elevation C</option>
+              <option value="D">Elevation D</option>
+            </select>
+          </div>
+        </div>
+        <div class="grid-3">
+          <div class="field">
+            <label>Plan Name <span class="hint" style="font-style:italic;">— auto-filled</span></label>
+            <input type="text" name="plan_name" id="planName" readonly>
+          </div>
+          <div class="field">
+            <label>Square Footage</label>
+            <input type="number" name="square_footage" id="planSqft" min="0">
+          </div>
+          <div class="field">
+            <label>Stories</label>
+            <input type="number" name="stories" id="planStories" step="0.5" min="0" max="4">
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 4 — PDF attachment (AI extraction) -->
+      <section class="card">
+        <div class="head">
+          <h2>Submission packet</h2>
+          <span class="hint">One PDF, AI extracts the rest</span>
+        </div>
+        <label class="dropzone" id="dropzone" for="pdfInput">
+          <div id="dzText">
+            <div class="big-text">📄 Drop your submission PDF here</div>
+            <div class="small-text">or click to choose a file</div>
+            <div class="ai-pitch">
+              <strong>How this saves Karla 20 minutes per submission:</strong><br>
+              Upload one PDF — site plan, elevations, material schedule — and Bedrock's AI extracts brick + stone colors, masonry percentages by elevation, siding, trim, roof material, fence specs, paint palette, and option-tag selections automatically. No retyping. The structured data lands in our review queue alongside the source PDF you uploaded.
+            </div>
+          </div>
+        </label>
+        <input type="file" id="pdfInput" accept="application/pdf">
+      </section>
+
+      <!-- SECTION 5 — Acknowledgments -->
+      <section class="card">
+        <div class="head">
+          <h2>Acknowledgments</h2>
+          <span class="hint">Required before submitting</span>
+        </div>
+        <div class="ack">
+          <input type="checkbox" id="ackCompliance">
+          <label for="ackCompliance">
+            <strong>Compliance:</strong> The plan submitted reflects the approved design and materials. Any field substitutions require a written change request before construction continues.
+          </label>
+        </div>
+        <div class="ack">
+          <input type="checkbox" id="ackChangeControl">
+          <label for="ackChangeControl">
+            <strong>Change control:</strong> Material or design changes after approval (color, brick, stone, masonry %, etc.) require a separate submission and may incur an additional review fee.
+          </label>
+        </div>
+
+        <div class="submit-row">
+          <div class="submit-note">
+            By submitting, DRB Group authorizes Bedrock to review this submission against the August Meadows Declaration and Design Guidelines. You'll receive a tracking link and the reviewer's decision letter via email.
+          </div>
+          <button type="submit" class="submit-btn" id="submitBtn">Submit for review →</button>
+        </div>
+      </section>
+    </form>
+  </div>
+</main>
+
+<script>
+  function $(id) { return document.getElementById(id); }
+
+  function toast(msg, level) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (level || '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 5500);
+  }
+
+  // ---- Plan dropdown: auto-fill plan_name + sqft + stories ----
+  $('planSelect').addEventListener('change', (e) => {
+    const opt = e.target.selectedOptions[0];
+    if (!opt || !opt.value) {
+      $('planName').value = '';
+      $('planSqft').value = '';
+      $('planStories').value = '';
+      return;
+    }
+    $('planName').value    = opt.dataset.name    || '';
+    $('planSqft').value    = opt.dataset.sqft    || '';
+    $('planStories').value = opt.dataset.stories || '';
+  });
+
+  // ---- PDF dropzone ----
+  let pdfFile = null;
+  const dz = $('dropzone');
+  const pdfInput = $('pdfInput');
+  pdfInput.addEventListener('change', () => {
+    if (pdfInput.files && pdfInput.files[0]) setPdf(pdfInput.files[0]);
+  });
+  ['dragenter', 'dragover'].forEach((ev) => {
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = '#f5efc8'; });
+  });
+  ['dragleave', 'drop'].forEach((ev) => {
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = ''; });
+  });
+  dz.addEventListener('drop', (e) => {
+    const f = e.dataTransfer.files && e.dataTransfer.files[0];
+    if (f && f.type === 'application/pdf') setPdf(f);
+    else if (f) toast('Please upload a PDF file.', 'error');
+  });
+  function setPdf(f) {
+    pdfFile = f;
+    dz.classList.add('has-file');
+    $('dzText').innerHTML = `
+      <div class="big-text">✓ ${escapeHtml(f.name)}</div>
+      <div class="small-text">${(f.size / 1024 / 1024).toFixed(2)} MB · ready for AI extraction</div>
+      <div class="ai-pitch">Click to choose a different PDF.</div>
+    `;
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  // ---- Submit ----
+  $('submitForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    document.querySelectorAll('.field.error').forEach((f) => f.classList.remove('error'));
+
+    const fd = new FormData(e.target);
+    const get = (k) => (fd.get(k) || '').toString().trim();
+    const getNum = (k) => { const v = get(k); return v === '' ? null : Number(v); };
+
+    const payload = {
+      community_slug: 'august-meadows',
+      builder_company_name: 'DRB Group',
+      submitter_name:  get('submitter_name'),
+      submitter_email: get('submitter_email'),
+      submitter_phone: get('submitter_phone'),
+      source: 'portal',
+      lot_number:     get('lot_number'),
+      block_number:   get('block_number') || undefined,
+      section_number: get('section_number') || undefined,
+      street_address: get('street_address'),
+      lot_type:       get('lot_type') || undefined,
+      plan_number:    get('plan_number'),
+      plan_name:      get('plan_name') || undefined,
+      elevation:      get('elevation'),
+      square_footage: getNum('square_footage'),
+      stories:        getNum('stories'),
+      materials: {
+        ai_extraction_pending: true,
+        source_pdf_filename: pdfFile ? pdfFile.name : null,
+      },
+      builder_acknowledgments: {
+        compliance:     !!$('ackCompliance').checked,
+        change_control: !!$('ackChangeControl').checked,
+        acknowledged_at: new Date().toISOString(),
+      },
+    };
+
+    // Validate
+    const required = ['submitter_email', 'lot_number', 'street_address', 'plan_number', 'elevation'];
+    for (const k of required) {
+      if (!payload[k]) {
+        const el = document.querySelector(`[name="${k}"]`);
+        if (el) el.closest('.field')?.classList.add('error');
+        return toast(`${k.replace(/_/g, ' ')} is required`, 'error');
+      }
+    }
+    if (!payload.builder_acknowledgments.compliance || !payload.builder_acknowledgments.change_control) {
+      return toast('Both acknowledgments must be checked.', 'error');
+    }
+    if (!pdfFile) {
+      return toast('Please upload a submission PDF.', 'error');
+    }
+
+    const btn = $('submitBtn');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loader"></span>Submitting…`;
+
+    try {
+      const r = await fetch('/api/builder-applications', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      const applicationId = data.application_id;
+      const referenceNumber = data.reference_number;
+
+      // Upload the PDF as the submission packet attachment
+      btn.innerHTML = `<span class="loader"></span>Uploading PDF…`;
+      const upFd = new FormData();
+      upFd.append('files', pdfFile);
+      upFd.append('kinds', 'submission_packet');
+      const ar = await fetch(`/api/builder-applications/${applicationId}/attachments`, {
+        method: 'POST',
+        body: upFd,
+      });
+      if (!ar.ok) {
+        const ej = await ar.json().catch(() => ({}));
+        console.warn('Attachment upload returned non-OK:', ej.error || ar.status);
+      }
+
+      renderSuccess(referenceNumber);
+    } catch (err) {
+      toast(`Submission failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.innerHTML = 'Submit for review →';
+    }
+  });
+
+  function renderSuccess(refNumber) {
+    $('submitForm').style.display = 'none';
+    const wrap = $('successWrap');
+    wrap.style.display = 'block';
+    wrap.innerHTML = `
+      <div class="success-panel">
+        <h2>Submission received ✓</h2>
+        <div class="ref">${escapeHtml(refNumber)}</div>
+        <p>We'll start review and send a tracking email to your inbox shortly.</p>
+        <p>You can check status anytime at the link below using this reference number.</p>
+        <a class="portal-cta" href="/portal-login.html">Open the DRB portal →</a>
+      </div>
+    `;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+
+</body>
+</html>

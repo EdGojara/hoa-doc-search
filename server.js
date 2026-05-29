@@ -935,9 +935,19 @@ app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 
-// Public builder submission form — /builders/:slug serves builder-submit.html.
-// The form reads :slug from the path and calls /api/builder-applications/public/community/:slug
-// to populate community-specific copy + the design guidelines link.
+// Builder-specific landing pages — declared BEFORE the generic /builders/:slug
+// so Express matches the specific path first. Each dedicated page is
+// co-branded (builder logo + community context) and submits to the same
+// POST /api/builder-applications endpoint with community_slug + builder_company_name
+// baked in. As builders join, add a route entry per builder-community pair.
+app.get('/builders/august-meadows-drb', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'builder-submit-drb-am.html'));
+});
+
+// Public builder submission form — /builders/:slug serves the generic
+// builder-submit.html. The form reads :slug from the path and calls
+// /api/builder-applications/public/community/:slug to populate community-
+// specific copy + the design guidelines link.
 app.get('/builders/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'builder-submit.html'));
 });
