@@ -6177,11 +6177,13 @@
       <span style="color:#315A87; font-weight:500;">Single source of truth for community documents.</span>
     </p>
 
-    <!-- askEd coverage panel — kept in DOM as a hidden admin escape hatch
-         (the daily auto-reindex scheduler job drains the queue overnight,
-         so operators don't normally need to see this). To re-enable for
-         debugging, remove the style="display:none". -->
-    <div class="panel" style="margin-bottom: 16px; display:none;">
+    <!-- askEd coverage panel — surfaced 2026-05-29 because the daily
+         auto-reindex scheduler only drains the 'pending' / 'failed' queue;
+         it does NOT catch docs that were silently miss-extracted under the
+         old pre-OCR pipeline and got marked 'indexed' with garbage chunks.
+         The "Re-OCR suspect scans" button re-queues those. Keep this panel
+         visible until the backlog is drained across the portfolio. -->
+    <div class="panel" style="margin-bottom: 16px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
         <h3 style="margin:0;">🧠 askEd coverage</h3>
         <div style="display:flex; gap:6px; align-items:center;">
