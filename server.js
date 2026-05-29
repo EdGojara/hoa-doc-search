@@ -7527,10 +7527,10 @@ app.get('/api/me', async (req, res) => {
 
     const { data: profile } = await supabase
       .from('user_profiles')
-      .select('id, email, full_name, role, is_active, last_sign_in_at, created_at')
+      .select('id, email, full_name, role, is_active, last_sign_in_at, created_at, preferences')
       .eq('id', user.id)
       .maybeSingle();
-    if (!profile) return res.json({ user: { id: user.id, email: user.email, full_name: null, role: 'staff', is_active: true, last_sign_in_at: null } });
+    if (!profile) return res.json({ user: { id: user.id, email: user.email, full_name: null, role: 'staff', is_active: true, last_sign_in_at: null, preferences: {} } });
     // Return the profile even if inactive — the UI uses is_active to show
     // a "deactivated" page. Downstream API endpoints enforce inactive
     // refusal via resolveUserRole returning 'inactive'.

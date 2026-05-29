@@ -359,7 +359,12 @@
 </div>
 
 <div class="tabs">
-  <div class="tab active" onclick="switchTab('asked')">🧠 askEd</div>
+  <!-- Home tab — personalized tile dashboard. First in the nav (leftmost)
+       so it's the operator's landing surface after sign-in. Tiles are
+       picked from a catalog and stored on user_profiles.preferences.home_tiles
+       (see migration 131 + api/users.js PATCH /me/preferences). -->
+  <div class="tab active" onclick="switchTab('home')">🏠 Home</div>
+  <div class="tab" onclick="switchTab('asked')">🧠 askEd</div>
   <div class="tab" onclick="switchTab('calendar')">🗓️ Calendar</div>
   <div class="tab" onclick="switchTab('perf')">📊 Performance</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
@@ -790,8 +795,44 @@
        vertical space. See tab-archistory. -->
 </div>
 
+<!-- =========================================================================
+     HOME TAB — personalized tile dashboard. Renders user.preferences.home_tiles
+     against the HOME_TILE_CATALOG defined in the page script. Customize button
+     opens a modal that lets the user pick which tiles to show.
+     ========================================================================= -->
+<div class="tab-content active" id="tab-home" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1300px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
+      <div>
+        <h2 style="margin:0 0 4px 0; color:#1A3050;">🏠 Home</h2>
+        <p id="homeWelcome" style="color:#64748b; font-size:13.5px; margin:0;">Pick the modules that matter to you. Your selection is saved per-user.</p>
+      </div>
+      <button type="button" onclick="homeOpenCustomize()" class="secondary-btn" style="padding:8px 14px; font-size:13px;">⚙️ Customize tiles</button>
+    </div>
+    <div id="homeTilesGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px;">
+      <div style="color:#94a3b8; font-size:13px; padding:30px; text-align:center; grid-column:1/-1;">Loading your tiles…</div>
+    </div>
+  </div>
+</div>
+
+<!-- Customize tiles modal -->
+<div id="homeCustomizeModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
+  <div style="background:#fff; border-radius:14px; max-width:760px; width:100%; padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+      <h3 style="margin:0; color:#1A3050;">⚙️ Customize home tiles</h3>
+      <button type="button" onclick="homeCloseCustomize()" style="background:none; border:none; font-size:22px; color:#64748b; cursor:pointer;">×</button>
+    </div>
+    <p style="color:#64748b; font-size:12.5px; margin:0 0 14px 0;">Check the tiles you want on your home screen. They'll appear in the order you check them (top-down, left-right). Max 24 tiles.</p>
+    <div id="homeCustomizeCatalog" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:8px; margin-bottom:16px;"></div>
+    <div style="display:flex; justify-content:flex-end; gap:8px;">
+      <button type="button" onclick="homeCloseCustomize()" class="secondary-btn" style="padding:7px 14px; font-size:12.5px;">Cancel</button>
+      <button type="button" onclick="homeSaveCustomize()" class="primary-btn" id="homeSaveBtn" style="padding:7px 14px; font-size:12.5px;">💾 Save tiles</button>
+    </div>
+  </div>
+</div>
+
 <!-- Ask Ed Tab — single AI surface, multiple modes -->
-<div class="tab-content active" id="tab-asked">
+<div class="tab-content" id="tab-asked">
   <div class="ask-ed-container">
     <div class="ask-ed-left">
       <h3>🧠 askEd</h3>
@@ -19423,7 +19464,178 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // parent highlight is handled separately by the TAB_GROUPS patch below.
     document.querySelector(`.tab[onclick="switchTab('${tab}')"]`)?.classList.add('active');
     document.getElementById(`tab-${tab}`)?.classList.add('active');
+    // Home tab: re-render the tile grid on every open. Cheap (pure DOM),
+    // gives the operator a fresh count if widgets get added in Phase 2.
+    if (tab === 'home') { try { homeRender(); } catch (_) {} }
   }
+
+  // ===================================================================
+  // HOME DASHBOARD — Phase 1 (static tile shortcuts)
+  // ===================================================================
+  // Canonical catalog of all available tiles. KEEP IN SYNC with the
+  // HOME_TILE_CATALOG Set in api/users.js — server-side whitelist filter
+  // drops any key not present there. Adding a new tile = two edits:
+  // here AND in api/users.js HOME_TILE_CATALOG.
+  //
+  // Each entry:
+  //   key:    stable identifier persisted in user_profiles.preferences.home_tiles
+  //   label:  shown on the tile and in the customize modal
+  //   icon:   single emoji
+  //   group:  used to group rows in the customize modal
+  //   action: callback that runs on tile click. Typically a switchTab call;
+  //           some open modals directly or navigate to a separate page.
+  //   note:   small tagline rendered under the label on the tile
+  // ===================================================================
+  const HOME_TILE_CATALOG = {
+    asked:              { label: 'askEd',               icon: '🧠', group: 'AI',         note: 'Ask anything · draft responses',     action: () => switchTab('asked') },
+    inspect:            { label: 'Inspect',             icon: '🚗', group: 'Enforcement', note: 'DRV capture · map · queues',          action: () => switchTab('inspect') },
+    drafts:             { label: 'Drafts queue',        icon: '📝', group: 'Enforcement', note: 'Letters awaiting your review',        action: () => { switchTab('inspect'); setTimeout(() => { document.getElementById('inspDraftsList')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 200); } },
+    mail_queue:         { label: 'Mail Queue',          icon: '📬', group: 'Enforcement', note: 'Approved · ready to print',           action: () => { switchTab('inspect'); setTimeout(() => { document.getElementById('inspMailQueueList')?.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, 200); } },
+    manual_violation:   { label: 'Manual violation',    icon: '📥', group: 'Enforcement', note: 'Neighbor report · board email',       action: () => { if (typeof manualVioOpen === 'function') manualVioOpen(); else switchTab('inspect'); } },
+    builder_arc:        { label: 'Builder ARC',         icon: '🧱', group: 'Architectural', note: 'New construction submissions',       action: () => { location.href = '/builder-arc-review.html'; } },
+    acc:                { label: 'ACC',                 icon: '🏗️', group: 'Architectural', note: 'Resident applications',              action: () => { if (typeof setAccMode === 'function') setAccMode('review'); else switchTab('acc'); } },
+    owner_ar:           { label: 'Owner AR',            icon: '💵', group: 'Financial',  note: 'Receivables · delinquencies',         action: () => switchTab('ownerar') },
+    financial:          { label: 'Financial Review',    icon: '📊', group: 'Financial',  note: 'BS · IS · variance',                  action: () => switchTab('finrev') },
+    docs:               { label: 'Documents',           icon: '🗂️', group: 'Library',    note: 'Community library · search',          action: () => switchTab('docs') },
+    meetings:           { label: 'Meetings',            icon: '🗳️', group: 'Operations', note: 'Upcoming · minutes · packets',         action: () => switchTab('meetings') },
+    board_packets:      { label: 'Board Packets',       icon: '📦', group: 'Operations', note: 'Curated for the next meeting',         action: () => switchTab('boardpackets') },
+    events:             { label: 'Events',              icon: '🎉', group: 'Operations', note: 'Annual · social · check-in',           action: () => switchTab('events') },
+    calendar:           { label: 'Calendar',            icon: '🗓️', group: 'Operations', note: 'Schedule · deadlines',                action: () => switchTab('calendar') },
+    vendor:             { label: 'Vendors',             icon: '🏢', group: 'Operations', note: 'Renewals · invoices',                 action: () => switchTab('vendor') },
+    community_profile:  { label: 'Community Profile',   icon: '🏘️', group: 'Reference',  note: 'Per-community config · contacts',     action: () => switchTab('community') },
+    forms_applications: { label: 'Forms & Applications', icon: '📑', group: 'Reference',  note: 'Form responses · status',             action: () => switchTab('forms') },
+    performance:        { label: 'Performance',         icon: '📊', group: 'Reference',  note: 'KPIs · metrics',                       action: () => switchTab('perf') },
+    quick:              { label: 'Quick',               icon: '⚡', group: 'Reference',  note: 'One-off tools',                        action: () => switchTab('quick') },
+  };
+  const HOME_TILE_DEFAULTS = ['asked', 'inspect', 'drafts', 'manual_violation', 'community_profile', 'owner_ar'];
+
+  function homeGetTiles() {
+    const prefs = (window.currentUser && window.currentUser.preferences) || {};
+    const arr = Array.isArray(prefs.home_tiles) ? prefs.home_tiles : null;
+    // Empty array is a legitimate user choice ("I don't want any tiles"); only
+    // fall back to defaults when the field is genuinely uninitialized (null).
+    if (arr === null) return HOME_TILE_DEFAULTS;
+    return arr.filter((k) => HOME_TILE_CATALOG[k]);
+  }
+
+  function homeRender() {
+    const grid = document.getElementById('homeTilesGrid');
+    if (!grid) return;
+    const tileKeys = homeGetTiles();
+    // Personalize the welcome line with the operator's first name when we have it
+    const me = window.currentUser || {};
+    const firstName = ((me.full_name || me.email || '').split(/\s+|@/)[0]) || '';
+    const welcomeEl = document.getElementById('homeWelcome');
+    if (welcomeEl && firstName) {
+      welcomeEl.textContent = `Welcome back, ${firstName}. ${tileKeys.length === 0 ? 'No tiles yet — tap Customize to add some.' : 'Tap a tile to jump.'}`;
+    }
+    if (tileKeys.length === 0) {
+      grid.innerHTML = `<div style="grid-column:1/-1; padding:30px; text-align:center; color:#94a3b8; background:#fff; border:1px dashed #cbd5e1; border-radius:12px;">
+        <div style="font-size:32px; margin-bottom:8px;">🏠</div>
+        <div style="font-size:14px; font-weight:600; color:#475569; margin-bottom:4px;">No tiles selected yet</div>
+        <div style="font-size:12.5px;">Tap <strong>Customize tiles</strong> to pick the modules you use most.</div>
+      </div>`;
+      return;
+    }
+    grid.innerHTML = tileKeys.map((k, idx) => {
+      const t = HOME_TILE_CATALOG[k];
+      if (!t) return '';
+      return `
+        <button type="button" onclick="HOME_TILE_CATALOG['${k}'].action()" class="home-tile-btn"
+                style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:16px 16px 14px 16px; text-align:left; cursor:pointer; display:flex; flex-direction:column; gap:6px; transition:transform .12s, box-shadow .12s, border-color .12s;"
+                onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(15,23,42,0.08)'; this.style.borderColor='#cbd5e1';"
+                onmouseout="this.style.transform=''; this.style.boxShadow=''; this.style.borderColor='#e2e8f0';">
+          <div style="font-size:30px; line-height:1;">${t.icon}</div>
+          <div style="font-size:15px; font-weight:700; color:#1A3050;">${escapeHtml(t.label)}</div>
+          <div style="font-size:11.5px; color:#64748b; line-height:1.4;">${escapeHtml(t.note || '')}</div>
+        </button>`;
+    }).join('');
+  }
+
+  function homeOpenCustomize() {
+    const modal = document.getElementById('homeCustomizeModal');
+    const catalogEl = document.getElementById('homeCustomizeCatalog');
+    if (!modal || !catalogEl) return;
+    const currentTiles = new Set(homeGetTiles());
+    // Group tiles by .group field for readability in the catalog modal
+    const groups = {};
+    for (const [key, def] of Object.entries(HOME_TILE_CATALOG)) {
+      const g = def.group || 'Other';
+      if (!groups[g]) groups[g] = [];
+      groups[g].push({ key, def });
+    }
+    const html = Object.entries(groups).map(([groupName, items]) => {
+      const items_html = items.map(({ key, def }) => {
+        const checked = currentTiles.has(key) ? 'checked' : '';
+        return `
+          <label style="display:flex; gap:8px; align-items:flex-start; padding:8px 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; cursor:pointer;">
+            <input type="checkbox" data-tile-key="${escapeHtml(key)}" ${checked} style="margin-top:2px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:13px; color:#1A3050; font-weight:600;">${def.icon} ${escapeHtml(def.label)}</div>
+              <div style="font-size:11px; color:#64748b;">${escapeHtml(def.note || '')}</div>
+            </div>
+          </label>`;
+      }).join('');
+      return `
+        <div style="grid-column:1/-1; margin-top:8px; margin-bottom:2px;">
+          <div style="font-size:11px; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; font-weight:700;">${escapeHtml(groupName)}</div>
+        </div>
+        ${items_html}`;
+    }).join('');
+    catalogEl.innerHTML = html;
+    modal.style.display = 'flex';
+  }
+
+  function homeCloseCustomize() {
+    document.getElementById('homeCustomizeModal').style.display = 'none';
+  }
+
+  async function homeSaveCustomize() {
+    const checkboxes = document.querySelectorAll('#homeCustomizeCatalog input[type="checkbox"][data-tile-key]');
+    const selected = [];
+    checkboxes.forEach((cb) => { if (cb.checked) selected.push(cb.dataset.tileKey); });
+    const btn = document.getElementById('homeSaveBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) {}
+      const r = await fetch('/api/users/me/preferences', {
+        method: 'PATCH', headers, body: JSON.stringify({ home_tiles: selected }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || 'save failed');
+      // Server returns the merged preferences; update the cached user object
+      window.currentUser = window.currentUser || {};
+      window.currentUser.preferences = j.preferences || {};
+      homeCloseCustomize();
+      homeRender();
+    } catch (e) {
+      alert('Could not save tiles: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Save tiles'; }
+    }
+  }
+
+  // Initial render on first page paint — Home is the default active tab,
+  // so the grid needs to populate before the user clicks anything. Wait
+  // for window.currentUser to be set by the auth bootstrap (~250ms after
+  // login); if it's not ready yet, retry every 100ms up to 3 seconds.
+  (function _wireHomeInitialRender() {
+    let attempts = 0;
+    const tryRender = () => {
+      if (window.currentUser) { homeRender(); return; }
+      attempts++;
+      if (attempts < 30) setTimeout(tryRender, 100);
+    };
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', tryRender);
+    } else {
+      tryRender();
+    }
+  })();
 
   // Consolidated ACC tab — one entry point in the nav, three sub-views
   // (Review / Requests / History). Each sub-view is its own tab-content

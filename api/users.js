@@ -89,6 +89,82 @@ router.get('/', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// PATCH /api/users/me/preferences — self-service preference update.
+// Lets each user update their own preferences JSONB without needing admin.
+// REGISTERED BEFORE /:id so 'me' is matched as a literal, not a UUID.
+//
+// Body: { home_tiles: ['inspect', 'drafts', ...] }
+//   home_tiles array is whitelist-validated against HOME_TILE_CATALOG. Anything
+//   not in the catalog is silently dropped so a tampered client can't inject
+//   arbitrary keys that later get rendered as fetch targets.
+//
+// Returns: { preferences: <merged final state> }
+// ----------------------------------------------------------------------------
+
+// Canonical catalog of allowed home_tiles keys. Mirrors the frontend HOME_TILE_CATALOG.
+// Keep in sync; any new tile must be added here AND on the frontend.
+const HOME_TILE_CATALOG = new Set([
+  'asked', 'inspect', 'drafts', 'mail_queue', 'manual_violation',
+  'builder_arc', 'acc', 'owner_ar', 'docs', 'meetings', 'events',
+  'vendor', 'community_profile', 'forms_applications', 'financial',
+  'board_packets', 'calendar', 'performance', 'quick',
+]);
+
+router.patch('/me/preferences', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId) return res.status(401).json({ error: 'authentication required' });
+    if (ctx.user && ctx.user.is_active === false) return res.status(403).json({ error: 'account deactivated' });
+
+    const body = req.body || {};
+    const prefsPatch = {};
+
+    if (Array.isArray(body.home_tiles)) {
+      // Whitelist filter + de-dupe + cap at 24 tiles (so a buggy client
+      // can't push a 1000-tile array that bloats every /api/me response).
+      const seen = new Set();
+      const filtered = [];
+      for (const k of body.home_tiles) {
+        if (typeof k !== 'string') continue;
+        if (!HOME_TILE_CATALOG.has(k)) continue;
+        if (seen.has(k)) continue;
+        seen.add(k);
+        filtered.push(k);
+        if (filtered.length >= 24) break;
+      }
+      prefsPatch.home_tiles = filtered;
+    }
+
+    if (Object.keys(prefsPatch).length === 0) {
+      return res.status(400).json({ error: 'no recognized preferences provided' });
+    }
+
+    // Merge with existing preferences so we don't blow away other keys
+    const { data: existing } = await supabase
+      .from('user_profiles')
+      .select('preferences')
+      .eq('id', ctx.supabaseUserId)
+      .maybeSingle();
+    const currentPrefs = (existing && existing.preferences) || {};
+    const newPrefs = { ...currentPrefs, ...prefsPatch };
+
+    const { error: updErr } = await supabase
+      .from('user_profiles')
+      .update({ preferences: newPrefs, updated_at: new Date().toISOString() })
+      .eq('id', ctx.supabaseUserId);
+    if (updErr) {
+      console.error('[users.me.preferences] update failed:', updErr.message);
+      return res.status(500).json({ error: safeErrorMessage(updErr) });
+    }
+
+    res.json({ preferences: newPrefs });
+  } catch (err) {
+    console.error('[users.me.preferences]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // PATCH /api/users/:id  — change role and/or active status
 // ----------------------------------------------------------------------------
 router.patch('/:id', express.json({ limit: '32kb' }), async (req, res) => {
