@@ -6081,6 +6081,42 @@ app.get('/api/nominations/cycles/:id', async (req, res) => {
   }
 });
 
+// PATCH /api/nominations/cycles/:id — update cycle config.
+// Whitelist-only patch. Today the only field exposed is candidate_sort_mode
+// (added migration 132) but the whitelist pattern keeps this extensible
+// without leaking arbitrary client writes into the cycle row.
+app.patch('/api/nominations/cycles/:id', async (req, res) => {
+  try {
+    const ALLOWED = new Set(['candidate_sort_mode']);
+    const VALID_SORT_MODES = new Set(['alphabetical', 'incumbents_first', 'manual']);
+    const body = req.body || {};
+    const patch = {};
+    for (const [k, v] of Object.entries(body)) {
+      if (ALLOWED.has(k)) patch[k] = v;
+    }
+    if ('candidate_sort_mode' in patch && !VALID_SORT_MODES.has(patch.candidate_sort_mode)) {
+      return res.status(400).json({
+        error: `candidate_sort_mode must be one of: ${[...VALID_SORT_MODES].join(', ')}`,
+      });
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
+    patch.updated_at = new Date().toISOString();
+
+    const { data, error } = await supabase
+      .from('nomination_cycles')
+      .update(patch)
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'cycle not found' });
+    res.json({ cycle: data });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Delete a nomination cycle. Used to clean up duplicates / test cycles.
 // Nominations on this cycle cascade-delete via the FK ON DELETE CASCADE on
 // the nominations.cycle_id column (defined in migration 034).
@@ -6418,7 +6454,7 @@ app.patch('/api/nominations/:id', async (req, res) => {
     //                    submitted via the public form; paper/email/in-person
     //                    intakes are typed by staff and are inherently
     //                    correctable).
-    const STATUS_FIELDS = ['status', 'manager_notes'];
+    const STATUS_FIELDS = ['status', 'manager_notes', 'ballot_order'];
     const NOMINEE_FIELDS = [
       'nominee_name', 'nominee_address', 'nominee_email', 'nominee_phone',
       'nominee_bio', 'years_in_community',
@@ -6428,6 +6464,17 @@ app.patch('/api/nominations/:id', async (req, res) => {
     const patch = {};
     ALL_ALLOWED.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
+
+    // ballot_order validation — must be NULL (clear order) or a positive
+    // integer. Frontend sends null when reverting a row to "no explicit
+    // position", or 1..N when assigning a slot in manual ordering.
+    if ('ballot_order' in patch) {
+      const bo = patch.ballot_order;
+      if (bo !== null && (!Number.isInteger(Number(bo)) || Number(bo) < 1)) {
+        return res.status(400).json({ error: 'ballot_order must be null or a positive integer' });
+      }
+      patch.ballot_order = (bo === null) ? null : Number(bo);
+    }
 
     // Required-field validation for nominee_* updates — empty NAME or ADDRESS
     // would brick downstream rendering.

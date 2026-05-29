@@ -1764,6 +1764,21 @@
         <div id="amnVotingMethodsList" style="font-size:12.5px; color:#334155; padding-left:6px;"></div>
 
         <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Slate <span id="amnSlateCount" style="color:#94A3B8; font-weight:400; font-size:11px;"></span></h4>
+
+        <!-- Candidate order control (migration 132). The dropdown sets the
+             cycle's candidate_sort_mode; the renderer reads that at PDF
+             generation time. Manual mode shows drag handles next to each
+             slate row so the operator can arrange exact positions. -->
+        <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
+          <span style="font-size:11.5px; color:#475569; font-weight:600;">Candidate order:</span>
+          <select id="amnSortMode" onchange="amnSetSortMode(this.value)" style="font-size:12px; padding:4px 8px; border:1px solid #d0d7de; border-radius:6px; background:#fff;">
+            <option value="alphabetical">Alphabetical (last name)</option>
+            <option value="incumbents_first">Incumbents first, then alphabetical</option>
+            <option value="manual">Manual (drag to reorder)</option>
+          </select>
+          <span id="amnSortModeHint" style="font-size:11px; color:#94A3B8;"></span>
+        </div>
+
         <div id="amnSlateList" style="font-size:13px; color:#334155;">—</div>
         <p style="font-size:11.5px; color:#94A3B8; margin:6px 0 0 0;">To add or remove candidates from the slate, go to <strong>Call for Nominations</strong> → open the cycle → click <strong>✓ Put on ballot</strong> on the nomination row.</p>
 
@@ -27917,6 +27932,152 @@ ${questionsPage}
   let amnAllCycles = [];
   let amnCurrentCycleId = null;
 
+  // ===================================================================
+  // Annual Meeting Notice slate ordering (mig 132)
+  // ===================================================================
+  // Local cache of the slate + current sort mode, so dropdown changes
+  // and drag-reorders re-render without a server roundtrip. The actual
+  // ballot order persists to the DB on user action (PATCH cycle for the
+  // mode; PATCH each nomination's ballot_order on drop).
+  let _amnSlate = [];
+  let _amnSortMode = 'alphabetical';
+  let _amnActiveCycleId = null;
+
+  // Mirror of lib/nominations/annual_meeting_notice.js's sortCandidatesByMode.
+  // Keep these two in sync — both are called "sort the slate" and they MUST
+  // produce the same order or the UI will lie about what the PDF will show.
+  function amnSortByMode(candidates, mode) {
+    const lastName = (c) => (c.nominee_name || '').split(' ').slice(-1)[0].toLowerCase();
+    const out = [...(candidates || [])];
+    if (mode === 'incumbents_first') {
+      out.sort((a, b) => {
+        const ai = a.is_incumbent ? 0 : 1;
+        const bi = b.is_incumbent ? 0 : 1;
+        if (ai !== bi) return ai - bi;
+        return lastName(a).localeCompare(lastName(b));
+      });
+    } else if (mode === 'manual') {
+      out.sort((a, b) => {
+        const ao = (typeof a.ballot_order === 'number') ? a.ballot_order : Number.POSITIVE_INFINITY;
+        const bo = (typeof b.ballot_order === 'number') ? b.ballot_order : Number.POSITIVE_INFINITY;
+        if (ao !== bo) return ao - bo;
+        return lastName(a).localeCompare(lastName(b));
+      });
+    } else {
+      out.sort((a, b) => lastName(a).localeCompare(lastName(b)));
+    }
+    return out;
+  }
+
+  function amnRenderSlate() {
+    const slateBox = document.getElementById('amnSlateList');
+    const hintEl = document.getElementById('amnSortModeHint');
+    if (!slateBox) return;
+    if (_amnSlate.length === 0) {
+      slateBox.innerHTML = `<div style="padding:8px 10px; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:0 6px 6px 0; font-size:12px; color:#78350f;">No candidates on the slate yet. Go to <strong>Call for Nominations</strong>, open this cycle, and click <strong>✓ Put on ballot</strong> on each candidate first.</div>`;
+      if (hintEl) hintEl.textContent = '';
+      return;
+    }
+    const ordered = amnSortByMode(_amnSlate, _amnSortMode);
+    const isManual = _amnSortMode === 'manual';
+    if (hintEl) {
+      hintEl.textContent = isManual
+        ? 'Drag rows by the ⋮⋮ handle to reorder. Position saves automatically.'
+        : (_amnSortMode === 'incumbents_first'
+          ? 'Incumbents listed first, then challengers (alphabetical within each).'
+          : 'Sorted alphabetically by last name.');
+    }
+    slateBox.innerHTML = ordered.map((n, idx) => {
+      const photo = n.photo_signed_url
+        ? `<img src="${n.photo_signed_url}" style="width:32px; height:32px; border-radius:6px; object-fit:cover; vertical-align:middle; margin-right:8px;">`
+        : `<span style="display:inline-block; width:32px; height:32px; border-radius:6px; background:#f1f5f9; vertical-align:middle; margin-right:8px;"></span>`;
+      const dragHandle = isManual
+        ? `<span class="amn-drag-handle" style="cursor:grab; color:#94a3b8; font-weight:700; padding:0 6px; user-select:none;" title="Drag to reorder">⋮⋮</span>`
+        : '';
+      const draggableAttrs = isManual
+        ? `draggable="true" ondragstart="amnDragStart(event, '${escapeHtml(n.id)}')" ondragover="event.preventDefault()" ondrop="amnDrop(event, '${escapeHtml(n.id)}')" ondragend="amnDragEnd(event)"`
+        : '';
+      const positionBadge = isManual
+        ? `<span style="display:inline-block; min-width:20px; text-align:center; color:#94a3b8; font-size:11px; font-feature-settings:'tnum'; margin-right:6px;">${idx + 1}</span>`
+        : '';
+      return `<div class="amn-slate-row" data-nom-id="${escapeHtml(n.id)}" ${draggableAttrs}
+                   style="padding:6px 4px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; gap:4px; transition:background .12s;">
+        ${dragHandle}${positionBadge}${photo}
+        <div style="flex:1;">
+          <strong>${escapeHtml(n.nominee_name)}</strong>${n.is_incumbent ? ' <span style="background:#eef2ff; color:#1E2761; padding:1px 6px; border-radius:8px; font-size:10px; font-weight:700;">INCUMBENT</span>' : ''}${n.years_in_community ? ` <span style="color:#94A3B8; font-size:11px;">· ${escapeHtml(n.years_in_community)}</span>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function amnSetSortMode(mode) {
+    if (!['alphabetical', 'incumbents_first', 'manual'].includes(mode)) return;
+    _amnSortMode = mode;
+    amnRenderSlate(); // instant visual feedback
+    // Persist to the cycle so the renderer reads it on next generate
+    if (!_amnActiveCycleId) return;
+    try {
+      const r = await fetch(`/api/nominations/cycles/${_amnActiveCycleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ candidate_sort_mode: mode }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        console.warn('[amnSetSortMode] save failed:', j.error || r.status);
+      }
+    } catch (e) {
+      console.warn('[amnSetSortMode] save threw:', e.message);
+    }
+  }
+
+  // Drag-and-drop reorder. Stores the dragged id on the dataTransfer +
+  // a fallback global (some mobile browsers strip dataTransfer on drop).
+  let _amnDragId = null;
+  function amnDragStart(e, id) {
+    _amnDragId = id;
+    try { e.dataTransfer.setData('text/plain', id); } catch (_) {}
+    e.dataTransfer.effectAllowed = 'move';
+    const row = e.currentTarget;
+    if (row) row.style.opacity = '0.5';
+  }
+  function amnDragEnd(e) {
+    const row = e.currentTarget;
+    if (row) row.style.opacity = '';
+    _amnDragId = null;
+  }
+  async function amnDrop(e, dropOnId) {
+    e.preventDefault();
+    const draggedId = _amnDragId || (() => { try { return e.dataTransfer.getData('text/plain'); } catch (_) { return null; } })();
+    if (!draggedId || draggedId === dropOnId) return;
+    // Reorder the cached slate in JS — move dragged before dropOnId.
+    const ordered = amnSortByMode(_amnSlate, _amnSortMode);
+    const fromIdx = ordered.findIndex((n) => n.id === draggedId);
+    const toIdx = ordered.findIndex((n) => n.id === dropOnId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    const [moved] = ordered.splice(fromIdx, 1);
+    ordered.splice(toIdx, 0, moved);
+    // Assign new ballot_order positions 1..N
+    const updates = ordered.map((n, idx) => ({ id: n.id, ballot_order: idx + 1 }));
+    // Update local cache so rerender uses the new positions
+    const byId = new Map(_amnSlate.map((n) => [n.id, n]));
+    updates.forEach((u) => {
+      const row = byId.get(u.id);
+      if (row) row.ballot_order = u.ballot_order;
+    });
+    amnRenderSlate();
+    // Persist each row's new ballot_order. Done in parallel to keep
+    // perceived latency low; failure on any one row logs but doesn't roll
+    // back the others (the UI already shows the intended state).
+    await Promise.all(updates.map((u) =>
+      fetch(`/api/nominations/${u.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ballot_order: u.ballot_order }),
+      }).catch((e) => console.warn('[amnDrop] save failed for', u.id, e.message))
+    ));
+  }
+
   async function amnLoadCycles() {
     const sel = document.getElementById('amnCycleSelect');
     if (!sel) return;
@@ -27945,9 +28106,11 @@ ${questionsPage}
     if (!cycleId) {
       detailsBox.style.display = 'none';
       amnCurrentCycleId = null;
+      _amnActiveCycleId = null;
       return;
     }
     amnCurrentCycleId = cycleId;
+    _amnActiveCycleId = cycleId;
     const cycle = amnAllCycles.find((c) => c.id === cycleId);
     if (!cycle) return;
 
@@ -27989,19 +28152,15 @@ ${questionsPage}
       const j = await r.json();
       const all = j.nominations || [];
       const slate = all.filter((n) => n.status === 'on_slate');
-      const slateBox = document.getElementById('amnSlateList');
       const countEl = document.getElementById('amnSlateCount');
       countEl.textContent = `(${slate.length} on ballot of ${all.length} submitted)`;
-      if (slate.length === 0) {
-        slateBox.innerHTML = `<div style="padding:8px 10px; background:#fef3c7; border-left:3px solid #ca8a04; border-radius:0 6px 6px 0; font-size:12px; color:#78350f;">No candidates on the slate yet. Go to <strong>Call for Nominations</strong>, open this cycle, and click <strong>✓ Put on ballot</strong> on each candidate first.</div>`;
-      } else {
-        slateBox.innerHTML = slate.sort((a, b) => (a.nominee_name || '').localeCompare(b.nominee_name || '')).map((n) => {
-          const photo = n.photo_signed_url
-            ? `<img src="${n.photo_signed_url}" style="width:32px; height:32px; border-radius:6px; object-fit:cover; vertical-align:middle; margin-right:8px;">`
-            : `<span style="display:inline-block; width:32px; height:32px; border-radius:6px; background:#f1f5f9; vertical-align:middle; margin-right:8px;"></span>`;
-          return `<div style="padding:4px 0; border-bottom:1px solid #e2e8f0;">${photo}<strong>${escapeHtml(n.nominee_name)}</strong>${n.is_incumbent ? ' <span style="background:#eef2ff; color:#1E2761; padding:1px 6px; border-radius:8px; font-size:10px; font-weight:700;">INCUMBENT</span>' : ''}${n.years_in_community ? ` <span style="color:#94A3B8; font-size:11px;">· ${escapeHtml(n.years_in_community)}</span>` : ''}</div>`;
-        }).join('');
-      }
+      // Cache the cycle's sort mode + the slate for rerenders triggered by
+      // the dropdown / drag-drop without refetching from the server.
+      _amnSlate = slate;
+      _amnSortMode = cycle.candidate_sort_mode || 'alphabetical';
+      const sortSel = document.getElementById('amnSortMode');
+      if (sortSel) sortSel.value = _amnSortMode;
+      amnRenderSlate();
       // Enable Generate only when there's at least 1 candidate on slate.
       const gen = document.getElementById('amnGenerateBtn');
       if (slate.length > 0) {
