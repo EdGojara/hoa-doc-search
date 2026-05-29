@@ -522,7 +522,14 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
     // no row is configured.
     const priorityWeight = await _getPriorityWeight(communityId, categoryId);
 
-    // ---- 1) Synthetic spot_check inspection -----------------------------
+    // ---- 1) Synthetic inspection wrapper -------------------------------
+    // Migration 054 dropped 'spot_check' from the inspections.mode CHECK
+    // (production allows 'drive_by','resale','mounted_camera' only). We use
+    // 'drive_by' as the closest match and put the actual differentiator on
+    // route_label ("Manual entry: <source>") so reports can still filter
+    // manual entries from real drive-bys by route_label LIKE 'Manual %'.
+    // A follow-up migration could re-add 'manual_entry' as a first-class
+    // mode if Ed wants cleaner filtering at scale.
     const inspectionRouteLabel = `Manual entry: ${source.replace(/_/g, ' ')}`
       + (description ? ` — ${description.slice(0, 60)}` : '');
     const { data: inspection, error: insErr } = await supabase
@@ -530,7 +537,7 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
       .insert({
         community_id: communityId,
         operator_id: actor.id || null,
-        mode: 'spot_check',
+        mode: 'drive_by',
         route_label: inspectionRouteLabel.slice(0, 200),
         status: 'closed',                              // closes immediately
         started_at: new Date().toISOString(),
