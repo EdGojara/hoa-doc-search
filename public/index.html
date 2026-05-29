@@ -11158,9 +11158,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="display: flex; gap: 6px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;">
         <button type="button" id="inspViewListBtn" class="ed-mode-btn active" onclick="inspSetView('list')">📋 List</button>
         <button type="button" id="inspViewMapBtn"  class="ed-mode-btn"        onclick="inspSetView('map')">🗺️ Map</button>
-        <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: auto;">
-          📍 <span id="inspSelectedPropLabel">—</span>
-          <span onclick="inspClearSelectedProperty()" style="margin-left: 6px; cursor: pointer; opacity: 0.7;">✕</span>
+        <!-- Right-side group: keeps the address chip and Take-photo button
+             on the same line on narrow iPhone viewports. Without the wrapper,
+             flex-wrap pushes the button to a new line below the chip — which
+             defeats the whole point of moving the button up top to avoid
+             scrolling. (Scar 2026-05-28 — Canyon Gate prep.) -->
+        <div style="display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end;">
+          <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: #fff; border: 1px solid #d0d7de; color: #1A3050; border-radius: 999px; font-size: 12px; font-weight: 700;">
+            📍 <span id="inspSelectedPropLabel">—</span>
+            <span onclick="inspClearSelectedProperty()" style="margin-left: 6px; cursor: pointer; opacity: 0.7;">✕</span>
+          </div>
+          <!-- Compact Take photo button — accessible without scrolling on
+               iPhone. Uses the same <label for=> iOS bridge as the larger
+               button below the map. -->
+          <label for="inspPhotoInput" id="inspCaptureBtnTop" onclick="inspTriggerCaptureNoClick()"
+                 style="padding: 8px 14px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 999px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 8px rgba(212,175,55,0.4); white-space: nowrap;">
+            📷 Take photo
+          </label>
         </div>
       </div>
 
