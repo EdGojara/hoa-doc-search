@@ -957,12 +957,22 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     if (violation.opened_from_observation_id) {
       const { data: obs } = await supabase
         .from('property_observations')
-        .select('id, ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path)')
+        .select('id, ai_description, reviewer_notes, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path)')
         .eq('id', violation.opened_from_observation_id)
         .maybeSingle();
       if (obs) {
+        // For manual entries the AI cross-check may not have finished yet
+        // (it's async, ~3-6 sec after submit). Fall back to the staff's
+        // reviewer_notes (what they typed in the Description field) so the
+        // letter renderer's required-min-10-chars validator passes.
+        // Final fallback: a generic placeholder so a letter can still be
+        // drafted even if neither AI nor staff entered text — better to
+        // have a draftable letter than block the workflow entirely.
+        const description = obs.ai_description
+          || obs.reviewer_notes
+          || `Condition observed at the property consistent with ${(violation.enforcement_categories && violation.enforcement_categories.label) || 'the noted category'}.`;
         observation = {
-          ai_description: obs.ai_description,
+          ai_description: description,
           severity: obs.severity,
           captured_at: (obs.inspection_photos && obs.inspection_photos.captured_at) || obs.created_at,
         };
@@ -1115,8 +1125,14 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         lot_number:     pRow.lot_number,
       },
       owner: {
-        full_name:       pRow.owner_name,
-        mailing_address: pRow.owner_mailing_address,
+        full_name: pRow.owner_name,
+        // For owner-occupied properties (the common case), mailing_address
+        // IS the property address. Fall back to a constructed string from
+        // property fields when owner_mailing_address is null so the
+        // validator's "required" rule doesn't block letter generation.
+        // Same fallback pattern already used at line 1199 (mailed_to).
+        mailing_address: pRow.owner_mailing_address
+          || `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}, ${pRow.city || ''} ${pRow.state || 'TX'} ${pRow.zip || ''}`.trim(),
       },
       community: {
         name:       violation.communities && violation.communities.name,
