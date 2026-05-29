@@ -460,11 +460,20 @@ router.get('/me', async (req, res) => {
 
     const props = (propScopes || []).map((s) => s.properties).filter(Boolean);
     if (!props.length) {
-      // User has portal access but no property scope yet — show a polite empty state
+      // User has portal access but no property scope yet — show a polite
+      // empty state. Include role + email so the login-page router can tell
+      // builders from homeowners (builders have no property scope by design;
+      // without role here the post-consume router can't decide between the
+      // homeowner portal and /builder-dashboard.html).
       return res.json({
-        user: { name: user.full_name || user.email, email: user.email,
-                tutorial_dismissed: !!user.tutorial_dismissed_at,
-                first_login_at: user.first_login_at, login_count: user.login_count || 0 },
+        user: {
+          name: user.full_name || user.email,
+          email: user.email,
+          role: user.role,
+          tutorial_dismissed: !!user.tutorial_dismissed_at,
+          first_login_at: user.first_login_at,
+          login_count: user.login_count || 0,
+        },
         property: null,
         properties: [],
         community: { name: 'Your Community', slug: '', portal_active: false },

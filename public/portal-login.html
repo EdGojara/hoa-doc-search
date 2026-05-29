@@ -237,23 +237,32 @@ function toast(msg, kind) {
       credentials: 'same-origin',
     });
     if (r.ok) {
-      // Smart routing — if this user last viewed the board portal AND
-      // they're a board-capable role, send them there. Else default to
-      // /portal. Check is_board_member from /me before redirecting to
-      // /board-portal (don't expose board portal to non-board users
-      // even if they tampered with localStorage).
+      // Role-aware routing — three possible landing pages:
+      //   - /builder-dashboard.html for role='builder' (DRB Group reviewers)
+      //   - /board-portal for board members who last viewed it
+      //   - /portal otherwise (homeowner default)
+      // Always verify role server-side via /me — never trust localStorage
+      // alone to grant access to a privileged surface.
       let dest = '/portal';
       try {
-        const lastView = localStorage.getItem('bedrock_portal_last_view');
-        if (lastView === 'board') {
-          // Verify the user actually has board access before honoring
-          const meRes = await fetch('/api/portal/me', { credentials: 'same-origin' });
-          if (meRes.ok) {
-            const me = await meRes.json();
-            if (me.is_board_member) dest = '/board-portal';
+        const meRes = await fetch('/api/portal/me', { credentials: 'same-origin' });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          // Builder role: hard-route to the builder dashboard. The homeowner
+          // portal hits a "Portal not yet available for your community"
+          // dead-end for builders because they have no portal_user_properties
+          // rows by design.
+          if (me.user && me.user.role === 'builder') {
+            dest = '/builder-dashboard.html';
+          } else {
+            // Board check (existing pattern)
+            const lastView = localStorage.getItem('bedrock_portal_last_view');
+            if (lastView === 'board' && me.is_board_member) {
+              dest = '/board-portal';
+            }
           }
         }
-      } catch (_) { /* localStorage / fetch failure → default to /portal */ }
+      } catch (_) { /* fetch failure → default to /portal */ }
       window.location.href = dest;
     } else {
       const data = await r.json().catch(() => ({}));
