@@ -855,6 +855,67 @@ router.delete('/inspections/:id', async (req, res) => {
 //   fetch('/api/inspections/geocode-debug?address=20010+Cape+Clover+Trail,+Richmond,+TX,+77407')
 //     .then(r => r.json()).then(j => console.log(j))
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// GET /api/inspections/_diagnose_violations/:property_id
+// Temporary diagnostic — 2026-05-28. List endpoint reports a property has N
+// violations; detail endpoint reports 0 for the same property_id. This
+// endpoint runs four distinct queries on the same property_id and returns
+// the raw shape/count/error from each so we can pin down WHICH query is
+// failing and why. Strip after the root cause is fixed.
+// ---------------------------------------------------------------------------
+router.get('/inspections/_diagnose_violations/:property_id', async (req, res) => {
+  const propertyId = req.params.property_id;
+  const out = { property_id_received: propertyId, queries: {} };
+
+  // Q1: simplest possible — just count rows with this property_id, no joins
+  try {
+    const r = await supabase.from('violations').select('id', { count: 'exact', head: false }).eq('property_id', propertyId);
+    out.queries.q1_simple_count = { error: r.error && r.error.message, data_length: (r.data || []).length, count: r.count, sample_ids: (r.data || []).slice(0, 3).map((v) => v.id) };
+  } catch (e) { out.queries.q1_simple_count = { exception: e.message }; }
+
+  // Q2: same as detail endpoint full select (with Phase 7b columns + embed)
+  try {
+    const r = await supabase.from('violations')
+      .select('id, opened_at, current_stage, quality_status, confidence_weight, source, reviewed_at, review_notes, primary_category_id, enforcement_categories(id, code, label)')
+      .eq('property_id', propertyId);
+    out.queries.q2_full_select = { error: r.error && r.error.message, data_length: (r.data || []).length, sample: (r.data || []).slice(0, 2) };
+  } catch (e) { out.queries.q2_full_select = { exception: e.message }; }
+
+  // Q3: minimal pre-057 columns + embed
+  try {
+    const r = await supabase.from('violations')
+      .select('id, opened_at, current_stage, primary_category_id, enforcement_categories(id, code, label)')
+      .eq('property_id', propertyId);
+    out.queries.q3_minimal_with_embed = { error: r.error && r.error.message, data_length: (r.data || []).length, sample: (r.data || []).slice(0, 2) };
+  } catch (e) { out.queries.q3_minimal_with_embed = { exception: e.message }; }
+
+  // Q4: raw property_id filter, no embed at all
+  try {
+    const r = await supabase.from('violations').select('id, property_id, community_id, current_stage, primary_category_id').eq('property_id', propertyId);
+    out.queries.q4_no_embed = { error: r.error && r.error.message, data_length: (r.data || []).length, sample: (r.data || []).slice(0, 2) };
+  } catch (e) { out.queries.q4_no_embed = { exception: e.message }; }
+
+  // Q5: do the LIST endpoint approach — filter by community_id then filter to this property in JS
+  try {
+    // First grab the property's community_id
+    const pRow = await supabase.from('v_current_property_owners').select('property_id, community_id, street_address').eq('property_id', propertyId).maybeSingle();
+    out.property_view_row = { error: pRow.error && pRow.error.message, data: pRow.data };
+    if (pRow.data && pRow.data.community_id) {
+      const r = await supabase.from('violations').select('id, property_id, community_id, current_stage').eq('community_id', pRow.data.community_id);
+      const all = r.data || [];
+      const matching = all.filter((v) => v.property_id === propertyId);
+      out.queries.q5_via_community_then_js_filter = {
+        error: r.error && r.error.message,
+        community_total_rows: all.length,
+        matching_this_property: matching.length,
+        sample_matching: matching.slice(0, 2),
+      };
+    }
+  } catch (e) { out.queries.q5_via_community_then_js_filter = { exception: e.message }; }
+
+  res.json(out);
+});
+
 router.get('/inspections/geocode-debug', async (req, res) => {
   const address = (req.query.address || '').toString().trim();
   if (!address) return res.status(400).json({ error: 'address query param required' });

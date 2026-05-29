@@ -12951,31 +12951,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         alert('No properties on this map have open violations per the list endpoint.\nNothing to diagnose.');
         return;
       }
-      const sample = withViolations.slice(0, 3);
-      const results = [];
-      for (const p of sample) {
-        try {
-          const r = await fetch('/api/inspections/property-detail/' + encodeURIComponent(p.property_id));
-          const j = await r.json().catch(() => ({ _parse_error: true }));
-          results.push({
-            addr: p.street_address,
-            property_id: p.property_id,
-            list_open: p.violation_count_open,
-            list_ytd: p.violation_count_ytd,
-            list_lifetime: p.violation_count_lifetime,
-            list_worst_stage: p.worst_open_stage,
-            http_status: r.status,
-            detail_open: j && j.counts && j.counts.violations_open,
-            detail_lifetime: j && j.counts && j.counts.violations_lifetime,
-            detail_arr_len: j && j.violations ? j.violations.length : null,
-            detail_error: j && j.error,
-          });
-        } catch (e) {
-          results.push({ addr: p.street_address, property_id: p.property_id, fetch_error: e.message });
-        }
-      }
-      const lines = results.map((r) => JSON.stringify(r, null, 2)).join('\n\n');
-      alert('DETAIL MISMATCH DIAGNOSIS (3 properties)\n\n' + lines);
+      // Use the deep-diagnose endpoint that runs 5 distinct supabase queries
+      // server-side and returns raw shape/count/error for each — far more
+      // informative than just hitting the detail endpoint.
+      const p = withViolations[0];
+      const r = await fetch('/api/inspections/_diagnose_violations/' + encodeURIComponent(p.property_id));
+      const j = await r.json().catch(() => ({ _parse_error: true }));
+      const summary = {
+        addr: p.street_address,
+        property_id: p.property_id,
+        list_open: p.violation_count_open,
+        list_lifetime: p.violation_count_lifetime,
+        list_worst_stage: p.worst_open_stage,
+        diagnose_response: j,
+      };
+      console.log('[diagnose]', summary);
+      alert('DEEP VIOLATIONS DIAGNOSIS\n\n' + JSON.stringify(summary, null, 2).slice(0, 3500));
       console.log('[diagnose] results:', results);
     } catch (e) {
       alert('Diagnostic failed: ' + e.message);
