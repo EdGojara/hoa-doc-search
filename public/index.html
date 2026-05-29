@@ -22583,15 +22583,34 @@ ${questionsPage}
               <th style="padding:6px 8px; text-align:center; width:8%;">Required</th>
             </tr></thead>
             <tbody>
-              ${c.rows.map(r => `<tr style="border-bottom:1px solid #eee;">
-                <td style="padding:6px 8px;">${escapeHtml(r.category_display)}</td>
+              ${c.rows.map(r => {
+                // Three render paths for the category cell:
+                //   1. Document present + status green → clickable link to
+                //      open PDF in new tab via /api/documents/:id/download
+                //   2. Status green BUT current_document_id missing →
+                //      "file missing" warning so the disconnect is visible
+                //      (Quail Ridge CC&Rs hit this 2026-05-29 — green dot
+                //      but no actual file)
+                //   3. No status / not current → plain text
+                const cat = escapeHtml(r.category_display);
+                let categoryCell;
+                if (r.current_document_id) {
+                  categoryCell = `<a href="/api/documents/${escapeHtml(r.current_document_id)}/download" target="_blank" rel="noopener" style="color:#315A87; text-decoration:none; border-bottom:1px dotted #94a3b8;" title="Open PDF in new tab">${cat}</a>`;
+                } else if (r.matrix_status === 'current') {
+                  categoryCell = `${cat} <span style="background:#fef3c7; color:#92400e; padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600; margin-left:6px;" title="Status tracker says current but no document_id is linked — the actual PDF may not be uploaded">⚠ file missing</span>`;
+                } else {
+                  categoryCell = cat;
+                }
+                return `<tr style="border-bottom:1px solid #eee;">
+                <td style="padding:6px 8px;">${categoryCell}</td>
                 <td style="padding:6px 8px; text-align:center; font-size:14px;">${statusIcon(r.matrix_status, r.days_to_expiration)}</td>
                 <td style="padding:6px 8px;">${escapeHtml(r.current_period || '—')}</td>
                 <td style="padding:6px 8px; ${r.matrix_status === 'expired' ? 'color:#d32f2f;' : r.matrix_status === 'expiring_soon' ? 'color:#ed6c02;' : ''}">${r.current_expiration_date || '—'}</td>
                 <td style="padding:6px 8px; text-align:center;">${r.current_document_id ? (r.in_homewise ? '✓' : '<span style="color:#aaa;">—</span>') : ''}</td>
                 <td style="padding:6px 8px; text-align:center;">${r.current_document_id ? (r.in_vantaca ? '✓' : '<span style="color:#aaa;">—</span>') : ''}</td>
                 <td style="padding:6px 8px; text-align:center; color:#888;">${r.required_for_resale ? '★' : ''}</td>
-              </tr>`).join('')}
+              </tr>`;
+              }).join('')}
             </tbody>
           </table>
         </div>`);
