@@ -19509,13 +19509,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   };
   const HOME_TILE_DEFAULTS = ['asked', 'inspect', 'drafts', 'manual_violation', 'community_profile', 'owner_ar'];
 
+  // localStorage key for home tile persistence. We persist client-side as
+  // the primary store (works without any DB column) and best-effort-write
+  // to user_profiles.preferences.home_tiles in the background. When the
+  // server-side migration eventually lands, the API write starts succeeding
+  // and the user's tile selection sync to the DB without any UI change.
+  const HOME_TILES_LS_KEY = 'bedrock.home_tiles.v1';
+
   function homeGetTiles() {
+    // 1. Browser-local persistence (primary, works without any DB column)
+    try {
+      const raw = localStorage.getItem(HOME_TILES_LS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed)) {
+          return parsed.filter((k) => HOME_TILE_CATALOG[k]);
+        }
+      }
+    } catch (_) { /* localStorage unavailable / parse failed → next fallback */ }
+
+    // 2. Server-side persistence (works once migration 131 + col land).
+    //    user_profiles.preferences.home_tiles read from /api/me at sign-in.
     const prefs = (window.currentUser && window.currentUser.preferences) || {};
     const arr = Array.isArray(prefs.home_tiles) ? prefs.home_tiles : null;
-    // Empty array is a legitimate user choice ("I don't want any tiles"); only
-    // fall back to defaults when the field is genuinely uninitialized (null).
-    if (arr === null) return HOME_TILE_DEFAULTS;
-    return arr.filter((k) => HOME_TILE_CATALOG[k]);
+    if (arr) return arr.filter((k) => HOME_TILE_CATALOG[k]);
+
+    // 3. Defaults for genuinely first-time users
+    return HOME_TILE_DEFAULTS;
   }
 
   function homeRender() {
@@ -19596,6 +19616,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     checkboxes.forEach((cb) => { if (cb.checked) selected.push(cb.dataset.tileKey); });
     const btn = document.getElementById('homeSaveBtn');
     if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+
+    // 1) PRIMARY: write to localStorage. This always succeeds (modulo a
+    //    private-browsing quota error, which we tolerate). The user's
+    //    tile selection is now persisted on this device.
+    let localSaved = false;
+    try {
+      localStorage.setItem(HOME_TILES_LS_KEY, JSON.stringify(selected));
+      localSaved = true;
+    } catch (e) {
+      console.warn('[home] localStorage write failed:', e.message);
+    }
+
+    // 2) BEST-EFFORT: also push to the API. If migration 131 + the
+    //    preferences column have landed in the DB, this succeeds and the
+    //    selection syncs across devices for this user. If not, it fails
+    //    silently with a console warning — we already saved locally.
+    let serverSaved = false;
     try {
       const headers = { 'Content-Type': 'application/json' };
       try {
@@ -19606,16 +19643,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         method: 'PATCH', headers, body: JSON.stringify({ home_tiles: selected }),
       });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(j.error || 'save failed');
-      // Server returns the merged preferences; update the cached user object
-      window.currentUser = window.currentUser || {};
-      window.currentUser.preferences = j.preferences || {};
+      if (r.ok) {
+        serverSaved = true;
+        window.currentUser = window.currentUser || {};
+        window.currentUser.preferences = j.preferences || {};
+      } else {
+        console.warn('[home] server save failed (using localStorage only):', j.error || r.status);
+      }
+    } catch (e) {
+      console.warn('[home] server save threw (using localStorage only):', e.message);
+    }
+
+    if (btn) { btn.disabled = false; btn.textContent = '💾 Save tiles'; }
+
+    if (localSaved || serverSaved) {
       homeCloseCustomize();
       homeRender();
-    } catch (e) {
-      alert('Could not save tiles: ' + e.message);
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '💾 Save tiles'; }
+    } else {
+      alert('Could not save tiles — your browser may have storage disabled.');
     }
   }
 
