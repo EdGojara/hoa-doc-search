@@ -31,6 +31,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
+const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations, parseVantacaViolationsPdf } = require('../lib/enforcement/vantaca_violation_import');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
@@ -882,13 +883,17 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     const forceRegenerate = !!body.force_regenerate;
     if (!violationId) return res.status(400).json({ error: 'violation_id required' });
 
-    // Fetch violation + property + community + category in one round trip
+    // Fetch violation + property + community + category in one round trip.
+    // slug is needed so we can dispatch force-mow 10-day letters to the
+    // dedicated renderer (lib/lawn_force_mow_renderer.js) instead of the
+    // standard §209 violation_letter pipeline. Different statutory
+    // structure, different community-config requirements.
     const { data: violation, error: vErr } = await supabase
       .from('violations')
       .select(`
         id, property_id, community_id, current_stage, cure_period_ends_at,
         opened_at, opened_from_observation_id, primary_category_id, board_priority_at_open,
-        enforcement_categories ( label, description ),
+        enforcement_categories ( slug, label, description ),
         communities ( name )
       `)
       .eq('id', violationId)
@@ -1024,12 +1029,22 @@ router.post('/generate-letter', express.json(), async (req, res) => {
     let commLegalName = null;
     let commAuthorityCitation = null;
     const commLetterFees = { c1: null, c2: null, c209: null, fine: null, curec1: null, curec2: null, curec209: null };
+    // Force-mow community config (migration 126) — only used when the
+    // category is lawn_force_mow_10day. Captured here so we only round-trip
+    // the communities table once.
+    const commForceMow = {
+      declaration_doc_number:  null,
+      declaration_county:      null,
+      declaration_short_name:  null,
+      force_mow_section_full:  null,
+      force_mow_admin_fee_cents: null,
+    };
     let senderName = body.sender_name || null;
     let senderTitle = body.sender_title || null;
     try {
       const { data: comm } = await supabase
         .from('communities')
-        .select('legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
+        .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, force_mow_admin_fee_cents')
         .eq('id', violation.community_id)
         .maybeSingle();
       if (comm) {
@@ -1044,6 +1059,11 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         commLetterFees.curec209 = comm.letter_cure_days_certified_209;
         if (!senderName)  senderName  = comm.letter_sender_name || null;
         if (!senderTitle) senderTitle = comm.letter_sender_title || null;
+        commForceMow.declaration_doc_number   = comm.declaration_doc_number || null;
+        commForceMow.declaration_county       = comm.declaration_county || null;
+        commForceMow.declaration_short_name   = comm.declaration_short_name || comm.name || null;
+        commForceMow.force_mow_section_full   = comm.force_mow_section_full || null;
+        commForceMow.force_mow_admin_fee_cents = (comm.force_mow_admin_fee_cents != null) ? comm.force_mow_admin_fee_cents : 2500;
       }
     } catch (_) {}
 
@@ -1105,8 +1125,114 @@ router.post('/generate-letter', express.json(), async (req, res) => {
       priorViolations = pv || [];
     } catch (_) {}
 
-    // Generate the PDF
-    const pdfBuffer = await renderViolationLetterPdf({
+    // ----- DISPATCH: force-mow 10-day letter has its own renderer -------
+    // The lawn_force_mow_10day track is governed by §202.018 / Declaration
+    // self-help, not the standard §209 escalation pipeline. Different
+    // statutory wording, different required community-config fields, locked
+    // gold-standard template per CLAUDE.md catastrophic-output discipline.
+    // We branch here so this category gets the dedicated renderer; all
+    // other categories fall through to the standard violation_letter path.
+    const categorySlug = violation.enforcement_categories && violation.enforcement_categories.slug;
+    let pdfBuffer = null;
+    if (categorySlug === 'lawn_force_mow_10day') {
+      // Validate community has the force-mow declaration fields populated.
+      // Without them we can't cite the right Article or doc number — too
+      // risky to draft with placeholders on a certified §202.018 notice.
+      const missing = [];
+      if (!commForceMow.declaration_doc_number)  missing.push('declaration_doc_number');
+      if (!commForceMow.declaration_county)      missing.push('declaration_county');
+      if (!commForceMow.force_mow_section_full)  missing.push('force_mow_section_full');
+      if (missing.length > 0) {
+        return res.status(400).json({
+          error: 'force-mow letter requires community config that is not yet set: '
+                 + missing.join(', ')
+                 + `. Set these columns on the communities row for ${(violation.communities && violation.communities.name) || 'this community'} via migration 126 pattern, then retry.`,
+          missing_fields: missing,
+        });
+      }
+
+      const today = new Date();
+      const todayIso = today.toISOString().slice(0, 10);
+      // Observation date — fall back to the violation's opened_at when the
+      // observation captured_at is missing
+      const obsDateRaw = (observation && observation.captured_at) || violation.opened_at;
+      const obsIso = obsDateRaw ? new Date(obsDateRaw).toISOString().slice(0, 10) : todayIso;
+
+      // Owner block: name on line 1, mailing address on subsequent lines.
+      // Handles owner-occupied (mailing == property) and rentals
+      // (separate mailing line via alt_mailing_address_block, set on the
+      // optional field — schema allows null).
+      const ownerName = pRow.owner_name || 'Property Owner';
+      const propAddr = `${pRow.street_address || ''}${pRow.unit ? ' #' + pRow.unit : ''}`;
+      const cityStateZip = `${pRow.city || ''}, ${pRow.state || 'TX'} ${pRow.zip || ''}`.replace(/\s+,/g, ',').trim();
+      const homeownerBlock = `${ownerName}\n${propAddr}\n${cityStateZip}`;
+      const propertyAddressFull = `${propAddr}, ${cityStateZip}`;
+
+      // Hearing-rights gating: §209.006-007 paragraph required when no
+      // prior notice for the same violation in the past 6 months. Look at
+      // interactions for this property + category to compute it. Defaults
+      // to TRUE (safer to include the disclosure than omit it).
+      let includeHearingRights = true;
+      try {
+        const sixMonthsAgo = new Date(Date.now() - 180 * 24 * 60 * 60 * 1000).toISOString();
+        const { data: priorNotices } = await supabase
+          .from('interactions')
+          .select('id, sent_at')
+          .eq('property_id', violation.property_id)
+          .gte('sent_at', sixMonthsAgo)
+          .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_force_mow_10day']);
+        // Cross-reference to violations of the same category — only count
+        // letters tied to a force-mow violation here
+        if (priorNotices && priorNotices.length > 0) {
+          const { data: sameCatVios } = await supabase
+            .from('violations')
+            .select('id')
+            .eq('property_id', violation.property_id)
+            .eq('primary_category_id', violation.primary_category_id)
+            .gte('opened_at', sixMonthsAgo);
+          // Conservative: any same-category violation in window OR any
+          // recent letter → suppress (already informed)
+          if ((sameCatVios && sameCatVios.length > 0) || priorNotices.length > 0) {
+            // Strict reading of §209: NO notice for SAME violation in 6mo
+            // means we can omit. Easier to be safe and include — attorney
+            // can scrub on review if they want it leaner.
+            includeHearingRights = true;
+          }
+        }
+      } catch (_) { /* default TRUE */ }
+
+      const feeCents = commForceMow.force_mow_admin_fee_cents != null ? commForceMow.force_mow_admin_fee_cents : 2500;
+      const feeFormatted = `$${(feeCents / 100).toFixed(2)}`;
+
+      const forceMowInput = {
+        community_legal_name:    commLegalName || (violation.communities && violation.communities.name) || 'the Association',
+        community_short_name:    commForceMow.declaration_short_name,
+        letter_date:             todayIso,
+        homeowner_names_block:   homeownerBlock,
+        property_address_full:   propertyAddressFull,
+        property_address_short:  propAddr,
+        declaration_doc_number:  commForceMow.declaration_doc_number,
+        declaration_county:      commForceMow.declaration_county,
+        declaration_section_full: commForceMow.force_mow_section_full,
+        observation_date:        obsIso,
+        observed_condition:      (observation && observation.ai_description) || 'Lawn in need of mowing, edging, and weed control consistent with the standard maintained by the community.',
+        admin_fee_amount:        feeFormatted,
+        include_hearing_rights:  includeHearingRights,
+      };
+
+      try {
+        pdfBuffer = renderForceMowLetterPdf(forceMowInput);
+      } catch (renderErr) {
+        console.error('[enforcement.generate-letter] force-mow render failed:', renderErr.message);
+        return res.status(500).json({
+          error: 'force-mow letter render failed',
+          detail: renderErr.message,
+          code: renderErr.code || null,
+        });
+      }
+    } else {
+    // Generate the PDF (standard violation letter)
+    pdfBuffer = await renderViolationLetterPdf({
       violation: {
         id: violation.id,
         current_stage: violation.current_stage,
@@ -1155,6 +1281,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         sender_title: senderTitle,
       },
     });
+    } // end else (standard violation letter path)
 
     // Upload to storage bucket. Path: violation_id/stage-yyyymmdd-HHMMSS.pdf
     await _ensureLettersBucket();
