@@ -6411,18 +6411,54 @@ app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
 
 app.patch('/api/nominations/:id', async (req, res) => {
   try {
-    const allowed = ['status', 'manager_notes'];
+    // Two whitelists:
+    //   STATUS_FIELDS — always editable by staff regardless of channel
+    //   NOMINEE_FIELDS — editable only when submission_channel != 'online_form'
+    //                    (preserves the audit of what the homeowner actually
+    //                    submitted via the public form; paper/email/in-person
+    //                    intakes are typed by staff and are inherently
+    //                    correctable).
+    const STATUS_FIELDS = ['status', 'manager_notes'];
+    const NOMINEE_FIELDS = [
+      'nominee_name', 'nominee_address', 'nominee_email', 'nominee_phone',
+      'nominee_bio', 'years_in_community',
+    ];
+    const ALL_ALLOWED = [...STATUS_FIELDS, ...NOMINEE_FIELDS];
+
     const patch = {};
-    allowed.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
+    ALL_ALLOWED.forEach((k) => { if (k in (req.body || {})) patch[k] = req.body[k]; });
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
+
+    // Required-field validation for nominee_* updates — empty NAME or ADDRESS
+    // would brick downstream rendering.
+    if ('nominee_name' in patch && !String(patch.nominee_name || '').trim()) {
+      return res.status(400).json({ error: 'nominee_name cannot be empty' });
+    }
+    if ('nominee_address' in patch && !String(patch.nominee_address || '').trim()) {
+      return res.status(400).json({ error: 'nominee_address cannot be empty' });
+    }
     patch.updated_at = new Date().toISOString();
 
-    // Read prior status so the audit log can record old → new.
+    // Read prior status + submission_channel so the audit log can record
+    // old → new AND so we can refuse nominee_* edits on online_form rows.
     const { data: prior } = await supabase
       .from('nominations')
-      .select('id, cycle_id, nominee_name, status')
+      .select('id, cycle_id, nominee_name, status, submission_channel')
       .eq('id', req.params.id)
       .maybeSingle();
+    if (!prior) return res.status(404).json({ error: 'nomination not found' });
+
+    // GUARD: nominee_* fields are immutable on online_form submissions.
+    // The homeowner submitted those values themselves; staff editing them
+    // afterward would destroy the audit trail of what the homeowner said.
+    // (Paper/email/in-person intakes don't have this constraint — they
+    // were typed by staff from a paper form or phone call to begin with.)
+    const triedToEditNomineeFields = NOMINEE_FIELDS.some((k) => k in patch);
+    if (triedToEditNomineeFields && prior.submission_channel === 'online_form') {
+      return res.status(403).json({
+        error: 'online_form submissions cannot be edited (preserves what the homeowner actually submitted). Only status and manager_notes are editable on online nominations.',
+      });
+    }
 
     const { data, error } = await supabase
       .from('nominations')
@@ -6436,6 +6472,9 @@ app.patch('/api/nominations/:id', async (req, res) => {
     // on_slate_added / on_slate_removed event_types when the change is
     // crossing the ballot threshold — makes it trivial later to query
     // "everyone who was ever on a ballot."
+    // List every field that actually changed so the audit log captures the
+    // scope of the edit (not just "something changed").
+    const changedFields = Object.keys(patch).filter((k) => k !== 'updated_at');
     if (prior && 'status' in patch && prior.status !== patch.status) {
       let evt = 'status_changed';
       if (patch.status === 'on_slate') evt = 'on_slate_added';
@@ -6446,16 +6485,18 @@ app.patch('/api/nominations/:id', async (req, res) => {
         nominee_name: data.nominee_name,
         event_type: evt,
         actor: req.body.actor || 'staff',
-        payload: { old: prior.status, new: patch.status, manager_notes_changed: 'manager_notes' in patch },
+        payload: { old: prior.status, new: patch.status, other_fields_changed: changedFields.filter((f) => f !== 'status') },
       });
-    } else if (prior && 'manager_notes' in patch) {
+    } else if (prior && changedFields.length > 0) {
+      // Generic edit — manager_notes changes go here, AND nominee_* edits
+      // from the new Edit modal (bio fill-in, address correction, etc.).
       nomLogEvent({
         nomination_id: data.id,
         cycle_id: data.cycle_id,
         nominee_name: data.nominee_name,
         event_type: 'edited',
         actor: req.body.actor || 'staff',
-        payload: { fields_changed: ['manager_notes'] },
+        payload: { fields_changed: changedFields },
       });
     }
     res.json({ nomination: data });

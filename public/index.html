@@ -1551,6 +1551,36 @@
         <div id="nomList" style="font-size:13px; color:#6B7280;">No nominations submitted yet.</div>
       </div>
 
+      <!-- Edit nomination modal — opens when staff taps ✏️ Edit details on
+           any non-online-form nomination row. Online-form rows show a
+           "🔒 Online — locked" badge instead (audit trail preservation).
+           Backend PATCH also refuses online_form edits as a hard server
+           guard regardless of this UI gate. -->
+      <div id="nomEditModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
+        <div style="background:#fff; border-radius:14px; max-width:580px; width:100%; padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:6px;">
+            <div>
+              <h3 style="margin:0 0 2px 0; color:#1E2761;">✏️ Edit nomination</h3>
+              <div style="font-size:11.5px; color:#94A3B8;">Source: <span id="nomEditChannel" style="font-weight:600; color:#64748b;">—</span> · Bio fill-in is the usual case</div>
+            </div>
+            <button type="button" onclick="nomEditClose()" style="background:none; border:none; font-size:22px; color:#64748b; cursor:pointer; line-height:1;">×</button>
+          </div>
+          <div id="nomEditError" style="display:none; margin:10px 0; padding:7px 10px; background:#fef2f2; border-left:3px solid #b91c1c; color:#b91c1c; font-size:12.5px; border-radius:0 5px 5px 0;"></div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px; margin-top:14px;">
+            <label style="grid-column: 1 / -1;"><span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:3px;">Name *</span><input id="nomEditName" type="text" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box;"></label>
+            <label style="grid-column: 1 / -1;"><span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:3px;">Address *</span><input id="nomEditAddress" type="text" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box;"></label>
+            <label><span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:3px;">Email</span><input id="nomEditEmail" type="email" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box;"></label>
+            <label><span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:3px;">Phone</span><input id="nomEditPhone" type="tel" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box;"></label>
+            <label style="grid-column: 1 / -1;"><span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:3px;">Years in community</span><input id="nomEditYears" type="text" placeholder="e.g., '7 years' or '12'" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box;"></label>
+            <label style="grid-column: 1 / -1;"><span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:3px;">Bio (shown on the ballot and the meeting notice)</span><textarea id="nomEditBio" rows="6" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box; resize:vertical; font-family:inherit;"></textarea></label>
+          </div>
+          <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+            <button type="button" onclick="nomEditClose()" class="secondary-btn" style="font-size:12.5px; padding:7px 14px;">Cancel</button>
+            <button type="button" onclick="nomEditSave()" id="nomEditSaveBtn" class="action-btn" style="font-size:12.5px; padding:7px 14px;">💾 Save changes</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Letter preview modal — opens an iframe with the rendered PDF
            in-page so we sidestep popup blockers that kill window.open()
            after an async fetch. Header has "Open in new tab" + "Download"
@@ -27534,6 +27564,9 @@ ${questionsPage}
               <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center;">
                 <input type="file" accept="image/*" id="nomPhotoInput_${n.id}" style="display:none;" onchange="nomUploadPhoto('${n.id}', this)">
                 <button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="document.getElementById('nomPhotoInput_${n.id}').click()">${hasPhoto ? '📷 Replace photo' : '📷 Add photo'}</button>
+                ${n.submission_channel === 'online_form'
+                  ? `<span style="font-size:10.5px; color:#94a3b8; font-style:italic; padding:2px 6px;" title="Online form submissions are locked — preserves what the homeowner actually entered">🔒 Online — locked</span>`
+                  : `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick='nomEditOpen(${JSON.stringify(n).replace(/'/g, "&#39;")})'>✏️ Edit details</button>`}
                 ${isOnSlate
                   ? `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'verified')">↺ Remove from ballot</button>`
                   : `<button class="action-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'on_slate')">✓ Put on ballot</button>`}
@@ -27548,6 +27581,94 @@ ${questionsPage}
       }).join('');
     } catch (e) {
       document.getElementById('nomList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  // ===================================================================
+  // Edit nomination — modal flow for paper/email/in-person submissions
+  // (online_form rows are server-side immutable on nominee_* fields).
+  // Opens the modal pre-filled with the current values, on Save sends a
+  // PATCH with only the changed fields so the audit log captures the
+  // exact scope of the edit.
+  // ===================================================================
+  let _nomEditOriginal = null;
+  let _nomEditId = null;
+
+  function nomEditOpen(n) {
+    _nomEditOriginal = n;
+    _nomEditId = n.id;
+    document.getElementById('nomEditName').value = n.nominee_name || '';
+    document.getElementById('nomEditAddress').value = n.nominee_address || '';
+    document.getElementById('nomEditEmail').value = n.nominee_email || '';
+    document.getElementById('nomEditPhone').value = n.nominee_phone || '';
+    document.getElementById('nomEditYears').value = n.years_in_community || '';
+    document.getElementById('nomEditBio').value = n.nominee_bio || '';
+    document.getElementById('nomEditChannel').textContent =
+      (n.submission_channel || 'other').replace(/_/g, ' ');
+    document.getElementById('nomEditError').style.display = 'none';
+    document.getElementById('nomEditModal').style.display = 'flex';
+  }
+
+  function nomEditClose() {
+    document.getElementById('nomEditModal').style.display = 'none';
+    _nomEditOriginal = null;
+    _nomEditId = null;
+  }
+
+  async function nomEditSave() {
+    if (!_nomEditId || !_nomEditOriginal) return;
+    const errEl = document.getElementById('nomEditError');
+    errEl.style.display = 'none';
+
+    const newVals = {
+      nominee_name: document.getElementById('nomEditName').value.trim(),
+      nominee_address: document.getElementById('nomEditAddress').value.trim(),
+      nominee_email: document.getElementById('nomEditEmail').value.trim() || null,
+      nominee_phone: document.getElementById('nomEditPhone').value.trim() || null,
+      years_in_community: document.getElementById('nomEditYears').value.trim() || null,
+      nominee_bio: document.getElementById('nomEditBio').value.trim() || null,
+    };
+    if (!newVals.nominee_name) { errEl.textContent = 'Name is required.'; errEl.style.display = 'block'; return; }
+    if (!newVals.nominee_address) { errEl.textContent = 'Address is required.'; errEl.style.display = 'block'; return; }
+
+    // Send only the fields that actually changed — keeps the audit log
+    // clean and avoids accidentally clobbering server-side defaults if
+    // we add fields later.
+    const orig = _nomEditOriginal;
+    const patch = {};
+    Object.keys(newVals).forEach((k) => {
+      const before = orig[k] || null;
+      const after = newVals[k] || null;
+      if (before !== after) patch[k] = after;
+    });
+    if (Object.keys(patch).length === 0) {
+      errEl.textContent = 'No changes to save.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('nomEditSaveBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/nominations/${_nomEditId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(patch),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      nomEditClose();
+      // Refresh the nominations list so the updated row reflects the edit.
+      // nomOpenCycle reloads the full cycle panel (cycle metadata + the
+      // nominations list); we re-open whichever cycle is currently active.
+      if (typeof nomOpenCycle === 'function' && typeof nomActiveCycleId !== 'undefined' && nomActiveCycleId) {
+        nomOpenCycle(nomActiveCycleId);
+      }
+    } catch (e) {
+      errEl.textContent = 'Could not save: ' + e.message;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save changes';
     }
   }
 
