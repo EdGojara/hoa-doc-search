@@ -11209,8 +11209,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
            pair is the wrong-house insurance + the evidence — both ride along
            on the violation letter. -->
       <div style="margin-bottom: 14px;">
-        <!-- Hidden file input — uses device camera via capture="environment" -->
-        <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="display: none;" onchange="inspOnPhotoSelected(this)">
+        <!-- Hidden file input — uses device camera via capture="environment".
+             NOTE: positioned off-screen instead of display:none because iOS
+             Safari can silently refuse to interact with display:none file
+             inputs (scar 2026-05-28 — Ed's iPhone Canyon Gate prep). -->
+        <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="position:absolute; left:-9999px; width:1px; height:1px; opacity:0; pointer-events:none;" onchange="inspOnPhotoSelected(this)">
 
         <!-- Staged-wide chip (shown only after a wide is staged) -->
         <div id="inspWidePairChip" style="display:none; background:#fff; border:1px solid #d8e2ed; border-radius:10px; padding:8px 10px; margin-bottom: 8px; display:flex; align-items:center; gap:10px;">
@@ -13462,7 +13465,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // 'pair' kicks off the wide → close-up sequence. Subsequent taps stay
     // in pair mode until the close-up lands or the user resets.
     if (modeOverride === 'pair') inspNextCaptureOverride = 'pair_wide';
-    // First tap on iOS also triggers the orientation permission request
+
+    // CRITICAL on iOS Safari: the file input click MUST be the first
+    // synchronous action inside the user-gesture handler. Any async work
+    // (DeviceOrientationEvent.requestPermission, fetch, await) BEFORE this
+    // line breaks the gesture chain and iOS silently refuses to open the
+    // camera. Scar 2026-05-28: Canyon Gate inspection prep, Ed's iPhone
+    // gave "nothing happens" because orientation permission was running first.
+    document.getElementById('inspPhotoInput').click();
+
+    // Defer the orientation permission request to AFTER the file input has
+    // already been triggered. iOS will queue both — the camera opens, the
+    // permission popup appears underneath or after.
     if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       DeviceOrientationEvent.requestPermission().then((perm) => {
@@ -13470,7 +13484,6 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         inspState._needsOrientationPermission = false;
       }).catch(() => { inspState._needsOrientationPermission = false; });
     }
-    document.getElementById('inspPhotoInput').click();
   }
 
   function inspResolveCaptureRole() {
