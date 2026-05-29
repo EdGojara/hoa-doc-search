@@ -1148,4 +1148,165 @@ router.get('/public/status/:reference', async (req, res) => {
   }
 });
 
+// ============================================================================
+// GET /api/builder-applications/portal/my-submissions
+// Builder-facing dashboard endpoint. Authenticates via the same portal-user
+// magic-link cookie homeowners use. Returns ALL submissions the authenticated
+// user's linked builder_companies have submitted, grouped:
+//   - pending: status IN (received, under_review, info_requested) — top of UI
+//   - decided: status IN (approved, *_with_conditions, denied, withdrawn)
+//
+// Access scope (CLAUDE.md Done Checklist #2): the only submissions returned
+// are those whose builder_company_id is in the active portal_user_builders
+// link set for THIS portal user. Never trust client-provided builder_company_id.
+//
+// Letter PDFs: re-sign storage paths on every request rather than trusting
+// the cached letter_signed_url (which may have expired). Single source of
+// truth = letter_pdf_path.
+// ============================================================================
+router.get('/portal/my-submissions', async (req, res) => {
+  try {
+    const { resolvePortalUser } = require('./portal');
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+
+    // Look up which builder companies this portal user can act on
+    const { data: links, error: linkErr } = await supabase
+      .from('portal_user_builders')
+      .select('builder_company_id, builder_companies(id, company_name)')
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null);
+    if (linkErr) {
+      console.error('[builder_applications] portal link lookup failed:', linkErr.message);
+      return res.status(500).json({ error: safeErrorMessage(linkErr) });
+    }
+    const builderIds = (links || []).map((l) => l.builder_company_id).filter(Boolean);
+    if (builderIds.length === 0) {
+      // No builder access — return empty rather than erroring so the UI can
+      // show a "no access yet, contact bedrock" message gracefully.
+      return res.json({
+        builder_companies: [],
+        pending: [],
+        decided: [],
+        empty_reason: 'no_builder_access',
+      });
+    }
+    const builderCompanies = (links || [])
+      .filter((l) => l.builder_companies)
+      .map((l) => ({ id: l.builder_companies.id, name: l.builder_companies.company_name }));
+
+    // Fetch submissions for those builders, scoped to Bedrock-managed
+    // communities. Hard cap at 500 to avoid runaway responses if a builder
+    // racks up years of history. Most recent first within each bucket.
+    const { data: apps, error: appsErr } = await supabase
+      .from('builder_applications')
+      .select(`
+        id, reference_number, status, fast_track,
+        street_address, lot_number, block_number, section_number,
+        plan_number, plan_name, elevation, square_footage, stories,
+        submitter_name, submitter_email,
+        submitted_at, decided_at, decided_by,
+        builder_company_id, builder_companies(id, company_name),
+        community_id, communities(id, name, slug),
+        master_plan_id, master_plans(id, plan_number, plan_name),
+        builder_application_responses(
+          id, response_type, message_to_builder, conditions, denial_reasons,
+          decided_at, decided_by, letter_pdf_path, email_sent_at
+        )
+      `)
+      .in('builder_company_id', builderIds)
+      .order('submitted_at', { ascending: false })
+      .limit(500);
+    if (appsErr) {
+      console.error('[builder_applications] portal submissions fetch failed:', appsErr.message);
+      return res.status(500).json({ error: safeErrorMessage(appsErr) });
+    }
+
+    const PENDING_STATUSES = new Set(['received', 'under_review', 'info_requested']);
+
+    // Parallelize letter PDF signing for decided rows — sequential awaits
+    // at 500-row scale would push response time past 30 sec. Promise.all
+    // means total time = single slowest sign call, not the sum.
+    const signedUrls = await Promise.all((apps || []).map(async (a) => {
+      const latestResp = (a.builder_application_responses || [])
+        .sort((x, y) => new Date(y.decided_at || 0) - new Date(x.decided_at || 0))[0] || null;
+      if (!latestResp || !latestResp.letter_pdf_path) return { id: a.id, latestResp, url: null };
+      try {
+        const { data: signed, error: signErr } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(latestResp.letter_pdf_path, 60 * 60); // 1h
+        if (signErr) {
+          console.warn('[builder_applications] letter sign failed for', a.id, signErr.message);
+          return { id: a.id, latestResp, url: null };
+        }
+        return { id: a.id, latestResp, url: signed && signed.signedUrl };
+      } catch (e) {
+        console.warn('[builder_applications] letter sign exception for', a.id, e.message);
+        return { id: a.id, latestResp, url: null };
+      }
+    }));
+    const signedById = new Map(signedUrls.map((s) => [s.id, s]));
+
+    const pending = [];
+    const decided = [];
+
+    for (const a of (apps || [])) {
+      const signedEntry = signedById.get(a.id) || { latestResp: null, url: null };
+      const latestResponse = signedEntry.latestResp;
+      const letterUrl = signedEntry.url;
+
+      const row = {
+        id: a.id,
+        reference_number: a.reference_number,
+        status: a.status,
+        fast_track: !!a.fast_track,
+        community: a.communities ? { id: a.communities.id, name: a.communities.name, slug: a.communities.slug } : null,
+        builder: a.builder_companies ? { id: a.builder_companies.id, name: a.builder_companies.company_name } : null,
+        street_address: a.street_address,
+        lot_number: a.lot_number,
+        block_number: a.block_number,
+        section_number: a.section_number,
+        plan_number: a.plan_number,
+        plan_name: a.plan_name,
+        elevation: a.elevation,
+        square_footage: a.square_footage,
+        stories: a.stories,
+        submitter_name: a.submitter_name,
+        submitter_email: a.submitter_email,
+        submitted_at: a.submitted_at,
+        decided_at: a.decided_at,
+        decided_by: a.decided_by,
+        days_in_review: a.submitted_at && !a.decided_at
+          ? Math.floor((Date.now() - new Date(a.submitted_at).getTime()) / 86400000)
+          : null,
+        response: latestResponse ? {
+          response_type: latestResponse.response_type,
+          message_to_builder: latestResponse.message_to_builder,
+          conditions: latestResponse.conditions,
+          denial_reasons: latestResponse.denial_reasons,
+          decided_at: latestResponse.decided_at,
+          decided_by: latestResponse.decided_by,
+          letter_url: letterUrl,
+          email_sent_at: latestResponse.email_sent_at,
+        } : null,
+      };
+      if (PENDING_STATUSES.has(a.status)) pending.push(row); else decided.push(row);
+    }
+
+    res.json({
+      builder_companies: builderCompanies,
+      pending,
+      decided,
+      counts: {
+        pending: pending.length,
+        decided: decided.length,
+        total: pending.length + decided.length,
+      },
+    });
+  } catch (err) {
+    console.error('[builder_applications] portal dashboard failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = { router };

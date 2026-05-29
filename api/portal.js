@@ -1551,4 +1551,12 @@ function escapeHtml(s) {
   return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-module.exports = { router };
+module.exports = {
+  router,
+  // Auth helper — used by builder-applications dashboard to authenticate
+  // the same portal-user cookie that homeowners use. Builder reviewers are
+  // linked to builder_companies via the portal_user_builders join table
+  // (migration 080). Exported here so the linkage table is the single
+  // source of truth for "what does this portal user have access to."
+  resolvePortalUser,
+};
