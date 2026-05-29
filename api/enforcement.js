@@ -4951,7 +4951,9 @@ router.post('/violations/bulk-attach-letters', upload.array('pdfs', 50), async (
 // Returns the PDF directly (application/pdf). Operator downloads, prints,
 // applies certified mail label, sends.
 // ===========================================================================
-const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
+// (renderForceMowLetterPdf is imported at the top of the file alongside the
+// other renderers — was duplicated here in an earlier session, dedup'd
+// 2026-05-29 to fix a SyntaxError "Identifier already declared" crash.)
 
 router.post('/violations/:violationId/draft-force-mow-letter', async (req, res) => {
   try {
