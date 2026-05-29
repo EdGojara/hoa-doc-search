@@ -7525,11 +7525,34 @@ app.get('/api/me', async (req, res) => {
     const { data: { user }, error } = await supabase.auth.getUser(token);
     if (error || !user) return res.status(401).json({ error: 'invalid_token' });
 
-    const { data: profile } = await supabase
-      .from('user_profiles')
-      .select('id, email, full_name, role, is_active, last_sign_in_at, created_at, preferences')
-      .eq('id', user.id)
-      .maybeSingle();
+    // Try the full SELECT first (includes preferences from migration 131).
+    // If the preferences column doesn't exist yet (migration not applied),
+    // the SELECT errors and supabase.maybeSingle() returns data=null + an
+    // error. We swallow that and fall back to the pre-131 column set so
+    // /api/me always returns the user's real role — without the fallback,
+    // a missing column silently demoted every admin to 'staff'. (Scar:
+    // Ed lost admin access for ~10 min 2026-05-29 because of exactly this.)
+    let profile = null;
+    {
+      const fullSel = await supabase
+        .from('user_profiles')
+        .select('id, email, full_name, role, is_active, last_sign_in_at, created_at, preferences')
+        .eq('id', user.id)
+        .maybeSingle();
+      if (fullSel.data) {
+        profile = fullSel.data;
+      } else if (fullSel.error) {
+        console.warn('[/api/me] full select failed, falling back to pre-131 columns:', fullSel.error.message);
+        const minSel = await supabase
+          .from('user_profiles')
+          .select('id, email, full_name, role, is_active, last_sign_in_at, created_at')
+          .eq('id', user.id)
+          .maybeSingle();
+        if (minSel.data) {
+          profile = { ...minSel.data, preferences: {} };
+        }
+      }
+    }
     if (!profile) return res.json({ user: { id: user.id, email: user.email, full_name: null, role: 'staff', is_active: true, last_sign_in_at: null, preferences: {} } });
     // Return the profile even if inactive — the UI uses is_active to show
     // a "deactivated" page. Downstream API endpoints enforce inactive
