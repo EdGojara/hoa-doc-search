@@ -19527,12 +19527,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     owner_ar:           { label: 'Owner AR',            icon: '💵', group: 'Financial',  note: 'Receivables · delinquencies',         action: () => switchTab('ownerar') },
     financial:          { label: 'Financial Review',    icon: '📊', group: 'Financial',  note: 'BS · IS · variance',                  action: () => switchTab('finrev') },
     docs:               { label: 'Documents',           icon: '🗂️', group: 'Library',    note: 'Community library · search',          action: () => switchTab('docs') },
-    meetings:           { label: 'Meetings',            icon: '🗳️', group: 'Operations', note: 'Upcoming · minutes · packets',         action: () => switchTab('meetings') },
-    board_packets:      { label: 'Board Packets',       icon: '📦', group: 'Operations', note: 'Curated for the next meeting',         action: () => switchTab('boardpackets') },
+    // NOTE on grouped tabs: Meetings / Vendors / Community Profile / Bedrock
+    // Office are top-nav GROUPS (data-group="..."), opened via openTabGroup,
+    // not switchTab. Calling switchTab on a group key doesn't find a matching
+    // .tab[onclick="switchTab('group-key')"] selector and silently no-ops.
+    // Board Packets lives inside the Meetings group, so the tile lands on the
+    // group's default sub-view; users can switch within after.
+    meetings:           { label: 'Meetings',            icon: '🗳️', group: 'Operations', note: 'Upcoming · minutes · packets',         action: () => { if (typeof openTabGroup === 'function') openTabGroup('meetings'); else switchTab('meetings'); } },
+    board_packets:      { label: 'Board Packets',       icon: '📦', group: 'Operations', note: 'Curated for the next meeting',         action: () => { if (typeof openTabGroup === 'function') openTabGroup('meetings'); else switchTab('boardpackets'); } },
     events:             { label: 'Events',              icon: '🎉', group: 'Operations', note: 'Annual · social · check-in',           action: () => switchTab('events') },
     calendar:           { label: 'Calendar',            icon: '🗓️', group: 'Operations', note: 'Schedule · deadlines',                action: () => switchTab('calendar') },
-    vendor:             { label: 'Vendors',             icon: '🏢', group: 'Operations', note: 'Renewals · invoices',                 action: () => switchTab('vendor') },
-    community_profile:  { label: 'Community Profile',   icon: '🏘️', group: 'Reference',  note: 'Per-community config · contacts',     action: () => switchTab('community') },
+    vendor:             { label: 'Vendors',             icon: '🏢', group: 'Operations', note: 'Renewals · invoices',                 action: () => { if (typeof openTabGroup === 'function') openTabGroup('vendor'); else switchTab('vendor'); } },
+    community_profile:  { label: 'Community Profile',   icon: '🏘️', group: 'Reference',  note: 'Per-community config · contacts',     action: () => { if (typeof openTabGroup === 'function') openTabGroup('community'); else switchTab('community'); } },
     forms_applications: { label: 'Forms & Applications', icon: '📑', group: 'Reference',  note: 'Form responses · status',             action: () => switchTab('forms') },
     performance:        { label: 'Performance',         icon: '📊', group: 'Reference',  note: 'KPIs · metrics',                       action: () => switchTab('perf') },
     quick:              { label: 'Quick',               icon: '⚡', group: 'Reference',  note: 'One-off tools',                        action: () => switchTab('quick') },
