@@ -855,67 +855,6 @@ router.delete('/inspections/:id', async (req, res) => {
 //   fetch('/api/inspections/geocode-debug?address=20010+Cape+Clover+Trail,+Richmond,+TX,+77407')
 //     .then(r => r.json()).then(j => console.log(j))
 // ---------------------------------------------------------------------------
-// ---------------------------------------------------------------------------
-// GET /api/inspections/_diagnose_violations/:property_id
-// Temporary diagnostic — 2026-05-28. List endpoint reports a property has N
-// violations; detail endpoint reports 0 for the same property_id. This
-// endpoint runs four distinct queries on the same property_id and returns
-// the raw shape/count/error from each so we can pin down WHICH query is
-// failing and why. Strip after the root cause is fixed.
-// ---------------------------------------------------------------------------
-router.get('/inspections/_diagnose_violations/:property_id', async (req, res) => {
-  const propertyId = req.params.property_id;
-  const out = { property_id_received: propertyId, queries: {} };
-
-  // Q1: simplest possible — just count rows with this property_id, no joins
-  try {
-    const r = await supabase.from('violations').select('id', { count: 'exact', head: false }).eq('property_id', propertyId);
-    out.queries.q1_simple_count = { error: r.error && r.error.message, data_length: (r.data || []).length, count: r.count, sample_ids: (r.data || []).slice(0, 3).map((v) => v.id) };
-  } catch (e) { out.queries.q1_simple_count = { exception: e.message }; }
-
-  // Q2: same as detail endpoint full select (with Phase 7b columns + embed)
-  try {
-    const r = await supabase.from('violations')
-      .select('id, opened_at, current_stage, quality_status, confidence_weight, source, reviewed_at, review_notes, primary_category_id, enforcement_categories(id, code, label)')
-      .eq('property_id', propertyId);
-    out.queries.q2_full_select = { error: r.error && r.error.message, data_length: (r.data || []).length, sample: (r.data || []).slice(0, 2) };
-  } catch (e) { out.queries.q2_full_select = { exception: e.message }; }
-
-  // Q3: minimal pre-057 columns + embed
-  try {
-    const r = await supabase.from('violations')
-      .select('id, opened_at, current_stage, primary_category_id, enforcement_categories(id, code, label)')
-      .eq('property_id', propertyId);
-    out.queries.q3_minimal_with_embed = { error: r.error && r.error.message, data_length: (r.data || []).length, sample: (r.data || []).slice(0, 2) };
-  } catch (e) { out.queries.q3_minimal_with_embed = { exception: e.message }; }
-
-  // Q4: raw property_id filter, no embed at all
-  try {
-    const r = await supabase.from('violations').select('id, property_id, community_id, current_stage, primary_category_id').eq('property_id', propertyId);
-    out.queries.q4_no_embed = { error: r.error && r.error.message, data_length: (r.data || []).length, sample: (r.data || []).slice(0, 2) };
-  } catch (e) { out.queries.q4_no_embed = { exception: e.message }; }
-
-  // Q5: do the LIST endpoint approach — filter by community_id then filter to this property in JS
-  try {
-    // First grab the property's community_id
-    const pRow = await supabase.from('v_current_property_owners').select('property_id, community_id, street_address').eq('property_id', propertyId).maybeSingle();
-    out.property_view_row = { error: pRow.error && pRow.error.message, data: pRow.data };
-    if (pRow.data && pRow.data.community_id) {
-      const r = await supabase.from('violations').select('id, property_id, community_id, current_stage').eq('community_id', pRow.data.community_id);
-      const all = r.data || [];
-      const matching = all.filter((v) => v.property_id === propertyId);
-      out.queries.q5_via_community_then_js_filter = {
-        error: r.error && r.error.message,
-        community_total_rows: all.length,
-        matching_this_property: matching.length,
-        sample_matching: matching.slice(0, 2),
-      };
-    }
-  } catch (e) { out.queries.q5_via_community_then_js_filter = { exception: e.message }; }
-
-  res.json(out);
-});
-
 router.get('/inspections/geocode-debug', async (req, res) => {
   const address = (req.query.address || '').toString().trim();
   if (!address) return res.status(400).json({ error: 'address query param required' });
@@ -1557,16 +1496,14 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
 
     // Run all the history queries in parallel
     const [violationsRes, interactionsRes, inspectionsRes, observationsRes] = await Promise.all([
-      // Violations with category name joined.
-      // NOTE: this select pulls Phase 7b quality columns (quality_status,
-      // confidence_weight, source, reviewed_at, review_notes) from migration
-      // 057. If 057 hasn't been applied to the live DB, PostgREST returns
-      // an error and violationsRes.data falls to null → empty array → silent
-      // "0 violations" on the detail panel. Diagnostic-first scar 2026-05-28.
-      // The fallback path below catches that and re-runs with the minimal
-      // (pre-057) column set so the panel still works.
+      // Violations with category embed. NOTE: enforcement_categories has
+      // columns (id, slug, label, description, default_priority_weight,
+      // display_order) — NOT `code`. Selecting a non-existent column makes
+      // PostgREST error → violationsRes.data falls to null → empty array →
+      // silent "0 violations" on the detail panel even when the property
+      // clearly has violations. (Scar: 6 hours chasing this 2026-05-28.)
       supabase.from('violations')
-        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, enforcement_categories(id, code, label)')
+        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, enforcement_categories(id, slug, label)')
         .eq('property_id', propertyId)
         .order('opened_at', { ascending: false }),
       // Interactions
@@ -1588,39 +1525,17 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         .limit(20),
     ]);
 
-    let violations = violationsRes.data || [];
-    // Silent-failure guard: if the full select errored (most likely cause:
-    // migration 057 hasn't been applied so the Phase 7b columns are missing),
-    // log it loud and fall back to the minimal pre-057 select so the panel
-    // still surfaces the violation history. Without this fallback, the panel
-    // shows "No violations on record" while the list endpoint correctly
-    // tallies them — exactly the mismatch surfaced 2026-05-28 during
-    // Canyon Gate prep.
-    if (violationsRes.error || (violationsRes.data === null)) {
-      console.error('[inspections.property-detail] full violations select failed:', violationsRes.error && violationsRes.error.message, '— falling back to minimal select');
-      const fallback = await supabase.from('violations')
-        .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, enforcement_categories(id, code, label)')
-        .eq('property_id', propertyId)
-        .order('opened_at', { ascending: false });
-      if (fallback.error) {
-        console.error('[inspections.property-detail] fallback violations select ALSO failed:', fallback.error.message);
-        return res.status(500).json({
-          error: 'violations query failed',
-          detail: fallback.error.message,
-          full_select_error: violationsRes.error && violationsRes.error.message,
-        });
-      }
-      violations = (fallback.data || []).map((v) => ({
-        ...v,
-        // Fill defaults for the Phase 7b fields the renderer expects so the
-        // UI doesn't blow up on missing properties.
-        quality_status:    'unreviewed',
-        confidence_weight: 1.0,
-        source:            'trustEd_native',
-        reviewed_at:       null,
-        review_notes:      null,
-      }));
+    // Loud-fail any silent error from the violations select rather than
+    // defaulting to []. The detail panel rendering "0 violations" when the
+    // DB has rows was the symptom of the `code`-vs-`slug` typo above; if
+    // any FUTURE query failure causes data:null, we want to see it
+    // immediately, not silently mask it. Same applies to inspections /
+    // observations / interactions.
+    if (violationsRes.error) {
+      console.error('[inspections.property-detail] violations select error:', violationsRes.error.message);
+      return res.status(500).json({ error: 'violations query failed', detail: violationsRes.error.message });
     }
+    const violations = violationsRes.data || [];
     const interactions = interactionsRes.data || [];
     const obsRows = observationsRes.data || [];
 
@@ -1708,7 +1623,10 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         current_stage:     v.current_stage,
         cure_period_ends_at: v.cure_period_ends_at,
         board_priority_at_open: v.board_priority_at_open,
-        category_code:     v.enforcement_categories && v.enforcement_categories.code,
+        // category_code is what the frontend display fallback expects;
+        // in this schema the equivalent column is `slug` (no `code` column
+        // on enforcement_categories — was a stale typo).
+        category_code:     v.enforcement_categories && v.enforcement_categories.slug,
         category_label:    v.enforcement_categories && v.enforcement_categories.label,
         // Quality fields (Phase 7b)
         quality_status:    v.quality_status,
