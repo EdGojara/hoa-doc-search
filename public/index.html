@@ -11158,23 +11158,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="display: flex; gap: 6px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;">
         <button type="button" id="inspViewListBtn" class="ed-mode-btn active" onclick="inspSetView('list')">📋 List</button>
         <button type="button" id="inspViewMapBtn"  class="ed-mode-btn"        onclick="inspSetView('map')">🗺️ Map</button>
-        <!-- Right-side group: keeps the address chip and Take-photo button
-             on the same line on narrow iPhone viewports. Without the wrapper,
-             flex-wrap pushes the button to a new line below the chip — which
-             defeats the whole point of moving the button up top to avoid
-             scrolling. (Scar 2026-05-28 — Canyon Gate prep.) -->
-        <div style="display:flex; align-items:center; gap:8px; margin-left:auto; flex-wrap:wrap; justify-content:flex-end;">
-          <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: #fff; border: 1px solid #d0d7de; color: #1A3050; border-radius: 999px; font-size: 12px; font-weight: 700;">
-            📍 <span id="inspSelectedPropLabel">—</span>
-            <span onclick="inspClearSelectedProperty()" style="margin-left: 6px; cursor: pointer; opacity: 0.7;">✕</span>
-          </div>
-          <!-- Compact Take photo button — accessible without scrolling on
-               iPhone. Uses the same <label for=> iOS bridge as the larger
-               button below the map. -->
-          <label for="inspPhotoInput" id="inspCaptureBtnTop" onclick="inspTriggerCaptureNoClick()"
-                 style="padding: 8px 14px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 999px; font-size: 13px; font-weight: 700; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; box-shadow: 0 2px 8px rgba(212,175,55,0.4); white-space: nowrap;">
-            📷 Take photo
-          </label>
+        <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: auto;">
+          📍 <span id="inspSelectedPropLabel">—</span>
+          <span onclick="inspClearSelectedProperty()" style="margin-left: 6px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
       </div>
 
@@ -11249,11 +11235,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              inspTriggerCapture() to manage pair-shot mode + orientation
              permission, but iOS opens the camera regardless of whether
              that JS runs successfully. -->
+        <!-- Take photo button: position:fixed at the bottom of the viewport
+             on iPhone / small screens so the operator never has to scroll
+             during a drive-by route. Stays in flow on desktop (max-width
+             media query). Single <label for="inspPhotoInput"> bridge —
+             confirmed working on iOS Safari 2026-05-28.
+             max-width:560px + centered so it doesn't stretch across a wide
+             laptop browser. -->
         <label for="inspPhotoInput" id="inspCaptureBtn" onclick="inspTriggerCaptureNoClick()"
-                style="width: 100%; padding: 22px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border: none; border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 4px 14px rgba(212, 175, 55, 0.35); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box;">
+                style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: 560px; margin: 0 auto; z-index: 60; padding: 18px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box;">
           <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
           <span id="inspCaptureLabel">Take photo</span>
         </label>
+        <!-- Spacer so the photo session list below isn't hidden behind the
+             fixed-position button. Matches button height + bottom inset. -->
+        <div style="height: 80px;"></div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:10px;">
           <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; flex:1;">Tap once to enable GPS + compass for accurate tagging</div>
           <a href="#" onclick="event.preventDefault(); inspTriggerCapture('pair')" title="Wide shot first (identifies the house), then close-up — pair travels onto the letter as wrong-house insurance. Useful for §209 certified letters." style="font-size: 10.5px; color: #64748b; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">Pair shot (advanced)</a>
