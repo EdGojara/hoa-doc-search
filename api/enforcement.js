@@ -472,6 +472,126 @@ router.post('/open-violation', express.json(), async (req, res) => {
 // (no inspection_photo_id link — handled below) and the violation. Letter
 // generation is decoupled (manual approval step, per Ed 2026-05-29).
 // ---------------------------------------------------------------------------
+
+// ===========================================================================
+// GET /api/enforcement/violations/duplicate-check
+// Returns existing open + recently-closed violations for a (property,
+// category) pair. Used by the manual violation modal to warn the operator
+// before they file a duplicate when multiple staff are splitting a community.
+//
+// Query params:
+//   property_id  (required)
+//   category_id  (required)
+//
+// Response:
+//   {
+//     has_open: bool,
+//     has_recent_closed: bool,
+//     duplicates: [{
+//       id, current_stage, opened_at, days_ago,
+//       opened_by_email, category_label, source
+//     }]
+//   }
+//
+// "Open" = current_stage NOT IN (cured, closed, voided)
+// "Recent closed" = cured/closed within the last 30 days
+// ===========================================================================
+router.get('/violations/duplicate-check', async (req, res) => {
+  try {
+    const propertyId = req.query.property_id;
+    const categoryId = req.query.category_id;
+    if (!propertyId || !categoryId) {
+      return res.status(400).json({ error: 'property_id and category_id required' });
+    }
+
+    // Pull every violation at (property, category) so we can classify in JS.
+    // At per-property scale (< 50 violations lifetime even on the worst
+    // offenders) this is fine — we're not iterating the whole table.
+    const { data: vios, error } = await supabase
+      .from('violations')
+      .select(`
+        id, current_stage, opened_at, resolved_at, source,
+        opened_by_user_id, enforcement_categories(label)
+      `)
+      .eq('property_id', propertyId)
+      .eq('primary_category_id', categoryId)
+      .order('opened_at', { ascending: false })
+      .limit(20);
+    if (error) {
+      console.error('[duplicate-check] query failed:', error.message);
+      return res.status(500).json({ error: safeErrorMessage(error) });
+    }
+
+    const now = Date.now();
+    const THIRTY_DAYS_MS = 30 * 86400 * 1000;
+    const OPEN_STAGES = new Set();
+    // Anything not in this set counts as "open"
+    const CLOSED_STAGES = new Set(['cured', 'closed', 'voided']);
+
+    // Resolve opened_by user emails in one batch (avoids N+1)
+    const userIds = [...new Set((vios || []).map((v) => v.opened_by_user_id).filter(Boolean))];
+    let userEmailById = new Map();
+    if (userIds.length > 0) {
+      try {
+        const { data: profiles } = await supabase
+          .from('user_profiles')
+          .select('id, email, full_name')
+          .in('id', userIds);
+        userEmailById = new Map(
+          (profiles || []).map((p) => [p.id, p.full_name || p.email || null])
+        );
+      } catch (_) { /* tolerate */ }
+    }
+
+    const duplicates = [];
+    let has_open = false;
+    let has_recent_closed = false;
+
+    for (const v of (vios || [])) {
+      const isClosed = CLOSED_STAGES.has(v.current_stage);
+      const openedAt = v.opened_at ? new Date(v.opened_at).getTime() : null;
+      const daysAgo = openedAt ? Math.floor((now - openedAt) / 86400000) : null;
+
+      if (!isClosed) {
+        has_open = true;
+        duplicates.push({
+          id: v.id,
+          status: 'open',
+          current_stage: v.current_stage,
+          opened_at: v.opened_at,
+          days_ago: daysAgo,
+          opened_by: userEmailById.get(v.opened_by_user_id) || null,
+          category_label: v.enforcement_categories && v.enforcement_categories.label,
+          source: v.source,
+        });
+      } else {
+        const resolvedAt = v.resolved_at ? new Date(v.resolved_at).getTime() : openedAt;
+        const sinceResolved = resolvedAt ? now - resolvedAt : Infinity;
+        if (sinceResolved <= THIRTY_DAYS_MS) {
+          has_recent_closed = true;
+          duplicates.push({
+            id: v.id,
+            status: 'recently_closed',
+            current_stage: v.current_stage,
+            opened_at: v.opened_at,
+            resolved_at: v.resolved_at,
+            days_ago: daysAgo,
+            days_since_resolved: Math.floor(sinceResolved / 86400000),
+            opened_by: userEmailById.get(v.opened_by_user_id) || null,
+            category_label: v.enforcement_categories && v.enforcement_categories.label,
+            source: v.source,
+          });
+        }
+      }
+    }
+
+    res.json({ has_open, has_recent_closed, duplicates });
+  } catch (err) {
+    console.error('[duplicate-check]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.post('/violations/manual', upload.array('photos', 6), async (req, res) => {
   try {
     const { requireActingUser } = require('./_acting_user');
@@ -516,6 +636,43 @@ router.post('/violations/manual', upload.array('photos', 6), async (req, res) =>
     if (!propRow) return res.status(404).json({ error: 'property not found' });
     if (propRow.community_id !== communityId) {
       return res.status(400).json({ error: 'property does not belong to specified community' });
+    }
+
+    // ---- Server-side duplicate guard (race-condition backstop) -----------
+    // The frontend modal also checks via GET /duplicate-check before submit,
+    // but two operators could pass that check simultaneously and both
+    // submit. This guard fires at INSERT time. Bypassed when the operator
+    // explicitly sends allow_duplicate=true (i.e., they saw the warning and
+    // confirmed it's intentional).
+    const allowDuplicate = body.allow_duplicate === 'true' || body.allow_duplicate === true;
+    if (!allowDuplicate) {
+      const { data: existingOpen } = await supabase
+        .from('violations')
+        .select('id, current_stage, opened_at, opened_by_user_id, source')
+        .eq('property_id', propertyId)
+        .eq('primary_category_id', categoryId)
+        .not('current_stage', 'in', '("cured","closed","voided")')
+        .order('opened_at', { ascending: false })
+        .limit(1);
+      if (existingOpen && existingOpen.length > 0) {
+        const e = existingOpen[0];
+        const daysAgo = e.opened_at
+          ? Math.floor((Date.now() - new Date(e.opened_at).getTime()) / 86400000)
+          : null;
+        // Cleanup any uploaded files BEFORE returning — multer already
+        // wrote them to memory, but we haven't pushed to storage yet here.
+        return res.status(409).json({
+          error: 'duplicate_open_violation',
+          message: 'An open violation already exists for this property in this category. Set allow_duplicate=true to file anyway.',
+          existing_violation: {
+            id: e.id,
+            current_stage: e.current_stage,
+            opened_at: e.opened_at,
+            days_ago: daysAgo,
+            source: e.source,
+          },
+        });
+      }
     }
 
     // Resolve board priority for the (community, category) — same engine

@@ -11550,10 +11550,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <input type="search" id="manualVioPropertySearch" placeholder="Type address to filter…"
                  oninput="manualVioPropertyFilter()"
                  style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; margin-bottom: 6px;">
-          <select id="manualVioProperty"
+          <select id="manualVioProperty" onchange="manualVioDuplicateCheck()"
                   style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
             <option value="">— pick a community first —</option>
           </select>
+        </div>
+
+        <!-- Duplicate warning panel — shown when property + category both
+             set AND the duplicate-check endpoint returns existing open or
+             recently-closed violations. Two action buttons inline:
+             "File anyway" (sets allowDuplicate flag, lets submit proceed)
+             OR "Cancel" (clears the form selection). -->
+        <div id="manualVioDupeWarning" style="display:none; margin-bottom:14px; padding:12px 14px; background:#fffbeb; border:1px solid #fde047; border-left:4px solid #f59e0b; border-radius:6px;">
+          <div style="font-size:13px; font-weight:600; color:#854d0e; margin-bottom:6px;">⚠️ Possible duplicate</div>
+          <div id="manualVioDupeBody" style="font-size:12.5px; color:#78350f; line-height:1.5; margin-bottom:8px;"></div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button type="button" onclick="manualVioAllowDupe()" id="manualVioAllowDupeBtn" style="background:#fff; border:1px solid #d97706; color:#92400e; padding:5px 12px; border-radius:5px; font-size:11.5px; font-weight:600; cursor:pointer;">📝 File anyway</button>
+            <button type="button" onclick="manualVioOpenExisting()" id="manualVioOpenExistingBtn" style="background:#fff; border:1px solid #94a3b8; color:#475569; padding:5px 12px; border-radius:5px; font-size:11.5px; font-weight:600; cursor:pointer;">👁️ Open existing</button>
+          </div>
         </div>
 
         <!-- Category -->
@@ -13235,6 +13249,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   let _mvProperties = [];        // properties for currently-selected community
   let _mvCategories = [];        // enforcement categories (global)
   let _mvCommunitiesLoaded = false;
+  // Duplicate-warning state (added 2026-05-29 for split-community concurrent
+  // inspector flow). Set by manualVioAllowDupe() when the operator confirms
+  // a duplicate is intentional. Reset on every property/category change so
+  // the warning re-evaluates fresh.
+  let _mvAllowDuplicate = false;
+  let _mvDupeCheckTimer = null;
+  let _mvExistingViolationId = null;
   // Cache the original form HTML on first open. After a successful submit
   // we replace the modal body with a success view; "Add another" needs to
   // restore the form. Without this, the IDs the rest of the JS expects
@@ -13255,12 +13276,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     // Reset state when re-opening so a previous draft doesn't leak
     _mvPhotos = [];
+    _mvAllowDuplicate = false;
+    _mvExistingViolationId = null;
+    if (_mvDupeCheckTimer) { clearTimeout(_mvDupeCheckTimer); _mvDupeCheckTimer = null; }
     document.getElementById('manualVioPhotoList').innerHTML = '';
     document.getElementById('manualVioPhotoList').style.display = 'none';
     document.getElementById('manualVioDescription').value = '';
     document.getElementById('manualVioPropertySearch').value = '';
     document.getElementById('manualVioError').style.display = 'none';
     document.getElementById('manualVioForceMowWarn').style.display = 'none';
+    const dupeEl = document.getElementById('manualVioDupeWarning');
+    if (dupeEl) dupeEl.style.display = 'none';
 
     // Show modal
     document.getElementById('manualVioModal').style.display = 'flex';
@@ -13391,6 +13417,83 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const slug = selectedOpt ? selectedOpt.dataset.slug : '';
     document.getElementById('manualVioForceMowWarn').style.display =
       (slug === 'lawn_force_mow_10day') ? 'block' : 'none';
+    // Trigger duplicate check whenever category changes (property may
+    // already be set from a prior selection).
+    manualVioDuplicateCheck();
+  }
+
+  // Debounced duplicate check — called on property change, category change,
+  // and modal open. Fires GET /violations/duplicate-check whenever both
+  // property and category are populated. Shows the warning panel with
+  // structured details + offers "File anyway" + "Open existing" actions.
+  async function manualVioDuplicateCheck() {
+    if (_mvDupeCheckTimer) clearTimeout(_mvDupeCheckTimer);
+    // Reset the allow-flag — user changed inputs, fresh evaluation
+    _mvAllowDuplicate = false;
+    _mvExistingViolationId = null;
+    const warnEl = document.getElementById('manualVioDupeWarning');
+    if (warnEl) warnEl.style.display = 'none';
+
+    const propertyId = document.getElementById('manualVioProperty').value;
+    const categoryId = document.getElementById('manualVioCategory').value;
+    if (!propertyId || !categoryId) return;
+
+    _mvDupeCheckTimer = setTimeout(async () => {
+      try {
+        const r = await fetch(
+          '/api/enforcement/violations/duplicate-check?'
+          + 'property_id=' + encodeURIComponent(propertyId)
+          + '&category_id=' + encodeURIComponent(categoryId)
+        );
+        if (!r.ok) return; // soft-fail — submit will hit server-side guard
+        const j = await r.json();
+        if (!j.has_open && !j.has_recent_closed) return;
+
+        // Build the warning content
+        const lines = (j.duplicates || []).map((d) => {
+          const openedBy = d.opened_by ? ` by ${escapeHtml(d.opened_by)}` : '';
+          const sourceTag = d.source && d.source !== 'trustEd_native'
+            ? ` <span style="color:#92400e; font-size:10.5px;">[${escapeHtml(d.source.replace(/_/g, ' '))}]</span>`
+            : '';
+          if (d.status === 'open') {
+            return `<li><strong>Open</strong>: stage ${escapeHtml((d.current_stage || '').replace(/_/g, ' '))} · opened ${d.days_ago != null ? d.days_ago + ' days ago' : '—'}${openedBy}${sourceTag}</li>`;
+          }
+          return `<li><strong>Recently cured</strong>: closed ${d.days_since_resolved != null ? d.days_since_resolved + ' days ago' : '—'}${openedBy} — may be the same condition recurring${sourceTag}</li>`;
+        }).join('');
+        document.getElementById('manualVioDupeBody').innerHTML = `
+          This property already has activity for this category:
+          <ul style="margin:6px 0 0 18px; padding:0;">${lines}</ul>
+          ${j.has_open ? '<div style="margin-top:6px; font-style:italic;">Filing again will create a parallel open violation. Coordinate with the other operator first, or open the existing one if you have new evidence.</div>' : ''}
+        `;
+        warnEl.style.display = 'block';
+
+        // Stash the first existing violation id so "Open existing" works
+        const first = (j.duplicates || []).find((d) => d.status === 'open') || (j.duplicates || [])[0];
+        _mvExistingViolationId = first ? first.id : null;
+      } catch (e) {
+        // Soft-fail — server-side guard will catch real duplicates at submit
+        console.warn('[manualVioDuplicateCheck] check failed:', e.message);
+      }
+    }, 300);
+  }
+
+  // User confirmed they want to file anyway. Hides the warning + sets the
+  // flag the next submit will send.
+  function manualVioAllowDupe() {
+    _mvAllowDuplicate = true;
+    const warnEl = document.getElementById('manualVioDupeWarning');
+    if (warnEl) warnEl.style.display = 'none';
+  }
+
+  // Open the existing violation's property detail panel so the operator
+  // can review what's already filed before deciding whether to duplicate.
+  function manualVioOpenExisting() {
+    const propertyId = document.getElementById('manualVioProperty').value;
+    if (!propertyId) return;
+    manualVioClose();
+    if (typeof inspOpenPropertyDetail === 'function') {
+      inspOpenPropertyDetail(propertyId);
+    }
   }
 
   function manualVioPhotoSelected(input) {
@@ -13463,6 +13566,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     fd.append('severity', severity);
     fd.append('source', source);
     fd.append('description', description);
+    // Tell the server-side guard whether the operator confirmed an
+    // intentional duplicate via the warning panel's "File anyway" button.
+    if (_mvAllowDuplicate) fd.append('allow_duplicate', 'true');
     _mvPhotos.forEach((p) => fd.append('photos', p.file, p.file.name));
 
     try {
@@ -13485,6 +13591,25 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       });
       const j = await r.json().catch(() => ({}));
       if (!r.ok) {
+        // Race-condition: server-side duplicate guard fired between our
+        // pre-check and submit (another operator filed in the interim).
+        // Surface the warning panel inline so the operator can decide
+        // without re-walking the whole form.
+        if (r.status === 409 && j.error === 'duplicate_open_violation' && j.existing_violation) {
+          const e = j.existing_violation;
+          _mvExistingViolationId = e.id;
+          const warnEl = document.getElementById('manualVioDupeWarning');
+          document.getElementById('manualVioDupeBody').innerHTML = `
+            <strong>An open violation was just filed</strong> for this property + category by another operator while you were submitting:
+            <ul style="margin:6px 0 0 18px; padding:0;">
+              <li>Stage <strong>${escapeHtml((e.current_stage || '').replace(/_/g, ' '))}</strong> · opened ${e.days_ago != null ? e.days_ago + ' days ago' : 'just now'}${e.source ? ' · source: ' + escapeHtml(e.source.replace(/_/g, ' ')) : ''}</li>
+            </ul>
+            <div style="margin-top:6px; font-style:italic;">Tap "File anyway" to add a parallel violation, or "Open existing" to review it.</div>
+          `;
+          if (warnEl) warnEl.style.display = 'block';
+          showErr('Duplicate detected — confirm with "File anyway" above or open the existing one.');
+          return;
+        }
         showErr(j.error || ('Failed to create violation (HTTP ' + r.status + ')'));
         return;
       }
