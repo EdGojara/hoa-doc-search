@@ -170,4 +170,4 @@ router.patch('/:id', express.json({ limit: '32kb' }), async (req, res) => {
   }
 });
 
-module.exports = { router };
+module.exports = { router, resolveUserRole, requireAdmin };

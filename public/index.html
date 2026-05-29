@@ -16239,6 +16239,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             ▶ Analyze
           </button>
         ` : '';
+        // Admin-only force-delete button. Shown to role='admin' users on
+        // BOTH active and closed inspections — bypasses the regular Discard
+        // refusal gates (finalized status + opened-violations). Voids any
+        // attached violations as part of the cascade.
+        const isAdminUser = (window.currentUser && window.currentUser.role === 'admin');
+        const adminForceDeleteBtn = isAdminUser ? `
+          <button type="button" onclick="inspAdminForceDelete('${i.id}', this)"
+                  style="background: #991b1b; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="ADMIN ONLY — Force delete this inspection even if finalized or if it opened violations. Will void attached violations + delete observations + photos + draft letters. Printed letters survive as audit records.">
+            ⚠️ Force delete
+          </button>
+        ` : '';
         const closedActions = isClosed ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             <button type="button" onclick="inspResume('${i.id}')"
@@ -16246,6 +16258,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                     title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
               🔓 Reopen &amp; resume
             </button>
+            ${adminForceDeleteBtn}
           </div>
         ` : '';
         const activeActions = (!isTerminal) ? `
@@ -16266,6 +16279,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                     title="Delete this inspection + every photo, observation, and draft letter it produced. Refuses if any violation was already opened.">
               🗑️ Discard
             </button>
+            ${adminForceDeleteBtn}
           </div>
         ` : '';
         const actions = isClosed ? closedActions : activeActions;
@@ -16311,6 +16325,51 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspLoadRecent();
     } catch (e) {
       alert('Could not discard: ' + e.message);
+    }
+  }
+
+  // Admin force-delete — bypasses the Discard refusal gates. Server-side
+  // requires user_profiles.role='admin' (button is hidden for non-admins
+  // but the server check is the real gate). Typed-confirm protects against
+  // fat-finger; "DELETE" must be typed exactly.
+  async function inspAdminForceDelete(id, btn) {
+    const typed = prompt(
+      'ADMIN FORCE DELETE\n\n' +
+      'This will:\n' +
+      '  • VOID any open violations this inspection opened\n' +
+      '  • DELETE observations + photos + storage objects\n' +
+      '  • DELETE draft + approved-but-not-printed letter PDFs\n' +
+      '  • DELETE the inspection row itself\n\n' +
+      'Printed letters (already mailed) are PRESERVED for audit.\n\n' +
+      'This bypasses the "finalized" + "opened violations" refusal gates.\n\n' +
+      'Type DELETE (in caps) to confirm:'
+    );
+    if (typed !== 'DELETE') return;
+
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Deleting…'; }
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) {}
+      const r = await fetch(`/api/inspections/${id}/admin-force-delete`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ confirm: 'DELETE' }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `force-delete failed (${r.status})`);
+      const parts = [];
+      if (j.voided_violations) parts.push(`voided ${j.voided_violations} violation${j.voided_violations === 1 ? '' : 's'}`);
+      if (j.deleted_observations) parts.push(`${j.deleted_observations} observation${j.deleted_observations === 1 ? '' : 's'}`);
+      if (j.deleted_photos) parts.push(`${j.deleted_photos} photo${j.deleted_photos === 1 ? '' : 's'}`);
+      if (j.deleted_pending_letters) parts.push(`${j.deleted_pending_letters} draft letter${j.deleted_pending_letters === 1 ? '' : 's'}`);
+      alert('✓ Force-deleted inspection.' + (parts.length ? '\n\nCleaned up: ' + parts.join(' · ') : ''));
+      inspLoadRecent();
+    } catch (e) {
+      alert('Force-delete failed: ' + e.message);
+      if (btn) { btn.disabled = false; btn.textContent = '⚠️ Force delete'; }
     }
   }
 

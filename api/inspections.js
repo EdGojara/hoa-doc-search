@@ -806,6 +806,165 @@ router.delete('/inspections/:id', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/inspections/:id/admin-force-delete
+// Admin-only escape hatch that bypasses the two refusal gates on the regular
+// DELETE handler (finalized-status + opened-violations). Same cascade
+// pipeline — observations, photos, storage, draft/approved interactions —
+// but ALSO voids any open violations the inspection opened and lets
+// finalized inspections through.
+//
+// Body must include { confirm: 'DELETE' } so a fat-finger can't trigger it.
+//
+// Access scope (CLAUDE.md): the requireAdmin middleware reads the bearer
+// JWT, fetches user_profiles.role, returns 403 unless role='admin'. Hiding
+// the button on the frontend alone is not security — staff can hit the
+// endpoint URL directly otherwise.
+//
+// Audit: printed interactions (printed_at IS NOT NULL) are NEVER deleted —
+// once a letter is in the mail, the audit record survives the inspection
+// deletion. Their inspection_id / observation_id get nulled via ON DELETE
+// SET NULL on those columns.
+// ---------------------------------------------------------------------------
+router.post('/inspections/:id/admin-force-delete', express.json(), async (req, res) => {
+  try {
+    // Lazy require so test envs without users module can still load this file
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return; // requireAdmin already wrote 403
+
+    const { id } = req.params;
+    const confirm = (req.body && req.body.confirm) || '';
+    if (confirm !== 'DELETE') {
+      return res.status(400).json({ error: 'must POST { "confirm": "DELETE" } to force-delete' });
+    }
+
+    const { data: insp, error: inspErr } = await supabase
+      .from('inspections')
+      .select('id, status, community_id, mode, started_at')
+      .eq('id', id)
+      .single();
+    if (inspErr || !insp) return res.status(404).json({ error: 'inspection not found' });
+
+    // Pull observations early so we can void + delete by id
+    const { data: obsRows } = await supabase
+      .from('property_observations')
+      .select('id')
+      .eq('inspection_id', id);
+    const obsIds = (obsRows || []).map((o) => o.id);
+
+    // 1) VOID any violations opened from this inspection's observations.
+    // We don't hard-delete violations — they're audit data — but voiding
+    // them removes them from active enforcement and clears the regular-
+    // DELETE refusal gate's reason for existing.
+    let voidedViolationIds = [];
+    if (obsIds.length > 0) {
+      const { data: openedVios } = await supabase
+        .from('violations')
+        .select('id, current_stage')
+        .in('opened_from_observation_id', obsIds);
+      const idsToVoid = (openedVios || [])
+        .filter((v) => !['cured', 'closed', 'voided'].includes(v.current_stage))
+        .map((v) => v.id);
+      if (idsToVoid.length > 0) {
+        const { error: voidErr } = await supabase
+          .from('violations')
+          .update({
+            current_stage: 'voided',
+            resolved_at:   new Date().toISOString(),
+            resolved_via:  'voided',
+            resolved_notes: `Voided by admin force-delete of inspection ${id} (operator: ${ctx.user?.email || 'unknown'})`,
+          })
+          .in('id', idsToVoid);
+        if (voidErr) {
+          console.error('[admin-force-delete] violation void failed:', voidErr.message);
+          return res.status(500).json({ error: 'violations: ' + voidErr.message });
+        }
+        voidedViolationIds = idsToVoid;
+      }
+    }
+
+    // 2) Delete draft + approved (not yet printed) interactions for this
+    //    inspection. Same pattern as the regular DELETE handler. Printed
+    //    interactions survive — they're audit-grade.
+    let stalePdfPaths = [];
+    let staleInterCount = 0;
+    try {
+      const interactionFilter = `inspection_id.eq.${id}` + (obsIds.length ? `,observation_id.in.(${obsIds.join(',')})` : '');
+      const { data: staleInter } = await supabase
+        .from('interactions')
+        .select('id, content, status, printed_at')
+        .or(interactionFilter)
+        .in('status', ['draft', 'approved'])
+        .is('printed_at', null);
+      staleInterCount = (staleInter || []).length;
+      stalePdfPaths = (staleInter || [])
+        .filter((i) => i.content && /\.pdf$/i.test(String(i.content)))
+        .map((i) => i.content);
+      if (stalePdfPaths.length > 0) {
+        try { await supabase.storage.from('violation-letters').remove(stalePdfPaths); } catch (_) {}
+      }
+      await supabase
+        .from('interactions')
+        .delete()
+        .or(interactionFilter)
+        .in('status', ['draft', 'approved'])
+        .is('printed_at', null);
+    } catch (_) { /* swallow — best-effort cleanup */ }
+
+    // 3) Delete observations
+    if (obsIds.length > 0) {
+      const { error: obsDelErr } = await supabase
+        .from('property_observations')
+        .delete()
+        .eq('inspection_id', id);
+      if (obsDelErr) return res.status(500).json({ error: 'observations: ' + obsDelErr.message });
+    }
+
+    // 4) Delete photos + storage objects
+    const { data: photos } = await supabase
+      .from('inspection_photos')
+      .select('id, storage_path')
+      .eq('inspection_id', id);
+    const storagePaths = (photos || []).map((p) => p.storage_path).filter(Boolean);
+    if (storagePaths.length > 0) {
+      try { await supabase.storage.from('documents').remove(storagePaths); } catch (_) {}
+    }
+    if (photos && photos.length > 0) {
+      const { error: phDelErr } = await supabase
+        .from('inspection_photos')
+        .delete()
+        .eq('inspection_id', id);
+      if (phDelErr) return res.status(500).json({ error: 'photos: ' + phDelErr.message });
+    }
+
+    // 5) Delete the inspection row
+    const { error: delErr } = await supabase.from('inspections').delete().eq('id', id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    console.log('[admin-force-delete] inspection', id,
+      'by', ctx.user?.email || ctx.user?.id || 'unknown',
+      '· voided', voidedViolationIds.length, 'violations',
+      '· deleted', obsIds.length, 'obs,', (photos || []).length, 'photos,',
+      staleInterCount, 'draft/approved interactions');
+
+    res.json({
+      ok: true,
+      deleted_inspection_id: id,
+      prior_status: insp.status,
+      voided_violations: voidedViolationIds.length,
+      voided_violation_ids: voidedViolationIds,
+      deleted_observations: obsIds.length,
+      deleted_photos: (photos || []).length,
+      deleted_pending_letters: staleInterCount,
+      acted_by: ctx.user?.email || null,
+    });
+  } catch (err) {
+    console.error('[admin-force-delete]', err);
+    res.status(500).json({ error: err.message || 'force-delete failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/inspections/recent — list recent inspections (optional ?community_id=&limit=)
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
