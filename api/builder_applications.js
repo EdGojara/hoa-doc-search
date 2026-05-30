@@ -50,6 +50,14 @@ const upload = multer({
   limits: { fileSize: 25 * 1024 * 1024, files: 12 },
 });
 
+// Bulk upload variant — used by /master-plans/bulk-extract for builder
+// plan inventory uploads (DRB has 19 plans across Classic + Premier tiers).
+// Same per-file 25MB cap; up to 30 files per call for headroom.
+const uploadBulk = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 30 },
+});
+
 const router = express.Router();
 
 // ----------------------------------------------------------------------------
@@ -1288,6 +1296,301 @@ router.post('/master-plans', upload.single('plan_pdf'), async (req, res) => {
     });
   } catch (err) {
     console.error('[master-plans POST]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/master-plans/bulk-extract
+// Admin-only bulk PDF upload. For each PDF:
+//   1. Upload to documents storage under builders/<bid>/master-plans/
+//   2. Insert library_documents row (category=master_plan_pdf, index_status=
+//      'pending' so the OCR/reindex pipeline picks it up for askEd retrieval)
+//   3. Send the PDF binary to Claude PDF-direct extraction asking for
+//      plan_number, plan_name, elevation, square_footage, stories
+//   4. Return the extracted fields + library_document_id per file
+//
+// Does NOT create master_plans rows. The operator reviews the extracted
+// metadata in a grid, edits anything wrong, then submits to bulk-commit.
+// Two-step flow because AI extraction is ~95% accurate; 5% drift on a
+// master plan registration matters (wrong plan number → DRB submissions
+// don't fast-track and staff has to re-tag manually).
+//
+// Multipart form:
+//   plan_pdfs[]         multiple PDFs (up to 30 per call)
+//   builder_company_id  UUID (required) — applies to all PDFs in this batch
+//
+// Returns: { extracted: [{ filename, library_document_id, file_path,
+//             plan_number, plan_name, elevation, square_footage, stories,
+//             ai_confidence, ai_notes, error?: string }, ...] }
+// ============================================================================
+router.post('/master-plans/bulk-extract', uploadBulk.array('plan_pdfs', 30), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const files = req.files || [];
+    if (files.length === 0) return res.status(400).json({ error: 'plan_pdfs files required' });
+
+    const builderId = req.body?.builder_company_id;
+    if (!builderId) return res.status(400).json({ error: 'builder_company_id is required' });
+
+    const { data: company } = await supabase
+      .from('builder_companies')
+      .select('id, company_name')
+      .eq('id', builderId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!company) return res.status(404).json({ error: 'builder_company not found' });
+
+    // Anthropic SDK for the PDF-direct extraction
+    let Anthropic, anthropic;
+    try {
+      Anthropic = require('@anthropic-ai/sdk');
+      anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    } catch (e) {
+      return res.status(500).json({ error: 'Anthropic SDK unavailable: ' + e.message });
+    }
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured — extraction unavailable' });
+    }
+
+    const EXTRACT_PROMPT = `You are reviewing a builder's home plan PDF. Extract the canonical plan identification.
+
+Look at: the title block (usually top-right or bottom of the cover sheet), the schedule of plans, square footage callouts ("Heated: 2,150 sqft" or similar), and elevation labels.
+
+Extract these fields:
+- plan_number: The numeric/alphanumeric plan identifier (e.g., "6512", "7234")
+- plan_name: The marketing/series name (e.g., "The Tuscany", "The Magnolia") — null if not shown
+- elevation: The elevation letter or code shown (e.g., "A", "B", "Standard"). If the PDF shows multiple elevations, pick the FIRST/primary one and put the others in ai_notes.
+- square_footage: The heated/living-area square footage as an integer (no commas, no units). Use null if not stated.
+- stories: Number of stories (1, 1.5, 2, 2.5, 3). null if not stated.
+- ai_confidence: "high" | "medium" | "low"
+- ai_notes: Any caveats — "shows elevations A/B/C, only A captured" or "couldn't find sqft on cover sheet" or "this looks like a site plan not a home plan"
+
+Return ONLY valid JSON, no preamble:
+{"plan_number":"...","plan_name":"...","elevation":"...","square_footage":2150,"stories":2,"ai_confidence":"high","ai_notes":"..."}`;
+
+    const out = [];
+    for (const file of files) {
+      const filename = file.originalname || 'unknown.pdf';
+      if (file.mimetype !== 'application/pdf') {
+        out.push({ filename, error: `not a PDF (got ${file.mimetype})` });
+        continue;
+      }
+      try {
+        // 1. Upload to storage
+        const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+        const stamp = Date.now() + '-' + Math.floor(Math.random() * 10000);
+        const storagePath = `builders/${company.id}/master-plans/${stamp}_${safeName}`;
+        const fileHash = require('crypto').createHash('sha256').update(file.buffer).digest('hex');
+
+        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET)
+          .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: false });
+        if (upErr) { out.push({ filename, error: 'storage upload: ' + upErr.message }); continue; }
+
+        // 2. Insert library_documents row
+        const fileNameNormalized = `${company.company_name.replace(/\s+/g, '-')}-${safeName}`;
+        const { data: libDoc, error: libErr } = await supabase
+          .from('library_documents')
+          .insert({
+            management_company_id: BEDROCK_MGMT_CO_ID,
+            community_id: null,  // populated at bulk-commit time when operator picks pre-approval communities
+            category: 'master_plan_pdf',
+            title: `${company.company_name} — ${filename.replace(/\.pdf$/i, '')}`,
+            file_path: storagePath,
+            file_name_original: filename,
+            file_name_normalized: fileNameNormalized,
+            file_hash: fileHash,
+            status: 'current',
+            index_status: 'pending',
+            uploaded_at: new Date().toISOString(),
+          })
+          .select('id')
+          .single();
+        if (libErr) {
+          // Rollback storage
+          try { await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]); } catch (_) {}
+          out.push({ filename, error: 'library_documents insert: ' + libErr.message });
+          continue;
+        }
+
+        // 3. Claude PDF-direct extract
+        let extracted = null;
+        let aiRaw = null;
+        try {
+          const resp = await anthropic.messages.create({
+            model: 'claude-sonnet-4-5',
+            max_tokens: 600,
+            messages: [{
+              role: 'user',
+              content: [
+                {
+                  type: 'document',
+                  source: { type: 'base64', media_type: 'application/pdf', data: file.buffer.toString('base64') },
+                },
+                { type: 'text', text: EXTRACT_PROMPT },
+              ],
+            }],
+          });
+          const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
+          aiRaw = txt;
+          // Strip code fences if Claude wrapped the JSON
+          const jsonMatch = txt.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            extracted = JSON.parse(jsonMatch[0]);
+          }
+        } catch (aiErr) {
+          console.warn('[bulk-extract] AI extraction failed for', filename, '·', aiErr.message);
+          extracted = null;
+        }
+
+        out.push({
+          filename,
+          library_document_id: libDoc.id,
+          file_path: storagePath,
+          plan_number: extracted?.plan_number || null,
+          plan_name: extracted?.plan_name || null,
+          elevation: extracted?.elevation || null,
+          square_footage: extracted?.square_footage ?? null,
+          stories: extracted?.stories ?? null,
+          ai_confidence: extracted?.ai_confidence || null,
+          ai_notes: extracted?.ai_notes || null,
+          raw_extracted: aiRaw,  // surfaced for debugging when extraction looks wrong
+        });
+      } catch (perFileErr) {
+        console.error('[bulk-extract] per-file failure for', filename, '·', perFileErr.message);
+        out.push({ filename, error: perFileErr.message });
+      }
+    }
+
+    res.json({
+      ok: true,
+      builder_company: { id: company.id, name: company.company_name },
+      extracted: out,
+      total_files: files.length,
+      total_extracted_ok: out.filter((r) => !r.error).length,
+    });
+  } catch (err) {
+    console.error('[bulk-extract]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/master-plans/bulk-commit
+// Admin-only. Companion to /bulk-extract — takes the reviewed grid of rows
+// and creates master_plans + master_plan_community_approvals records.
+// Each row carries a library_document_id from the prior extract step.
+//
+// Body: {
+//   builder_company_id,
+//   community_ids: [uuid, ...],   // pre-approve at these communities
+//   rows: [{
+//     library_document_id, plan_number, plan_name?, elevation,
+//     elevation_orientation?, square_footage?, stories?, notes?
+//   }, ...]
+// }
+//
+// Returns: { ok, registered: [{plan_number, elevation, master_plan_id}],
+//            failed: [{filename or row, error}] }
+// ============================================================================
+router.post('/master-plans/bulk-commit', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const body = req.body || {};
+    const builderId = body.builder_company_id;
+    if (!builderId) return res.status(400).json({ error: 'builder_company_id required' });
+    const communityIds = Array.isArray(body.community_ids) ? body.community_ids.filter(Boolean) : [];
+    const rows = Array.isArray(body.rows) ? body.rows : [];
+    if (rows.length === 0) return res.status(400).json({ error: 'rows array required' });
+
+    const { data: company } = await supabase
+      .from('builder_companies')
+      .select('id, company_name')
+      .eq('id', builderId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!company) return res.status(404).json({ error: 'builder_company not found' });
+
+    const registered = [];
+    const failed = [];
+
+    for (const row of rows) {
+      try {
+        // Required-field validation
+        if (!row.library_document_id) { failed.push({ row, error: 'library_document_id missing' }); continue; }
+        if (!row.plan_number) { failed.push({ row, error: 'plan_number required' }); continue; }
+        if (!row.elevation) { failed.push({ row, error: 'elevation required' }); continue; }
+
+        // If the library_doc was pre-approved for a SPECIFIC community at upload,
+        // update its community_id to the first pre-approval (for the matrix view).
+        if (communityIds[0]) {
+          try {
+            await supabase.from('library_documents')
+              .update({ community_id: communityIds[0] })
+              .eq('id', row.library_document_id);
+          } catch (_) {}
+        }
+
+        const { data: plan, error: planErr } = await supabase
+          .from('master_plans')
+          .insert({
+            builder_company_id: company.id,
+            plan_number: String(row.plan_number).trim(),
+            plan_name: (row.plan_name || '').trim() || null,
+            elevation: String(row.elevation).trim(),
+            elevation_orientation: row.elevation_orientation || null,
+            square_footage: row.square_footage ? parseInt(row.square_footage, 10) : null,
+            stories: row.stories ? parseFloat(row.stories) : null,
+            default_materials: row.default_materials || {},
+            status: 'approved',
+            notes: row.notes || null,
+            library_document_id: row.library_document_id,
+          })
+          .select('id, plan_number, elevation')
+          .single();
+        if (planErr) {
+          if (planErr.code === '23505') {
+            failed.push({ row, error: `duplicate master plan: ${row.plan_number} / ${row.elevation}` });
+          } else {
+            failed.push({ row, error: planErr.message });
+          }
+          continue;
+        }
+
+        // Pre-approve at selected communities
+        for (const cid of communityIds) {
+          try {
+            await supabase.from('master_plan_community_approvals').insert({
+              master_plan_id: plan.id,
+              community_id: cid,
+              approved_by: 'bulk_admin_upload',
+            });
+          } catch (_) {}
+        }
+
+        registered.push({ master_plan_id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation });
+      } catch (perRowErr) {
+        failed.push({ row, error: perRowErr.message });
+      }
+    }
+
+    res.json({
+      ok: true,
+      builder_company: { id: company.id, name: company.company_name },
+      community_ids: communityIds,
+      registered_count: registered.length,
+      failed_count: failed.length,
+      registered,
+      failed,
+    });
+  } catch (err) {
+    console.error('[bulk-commit]', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

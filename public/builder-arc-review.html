@@ -386,6 +386,7 @@
   <div class="util">
     <a href="/">← Platform</a>
     <a href="#" id="uploadMasterPlanBtn">📐 Upload master plan</a>
+    <a href="#" id="bulkUploadMasterPlansBtn">📚 Bulk upload plans</a>
     <a href="#" id="refreshBtn">Refresh</a>
   </div>
 </header>
@@ -465,6 +466,75 @@
         <button type="submit" id="mpSubmitBtn" style="padding:10px 22px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Upload plan</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- Bulk upload modal — drag-drop many plan PDFs, AI extracts metadata,
+     operator reviews + corrects in a grid, then commits all at once.
+     Built for DRB's 19-plan inventory (Classic + Premier tiers) 2026-05-29.
+     Reusable for any future builder onboarding at scale. -->
+<div id="bulkMasterPlanModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:24px 16px; overflow-y:auto;">
+  <div style="background:#fff; max-width:1100px; width:100%; border-radius:12px; padding:24px 28px; box-shadow:0 8px 32px rgba(0,0,0,0.3); font-family:var(--font-sans, system-ui);">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <h2 style="margin:0; font-family:var(--font-serif, Georgia); font-size:22px; color:var(--navy, #1A3050);">📚 Bulk upload master plans</h2>
+      <button onclick="closeBulkMasterPlanModal()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
+    </div>
+    <p style="margin:0 0 14px; font-size:13px; color:#475569; line-height:1.5;">
+      Drop multiple plan PDFs at once. The AI extracts plan number, elevation, square footage, and stories from each. Review the grid, correct anything wrong, then commit all at once. Each plan auto-fast-tracks at any community you pre-approve here.
+    </p>
+
+    <!-- Step 1: Builder + communities + drop zone -->
+    <div id="bulkStep1" style="display:flex; flex-direction:column; gap:14px;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Builder *</label>
+          <select id="bulkBuilderCompany" required style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+            <option value="">— pick a builder —</option>
+          </select>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Pre-approve for these communities</label>
+          <div id="bulkCommunityCheckboxes" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; max-height:80px; overflow-y:auto; font-size:13px;"><em style="color:#94a3b8;">Loading…</em></div>
+        </div>
+      </div>
+      <div id="bulkDropZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:40px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.15s;">
+        <div style="font-size:36px; margin-bottom:8px;">📄</div>
+        <div style="font-size:14px; color:#475569; font-weight:600;">Drop plan PDFs here, or click to select</div>
+        <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 30 PDFs per batch · ~3–6 sec per file for AI extraction</div>
+        <input id="bulkFileInput" type="file" accept="application/pdf" multiple style="display:none;">
+      </div>
+      <div id="bulkProgress" style="display:none; padding:12px; background:#eff6ff; border:1px solid #93c5fd; border-radius:6px; font-size:13px; color:#1e3a8a;"></div>
+      <div id="bulkErrorStep1" style="display:none; color:#b91c1c; font-size:13px;"></div>
+    </div>
+
+    <!-- Step 2: Review grid -->
+    <div id="bulkStep2" style="display:none; flex-direction:column; gap:12px;">
+      <div style="background:#fffbeb; border:1px solid #fde047; border-radius:6px; padding:10px 12px; font-size:12.5px; color:#854d0e; line-height:1.5;">
+        <strong>Review before commit.</strong> AI extraction is 95% accurate but worth a glance on each row. Correct any wrong values; uncheck rows you want to skip. The 🔍 OCR badge means the PDF was scanned — extraction may need a closer look. Confidence is the AI's self-assessment.
+      </div>
+      <div style="max-height:50vh; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
+        <table id="bulkGrid" style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead style="background:#1A3050; color:#fff; position:sticky; top:0;">
+            <tr>
+              <th style="padding:8px 10px; text-align:center; width:36px;">✓</th>
+              <th style="padding:8px 10px; text-align:left;">File</th>
+              <th style="padding:8px 10px; text-align:left;">Plan #</th>
+              <th style="padding:8px 10px; text-align:left;">Plan name</th>
+              <th style="padding:8px 10px; text-align:left;">Elev</th>
+              <th style="padding:8px 10px; text-align:left;">Sqft</th>
+              <th style="padding:8px 10px; text-align:left;">Stories</th>
+              <th style="padding:8px 10px; text-align:left;">AI</th>
+            </tr>
+          </thead>
+          <tbody id="bulkGridBody"></tbody>
+        </table>
+      </div>
+      <div id="bulkCommitStatus" style="display:none; padding:10px 12px; border-radius:6px; font-size:13px;"></div>
+      <div style="display:flex; gap:10px; justify-content:flex-end;">
+        <button type="button" onclick="bulkBackToStep1()" style="padding:10px 18px; background:#fff; border:1px solid #d0d7de; color:#475569; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">← Drop more files</button>
+        <button type="button" id="bulkCommitBtn" onclick="bulkCommitAll()" style="padding:10px 22px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Register all selected</button>
+      </div>
+    </div>
   </div>
 </div>
 
@@ -1173,6 +1243,266 @@ document.getElementById('masterPlanForm').addEventListener('submit', async (e) =
 // ----------------------------------------------------------------------------
 // Boot
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Bulk master plan upload (Step 1: drop → extract; Step 2: review → commit)
+// ----------------------------------------------------------------------------
+let _bulkExtracted = []; // [{ filename, library_document_id, plan_number, ..., _selected: true }]
+let _bulkBuilderId = null;
+let _bulkCommunityIds = [];
+
+function openBulkMasterPlanModal() {
+  document.getElementById('bulkMasterPlanModal').style.display = 'flex';
+  document.getElementById('bulkStep1').style.display = 'flex';
+  document.getElementById('bulkStep2').style.display = 'none';
+  document.getElementById('bulkProgress').style.display = 'none';
+  document.getElementById('bulkErrorStep1').style.display = 'none';
+  document.getElementById('bulkCommitStatus').style.display = 'none';
+  _bulkExtracted = [];
+  loadBulkPickers();
+}
+function closeBulkMasterPlanModal() {
+  document.getElementById('bulkMasterPlanModal').style.display = 'none';
+}
+function bulkBackToStep1() {
+  document.getElementById('bulkStep1').style.display = 'flex';
+  document.getElementById('bulkStep2').style.display = 'none';
+  document.getElementById('bulkProgress').style.display = 'none';
+  document.getElementById('bulkErrorStep1').style.display = 'none';
+  document.getElementById('bulkFileInput').value = '';
+}
+
+async function loadBulkPickers() {
+  // Communities — only those with builder_arc_active
+  try {
+    const r = await fetch('/api/communities?builder_arc_only=1');
+    const data = await r.json();
+    const list = data.communities || data || [];
+    const cb = document.getElementById('bulkCommunityCheckboxes');
+    if (!Array.isArray(list) || list.length === 0) {
+      cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities. Flip the toggle in Community Profile.</em>';
+    } else {
+      cb.innerHTML = list.map((c) => `
+        <label style="display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer;">
+          <input type="checkbox" name="bulkCommunity" value="${escapeHtml(c.id)}">
+          <span>${escapeHtml(c.name)}</span>
+        </label>
+      `).join('');
+    }
+  } catch (e) {
+    document.getElementById('bulkCommunityCheckboxes').innerHTML = `<em style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</em>`;
+  }
+  // Builders — reuse the same source as the single-upload modal (master-plans aggregate)
+  try {
+    const r = await api('GET', '/api/builder-applications/master-plans?limit=1');
+    const sel = document.getElementById('bulkBuilderCompany');
+    sel.innerHTML = '<option value="">— pick a builder —</option>';
+    const seen = new Set();
+    (r.master_plans || []).forEach((p) => {
+      const bc = p.builder_company;
+      if (bc && !seen.has(bc.id)) {
+        seen.add(bc.id);
+        const opt = document.createElement('option');
+        opt.value = bc.id;
+        opt.textContent = bc.company_name;
+        sel.appendChild(opt);
+      }
+    });
+    if (seen.size === 0) {
+      sel.innerHTML += '<option value="" disabled>No registered builders — use the single Upload master plan flow once first OR seed via Supabase</option>';
+    }
+  } catch (e) {
+    console.warn('[bulk] builder picker load failed:', e.message);
+  }
+}
+
+document.getElementById('bulkUploadMasterPlansBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  openBulkMasterPlanModal();
+});
+
+// Drop-zone wiring
+(function wireBulkDrop() {
+  const zone = document.getElementById('bulkDropZone');
+  const input = document.getElementById('bulkFileInput');
+  if (!zone || !input) return;
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.borderColor = 'var(--gold, #D4AF37)'; zone.style.background = '#fffbeb'; });
+  zone.addEventListener('dragleave', (e) => { e.preventDefault(); zone.style.borderColor = '#cbd5e1'; zone.style.background = '#f8fafc'; });
+  zone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    zone.style.borderColor = '#cbd5e1';
+    zone.style.background = '#f8fafc';
+    const files = Array.from(e.dataTransfer?.files || []).filter((f) => f.type === 'application/pdf');
+    if (files.length > 0) startBulkExtract(files);
+  });
+  input.addEventListener('change', () => {
+    const files = Array.from(input.files || []);
+    if (files.length > 0) startBulkExtract(files);
+  });
+})();
+
+async function startBulkExtract(files) {
+  const builderId = document.getElementById('bulkBuilderCompany').value;
+  if (!builderId) {
+    showBulkStep1Error('Pick a builder before dropping files.');
+    return;
+  }
+  _bulkBuilderId = builderId;
+  _bulkCommunityIds = Array.from(document.querySelectorAll('input[name="bulkCommunity"]:checked')).map((c) => c.value);
+
+  const progress = document.getElementById('bulkProgress');
+  progress.style.display = 'block';
+  progress.innerHTML = `⏳ Uploading + extracting metadata for ${files.length} PDF${files.length === 1 ? '' : 's'}… (typically 3–6 sec per file)`;
+  document.getElementById('bulkErrorStep1').style.display = 'none';
+
+  const fd = new FormData();
+  fd.append('builder_company_id', builderId);
+  files.forEach((f) => fd.append('plan_pdfs', f));
+
+  try {
+    const r = await fetch('/api/builder-applications/master-plans/bulk-extract', { method: 'POST', body: fd });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    _bulkExtracted = (j.extracted || []).map((row) => ({ ...row, _selected: !row.error }));
+    progress.innerHTML = `✓ Extracted ${j.total_extracted_ok} of ${j.total_files} files. Review below.`;
+    setTimeout(() => { progress.style.display = 'none'; }, 1500);
+    showBulkStep2();
+  } catch (e) {
+    showBulkStep1Error(e.message);
+    progress.style.display = 'none';
+  }
+}
+
+function showBulkStep1Error(msg) {
+  const el = document.getElementById('bulkErrorStep1');
+  el.textContent = '✗ ' + msg;
+  el.style.display = 'block';
+}
+
+function showBulkStep2() {
+  document.getElementById('bulkStep1').style.display = 'none';
+  document.getElementById('bulkStep2').style.display = 'flex';
+  renderBulkGrid();
+}
+
+function renderBulkGrid() {
+  const body = document.getElementById('bulkGridBody');
+  if (_bulkExtracted.length === 0) {
+    body.innerHTML = '<tr><td colspan="8" style="padding:14px; text-align:center; color:#94a3b8;">No files extracted.</td></tr>';
+    return;
+  }
+  body.innerHTML = _bulkExtracted.map((row, i) => {
+    if (row.error) {
+      return `<tr style="background:#fef2f2; border-bottom:1px solid #fecaca;">
+        <td style="padding:6px 10px;"><input type="checkbox" disabled></td>
+        <td style="padding:6px 10px; font-family:monospace; font-size:11px;">${escapeHtml(row.filename)}</td>
+        <td colspan="6" style="padding:6px 10px; color:#b91c1c;">✗ ${escapeHtml(row.error)}</td>
+      </tr>`;
+    }
+    const confColor = row.ai_confidence === 'high' ? '#15803d' : row.ai_confidence === 'medium' ? '#b45309' : '#94a3b8';
+    return `<tr style="border-bottom:1px solid #e2e8f0;">
+      <td style="padding:6px 10px; text-align:center;"><input type="checkbox" data-idx="${i}" class="bulk-row-sel" ${row._selected ? 'checked' : ''}></td>
+      <td style="padding:6px 10px; font-family:monospace; font-size:11px; color:#475569;">${escapeHtml(row.filename)}</td>
+      <td style="padding:6px 10px;"><input data-idx="${i}" data-field="plan_number" class="bulk-cell" type="text" value="${escapeHtml(row.plan_number || '')}" style="width:90px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
+      <td style="padding:6px 10px;"><input data-idx="${i}" data-field="plan_name" class="bulk-cell" type="text" value="${escapeHtml(row.plan_name || '')}" style="width:140px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
+      <td style="padding:6px 10px;"><input data-idx="${i}" data-field="elevation" class="bulk-cell" type="text" value="${escapeHtml(row.elevation || '')}" style="width:60px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
+      <td style="padding:6px 10px;"><input data-idx="${i}" data-field="square_footage" class="bulk-cell" type="number" value="${row.square_footage ?? ''}" style="width:80px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
+      <td style="padding:6px 10px;"><input data-idx="${i}" data-field="stories" class="bulk-cell" type="number" step="0.5" value="${row.stories ?? ''}" style="width:60px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
+      <td style="padding:6px 10px; font-size:11px;">
+        <span style="color:${confColor}; font-weight:700;">${escapeHtml(row.ai_confidence || '?')}</span>
+        ${row.ai_notes ? `<span title="${escapeHtml(row.ai_notes)}" style="margin-left:4px; cursor:help;">ℹ️</span>` : ''}
+      </td>
+    </tr>`;
+  }).join('');
+  // Wire inputs to mutate state
+  body.querySelectorAll('.bulk-cell').forEach((el) => {
+    el.addEventListener('input', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      const field = el.dataset.field;
+      if (Number.isFinite(idx) && _bulkExtracted[idx]) {
+        _bulkExtracted[idx][field] = el.value;
+      }
+    });
+  });
+  body.querySelectorAll('.bulk-row-sel').forEach((el) => {
+    el.addEventListener('change', () => {
+      const idx = parseInt(el.dataset.idx, 10);
+      if (Number.isFinite(idx) && _bulkExtracted[idx]) {
+        _bulkExtracted[idx]._selected = el.checked;
+      }
+    });
+  });
+}
+
+async function bulkCommitAll() {
+  const status = document.getElementById('bulkCommitStatus');
+  const btn = document.getElementById('bulkCommitBtn');
+  const selected = _bulkExtracted.filter((r) => r._selected && !r.error);
+  if (selected.length === 0) {
+    status.style.display = 'block';
+    status.style.background = '#fef2f2';
+    status.style.border = '1px solid #fecaca';
+    status.style.color = '#991b1b';
+    status.textContent = 'No rows selected. Tick at least one row before committing.';
+    return;
+  }
+  // Validate required fields client-side first
+  const missing = selected.filter((r) => !r.plan_number || !r.elevation);
+  if (missing.length > 0) {
+    status.style.display = 'block';
+    status.style.background = '#fef2f2';
+    status.style.border = '1px solid #fecaca';
+    status.style.color = '#991b1b';
+    status.textContent = `✗ ${missing.length} selected row${missing.length === 1 ? '' : 's'} missing plan_number or elevation. Fill them in or untick those rows.`;
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Committing…';
+  try {
+    const body = {
+      builder_company_id: _bulkBuilderId,
+      community_ids: _bulkCommunityIds,
+      rows: selected.map((r) => ({
+        library_document_id: r.library_document_id,
+        plan_number: r.plan_number,
+        plan_name: r.plan_name || null,
+        elevation: r.elevation,
+        square_footage: r.square_footage || null,
+        stories: r.stories || null,
+      })),
+    };
+    const r = await fetch('/api/builder-applications/master-plans/bulk-commit', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    status.style.display = 'block';
+    if (j.failed_count > 0) {
+      status.style.background = '#fffbeb';
+      status.style.border = '1px solid #fde047';
+      status.style.color = '#854d0e';
+      const failList = (j.failed || []).slice(0, 5).map((f) => `<li>${escapeHtml(f.row?.plan_number || '—')}/${escapeHtml(f.row?.elevation || '—')}: ${escapeHtml(f.error)}</li>`).join('');
+      status.innerHTML = `<strong>${j.registered_count} registered · ${j.failed_count} failed</strong><ul style="margin:4px 0 0 18px; padding:0; font-size:11.5px;">${failList}</ul>`;
+    } else {
+      status.style.background = '#dcfce7';
+      status.style.border = '1px solid #bbf7d0';
+      status.style.color = '#166534';
+      status.innerHTML = `<strong>✓ ${j.registered_count} master plan${j.registered_count === 1 ? '' : 's'} registered.</strong> Pre-approved for ${j.community_ids.length} community${j.community_ids.length === 1 ? '' : ' (ies)'}.`;
+    }
+  } catch (e) {
+    status.style.display = 'block';
+    status.style.background = '#fef2f2';
+    status.style.border = '1px solid #fecaca';
+    status.style.color = '#991b1b';
+    status.textContent = '✗ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Register all selected';
+  }
+}
+
 // ----------------------------------------------------------------------------
 // Admin: hard-delete a builder submission
 // ----------------------------------------------------------------------------
