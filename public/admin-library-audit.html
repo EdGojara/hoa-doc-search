@@ -102,6 +102,20 @@
 
 <div id="missingRequiredAlert"></div>
 
+<div id="designGuidelinesPanel" style="display:none; background:#fff; border:1px solid #fde047; border-radius:10px; padding:16px 20px; margin-bottom:18px;">
+  <h2 style="font-family:var(--font-serif, Georgia); font-size:16px; font-weight:600; margin:0 0 6px; color:#854d0e;">📐 Replace design guidelines</h2>
+  <p style="margin:0 0 10px; font-size:13px; color:#475569; line-height:1.5;">
+    Drop the recorded design guidelines + any related exhibits here. The current <code>design_document</code> entries for this community will be marked <code>superseded</code> (kept in the library for audit), and these become the new <code>current</code> versions the AI reads from.
+  </p>
+  <div id="dgDropZone" style="border:2px dashed #fde047; border-radius:8px; padding:24px 16px; text-align:center; cursor:pointer; background:#fffbeb; transition:all 0.15s;">
+    <div style="font-size:24px; margin-bottom:6px;">📄</div>
+    <div style="font-size:13px; color:#475569; font-weight:600;">Drop PDFs here or click to select</div>
+    <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 5 PDFs · 25MB max each</div>
+    <input id="dgFileInput" type="file" accept="application/pdf" multiple style="display:none;">
+  </div>
+  <div id="dgStatus" style="display:none; margin-top:10px; padding:10px 12px; border-radius:6px; font-size:13px;"></div>
+</div>
+
 <div id="expectedFilesPanel"></div>
 
 <div class="panel">
@@ -183,11 +197,14 @@ async function onCommunityChange() {
     document.getElementById('categoryBody').innerHTML = '<tr><td colspan="4" class="loader">Pick a community to audit.</td></tr>';
     document.getElementById('expectedFilesPanel').innerHTML = '';
     document.getElementById('missingRequiredAlert').innerHTML = '';
+    document.getElementById('designGuidelinesPanel').style.display = 'none';
     document.getElementById('statTotal').textContent = '—';
     document.getElementById('statCurrent').textContent = '—';
     document.getElementById('statMissingReq').textContent = '—';
     return;
   }
+  document.getElementById('designGuidelinesPanel').style.display = 'block';
+  wireDesignGuidelinesUpload(communityId);
   const opt = sel.options[sel.selectedIndex];
   const slug = opt ? opt.dataset.slug : '';
 
@@ -297,6 +314,87 @@ function renderAudit(j, slug) {
   }).join('');
   tbody.innerHTML = rows;
 }
+
+// Wire the design-guidelines drop zone for the current community
+function wireDesignGuidelinesUpload(communityId) {
+  const zone = document.getElementById('dgDropZone');
+  const input = document.getElementById('dgFileInput');
+  const status = document.getElementById('dgStatus');
+
+  // Replace handlers each time community changes so the closure uses the right id
+  zone.onclick = () => input.click();
+  zone.ondragover = (e) => { e.preventDefault(); zone.style.background = '#fef3c7'; zone.style.borderColor = '#D4AF37'; };
+  zone.ondragleave = (e) => { e.preventDefault(); zone.style.background = '#fffbeb'; zone.style.borderColor = '#fde047'; };
+  zone.ondrop = (e) => {
+    e.preventDefault();
+    zone.style.background = '#fffbeb';
+    zone.style.borderColor = '#fde047';
+    if (e.dataTransfer.files.length > 0) uploadDesignGuidelines(communityId, e.dataTransfer.files);
+  };
+  input.onchange = () => { if (input.files.length > 0) uploadDesignGuidelines(communityId, input.files); };
+}
+
+async function uploadDesignGuidelines(communityId, fileList) {
+  const status = document.getElementById('dgStatus');
+  status.style.display = 'block';
+  status.style.background = '#eff6ff';
+  status.style.border = '1px solid #93c5fd';
+  status.style.color = '#1e3a8a';
+  status.textContent = `Uploading ${fileList.length} file(s) and superseding existing design_document entries…`;
+
+  const fd = new FormData();
+  for (const f of fileList) fd.append('design_pdfs', f);
+
+  try {
+    const headers = {};
+    // The /api/me endpoint and admin endpoints expect Bearer auth
+    // Try to grab supabase session from the parent scope (none in this page yet — graceful degrade to staff cookie only)
+    if (window._supa) {
+      const { data: { session } } = await window._supa.auth.getSession();
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+    }
+    const r = await fetch('/api/community-profile/' + encodeURIComponent(communityId) + '/replace-design-guidelines', {
+      method: 'POST', headers, body: fd,
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    const lines = [
+      `✓ Ingested: ${j.ingested.length} file(s) (now status=current)`,
+      `Superseded: ${j.superseded.length} prior design_document(s)`,
+    ];
+    if (j.skipped.length > 0) lines.push(`Skipped: ${j.skipped.length}`);
+    status.style.background = '#dcfce7';
+    status.style.border = '1px solid #bbf7d0';
+    status.style.color = '#166534';
+    status.innerHTML = lines.join('<br>') + '<br><br>Refreshing audit…';
+    setTimeout(onCommunityChange, 800);
+  } catch (e) {
+    status.style.background = '#fef2f2';
+    status.style.border = '1px solid #fecaca';
+    status.style.color = '#991b1b';
+    status.textContent = '✗ Upload failed: ' + e.message;
+  }
+}
+
+// Lazy-load Supabase SDK for the Bearer token (admin endpoints need it)
+(async function bootSupa() {
+  try {
+    const cfgRes = await fetch('/api/auth/config');
+    const cfg = await cfgRes.json();
+    if (!cfg.enabled) return;
+    if (!window.supabase) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    window._supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  } catch (e) {
+    console.warn('Supabase bootstrap failed:', e.message);
+  }
+})();
 
 loadCommunities();
 </script>

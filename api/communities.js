@@ -29,6 +29,17 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
 
+// Separate multer config for design-guidelines upload — bigger limit since
+// recorded DGs run 500KB-2MB and Exhibit B docs can be larger. Up to 5 files
+// per upload (DG + Exhibit B + amendments + cover letter etc.).
+const designGuidelinesUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 25 * 1024 * 1024, files: 5 },
+});
+
+const DESIGN_DOC_BUCKET = 'documents';
+const BEDROCK_MGMT_CO_ID_DG = '00000000-0000-0000-0000-000000000001';
+
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
 
@@ -552,6 +563,131 @@ router.delete('/facts/:factId', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
+// ----------------------------------------------------------------------------
+// POST /:communityId/replace-design-guidelines — supersede any current
+// design_document rows for this community + ingest the provided PDFs as the
+// new current design guidelines. Used when the operator realizes the wrong
+// version was ingested (e.g., the pre-recording working name like "Jones
+// Creek Reserve" instead of the as-recorded "August Meadows" version).
+//
+// Multipart form: design_pdfs[] — up to 5 PDFs, 25MB each
+//
+// Hash dedup: if a PDF with the same SHA-256 already exists in
+// library_documents, reuses that row (just marks it status='current' if it
+// was superseded earlier).
+//
+// Returns: { ok, ingested: [{id, title, file_size_bytes}],
+//            superseded: [{id, title}], skipped: [{file, reason}] }
+// ----------------------------------------------------------------------------
+router.post('/:communityId/replace-design-guidelines',
+  designGuidelinesUpload.array('design_pdfs', 5),
+  async (req, res) => {
+    try {
+      const { requireAdmin } = require('./users');
+      const ctx = await requireAdmin(req, res);
+      if (!ctx) return;
+
+      const { communityId } = req.params;
+      const files = req.files || [];
+      if (files.length === 0) return res.status(400).json({ error: 'design_pdfs files required' });
+
+      // Resolve community for storage path + sanity check
+      const { data: community, error: cErr } = await supabase.from('communities')
+        .select('id, name, slug')
+        .eq('id', communityId)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID_DG)
+        .maybeSingle();
+      if (cErr) throw cErr;
+      if (!community) return res.status(404).json({ error: 'community_not_found' });
+
+      // Step 1: supersede existing current design_document rows for this community
+      const { data: superseded, error: supErr } = await supabase
+        .from('library_documents')
+        .update({ status: 'superseded' })
+        .eq('community_id', communityId)
+        .eq('category', 'design_document')
+        .eq('status', 'current')
+        .select('id, title');
+      if (supErr) throw supErr;
+
+      // Step 2: ingest each new PDF
+      const ingested = [];
+      const skipped = [];
+      for (const file of files) {
+        const filename = file.originalname || 'design.pdf';
+        if (file.mimetype !== 'application/pdf') {
+          skipped.push({ file: filename, reason: `not a PDF (got ${file.mimetype})` });
+          continue;
+        }
+        try {
+          const fileHash = require('crypto').createHash('sha256').update(file.buffer).digest('hex');
+
+          // Hash dedup: if this exact PDF is already in library_documents,
+          // just promote it to current for this community (works whether it
+          // was previously superseded or attached to a different community).
+          const { data: existing } = await supabase
+            .from('library_documents')
+            .select('id, title, file_path, status, community_id')
+            .eq('file_hash', fileHash)
+            .maybeSingle();
+
+          if (existing) {
+            await supabase.from('library_documents').update({
+              status: 'current',
+              community_id: communityId,
+              category: 'design_document',
+              uploaded_at: new Date().toISOString(),
+            }).eq('id', existing.id);
+            ingested.push({ id: existing.id, title: existing.title || filename, reused: true });
+            continue;
+          }
+
+          // New file — upload + insert
+          const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
+          const stamp = Date.now() + '-' + Math.floor(Math.random() * 10000);
+          const storagePath = `communities/${community.slug || communityId}/design-guidelines/${stamp}_${safeName}`;
+          const { error: upErr } = await supabase.storage.from(DESIGN_DOC_BUCKET)
+            .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: false });
+          if (upErr) { skipped.push({ file: filename, reason: 'storage upload: ' + upErr.message }); continue; }
+
+          const { data: doc, error: insErr } = await supabase.from('library_documents').insert({
+            management_company_id: BEDROCK_MGMT_CO_ID_DG,
+            community_id: communityId,
+            category: 'design_document',
+            title: `${community.name} — ${filename.replace(/\.pdf$/i, '')}`,
+            file_path: storagePath,
+            file_name_original: filename,
+            file_name_normalized: `${(community.slug || 'community')}-${safeName}`,
+            file_hash: fileHash,
+            file_size_bytes: file.size,
+            status: 'current',
+            index_status: 'pending',
+            uploaded_at: new Date().toISOString(),
+          }).select('id, title').single();
+          if (insErr) {
+            try { await supabase.storage.from(DESIGN_DOC_BUCKET).remove([storagePath]); } catch (_) {}
+            skipped.push({ file: filename, reason: 'db insert: ' + insErr.message });
+            continue;
+          }
+          ingested.push({ id: doc.id, title: doc.title, file_size_bytes: file.size, reused: false });
+        } catch (perFileErr) {
+          skipped.push({ file: filename, reason: perFileErr.message });
+        }
+      }
+
+      res.json({
+        ok: true,
+        community: { id: community.id, name: community.name },
+        ingested,
+        superseded: superseded || [],
+        skipped,
+      });
+    } catch (err) {
+      console.error('[community-profile] replace-design-guidelines failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
 // ----------------------------------------------------------------------------
 // GET /:communityId/library-audit — what library_documents exist for this
