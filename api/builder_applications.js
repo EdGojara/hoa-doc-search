@@ -2326,6 +2326,110 @@ router.get('/master-plans', async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/builder-applications/master-plans/fix-pre-approvals
+// ----------------------------------------------------------------------------
+// Admin-only sweep that finds master_plans rows with NO active community
+// pre-approval and adds the approvals from their builder's active_community_ids.
+// Used to clean up plans that were registered before migration 137 applied
+// (or before the builder's active_community_ids was seeded). Idempotent —
+// safe to run repeatedly; rows that already have approvals are skipped.
+//
+// Body: { builder_company_id? }  // scope to one builder, optional
+// Returns: { ok, fixed: [{ master_plan_id, plan_number, elevation, added_community_ids }],
+//            skipped_no_builder_communities: [...],
+//            total_plans_checked, total_plans_fixed }
+// ============================================================================
+router.post('/master-plans/fix-pre-approvals', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const body = req.body || {};
+
+    // Fetch all master_plans (optionally scoped to a builder)
+    let q = supabase
+      .from('master_plans')
+      .select('id, builder_company_id, plan_number, elevation, status')
+      .neq('status', 'retired');
+    if (body.builder_company_id) q = q.eq('builder_company_id', body.builder_company_id);
+    const { data: plans, error: planErr } = await q;
+    if (planErr) throw planErr;
+    if (!plans || plans.length === 0) {
+      return res.json({ ok: true, fixed: [], total_plans_checked: 0, total_plans_fixed: 0 });
+    }
+
+    // Fetch all approvals for those plans (in one query)
+    const planIds = plans.map((p) => p.id);
+    const { data: approvals, error: apprErr } = await supabase
+      .from('master_plan_community_approvals')
+      .select('master_plan_id, community_id, retired_at')
+      .in('master_plan_id', planIds);
+    if (apprErr) throw apprErr;
+    const activeApprovalsByPlan = {};
+    for (const a of (approvals || [])) {
+      if (a.retired_at) continue;
+      (activeApprovalsByPlan[a.master_plan_id] ||= new Set()).add(a.community_id);
+    }
+
+    // Fetch builder active_community_ids for all relevant builders
+    const builderIds = [...new Set(plans.map((p) => p.builder_company_id).filter(Boolean))];
+    const buildersById = {};
+    if (builderIds.length) {
+      const { data: builders, error: bErr } = await supabase
+        .from('builder_companies')
+        .select('id, active_community_ids')
+        .in('id', builderIds);
+      if (bErr) throw bErr;
+      for (const b of (builders || [])) {
+        buildersById[b.id] = Array.isArray(b.active_community_ids) ? b.active_community_ids : [];
+      }
+    }
+
+    const fixed = [];
+    const skipped = [];
+    for (const p of plans) {
+      const existingActive = activeApprovalsByPlan[p.id] || new Set();
+      const targetCommunities = buildersById[p.builder_company_id] || [];
+      if (targetCommunities.length === 0) {
+        if (existingActive.size === 0) {
+          skipped.push({ master_plan_id: p.id, plan_number: p.plan_number, elevation: p.elevation, reason: 'builder has no active_community_ids' });
+        }
+        continue;
+      }
+      const toAdd = targetCommunities.filter((cid) => !existingActive.has(cid));
+      if (toAdd.length === 0) continue;  // already covered
+      for (const cid of toAdd) {
+        try {
+          await supabase.from('master_plan_community_approvals').insert({
+            master_plan_id: p.id,
+            community_id: cid,
+            approved_by: 'fix_pre_approvals_sweep',
+          });
+        } catch (_) {}
+      }
+      fixed.push({
+        master_plan_id: p.id,
+        plan_number: p.plan_number,
+        elevation: p.elevation,
+        added_community_ids: toAdd,
+      });
+    }
+
+    res.json({
+      ok: true,
+      fixed,
+      skipped_no_builder_communities: skipped,
+      total_plans_checked: plans.length,
+      total_plans_fixed: fixed.length,
+    });
+  } catch (err) {
+    console.error('[builder_applications] fix pre-approvals failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // DELETE /api/builder-applications/master-plans/:id
 // ----------------------------------------------------------------------------
 // Admin-only hard delete of a master plan row. Used to clean up duplicate

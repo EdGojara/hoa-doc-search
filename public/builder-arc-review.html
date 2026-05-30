@@ -598,6 +598,7 @@
           <option value="">All</option>
         </select>
       </label>
+      <button id="libFixApprovalsBtn" onclick="fixPreApprovals()" style="display:none; padding:6px 12px; background:#fff; border:1px solid #d4af37; color:#854d0e; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Re-apply community pre-approvals from each builder's active communities">🔧 Fix pre-approvals</button>
       <div style="margin-left:auto; align-self:center; color:#475569;" id="libCount">—</div>
     </div>
     <div style="max-height:50vh; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
@@ -1849,6 +1850,10 @@ function renderLibraryRows() {
   }
   const colCount = window._isAdmin ? 10 : 9;
 
+  // Show the admin-only "Fix pre-approvals" button
+  const fixBtn = document.getElementById('libFixApprovalsBtn');
+  if (fixBtn) fixBtn.style.display = window._isAdmin ? 'inline-block' : 'none';
+
   let rows = _libPlansCache.slice();
   if (builderFilter) rows = rows.filter((p) => p.builder_company_id === builderFilter);
   if (communityFilter) {
@@ -1909,6 +1914,43 @@ function renderLibraryRows() {
       </tr>
     `;
   }).join('');
+}
+
+async function fixPreApprovals() {
+  if (!window._isAdmin) return;
+  if (!confirm('Re-apply community pre-approvals across all registered plans?\n\nFor each plan that has no active community pre-approval, this adds approvals from the builder\'s active_community_ids.\n\nIdempotent — safe to run repeatedly. Plans that already have approvals are skipped.\n\nProceed?')) return;
+  const btn = document.getElementById('libFixApprovalsBtn');
+  const original = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '🔧 Working…';
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/builder-applications/master-plans/fix-pre-approvals', {
+      method: 'POST', headers, body: '{}',
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    const lines = [
+      `Checked: ${j.total_plans_checked} plans`,
+      `Fixed: ${j.total_plans_fixed} plans (added missing approvals)`,
+    ];
+    if ((j.skipped_no_builder_communities || []).length > 0) {
+      lines.push(`Skipped: ${j.skipped_no_builder_communities.length} (builder has no active_community_ids — apply migration 137 or seed the builder)`);
+    }
+    alert(lines.join('\n') + '\n\nLibrary will refresh.');
+    await loadRegisteredPlans();
+  } catch (e) {
+    alert('Fix failed: ' + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = original;
+  }
 }
 
 async function deleteRegisteredPlan(planId, planNumber, elevation) {
