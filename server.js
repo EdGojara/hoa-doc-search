@@ -1068,7 +1068,7 @@ const {
 // Hybrid retrieval lives in lib/hybrid_retrieval.js — shared with the voice
 // module (lib/voice/reason.js) so Claire and askEd/chat hit the SAME
 // retrieval logic. No parallel silos per CLAUDE.md.
-const { getRelevantChunks } = require('./lib/hybrid_retrieval');
+const { getRelevantChunks, getRelevantChunksWithSources } = require('./lib/hybrid_retrieval');
 
 
 // DEPRECATED 2026-05-17 — the "Ask a Question" tab in trustEd was folded into
@@ -2919,13 +2919,20 @@ app.post('/ask-ed', upload.array('attachment', 10), async (req, res) => {
     // Semantic playbook retrieval + community docs + community profile,
     // all in parallel. Quick + coach modes skip RAG — quick because latency
     // matters, coach because the draft itself is the source material.
-    const [playbookEntries, docContext, communityContext] = skipRag
-      ? [[], '', await buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })]
+    //
+    // getRelevantChunksWithSources returns { context, sources } so the
+    // response can show the user EXACTLY which documents informed the
+    // answer (trust-at-point-of-use, surfaced 2026-05-29). Quick/coach
+    // modes get empty sources since they skip RAG.
+    const [playbookEntries, docRetrieval, communityContext] = skipRag
+      ? [[], { context: '', sources: [] }, await buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })]
       : await Promise.all([
           getRelevantPlaybook(situation || 'general guidance', { matchCount: 10 }),
-          getRelevantChunks(situation || 'general guidance', community),
+          getRelevantChunksWithSources(situation || 'general guidance', community),
           buildCommunityContextBlock(community).catch((e) => { console.warn('[community-ctx]', e.message); return ''; })
         ]);
+    const docContext = docRetrieval.context;
+    const docSources = docRetrieval.sources;
     const playbookContext = skipRag
       ? ''
       : (formatPlaybookContext(playbookEntries, {
@@ -3083,7 +3090,15 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
       }
     } catch (e) { console.warn('[ask-ed] leak filter threw (shipping unscrubbed):', e.message); }
 
-    res.json({ guidance: cleaned });
+    res.json({
+      guidance: cleaned,
+      // Trust-at-point-of-use: the source list lets the operator see
+      // exactly which documents informed the answer. Empty when skipRag
+      // (quick / coach modes). 2026-05-29 — surfaced after Ed flagged
+      // recurring gaps where the system "had" docs that weren't reaching
+      // askEd retrieval.
+      sources: docSources || [],
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ guidance: 'Error getting guidance. Please try again.' });

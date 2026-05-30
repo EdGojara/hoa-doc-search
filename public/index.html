@@ -20565,7 +20565,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       });
       const data = await res.json();
       output.className = 'output-box';
+      // Render guidance text first, then trust-at-point-of-use source list.
+      // textContent for the guidance keeps any HTML in the model's output
+      // from rendering as markup (defense against prompt injection),
+      // sources block uses innerHTML on values we control (filenames from
+      // our own DB).
       output.textContent = data.guidance;
+      if (Array.isArray(data.sources) && data.sources.length > 0) {
+        const srcBlock = document.createElement('div');
+        srcBlock.style.cssText = 'margin-top:16px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1A3050; border-radius:0 6px 6px 0; font-size:12px; color:#475569;';
+        const items = data.sources.map((s) => {
+          const ocrTag = s.ocr
+            ? ' <span style="font-size:10.5px; color:#92400e; background:#fef3c7; padding:1px 5px; border-radius:3px;">🔍 OCR\'d — spot-check</span>'
+            : '';
+          const matchTag = (s.sources && s.sources.length >= 2)
+            ? ` <span style="font-size:10.5px; color:#1A3050; opacity:0.6;">(${s.sources.join('+')})</span>`
+            : '';
+          const fname = String(s.filename || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          const cname = String(s.community || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+          return `<li style="margin-bottom:4px;"><strong style="color:#1A3050;">${fname}</strong> <span style="opacity:0.7;">— ${cname} · ${s.chunk_count} chunk${s.chunk_count === 1 ? '' : 's'}</span>${matchTag}${ocrTag}</li>`;
+        }).join('');
+        srcBlock.innerHTML = `
+          <div style="font-weight:700; color:#1A3050; margin-bottom:8px; font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;">Based on these documents</div>
+          <ul style="margin:0; padding-left:18px; line-height:1.5;">${items}</ul>
+          <div style="margin-top:8px; font-size:10.5px; color:#94a3b8; line-height:1.5;">If the doc you expected isn't here, the system may not have it indexed yet — check the Documents tab.</div>
+        `;
+        output.appendChild(srcBlock);
+      }
       copyBtn.style.display = 'block';
       // Email export buttons make sense for advisor + draft modes (output is
       // something you'd actually send); hide for review (it has its own
