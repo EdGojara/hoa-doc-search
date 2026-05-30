@@ -1163,18 +1163,19 @@ function closeMasterPlanModal() {
 }
 
 async function loadMasterPlanFormPickers() {
-  // Communities — pre-check ALL by default (operator typically wants
-  // pre-approval everywhere the builder is active).
+  // Active communities — render unchecked; checkboxes auto-fill when a
+  // builder is picked based on the builder's active_community_ids.
   try {
-    const c = await api('GET', '/api/communities?builder_arc_only=1');
+    const c = await api('GET', '/api/builder-applications/active-communities');
     const list = c.communities || c || [];
+    _allActiveCommunities = list;
     const cb = document.getElementById('mpCommunityCheckboxes');
     if (!Array.isArray(list) || list.length === 0) {
       cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities found. Turn on builder_arc_active in Community Profile first.</em>';
     } else {
       cb.innerHTML = list.map((co) => `
         <label style="display:flex; align-items:center; gap:8px; padding:4px 0; cursor:pointer;">
-          <input type="checkbox" name="mpCommunity" value="${escapeHtml(co.id)}" checked>
+          <input type="checkbox" name="mpCommunity" value="${escapeHtml(co.id)}">
           <span>${escapeHtml(co.name)}</span>
         </label>
       `).join('');
@@ -1183,22 +1184,28 @@ async function loadMasterPlanFormPickers() {
     document.getElementById('mpCommunityCheckboxes').innerHTML = `<em style="color:#b91c1c;">Couldn't load communities: ${escapeHtml(e.message)}</em>`;
   }
 
-  // Builders — use the dedicated /builder-companies endpoint so newly
-  // registered builders (no master plans yet) show up. Auto-select if
-  // only one is registered.
+  // Builders — auto-select if only one + auto-check that builder's
+  // communities. Onchange wired so switching builder re-checks the
+  // right boxes automatically.
   try {
     const r = await api('GET', '/api/builder-applications/builder-companies');
-    const list = r.builder_companies || [];
+    _allBuilderCompanies = r.builder_companies || [];
     const sel = document.getElementById('mpBuilderCompany');
-    if (list.length === 0) {
+    if (_allBuilderCompanies.length === 0) {
       sel.innerHTML = '<option value="" disabled selected>No registered builders yet — seed via migration 127 or Supabase</option>';
-    } else if (list.length === 1) {
-      const only = list[0];
+    } else if (_allBuilderCompanies.length === 1) {
+      const only = _allBuilderCompanies[0];
       sel.innerHTML = `<option value="${escapeHtml(only.id)}" selected>${escapeHtml(only.company_name)}</option>`;
+      applyBuilderCommunityAutocheck('mpCommunity', only);
     } else {
       sel.innerHTML = '<option value="">— pick a builder —</option>' +
-        list.map((bc) => `<option value="${escapeHtml(bc.id)}">${escapeHtml(bc.company_name)}</option>`).join('');
+        _allBuilderCompanies.map((bc) => `<option value="${escapeHtml(bc.id)}">${escapeHtml(bc.company_name)}</option>`).join('');
     }
+    sel.onchange = () => {
+      const id = sel.value;
+      const builder = _allBuilderCompanies.find((b) => b.id === id);
+      applyBuilderCommunityAutocheck('mpCommunity', builder);
+    };
   } catch (e) {
     console.warn('[mp] builder picker load failed:', e.message);
     const sel = document.getElementById('mpBuilderCompany');
@@ -1301,21 +1308,27 @@ function bulkBackToStep1() {
   document.getElementById('bulkFileInput').value = '';
 }
 
+// Cache of builders + their associated communities so the builder
+// dropdown's onchange handler can auto-check the right boxes without
+// re-fetching. Populated by loadBulkPickers / loadMasterPlanFormPickers.
+let _allBuilderCompanies = [];
+let _allActiveCommunities = [];
+
 async function loadBulkPickers() {
-  // Communities — only those with builder_arc_active. Pre-check ALL by
-  // default (operator usually wants pre-approval everywhere the builder
-  // is active; uncheck is one click if not).
+  // Active communities — full list, rendered as checkboxes
   try {
     const r = await fetch('/api/builder-applications/active-communities');
     const data = await r.json();
-    const list = data.communities || data || [];
+    _allActiveCommunities = data.communities || data || [];
     const cb = document.getElementById('bulkCommunityCheckboxes');
-    if (!Array.isArray(list) || list.length === 0) {
+    if (!Array.isArray(_allActiveCommunities) || _allActiveCommunities.length === 0) {
       cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities. Flip the toggle in Community Profile first.</em>';
     } else {
-      cb.innerHTML = list.map((c) => `
+      // Initial render — no builder selected yet, so leave checkboxes
+      // unchecked. They auto-check as soon as a builder is picked.
+      cb.innerHTML = _allActiveCommunities.map((c) => `
         <label style="display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer;">
-          <input type="checkbox" name="bulkCommunity" value="${escapeHtml(c.id)}" checked>
+          <input type="checkbox" name="bulkCommunity" value="${escapeHtml(c.id)}">
           <span>${escapeHtml(c.name)}</span>
         </label>
       `).join('');
@@ -1323,29 +1336,47 @@ async function loadBulkPickers() {
   } catch (e) {
     document.getElementById('bulkCommunityCheckboxes').innerHTML = `<em style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</em>`;
   }
-  // Builders — use the dedicated /builder-companies endpoint so new
-  // builders (registered but not yet having any master plans) show up.
-  // Auto-select if there's only one — saves a click in the common
-  // single-builder case (DRB at August Meadows today).
+  // Builders — load + auto-select if only one + auto-check that
+  // builder's communities (1:1 mapping today: DRB→August Meadows,
+  // Lennar→Still Creek Ranch).
   try {
     const r = await api('GET', '/api/builder-applications/builder-companies');
-    const list = r.builder_companies || [];
+    _allBuilderCompanies = r.builder_companies || [];
     const sel = document.getElementById('bulkBuilderCompany');
-    if (list.length === 0) {
+    if (_allBuilderCompanies.length === 0) {
       sel.innerHTML = '<option value="" disabled selected>No registered builders yet — register via Supabase or the seed migration first</option>';
-    } else if (list.length === 1) {
-      // Single builder — auto-select, no "pick a builder" prompt
-      const only = list[0];
+    } else if (_allBuilderCompanies.length === 1) {
+      const only = _allBuilderCompanies[0];
       sel.innerHTML = `<option value="${escapeHtml(only.id)}" selected>${escapeHtml(only.company_name)}</option>`;
+      applyBuilderCommunityAutocheck('bulkCommunity', only);
     } else {
       sel.innerHTML = '<option value="">— pick a builder —</option>' +
-        list.map((bc) => `<option value="${escapeHtml(bc.id)}">${escapeHtml(bc.company_name)}</option>`).join('');
+        _allBuilderCompanies.map((bc) => `<option value="${escapeHtml(bc.id)}">${escapeHtml(bc.company_name)}</option>`).join('');
     }
+    // Wire the onchange to auto-check the right communities. Replaces any
+    // prior listener so we don't double-fire on re-open.
+    sel.onchange = () => {
+      const id = sel.value;
+      const builder = _allBuilderCompanies.find((b) => b.id === id);
+      applyBuilderCommunityAutocheck('bulkCommunity', builder);
+    };
   } catch (e) {
     console.warn('[bulk] builder picker load failed:', e.message);
     const sel = document.getElementById('bulkBuilderCompany');
     sel.innerHTML = `<option value="" disabled selected>Couldn't load builders: ${escapeHtml(e.message)}</option>`;
   }
+}
+
+// Auto-check the community checkboxes that match the picked builder's
+// active_community_ids. Unchecks everything else. Operator can still
+// override per row (this is a smart default, not a hard rule).
+//   inputName — 'bulkCommunity' or 'mpCommunity' depending on which modal
+//   builder    — the builder_companies row OR undefined to clear all
+function applyBuilderCommunityAutocheck(inputName, builder) {
+  const ids = new Set(builder?.active_community_ids || []);
+  document.querySelectorAll(`input[name="${inputName}"]`).forEach((cb) => {
+    cb.checked = ids.has(cb.value);
+  });
 }
 
 document.getElementById('bulkUploadMasterPlansBtn').addEventListener('click', (e) => {

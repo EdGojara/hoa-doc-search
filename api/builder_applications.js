@@ -295,12 +295,18 @@ router.get('/builder-companies', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('builder_companies')
-      .select('id, company_name, primary_email_domain, primary_contact_name, primary_contact_email, status')
+      .select('id, company_name, primary_email_domain, primary_contact_name, primary_contact_email, status, active_community_ids')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('status', 'active')
       .order('company_name');
     if (error) throw error;
-    res.json({ ok: true, builder_companies: data || [] });
+    // Normalize active_community_ids to always be a real JS array so the
+    // frontend can .includes() / .indexOf() without type-checking.
+    const builders = (data || []).map((b) => ({
+      ...b,
+      active_community_ids: Array.isArray(b.active_community_ids) ? b.active_community_ids : [],
+    }));
+    res.json({ ok: true, builder_companies: builders });
   } catch (err) {
     console.error('[builder_companies]', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
