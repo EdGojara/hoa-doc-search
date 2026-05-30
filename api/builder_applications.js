@@ -1455,41 +1455,68 @@ If you can identify the plan number + at least one elevation, return what you ca
         continue;
       }
       try {
-        // 1. Upload to storage
+        // 1. Hash first — if this PDF is already in library_documents (same
+        //    SHA-256), reuse that row instead of uploading a duplicate. Lets
+        //    the operator re-run an upload safely after a partial-failure
+        //    without hitting the ux_docs_file_hash unique constraint.
         const safeName = filename.replace(/[^a-zA-Z0-9._-]/g, '_');
-        const stamp = Date.now() + '-' + Math.floor(Math.random() * 10000);
-        const storagePath = `builders/${company.id}/master-plans/${stamp}_${safeName}`;
         const fileHash = require('crypto').createHash('sha256').update(file.buffer).digest('hex');
-
-        const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET)
-          .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: false });
-        if (upErr) { out.push({ filename, error: 'storage upload: ' + upErr.message }); continue; }
-
-        // 2. Insert library_documents row
         const fileNameNormalized = `${company.company_name.replace(/\s+/g, '-')}-${safeName}`;
-        const { data: libDoc, error: libErr } = await supabase
+
+        let libDocId = null;
+        let storagePath = null;
+        let reusedExisting = false;
+
+        const { data: existing, error: existErr } = await supabase
           .from('library_documents')
-          .insert({
-            management_company_id: BEDROCK_MGMT_CO_ID,
-            community_id: null,  // populated at bulk-commit time when operator picks pre-approval communities
-            category: 'master_plan_pdf',
-            title: `${company.company_name} — ${filename.replace(/\.pdf$/i, '')}`,
-            file_path: storagePath,
-            file_name_original: filename,
-            file_name_normalized: fileNameNormalized,
-            file_hash: fileHash,
-            status: 'current',
-            index_status: 'pending',
-            uploaded_at: new Date().toISOString(),
-          })
-          .select('id')
-          .single();
-        if (libErr) {
-          // Rollback storage
-          try { await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]); } catch (_) {}
-          out.push({ filename, error: 'library_documents insert: ' + libErr.message });
+          .select('id, file_path')
+          .eq('file_hash', fileHash)
+          .maybeSingle();
+        if (existErr && existErr.code !== 'PGRST116') {
+          out.push({ filename, error: 'hash lookup: ' + existErr.message });
           continue;
         }
+
+        if (existing) {
+          libDocId = existing.id;
+          storagePath = existing.file_path;
+          reusedExisting = true;
+        } else {
+          // New file — upload to storage + insert library_documents row.
+          const stamp = Date.now() + '-' + Math.floor(Math.random() * 10000);
+          storagePath = `builders/${company.id}/master-plans/${stamp}_${safeName}`;
+
+          const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET)
+            .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: false });
+          if (upErr) { out.push({ filename, error: 'storage upload: ' + upErr.message }); continue; }
+
+          const { data: libDoc, error: libErr } = await supabase
+            .from('library_documents')
+            .insert({
+              management_company_id: BEDROCK_MGMT_CO_ID,
+              community_id: null,  // populated at bulk-commit time when operator picks pre-approval communities
+              category: 'master_plan_pdf',
+              title: `${company.company_name} — ${filename.replace(/\.pdf$/i, '')}`,
+              file_path: storagePath,
+              file_name_original: filename,
+              file_name_normalized: fileNameNormalized,
+              file_hash: fileHash,
+              status: 'current',
+              index_status: 'pending',
+              uploaded_at: new Date().toISOString(),
+            })
+            .select('id')
+            .single();
+          if (libErr) {
+            try { await supabase.storage.from(STORAGE_BUCKET).remove([storagePath]); } catch (_) {}
+            out.push({ filename, error: 'library_documents insert: ' + libErr.message });
+            continue;
+          }
+          libDocId = libDoc.id;
+        }
+
+        // Synthetic libDoc handle for the rest of the loop (existing code reads libDoc.id)
+        const libDoc = { id: libDocId };
 
         // 3. Claude PDF-direct extract
         let extracted = null;
