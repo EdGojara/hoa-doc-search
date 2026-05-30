@@ -537,6 +537,90 @@ router.delete('/facts/:factId', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /:communityId/library-audit — what library_documents exist for this
+// community, grouped by category. Compares against the canonical category
+// list and flags expected categories that are missing (so the operator
+// knows "this community has no current bylaws on file" without scanning).
+// ----------------------------------------------------------------------------
+router.get('/:communityId/library-audit', async (req, res) => {
+  try {
+    const { communityId } = req.params;
+
+    // 1. Pull all library_documents for this community (any status — caller
+    //    sees current + superseded counts so they can spot stale state)
+    const { data: docs, error: docsErr } = await supabase
+      .from('library_documents')
+      .select('id, category, title, file_name_original, status, effective_date, expiration_date, uploaded_at, file_size_bytes')
+      .eq('community_id', communityId)
+      .order('category', { ascending: true })
+      .order('uploaded_at', { ascending: false });
+    if (docsErr) throw docsErr;
+
+    // 2. Pull category catalog so the response can label & sort
+    const { data: cats, error: catsErr } = await supabase
+      .from('document_categories')
+      .select('category, display_name, required_for_resale, typical_frequency, sort_order')
+      .order('sort_order');
+    if (catsErr) throw catsErr;
+    const catByKey = Object.fromEntries((cats || []).map((c) => [c.category, c]));
+
+    // 3. Group docs by category
+    const byCategory = {};
+    for (const d of (docs || [])) {
+      (byCategory[d.category] ||= []).push(d);
+    }
+
+    // 4. Build response: every canonical category gets a row (present or
+    //    missing). Plus any "unknown" categories that aren't in the catalog.
+    const categories = (cats || []).map((c) => {
+      const items = byCategory[c.category] || [];
+      const currentCount = items.filter((i) => i.status === 'current').length;
+      return {
+        category: c.category,
+        display_name: c.display_name,
+        required_for_resale: c.required_for_resale,
+        typical_frequency: c.typical_frequency,
+        sort_order: c.sort_order,
+        total_count: items.length,
+        current_count: currentCount,
+        missing: items.length === 0,
+        items,
+      };
+    });
+
+    // Unknown / extra categories that appear in library_documents but aren't
+    // in the catalog — surface them so we know to add them or recategorize.
+    const unknownCats = Object.keys(byCategory).filter((k) => !catByKey[k]);
+    for (const k of unknownCats) {
+      categories.push({
+        category: k,
+        display_name: k,
+        required_for_resale: false,
+        typical_frequency: 'unknown',
+        sort_order: 9999,
+        total_count: byCategory[k].length,
+        current_count: byCategory[k].filter((i) => i.status === 'current').length,
+        missing: false,
+        items: byCategory[k],
+        unknown_category: true,
+      });
+    }
+
+    res.json({
+      ok: true,
+      community_id: communityId,
+      total_documents: (docs || []).length,
+      current_documents: (docs || []).filter((d) => d.status === 'current').length,
+      missing_required_for_resale: categories.filter((c) => c.required_for_resale && c.missing).map((c) => c.category),
+      categories,
+    });
+  } catch (err) {
+    console.error('[community-profile] /library-audit failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /:communityId/computed — just the computed facts (no manual overlay)
 // ----------------------------------------------------------------------------
 router.get('/:communityId/computed', async (req, res) => {
