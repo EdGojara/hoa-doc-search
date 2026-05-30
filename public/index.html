@@ -7139,6 +7139,39 @@
           </div>
         </div>
 
+        <!-- Builder ARC standards (per-community structured rubric) -->
+        <!-- These fields are read FIRST by the Builder ARC AI review pipeline
+             before falling back to the Design Guidelines PDF. Encoding them
+             structurally here means the AI doesn't re-discover them on every
+             submission and staff can update without re-uploading PDFs.
+             Migration 135 stores all of this as one JSONB column. -->
+        <div style="background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:12px; font-weight:700; color:#1e3a8a; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🧱 Builder ARC standards</div>
+          <p style="font-size:11px; color:#1e3a8a; margin:0 0 10px; line-height:1.5;">Objective specifications from the community's design guidelines. The AI review pipeline checks each new construction submission against these rules FIRST, then references the Design Guidelines PDF for nuance.</p>
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px 12px;">
+            <label class="prof-fld"><span>Min square footage</span><input id="bas-min-sqft" type="number" min="0" placeholder="e.g., 1500" /></label>
+            <label class="prof-fld"><span>Roof pitch — sides (min)</span><input id="bas-roof-sides" type="text" placeholder="e.g., 8:12" /></label>
+            <label class="prof-fld"><span>Roof pitch — porches (min)</span><input id="bas-roof-porches" type="text" placeholder="e.g., 6:12" /></label>
+            <label class="prof-fld"><span>Front masonry minimum (%)</span><input id="bas-masonry-front-pct" type="number" min="0" max="100" placeholder="e.g., 35" /></label>
+            <label class="prof-fld"><span>Masonry wrap on sides (ft)</span><input id="bas-masonry-wrap-ft" type="number" min="0" step="0.5" placeholder="e.g., 2" /></label>
+            <label class="prof-fld"><span>Single-material max (%)</span><input id="bas-single-material-max-pct" type="number" min="0" max="100" placeholder="e.g., 75" /></label>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 12px; margin-top:10px;">
+            <label class="prof-fld"><span>Brick specification</span><input id="bas-brick-spec" type="text" placeholder='e.g., ASTM C216-87' /></label>
+            <label class="prof-fld"><span>Brick color palette</span><input id="bas-brick-colors" type="text" placeholder="e.g., earth tones" /></label>
+            <label class="prof-fld"><span>Allowed brick types (comma-separated)</span><input id="bas-brick-allowed" type="text" placeholder="e.g., king, queen" /></label>
+            <label class="prof-fld"><span>Prohibited brick types (comma-separated)</span><input id="bas-brick-prohibited" type="text" placeholder="e.g., jumbo, stucco brick" /></label>
+            <label class="prof-fld"><span>Mortar joint style</span><input id="bas-mortar-joints" type="text" placeholder='e.g., tooled (no slump)' /></label>
+            <label class="prof-fld"><span>Prohibited materials (comma-separated)</span><input id="bas-prohibited-materials" type="text" placeholder="e.g., Dryvit, EIFS" /></label>
+          </div>
+          <div style="margin-top:10px;">
+            <label class="prof-fld"><span>Additional standards / notes (free-form)</span>
+              <textarea id="bas-notes" rows="3" placeholder="e.g., 'Two-story dwellings must be adjacent to a single-story; color palette adjacency prohibited; fence height max 6ft'"></textarea>
+            </label>
+            <div style="font-size:10.5px; color:#1e3a8a; margin-top:4px;">The AI review reads this verbatim. Use it for rules you couldn't structure into the fields above.</div>
+          </div>
+        </div>
+
         <!-- Payment routing (lockbox) -->
         <div style="background:#fffbeb; border:1px solid #f3d894; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
           <div style="font-size:12px; font-weight:700; color:#78350f; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🏦 Payment routing (lockbox)</div>
@@ -18541,6 +18574,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     set('lc-decl-short-name',  c.declaration_short_name);
     set('lc-fm-section',       c.force_mow_section_full);
     set('lc-fm-fee',           c.force_mow_admin_fee_cents != null ? (c.force_mow_admin_fee_cents / 100) : '');
+
+    // Builder ARC standards (migration 135 — single JSONB column)
+    const bas = (c.builder_arc_standards && typeof c.builder_arc_standards === 'object') ? c.builder_arc_standards : {};
+    set('bas-min-sqft',                bas.min_square_footage);
+    set('bas-roof-sides',              bas.roof_pitch_sides_min);
+    set('bas-roof-porches',            bas.roof_pitch_porches_min);
+    set('bas-masonry-front-pct',       bas.masonry_front_elevation_min_pct);
+    set('bas-masonry-wrap-ft',         bas.masonry_wrap_distance_feet);
+    set('bas-single-material-max-pct', bas.single_material_max_pct);
+    set('bas-brick-spec',              bas.brick_spec);
+    set('bas-brick-colors',            bas.brick_color_palette);
+    set('bas-brick-allowed',           Array.isArray(bas.brick_allowed_types) ? bas.brick_allowed_types.join(', ') : (bas.brick_allowed_types || ''));
+    set('bas-brick-prohibited',        Array.isArray(bas.brick_prohibited_types) ? bas.brick_prohibited_types.join(', ') : (bas.brick_prohibited_types || ''));
+    set('bas-mortar-joints',           bas.mortar_joint_style);
+    set('bas-prohibited-materials',    Array.isArray(bas.prohibited_materials) ? bas.prohibited_materials.join(', ') : (bas.prohibited_materials || ''));
+    set('bas-notes',                   bas.notes);
   }
 
   async function lcSaveLetterConfig() {
@@ -18576,6 +18625,36 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       declaration_short_name:            val('lc-decl-short-name') || null,
       force_mow_section_full:            val('lc-fm-section') || null,
       force_mow_admin_fee_cents:         dollarsToCents('lc-fm-fee'),
+      // Builder ARC standards — assembled into a single JSONB object before
+      // POST. Empty strings become undefined (omitted from the JSON);
+      // comma-separated lists become arrays.
+      builder_arc_standards:             (function () {
+        const csv = (id) => {
+          const raw = val(id);
+          if (!raw) return undefined;
+          return raw.split(',').map((s) => s.trim()).filter(Boolean);
+        };
+        const numOrU = (id) => { const v = val(id); return v === '' ? undefined : Number(v); };
+        const strOrU = (id) => { const v = val(id); return v || undefined; };
+        const o = {
+          min_square_footage: numOrU('bas-min-sqft'),
+          roof_pitch_sides_min: strOrU('bas-roof-sides'),
+          roof_pitch_porches_min: strOrU('bas-roof-porches'),
+          masonry_front_elevation_min_pct: numOrU('bas-masonry-front-pct'),
+          masonry_wrap_distance_feet: numOrU('bas-masonry-wrap-ft'),
+          single_material_max_pct: numOrU('bas-single-material-max-pct'),
+          brick_spec: strOrU('bas-brick-spec'),
+          brick_color_palette: strOrU('bas-brick-colors'),
+          brick_allowed_types: csv('bas-brick-allowed'),
+          brick_prohibited_types: csv('bas-brick-prohibited'),
+          mortar_joint_style: strOrU('bas-mortar-joints'),
+          prohibited_materials: csv('bas-prohibited-materials'),
+          notes: strOrU('bas-notes'),
+        };
+        // Drop undefined keys so the JSONB stays clean
+        Object.keys(o).forEach((k) => { if (o[k] === undefined) delete o[k]; });
+        return o;
+      })(),
     };
     // Drop nulls so the endpoint only patches what's actually provided
     Object.keys(updates).forEach((k) => { if (updates[k] === null || updates[k] === undefined) delete updates[k]; });
