@@ -1364,8 +1364,11 @@ async function startBulkExtract(files) {
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     _bulkExtracted = (j.extracted || []).map((row) => ({ ...row, _selected: !row.error }));
-    progress.innerHTML = `✓ Extracted ${j.total_extracted_ok} of ${j.total_files} files. Review below.`;
-    setTimeout(() => { progress.style.display = 'none'; }, 1500);
+    const multiNote = (j.total_extracted_rows && j.total_files_ok && j.total_extracted_rows > j.total_files_ok)
+      ? ` (${j.total_extracted_rows} elevations across ${j.total_files_ok} plan PDFs)`
+      : '';
+    progress.innerHTML = `✓ Extracted ${j.total_files_ok || 0} of ${j.total_files} files${multiNote}. Review below.`;
+    setTimeout(() => { progress.style.display = 'none'; }, 2000);
     showBulkStep2();
   } catch (e) {
     showBulkStep1Error(e.message);
@@ -1400,9 +1403,19 @@ function renderBulkGrid() {
       </tr>`;
     }
     const confColor = row.ai_confidence === 'high' ? '#15803d' : row.ai_confidence === 'medium' ? '#b45309' : '#94a3b8';
-    return `<tr style="border-bottom:1px solid #e2e8f0;">
+    // When a PDF produced multiple elevations, badge each row with its
+    // position (e.g., "2/3") so the operator sees the relationship.
+    // First-row of a multi-elevation PDF gets a subtle top divider.
+    const multiBadge = (row.elevation_count > 1)
+      ? ` <span style="background:#1e3a8a; color:#fff; padding:1px 5px; border-radius:3px; font-size:9.5px; font-weight:600;">${row.elevation_index}/${row.elevation_count}</span>`
+      : '';
+    const isFirstOfMulti = (row.elevation_count > 1 && row.elevation_index === 1);
+    const rowStyle = isFirstOfMulti
+      ? 'border-top:2px solid #1e3a8a; border-bottom:1px solid #e2e8f0;'
+      : 'border-bottom:1px solid #e2e8f0;';
+    return `<tr style="${rowStyle}">
       <td style="padding:6px 10px; text-align:center;"><input type="checkbox" data-idx="${i}" class="bulk-row-sel" ${row._selected ? 'checked' : ''}></td>
-      <td style="padding:6px 10px; font-family:monospace; font-size:11px; color:#475569;">${escapeHtml(row.filename)}</td>
+      <td style="padding:6px 10px; font-family:monospace; font-size:11px; color:#475569;">${escapeHtml(row.filename)}${multiBadge}</td>
       <td style="padding:6px 10px;"><input data-idx="${i}" data-field="plan_number" class="bulk-cell" type="text" value="${escapeHtml(row.plan_number || '')}" style="width:90px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
       <td style="padding:6px 10px;"><input data-idx="${i}" data-field="plan_name" class="bulk-cell" type="text" value="${escapeHtml(row.plan_name || '')}" style="width:140px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>
       <td style="padding:6px 10px;"><input data-idx="${i}" data-field="elevation" class="bulk-cell" type="text" value="${escapeHtml(row.elevation || '')}" style="width:60px; padding:4px 6px; border:1px solid #d0d7de; border-radius:4px; font-size:12.5px;"></td>

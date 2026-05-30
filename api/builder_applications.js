@@ -1356,21 +1356,34 @@ router.post('/master-plans/bulk-extract', uploadBulk.array('plan_pdfs', 30), asy
       return res.status(500).json({ error: 'ANTHROPIC_API_KEY not configured — extraction unavailable' });
     }
 
-    const EXTRACT_PROMPT = `You are reviewing a builder's home plan PDF. Extract the canonical plan identification.
+    const EXTRACT_PROMPT = `You are reviewing a builder's home plan PDF. Extract EVERY elevation shown in this PDF.
 
-Look at: the title block (usually top-right or bottom of the cover sheet), the schedule of plans, square footage callouts ("Heated: 2,150 sqft" or similar), and elevation labels.
+A single PDF often shows multiple elevations of the same base plan (e.g., Plan 6512 Elevation A, B, and C — usually one cover sheet listing all three then detail pages per elevation). Return ALL elevations as an array. If the PDF shows only one elevation, return a single-element array.
 
-Extract these fields:
-- plan_number: The numeric/alphanumeric plan identifier (e.g., "6512", "7234")
-- plan_name: The marketing/series name (e.g., "The Tuscany", "The Magnolia") — null if not shown
-- elevation: The elevation letter or code shown (e.g., "A", "B", "Standard"). If the PDF shows multiple elevations, pick the FIRST/primary one and put the others in ai_notes.
-- square_footage: The heated/living-area square footage as an integer (no commas, no units). Use null if not stated.
+Each entry in the array:
+- plan_number: The plan identifier (e.g., "6512"). Usually shared across elevations of the same plan.
+- plan_name: The marketing/series name (e.g., "The Tuscany"). Usually shared.
+- elevation: The elevation letter or code shown (REQUIRED — A, B, C, Standard, etc.). Must be unique within the array.
+- square_footage: Heated/living-area square footage as an integer. May vary per elevation. null if not stated.
 - stories: Number of stories (1, 1.5, 2, 2.5, 3). null if not stated.
-- ai_confidence: "high" | "medium" | "low"
-- ai_notes: Any caveats — "shows elevations A/B/C, only A captured" or "couldn't find sqft on cover sheet" or "this looks like a site plan not a home plan"
+
+Plus top-level fields about the PDF as a whole:
+- ai_confidence: "high" | "medium" | "low" — your overall confidence in the extraction
+- ai_notes: Any caveats — "schedule of plans table shows three elevations" or "couldn't find sqft on cover sheet, may be on detail pages" or "this looks like a site plan not a home plan"
+
+Look at: the title block (usually top-right or bottom of the cover sheet), the schedule of plans table (often a grid showing each elevation's footprint + sqft), square footage callouts, elevation header labels on per-elevation detail pages.
 
 Return ONLY valid JSON, no preamble:
-{"plan_number":"...","plan_name":"...","elevation":"...","square_footage":2150,"stories":2,"ai_confidence":"high","ai_notes":"..."}`;
+{
+  "elevations": [
+    {"plan_number":"6512","plan_name":"Tuscany","elevation":"A","square_footage":2150,"stories":2},
+    {"plan_number":"6512","plan_name":"Tuscany","elevation":"B","square_footage":2150,"stories":2}
+  ],
+  "ai_confidence":"high",
+  "ai_notes":"Schedule of plans on page 1 lists A, B, C."
+}
+
+If you can identify the plan number + at least one elevation, return what you can. If you cannot identify even the plan number, return {"elevations":[], "ai_confidence":"low", "ai_notes":"explain why"}.`;
 
     const out = [];
     for (const file of files) {
@@ -1446,31 +1459,68 @@ Return ONLY valid JSON, no preamble:
           extracted = null;
         }
 
-        out.push({
-          filename,
-          library_document_id: libDoc.id,
-          file_path: storagePath,
-          plan_number: extracted?.plan_number || null,
-          plan_name: extracted?.plan_name || null,
-          elevation: extracted?.elevation || null,
-          square_footage: extracted?.square_footage ?? null,
-          stories: extracted?.stories ?? null,
-          ai_confidence: extracted?.ai_confidence || null,
-          ai_notes: extracted?.ai_notes || null,
-          raw_extracted: aiRaw,  // surfaced for debugging when extraction looks wrong
-        });
+        // The new prompt asks for an "elevations" array so a single PDF
+        // can produce multiple registration rows (one per elevation). For
+        // each entry, we share the library_document_id but stamp a unique
+        // elevation + per-row sqft/stories. Falls back to a single empty
+        // row when extraction returns nothing usable so the operator can
+        // still see + edit the filename in the grid.
+        const elevations = Array.isArray(extracted?.elevations) ? extracted.elevations : [];
+        if (elevations.length > 0) {
+          elevations.forEach((elev, idx) => {
+            out.push({
+              filename,
+              library_document_id: libDoc.id,
+              file_path: storagePath,
+              plan_number: elev?.plan_number || null,
+              plan_name: elev?.plan_name || null,
+              elevation: elev?.elevation || null,
+              square_footage: elev?.square_footage ?? null,
+              stories: elev?.stories ?? null,
+              ai_confidence: extracted?.ai_confidence || null,
+              ai_notes: idx === 0 ? (extracted?.ai_notes || null) : null,
+              elevation_index: idx + 1,
+              elevation_count: elevations.length,
+              raw_extracted: idx === 0 ? aiRaw : null,
+            });
+          });
+        } else {
+          // Extraction returned nothing — single placeholder row so the
+          // operator can still type in the metadata manually.
+          out.push({
+            filename,
+            library_document_id: libDoc.id,
+            file_path: storagePath,
+            plan_number: null,
+            plan_name: null,
+            elevation: null,
+            square_footage: null,
+            stories: null,
+            ai_confidence: extracted?.ai_confidence || 'low',
+            ai_notes: extracted?.ai_notes || 'AI returned no elevations — review PDF manually',
+            elevation_index: 1,
+            elevation_count: 1,
+            raw_extracted: aiRaw,
+          });
+        }
       } catch (perFileErr) {
         console.error('[bulk-extract] per-file failure for', filename, '·', perFileErr.message);
         out.push({ filename, error: perFileErr.message });
       }
     }
 
+    // Per-PDF success count — distinct from total elevations because one
+    // PDF can produce multiple rows now. Counts unique filenames that
+    // produced at least one error-free row.
+    const successfulFilenames = new Set(out.filter((r) => !r.error).map((r) => r.filename));
+
     res.json({
       ok: true,
       builder_company: { id: company.id, name: company.company_name },
       extracted: out,
       total_files: files.length,
-      total_extracted_ok: out.filter((r) => !r.error).length,
+      total_files_ok: successfulFilenames.size,
+      total_extracted_rows: out.filter((r) => !r.error).length,
     });
   } catch (err) {
     console.error('[bulk-extract]', err);
