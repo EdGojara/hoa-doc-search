@@ -118,8 +118,9 @@
     <label style="display:flex; align-items:flex-start; gap:8px; cursor:pointer; color:#1a3050; font-weight:500;">
       <input type="checkbox" id="dgSupersedeToggle" checked style="margin-top:3px;">
       <span>
-        <strong>Replace mode (default)</strong> — mark all existing <code>current</code> design_document entries as <code>superseded</code> before ingesting. Use this when the wrong DG was ingested and you're swapping in the right one. Old PDFs stay in the library for audit but aren't surfaced to AI retrieval.
-        <br><span style="color:#854d0e;">Uncheck</span> for <strong>add mode</strong> — keep existing docs as <code>current</code> and add the new ones alongside (use for amendments / supplementary exhibits).
+        <strong>Replace mode (default)</strong> — mark all existing <code>current</code> design_document entries as <code>superseded</code> before ingesting. Use this when the wrong DG was ingested and you're swapping in the right one.
+        <br><span style="color:#b91c1c; font-weight:600;">⚠ Gotcha:</span> if your "new set" is multiple PDFs (DG + Exhibit B + amendments), <strong>drop them all in ONE upload</strong>. Each separate upload runs supersede first, so a second upload will supersede the first. If you do hit this, use the <span style="color:#166534; font-weight:600;">↑ Promote</span> button below to flip a doc back to current.
+        <br><span style="color:#854d0e;">Uncheck</span> for <strong>add mode</strong> — keep existing docs as <code>current</code> and add the new ones alongside (safe for ongoing amendments).
       </span>
     </label>
   </div>
@@ -337,8 +338,12 @@ function renderAudit(j, slug) {
       ? `<ul class="items">${c.items.slice(0, 8).map((i) => {
           const label = escapeHtml(i.file_name_original || i.title || i.id.slice(0, 8));
           const statusSpan = `<span style="color:${i.status === 'current' ? '#94a3b8' : '#b45309'};">(${escapeHtml(i.status)})</span>`;
-          const delBtn = `<button onclick="deleteLibraryDoc('${escapeHtml(i.id)}', '${escapeHtml((i.file_name_original || i.title || '').replace(/'/g, "\\'").slice(0, 60))}')" title="Hard-delete this document + its storage file" style="margin-left:6px; background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:1px 5px; border-radius:4px; font-size:10px; cursor:pointer;">🗑️</button>`;
-          return `<li>${label} ${statusSpan} ${delBtn}</li>`;
+          const safeLabel = (i.file_name_original || i.title || '').replace(/'/g, "\\'").slice(0, 60);
+          const promoteBtn = i.status === 'superseded'
+            ? `<button onclick="promoteToCurrent('${escapeHtml(i.id)}', '${escapeHtml(safeLabel)}')" title="Flip this doc back to status=current" style="margin-left:6px; background:#fff; border:1px solid #bbf7d0; color:#166534; padding:1px 5px; border-radius:4px; font-size:10px; cursor:pointer;">↑ Promote</button>`
+            : '';
+          const delBtn = `<button onclick="deleteLibraryDoc('${escapeHtml(i.id)}', '${escapeHtml(safeLabel)}')" title="Hard-delete this document + its storage file" style="margin-left:6px; background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:1px 5px; border-radius:4px; font-size:10px; cursor:pointer;">🗑️</button>`;
+          return `<li>${label} ${statusSpan} ${promoteBtn} ${delBtn}</li>`;
         }).join('')}${c.items.length > 8 ? `<li><em>+${c.items.length - 8} more</em></li>` : ''}</ul>`
       : '<em style="color:#94a3b8;">none</em>';
     return `
@@ -369,6 +374,22 @@ function wireDesignGuidelinesUpload(communityId) {
     if (e.dataTransfer.files.length > 0) uploadDesignGuidelines(communityId, e.dataTransfer.files);
   };
   input.onchange = () => { if (input.files.length > 0) uploadDesignGuidelines(communityId, input.files); };
+}
+
+async function promoteToCurrent(docId, label) {
+  if (!confirm(`Promote this document back to status=current?\n\n${label || docId}\n\nUse this when a previous "Replace" upload accidentally superseded a document that should still be active.`)) return;
+  try {
+    const r = await authedFetch('/api/documents/' + encodeURIComponent(docId), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'current' }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    await onCommunityChange();
+  } catch (e) {
+    alert('Promote failed: ' + e.message);
+  }
 }
 
 async function deleteLibraryDoc(docId, label) {
