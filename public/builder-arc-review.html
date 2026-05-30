@@ -1174,7 +1174,7 @@ async function loadMasterPlanFormPickers() {
       cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities found. Turn on builder_arc_active in Community Profile first.</em>';
     } else {
       cb.innerHTML = list.map((co) => `
-        <label style="display:flex; align-items:center; gap:8px; padding:4px 0; cursor:pointer;">
+        <label style="display:flex; align-items:center; gap:8px; padding:4px 0; cursor:pointer; color:#1a3a5c; font-weight:500;">
           <input type="checkbox" name="mpCommunity" value="${escapeHtml(co.id)}">
           <span>${escapeHtml(co.name)}</span>
         </label>
@@ -1327,7 +1327,7 @@ async function loadBulkPickers() {
       // Initial render — no builder selected yet, so leave checkboxes
       // unchecked. They auto-check as soon as a builder is picked.
       cb.innerHTML = _allActiveCommunities.map((c) => `
-        <label style="display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer;">
+        <label style="display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer; color:#1a3a5c; font-weight:500;">
           <input type="checkbox" name="bulkCommunity" value="${escapeHtml(c.id)}">
           <span>${escapeHtml(c.name)}</span>
         </label>
