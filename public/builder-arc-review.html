@@ -624,6 +624,9 @@ function rowHtml(item) {
         <span class="badge ${item.status}">${escapeHtml((item.status || '').replace(/_/g, ' '))}</span>
         ${fastTrack}
       </td>
+      <td class="action-cell">
+        <button class="row-delete-btn" data-id="${item.application_id}" data-ref="${escapeHtml(item.reference_number || item.application_id)}" title="Admin: delete this submission (cascades to assessments, responses, attachments)">🗑️</button>
+      </td>
     </tr>
   `;
 }
@@ -666,9 +669,21 @@ async function loadQueue() {
           <th>Plan / Elevation</th>
           <th>Age</th>
           <th>Status</th>
+          <th style="width:42px;"></th>
         </tr></thead>
         <tbody>${state.items.map(rowHtml).join('')}</tbody>
       </table>`;
+
+    // Wire the per-row delete buttons FIRST (before the row-click handler)
+    // so a button click doesn't also fire the row's "open detail" handler.
+    body.querySelectorAll('.row-delete-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const id = btn.dataset.id;
+        const ref = btn.dataset.ref;
+        confirmAndDeleteSubmission(id, ref);
+      });
+    });
 
     body.querySelectorAll('tbody tr').forEach((tr) => {
       tr.addEventListener('click', () => loadDetail(tr.dataset.id));
@@ -1158,6 +1173,58 @@ document.getElementById('masterPlanForm').addEventListener('submit', async (e) =
 // ----------------------------------------------------------------------------
 // Boot
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// Admin: hard-delete a builder submission
+// ----------------------------------------------------------------------------
+// Uses a type-to-confirm pattern (admin destructive op). User must type the
+// reference number (or first 8 chars of the UUID if no ref number) before
+// the DELETE fires. Server enforces admin role — non-admins see a 403.
+async function confirmAndDeleteSubmission(id, ref) {
+  const refDisplay = ref || id.slice(0, 8);
+  const typed = prompt(
+    `Hard-delete this submission and ALL its assessments, responses, and attachments?\n\n` +
+    `This is irreversible — the DB cascade removes related records. Storage PDFs (plan sets, letter PDFs) become orphans (staff sweep later).\n\n` +
+    `To confirm, type: ${refDisplay}`
+  );
+  if (typed === null) return;  // cancelled
+  if (typed.trim() !== refDisplay) {
+    alert('Confirmation text did not match. Delete cancelled.');
+    return;
+  }
+  try {
+    const r = await fetch('/api/builder-applications/' + encodeURIComponent(id), { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    alert(`Deleted ${j.deleted?.reference_number || refDisplay}.${j.orphaned_storage_paths?.length ? ` (${j.orphaned_storage_paths.length} storage path${j.orphaned_storage_paths.length === 1 ? '' : 's'} orphaned for later sweep)` : ''}`);
+    loadQueue();  // refresh the list
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+// Small style nudge for the per-row delete button — appended dynamically
+// so we don't touch the main <style> block.
+(function ensureDeleteBtnStyles() {
+  if (document.getElementById('row-delete-btn-styles')) return;
+  const s = document.createElement('style');
+  s.id = 'row-delete-btn-styles';
+  s.textContent = `
+    td.action-cell { text-align: center; padding-right: 12px; }
+    .row-delete-btn {
+      background: transparent; border: 1px solid transparent;
+      color: var(--ink-faint); cursor: pointer;
+      font-size: 14px; padding: 4px 8px; border-radius: 5px;
+      opacity: 0.45; transition: all 0.15s;
+    }
+    tr:hover .row-delete-btn { opacity: 0.85; }
+    .row-delete-btn:hover {
+      background: #fee2e2; color: #b91c1c; border-color: #fecaca;
+      opacity: 1;
+    }
+  `;
+  document.head.appendChild(s);
+})();
+
 (async function init() {
   await loadCommunities();
   await loadQueue();

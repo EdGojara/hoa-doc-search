@@ -477,6 +477,81 @@ router.get('/', async (req, res) => {
 });
 
 // ============================================================================
+// DELETE /api/builder-applications/:id — admin-only hard delete
+// Removes the submission + cascade-deletes its assessments, responses, and
+// attachments via the schema's ON DELETE CASCADE FKs (migration 080).
+//
+// Storage cleanup: PDFs stored under builder_application_attachments
+// .storage_path and builder_application_responses.letter_pdf_path become
+// orphans in the Supabase storage bucket — logged for later sweep but
+// NOT auto-deleted (admin destructive op should be reversible at storage
+// layer in case the delete was wrong).
+//
+// Used to clean up test submissions, or admin-corrective delete of a
+// submission that landed against the wrong property / wrong builder.
+// ============================================================================
+router.delete('/:id', async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ error: 'id required' });
+
+    // Fetch first so we can log what we're deleting + return useful confirmation
+    const { data: app, error: gErr } = await supabase
+      .from('builder_applications')
+      .select('id, reference_number, street_address, lot_number, plan_number, elevation, status')
+      .eq('id', id)
+      .maybeSingle();
+    if (gErr) {
+      console.error('[builder_applications.delete] lookup failed:', gErr.message);
+      return res.status(500).json({ error: safeErrorMessage(gErr) });
+    }
+    if (!app) return res.status(404).json({ error: 'submission not found' });
+
+    // Collect orphan storage paths (audit trail; manual sweep later if needed)
+    const [attsRes, respsRes] = await Promise.all([
+      supabase.from('builder_application_attachments').select('storage_path').eq('application_id', id),
+      supabase.from('builder_application_responses').select('letter_pdf_path').eq('application_id', id),
+    ]);
+    const orphans = [];
+    (attsRes.data || []).forEach((a) => { if (a.storage_path) orphans.push(a.storage_path); });
+    (respsRes.data || []).forEach((r) => { if (r.letter_pdf_path) orphans.push(r.letter_pdf_path); });
+
+    // The cascade FKs handle the children. Single DELETE on parent.
+    const { error: dErr } = await supabase
+      .from('builder_applications')
+      .delete()
+      .eq('id', id);
+    if (dErr) {
+      console.error('[builder_applications.delete] delete failed:', dErr.message);
+      return res.status(500).json({ error: safeErrorMessage(dErr) });
+    }
+
+    console.log('[builder_applications.delete] admin',
+      ctx.user && ctx.user.email,
+      'deleted', app.reference_number || id,
+      '· orphaned storage paths:', orphans.length);
+
+    res.json({
+      ok: true,
+      deleted: {
+        id: app.id,
+        reference_number: app.reference_number,
+        address: app.street_address,
+        lot: app.lot_number,
+        plan: `${app.plan_number} / ${app.elevation}`,
+        status_at_delete: app.status,
+      },
+      orphaned_storage_paths: orphans,
+    });
+  } catch (err) {
+    console.error('[builder_applications.delete]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /api/builder-applications/:id
 // Returns full detail: application + community + builder_company + master_plan
 //          + attachments + assessments + responses (latest first)
