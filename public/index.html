@@ -6274,6 +6274,7 @@
         <h3 style="margin:0;">🧠 askEd coverage</h3>
         <div style="display:flex; gap:6px; align-items:center;">
           <button class="secondary-btn" onclick="docsLoadCoverage()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+          <button class="secondary-btn" onclick="location.href='/admin-library-audit.html'" style="font-size:12px; padding:6px 14px;" title="Per-community document inventory — what's in library_documents vs. what's expected, with a Replace Design Guidelines tool">📒 Library audit</button>
           <button class="secondary-btn" onclick="docsApplyMigrations()" id="docsApplyMigBtn" style="font-size:12px; padding:6px 14px;" title="Apply migrations/*.sql that haven't landed yet. Bypasses the Supabase SQL editor by connecting via DATABASE_URL.">🗄️ Apply pending migrations</button>
           <button class="secondary-btn" onclick="docsQueueThinExtractionReindex()" id="docsThinReindexBtn" style="font-size:12px; padding:6px 14px;" title="Find docs marked 'indexed' but with suspiciously thin extracted text (likely uploaded pre-OCR pipeline) and re-queue them for OCR reprocessing">🔍 Re-OCR suspect scans</button>
           <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
