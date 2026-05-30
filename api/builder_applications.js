@@ -560,7 +560,14 @@ router.get('/', async (req, res) => {
 // Used to clean up test submissions, or admin-corrective delete of a
 // submission that landed against the wrong property / wrong builder.
 // ============================================================================
-router.delete('/:id', async (req, res) => {
+// Reusable UUID-shape guard. Lets non-UUID single-segment paths
+// (/master-plans, /builder-companies, etc.) fall through to subsequent
+// routes instead of erroring with "invalid input syntax for type uuid".
+// Hit this scar twice already — guarding the /:id handlers permanently.
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+router.delete('/:id', async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
   try {
     const { requireAdmin } = require('./users');
     const ctx = await requireAdmin(req, res);
@@ -626,7 +633,8 @@ router.delete('/:id', async (req, res) => {
 // Returns full detail: application + community + builder_company + master_plan
 //          + attachments + assessments + responses (latest first)
 // ============================================================================
-router.get('/:id', async (req, res) => {
+router.get('/:id', async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
   try {
     const [appResp, assessResp, respResp, attResp] = await Promise.all([
       supabase
