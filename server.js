@@ -447,6 +447,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/builders\/[^/]+$/,                    // /builders/:slug — builder submission form (DRB, etc.)
   /^\/builders\/status\/[^/]+$/,            // /builders/status/:reference — builder submission status lookup
   /^\/august-meadows-submission-form\.html$/, // standalone printable form for DRB's June batch (Karla's email-form workflow)
+  /^\/forms\/august-meadows-submission\.pdf$/, // server-rendered PDF version of the same form (puppeteer print)
   /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
   /^\/portal-login\.html$/,                 // magic-link entry page
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)
@@ -913,6 +914,27 @@ app.use('/api/community-map', communityMapRouter);
 // missed deed transfers Vantaca didn't pick up. See migration 122.
 const { router: appraisalRouter } = require('./api/appraisal');
 app.use('/api/appraisal', appraisalRouter);
+
+// PDF export of the printable submission form so Ed can email Karla a static
+// attachment alongside the live link. Renders the existing HTML form via
+// puppeteer (same path the financial PDF pipeline uses). Public-accessible —
+// the form itself is already in _STAFF_GATE_PUBLIC for the same reason.
+app.get('/forms/august-meadows-submission.pdf', async (req, res) => {
+  try {
+    const fs = require('fs');
+    const html = fs.readFileSync(
+      require('path').join(__dirname, 'public', 'august-meadows-submission-form.html'),
+      'utf8',
+    );
+    const pdfBuffer = await renderFinancialPdfBuffer(html);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="august-meadows-submission-form.pdf"');
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[forms] august-meadows pdf render failed:', err.message);
+    res.status(500).send('PDF generation failed: ' + err.message);
+  }
+});
 
 // Public clubhouse rental form + post-Stripe success page
 app.get('/clubhouse/:slug', (req, res) => {
