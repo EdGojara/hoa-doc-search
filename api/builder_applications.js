@@ -1954,32 +1954,77 @@ router.delete('/master-plans/orphans/:library_document_id', async (req, res) => 
 // ============================================================================
 router.get('/master-plans', async (req, res) => {
   try {
-    let q = supabase
-      .from('master_plans')
-      .select(`
-        *,
-        builder_company:builder_companies(id, company_name),
-        library_document:library_documents(id, title, storage_bucket, storage_path),
-        community_approvals:master_plan_community_approvals(
-          community_id, approved_at, approved_by, retired_at,
-          community:communities(id, name)
-        )
-      `)
-      .order('plan_number');
-
+    // Stage 1: master_plans rows (flat — no nested embeds, which can silently
+    // fail PostgREST relationship resolution when multiple FKs are present)
+    let q = supabase.from('master_plans').select('*').order('plan_number');
     if (req.query.builder_company_id) q = q.eq('builder_company_id', req.query.builder_company_id);
     if (req.query.status) q = q.eq('status', req.query.status);
+    const { data: planRows, error: planErr } = await q;
+    if (planErr) throw planErr;
+    const plans = planRows || [];
+    console.log(`[master-plans] base query returned ${plans.length} rows`);
 
-    const { data, error } = await q;
-    if (error) throw error;
+    if (plans.length === 0) {
+      return res.json({ master_plans: [], total: 0 });
+    }
 
-    let plans = data || [];
+    // Stage 2: hydrate builder + library_document + community approvals via
+    // separate flat queries. Small N, small joins — way more debuggable than
+    // a nested PostgREST embed.
+    const builderIds = [...new Set(plans.map((p) => p.builder_company_id).filter(Boolean))];
+    const libDocIds  = [...new Set(plans.map((p) => p.library_document_id).filter(Boolean))];
+    const planIds    = plans.map((p) => p.id);
+
+    const [buildersRes, libDocsRes, approvalsRes] = await Promise.all([
+      builderIds.length
+        ? supabase.from('builder_companies').select('id, company_name').in('id', builderIds)
+        : Promise.resolve({ data: [] }),
+      libDocIds.length
+        ? supabase.from('library_documents').select('id, title, storage_bucket, file_path').in('id', libDocIds)
+        : Promise.resolve({ data: [] }),
+      supabase.from('master_plan_community_approvals')
+        .select('master_plan_id, community_id, approved_at, approved_by, retired_at')
+        .in('master_plan_id', planIds),
+    ]);
+
+    if (buildersRes.error) throw buildersRes.error;
+    if (libDocsRes.error)  throw libDocsRes.error;
+    if (approvalsRes.error) throw approvalsRes.error;
+
+    const buildersById = Object.fromEntries((buildersRes.data || []).map((b) => [b.id, b]));
+    const libDocsById  = Object.fromEntries((libDocsRes.data || []).map((d) => [d.id, d]));
+
+    // Group approvals by master_plan_id + look up community names
+    const allCommunityIds = [...new Set((approvalsRes.data || []).map((a) => a.community_id).filter(Boolean))];
+    let communitiesById = {};
+    if (allCommunityIds.length) {
+      const { data: comms, error: commsErr } = await supabase
+        .from('communities').select('id, name').in('id', allCommunityIds);
+      if (commsErr) throw commsErr;
+      communitiesById = Object.fromEntries((comms || []).map((c) => [c.id, c]));
+    }
+    const approvalsByPlan = {};
+    for (const a of (approvalsRes.data || [])) {
+      (approvalsByPlan[a.master_plan_id] ||= []).push({
+        ...a,
+        community: communitiesById[a.community_id] || null,
+      });
+    }
+
+    let hydrated = plans.map((p) => ({
+      ...p,
+      builder_company: buildersById[p.builder_company_id] || null,
+      library_document: libDocsById[p.library_document_id] || null,
+      community_approvals: approvalsByPlan[p.id] || [],
+    }));
+
     if (req.query.community_id) {
-      plans = plans.filter((p) => (p.community_approvals || [])
+      hydrated = hydrated.filter((p) => p.community_approvals
         .some((a) => a.community_id === req.query.community_id && !a.retired_at));
     }
 
-    res.json({ master_plans: plans, total: plans.length });
+    console.log(`[master-plans] returning ${hydrated.length} hydrated rows`);
+    res.json({ master_plans: hydrated, total: hydrated.length });
   } catch (err) {
     console.error('[builder_applications] master plans list failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
@@ -1995,16 +2040,23 @@ router.get('/master-plans/:id/pdf', async (req, res) => {
   try {
     const { data: plan, error: planErr } = await supabase
       .from('master_plans')
-      .select('id, library_document_id, library_document:library_documents(storage_bucket, storage_path)')
+      .select('id, library_document_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (planErr) throw planErr;
     if (!plan) return res.status(404).json({ error: 'plan_not_found' });
-    const bucket = plan.library_document?.storage_bucket;
-    const path = plan.library_document?.storage_path;
-    if (!bucket || !path) return res.status(404).json({ error: 'plan_pdf_missing' });
+    if (!plan.library_document_id) return res.status(404).json({ error: 'plan_pdf_missing' });
+
+    const { data: doc, error: docErr } = await supabase
+      .from('library_documents')
+      .select('storage_bucket, file_path')
+      .eq('id', plan.library_document_id)
+      .maybeSingle();
+    if (docErr) throw docErr;
+    if (!doc?.storage_bucket || !doc?.file_path) return res.status(404).json({ error: 'plan_pdf_missing' });
+
     const { data: signed, error: signErr } = await supabase
-      .storage.from(bucket).createSignedUrl(path, 60 * 10);  // 10 min
+      .storage.from(doc.storage_bucket).createSignedUrl(doc.file_path, 60 * 10);  // 10 min
     if (signErr) throw signErr;
     res.redirect(signed.signedUrl);
   } catch (err) {
