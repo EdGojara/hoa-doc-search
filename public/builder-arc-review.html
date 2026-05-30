@@ -629,8 +629,45 @@ function toast(msg, kind) {
   t.textContent = msg;
   setTimeout(() => { t.className = 'toast'; }, 4200);
 }
+// Supabase client bootstrap — same pattern as index.html. Lets admin
+// endpoints (DELETE submission, bulk-commit) recognize the operator's
+// role from user_profiles via the Bearer token. Without this, the staff
+// cookie alone gets the page rendered but admin-required endpoints
+// return 403 (resolveUserRole has no JWT to lookup). Scar 2026-05-29.
+window.supa = null;
+(async function bootBuilderSupa() {
+  try {
+    const cfgRes = await fetch('/api/auth/config');
+    const cfg = await cfgRes.json();
+    if (!cfg.enabled) return;
+    // Load Supabase SDK lazily so the page doesn't break if the CDN is
+    // unreachable (admin features degrade gracefully).
+    if (!window.supabase) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+        s.onload = resolve;
+        s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+  } catch (e) {
+    console.warn('[builder-arc] supabase bootstrap failed:', e.message);
+  }
+})();
+
 async function api(method, path, body, isMultipart) {
   const opts = { method, headers: {} };
+  // Attach the operator's Supabase JWT so admin-gated endpoints can
+  // resolve the user_profiles role. No-op if not signed in (the staff
+  // cookie gate still applies to non-admin endpoints).
+  try {
+    if (window.supa) {
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (session?.access_token) opts.headers.Authorization = 'Bearer ' + session.access_token;
+    }
+  } catch (_) { /* tolerate; non-admin endpoints don't need the JWT */ }
   if (body && !isMultipart) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
@@ -1356,7 +1393,14 @@ async function startBulkExtract(files) {
   files.forEach((f) => fd.append('plan_pdfs', f));
 
   try {
-    const r = await fetch('/api/builder-applications/master-plans/bulk-extract', { method: 'POST', body: fd });
+    const headers = {};
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/builder-applications/master-plans/bulk-extract', { method: 'POST', headers, body: fd });
     const j = await r.json();
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     _bulkExtracted = (j.extracted || []).map((row) => ({ ...row, _selected: !row.error }));
@@ -1480,9 +1524,16 @@ async function bulkCommitAll() {
         stories: r.stories || null,
       })),
     };
+    const commitHeaders = { 'Content-Type': 'application/json' };
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) commitHeaders.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
     const r = await fetch('/api/builder-applications/master-plans/bulk-commit', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: commitHeaders,
       body: JSON.stringify(body),
     });
     const j = await r.json();
@@ -1531,7 +1582,14 @@ async function confirmAndDeleteSubmission(id, ref) {
     return;
   }
   try {
-    const r = await fetch('/api/builder-applications/' + encodeURIComponent(id), { method: 'DELETE' });
+    const headers = {};
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/builder-applications/' + encodeURIComponent(id), { method: 'DELETE', headers });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
     alert(`Deleted ${j.deleted?.reference_number || refDisplay}.${j.orphaned_storage_paths?.length ? ` (${j.orphaned_storage_paths.length} storage path${j.orphaned_storage_paths.length === 1 ? '' : 's'} orphaned for later sweep)` : ''}`);
