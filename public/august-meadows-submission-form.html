@@ -334,22 +334,19 @@
        PLAN
        ================================================================ -->
   <section>
-    <h2>Plan</h2>
-    <div class="row four">
+    <h2>Which pre-approved plan</h2>
+    <p class="subtitle" style="margin:0 0 6px;">We have your plans on file — plan number, elevation, square footage, stories, masonry %, roof pitch, brick spec. Just tell us which plan + elevation; we won't ask you to re-state the spec. If this is a NEW plan we haven't seen, email us first so we can register it.</p>
+    <div class="row three">
       <div class="fld">
         <label>Plan number<span class="req">*</span></label>
         <input type="text" name="plan_number" placeholder="e.g. 6512">
-      </div>
-      <div class="fld">
-        <label>Plan name<span class="opt"> — optional</span></label>
-        <input type="text" name="plan_name">
       </div>
       <div class="fld">
         <label>Elevation<span class="req">*</span></label>
         <input type="text" name="elevation" placeholder="e.g. A">
       </div>
       <div class="fld">
-        <label>Orientation</label>
+        <label>Orientation<span class="opt"> — if mirrored</span></label>
         <select name="elevation_orientation">
           <option value=""></option>
           <option>Standard</option>
@@ -358,55 +355,29 @@
         </select>
       </div>
     </div>
-    <div class="row three">
-      <div class="fld">
-        <label>Square footage</label>
-        <input type="number" name="square_footage" min="0" placeholder="min 1,500">
-      </div>
-      <div class="fld">
-        <label>Stories</label>
-        <select name="stories">
-          <option value=""></option>
-          <option>1</option>
-          <option>1.5</option>
-          <option>2</option>
-          <option>2.5</option>
-          <option>3</option>
-        </select>
-      </div>
-      <div class="fld">
-        <label>Master plan match<span class="opt"> — if pre-approved</span></label>
-        <input type="text" name="master_plan_match" placeholder="Plan + elevation (auto-fast-track)">
-      </div>
-    </div>
   </section>
 
   <!-- ================================================================
-       MATERIALS — the heart of the review
+       MATERIALS — buyer's per-home color/material choices (NOT the
+       community-wide requirements, which we already have on file)
        ================================================================ -->
   <section>
-    <h2>Materials &amp; Finishes</h2>
-    <p class="subtitle" style="margin:0 0 6px;">August Meadows requires &gt;35% masonry on front elevation; min 2-foot wrap on sides; brick must be king or queen per ASTM C216-87 in earth tones (no jumbo, no stucco brick); mortar joints tooled (no slump); no Dryvit or EIFS.</p>
+    <h2>Buyer's color &amp; material choices for this home</h2>
+    <p class="subtitle" style="margin:0 0 6px;">The community standards (masonry %, brick spec, roof pitch, prohibited materials) are already on file — we verify those against the plan PDF during review. What we DON'T have is the buyer's specific selections for this home: brick color, paint, trim, etc. Fill those below.</p>
     <table class="materials">
       <tr><td>Brick color</td><td><input type="text" name="brick_color"></td></tr>
       <tr><td>Brick manufacturer</td><td><input type="text" name="brick_manufacturer"></td></tr>
       <tr><td>Stone type / color</td><td><input type="text" name="stone_color"></td></tr>
       <tr><td>Stucco (color / type, if any)</td><td><input type="text" name="stucco_color"></td></tr>
-      <tr><td>Masonry % — front elevation</td><td><input type="number" name="masonry_percentage_front" min="0" max="100" placeholder="must be &gt;35%"></td></tr>
-      <tr><td>Masonry % — sides</td><td><input type="number" name="masonry_percentage_sides" min="0" max="100"></td></tr>
-      <tr><td>Masonry wrap distance (ft)</td><td><input type="number" name="masonry_wrap_feet" step="0.5" placeholder="2 ft minimum"></td></tr>
       <tr><td>Siding material (if any)</td><td><input type="text" name="siding_material"></td></tr>
       <tr><td>Siding color</td><td><input type="text" name="siding_color"></td></tr>
       <tr><td>Trim color</td><td><input type="text" name="trim_color"></td></tr>
       <tr><td>Shutter color (if present)</td><td><input type="text" name="shutter_color"></td></tr>
       <tr><td>Front door color</td><td><input type="text" name="front_door_color"></td></tr>
       <tr><td>Garage door style + color</td><td><input type="text" name="garage_door"></td></tr>
-      <tr><td>Roof material</td><td><input type="text" name="roof_material"></td></tr>
-      <tr><td>Roof color</td><td><input type="text" name="roof_color"></td></tr>
-      <tr><td>Roof pitch — sides<span class="opt" style="font-weight:400; color:var(--ink-faint);"> (8:12 min)</span></td><td><input type="text" name="roof_pitch_sides" placeholder="e.g. 8:12"></td></tr>
-      <tr><td>Roof pitch — porches<span class="opt" style="font-weight:400; color:var(--ink-faint);"> (6:12 min)</span></td><td><input type="text" name="roof_pitch_porches" placeholder="e.g. 6:12"></td></tr>
-      <tr><td>Fence material + height</td><td><input type="text" name="fence"></td></tr>
-      <tr><td>Driveway material</td><td><input type="text" name="driveway"></td></tr>
+      <tr><td>Roof color<span class="opt" style="font-weight:400; color:var(--ink-faint);"> (material per plan spec)</span></td><td><input type="text" name="roof_color"></td></tr>
+      <tr><td>Fence material + height (if applicable)</td><td><input type="text" name="fence"></td></tr>
+      <tr><td>Driveway material<span class="opt" style="font-weight:400; color:var(--ink-faint);"> (if different from plan default)</span></td><td><input type="text" name="driveway"></td></tr>
     </table>
 
     <div class="row two" style="margin-top:10px;">
@@ -421,7 +392,7 @@
     </div>
 
     <div class="fld" style="margin-top:8px;">
-      <label>Structural modifications from master plan<span class="opt"> — optional</span></label>
+      <label>Structural modifications from master plan<span class="opt"> — only if different from the plan on file</span></label>
       <textarea name="structural_modifications" rows="2" placeholder="e.g. extended back patio, optional 4th bedroom, no structural changes"></textarea>
     </div>
   </section>
