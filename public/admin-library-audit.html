@@ -1,0 +1,304 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Library Audit · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@500;600&family=Inter:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  body {
+    margin: 0; padding: 32px;
+    background: #f7f9fc;
+    color: #1a3050;
+    font-family: var(--font-sans, 'Inter', system-ui);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+  h1 { font-family: var(--font-serif, Georgia); font-size: 28px; margin: 0 0 4px; color: #1A3050; }
+  h1 em { color: #D4AF37; font-style: italic; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 22px; }
+  .controls {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 16px 20px; margin-bottom: 20px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap;
+  }
+  label { font-size: 12px; font-weight: 600; color: #475569; }
+  select { padding: 8px 12px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 14px; min-width: 220px; }
+  .stats { margin-left: auto; display: flex; gap: 20px; }
+  .stat { text-align: right; }
+  .stat .n { font-size: 22px; font-weight: 700; color: #1A3050; }
+  .stat .l { font-size: 11px; color: #6b7280; text-transform: uppercase; letter-spacing: 0.06em; }
+  .alert {
+    background: #fef2f2; border: 1px solid #fecaca; color: #991b1b;
+    padding: 12px 16px; border-radius: 8px; margin-bottom: 18px; font-size: 13.5px;
+  }
+  .alert strong { font-weight: 700; }
+  .panel {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    overflow: hidden; margin-bottom: 24px;
+  }
+  .panel h2 {
+    font-family: var(--font-serif, Georgia); font-size: 17px; font-weight: 600;
+    margin: 0; padding: 14px 20px; background: #1A3050; color: #fff;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  thead th {
+    text-align: left; padding: 10px 14px; background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0; color: #475569;
+    font-weight: 600; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em;
+  }
+  tbody td { padding: 10px 14px; border-bottom: 1px solid #f1f5f9; vertical-align: top; }
+  tr.missing { background: #fffbeb; }
+  tr.missing td { color: #854d0e; }
+  tr.required-missing { background: #fef2f2; }
+  tr.required-missing td { color: #991b1b; }
+  tr.present td:first-child { color: #166534; font-weight: 600; }
+  .pill {
+    display: inline-block; padding: 1px 8px; border-radius: 999px;
+    font-size: 11px; font-weight: 600;
+  }
+  .pill.req { background: #fef3c7; color: #854d0e; }
+  .pill.miss { background: #fee2e2; color: #991b1b; }
+  .pill.ok { background: #dcfce7; color: #166534; }
+  .pill.unknown { background: #e0e7ff; color: #3730a3; }
+  .items {
+    margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: #475569;
+    list-style: disc;
+  }
+  .items li { padding: 1px 0; }
+  .checklist {
+    background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
+    padding: 16px 20px; margin-bottom: 24px;
+  }
+  .checklist h2 {
+    font-family: var(--font-serif, Georgia); font-size: 16px; font-weight: 600;
+    margin: 0 0 10px; color: #1A3050;
+  }
+  .checklist table { font-size: 12.5px; }
+  .checklist .yes { color: #166534; font-weight: 600; }
+  .checklist .no { color: #b91c1c; font-weight: 600; }
+  .checklist .maybe { color: #854d0e; font-weight: 600; }
+  .loader { color: #94a3b8; font-style: italic; }
+  a.back { color: #1A3050; text-decoration: none; font-size: 13px; margin-bottom: 12px; display: inline-block; }
+  a.back:hover { color: #D4AF37; }
+</style>
+</head>
+<body>
+
+<a href="/" class="back">← Platform</a>
+<h1>📚 Library <em>Audit</em></h1>
+<div class="sub">Per-community inventory of documents in <code>library_documents</code> compared against the canonical category catalog.</div>
+
+<div class="controls">
+  <label>Community
+    <select id="communityPicker"><option value="">Loading…</option></select>
+  </label>
+  <div class="stats">
+    <div class="stat"><div class="n" id="statTotal">—</div><div class="l">Documents</div></div>
+    <div class="stat"><div class="n" id="statCurrent">—</div><div class="l">Current</div></div>
+    <div class="stat"><div class="n" id="statMissingReq">—</div><div class="l">Missing required</div></div>
+  </div>
+</div>
+
+<div id="missingRequiredAlert"></div>
+
+<div id="expectedFilesPanel"></div>
+
+<div class="panel">
+  <h2>All categories</h2>
+  <table>
+    <thead>
+      <tr>
+        <th style="width:22%;">Category</th>
+        <th style="width:8%;">Status</th>
+        <th style="width:8%;">Count</th>
+        <th>Files</th>
+      </tr>
+    </thead>
+    <tbody id="categoryBody">
+      <tr><td colspan="4" class="loader">Pick a community to audit.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<script>
+'use strict';
+
+// Hardcoded expected-files checklist for August Meadows (the OneDrive folder
+// Ed surfaced 2026-05-30). Used only for the per-community expected vs. actual
+// comparison at the top of the page. Future: per-community lists from a config
+// table; for now, AM is the only one wired.
+const EXPECTED_FILES_BY_SLUG = {
+  'august-meadows': [
+    { name: 'CCRs (August Meadows) 11.14.2024.pdf', category: 'declaration_ccrs' },
+    { name: 'Declaration.pdf', category: 'declaration_ccrs', note: 'may duplicate CCRs above' },
+    { name: 'Certificate of Formation.pdf', category: 'articles_of_incorporation' },
+    { name: 'Management Agreement August Meadows.pdf', category: 'management_agreement' },
+    { name: 'Management Certificate.pdf', category: 'other', note: 'no canonical category — falls to "other"' },
+    { name: 'August Meadows Projected budget.pdf', category: 'annual_budget' },
+    { name: 'August Meadows Section One.pdf', category: 'other', note: 'plat — no canonical category' },
+    { name: 'Residential Design Guidelines (Jones Creek Reserve) 2.5.2024.pdf', category: 'design_document', note: 'CRITICAL for ARC' },
+    { name: 'Residential Design Guidelines (Jones Creek Reserve) 2.5.2024 - Brightland Comments.pdf', category: 'design_document', note: 'markup version' },
+    { name: 'Access Production and Copying Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Dedicatory Instruments Enforcement Board Hearing and Fine Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Document Retention Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Generator Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Religious Items Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Security Measures Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Swimming Pool Enclosures Policy.pdf', category: 'resolutions_and_policies' },
+    { name: 'Amazon Receipt.GymWipes.pdf', category: 'other', note: 'vendor receipt — vendor_invoices live in their own table; this would be misfiled in library_documents' },
+    { name: 'AM STL MCDF.pdf', category: 'other', note: 'unclear acronym — needs Ed clarification' },
+  ],
+};
+
+function escapeHtml(s) {
+  if (s == null) return '';
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+
+async function loadCommunities() {
+  const sel = document.getElementById('communityPicker');
+  try {
+    const r = await fetch('/api/community-profile/');
+    const j = await r.json();
+    const list = (j.communities || [])
+      .filter((c) => c.active !== false)
+      .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    sel.innerHTML = '<option value="">— pick a community —</option>' +
+      list.map((c) => `<option value="${escapeHtml(c.id)}" data-slug="${escapeHtml(c.slug || '')}">${escapeHtml(c.name)}${c.builder_arc_active ? ' 🏗️' : ''}</option>`).join('');
+    sel.addEventListener('change', onCommunityChange);
+    // Auto-pick August Meadows if it's in the list
+    const am = list.find((c) => (c.slug || '').toLowerCase() === 'august-meadows' || (c.name || '').toLowerCase().includes('august meadow'));
+    if (am) { sel.value = am.id; onCommunityChange(); }
+  } catch (e) {
+    sel.innerHTML = '<option value="">Failed to load communities</option>';
+    console.error(e);
+  }
+}
+
+async function onCommunityChange() {
+  const sel = document.getElementById('communityPicker');
+  const communityId = sel.value;
+  if (!communityId) {
+    document.getElementById('categoryBody').innerHTML = '<tr><td colspan="4" class="loader">Pick a community to audit.</td></tr>';
+    document.getElementById('expectedFilesPanel').innerHTML = '';
+    document.getElementById('missingRequiredAlert').innerHTML = '';
+    document.getElementById('statTotal').textContent = '—';
+    document.getElementById('statCurrent').textContent = '—';
+    document.getElementById('statMissingReq').textContent = '—';
+    return;
+  }
+  const opt = sel.options[sel.selectedIndex];
+  const slug = opt ? opt.dataset.slug : '';
+
+  document.getElementById('categoryBody').innerHTML = '<tr><td colspan="4" class="loader">Loading audit…</td></tr>';
+
+  try {
+    const r = await fetch('/api/community-profile/' + encodeURIComponent(communityId) + '/library-audit');
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      throw new Error(j.error || `HTTP ${r.status}`);
+    }
+    const j = await r.json();
+    renderAudit(j, slug);
+  } catch (e) {
+    document.getElementById('categoryBody').innerHTML = `<tr><td colspan="4" style="color:#b91c1c;">Audit failed: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderAudit(j, slug) {
+  // Stats
+  document.getElementById('statTotal').textContent = j.total_documents;
+  document.getElementById('statCurrent').textContent = j.current_documents;
+  document.getElementById('statMissingReq').textContent = (j.missing_required_for_resale || []).length;
+
+  // Missing required alert
+  const alertDiv = document.getElementById('missingRequiredAlert');
+  if ((j.missing_required_for_resale || []).length > 0) {
+    alertDiv.innerHTML = `
+      <div class="alert">
+        <strong>${j.missing_required_for_resale.length} required-for-resale categor${j.missing_required_for_resale.length === 1 ? 'y is' : 'ies are'} missing.</strong>
+        These are needed for HOA resale packets: ${j.missing_required_for_resale.map((c) => `<code>${escapeHtml(c)}</code>`).join(', ')}.
+      </div>`;
+  } else {
+    alertDiv.innerHTML = '';
+  }
+
+  // Expected files comparison
+  const expected = EXPECTED_FILES_BY_SLUG[slug] || [];
+  const expectedPanel = document.getElementById('expectedFilesPanel');
+  if (expected.length > 0) {
+    // Build a flat searchable index of all current items
+    const allItems = [];
+    for (const c of j.categories) {
+      for (const it of (c.items || [])) {
+        allItems.push({ ...it, category: c.category });
+      }
+    }
+    const findMatch = (name) => {
+      const lower = name.toLowerCase();
+      return allItems.find((it) =>
+        (it.file_name_original || '').toLowerCase() === lower ||
+        (it.title || '').toLowerCase().includes(lower.replace(/\.pdf$/, '').slice(0, 30)));
+    };
+    const rows = expected.map((ef) => {
+      const match = findMatch(ef.name);
+      const statusCell = match
+        ? `<span class="yes">✓ in library</span>`
+        : `<span class="no">✗ NOT FOUND</span>`;
+      const catCell = match
+        ? `<code>${escapeHtml(match.category)}</code>${match.category !== ef.category ? ` <span class="maybe">(expected ${escapeHtml(ef.category)})</span>` : ''}`
+        : `<span class="maybe">expected: ${escapeHtml(ef.category)}</span>`;
+      const noteCell = ef.note ? `<span style="color:#94a3b8;">${escapeHtml(ef.note)}</span>` : '';
+      return `
+        <tr>
+          <td>${escapeHtml(ef.name)}</td>
+          <td>${statusCell}</td>
+          <td>${catCell}</td>
+          <td>${noteCell}</td>
+        </tr>`;
+    }).join('');
+    expectedPanel.innerHTML = `
+      <div class="checklist">
+        <h2>Files you have in OneDrive — are they ingested?</h2>
+        <table>
+          <thead>
+            <tr><th>OneDrive filename</th><th style="width:120px;">In library</th><th style="width:200px;">Category</th><th>Note</th></tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <p style="margin:10px 0 0; font-size:12px; color:#6b7280;">
+          Match is by exact filename or fuzzy title match. If a file shows "NOT FOUND" but you know it's in the system under a different filename, it's there — the match is best-effort.
+        </p>
+      </div>`;
+  } else {
+    expectedPanel.innerHTML = '';
+  }
+
+  // All categories table
+  const tbody = document.getElementById('categoryBody');
+  const rows = j.categories.map((c) => {
+    let rowClass = c.missing ? (c.required_for_resale ? 'required-missing' : 'missing') : 'present';
+    const statusPill = c.missing
+      ? (c.required_for_resale ? '<span class="pill miss">✗ missing (required)</span>' : '<span class="pill miss">✗ missing</span>')
+      : '<span class="pill ok">✓ present</span>';
+    const unknownPill = c.unknown_category ? '<span class="pill unknown">unknown category</span>' : '';
+    const requiredPill = c.required_for_resale ? '<span class="pill req">resale</span>' : '';
+    const itemsCell = c.items.length > 0
+      ? `<ul class="items">${c.items.slice(0, 6).map((i) => `<li>${escapeHtml(i.file_name_original || i.title || i.id.slice(0, 8))} <span style="color:#94a3b8;">(${escapeHtml(i.status)})</span></li>`).join('')}${c.items.length > 6 ? `<li><em>+${c.items.length - 6} more</em></li>` : ''}</ul>`
+      : '<em style="color:#94a3b8;">none</em>';
+    return `
+      <tr class="${rowClass}">
+        <td>${escapeHtml(c.display_name)} <code style="color:#94a3b8; font-size:11px;">${escapeHtml(c.category)}</code> ${unknownPill}</td>
+        <td>${statusPill} ${requiredPill}</td>
+        <td>${c.total_count} <span style="color:#94a3b8; font-size:11px;">(${c.current_count} current)</span></td>
+        <td>${itemsCell}</td>
+      </tr>`;
+  }).join('');
+  tbody.innerHTML = rows;
+}
+
+loadCommunities();
+</script>
+</body>
+</html>

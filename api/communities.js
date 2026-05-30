@@ -155,6 +155,23 @@ function mergeComputedAndManual(computed, manualFacts) {
 }
 
 // ----------------------------------------------------------------------------
+// GET / — minimal list for admin pickers (id, name, slug, builder_arc_active)
+// ----------------------------------------------------------------------------
+router.get('/', async (_req, res) => {
+  try {
+    const { data, error } = await supabase.from('communities')
+      .select('id, name, slug, builder_arc_active, active')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('name', { ascending: true });
+    if (error) throw error;
+    res.json({ communities: data || [] });
+  } catch (err) {
+    console.error('[community-profile] / list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /:communityId/full — everything in one call (for the admin page)
 // ----------------------------------------------------------------------------
 router.get('/:communityId/full', async (req, res) => {
