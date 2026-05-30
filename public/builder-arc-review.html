@@ -572,10 +572,15 @@
 
     <!-- Orphan PDFs section — collapsed by default; expands when banner clicked -->
     <div id="libOrphanSection" style="display:none; margin-bottom:18px;">
-      <h3 style="margin:0 0 8px; font-size:14px; font-weight:600; color:#854d0e;">⚠ Uploaded but not registered</h3>
-      <p style="margin:0 0 8px; font-size:12px; color:#475569; line-height:1.5;">
-        These PDFs were uploaded but never linked to a master plan. Either finish registering each one (pick builder, plan#, elevation, community) or delete if it shouldn't have been uploaded.
-      </p>
+      <div style="display:flex; align-items:center; justify-content:space-between; gap:14px; margin:0 0 8px;">
+        <div>
+          <h3 style="margin:0 0 4px; font-size:14px; font-weight:600; color:#854d0e;">⚠ Uploaded but not registered</h3>
+          <p style="margin:0; font-size:12px; color:#475569; line-height:1.5;">
+            One click runs AI extraction + auto-registers every orphan using the builder inferred from the filename and that builder's pre-approved communities. Anything the AI can't parse stays here for manual fill.
+          </p>
+        </div>
+        <button id="libOrphanAutoAllBtn" onclick="autoRegisterAllOrphans()" style="padding:9px 16px; background:var(--gold, #D4AF37); color:#1A3050; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer; white-space:nowrap;">🪄 Auto-register all</button>
+      </div>
       <div style="border:1px solid #fde047; border-radius:6px; overflow:hidden;">
         <div id="libOrphanList"></div>
       </div>
@@ -1586,17 +1591,19 @@ function renderOrphanRow(o) {
   const communityChecks = Object.values(_libCommunitiesById)
     .map((c) => `<label style="display:inline-flex; align-items:center; gap:4px; margin-right:10px; color:#1a3a5c; font-weight:500;"><input type="checkbox" data-orphan-community="${escapeHtml(o.id)}" value="${escapeHtml(c.id)}"> ${escapeHtml(c.name)}</label>`).join('');
   return `
-    <div style="border-bottom:1px solid #fde047; padding:12px 14px; background:#fffef5;" data-orphan-id="${escapeHtml(o.id)}">
+    <div style="border-bottom:1px solid #fde047; padding:12px 14px; background:#fffef5;" data-orphan-id="${escapeHtml(o.id)}" data-orphan-card="1">
       <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
         <div>
           <div style="font-weight:600; color:#1a3a5c; font-size:13px;">${escapeHtml(name)}</div>
           <div style="font-size:11.5px; color:#6b7280;">Uploaded ${escapeHtml(uploaded)}</div>
         </div>
         <div style="display:flex; gap:8px;">
-          <a href="/api/builder-applications/master-plans/orphans/${encodeURIComponent(o.id)}/pdf" target="_blank" style="color:var(--gold, #b8860b); text-decoration:none; font-weight:600; font-size:12px; align-self:center;" data-no-pdf="true">View PDF</a>
+          <a href="/api/builder-applications/master-plans/orphans/${encodeURIComponent(o.id)}/pdf" target="_blank" style="color:#b8860b; text-decoration:none; font-weight:600; font-size:12px; align-self:center;" data-no-pdf="true">View PDF</a>
+          <button onclick="autoFillOrphan('${escapeHtml(o.id)}')" data-orphan-autofill-btn="${escapeHtml(o.id)}" style="padding:6px 10px; background:#fff; border:1px solid #d4af37; color:#854d0e; border-radius:6px; font-size:12px; cursor:pointer; font-weight:600;">🪄 Auto-fill</button>
           <button onclick="deleteOrphan('${escapeHtml(o.id)}', '${escapeHtml(name).replace(/'/g, "\\'")}')" style="padding:6px 10px; background:#fff; border:1px solid #fecaca; color:#b91c1c; border-radius:6px; font-size:12px; cursor:pointer;">Delete</button>
         </div>
       </div>
+      <div data-orphan-status="${escapeHtml(o.id)}" style="display:none; margin-top:8px; font-size:12px; padding:6px 10px; border-radius:4px;"></div>
       <div style="display:grid; grid-template-columns: 1fr 1fr 80px 100px 80px; gap:8px; margin-top:10px;">
         <select data-orphan-field="builder_company_id" data-orphan-id="${escapeHtml(o.id)}" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:12.5px;">
           <option value="">— pick builder —</option>
@@ -1611,10 +1618,138 @@ function renderOrphanRow(o) {
         <span style="color:#475569; font-weight:500;">Pre-approve at: </span>${communityChecks || '<em style="color:#94a3b8;">No active communities</em>'}
       </div>
       <div style="margin-top:8px; display:flex; justify-content:flex-end;">
-        <button onclick="registerOrphan('${escapeHtml(o.id)}')" style="padding:7px 14px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:6px; font-size:12.5px; font-weight:600; cursor:pointer;">Finish registering</button>
+        <button onclick="registerOrphan('${escapeHtml(o.id)}')" style="padding:7px 14px; background:#1A3050; color:#fff; border:none; border-radius:6px; font-size:12.5px; font-weight:600; cursor:pointer;">Finish registering</button>
       </div>
     </div>
   `;
+}
+
+function setOrphanStatus(libDocId, kind, text) {
+  const el = document.querySelector(`[data-orphan-status="${libDocId}"]`);
+  if (!el) return;
+  el.style.display = 'block';
+  el.textContent = text;
+  if (kind === 'progress') {
+    el.style.background = '#eff6ff';
+    el.style.border = '1px solid #93c5fd';
+    el.style.color = '#1e3a8a';
+  } else if (kind === 'success') {
+    el.style.background = '#dcfce7';
+    el.style.border = '1px solid #bbf7d0';
+    el.style.color = '#166534';
+  } else if (kind === 'error') {
+    el.style.background = '#fef2f2';
+    el.style.border = '1px solid #fecaca';
+    el.style.color = '#991b1b';
+  } else {
+    el.style.background = '#fffbeb';
+    el.style.border = '1px solid #fde047';
+    el.style.color = '#854d0e';
+  }
+}
+
+// Auto-fill: extract AI metadata + pre-populate the form. Lets operator
+// verify before clicking Finish registering. Note: a single PDF may have
+// multiple elevations — auto-fill picks the FIRST one for the form. Use
+// 🪄 Auto-register all for true multi-elevation registration.
+async function autoFillOrphan(libDocId) {
+  const btn = document.querySelector(`[data-orphan-autofill-btn="${libDocId}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = '🪄 Extracting…'; }
+  setOrphanStatus(libDocId, 'progress', 'Running AI extraction…');
+  try {
+    const headers = {};
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/builder-applications/master-plans/orphans/' + encodeURIComponent(libDocId) + '/extract',
+      { method: 'POST', headers });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+    const setField = (field, val) => {
+      const el = document.querySelector(`[data-orphan-field="${field}"][data-orphan-id="${libDocId}"]`);
+      if (el && val != null) el.value = val;
+    };
+    if (j.inferred_builder_company_id) setField('builder_company_id', j.inferred_builder_company_id);
+    const first = (j.elevations || [])[0];
+    if (first) {
+      if (first.plan_number) setField('plan_number', first.plan_number);
+      if (first.plan_name)   setField('plan_name', first.plan_name);
+      if (first.elevation)   setField('elevation', first.elevation);
+      if (first.square_footage != null) setField('square_footage', first.square_footage);
+    }
+    // Pre-check communities
+    const suggested = new Set(j.suggested_community_ids || []);
+    document.querySelectorAll(`[data-orphan-community="${libDocId}"]`).forEach((cb) => {
+      cb.checked = suggested.has(cb.value);
+    });
+
+    const elevCount = (j.elevations || []).length;
+    const extra = elevCount > 1 ? ` · PDF has ${elevCount} elevations — use 🪄 Auto-register all to register them all.` : '';
+    setOrphanStatus(libDocId, 'success', `AI: ${j.ai_confidence || 'low'} confidence${extra}`);
+  } catch (e) {
+    setOrphanStatus(libDocId, 'error', 'Auto-fill failed: ' + e.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🪄 Auto-fill'; }
+  }
+}
+
+// Auto-register all: extract + register every orphan sequentially. Cards
+// that succeed disappear on reload; failures stay visible with status.
+async function autoRegisterAllOrphans() {
+  const btn = document.getElementById('libOrphanAutoAllBtn');
+  if (!_libOrphansCache || _libOrphansCache.length === 0) return;
+  if (!confirm(`Run AI extraction + auto-register on all ${_libOrphansCache.length} orphan PDF(s)?\n\nBuilder is inferred from each PDF's title.\nCommunity pre-approval uses the builder's active communities.\nDuplicates are skipped.\n\nProceed?`)) return;
+
+  const initialBtnText = btn.textContent;
+  btn.disabled = true;
+  let registeredCount = 0;
+  let skippedCount = 0;
+  let failedCount = 0;
+
+  for (let i = 0; i < _libOrphansCache.length; i++) {
+    const o = _libOrphansCache[i];
+    btn.textContent = `🪄 Working ${i + 1} / ${_libOrphansCache.length}…`;
+    setOrphanStatus(o.id, 'progress', 'Running AI + registering…');
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        if (window.supa) {
+          const { data: { session } } = await window.supa.auth.getSession();
+          if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+        }
+      } catch (_) {}
+      const r = await fetch(
+        '/api/builder-applications/master-plans/orphans/' + encodeURIComponent(o.id) + '/auto-register',
+        { method: 'POST', headers, body: '{}' }
+      );
+      const j = await r.json();
+      if (!r.ok) {
+        failedCount++;
+        setOrphanStatus(o.id, 'error', j.error || `HTTP ${r.status}`);
+        continue;
+      }
+      const regN = (j.registered || []).length;
+      const skipN = (j.skipped || []).length;
+      registeredCount += regN;
+      skippedCount += skipN;
+      const parts = [];
+      if (regN > 0) parts.push(`${regN} registered`);
+      if (skipN > 0) parts.push(`${skipN} skipped`);
+      setOrphanStatus(o.id, regN > 0 ? 'success' : 'warn', parts.join(' · ') || 'no rows produced');
+    } catch (e) {
+      failedCount++;
+      setOrphanStatus(o.id, 'error', 'Failed: ' + e.message);
+    }
+  }
+
+  btn.disabled = false;
+  btn.textContent = initialBtnText;
+  alert(`Done.\nRegistered: ${registeredCount} master plan rows\nSkipped (duplicates): ${skippedCount}\nFailed: ${failedCount}\n\nThe library will now refresh.`);
+  await Promise.all([loadRegisteredPlans(), loadOrphans()]);
 }
 
 async function registerOrphan(libDocId) {

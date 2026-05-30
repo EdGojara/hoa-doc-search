@@ -45,6 +45,86 @@ const SERVICE_TYPE = 'arc_builder_new_construction';
 const STORAGE_BUCKET = 'documents';
 const ARCHIVE_BCC = process.env.ARCHIVE_BCC_EMAIL || 'Archive1Emails@bedrocktx.com';
 
+// Shared master-plan-PDF extraction prompt. Used by /master-plans/bulk-extract
+// and /master-plans/orphans/:id/extract so the orphan recovery flow can re-run
+// AI extraction instead of forcing operator manual entry on PDFs the AI
+// already understands.
+const MASTER_PLAN_EXTRACT_PROMPT = `You are reviewing a builder's home plan PDF. Extract EVERY elevation shown in this PDF.
+
+A single PDF often shows multiple elevations of the same base plan (e.g., Plan 6512 Elevation A, B, and C — usually one cover sheet listing all three then detail pages per elevation). Return ALL elevations as an array. If the PDF shows only one elevation, return a single-element array.
+
+Each entry in the array:
+- plan_number: The plan identifier (e.g., "6512"). Usually shared across elevations of the same plan.
+- plan_name: The marketing/series name (e.g., "The Tuscany"). Usually shared.
+- elevation: The elevation letter or code shown (REQUIRED — A, B, C, Standard, etc.). Must be unique within the array.
+- square_footage: Heated/living-area square footage as an integer. May vary per elevation. null if not stated.
+- stories: Number of stories (1, 1.5, 2, 2.5, 3). null if not stated.
+
+Plus top-level fields about the PDF as a whole:
+- ai_confidence: "high" | "medium" | "low" — your overall confidence in the extraction
+- ai_notes: Any caveats
+
+Look at: the title block (usually top-right or bottom of the cover sheet), the schedule of plans table (often a grid showing each elevation's footprint + sqft), square footage callouts, elevation header labels on per-elevation detail pages.
+
+Return ONLY valid JSON, no preamble:
+{
+  "elevations": [
+    {"plan_number":"6512","plan_name":"Tuscany","elevation":"A","square_footage":2150,"stories":2}
+  ],
+  "ai_confidence":"high",
+  "ai_notes":"Schedule of plans on page 1 lists A, B, C."
+}
+
+If you can identify the plan number + at least one elevation, return what you can. If you cannot identify even the plan number, return {"elevations":[], "ai_confidence":"low", "ai_notes":"explain why"}.`;
+
+// Run AI extraction on a master-plan PDF buffer. Returns the parsed object
+// or null if extraction couldn't produce structured JSON. Throws if the
+// Anthropic SDK / API key isn't configured.
+async function extractMasterPlanFromPdfBuffer(pdfBuffer) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
+  const Anthropic = require('@anthropic-ai/sdk');
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const resp = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 800,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } },
+        { type: 'text', text: MASTER_PLAN_EXTRACT_PROMPT },
+      ],
+    }],
+  });
+  const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
+  const jsonMatch = txt.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { extracted: null, raw: txt };
+  try {
+    return { extracted: JSON.parse(jsonMatch[0]), raw: txt };
+  } catch (_) {
+    return { extracted: null, raw: txt };
+  }
+}
+
+// Infer the builder_company_id from a library_documents.title formatted as
+// "${company.company_name} — ${filename}". Used by orphan auto-register to
+// avoid forcing the operator to pick the builder when the title carries it.
+async function inferBuilderFromTitle(title) {
+  if (!title || typeof title !== 'string') return null;
+  // Title format from bulk-extract: "${company_name} — ${filename}". The em-dash
+  // is the separator. Take everything before " — " as the candidate name.
+  const dashIdx = title.indexOf(' — ');
+  if (dashIdx < 0) return null;
+  const candidate = title.slice(0, dashIdx).trim();
+  if (!candidate) return null;
+  const { data } = await supabase
+    .from('builder_companies')
+    .select('id')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .ilike('company_name', candidate)
+    .maybeSingle();
+  return data?.id || null;
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024, files: 12 },
@@ -1809,6 +1889,212 @@ router.get('/master-plans/orphans/:library_document_id/pdf', async (req, res) =>
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
+
+// ============================================================================
+// POST /api/builder-applications/master-plans/orphans/:library_document_id/extract
+// ----------------------------------------------------------------------------
+// Runs AI extraction on an orphan PDF and returns the structured fields the
+// frontend needs to pre-populate the registration form. Also infers the
+// builder_company_id from the library_documents.title prefix + suggests
+// community_ids from that builder's active_community_ids.
+//
+// No DB writes. The frontend uses this to fill in the form, operator
+// verifies, then either calls /register or /auto-register to commit.
+// ============================================================================
+router.post('/master-plans/orphans/:library_document_id/extract', async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const libId = req.params.library_document_id;
+    const { data: doc, error: docErr } = await supabase
+      .from('library_documents')
+      .select('id, title, file_path, category')
+      .eq('id', libId)
+      .maybeSingle();
+    if (docErr) throw docErr;
+    if (!doc) return res.status(404).json({ error: 'library_document_not_found' });
+    if (doc.category !== 'master_plan_pdf') return res.status(400).json({ error: 'not a master plan PDF' });
+    if (!doc.file_path) return res.status(404).json({ error: 'pdf_missing' });
+
+    // Download the PDF bytes from storage so we can hand it to Claude
+    const { data: blob, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(doc.file_path);
+    if (dlErr) throw dlErr;
+    const arrayBuf = await blob.arrayBuffer();
+    const pdfBuffer = Buffer.from(arrayBuf);
+
+    // AI extract
+    let extracted = null;
+    let raw = null;
+    try {
+      const result = await extractMasterPlanFromPdfBuffer(pdfBuffer);
+      extracted = result.extracted;
+      raw = result.raw;
+    } catch (aiErr) {
+      console.warn('[orphan-extract] AI failed for', doc.id, '·', aiErr.message);
+    }
+
+    // Infer builder from title
+    const inferredBuilderId = await inferBuilderFromTitle(doc.title);
+
+    // Suggest community pre-approvals from the inferred builder's active_community_ids
+    let suggestedCommunityIds = [];
+    if (inferredBuilderId) {
+      const { data: builder } = await supabase
+        .from('builder_companies')
+        .select('active_community_ids')
+        .eq('id', inferredBuilderId)
+        .maybeSingle();
+      if (Array.isArray(builder?.active_community_ids)) {
+        suggestedCommunityIds = builder.active_community_ids;
+      }
+    }
+
+    res.json({
+      ok: true,
+      library_document_id: libId,
+      elevations: Array.isArray(extracted?.elevations) ? extracted.elevations : [],
+      ai_confidence: extracted?.ai_confidence || 'low',
+      ai_notes: extracted?.ai_notes || null,
+      inferred_builder_company_id: inferredBuilderId,
+      suggested_community_ids: suggestedCommunityIds,
+      raw_extracted: raw,
+    });
+  } catch (err) {
+    console.error('[builder_applications] orphan extract failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/master-plans/orphans/:library_document_id/auto-register
+// ----------------------------------------------------------------------------
+// Runs extract + creates master_plans rows + community approvals in one call.
+// Fans out into one master_plans row per elevation when the PDF shows
+// multiple. Handles duplicate-key collisions gracefully (existing plan with
+// same builder+plan#+elevation = skip + report).
+//
+// Body (all optional — server infers when missing):
+//   { builder_company_id?, community_ids?: [uuid, ...] }
+// Returns: { ok, registered: [{ plan_number, elevation, master_plan_id }],
+//            skipped: [{ reason, plan_number, elevation }],
+//            ai_confidence, ai_notes }
+// ============================================================================
+router.post('/master-plans/orphans/:library_document_id/auto-register',
+  express.json({ limit: '8kb' }),
+  async (req, res) => {
+    try {
+      const { requireAdmin } = require('./users');
+      const ctx = await requireAdmin(req, res);
+      if (!ctx) return;
+
+      const libId = req.params.library_document_id;
+      const { data: doc, error: docErr } = await supabase
+        .from('library_documents')
+        .select('id, title, file_path, category')
+        .eq('id', libId)
+        .maybeSingle();
+      if (docErr) throw docErr;
+      if (!doc) return res.status(404).json({ error: 'library_document_not_found' });
+      if (doc.category !== 'master_plan_pdf') return res.status(400).json({ error: 'not a master plan PDF' });
+      if (!doc.file_path) return res.status(404).json({ error: 'pdf_missing' });
+
+      // Already linked? Don't re-register.
+      const { data: existing } = await supabase.from('master_plans')
+        .select('id').eq('library_document_id', libId).limit(1);
+      if (existing && existing.length > 0) {
+        return res.status(409).json({ error: 'orphan already linked to a master plan — refresh the page' });
+      }
+
+      // 1. Builder — from body, else infer from title
+      let builderId = req.body?.builder_company_id || null;
+      if (!builderId) builderId = await inferBuilderFromTitle(doc.title);
+      if (!builderId) {
+        return res.status(400).json({ error: 'builder_unknown — title did not match any builder + none provided' });
+      }
+      const { data: builder } = await supabase
+        .from('builder_companies').select('id, company_name, active_community_ids')
+        .eq('id', builderId).eq('management_company_id', BEDROCK_MGMT_CO_ID).maybeSingle();
+      if (!builder) return res.status(404).json({ error: 'builder_company_not_found' });
+
+      // 2. Community pre-approvals — from body, else from builder's active list
+      let communityIds = Array.isArray(req.body?.community_ids) ? req.body.community_ids.filter(Boolean) : null;
+      if (!communityIds || communityIds.length === 0) {
+        communityIds = Array.isArray(builder.active_community_ids) ? builder.active_community_ids : [];
+      }
+
+      // 3. AI extract
+      const { data: blob, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(doc.file_path);
+      if (dlErr) throw dlErr;
+      const pdfBuffer = Buffer.from(await blob.arrayBuffer());
+      const { extracted } = await extractMasterPlanFromPdfBuffer(pdfBuffer);
+      const elevations = Array.isArray(extracted?.elevations) ? extracted.elevations : [];
+      if (elevations.length === 0) {
+        return res.status(422).json({
+          error: 'ai_extract_empty — could not identify plan_number + elevation. Fill in manually.',
+          ai_confidence: extracted?.ai_confidence || 'low',
+          ai_notes: extracted?.ai_notes || null,
+        });
+      }
+
+      // 4. Create one master_plans row per elevation
+      const registered = [];
+      const skipped = [];
+      for (const elev of elevations) {
+        if (!elev?.plan_number || !elev?.elevation) {
+          skipped.push({ reason: 'missing plan_number or elevation', plan_number: elev?.plan_number || null, elevation: elev?.elevation || null });
+          continue;
+        }
+        const { data: plan, error: planErr } = await supabase
+          .from('master_plans')
+          .insert({
+            builder_company_id: builder.id,
+            plan_number: String(elev.plan_number).trim(),
+            plan_name: elev.plan_name ? String(elev.plan_name).trim() : null,
+            elevation: String(elev.elevation).trim(),
+            square_footage: elev.square_footage ? parseInt(elev.square_footage, 10) : null,
+            stories: elev.stories ? parseFloat(elev.stories) : null,
+            status: 'approved',
+            library_document_id: libId,
+          })
+          .select('id, plan_number, elevation')
+          .single();
+        if (planErr) {
+          if (planErr.code === '23505') {
+            skipped.push({ reason: 'duplicate', plan_number: elev.plan_number, elevation: elev.elevation });
+          } else {
+            skipped.push({ reason: planErr.message, plan_number: elev.plan_number, elevation: elev.elevation });
+          }
+          continue;
+        }
+        // Approve at each community
+        for (const cid of communityIds) {
+          try {
+            await supabase.from('master_plan_community_approvals').insert({
+              master_plan_id: plan.id,
+              community_id: cid,
+              approved_by: 'orphan_auto_register',
+            });
+          } catch (_) {}
+        }
+        registered.push({ master_plan_id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation });
+      }
+
+      res.json({
+        ok: true,
+        builder_company: { id: builder.id, name: builder.company_name },
+        community_ids: communityIds,
+        registered,
+        skipped,
+        ai_confidence: extracted?.ai_confidence || null,
+        ai_notes: extracted?.ai_notes || null,
+      });
+    } catch (err) {
+      console.error('[builder_applications] orphan auto-register failed:', err.message);
+      res.status(500).json({ error: safeErrorMessage(err) });
+    }
+  });
 
 // ============================================================================
 // POST /api/builder-applications/master-plans/orphans/:library_document_id/register
