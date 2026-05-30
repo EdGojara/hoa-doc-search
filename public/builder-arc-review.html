@@ -385,9 +385,88 @@
   <div class="module-name">Builder <em>ARC Review</em></div>
   <div class="util">
     <a href="/">← Platform</a>
+    <a href="#" id="uploadMasterPlanBtn">📐 Upload master plan</a>
     <a href="#" id="refreshBtn">Refresh</a>
   </div>
 </header>
+
+<!-- Admin: direct master plan upload modal. Lets staff register builder plans
+     (DRB Plan 6512-A, etc.) WITHOUT going through the submission → approve →
+     promote workflow. Useful when a builder hands over their plan inventory
+     in bulk. Hidden by default; opened from the header link above. -->
+<div id="masterPlanModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto;">
+  <div style="background:#fff; max-width:680px; width:100%; border-radius:12px; padding:24px 28px; box-shadow:0 8px 32px rgba(0,0,0,0.3); font-family:var(--font-sans, system-ui);">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <h2 style="margin:0; font-family:var(--font-serif, Georgia); font-size:22px; color:var(--navy, #1A3050);">📐 Upload master plan</h2>
+      <button onclick="closeMasterPlanModal()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
+    </div>
+    <p style="margin:0 0 18px; font-size:13px; color:#475569; line-height:1.5;">
+      Register a builder's plan PDF directly into the master plan library. Once registered, future submissions of this plan auto-fast-track at any community where it's pre-approved (2-day SLA instead of 5).
+    </p>
+    <form id="masterPlanForm" style="display:flex; flex-direction:column; gap:14px;">
+      <div>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Builder *</label>
+        <select id="mpBuilderCompany" required style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+          <option value="">— pick a builder —</option>
+        </select>
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Plan number *</label>
+          <input id="mpPlanNumber" type="text" required placeholder="e.g., 6512" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Elevation *</label>
+          <input id="mpElevation" type="text" required placeholder="e.g., A" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Orientation</label>
+          <select id="mpOrientation" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+            <option value="">—</option>
+            <option value="standard">Standard</option>
+            <option value="left">Left</option>
+            <option value="right">Right</option>
+          </select>
+        </div>
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Plan name (optional)</label>
+        <input id="mpPlanName" type="text" placeholder="e.g., The Tuscany" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+      </div>
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Square footage</label>
+          <input id="mpSqft" type="number" min="0" placeholder="e.g., 2150" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Stories</label>
+          <input id="mpStories" type="number" step="0.5" min="1" placeholder="e.g., 2" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+        </div>
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Pre-approve for these communities</label>
+        <div id="mpCommunityCheckboxes" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:10px 12px; max-height:140px; overflow-y:auto; font-size:13px;">
+          <em style="color:#94a3b8;">Loading communities…</em>
+        </div>
+        <div style="font-size:11px; color:#6b7280; margin-top:4px;">Future submissions of this plan at the checked communities will auto-fast-track. You can add approvals later.</div>
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Notes (optional)</label>
+        <textarea id="mpNotes" rows="2" placeholder="Internal notes for staff" style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px; resize:vertical; font-family:inherit;"></textarea>
+      </div>
+      <div>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Plan PDF *</label>
+        <input id="mpPdf" type="file" accept="application/pdf" required style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:14px;">
+      </div>
+      <div id="mpError" style="display:none; color:#b91c1c; font-size:13px;"></div>
+      <div id="mpSuccess" style="display:none; padding:10px 12px; background:#dcfce7; border:1px solid #bbf7d0; border-radius:6px; color:#166534; font-size:13px;"></div>
+      <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:6px;">
+        <button type="button" onclick="closeMasterPlanModal()" style="padding:10px 18px; background:#fff; border:1px solid #d0d7de; color:#475569; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Cancel</button>
+        <button type="submit" id="mpSubmitBtn" style="padding:10px 22px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Upload plan</button>
+      </div>
+    </form>
+  </div>
+</div>
 
 <div class="shell" id="shell">
   <main class="queue">
@@ -944,6 +1023,137 @@ $('filterFastTrack').addEventListener('click', (e) => {
   loadQueue();
 });
 $('refreshBtn').addEventListener('click', (e) => { e.preventDefault(); loadQueue(); });
+
+// ----------------------------------------------------------------------------
+// Master plan direct-upload modal
+// ----------------------------------------------------------------------------
+function openMasterPlanModal() {
+  document.getElementById('masterPlanModal').style.display = 'flex';
+  // Pre-fill builder + community pickers fresh each open
+  loadMasterPlanFormPickers();
+  // Reset form state from any prior open
+  document.getElementById('masterPlanForm').reset();
+  document.getElementById('mpError').style.display = 'none';
+  document.getElementById('mpSuccess').style.display = 'none';
+}
+function closeMasterPlanModal() {
+  document.getElementById('masterPlanModal').style.display = 'none';
+}
+
+async function loadMasterPlanFormPickers() {
+  // Communities — reuse the existing /api/communities endpoint that filterCommunity uses
+  try {
+    const c = await api('GET', '/api/communities?builder_arc_only=1');
+    const list = c.communities || c || [];
+    const cb = document.getElementById('mpCommunityCheckboxes');
+    if (!Array.isArray(list) || list.length === 0) {
+      cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities found. Turn on builder_arc_active in Community Profile first.</em>';
+    } else {
+      cb.innerHTML = list.map((co) => `
+        <label style="display:flex; align-items:center; gap:8px; padding:4px 0; cursor:pointer;">
+          <input type="checkbox" name="mpCommunity" value="${escapeHtml(co.id)}">
+          <span>${escapeHtml(co.name)}</span>
+        </label>
+      `).join('');
+    }
+  } catch (e) {
+    document.getElementById('mpCommunityCheckboxes').innerHTML = `<em style="color:#b91c1c;">Couldn't load communities: ${escapeHtml(e.message)}</em>`;
+  }
+
+  // Builder companies — separate small endpoint or reuse application aggregate
+  try {
+    const r = await api('GET', '/api/builder-applications/master-plans?limit=1');
+    // We don't have a direct list endpoint for builder_companies; pull from
+    // the master-plans aggregate which includes builder_company embed.
+    // If that's empty, fall back to a hardcoded DRB option so the form is
+    // still usable (matches seed in migration 127).
+    const sel = document.getElementById('mpBuilderCompany');
+    sel.innerHTML = '<option value="">— pick a builder —</option>';
+    const seen = new Set();
+    (r.master_plans || []).forEach((p) => {
+      const bc = p.builder_company;
+      if (bc && !seen.has(bc.id)) {
+        seen.add(bc.id);
+        const opt = document.createElement('option');
+        opt.value = bc.id;
+        opt.textContent = bc.company_name;
+        sel.appendChild(opt);
+      }
+    });
+    if (seen.size === 0) {
+      // No plans yet → no builders surfaced; let the operator type free-form
+      // OR fall back to fetching builder_companies via a dedicated endpoint.
+      // For now show a note. Future: add /api/builder-companies endpoint.
+      sel.innerHTML += '<option value="" disabled>No registered builders yet — register one via Supabase or hit /api/builder-applications first</option>';
+    }
+  } catch (e) {
+    console.warn('[mp] builder picker load failed:', e.message);
+  }
+}
+
+document.getElementById('uploadMasterPlanBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  openMasterPlanModal();
+});
+
+document.getElementById('masterPlanForm').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = document.getElementById('mpSubmitBtn');
+  const errBox = document.getElementById('mpError');
+  const okBox = document.getElementById('mpSuccess');
+  errBox.style.display = 'none';
+  okBox.style.display = 'none';
+  btn.disabled = true;
+  btn.textContent = 'Uploading…';
+
+  try {
+    const fd = new FormData();
+    fd.append('builder_company_id', document.getElementById('mpBuilderCompany').value);
+    fd.append('plan_number', document.getElementById('mpPlanNumber').value.trim());
+    fd.append('elevation', document.getElementById('mpElevation').value.trim());
+    const orient = document.getElementById('mpOrientation').value;
+    if (orient) fd.append('elevation_orientation', orient);
+    const planName = document.getElementById('mpPlanName').value.trim();
+    if (planName) fd.append('plan_name', planName);
+    const sqft = document.getElementById('mpSqft').value;
+    if (sqft) fd.append('square_footage', sqft);
+    const stories = document.getElementById('mpStories').value;
+    if (stories) fd.append('stories', stories);
+    const notes = document.getElementById('mpNotes').value.trim();
+    if (notes) fd.append('notes', notes);
+    const cids = Array.from(document.querySelectorAll('input[name="mpCommunity"]:checked')).map((c) => c.value);
+    if (cids.length > 0) fd.append('community_ids', JSON.stringify(cids));
+    const pdfFile = document.getElementById('mpPdf').files[0];
+    if (!pdfFile) throw new Error('Plan PDF is required');
+    fd.append('plan_pdf', pdfFile);
+
+    const r = await fetch('/api/builder-applications/master-plans', {
+      method: 'POST',
+      body: fd,
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    const plan = j.master_plan || {};
+    const approvalCount = (j.community_approvals || []).length;
+    okBox.innerHTML = `✓ <strong>${escapeHtml(plan.plan_number)}</strong> Elevation <strong>${escapeHtml(plan.elevation)}</strong> registered. Pre-approved for ${approvalCount} community${approvalCount === 1 ? '' : ' (ies)'}. PDF will index for askEd in the next few minutes.`;
+    okBox.style.display = 'block';
+    // Clear the form for the next plan; keep builder selected since most uploads are batched per builder
+    document.getElementById('mpPlanNumber').value = '';
+    document.getElementById('mpElevation').value = '';
+    document.getElementById('mpOrientation').value = '';
+    document.getElementById('mpPlanName').value = '';
+    document.getElementById('mpSqft').value = '';
+    document.getElementById('mpStories').value = '';
+    document.getElementById('mpNotes').value = '';
+    document.getElementById('mpPdf').value = '';
+  } catch (e) {
+    errBox.textContent = '✗ ' + e.message;
+    errBox.style.display = 'block';
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Upload plan';
+  }
+});
 
 // ----------------------------------------------------------------------------
 // Boot

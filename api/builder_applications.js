@@ -1016,6 +1016,208 @@ router.post('/:id/promote-to-master', express.json({ limit: '128kb' }), async (r
 });
 
 // ============================================================================
+// POST /api/builder-applications/master-plans
+// Admin-only direct upload — register a master plan WITHOUT going through
+// the submission → approve → promote flow. Used when a builder hands over
+// their plan inventory in bulk (e.g., DRB at August Meadows: 5+ plans to
+// register before they file any individual lot submissions).
+//
+// Multipart form:
+//   plan_pdf            file       PDF of the plan set (required)
+//   builder_company_id  UUID       (required)
+//   plan_number         text       e.g., "6512" (required)
+//   elevation           text       e.g., "A" (required)
+//   plan_name           text       e.g., "The Tuscany"
+//   elevation_orientation text     "left" | "right" | "standard"
+//   square_footage     int
+//   stories            numeric
+//   default_materials  JSON string brick_color, paint_palette, etc.
+//   notes              text
+//   status             text       defaults to "approved" (admin uploads are
+//                                  treated as already approved by Bedrock review)
+//   community_ids      JSON array Pre-approve for these community IDs
+//                                  (creates master_plan_community_approvals rows)
+//
+// Flow:
+//   1. Upload PDF to storage bucket 'documents' under builders/<builder_id>/
+//      master-plans/<filename>
+//   2. Insert library_documents row (category=master_plan_pdf) so the OCR
+//      pipeline indexes it for askEd retrieval
+//   3. Insert master_plans row linking to the library_documents row
+//   4. For each provided community_id, insert master_plan_community_approvals
+//   5. Return the new plan + community approvals
+//
+// Idempotency: master_plans has UNIQUE (builder_company_id, plan_number,
+// elevation, elevation_orientation) so re-uploading the same plan returns
+// a 409 conflict rather than creating duplicates.
+// ============================================================================
+const fs_ = require('fs');
+const crypto_ = require('crypto');
+
+router.post('/master-plans', upload.single('plan_pdf'), async (req, res) => {
+  try {
+    const body = req.body || {};
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'plan_pdf file is required' });
+    if (file.mimetype !== 'application/pdf') {
+      return res.status(400).json({ error: 'plan_pdf must be a PDF file' });
+    }
+    if (!body.builder_company_id) return res.status(400).json({ error: 'builder_company_id is required' });
+    if (!body.plan_number) return res.status(400).json({ error: 'plan_number is required' });
+    if (!body.elevation) return res.status(400).json({ error: 'elevation is required (e.g., "A")' });
+
+    // Parse the optional structured fields
+    let defaultMaterials = {};
+    if (body.default_materials) {
+      try {
+        defaultMaterials = typeof body.default_materials === 'string'
+          ? JSON.parse(body.default_materials)
+          : body.default_materials;
+      } catch (e) {
+        return res.status(400).json({ error: 'default_materials must be valid JSON' });
+      }
+    }
+    let communityIds = [];
+    if (body.community_ids) {
+      try {
+        communityIds = typeof body.community_ids === 'string'
+          ? JSON.parse(body.community_ids)
+          : body.community_ids;
+        if (!Array.isArray(communityIds)) communityIds = [];
+      } catch (e) {
+        return res.status(400).json({ error: 'community_ids must be a JSON array of UUIDs' });
+      }
+    }
+
+    // Verify builder_company exists + belongs to Bedrock
+    const { data: company } = await supabase
+      .from('builder_companies')
+      .select('id, company_name')
+      .eq('id', body.builder_company_id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!company) return res.status(404).json({ error: 'builder_company not found' });
+
+    // ---- 1) Upload PDF to storage --------------------------------------
+    const safePlanNumber = String(body.plan_number).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const safeElevation = String(body.elevation).replace(/[^a-zA-Z0-9._-]/g, '_');
+    const stamp = Date.now();
+    const storagePath = `builders/${company.id}/master-plans/${safePlanNumber}_${safeElevation}_${stamp}.pdf`;
+    const fileHash = crypto_.createHash('sha256').update(file.buffer).digest('hex');
+
+    const { error: upErr } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: false });
+    if (upErr) {
+      console.error('[master-plans POST] storage upload failed:', upErr.message);
+      return res.status(500).json({ error: 'storage upload failed: ' + upErr.message });
+    }
+
+    // ---- 2) Insert library_documents row ------------------------------
+    // Pick the first community in the pre-approval list as community_id
+    // hint (so the doc shows under that community's matrix). If none
+    // selected, leave NULL — the doc is still searchable globally.
+    const docTitle = (body.plan_name && body.plan_name.trim())
+      ? `${company.company_name} ${body.plan_number} (${body.elevation}) — ${body.plan_name}`
+      : `${company.company_name} ${body.plan_number} (${body.elevation})`;
+    const fileNameOriginal = file.originalname || `${safePlanNumber}_${safeElevation}.pdf`;
+    const fileNameNormalized = `${company.company_name.replace(/\s+/g, '-')}-${safePlanNumber}-${safeElevation}-master-plan.pdf`;
+
+    const { data: libDoc, error: libErr } = await supabase
+      .from('library_documents')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: communityIds[0] || null,
+        category: 'master_plan_pdf',
+        title: docTitle,
+        file_path: storagePath,
+        file_name_original: fileNameOriginal,
+        file_name_normalized: fileNameNormalized,
+        file_hash: fileHash,
+        status: 'current',
+        index_status: 'pending',
+        uploaded_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+    if (libErr) {
+      console.error('[master-plans POST] library_documents insert failed:', libErr.message);
+      // Roll back storage so we don't leave an orphan
+      try { await supabase.storage.from('documents').remove([storagePath]); } catch (_) {}
+      return res.status(500).json({ error: 'library_documents insert failed: ' + libErr.message });
+    }
+
+    // ---- 3) Insert master_plans row -----------------------------------
+    const { data: plan, error: planErr } = await supabase
+      .from('master_plans')
+      .insert({
+        builder_company_id: company.id,
+        plan_number: String(body.plan_number).trim(),
+        plan_name: (body.plan_name || '').trim() || null,
+        elevation: String(body.elevation).trim(),
+        elevation_orientation: body.elevation_orientation || null,
+        square_footage: body.square_footage ? parseInt(body.square_footage, 10) : null,
+        stories: body.stories ? parseFloat(body.stories) : null,
+        default_materials: defaultMaterials,
+        status: body.status || 'approved',
+        notes: body.notes || null,
+        library_document_id: libDoc.id,
+      })
+      .select('*')
+      .single();
+    if (planErr) {
+      console.error('[master-plans POST] master_plans insert failed:', planErr.message);
+      // Roll back library_documents + storage
+      try {
+        await supabase.from('library_documents').delete().eq('id', libDoc.id);
+        await supabase.storage.from('documents').remove([storagePath]);
+      } catch (_) {}
+      // Surface the duplicate case clearly
+      if (planErr.code === '23505') {
+        return res.status(409).json({
+          error: 'A master plan with this builder/plan_number/elevation/orientation already exists.',
+          builder: company.company_name,
+          plan_number: body.plan_number,
+          elevation: body.elevation,
+        });
+      }
+      return res.status(500).json({ error: 'master_plans insert failed: ' + planErr.message });
+    }
+
+    // ---- 4) Pre-approve for selected communities ---------------------
+    const approvalRows = [];
+    for (const cid of communityIds) {
+      if (!cid) continue;
+      const { data: appr, error: apprErr } = await supabase
+        .from('master_plan_community_approvals')
+        .insert({
+          master_plan_id: plan.id,
+          community_id: cid,
+          approved_by: 'direct_admin_upload',
+        })
+        .select()
+        .single();
+      if (apprErr) {
+        console.warn('[master-plans POST] community approval insert failed for', cid, apprErr.message);
+      } else {
+        approvalRows.push(appr);
+      }
+    }
+
+    res.json({
+      ok: true,
+      master_plan: plan,
+      community_approvals: approvalRows,
+      library_document_id: libDoc.id,
+      pdf_storage_path: storagePath,
+    });
+  } catch (err) {
+    console.error('[master-plans POST]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // GET /api/builder-applications/master-plans
 // Query: builder_company_id?, community_id?, status? (draft|approved|retired)
 // Returns master plans + their community approvals.
