@@ -2040,6 +2040,96 @@ router.get('/master-plans', async (req, res) => {
 });
 
 // ============================================================================
+// DELETE /api/builder-applications/master-plans/:id
+// ----------------------------------------------------------------------------
+// Admin-only hard delete of a master plan row. Used to clean up duplicate
+// registrations from earlier broken upload runs. Cascades:
+//   - master_plan_community_approvals rows go via ON DELETE CASCADE
+//   - builder_applications.master_plan_id goes to NULL via ON DELETE SET NULL
+//   - if the library_document is no longer referenced by any other plan,
+//     it (and its storage object) get cleaned up too
+//
+// Refuses if any builder_applications row still references this plan — that's
+// real submission history; the operator should use the retire endpoint
+// instead so the audit trail survives. Duplicates from staging uploads have
+// no submission references, so they delete cleanly.
+// ============================================================================
+router.delete('/master-plans/:id', async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const planId = req.params.id;
+
+    // Fetch the plan first so we know what to clean up
+    const { data: plan, error: planErr } = await supabase
+      .from('master_plans')
+      .select('id, plan_number, elevation, library_document_id')
+      .eq('id', planId)
+      .maybeSingle();
+    if (planErr) throw planErr;
+    if (!plan) return res.status(404).json({ error: 'plan_not_found' });
+
+    // Refuse if a real submission references this plan
+    const { data: apps, error: appsErr } = await supabase
+      .from('builder_applications')
+      .select('id, reference_number')
+      .eq('master_plan_id', planId)
+      .limit(3);
+    if (appsErr) throw appsErr;
+    if (apps && apps.length > 0) {
+      return res.status(409).json({
+        error: `plan is referenced by ${apps.length}+ submission(s) — retire it instead of deleting so the audit trail survives`,
+        sample_references: apps.map((a) => a.reference_number).filter(Boolean),
+      });
+    }
+
+    // Delete the master_plans row (cascades to master_plan_community_approvals)
+    const { error: delErr } = await supabase
+      .from('master_plans')
+      .delete()
+      .eq('id', planId);
+    if (delErr) throw delErr;
+
+    // If the PDF isn't referenced by any other plan, clean it up too
+    let pdfCleanedUp = false;
+    if (plan.library_document_id) {
+      const { data: stillLinked, error: linkErr } = await supabase
+        .from('master_plans')
+        .select('id')
+        .eq('library_document_id', plan.library_document_id)
+        .limit(1);
+      if (linkErr) throw linkErr;
+      if (!stillLinked || stillLinked.length === 0) {
+        // Last reference — delete the library_document + storage object
+        const { data: doc } = await supabase
+          .from('library_documents')
+          .select('id, file_path')
+          .eq('id', plan.library_document_id)
+          .maybeSingle();
+        if (doc) {
+          await supabase.from('library_documents').delete().eq('id', doc.id);
+          if (doc.file_path) {
+            try { await supabase.storage.from(STORAGE_BUCKET).remove([doc.file_path]); } catch (_) {}
+          }
+          pdfCleanedUp = true;
+        }
+      }
+    }
+
+    res.json({
+      ok: true,
+      deleted: { id: plan.id, plan_number: plan.plan_number, elevation: plan.elevation },
+      pdf_cleaned_up: pdfCleanedUp,
+    });
+  } catch (err) {
+    console.error('[builder_applications] master plan delete failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // GET /api/builder-applications/master-plans/:id/pdf
 // Redirects to a short-lived signed URL for the underlying plan PDF.
 // Used by the master plan library "View" link.

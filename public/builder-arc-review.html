@@ -598,7 +598,7 @@
     <div style="max-height:50vh; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
       <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
         <thead style="background:#1A3050; color:#fff; position:sticky; top:0;">
-          <tr>
+          <tr id="libGridHeaderRow">
             <th style="padding:8px 10px; text-align:left;">Builder</th>
             <th style="padding:8px 10px; text-align:left;">Plan #</th>
             <th style="padding:8px 10px; text-align:left;">Plan name</th>
@@ -608,10 +608,11 @@
             <th style="padding:8px 10px; text-align:left;">Pre-approved at</th>
             <th style="padding:8px 10px; text-align:left;">Registered</th>
             <th style="padding:8px 10px; text-align:center;">PDF</th>
+            <!-- Delete column injected at render time when _isAdmin -->
           </tr>
         </thead>
         <tbody id="libGridBody">
-          <tr><td colspan="9" style="padding:24px; text-align:center; color:#94a3b8;">Loading…</td></tr>
+          <tr><td colspan="10" style="padding:24px; text-align:center; color:#94a3b8;">Loading…</td></tr>
         </tbody>
       </table>
     </div>
@@ -715,6 +716,7 @@ function toast(msg, kind) {
 // cookie alone gets the page rendered but admin-required endpoints
 // return 403 (resolveUserRole has no JWT to lookup). Scar 2026-05-29.
 window.supa = null;
+window._isAdmin = false;  // gated by /api/me check after Supabase bootstrap
 (async function bootBuilderSupa() {
   try {
     const cfgRes = await fetch('/api/auth/config');
@@ -732,6 +734,15 @@ window.supa = null;
       });
     }
     window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+
+    // Resolve role for client-side gating of admin-only controls (delete
+    // buttons etc.). The server enforces admin on every protected endpoint;
+    // this flag just keeps non-admin operators from seeing controls they
+    // can't use. Don't trust it for anything beyond visibility.
+    try {
+      const me = await api('GET', '/api/me');
+      window._isAdmin = me?.user?.role === 'admin';
+    } catch (_) { /* non-admin / unauth: leave _isAdmin = false */ }
   } catch (e) {
     console.warn('[builder-arc] supabase bootstrap failed:', e.message);
   }
@@ -1687,6 +1698,21 @@ function renderLibraryRows() {
   const communityFilter = document.getElementById('libFilterCommunity').value;
   const tbody = document.getElementById('libGridBody');
   const countEl = document.getElementById('libCount');
+  const headerRow = document.getElementById('libGridHeaderRow');
+
+  // Inject the admin-only Delete column header once. Removed for non-admin
+  // operators so the table doesn't have a useless empty column.
+  const existingDeleteTh = headerRow.querySelector('th[data-delete-col]');
+  if (window._isAdmin && !existingDeleteTh) {
+    const th = document.createElement('th');
+    th.dataset.deleteCol = '1';
+    th.style.cssText = 'padding:8px 10px; text-align:center; width:60px;';
+    th.textContent = '';
+    headerRow.appendChild(th);
+  } else if (!window._isAdmin && existingDeleteTh) {
+    existingDeleteTh.remove();
+  }
+  const colCount = window._isAdmin ? 10 : 9;
 
   let rows = _libPlansCache.slice();
   if (builderFilter) rows = rows.filter((p) => p.builder_company_id === builderFilter);
@@ -1695,10 +1721,22 @@ function renderLibraryRows() {
       .some((a) => a.community_id === communityFilter && !a.retired_at));
   }
 
-  countEl.textContent = `${rows.length} plan${rows.length === 1 ? '' : 's'}`;
+  // Duplicate detection: same builder + plan# + elevation appearing more than
+  // once. Operators eyeball this section for cleanup. Done across the FILTERED
+  // set so what's flagged matches what's visible.
+  const dupKey = (p) => `${p.builder_company_id}|${(p.plan_number || '').toLowerCase().trim()}|${(p.elevation || '').toLowerCase().trim()}`;
+  const dupCount = {};
+  rows.forEach((p) => { dupCount[dupKey(p)] = (dupCount[dupKey(p)] || 0) + 1; });
+  const dupGroups = Object.values(dupCount).filter((n) => n > 1).length;
+  const dupRows = rows.filter((p) => dupCount[dupKey(p)] > 1).length;
+
+  const countText = `${rows.length} plan${rows.length === 1 ? '' : 's'}`;
+  countEl.innerHTML = dupGroups
+    ? `${countText} · <span style="color:#b45309; font-weight:600;">${dupRows} in ${dupGroups} duplicate group${dupGroups === 1 ? '' : 's'}</span>`
+    : countText;
 
   if (rows.length === 0) {
-    tbody.innerHTML = `<tr><td colspan="9" style="padding:24px; text-align:center; color:#94a3b8;">No plans match.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="${colCount}" style="padding:24px; text-align:center; color:#94a3b8;">No plans match.</td></tr>`;
     return;
   }
 
@@ -1711,12 +1749,20 @@ function renderLibraryRows() {
       : escapeHtml(approvalNames.join(', '));
     const createdAt = p.created_at ? new Date(p.created_at).toLocaleDateString() : '—';
     const pdfCell = p.library_document_id
-      ? `<a href="/api/builder-applications/master-plans/${encodeURIComponent(p.id)}/pdf" target="_blank" style="color:var(--gold, #b8860b); text-decoration:none; font-weight:600;">View</a>`
+      ? `<a href="/api/builder-applications/master-plans/${encodeURIComponent(p.id)}/pdf" target="_blank" style="color:#b8860b; text-decoration:none; font-weight:600;">View</a>`
       : `<span style="color:#94a3b8;">—</span>`;
+    const isDup = dupCount[dupKey(p)] > 1;
+    const rowStyle = isDup
+      ? 'border-bottom:1px solid #fde047; background:#fffbeb;'
+      : 'border-bottom:1px solid #e2e8f0;';
+    const deleteCell = window._isAdmin
+      ? `<td style="padding:8px 10px; text-align:center;"><button onclick="deleteRegisteredPlan('${escapeHtml(p.id)}', '${escapeHtml(p.plan_number || '—')}', '${escapeHtml(p.elevation || '—')}')" title="Hard-delete (admin)" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:4px 8px; border-radius:4px; font-size:11px; cursor:pointer;">🗑️</button></td>`
+      : '';
+    const dupBadge = isDup ? ` <span style="color:#b45309; font-size:10px; font-weight:600; background:#fef3c7; padding:1px 6px; border-radius:999px; vertical-align:1px;">DUP ×${dupCount[dupKey(p)]}</span>` : '';
     return `
-      <tr style="border-bottom:1px solid #e2e8f0;">
+      <tr style="${rowStyle}">
         <td style="padding:8px 10px;">${escapeHtml(builderName)}</td>
-        <td style="padding:8px 10px; font-family:var(--font-mono); font-weight:600;">${escapeHtml(p.plan_number || '—')}</td>
+        <td style="padding:8px 10px; font-family:var(--font-mono); font-weight:600;">${escapeHtml(p.plan_number || '—')}${dupBadge}</td>
         <td style="padding:8px 10px;">${escapeHtml(p.plan_name || '')}</td>
         <td style="padding:8px 10px;">${escapeHtml(p.elevation || '—')}</td>
         <td style="padding:8px 10px; text-align:right;">${p.square_footage ? Number(p.square_footage).toLocaleString() : '—'}</td>
@@ -1724,9 +1770,34 @@ function renderLibraryRows() {
         <td style="padding:8px 10px;">${approvalsCell}</td>
         <td style="padding:8px 10px; color:#475569;">${escapeHtml(createdAt)}</td>
         <td style="padding:8px 10px; text-align:center;">${pdfCell}</td>
+        ${deleteCell}
       </tr>
     `;
   }).join('');
+}
+
+async function deleteRegisteredPlan(planId, planNumber, elevation) {
+  if (!window._isAdmin) return;  // double-check; server still enforces
+  const label = `Plan ${planNumber} / Elevation ${elevation}`;
+  if (!confirm(`Hard-delete ${label}?\n\nThis removes the master_plans row and community approvals. If no other plan shares the PDF, the PDF gets cleaned up too.\n\nRefuses if any real builder submission references this plan — retire instead.\n\nIrreversible. Continue?`)) return;
+  try {
+    const headers = {};
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/builder-applications/master-plans/' + encodeURIComponent(planId),
+      { method: 'DELETE', headers });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    // Refresh both sections — deleting a plan may move its PDF to orphan
+    // status if other plans still link to it, or remove it entirely.
+    await Promise.all([loadRegisteredPlans(), loadOrphans()]);
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
 }
 
 // Drop-zone wiring
