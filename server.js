@@ -7661,6 +7661,39 @@ app.get('/api/me', async (req, res) => {
 const { router: voiceRouter, handleWebSocketConnection: handleVoiceWs } = require('./api/voice');
 app.use('/api/voice', voiceRouter);
 
+// ============================================================================
+// MIGRATION RUNNER — admin-only endpoint that applies migrations/*.sql via
+// the app's pg DATABASE_URL connection. Bypasses the Supabase SQL editor
+// session that's been refusing to find tables PostgREST reads fine
+// (user_profiles, communities, nominations — all hit "relation does not
+// exist" in editor despite working in app). lib/migrations_runner.js owns
+// the actual work; this route is just the admin gate + JSON response.
+// ============================================================================
+app.post('/api/admin/apply-migrations', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./api/users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') {
+      return res.status(403).json({ error: 'admin role required' });
+    }
+    const { applyMigrations } = require('./lib/migrations_runner');
+    const dryRun = !!(req.body && req.body.dry_run);
+    const summary = await applyMigrations({
+      appliedByEmail: ctx.user && ctx.user.email,
+      dryRun,
+    });
+    console.log('[apply-migrations] by',
+      ctx.user && ctx.user.email,
+      'applied:', summary.applied.length,
+      'skipped:', summary.skipped.length,
+      'failed:', summary.failed.length);
+    res.json({ ok: true, summary });
+  } catch (err) {
+    console.error('[apply-migrations]', err.message);
+    res.status(500).json({ error: err.message, code: err.code });
+  }
+});
+
 // Create the HTTP server explicitly so we can attach a WebSocket upgrade
 // handler for the Twilio Media Streams path.
 const http = require('http');

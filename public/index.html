@@ -6274,6 +6274,7 @@
         <h3 style="margin:0;">🧠 askEd coverage</h3>
         <div style="display:flex; gap:6px; align-items:center;">
           <button class="secondary-btn" onclick="docsLoadCoverage()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+          <button class="secondary-btn" onclick="docsApplyMigrations()" id="docsApplyMigBtn" style="font-size:12px; padding:6px 14px;" title="Apply migrations/*.sql that haven't landed yet. Bypasses the Supabase SQL editor by connecting via DATABASE_URL.">🗄️ Apply pending migrations</button>
           <button class="secondary-btn" onclick="docsQueueThinExtractionReindex()" id="docsThinReindexBtn" style="font-size:12px; padding:6px 14px;" title="Find docs marked 'indexed' but with suspiciously thin extracted text (likely uploaded pre-OCR pipeline) and re-queue them for OCR reprocessing">🔍 Re-OCR suspect scans</button>
           <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
         </div>
@@ -22994,6 +22995,63 @@ ${questionsPage}
       }
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">✗ Failed: ${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  }
+
+  // Apply pending migrations via the in-app runner. Works only when
+  // DATABASE_URL is set in Render env — Supabase Dashboard → Project Settings
+  // → Database → Connection string → URI (the postgresql:// URL with the
+  // password). One env var, every future migration auto-applies on click.
+  async function docsApplyMigrations() {
+    const btn = document.getElementById('docsApplyMigBtn');
+    const status = document.getElementById('docs-reindex-status');
+    if (!confirm(
+      'Apply pending migrations from migrations/*.sql?\n\n' +
+      'This runs every .sql file in the repo that hasn\'t been recorded in ' +
+      'schema_migrations yet. Each migration runs in its own transaction so ' +
+      'a failure rolls back cleanly without leaving the database half-applied.\n\n' +
+      'Requires DATABASE_URL to be set in Render env. If not set, you\'ll get ' +
+      'a clear error telling you exactly what to add.'
+    )) return;
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Applying…';
+    status.textContent = '';
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) {}
+      const r = await fetch('/api/admin/apply-migrations', {
+        method: 'POST', headers, body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) {
+        if (j.code === 'DATABASE_URL_MISSING') {
+          status.innerHTML = `<div style="background:#fef3c7; border:1px solid #fde047; border-radius:6px; padding:12px 14px; color:#854d0e; font-size:12.5px; line-height:1.6;"><strong>DATABASE_URL not set in Render env.</strong><br>To enable: open Supabase Dashboard → Project Settings → Database → Connection string → URI. Copy the <code>postgresql://...</code> URL (it includes the password). Add it to Render → hoa-doc-search → Environment → Add Environment Variable: <code>DATABASE_URL</code> = (paste URL). Redeploy. Then click this button again.</div>`;
+          return;
+        }
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      const s = j.summary || {};
+      const appliedLines = (s.applied || []).map((a) => `<li>✓ ${escapeHtml(a.filename)} <span style="color:#94a3b8; font-size:10.5px;">(${a.duration_ms}ms)</span></li>`).join('');
+      const failedLines = (s.failed || []).map((f) => `<li style="color:#b91c1c;">✗ ${escapeHtml(f.filename)} — ${escapeHtml(f.error || 'unknown error')}</li>`).join('');
+      const skippedLines = (s.skipped || []).slice(0, 3).map((sk) => `<li style="color:#94a3b8;">⊝ ${escapeHtml(sk.filename)} <span style="font-size:10.5px;">(${escapeHtml(sk.reason)})</span></li>`).join('');
+      const skippedMore = (s.skipped || []).length > 3 ? `<li style="color:#94a3b8;">… and ${s.skipped.length - 3} more already-applied</li>` : '';
+      status.innerHTML = `
+        <div style="background:${s.failed.length > 0 ? '#fef2f2' : '#dcfce7'}; border:1px solid ${s.failed.length > 0 ? '#fecaca' : '#bbf7d0'}; border-radius:6px; padding:12px 14px; font-size:12.5px;">
+          <div style="font-weight:700; color:${s.failed.length > 0 ? '#991b1b' : '#166534'}; margin-bottom:6px;">
+            ${s.applied.length} applied · ${s.failed.length} failed · ${s.skipped.length} skipped
+          </div>
+          ${appliedLines || failedLines || skippedLines ? `<ul style="margin:0 0 0 18px; padding:0; line-height:1.7;">${appliedLines}${failedLines}${skippedLines}${skippedMore}</ul>` : ''}
+          ${s.applied.length > 0 ? '<div style="margin-top:6px; font-size:11.5px; color:#166534;">Hard-refresh the page so any new schema changes are visible to the UI.</div>' : ''}
+        </div>`;
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">✗ ${escapeHtml(e.message)}</span>`;
     } finally {
       btn.disabled = false;
       btn.textContent = orig;
