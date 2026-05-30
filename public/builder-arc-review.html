@@ -1306,7 +1306,7 @@ async function loadBulkPickers() {
   // default (operator usually wants pre-approval everywhere the builder
   // is active; uncheck is one click if not).
   try {
-    const r = await fetch('/api/communities?builder_arc_only=1');
+    const r = await fetch('/api/builder-applications/active-communities');
     const data = await r.json();
     const list = data.communities || data || [];
     const cb = document.getElementById('bulkCommunityCheckboxes');

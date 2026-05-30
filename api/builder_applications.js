@@ -253,6 +253,38 @@ async function fetchCommunity(communityIdOrSlug) {
 // ============================================================================
 
 // ----------------------------------------------------------------------------
+// GET /api/builder-applications/active-communities
+// Lists communities in the Bedrock portfolio where builder_arc_active=TRUE.
+// Returns the EXACT set of communities the builder-ARC pipeline operates
+// on — used by admin upload modals to pre-check pre-approval boxes.
+//
+// Avoids relying on the generic /api/communities listing which doesn't
+// always return builder_arc_active and was filtered with a permissive
+// !== false check (let through communities where the column was null/
+// undefined). Result: previously Canyon Gate + Eaglewood (force-mow
+// configured but no new construction) appeared in the modal alongside
+// August Meadows + Still Creek Ranch. This endpoint returns the
+// authoritative set.
+//
+// MUST be defined BEFORE any /:id route (Express order shadow scar).
+// ----------------------------------------------------------------------------
+router.get('/active-communities', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('communities')
+      .select('id, name, slug, builder_arc_fee_cents, builder_arc_sla_business_days, builder_arc_fast_track_business_days, builder_arc_design_guidelines_url, builder_arc_reference_prefix')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('builder_arc_active', true)
+      .order('name');
+    if (error) throw error;
+    res.json({ ok: true, communities: data || [] });
+  } catch (err) {
+    console.error('[active-communities]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/builder-applications/builder-companies
 // Lists active builder_companies for Bedrock. Populates the builder
 // dropdown in admin upload modals. MUST be defined BEFORE any /:id route
