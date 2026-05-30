@@ -1754,7 +1754,7 @@ router.get('/master-plans/orphans', async (req, res) => {
     // All master_plan PDFs
     const { data: docs, error: docsErr } = await supabase
       .from('library_documents')
-      .select('id, title, file_name_original, file_path, storage_bucket, uploaded_at')
+      .select('id, title, file_name_original, file_path, uploaded_at')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('category', 'master_plan_pdf')
       .order('uploaded_at', { ascending: false });
@@ -1791,7 +1791,7 @@ router.get('/master-plans/orphans/:library_document_id/pdf', async (req, res) =>
   try {
     const { data: doc, error: docErr } = await supabase
       .from('library_documents')
-      .select('id, category, storage_bucket, file_path')
+      .select('id, category, file_path')
       .eq('id', req.params.library_document_id)
       .maybeSingle();
     if (docErr) throw docErr;
@@ -1799,9 +1799,9 @@ router.get('/master-plans/orphans/:library_document_id/pdf', async (req, res) =>
     if (doc.category !== 'master_plan_pdf') {
       return res.status(400).json({ error: 'not a master plan PDF' });
     }
-    if (!doc.storage_bucket || !doc.file_path) return res.status(404).json({ error: 'pdf_missing' });
+    if (!doc.file_path) return res.status(404).json({ error: 'pdf_missing' });
     const { data: signed, error: signErr } = await supabase
-      .storage.from(doc.storage_bucket).createSignedUrl(doc.file_path, 60 * 10);
+      .storage.from(STORAGE_BUCKET).createSignedUrl(doc.file_path, 60 * 10);
     if (signErr) throw signErr;
     res.redirect(signed.signedUrl);
   } catch (err) {
@@ -1927,7 +1927,7 @@ router.delete('/master-plans/orphans/:library_document_id', async (req, res) => 
     // Get storage info before delete
     const { data: doc, error: docErr } = await supabase
       .from('library_documents')
-      .select('id, category, storage_bucket, file_path')
+      .select('id, category, file_path')
       .eq('id', libId)
       .maybeSingle();
     if (docErr) throw docErr;
@@ -1944,8 +1944,8 @@ router.delete('/master-plans/orphans/:library_document_id', async (req, res) => 
     if (delErr) throw delErr;
 
     // Best-effort storage cleanup
-    if (doc.file_path && doc.storage_bucket) {
-      try { await supabase.storage.from(doc.storage_bucket).remove([doc.file_path]); } catch (_) {}
+    if (doc.file_path) {
+      try { await supabase.storage.from(STORAGE_BUCKET).remove([doc.file_path]); } catch (_) {}
     }
 
     res.json({ ok: true, deleted: libId });
@@ -1988,7 +1988,7 @@ router.get('/master-plans', async (req, res) => {
         ? supabase.from('builder_companies').select('id, company_name').in('id', builderIds)
         : Promise.resolve({ data: [] }),
       libDocIds.length
-        ? supabase.from('library_documents').select('id, title, storage_bucket, file_path').in('id', libDocIds)
+        ? supabase.from('library_documents').select('id, title, file_path').in('id', libDocIds)
         : Promise.resolve({ data: [] }),
       supabase.from('master_plan_community_approvals')
         .select('master_plan_id, community_id, approved_at, approved_by, retired_at')
@@ -2057,14 +2057,14 @@ router.get('/master-plans/:id/pdf', async (req, res) => {
 
     const { data: doc, error: docErr } = await supabase
       .from('library_documents')
-      .select('storage_bucket, file_path')
+      .select('file_path')
       .eq('id', plan.library_document_id)
       .maybeSingle();
     if (docErr) throw docErr;
-    if (!doc?.storage_bucket || !doc?.file_path) return res.status(404).json({ error: 'plan_pdf_missing' });
+    if (!doc?.file_path) return res.status(404).json({ error: 'plan_pdf_missing' });
 
     const { data: signed, error: signErr } = await supabase
-      .storage.from(doc.storage_bucket).createSignedUrl(doc.file_path, 60 * 10);  // 10 min
+      .storage.from(STORAGE_BUCKET).createSignedUrl(doc.file_path, 60 * 10);  // 10 min
     if (signErr) throw signErr;
     res.redirect(signed.signedUrl);
   } catch (err) {
