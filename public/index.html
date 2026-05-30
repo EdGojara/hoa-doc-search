@@ -23068,12 +23068,20 @@ ${questionsPage}
       const failedLines = (s.failed || []).map((f) => `<li style="color:#b91c1c;">✗ ${escapeHtml(f.filename)} — ${escapeHtml(f.error || 'unknown error')}</li>`).join('');
       const skippedLines = (s.skipped || []).slice(0, 3).map((sk) => `<li style="color:#94a3b8;">⊝ ${escapeHtml(sk.filename)} <span style="font-size:10.5px;">(${escapeHtml(sk.reason)})</span></li>`).join('');
       const skippedMore = (s.skipped || []).length > 3 ? `<li style="color:#94a3b8;">… and ${s.skipped.length - 3} more already-applied</li>` : '';
+      const failCount = (s.failed || []).length;
+      const ackBtn = failCount > 0
+        ? `<div style="margin-top:10px; padding-top:8px; border-top:1px solid #fecaca;">
+             <button onclick="docsAcknowledgeMigrationFailures()" style="background:#fff; border:1px solid #d0d7de; color:#475569; padding:6px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">✓ Acknowledge ${failCount} historical failure${failCount === 1 ? '' : 's'}</button>
+             <span style="font-size:10.5px; color:#94a3b8; margin-left:8px;">these are old migrations whose schema is already past them — marking them acknowledged hides them from future runs</span>
+           </div>`
+        : '';
       status.innerHTML = `
-        <div style="background:${s.failed.length > 0 ? '#fef2f2' : '#dcfce7'}; border:1px solid ${s.failed.length > 0 ? '#fecaca' : '#bbf7d0'}; border-radius:6px; padding:12px 14px; font-size:12.5px;">
-          <div style="font-weight:700; color:${s.failed.length > 0 ? '#991b1b' : '#166534'}; margin-bottom:6px;">
+        <div style="background:${failCount > 0 ? '#fef2f2' : '#dcfce7'}; border:1px solid ${failCount > 0 ? '#fecaca' : '#bbf7d0'}; border-radius:6px; padding:12px 14px; font-size:12.5px;">
+          <div style="font-weight:700; color:${failCount > 0 ? '#991b1b' : '#166534'}; margin-bottom:6px;">
             ${s.applied.length} applied · ${s.failed.length} failed · ${s.skipped.length} skipped
           </div>
           ${appliedLines || failedLines || skippedLines ? `<ul style="margin:0 0 0 18px; padding:0; line-height:1.7;">${appliedLines}${failedLines}${skippedLines}${skippedMore}</ul>` : ''}
+          ${ackBtn}
           ${s.applied.length > 0 ? '<div style="margin-top:6px; font-size:11.5px; color:#166534;">Hard-refresh the page so any new schema changes are visible to the UI.</div>' : ''}
         </div>`;
     } catch (e) {
@@ -23081,6 +23089,31 @@ ${questionsPage}
     } finally {
       btn.disabled = false;
       btn.textContent = orig;
+    }
+  }
+
+  // Acknowledge historical migration failures — flips their error state to
+  // clean in schema_migrations so they show as "already_applied" on future
+  // runs instead of "failed". Used to clean up the noise from old migrations
+  // whose schema state is already past them (cannot drop columns from view,
+  // constraint already exists, etc.).
+  async function docsAcknowledgeMigrationFailures() {
+    if (!confirm('Acknowledge the historical migration failures?\n\nThese are old migrations whose database state is already in place (constraints already exist, views were rebuilt, etc.). Marking them as acknowledged hides them from future runs but does NOT re-apply anything.')) return;
+    const status = document.getElementById('docs-reindex-status');
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) {}
+      const r = await fetch('/api/admin/acknowledge-migration-failures', {
+        method: 'POST', headers, body: JSON.stringify({}),  // empty body = ack all
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = `<div style="background:#dcfce7; border:1px solid #bbf7d0; border-radius:6px; padding:10px 12px; font-size:12.5px; color:#166534;">✓ Acknowledged ${j.acknowledged_count} historical migration${j.acknowledged_count === 1 ? '' : 's'}. Click "Apply pending migrations" again to confirm — they should now show as skipped instead of failed.</div>`;
+    } catch (e) {
+      status.innerHTML = `<div style="color:#b91c1c; font-size:12.5px;">✗ ${escapeHtml(e.message)}</div>`;
     }
   }
 

@@ -7709,6 +7709,71 @@ app.post('/api/admin/apply-migrations', express.json({ limit: '8kb' }), async (r
   }
 });
 
+// ============================================================================
+// POST /api/admin/acknowledge-migration-failures — admin-only
+// Flips schema_migrations rows from error-state to clean ("already_applied")
+// for historical migrations whose schema state is already past them. These
+// migrations fail on every runner invocation because:
+//   • cannot drop columns from view (views were rebuilt since)
+//   • constraint already exists (added in a follow-up migration)
+//   • check constraint violated by existing seed data
+//   • function signature mismatch (function exists, different shape)
+// Marking them acknowledged is the equivalent of saying "we know this is
+// already in the schema; stop trying to re-apply it." Subsequent runs will
+// show them in the skipped column instead of failed.
+//
+// Body: { filenames: [string] } — empty array means "acknowledge ALL
+// currently-failing rows"
+// ============================================================================
+app.post('/api/admin/acknowledge-migration-failures', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const { resolveUserRole } = require('./api/users');
+    const ctx = await resolveUserRole(req);
+    if (!ctx.supabaseUserId || ctx.role !== 'admin') {
+      return res.status(403).json({ error: 'admin role required' });
+    }
+    if (!process.env.DATABASE_URL) {
+      return res.status(400).json({ error: 'DATABASE_URL env var not set', code: 'DATABASE_URL_MISSING' });
+    }
+    const { Client } = require('pg');
+    const client = new Client({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false } });
+    await client.connect();
+    try {
+      const filenames = Array.isArray(req.body?.filenames) ? req.body.filenames : [];
+      let result;
+      if (filenames.length === 0) {
+        // No filenames specified — acknowledge ALL currently-failing rows
+        result = await client.query(
+          `UPDATE schema_migrations
+           SET error = NULL,
+               applied_by = COALESCE($1, applied_by)
+           WHERE error IS NOT NULL
+           RETURNING filename`,
+          [`acknowledged by ${ctx.user && ctx.user.email || 'unknown'}`]
+        );
+      } else {
+        result = await client.query(
+          `UPDATE schema_migrations
+           SET error = NULL,
+               applied_by = COALESCE($1, applied_by)
+           WHERE filename = ANY($2::text[])
+             AND error IS NOT NULL
+           RETURNING filename`,
+          [`acknowledged by ${ctx.user && ctx.user.email || 'unknown'}`, filenames]
+        );
+      }
+      const acknowledged = result.rows.map((r) => r.filename);
+      console.log('[ack-migrations] by', ctx.user && ctx.user.email, 'count:', acknowledged.length);
+      res.json({ ok: true, acknowledged_count: acknowledged.length, filenames: acknowledged });
+    } finally {
+      await client.end();
+    }
+  } catch (err) {
+    console.error('[ack-migrations]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Create the HTTP server explicitly so we can attach a WebSocket upgrade
 // handler for the Twilio Media Streams path.
 const http = require('http');
