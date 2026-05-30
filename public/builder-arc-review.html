@@ -1557,6 +1557,10 @@ async function loadRegisteredPlans() {
 }
 
 let _libOrphansCache = [];
+// Per-orphan status memory — survives loadOrphans() re-render so an operator
+// who runs Auto-register all can still see WHY each failure failed after the
+// list refreshes. Keyed by library_document_id, value: {kind, text}.
+let _orphanLastStatus = {};
 
 async function loadOrphans() {
   const banner = document.getElementById('libOrphanBanner');
@@ -1579,6 +1583,21 @@ async function loadOrphans() {
       if (!open) section.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
     list.innerHTML = _libOrphansCache.map(renderOrphanRow).join('');
+
+    // Restore any persisted per-orphan status (so failure reasons from a prior
+    // Auto-register run survive the reload).
+    for (const o of _libOrphansCache) {
+      const prior = _orphanLastStatus[o.id];
+      if (prior) setOrphanStatus(o.id, prior.kind, prior.text);
+    }
+
+    // Auto-extract on render for orphans that don't already have a status —
+    // staggered so we don't fire all extracts in parallel. Operator sees the
+    // AI verdict inline without having to click Auto-fill.
+    const toExtract = _libOrphansCache.filter((o) => !_orphanLastStatus[o.id]);
+    for (let i = 0; i < toExtract.length; i++) {
+      setTimeout(() => autoFillOrphan(toExtract[i].id, /*silent=*/true), i * 400);
+    }
   } catch (e) {
     console.warn('Couldn\'t load orphans:', e.message);
   }
@@ -1626,6 +1645,8 @@ function renderOrphanRow(o) {
 }
 
 function setOrphanStatus(libDocId, kind, text) {
+  // Persist so a subsequent loadOrphans() re-render can restore the status
+  _orphanLastStatus[libDocId] = { kind, text };
   const el = document.querySelector(`[data-orphan-status="${libDocId}"]`);
   if (!el) return;
   el.style.display = 'block';
@@ -1653,8 +1674,10 @@ function setOrphanStatus(libDocId, kind, text) {
 // verify before clicking Finish registering. Note: a single PDF may have
 // multiple elevations — auto-fill picks the FIRST one for the form. Use
 // 🪄 Auto-register all for true multi-elevation registration.
-async function autoFillOrphan(libDocId) {
-  const btn = document.querySelector(`[data-orphan-autofill-btn="${libDocId}"]`);
+// silent=true: skip the per-button text/disabled visual changes (used by
+// the auto-on-render pass that runs across every card when the modal opens).
+async function autoFillOrphan(libDocId, silent) {
+  const btn = silent ? null : document.querySelector(`[data-orphan-autofill-btn="${libDocId}"]`);
   if (btn) { btn.disabled = true; btn.textContent = '🪄 Extracting…'; }
   setOrphanStatus(libDocId, 'progress', 'Running AI extraction…');
   try {
@@ -1689,8 +1712,16 @@ async function autoFillOrphan(libDocId) {
     });
 
     const elevCount = (j.elevations || []).length;
-    const extra = elevCount > 1 ? ` · PDF has ${elevCount} elevations — use 🪄 Auto-register all to register them all.` : '';
-    setOrphanStatus(libDocId, 'success', `AI: ${j.ai_confidence || 'low'} confidence${extra}`);
+    const builderNote = j.inferred_builder_company_id ? '' : ' · builder NOT inferred from title — pick manually';
+
+    if (elevCount === 0) {
+      // AI couldn't parse — surface the reason so operator knows what to do
+      const reason = j.ai_notes || 'AI couldn\'t identify plan_number + elevation';
+      setOrphanStatus(libDocId, 'error', `AI extract empty (${j.ai_confidence || 'low'}): ${reason}${builderNote}`);
+    } else {
+      const multi = elevCount > 1 ? ` · PDF has ${elevCount} elevations — use 🪄 Auto-register all to register them all` : '';
+      setOrphanStatus(libDocId, 'success', `AI: ${j.ai_confidence || 'low'} confidence${multi}${builderNote}`);
+    }
   } catch (e) {
     setOrphanStatus(libDocId, 'error', 'Auto-fill failed: ' + e.message);
   } finally {
@@ -1710,9 +1741,11 @@ async function autoRegisterAllOrphans() {
   let registeredCount = 0;
   let skippedCount = 0;
   let failedCount = 0;
+  const failureDetails = [];  // {name, reason}
 
   for (let i = 0; i < _libOrphansCache.length; i++) {
     const o = _libOrphansCache[i];
+    const name = o.file_name_original || o.title || o.id.slice(0, 8);
     btn.textContent = `🪄 Working ${i + 1} / ${_libOrphansCache.length}…`;
     setOrphanStatus(o.id, 'progress', 'Running AI + registering…');
     try {
@@ -1730,7 +1763,10 @@ async function autoRegisterAllOrphans() {
       const j = await r.json();
       if (!r.ok) {
         failedCount++;
-        setOrphanStatus(o.id, 'error', j.error || `HTTP ${r.status}`);
+        const reason = j.error || `HTTP ${r.status}`;
+        const aiNote = j.ai_notes ? ` (${j.ai_notes})` : '';
+        failureDetails.push({ name, reason: reason + aiNote });
+        setOrphanStatus(o.id, 'error', reason + aiNote);
         continue;
       }
       const regN = (j.registered || []).length;
@@ -1739,17 +1775,34 @@ async function autoRegisterAllOrphans() {
       skippedCount += skipN;
       const parts = [];
       if (regN > 0) parts.push(`${regN} registered`);
-      if (skipN > 0) parts.push(`${skipN} skipped`);
+      if (skipN > 0) {
+        parts.push(`${skipN} skipped`);
+        const skipReasons = (j.skipped || []).map((s) => `${s.plan_number || '?'}/${s.elevation || '?'}: ${s.reason}`).join(' · ');
+        if (skipReasons) failureDetails.push({ name, reason: 'skipped — ' + skipReasons });
+      }
       setOrphanStatus(o.id, regN > 0 ? 'success' : 'warn', parts.join(' · ') || 'no rows produced');
     } catch (e) {
       failedCount++;
+      failureDetails.push({ name, reason: e.message });
       setOrphanStatus(o.id, 'error', 'Failed: ' + e.message);
     }
   }
 
   btn.disabled = false;
   btn.textContent = initialBtnText;
-  alert(`Done.\nRegistered: ${registeredCount} master plan rows\nSkipped (duplicates): ${skippedCount}\nFailed: ${failedCount}\n\nThe library will now refresh.`);
+
+  // Detailed summary so the operator can see WHICH PDFs failed and WHY
+  const lines = [
+    `Registered: ${registeredCount} master plan rows`,
+    `Skipped (duplicates): ${skippedCount}`,
+    `Failed: ${failedCount}`,
+  ];
+  if (failureDetails.length > 0) {
+    lines.push('', 'Details:');
+    for (const f of failureDetails) lines.push(`  • ${f.name} — ${f.reason}`);
+  }
+  lines.push('', 'Library will refresh now. Failed orphans stay visible with the reason inline.');
+  alert(lines.join('\n'));
   await Promise.all([loadRegisteredPlans(), loadOrphans()]);
 }
 
