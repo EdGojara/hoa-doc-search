@@ -160,6 +160,201 @@ async function inferBuilderFromTitle(title) {
   return data?.id || null;
 }
 
+// ============================================================================
+// PLOT-PLAN EXTRACTION — for inbound builder submissions
+// ----------------------------------------------------------------------------
+// Builders attach a plot plan PDF to every submission. Lennar/DRB plot plans
+// carry ~80% of the structured data Bedrock needs (lot, plat#, address,
+// plan#, elevation, sqft, lot coverage %, fence LF, etc.) — extracting from
+// the PDF eliminates duplicate operator typing.
+// ============================================================================
+
+const PLOT_PLAN_EXTRACT_PROMPT = `You are extracting structured data from a builder's PLOT PLAN PDF for an HOA architectural review.
+
+Plot plans (also called site plans, plot drawings, or improvement surveys) show a specific home's footprint on a specific lot. They have a title block with property + plan + builder identification and usually a table of improvement quantities.
+
+Extract the following fields. Return null for any field you cannot find — do NOT invent or estimate.
+
+PROPERTY IDENTIFICATION:
+- lot_number: lot designation (e.g., "8", "12A")
+- block_number: block designation (e.g., "1")
+- section_number: section/phase (e.g., "1")
+- plat_number: recorded plat number (e.g., "20190044")
+- county: county name (e.g., "Fort Bend County")
+- subdivision_name: recorded subdivision name (e.g., "Still Creek Ranch")
+- street_address: full street address (e.g., "7419 Tye Creek Lane")
+
+PLAN IDENTIFICATION:
+- plan_number: builder's plan number (e.g., "6480")
+- plan_name: plan trade/series name if shown
+- elevation: elevation code (e.g., "A")
+- elevation_orientation: "left" | "right" | "standard" if mirrored
+- stories: numeric (1, 1.5, 2, 2.5, 3)
+- square_footage: heated/conditioned area in sqft
+
+LOT METRICS:
+- lot_area_sqft: total lot size
+- lot_coverage_pct: % of lot covered by structure (number, e.g., 43.26)
+- fence_linear_ft: total fence length
+- total_sod_sqyd: total sod area
+- total_paving_sqft: total impervious paving
+
+BUILDER IDENTIFICATION:
+- builder_company_name: builder shown on title block (e.g., "Lennar Homes", "DRB Group")
+- builder_internal_job_no: builder's internal job/lot reference
+- surveyor_firm: licensed surveyor firm
+- surveyor_license_no: TBPLS or equivalent license #
+- plot_issue_date: issue date stamped on the plot (YYYY-MM-DD)
+- flood_zone: FEMA flood zone (e.g., "X")
+
+OTHER:
+- options_notes: any notes like "NO OPTIONS" or option list
+- ai_confidence: "high" | "medium" | "low"
+- ai_notes: caveats — anything unusual or ambiguous
+
+Return ONLY valid JSON, no preamble. Example:
+{
+  "lot_number": "8", "block_number": "1", "section_number": "1",
+  "plat_number": "20190044", "county": "Fort Bend County",
+  "subdivision_name": "Still Creek Ranch", "street_address": "7419 Tye Creek Lane",
+  "plan_number": "6480", "plan_name": null, "elevation": "A", "elevation_orientation": "left",
+  "stories": 2, "square_footage": 2271,
+  "lot_area_sqft": 6600, "lot_coverage_pct": 43.26,
+  "fence_linear_ft": 233.1, "total_sod_sqyd": 441, "total_paving_sqft": 1002,
+  "builder_company_name": "Lennar Homes", "builder_internal_job_no": "LH204078",
+  "surveyor_firm": "Allpoints Land Survey, Inc.", "surveyor_license_no": "10122600",
+  "plot_issue_date": "2020-03-11", "flood_zone": "X",
+  "options_notes": "NO OPTIONS",
+  "ai_confidence": "high", "ai_notes": null
+}`;
+
+const COLOR_SHEET_EXTRACT_PROMPT = `You are extracting buyer color/material selections from a builder's SELECTIONS SHEET PDF for an HOA architectural review.
+
+These sheets vary widely by builder — sometimes a structured table, sometimes a narrative list. Extract what's there, return null for what's not.
+
+Fields:
+- brick_color, brick_manufacturer
+- stone_color, stone_type
+- siding_color, siding_material
+- stucco_color
+- trim_color
+- shutter_color (if present)
+- front_door_color
+- garage_door_color, garage_door_style
+- roof_color, roof_material
+- fence_material, fence_height_feet
+- driveway_material
+- ai_confidence: "high" | "medium" | "low"
+- ai_notes: caveats
+
+Return ONLY valid JSON.`;
+
+async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
+  if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
+  const Anthropic = require('@anthropic-ai/sdk');
+  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const { buffer: claudeBuffer, total_pages, trimmed } = await trimPdfToFirstPages(pdfBuffer, maxPagesToSend);
+  const resp = await anthropic.messages.create({
+    model: 'claude-sonnet-4-5',
+    max_tokens: 1200,
+    messages: [{
+      role: 'user',
+      content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: claudeBuffer.toString('base64') } },
+        { type: 'text', text: prompt + (trimmed ? `\n\nNote: this is the first ${maxPagesToSend} pages of a ${total_pages}-page document — the title block + tables should be in this slice.` : '') },
+      ],
+    }],
+  });
+  const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
+  const jsonMatch = txt.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { extracted: null, raw: txt };
+  try {
+    return { extracted: JSON.parse(jsonMatch[0]), raw: txt };
+  } catch (_) {
+    return { extracted: null, raw: txt };
+  }
+}
+
+const extractPlotPlanFromPdfBuffer  = (buf) => extractFromPdfBuffer(buf, PLOT_PLAN_EXTRACT_PROMPT, 5);
+const extractColorSheetFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, COLOR_SHEET_EXTRACT_PROMPT, 5);
+
+// Resolve community_id from extracted subdivision_name + plat_number. ILIKE
+// match on name with plat as tiebreaker if the subdivision name is ambiguous.
+async function resolveCommunityFromExtraction(extracted) {
+  const subdivision = extracted?.subdivision_name;
+  if (!subdivision) return null;
+  // Strip common suffixes ("Homeowners Association", "HOA") for cleaner match
+  const cleaned = String(subdivision)
+    .replace(/\s+(homeowners?\s+associations?|hoa|inc\.?|llc\.?)\b.*/i, '')
+    .trim();
+  if (!cleaned) return null;
+  const { data } = await supabase
+    .from('communities')
+    .select('id, name, slug')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .ilike('name', `%${cleaned}%`)
+    .limit(2);
+  if (!data || data.length === 0) return null;
+  if (data.length === 1) return data[0];
+  // Ambiguous — could add plat-based tiebreaker here when we track it on communities
+  return data[0];  // best-effort: first match
+}
+
+// Resolve builder_company_id from extracted builder_company_name. Loose
+// match — "Lennar Homes" → "Lennar"; "DRB Group" → "DRB Group".
+async function resolveBuilderFromExtraction(extracted) {
+  const name = extracted?.builder_company_name;
+  if (!name) return null;
+  // Try exact match first
+  let { data } = await supabase
+    .from('builder_companies')
+    .select('id, company_name')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .ilike('company_name', name)
+    .maybeSingle();
+  if (data) return data;
+  // Loose: try first word (e.g., "Lennar Homes" → "Lennar%")
+  const firstWord = name.split(/\s+/)[0];
+  if (firstWord && firstWord.length >= 3) {
+    const res = await supabase
+      .from('builder_companies')
+      .select('id, company_name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .ilike('company_name', `${firstWord}%`)
+      .limit(2);
+    if (res.data && res.data.length === 1) return res.data[0];
+  }
+  return null;
+}
+
+// Resolve master_plan_id from builder_company_id + plan_number + elevation.
+// Used to flip fast_track=TRUE when a submission matches a pre-approved plan.
+async function resolveMasterPlanForExtraction(builderId, planNumber, elevation, communityId) {
+  if (!builderId || !planNumber || !elevation) return null;
+  const { data: plans } = await supabase
+    .from('master_plans')
+    .select('id, plan_number, plan_name, elevation, status')
+    .eq('builder_company_id', builderId)
+    .ilike('plan_number', String(planNumber).trim())
+    .ilike('elevation', String(elevation).trim())
+    .eq('status', 'approved')
+    .limit(2);
+  if (!plans || plans.length === 0) return null;
+  const plan = plans[0];
+  // Verify community pre-approval if we have a community
+  if (communityId) {
+    const { data: appr } = await supabase
+      .from('master_plan_community_approvals')
+      .select('community_id, retired_at')
+      .eq('master_plan_id', plan.id)
+      .eq('community_id', communityId)
+      .maybeSingle();
+    const fastTrack = !!(appr && !appr.retired_at);
+    return { ...plan, fast_track: fastTrack };
+  }
+  return { ...plan, fast_track: false };
+}
+
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: 25 * 1024 * 1024, files: 12 },
@@ -2444,6 +2639,306 @@ router.post('/master-plans/fix-pre-approvals', express.json({ limit: '8kb' }), a
     });
   } catch (err) {
     console.error('[builder_applications] fix pre-approvals failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/plot-plan-extract
+// ----------------------------------------------------------------------------
+// AI-extract structured fields from a single plot plan PDF. Returns the
+// extraction plus auto-resolved community_id, builder_company_id, and
+// master_plan_id (with fast_track flag) when matches are found. Read-only —
+// no DB writes. Operator reviews + commits via /auto-create-from-extraction.
+//
+// Multipart form: plot_plan_pdf (required)
+// ============================================================================
+router.post('/plot-plan-extract', upload.single('plot_plan_pdf'), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'plot_plan_pdf required' });
+    if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'plot_plan_pdf must be a PDF' });
+
+    const { extracted, raw } = await extractPlotPlanFromPdfBuffer(file.buffer);
+    if (!extracted) {
+      return res.status(422).json({
+        error: 'AI returned no structured data — file may be a scan/image or unrecognized format',
+        raw_extracted: raw,
+      });
+    }
+
+    // Auto-resolve community + builder + master plan
+    const community = await resolveCommunityFromExtraction(extracted);
+    const builder = await resolveBuilderFromExtraction(extracted);
+    const masterPlan = await resolveMasterPlanForExtraction(
+      builder?.id, extracted.plan_number, extracted.elevation, community?.id,
+    );
+
+    res.json({
+      ok: true,
+      filename: file.originalname,
+      extracted,
+      resolved: {
+        community: community ? { id: community.id, name: community.name, slug: community.slug } : null,
+        builder: builder ? { id: builder.id, company_name: builder.company_name } : null,
+        master_plan: masterPlan,
+        fast_track: !!masterPlan?.fast_track,
+      },
+      raw_extracted: raw,
+    });
+  } catch (err) {
+    console.error('[builder_applications] plot-plan-extract failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/color-sheet-extract
+// ----------------------------------------------------------------------------
+// AI-extract buyer color/material selections from a selections sheet PDF.
+// Used alongside plot-plan-extract to assemble a full submission draft.
+//
+// Multipart form: color_sheet_pdf (required)
+// ============================================================================
+router.post('/color-sheet-extract', upload.single('color_sheet_pdf'), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'color_sheet_pdf required' });
+    if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'color_sheet_pdf must be a PDF' });
+
+    const { extracted, raw } = await extractColorSheetFromPdfBuffer(file.buffer);
+    if (!extracted) {
+      return res.status(422).json({
+        error: 'AI returned no structured data — file may be a scan/image or unrecognized format',
+        raw_extracted: raw,
+      });
+    }
+
+    res.json({
+      ok: true,
+      filename: file.originalname,
+      extracted,
+      raw_extracted: raw,
+    });
+  } catch (err) {
+    console.error('[builder_applications] color-sheet-extract failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/auto-create-from-extraction
+// ----------------------------------------------------------------------------
+// Commits an operator-reviewed extraction into a real builder_applications
+// row with status='received'. The body shape mirrors what plot-plan-extract
+// returns, plus a materials object from color-sheet-extract. Operator may
+// override any field before commit (community_id, builder_company_id,
+// master_plan_id, any extracted field).
+//
+// Also stores both source PDFs as builder_application_attachments so the
+// reviewer can View PDF when they open the submission.
+//
+// Body (JSON, application/json):
+// {
+//   community_id, builder_company_id, master_plan_id?,
+//   property: { lot_number, block_number, section_number, street_address, lot_type, plat_number },
+//   plan: { plan_number, plan_name, elevation, elevation_orientation, square_footage, stories },
+//   metrics: { lot_area_sqft, lot_coverage_pct, fence_linear_ft, total_sod_sqyd, total_paving_sqft },
+//   materials: { brick_color, brick_manufacturer, stone_color, ... },
+//   submitter: { email, name, phone },
+//   target_construction_start_date, estimated_completion_date,
+//   fast_track: bool,
+//   plot_plan_storage_path?, color_sheet_storage_path?  (set by separate upload helper)
+// }
+// ============================================================================
+router.post('/auto-create-from-extraction', express.json({ limit: '512kb' }), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const body = req.body || {};
+    const property = body.property || {};
+    const plan = body.plan || {};
+
+    // Required fields
+    if (!body.community_id) return res.status(400).json({ error: 'community_id required' });
+    if (!body.builder_company_id) return res.status(400).json({ error: 'builder_company_id required' });
+    if (!property.lot_number) return res.status(400).json({ error: 'property.lot_number required' });
+    if (!property.street_address) return res.status(400).json({ error: 'property.street_address required' });
+    if (!plan.plan_number) return res.status(400).json({ error: 'plan.plan_number required' });
+    if (!plan.elevation) return res.status(400).json({ error: 'plan.elevation required' });
+
+    // Generate reference number using the existing counter pattern
+    let referenceNumber = null;
+    try {
+      const { data: comm } = await supabase.from('communities')
+        .select('builder_arc_reference_prefix, slug').eq('id', body.community_id).maybeSingle();
+      const prefix = comm?.builder_arc_reference_prefix || (comm?.slug || 'BLD').slice(0, 3).toUpperCase();
+      const year = new Date().getFullYear();
+      const { data: counterRow } = await supabase
+        .from('application_reference_counters')
+        .select('next_number')
+        .eq('community_id', body.community_id)
+        .eq('service_type', SERVICE_TYPE)
+        .eq('year', year)
+        .maybeSingle();
+      let n = counterRow?.next_number || 1;
+      referenceNumber = `${prefix}-BLD-${year}-${String(n).padStart(4, '0')}`;
+      // Bump counter (upsert)
+      await supabase.from('application_reference_counters').upsert({
+        community_id: body.community_id,
+        service_type: SERVICE_TYPE,
+        year,
+        next_number: n + 1,
+      }, { onConflict: 'community_id,service_type,year' });
+    } catch (refErr) {
+      console.warn('[auto-create] reference number generation failed, proceeding without:', refErr.message);
+    }
+
+    // Compose application_data JSONB from extracted materials + metrics
+    const applicationData = {
+      ...(body.materials || {}),
+      lot_area_sqft: body.metrics?.lot_area_sqft ?? null,
+      lot_coverage_pct: body.metrics?.lot_coverage_pct ?? null,
+      fence_linear_ft: body.metrics?.fence_linear_ft ?? null,
+      total_sod_sqyd: body.metrics?.total_sod_sqyd ?? null,
+      total_paving_sqft: body.metrics?.total_paving_sqft ?? null,
+      plat_number: property.plat_number ?? null,
+      options_notes: body.options_notes ?? null,
+      surveyor_firm: body.surveyor?.firm ?? null,
+      surveyor_license_no: body.surveyor?.license_no ?? null,
+      plot_issue_date: body.surveyor?.plot_issue_date ?? null,
+      flood_zone: body.flood_zone ?? null,
+      builder_internal_job_no: body.builder_internal_job_no ?? null,
+    };
+
+    const insertRow = {
+      community_id: body.community_id,
+      builder_company_id: body.builder_company_id,
+      master_plan_id: body.master_plan_id || null,
+      reference_number: referenceNumber,
+      submitter_email: body.submitter?.email || 'unknown@unspecified',
+      submitter_name: body.submitter?.name || null,
+      submitter_phone: body.submitter?.phone || null,
+      source: 'email',
+      lot_number: String(property.lot_number).trim(),
+      block_number: property.block_number ? String(property.block_number).trim() : null,
+      section_number: property.section_number ? String(property.section_number).trim() : null,
+      street_address: String(property.street_address).trim(),
+      lot_type: property.lot_type || null,
+      plan_number: String(plan.plan_number).trim(),
+      plan_name: plan.plan_name || null,
+      elevation: String(plan.elevation).trim(),
+      elevation_orientation: plan.elevation_orientation || null,
+      square_footage: plan.square_footage ? parseInt(plan.square_footage, 10) : null,
+      stories: plan.stories ? parseFloat(plan.stories) : null,
+      application_data: applicationData,
+      status: 'received',
+      fast_track: !!body.fast_track,
+      fast_track_reason: body.fast_track ? 'master_plan_match' : null,
+      target_construction_start_date: body.target_construction_start_date || null,
+      estimated_completion_date: body.estimated_completion_date || null,
+      builder_acknowledgments: body.acknowledgments || {},
+    };
+
+    const { data: app, error: insErr } = await supabase
+      .from('builder_applications')
+      .insert(insertRow)
+      .select('id, reference_number, status, fast_track')
+      .single();
+    if (insErr) throw insErr;
+
+    // Attach the source PDFs (when caller uploaded them via storage first)
+    const attachmentsToCreate = [];
+    if (body.plot_plan_storage_path) {
+      attachmentsToCreate.push({
+        application_id: app.id,
+        kind: 'site_plan',
+        storage_bucket: STORAGE_BUCKET,
+        storage_path: body.plot_plan_storage_path,
+        original_filename: body.plot_plan_filename || 'plot_plan.pdf',
+        mime_type: 'application/pdf',
+        uploaded_by: ctx.user?.email || 'operator',
+      });
+    }
+    if (body.color_sheet_storage_path) {
+      attachmentsToCreate.push({
+        application_id: app.id,
+        kind: 'color_board',
+        storage_bucket: STORAGE_BUCKET,
+        storage_path: body.color_sheet_storage_path,
+        original_filename: body.color_sheet_filename || 'selections.pdf',
+        mime_type: 'application/pdf',
+        uploaded_by: ctx.user?.email || 'operator',
+      });
+    }
+    if (attachmentsToCreate.length > 0) {
+      try {
+        await supabase.from('builder_application_attachments').insert(attachmentsToCreate);
+      } catch (attErr) {
+        console.warn('[auto-create] attachment insert failed (non-fatal):', attErr.message);
+      }
+    }
+
+    res.json({
+      ok: true,
+      application: {
+        id: app.id,
+        reference_number: app.reference_number,
+        status: app.status,
+        fast_track: app.fast_track,
+      },
+    });
+  } catch (err) {
+    console.error('[builder_applications] auto-create-from-extraction failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/upload-source-pdf
+// ----------------------------------------------------------------------------
+// Helper used by the auto-create UI: uploads a PDF to storage so its path
+// can be passed to /auto-create-from-extraction. Returns the storage path.
+//
+// Multipart form: pdf (required), kind ("plot_plan" | "color_sheet" | "other")
+// ============================================================================
+router.post('/upload-source-pdf', upload.single('pdf'), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'pdf required' });
+    if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'pdf must be PDF' });
+
+    const kind = (req.body?.kind || 'other').toLowerCase();
+    const safeName = (file.originalname || 'doc.pdf').replace(/[^a-zA-Z0-9._-]/g, '_');
+    const stamp = Date.now() + '-' + Math.floor(Math.random() * 10000);
+    const storagePath = `builder-submissions/${kind}/${stamp}_${safeName}`;
+    const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET)
+      .upload(storagePath, file.buffer, { contentType: 'application/pdf', upsert: false });
+    if (upErr) throw upErr;
+
+    res.json({
+      ok: true,
+      storage_path: storagePath,
+      storage_bucket: STORAGE_BUCKET,
+      filename: file.originalname,
+      kind,
+    });
+  } catch (err) {
+    console.error('[builder_applications] upload-source-pdf failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

@@ -398,6 +398,7 @@
   <div class="module-name">Builder <em>ARC Review</em></div>
   <div class="util">
     <a href="/">← Platform</a>
+    <a href="#" id="autoCreateFromPdfBtn" style="color:#D4AF37;">🧠 Auto-create from PDFs</a>
     <a href="#" id="uploadMasterPlanBtn">📐 Upload master plan</a>
     <a href="#" id="bulkUploadMasterPlansBtn">📚 Bulk upload plans</a>
     <a href="#" id="masterPlanLibraryBtn">📒 Plan library</a>
@@ -621,6 +622,146 @@
           <tr><td colspan="10" style="padding:24px; text-align:center; color:#94a3b8;">Loading…</td></tr>
         </tbody>
       </table>
+    </div>
+  </div>
+</div>
+
+<!-- Auto-create from PDFs modal — operator drops plot plan + optional color
+     sheet, AI extracts structured fields, operator reviews + commits as a
+     real builder_applications row. The "encode-Ed" path: zero typing when
+     the AI extraction is clean. -->
+<div id="autoCreateModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:24px 16px; overflow-y:auto;">
+  <div style="background:#fff; max-width:980px; width:100%; border-radius:12px; padding:24px 28px; box-shadow:0 8px 32px rgba(0,0,0,0.3); font-family:var(--font-sans, system-ui); color:#1a3050;">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <h2 style="margin:0; font-family:var(--font-serif, Georgia); font-size:22px; color:#1A3050;">🧠 Auto-create submission from PDFs</h2>
+      <button onclick="closeAutoCreateModal()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
+    </div>
+    <p style="margin:0 0 14px; font-size:13px; color:#475569; line-height:1.5;">
+      Drop the builder's plot plan (required) + their color/material selection sheet (optional). AI extracts lot, plan, builder, and selections — auto-matches to a pre-approved master plan if it can. You review + commit as a draft submission.
+    </p>
+
+    <!-- Step 1: drop zones -->
+    <div id="acStep1" style="display:flex; flex-direction:column; gap:14px;">
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px;">
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Plot plan PDF *</label>
+          <div id="acPlotPlanDrop" style="border:2px dashed #cbd5e1; border-radius:8px; padding:28px 16px; text-align:center; cursor:pointer; background:#f8fafc;">
+            <div style="font-size:28px; margin-bottom:6px;">📄</div>
+            <div id="acPlotPlanLabel" style="font-size:13px; color:#475569; font-weight:600;">Drop plot plan here or click</div>
+            <input id="acPlotPlanInput" type="file" accept="application/pdf" style="display:none;">
+          </div>
+        </div>
+        <div>
+          <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Color/material sheet PDF (optional)</label>
+          <div id="acColorSheetDrop" style="border:2px dashed #cbd5e1; border-radius:8px; padding:28px 16px; text-align:center; cursor:pointer; background:#f8fafc;">
+            <div style="font-size:28px; margin-bottom:6px;">🎨</div>
+            <div id="acColorSheetLabel" style="font-size:13px; color:#475569; font-weight:600;">Drop selections sheet or skip</div>
+            <input id="acColorSheetInput" type="file" accept="application/pdf" style="display:none;">
+          </div>
+        </div>
+      </div>
+      <div id="acStep1Status" style="display:none; padding:10px 12px; border-radius:6px; font-size:13px;"></div>
+      <div style="display:flex; justify-content:flex-end; gap:10px;">
+        <button type="button" onclick="closeAutoCreateModal()" style="padding:10px 18px; background:#fff; border:1px solid #d0d7de; color:#475569; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Cancel</button>
+        <button type="button" id="acExtractBtn" onclick="acRunExtraction()" disabled style="padding:10px 22px; background:#D4AF37; color:#1A3050; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer; opacity:0.5;">🧠 Extract</button>
+      </div>
+    </div>
+
+    <!-- Step 2: review + edit + commit -->
+    <div id="acStep2" style="display:none; flex-direction:column; gap:14px;">
+      <div id="acResolutionBanner" style="padding:10px 14px; border-radius:6px; font-size:13px;"></div>
+
+      <div style="display:grid; grid-template-columns: 1fr 1fr; gap:18px;">
+        <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px;">
+          <legend style="padding:0 6px; font-size:12px; font-weight:600; color:#475569;">Community + Builder</legend>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <label style="font-size:11.5px; color:#475569;">Community *
+              <select id="acCommunityId" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></select>
+            </label>
+            <label style="font-size:11.5px; color:#475569;">Builder *
+              <select id="acBuilderId" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></select>
+            </label>
+            <div id="acFastTrackPill" style="display:none; font-size:12px; padding:4px 8px; border-radius:999px; background:#fef3c7; color:#854d0e; border:1px solid #fde047; align-self:flex-start; font-weight:600;">⚡ Fast-track match</div>
+          </div>
+        </fieldset>
+
+        <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px;">
+          <legend style="padding:0 6px; font-size:12px; font-weight:600; color:#475569;">Submitter (defaults from builder)</legend>
+          <div style="display:flex; flex-direction:column; gap:8px;">
+            <label style="font-size:11.5px; color:#475569;">Submitter email *
+              <input type="email" id="acSubmitterEmail" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </label>
+            <label style="font-size:11.5px; color:#475569;">Submitter name
+              <input type="text" id="acSubmitterName" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </label>
+          </div>
+        </fieldset>
+      </div>
+
+      <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px;">
+        <legend style="padding:0 6px; font-size:12px; font-weight:600; color:#475569;">Property</legend>
+        <div style="display:grid; grid-template-columns: 80px 80px 80px 1fr 1fr; gap:8px;">
+          <label style="font-size:11.5px; color:#475569;">Lot *<input type="text" id="acLot" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Block<input type="text" id="acBlock" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Section<input type="text" id="acSection" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Street address *<input type="text" id="acAddress" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Lot type
+            <select id="acLotType" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              <option value=""></option>
+              <option value="interior">Interior</option>
+              <option value="corner">Corner</option>
+              <option value="cul_de_sac">Cul-de-sac</option>
+              <option value="backs_to_common_area">Backs to common</option>
+              <option value="backs_to_thoroughfare">Backs to thoroughfare</option>
+              <option value="flag_lot">Flag lot</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px;">
+        <legend style="padding:0 6px; font-size:12px; font-weight:600; color:#475569;">Plan</legend>
+        <div style="display:grid; grid-template-columns: 100px 1fr 80px 100px 80px 80px; gap:8px;">
+          <label style="font-size:11.5px; color:#475569;">Plan # *<input type="text" id="acPlanNumber" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Plan name<input type="text" id="acPlanName" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Elevation *<input type="text" id="acElevation" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Orientation
+            <select id="acOrientation" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              <option value=""></option><option value="standard">Standard</option><option value="left">Left</option><option value="right">Right</option>
+            </select>
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Sqft<input type="number" id="acSqft" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Stories
+            <select id="acStories" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              <option value=""></option><option value="1">1</option><option value="1.5">1.5</option><option value="2">2</option><option value="2.5">2.5</option><option value="3">3</option>
+            </select>
+          </label>
+        </div>
+      </fieldset>
+
+      <fieldset style="border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px;">
+        <legend style="padding:0 6px; font-size:12px; font-weight:600; color:#475569;">Buyer color &amp; material selections</legend>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:8px;">
+          <label style="font-size:11.5px; color:#475569;">Brick color<input type="text" id="acBrickColor" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Brick mfr<input type="text" id="acBrickMfr" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Stone<input type="text" id="acStone" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Paint / siding color<input type="text" id="acPaint" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Trim color<input type="text" id="acTrim" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Shutter color<input type="text" id="acShutter" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Front door<input type="text" id="acFrontDoor" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Garage door<input type="text" id="acGarageDoor" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Roof color<input type="text" id="acRoofColor" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Fence material/height<input type="text" id="acFence" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Driveway material<input type="text" id="acDriveway" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+          <label style="font-size:11.5px; color:#475569;">Stucco<input type="text" id="acStucco" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;"></label>
+        </div>
+      </fieldset>
+
+      <div id="acCommitStatus" style="display:none; padding:10px 12px; border-radius:6px; font-size:13px;"></div>
+      <div style="display:flex; justify-content:space-between; gap:10px;">
+        <button type="button" onclick="acBackToStep1()" style="padding:10px 18px; background:#fff; border:1px solid #d0d7de; color:#475569; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">← Back</button>
+        <button type="button" id="acCommitBtn" onclick="acCommitDraft()" style="padding:10px 22px; background:#1A3050; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Create application draft</button>
+      </div>
     </div>
   </div>
 </div>
@@ -1506,6 +1647,342 @@ document.getElementById('masterPlanLibraryBtn').addEventListener('click', (e) =>
   e.preventDefault();
   openMasterPlanLibrary();
 });
+
+// ----------------------------------------------------------------------------
+// Auto-create from PDFs — plot plan + (optional) color sheet → AI extract →
+// operator review → commit as a builder_applications draft. The encode-Ed
+// path: zero retyping when AI extraction is clean.
+// ----------------------------------------------------------------------------
+let _acPlotPlanFile = null;
+let _acColorSheetFile = null;
+let _acExtraction = null;            // last plot-plan extraction response
+let _acColorExtraction = null;       // last color-sheet extraction response
+let _acPlotPlanStorage = null;       // { storage_path, storage_bucket, filename }
+let _acColorSheetStorage = null;
+
+document.getElementById('autoCreateFromPdfBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  openAutoCreateModal();
+});
+
+function openAutoCreateModal() {
+  document.getElementById('autoCreateModal').style.display = 'flex';
+  document.getElementById('acStep1').style.display = 'flex';
+  document.getElementById('acStep2').style.display = 'none';
+  document.getElementById('acStep1Status').style.display = 'none';
+  document.getElementById('acCommitStatus').style.display = 'none';
+  document.getElementById('acPlotPlanLabel').textContent = 'Drop plot plan here or click';
+  document.getElementById('acColorSheetLabel').textContent = 'Drop selections sheet or skip';
+  document.getElementById('acExtractBtn').disabled = true;
+  document.getElementById('acExtractBtn').style.opacity = '0.5';
+  _acPlotPlanFile = null;
+  _acColorSheetFile = null;
+  _acExtraction = null;
+  _acColorExtraction = null;
+  _acPlotPlanStorage = null;
+  _acColorSheetStorage = null;
+}
+
+function closeAutoCreateModal() {
+  document.getElementById('autoCreateModal').style.display = 'none';
+}
+
+function acBackToStep1() {
+  document.getElementById('acStep1').style.display = 'flex';
+  document.getElementById('acStep2').style.display = 'none';
+  document.getElementById('acCommitStatus').style.display = 'none';
+}
+
+// Wire drop zones
+(function wireAcDrops() {
+  function wire(zoneId, inputId, labelId, fileVar) {
+    const zone = document.getElementById(zoneId);
+    const input = document.getElementById(inputId);
+    const label = document.getElementById(labelId);
+    if (!zone || !input) return;
+    zone.addEventListener('click', () => input.click());
+    zone.addEventListener('dragover', (e) => { e.preventDefault(); zone.style.borderColor = '#D4AF37'; zone.style.background = '#fffbeb'; });
+    zone.addEventListener('dragleave', (e) => { e.preventDefault(); zone.style.borderColor = '#cbd5e1'; zone.style.background = '#f8fafc'; });
+    zone.addEventListener('drop', (e) => {
+      e.preventDefault();
+      zone.style.borderColor = '#cbd5e1';
+      zone.style.background = '#f8fafc';
+      const f = e.dataTransfer.files[0];
+      if (f) handleFile(f);
+    });
+    input.addEventListener('change', () => { if (input.files[0]) handleFile(input.files[0]); });
+    function handleFile(f) {
+      if (fileVar === 'plot') _acPlotPlanFile = f;
+      else _acColorSheetFile = f;
+      label.textContent = `✓ ${f.name}`;
+      label.style.color = '#166534';
+      // Enable extract once plot plan is set
+      if (_acPlotPlanFile) {
+        const btn = document.getElementById('acExtractBtn');
+        btn.disabled = false;
+        btn.style.opacity = '1';
+      }
+    }
+  }
+  wire('acPlotPlanDrop', 'acPlotPlanInput', 'acPlotPlanLabel', 'plot');
+  wire('acColorSheetDrop', 'acColorSheetInput', 'acColorSheetLabel', 'color');
+})();
+
+async function acRunExtraction() {
+  if (!_acPlotPlanFile) return;
+  const status = document.getElementById('acStep1Status');
+  const btn = document.getElementById('acExtractBtn');
+  btn.disabled = true;
+  btn.textContent = '🧠 Working…';
+  status.style.display = 'block';
+  status.style.background = '#eff6ff';
+  status.style.border = '1px solid #93c5fd';
+  status.style.color = '#1e3a8a';
+  status.textContent = 'Uploading + extracting plot plan…';
+
+  try {
+    const headers = {};
+    if (window.supa) {
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+    }
+
+    // Upload plot plan to storage so we can attach it to the application later
+    const ppFd = new FormData();
+    ppFd.append('pdf', _acPlotPlanFile);
+    ppFd.append('kind', 'plot_plan');
+    const ppUp = await fetch('/api/builder-applications/upload-source-pdf', { method: 'POST', headers, body: ppFd });
+    const ppUpJson = await ppUp.json();
+    if (!ppUp.ok) throw new Error(ppUpJson.error || `upload failed`);
+    _acPlotPlanStorage = ppUpJson;
+
+    // Extract from plot plan
+    const exFd = new FormData();
+    exFd.append('plot_plan_pdf', _acPlotPlanFile);
+    const ex = await fetch('/api/builder-applications/plot-plan-extract', { method: 'POST', headers, body: exFd });
+    const exJson = await ex.json();
+    if (!ex.ok) throw new Error(exJson.error || `extract failed`);
+    _acExtraction = exJson;
+
+    // Color sheet (optional)
+    if (_acColorSheetFile) {
+      status.textContent = 'Plot plan done. Uploading + extracting color sheet…';
+      const csUp = new FormData();
+      csUp.append('pdf', _acColorSheetFile);
+      csUp.append('kind', 'color_sheet');
+      const csUpRes = await fetch('/api/builder-applications/upload-source-pdf', { method: 'POST', headers, body: csUp });
+      const csUpJson = await csUpRes.json();
+      if (csUpRes.ok) _acColorSheetStorage = csUpJson;
+
+      const csFd = new FormData();
+      csFd.append('color_sheet_pdf', _acColorSheetFile);
+      const cs = await fetch('/api/builder-applications/color-sheet-extract', { method: 'POST', headers, body: csFd });
+      const csJson = await cs.json();
+      if (cs.ok) _acColorExtraction = csJson;
+    }
+
+    await acPopulateReviewStep();
+  } catch (e) {
+    status.style.background = '#fef2f2';
+    status.style.border = '1px solid #fecaca';
+    status.style.color = '#991b1b';
+    status.textContent = '✗ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '🧠 Extract';
+  }
+}
+
+async function acPopulateReviewStep() {
+  const ex = _acExtraction.extracted;
+  const resolved = _acExtraction.resolved;
+  const color = _acColorExtraction?.extracted || {};
+
+  // Populate community + builder dropdowns
+  const [cRes, bRes] = await Promise.all([
+    api('GET', '/api/builder-applications/active-communities'),
+    api('GET', '/api/builder-applications/builder-companies'),
+  ]);
+  const communities = cRes.communities || cRes || [];
+  const builders = bRes.builder_companies || [];
+
+  const cSel = document.getElementById('acCommunityId');
+  cSel.innerHTML = '<option value="">— pick —</option>' +
+    communities.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+  if (resolved?.community?.id) cSel.value = resolved.community.id;
+
+  const bSel = document.getElementById('acBuilderId');
+  bSel.innerHTML = '<option value="">— pick —</option>' +
+    builders.map((b) => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.company_name)}</option>`).join('');
+  if (resolved?.builder?.id) bSel.value = resolved.builder.id;
+
+  // Submitter defaults from builder primary contact (if available)
+  if (resolved?.builder?.id) {
+    const builderFull = builders.find((b) => b.id === resolved.builder.id);
+    if (builderFull) {
+      document.getElementById('acSubmitterEmail').value = builderFull.primary_contact_email || '';
+      document.getElementById('acSubmitterName').value = builderFull.primary_contact_name || '';
+    }
+  }
+
+  // Resolution banner
+  const banner = document.getElementById('acResolutionBanner');
+  const lines = [];
+  lines.push(`<strong>AI extraction:</strong> ${ex.ai_confidence || '?'} confidence`);
+  if (ex.ai_notes) lines.push(`<span style="color:#854d0e;">${escapeHtml(ex.ai_notes)}</span>`);
+  if (resolved?.community) lines.push(`Community auto-matched: <strong>${escapeHtml(resolved.community.name)}</strong>`);
+  else lines.push(`<span style="color:#b91c1c;">Community NOT auto-matched — pick manually</span>`);
+  if (resolved?.builder) lines.push(`Builder auto-matched: <strong>${escapeHtml(resolved.builder.company_name)}</strong>`);
+  else lines.push(`<span style="color:#b91c1c;">Builder NOT auto-matched — pick manually</span>`);
+  if (resolved?.master_plan) {
+    const ftBadge = resolved.fast_track
+      ? ` <span style="background:#dcfce7; color:#166534; padding:1px 6px; border-radius:999px; font-size:11px; font-weight:600;">⚡ FAST-TRACK</span>`
+      : ` <span style="background:#fef3c7; color:#854d0e; padding:1px 6px; border-radius:999px; font-size:11px; font-weight:600;">matched but NOT pre-approved at this community</span>`;
+    lines.push(`Master plan auto-matched: <strong>Plan ${escapeHtml(resolved.master_plan.plan_number)} / ${escapeHtml(resolved.master_plan.elevation)}</strong>${ftBadge}`);
+  } else {
+    lines.push(`<span style="color:#854d0e;">No master plan match — this submission won't fast-track. Confirm plan # + elevation are correct.</span>`);
+  }
+  banner.innerHTML = lines.map((l) => `<div>${l}</div>`).join('');
+  banner.style.background = resolved?.community && resolved?.builder ? '#eff6ff' : '#fffbeb';
+  banner.style.border = `1px solid ${resolved?.community && resolved?.builder ? '#93c5fd' : '#fde047'}`;
+  banner.style.color = '#1e3a8a';
+
+  // Show fast-track pill if applicable
+  document.getElementById('acFastTrackPill').style.display = resolved?.fast_track ? 'inline-block' : 'none';
+
+  // Property
+  document.getElementById('acLot').value = ex.lot_number || '';
+  document.getElementById('acBlock').value = ex.block_number || '';
+  document.getElementById('acSection').value = ex.section_number || '';
+  document.getElementById('acAddress').value = ex.street_address || '';
+
+  // Plan
+  document.getElementById('acPlanNumber').value = ex.plan_number || '';
+  document.getElementById('acPlanName').value = ex.plan_name || '';
+  document.getElementById('acElevation').value = ex.elevation || '';
+  document.getElementById('acOrientation').value = ex.elevation_orientation || '';
+  document.getElementById('acSqft').value = ex.square_footage || '';
+  document.getElementById('acStories').value = ex.stories != null ? String(ex.stories) : '';
+
+  // Colors (from color sheet or blank)
+  document.getElementById('acBrickColor').value = color.brick_color || '';
+  document.getElementById('acBrickMfr').value = color.brick_manufacturer || '';
+  document.getElementById('acStone').value = color.stone_color || color.stone_type || '';
+  document.getElementById('acPaint').value = color.siding_color || '';
+  document.getElementById('acTrim').value = color.trim_color || '';
+  document.getElementById('acShutter').value = color.shutter_color || '';
+  document.getElementById('acFrontDoor').value = color.front_door_color || '';
+  document.getElementById('acGarageDoor').value = color.garage_door_color || '';
+  document.getElementById('acRoofColor').value = color.roof_color || '';
+  document.getElementById('acFence').value = color.fence_material ? `${color.fence_material}${color.fence_height_feet ? ' / ' + color.fence_height_feet + 'ft' : ''}` : '';
+  document.getElementById('acDriveway').value = color.driveway_material || '';
+  document.getElementById('acStucco').value = color.stucco_color || '';
+
+  document.getElementById('acStep1').style.display = 'none';
+  document.getElementById('acStep2').style.display = 'flex';
+}
+
+async function acCommitDraft() {
+  const status = document.getElementById('acCommitStatus');
+  const btn = document.getElementById('acCommitBtn');
+  btn.disabled = true;
+  btn.textContent = 'Creating…';
+  status.style.display = 'block';
+  status.style.background = '#eff6ff';
+  status.style.border = '1px solid #93c5fd';
+  status.style.color = '#1e3a8a';
+  status.textContent = 'Creating draft submission…';
+
+  const ex = _acExtraction?.extracted || {};
+  const resolved = _acExtraction?.resolved || {};
+
+  const body = {
+    community_id: document.getElementById('acCommunityId').value || null,
+    builder_company_id: document.getElementById('acBuilderId').value || null,
+    master_plan_id: resolved.master_plan?.id || null,
+    fast_track: !!(resolved.fast_track && document.getElementById('acBuilderId').value === resolved.builder?.id),
+    submitter: {
+      email: document.getElementById('acSubmitterEmail').value,
+      name: document.getElementById('acSubmitterName').value,
+    },
+    property: {
+      lot_number: document.getElementById('acLot').value,
+      block_number: document.getElementById('acBlock').value,
+      section_number: document.getElementById('acSection').value,
+      street_address: document.getElementById('acAddress').value,
+      lot_type: document.getElementById('acLotType').value || null,
+      plat_number: ex.plat_number || null,
+    },
+    plan: {
+      plan_number: document.getElementById('acPlanNumber').value,
+      plan_name: document.getElementById('acPlanName').value,
+      elevation: document.getElementById('acElevation').value,
+      elevation_orientation: document.getElementById('acOrientation').value || null,
+      square_footage: document.getElementById('acSqft').value || null,
+      stories: document.getElementById('acStories').value || null,
+    },
+    metrics: {
+      lot_area_sqft: ex.lot_area_sqft ?? null,
+      lot_coverage_pct: ex.lot_coverage_pct ?? null,
+      fence_linear_ft: ex.fence_linear_ft ?? null,
+      total_sod_sqyd: ex.total_sod_sqyd ?? null,
+      total_paving_sqft: ex.total_paving_sqft ?? null,
+    },
+    materials: {
+      brick_color: document.getElementById('acBrickColor').value,
+      brick_manufacturer: document.getElementById('acBrickMfr').value,
+      stone_color: document.getElementById('acStone').value,
+      siding_color: document.getElementById('acPaint').value,
+      trim_color: document.getElementById('acTrim').value,
+      shutter_color: document.getElementById('acShutter').value,
+      front_door_color: document.getElementById('acFrontDoor').value,
+      garage_door_color: document.getElementById('acGarageDoor').value,
+      roof_color: document.getElementById('acRoofColor').value,
+      fence: document.getElementById('acFence').value,
+      driveway_material: document.getElementById('acDriveway').value,
+      stucco_color: document.getElementById('acStucco').value,
+    },
+    surveyor: {
+      firm: ex.surveyor_firm,
+      license_no: ex.surveyor_license_no,
+      plot_issue_date: ex.plot_issue_date,
+    },
+    flood_zone: ex.flood_zone,
+    builder_internal_job_no: ex.builder_internal_job_no,
+    options_notes: ex.options_notes,
+    plot_plan_storage_path: _acPlotPlanStorage?.storage_path || null,
+    plot_plan_filename: _acPlotPlanStorage?.filename || null,
+    color_sheet_storage_path: _acColorSheetStorage?.storage_path || null,
+    color_sheet_filename: _acColorSheetStorage?.filename || null,
+  };
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (window.supa) {
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+    }
+    const r = await fetch('/api/builder-applications/auto-create-from-extraction', {
+      method: 'POST', headers, body: JSON.stringify(body),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    status.style.background = '#dcfce7';
+    status.style.border = '1px solid #bbf7d0';
+    status.style.color = '#166534';
+    const ftNote = j.application.fast_track ? ' · ⚡ fast-track' : '';
+    status.innerHTML = `✓ Created <strong>${escapeHtml(j.application.reference_number || j.application.id.slice(0, 8))}</strong> (status: ${escapeHtml(j.application.status)}${ftNote}). Refreshing queue…`;
+    setTimeout(() => { closeAutoCreateModal(); loadQueue(); }, 1200);
+  } catch (e) {
+    status.style.background = '#fef2f2';
+    status.style.border = '1px solid #fecaca';
+    status.style.color = '#991b1b';
+    status.textContent = '✗ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Create application draft';
+  }
+}
 
 function closeMasterPlanLibrary() {
   document.getElementById('masterPlanLibraryModal').style.display = 'none';
