@@ -565,24 +565,28 @@ router.delete('/facts/:factId', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
-// POST /:communityId/replace-design-guidelines — supersede any current
-// design_document rows for this community + ingest the provided PDFs as the
-// new current design guidelines. Used when the operator realizes the wrong
-// version was ingested (e.g., the pre-recording working name like "Jones
-// Creek Reserve" instead of the as-recorded "August Meadows" version).
+// POST /:communityId/ingest-design-guidelines — ingest PDFs as design_document
+// for this community. Two modes via form field `supersede_current`:
+//   "true"  → mark all existing current design_document rows as superseded
+//             before ingesting (replace mode — for "wrong DG was ingested,
+//             swap to the right one")
+//   "false" → leave existing current rows in place (additive mode — for
+//             "add a new amendment / exhibit alongside the original")
+//
+// Default behavior is supersede=true to match the original "replace" UX
+// (and the route still answers to the legacy /replace-design-guidelines
+// path below for backward compatibility).
 //
 // Multipart form: design_pdfs[] — up to 5 PDFs, 25MB each
+//                 supersede_current=true|false
 //
 // Hash dedup: if a PDF with the same SHA-256 already exists in
-// library_documents, reuses that row (just marks it status='current' if it
-// was superseded earlier).
+// library_documents, reuses that row (just promotes it to status='current').
 //
-// Returns: { ok, ingested: [{id, title, file_size_bytes}],
+// Returns: { ok, mode, ingested: [{id, title, file_size_bytes}],
 //            superseded: [{id, title}], skipped: [{file, reason}] }
 // ----------------------------------------------------------------------------
-router.post('/:communityId/replace-design-guidelines',
-  designGuidelinesUpload.array('design_pdfs', 5),
-  async (req, res) => {
+async function _handleDesignGuidelinesIngest(req, res) {
     try {
       const { requireAdmin } = require('./users');
       const ctx = await requireAdmin(req, res);
@@ -591,6 +595,7 @@ router.post('/:communityId/replace-design-guidelines',
       const { communityId } = req.params;
       const files = req.files || [];
       if (files.length === 0) return res.status(400).json({ error: 'design_pdfs files required' });
+      const supersedeCurrent = String(req.body?.supersede_current ?? 'true').toLowerCase() === 'true';
 
       // Resolve community for storage path + sanity check
       const { data: community, error: cErr } = await supabase.from('communities')
@@ -601,15 +606,19 @@ router.post('/:communityId/replace-design-guidelines',
       if (cErr) throw cErr;
       if (!community) return res.status(404).json({ error: 'community_not_found' });
 
-      // Step 1: supersede existing current design_document rows for this community
-      const { data: superseded, error: supErr } = await supabase
-        .from('library_documents')
-        .update({ status: 'superseded' })
-        .eq('community_id', communityId)
-        .eq('category', 'design_document')
-        .eq('status', 'current')
-        .select('id, title');
-      if (supErr) throw supErr;
+      // Step 1: optionally supersede existing current design_document rows
+      let superseded = [];
+      if (supersedeCurrent) {
+        const { data: supData, error: supErr } = await supabase
+          .from('library_documents')
+          .update({ status: 'superseded' })
+          .eq('community_id', communityId)
+          .eq('category', 'design_document')
+          .eq('status', 'current')
+          .select('id, title');
+        if (supErr) throw supErr;
+        superseded = supData || [];
+      }
 
       // Step 2: ingest each new PDF
       const ingested = [];
@@ -678,16 +687,25 @@ router.post('/:communityId/replace-design-guidelines',
 
       res.json({
         ok: true,
+        mode: supersedeCurrent ? 'replace' : 'add',
         community: { id: community.id, name: community.name },
         ingested,
-        superseded: superseded || [],
+        superseded,
         skipped,
       });
     } catch (err) {
-      console.error('[community-profile] replace-design-guidelines failed:', err.message);
+      console.error('[community-profile] ingest-design-guidelines failed:', err.message);
       res.status(500).json({ error: err.message });
     }
-  });
+}
+
+// Canonical route name + backward-compat alias for the original /replace path
+router.post('/:communityId/ingest-design-guidelines',
+  designGuidelinesUpload.array('design_pdfs', 5),
+  _handleDesignGuidelinesIngest);
+router.post('/:communityId/replace-design-guidelines',
+  designGuidelinesUpload.array('design_pdfs', 5),
+  _handleDesignGuidelinesIngest);
 
 // ----------------------------------------------------------------------------
 // GET /:communityId/library-audit — what library_documents exist for this
@@ -697,6 +715,9 @@ router.post('/:communityId/replace-design-guidelines',
 // ----------------------------------------------------------------------------
 router.get('/:communityId/library-audit', async (req, res) => {
   try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
     const { communityId } = req.params;
 
     // 1. Pull all library_documents for this community (any status — caller
