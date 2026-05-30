@@ -1671,11 +1671,48 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
       return res.json({ bundles_created: 0, drafts_bundled: 0, singletons: 0, skipped: 0 });
     }
 
-    // Group by (property_id, type)
+    // Per-community §209 bundling-opt-out config (migration 133). When TRUE,
+    // letter_209 drafts (covers both certified_209 and fine_assessed) are
+    // treated as singletons regardless of how many are at the same property.
+    // Other types (courtesy_1, courtesy_2) still combine as before.
+    //
+    // Why: Texas §209 procedural defensibility — each violation needs its own
+    // §209.0064 cure-rights statement and §209.007 hearing-rights paragraph.
+    // A bundled letter CAN include all required citations per violation, but
+    // a defending attorney can argue the bundle "obscures" per-violation cure
+    // rights and create a procedural defense at the §209 hearing. Operators
+    // choose per community.
+    const communityIdsInScope = [...new Set(drafts.map((d) => d.community_id).filter(Boolean))];
+    const separateCertifiedCommunities = new Set();
+    if (communityIdsInScope.length > 0) {
+      try {
+        const { data: commRows } = await supabase
+          .from('communities')
+          .select('id, bundle_certified_letters_separately')
+          .in('id', communityIdsInScope);
+        for (const c of (commRows || [])) {
+          if (c.bundle_certified_letters_separately) separateCertifiedCommunities.add(c.id);
+        }
+      } catch (e) {
+        // If the column doesn't exist yet (migration 133 not applied), fall
+        // back to existing behavior — combine everything. Loud-warn so the
+        // operator can spot it in logs.
+        console.warn('[drafts/auto-bundle] community config lookup failed (migration 133 not applied?):', e.message);
+      }
+    }
+
+    // Group by (property_id, type). For letter_209 drafts in opt-out
+    // communities, we use a unique-per-draft key so each one ends up in its
+    // own group of 1 → falls through the singletons branch below and gets
+    // its own bundle_id without merging.
     const groups = new Map();
     for (const d of drafts) {
       if (!d.property_id) continue;
-      const key = `${d.property_id}|${d.type}`;
+      const isSeparateCertified = d.type === 'letter_209'
+        && separateCertifiedCommunities.has(d.community_id);
+      const key = isSeparateCertified
+        ? `${d.property_id}|${d.type}|${d.id}`  // unique → singleton path
+        : `${d.property_id}|${d.type}`;
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key).push(d);
     }
