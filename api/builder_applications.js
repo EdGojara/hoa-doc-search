@@ -1301,6 +1301,30 @@ router.post('/master-plans', upload.single('plan_pdf'), async (req, res) => {
 });
 
 // ============================================================================
+// GET /api/builder-applications/builder-companies
+// Lists all builder_companies registered for Bedrock. Used by admin upload
+// modals to populate the builder dropdown — required because new builders
+// can be registered before they have any master plans yet (chicken-and-
+// egg fix: prior implementation only surfaced builders that already had
+// at least one master plan).
+// ============================================================================
+router.get('/builder-companies', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('builder_companies')
+      .select('id, company_name, primary_email_domain, primary_contact_name, primary_contact_email, status')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('status', 'active')
+      .order('company_name');
+    if (error) throw error;
+    res.json({ ok: true, builder_companies: data || [] });
+  } catch (err) {
+    console.error('[builder_companies]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/builder-applications/master-plans/bulk-extract
 // Admin-only bulk PDF upload. For each PDF:
 //   1. Upload to documents storage under builders/<bid>/master-plans/

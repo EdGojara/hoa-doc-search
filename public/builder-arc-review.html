@@ -1126,7 +1126,8 @@ function closeMasterPlanModal() {
 }
 
 async function loadMasterPlanFormPickers() {
-  // Communities — reuse the existing /api/communities endpoint that filterCommunity uses
+  // Communities — pre-check ALL by default (operator typically wants
+  // pre-approval everywhere the builder is active).
   try {
     const c = await api('GET', '/api/communities?builder_arc_only=1');
     const list = c.communities || c || [];
@@ -1136,7 +1137,7 @@ async function loadMasterPlanFormPickers() {
     } else {
       cb.innerHTML = list.map((co) => `
         <label style="display:flex; align-items:center; gap:8px; padding:4px 0; cursor:pointer;">
-          <input type="checkbox" name="mpCommunity" value="${escapeHtml(co.id)}">
+          <input type="checkbox" name="mpCommunity" value="${escapeHtml(co.id)}" checked>
           <span>${escapeHtml(co.name)}</span>
         </label>
       `).join('');
@@ -1145,34 +1146,26 @@ async function loadMasterPlanFormPickers() {
     document.getElementById('mpCommunityCheckboxes').innerHTML = `<em style="color:#b91c1c;">Couldn't load communities: ${escapeHtml(e.message)}</em>`;
   }
 
-  // Builder companies — separate small endpoint or reuse application aggregate
+  // Builders — use the dedicated /builder-companies endpoint so newly
+  // registered builders (no master plans yet) show up. Auto-select if
+  // only one is registered.
   try {
-    const r = await api('GET', '/api/builder-applications/master-plans?limit=1');
-    // We don't have a direct list endpoint for builder_companies; pull from
-    // the master-plans aggregate which includes builder_company embed.
-    // If that's empty, fall back to a hardcoded DRB option so the form is
-    // still usable (matches seed in migration 127).
+    const r = await api('GET', '/api/builder-applications/builder-companies');
+    const list = r.builder_companies || [];
     const sel = document.getElementById('mpBuilderCompany');
-    sel.innerHTML = '<option value="">— pick a builder —</option>';
-    const seen = new Set();
-    (r.master_plans || []).forEach((p) => {
-      const bc = p.builder_company;
-      if (bc && !seen.has(bc.id)) {
-        seen.add(bc.id);
-        const opt = document.createElement('option');
-        opt.value = bc.id;
-        opt.textContent = bc.company_name;
-        sel.appendChild(opt);
-      }
-    });
-    if (seen.size === 0) {
-      // No plans yet → no builders surfaced; let the operator type free-form
-      // OR fall back to fetching builder_companies via a dedicated endpoint.
-      // For now show a note. Future: add /api/builder-companies endpoint.
-      sel.innerHTML += '<option value="" disabled>No registered builders yet — register one via Supabase or hit /api/builder-applications first</option>';
+    if (list.length === 0) {
+      sel.innerHTML = '<option value="" disabled selected>No registered builders yet — seed via migration 127 or Supabase</option>';
+    } else if (list.length === 1) {
+      const only = list[0];
+      sel.innerHTML = `<option value="${escapeHtml(only.id)}" selected>${escapeHtml(only.company_name)}</option>`;
+    } else {
+      sel.innerHTML = '<option value="">— pick a builder —</option>' +
+        list.map((bc) => `<option value="${escapeHtml(bc.id)}">${escapeHtml(bc.company_name)}</option>`).join('');
     }
   } catch (e) {
     console.warn('[mp] builder picker load failed:', e.message);
+    const sel = document.getElementById('mpBuilderCompany');
+    sel.innerHTML = `<option value="" disabled selected>Couldn't load builders: ${escapeHtml(e.message)}</option>`;
   }
 }
 
@@ -1272,18 +1265,20 @@ function bulkBackToStep1() {
 }
 
 async function loadBulkPickers() {
-  // Communities — only those with builder_arc_active
+  // Communities — only those with builder_arc_active. Pre-check ALL by
+  // default (operator usually wants pre-approval everywhere the builder
+  // is active; uncheck is one click if not).
   try {
     const r = await fetch('/api/communities?builder_arc_only=1');
     const data = await r.json();
     const list = data.communities || data || [];
     const cb = document.getElementById('bulkCommunityCheckboxes');
     if (!Array.isArray(list) || list.length === 0) {
-      cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities. Flip the toggle in Community Profile.</em>';
+      cb.innerHTML = '<em style="color:#94a3b8;">No builder-ARC-active communities. Flip the toggle in Community Profile first.</em>';
     } else {
       cb.innerHTML = list.map((c) => `
         <label style="display:flex; align-items:center; gap:6px; padding:2px 0; cursor:pointer;">
-          <input type="checkbox" name="bulkCommunity" value="${escapeHtml(c.id)}">
+          <input type="checkbox" name="bulkCommunity" value="${escapeHtml(c.id)}" checked>
           <span>${escapeHtml(c.name)}</span>
         </label>
       `).join('');
@@ -1291,27 +1286,28 @@ async function loadBulkPickers() {
   } catch (e) {
     document.getElementById('bulkCommunityCheckboxes').innerHTML = `<em style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</em>`;
   }
-  // Builders — reuse the same source as the single-upload modal (master-plans aggregate)
+  // Builders — use the dedicated /builder-companies endpoint so new
+  // builders (registered but not yet having any master plans) show up.
+  // Auto-select if there's only one — saves a click in the common
+  // single-builder case (DRB at August Meadows today).
   try {
-    const r = await api('GET', '/api/builder-applications/master-plans?limit=1');
+    const r = await api('GET', '/api/builder-applications/builder-companies');
+    const list = r.builder_companies || [];
     const sel = document.getElementById('bulkBuilderCompany');
-    sel.innerHTML = '<option value="">— pick a builder —</option>';
-    const seen = new Set();
-    (r.master_plans || []).forEach((p) => {
-      const bc = p.builder_company;
-      if (bc && !seen.has(bc.id)) {
-        seen.add(bc.id);
-        const opt = document.createElement('option');
-        opt.value = bc.id;
-        opt.textContent = bc.company_name;
-        sel.appendChild(opt);
-      }
-    });
-    if (seen.size === 0) {
-      sel.innerHTML += '<option value="" disabled>No registered builders — use the single Upload master plan flow once first OR seed via Supabase</option>';
+    if (list.length === 0) {
+      sel.innerHTML = '<option value="" disabled selected>No registered builders yet — register via Supabase or the seed migration first</option>';
+    } else if (list.length === 1) {
+      // Single builder — auto-select, no "pick a builder" prompt
+      const only = list[0];
+      sel.innerHTML = `<option value="${escapeHtml(only.id)}" selected>${escapeHtml(only.company_name)}</option>`;
+    } else {
+      sel.innerHTML = '<option value="">— pick a builder —</option>' +
+        list.map((bc) => `<option value="${escapeHtml(bc.id)}">${escapeHtml(bc.company_name)}</option>`).join('');
     }
   } catch (e) {
     console.warn('[bulk] builder picker load failed:', e.message);
+    const sel = document.getElementById('bulkBuilderCompany');
+    sel.innerHTML = `<option value="" disabled selected>Couldn't load builders: ${escapeHtml(e.message)}</option>`;
   }
 }
 
