@@ -446,6 +446,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
   /^\/builders\/[^/]+$/,                    // /builders/:slug — builder submission form (DRB, etc.)
   /^\/builders\/status\/[^/]+$/,            // /builders/status/:reference — builder submission status lookup
+  /^\/august-meadows-submission-form\.html$/, // standalone printable form for DRB's June batch (Karla's email-form workflow)
   /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
   /^\/portal-login\.html$/,                 // magic-link entry page
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)

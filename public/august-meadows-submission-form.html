@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>August Meadows — Builder ARC Submission Form</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  /* =============================================================================
+     August Meadows builder ARC submission form
+     ----------------------------------------------------------------------------
+     Standalone printable form. Built per Karla Rutan's (DRB Group, Houston)
+     request 2026-05-29: she needed a single fillable document she could
+     complete per address and email back with attachments. Used through
+     June 2026 batch; portal becomes the path after that.
+
+     Print path: open in browser → fill in fields → File → Print → Save as PDF
+     Hand-fill path: print blank → fill out by hand → scan → email
+     ============================================================================= */
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #1A3050;
+    --gold: #D4AF37;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --cream: #FAFAF6;
+    --rule: #c8c5b8;
+    --font-serif: 'Playfair Display', Georgia, 'Times New Roman', serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: #e7e3d4;
+    color: var(--ink);
+    font-family: var(--font-sans);
+    font-size: 11pt;
+    line-height: 1.4;
+  }
+  .page {
+    max-width: 800px;
+    margin: 24px auto;
+    background: #fff;
+    padding: 36px 44px;
+    box-shadow: 0 2px 16px rgba(0,0,0,0.08);
+    border: 1px solid var(--rule);
+  }
+  /* Letterhead */
+  header.lockup {
+    display: flex; align-items: center; justify-content: space-between;
+    border-bottom: 2px solid var(--gold);
+    padding-bottom: 14px;
+    margin-bottom: 18px;
+  }
+  .brand {
+    display: flex; align-items: center; gap: 14px;
+  }
+  .brand svg { width: 32px; height: 40px; }
+  .brand .wm {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em; line-height: 1.05;
+  }
+  .brand .wm em { font-style: italic; color: var(--gold); font-weight: 500; }
+  .brand .sub {
+    font-size: 9pt; color: var(--ink-faint);
+    letter-spacing: 0.14em; text-transform: uppercase; margin-top: 3px;
+  }
+  .form-id {
+    text-align: right; font-size: 9pt; color: var(--ink-faint);
+    line-height: 1.4;
+  }
+  .form-id strong { color: var(--navy); font-size: 10pt; }
+
+  h1 {
+    font-family: var(--font-serif);
+    font-size: 22pt; font-weight: 500;
+    color: var(--navy); letter-spacing: -0.01em;
+    margin: 0 0 4px;
+  }
+  h1 em { font-style: italic; color: var(--gold); font-weight: 500; }
+  .subtitle {
+    font-size: 10.5pt; color: var(--ink-soft);
+    margin: 0 0 18px;
+  }
+
+  /* Sections */
+  section { margin-bottom: 18px; }
+  h2 {
+    font-family: var(--font-serif);
+    font-size: 13pt; font-weight: 600;
+    color: var(--navy);
+    margin: 0 0 8px;
+    padding-bottom: 3px;
+    border-bottom: 1px solid var(--rule);
+  }
+
+  /* Fields */
+  .row { display: grid; gap: 10px 14px; margin-bottom: 8px; }
+  .row.two   { grid-template-columns: 1fr 1fr; }
+  .row.three { grid-template-columns: 1fr 1fr 1fr; }
+  .row.four  { grid-template-columns: 1fr 1fr 1fr 1fr; }
+
+  .fld {
+    display: flex; flex-direction: column;
+    font-size: 9pt; color: var(--ink-soft);
+  }
+  .fld label {
+    margin-bottom: 2px;
+    font-weight: 600; color: var(--navy);
+    letter-spacing: 0.02em;
+  }
+  .fld label .req { color: #b91c1c; margin-left: 2px; }
+  .fld label .opt { color: var(--ink-faint); font-weight: 400; font-size: 8.5pt; }
+  .fld input,
+  .fld select,
+  .fld textarea {
+    border: none;
+    border-bottom: 1px solid var(--ink); /* line-fill look */
+    padding: 4px 2px;
+    font: inherit;
+    font-size: 11pt;
+    color: var(--ink);
+    background: transparent;
+    width: 100%;
+    outline: none;
+  }
+  .fld textarea {
+    border: 1px solid var(--rule);
+    min-height: 36px;
+    padding: 6px 8px;
+    resize: vertical;
+  }
+  .fld input:focus,
+  .fld select:focus,
+  .fld textarea:focus { border-color: var(--gold); }
+
+  /* Checklist-style binary fields */
+  .check-row {
+    display: flex; gap: 16px; flex-wrap: wrap;
+    font-size: 10pt; color: var(--ink-soft);
+    margin-top: 4px;
+  }
+  .check-row label {
+    display: inline-flex; align-items: center; gap: 6px;
+    cursor: pointer;
+  }
+  .check-row input[type="checkbox"] { width: 14px; height: 14px; }
+
+  /* Materials table */
+  table.materials {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 6px;
+  }
+  table.materials td {
+    padding: 3px 4px;
+    border-bottom: 1px solid var(--rule);
+    font-size: 10.5pt;
+    vertical-align: bottom;
+  }
+  table.materials td:first-child {
+    width: 35%;
+    color: var(--navy); font-weight: 600;
+    font-size: 9.5pt;
+  }
+  table.materials td input {
+    border: none; width: 100%; padding: 2px 0;
+    font: inherit; font-size: 10.5pt;
+    background: transparent; outline: none;
+  }
+
+  /* Footer */
+  footer.submit {
+    margin-top: 24px;
+    padding: 14px 16px;
+    background: #fbfaf3;
+    border-left: 3px solid var(--gold);
+    font-size: 10.5pt; line-height: 1.5;
+    color: var(--ink-soft);
+  }
+  footer.submit strong { color: var(--navy); }
+  footer.submit a { color: var(--navy); }
+  .ack {
+    font-size: 9.5pt; color: var(--ink-soft);
+    line-height: 1.5;
+    margin-top: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--rule);
+    background: #fcfbf6;
+  }
+  .ack-check {
+    display: inline-flex; align-items: flex-start; gap: 6px;
+    margin-top: 4px;
+  }
+
+  /* Signature */
+  .sig-row {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 24px;
+    margin-top: 20px;
+  }
+  .sig-line {
+    border-bottom: 1px solid var(--ink);
+    padding: 30px 4px 2px;
+    font-size: 9pt; color: var(--ink-faint);
+  }
+
+  /* Print controls (hidden on print) */
+  .controls {
+    max-width: 800px;
+    margin: 16px auto 0;
+    padding: 0 4px;
+    display: flex; justify-content: flex-end; gap: 10px;
+  }
+  .controls button {
+    background: var(--navy); color: #fff; border: none;
+    padding: 9px 18px; border-radius: 6px;
+    font-size: 13px; font-weight: 600; cursor: pointer;
+  }
+  .controls button.secondary { background: #fff; color: var(--navy); border: 1px solid var(--navy); }
+
+  @media print {
+    body { background: #fff; }
+    .page { box-shadow: none; border: none; margin: 0; padding: 24px 32px; }
+    .controls { display: none !important; }
+    footer.submit { background: #f8f5e8; }
+    .fld input, .fld select, .fld textarea {
+      border-bottom-color: #000;
+    }
+  }
+
+  /* Small-screen courtesy — though this is intended for print/desktop */
+  @media (max-width: 640px) {
+    .page { padding: 20px 16px; }
+    .row.two, .row.three, .row.four { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<div class="controls">
+  <button class="secondary" onclick="window.location.reload()">Reset</button>
+  <button onclick="window.print()">🖨️ Print / Save as PDF</button>
+</div>
+
+<div class="page">
+
+  <header class="lockup">
+    <div class="brand">
+      <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" aria-label="Bedrock cornerstone">
+        <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
+        <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
+        <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
+      </svg>
+      <div>
+        <div class="wm">Bedrock <em>Association Management</em></div>
+        <div class="sub">trustEd · Builder ARC</div>
+      </div>
+    </div>
+    <div class="form-id">
+      <strong>BUILDER ARC SUBMISSION</strong><br>
+      August Meadows · Form v1<br>
+      Submission date: <input type="date" style="border:none; border-bottom:1px dotted #aaa; font-size:9pt; width:120px; padding:0; background:transparent;">
+    </div>
+  </header>
+
+  <h1>New Construction <em>Submission</em></h1>
+  <p class="subtitle">One submission per address. Attach the plan set + any material samples to the email; email completed form + attachments to <strong>builders@bedrocktx.com</strong>.</p>
+
+  <!-- ================================================================
+       BUILDER + SUBMITTER
+       ================================================================ -->
+  <section>
+    <h2>Builder &amp; Submitter</h2>
+    <div class="row two">
+      <div class="fld">
+        <label>Builder company<span class="req">*</span></label>
+        <input type="text" value="DRB Group" name="builder_company_name">
+      </div>
+      <div class="fld">
+        <label>Submitter name<span class="opt"> — purchasing coordinator</span></label>
+        <input type="text" name="submitter_name" placeholder="e.g. Karla Rutan">
+      </div>
+      <div class="fld">
+        <label>Submitter email<span class="req">*</span></label>
+        <input type="email" name="submitter_email">
+      </div>
+      <div class="fld">
+        <label>Submitter phone</label>
+        <input type="tel" name="submitter_phone">
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       PROPERTY
+       ================================================================ -->
+  <section>
+    <h2>Property — where the home will be built</h2>
+    <div class="row four">
+      <div class="fld">
+        <label>Lot<span class="req">*</span></label>
+        <input type="text" name="lot_number">
+      </div>
+      <div class="fld">
+        <label>Block</label>
+        <input type="text" name="block_number">
+      </div>
+      <div class="fld">
+        <label>Section</label>
+        <input type="text" name="section_number">
+      </div>
+      <div class="fld">
+        <label>Lot type</label>
+        <select name="lot_type">
+          <option value=""></option>
+          <option>Interior</option>
+          <option>Corner</option>
+          <option>Cul-de-sac</option>
+          <option>Backs to common area</option>
+          <option>Backs to thoroughfare</option>
+          <option>Flag lot</option>
+        </select>
+      </div>
+    </div>
+    <div class="fld" style="margin-top:6px;">
+      <label>Street address<span class="req">*</span></label>
+      <input type="text" name="street_address" placeholder="e.g. 8306 Graces Gamble Way">
+    </div>
+  </section>
+
+  <!-- ================================================================
+       PLAN
+       ================================================================ -->
+  <section>
+    <h2>Plan</h2>
+    <div class="row four">
+      <div class="fld">
+        <label>Plan number<span class="req">*</span></label>
+        <input type="text" name="plan_number" placeholder="e.g. 6512">
+      </div>
+      <div class="fld">
+        <label>Plan name<span class="opt"> — optional</span></label>
+        <input type="text" name="plan_name">
+      </div>
+      <div class="fld">
+        <label>Elevation<span class="req">*</span></label>
+        <input type="text" name="elevation" placeholder="e.g. A">
+      </div>
+      <div class="fld">
+        <label>Orientation</label>
+        <select name="elevation_orientation">
+          <option value=""></option>
+          <option>Standard</option>
+          <option>Left</option>
+          <option>Right</option>
+        </select>
+      </div>
+    </div>
+    <div class="row three">
+      <div class="fld">
+        <label>Square footage</label>
+        <input type="number" name="square_footage" min="0" placeholder="min 1,500">
+      </div>
+      <div class="fld">
+        <label>Stories</label>
+        <select name="stories">
+          <option value=""></option>
+          <option>1</option>
+          <option>1.5</option>
+          <option>2</option>
+          <option>2.5</option>
+          <option>3</option>
+        </select>
+      </div>
+      <div class="fld">
+        <label>Master plan match<span class="opt"> — if pre-approved</span></label>
+        <input type="text" name="master_plan_match" placeholder="Plan + elevation (auto-fast-track)">
+      </div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       MATERIALS — the heart of the review
+       ================================================================ -->
+  <section>
+    <h2>Materials &amp; Finishes</h2>
+    <p class="subtitle" style="margin:0 0 6px;">August Meadows requires &gt;35% masonry on front elevation; min 2-foot wrap on sides; brick must be king or queen per ASTM C216-87 in earth tones (no jumbo, no stucco brick); mortar joints tooled (no slump); no Dryvit or EIFS.</p>
+    <table class="materials">
+      <tr><td>Brick color</td><td><input type="text" name="brick_color"></td></tr>
+      <tr><td>Brick manufacturer</td><td><input type="text" name="brick_manufacturer"></td></tr>
+      <tr><td>Stone type / color</td><td><input type="text" name="stone_color"></td></tr>
+      <tr><td>Stucco (color / type, if any)</td><td><input type="text" name="stucco_color"></td></tr>
+      <tr><td>Masonry % — front elevation</td><td><input type="number" name="masonry_percentage_front" min="0" max="100" placeholder="must be &gt;35%"></td></tr>
+      <tr><td>Masonry % — sides</td><td><input type="number" name="masonry_percentage_sides" min="0" max="100"></td></tr>
+      <tr><td>Masonry wrap distance (ft)</td><td><input type="number" name="masonry_wrap_feet" step="0.5" placeholder="2 ft minimum"></td></tr>
+      <tr><td>Siding material (if any)</td><td><input type="text" name="siding_material"></td></tr>
+      <tr><td>Siding color</td><td><input type="text" name="siding_color"></td></tr>
+      <tr><td>Trim color</td><td><input type="text" name="trim_color"></td></tr>
+      <tr><td>Shutter color (if present)</td><td><input type="text" name="shutter_color"></td></tr>
+      <tr><td>Front door color</td><td><input type="text" name="front_door_color"></td></tr>
+      <tr><td>Garage door style + color</td><td><input type="text" name="garage_door"></td></tr>
+      <tr><td>Roof material</td><td><input type="text" name="roof_material"></td></tr>
+      <tr><td>Roof color</td><td><input type="text" name="roof_color"></td></tr>
+      <tr><td>Roof pitch — sides<span class="opt" style="font-weight:400; color:var(--ink-faint);"> (8:12 min)</span></td><td><input type="text" name="roof_pitch_sides" placeholder="e.g. 8:12"></td></tr>
+      <tr><td>Roof pitch — porches<span class="opt" style="font-weight:400; color:var(--ink-faint);"> (6:12 min)</span></td><td><input type="text" name="roof_pitch_porches" placeholder="e.g. 6:12"></td></tr>
+      <tr><td>Fence material + height</td><td><input type="text" name="fence"></td></tr>
+      <tr><td>Driveway material</td><td><input type="text" name="driveway"></td></tr>
+    </table>
+
+    <div class="row two" style="margin-top:10px;">
+      <div class="fld">
+        <label>Target construction start</label>
+        <input type="date" name="target_construction_start_date">
+      </div>
+      <div class="fld">
+        <label>Estimated completion</label>
+        <input type="date" name="estimated_completion_date">
+      </div>
+    </div>
+
+    <div class="fld" style="margin-top:8px;">
+      <label>Structural modifications from master plan<span class="opt"> — optional</span></label>
+      <textarea name="structural_modifications" rows="2" placeholder="e.g. extended back patio, optional 4th bedroom, no structural changes"></textarea>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       ATTACHMENTS CHECKLIST
+       ================================================================ -->
+  <section>
+    <h2>Attachments — email along with this form</h2>
+    <p class="subtitle" style="margin:0 0 6px;">Check each as you attach to the submission email.</p>
+    <div class="check-row" style="flex-direction:column; gap:6px;">
+      <label><input type="checkbox"> Complete plan set (architectural drawings, elevations, floor plans)</label>
+      <label><input type="checkbox"> Site plan / plot plan showing setbacks</label>
+      <label><input type="checkbox"> Materials list / specification sheet</label>
+      <label><input type="checkbox"> Brick &amp; stone samples (photos or product spec sheets)</label>
+      <label><input type="checkbox"> Paint palette selections (color names + codes)</label>
+      <label><input type="checkbox"> Fence detail (if applicable)</label>
+      <label><input type="checkbox"> Survey or recorded plat reference (if Section-specific overrides)</label>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       BUILDER ACKNOWLEDGMENTS
+       ================================================================ -->
+  <section>
+    <h2>Acknowledgments</h2>
+    <div class="ack">
+      <div class="ack-check"><input type="checkbox"> The plans submitted comply with the August Meadows Residential Design Guidelines (recorded April 22, 2026, Fort Bend County) and the Declaration of Covenants, Conditions, and Restrictions for August Meadows.</div>
+      <div class="ack-check"><input type="checkbox"> No construction will begin until written ARC approval is received from Bedrock Association Management on behalf of the Association.</div>
+      <div class="ack-check"><input type="checkbox"> Any modifications to the approved plan after issuance of the approval letter require a written amendment request to Bedrock prior to implementation.</div>
+      <div class="ack-check"><input type="checkbox"> Builder accepts responsibility for ensuring all applicable City of Needville permits and inspections (including energy code) are obtained independently.</div>
+    </div>
+  </section>
+
+  <!-- ================================================================
+       SIGNATURE
+       ================================================================ -->
+  <div class="sig-row">
+    <div class="sig-line">Authorized signature</div>
+    <div class="sig-line">Date</div>
+  </div>
+  <div class="sig-row" style="margin-top:6px;">
+    <div class="fld" style="border:none;">
+      <label>Printed name &amp; title</label>
+      <input type="text" name="signer_name_title">
+    </div>
+  </div>
+
+  <footer class="submit">
+    <strong>Where to send:</strong> email completed form + all attachments to <a href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a> with subject line:<br>
+    <code style="color:var(--navy);">August Meadows ARC Submission — Lot [#] — [Street Address]</code>
+    <br><br>
+    <strong>Standard review SLA:</strong> 5 business days · <strong>Fast-track:</strong> 2 business days when the plan + elevation match a pre-approved master plan on file with Bedrock.<br>
+    <strong>Review fee:</strong> $150 per submission, invoiced after the approval letter is issued.<br>
+    <strong>Questions:</strong> Ed Gojara · 346-440-1422 · egojara@bedrocktx.com
+  </footer>
+
+</div>
+
+<script>
+  // Tiny QoL — auto-populate the submission date with today's date.
+  (function () {
+    const dateInputs = document.querySelectorAll('input[type="date"]');
+    if (dateInputs.length > 0) {
+      const today = new Date().toISOString().slice(0, 10);
+      // Only the submission date (first one) — leave construction start/completion blank
+      const first = document.querySelector('header.lockup input[type="date"]');
+      if (first) first.value = today;
+    }
+  })();
+</script>
+
+</body>
+</html>
