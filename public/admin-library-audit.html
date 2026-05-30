@@ -334,7 +334,12 @@ function renderAudit(j, slug) {
     const unknownPill = c.unknown_category ? '<span class="pill unknown">unknown category</span>' : '';
     const requiredPill = c.required_for_resale ? '<span class="pill req">resale</span>' : '';
     const itemsCell = c.items.length > 0
-      ? `<ul class="items">${c.items.slice(0, 6).map((i) => `<li>${escapeHtml(i.file_name_original || i.title || i.id.slice(0, 8))} <span style="color:#94a3b8;">(${escapeHtml(i.status)})</span></li>`).join('')}${c.items.length > 6 ? `<li><em>+${c.items.length - 6} more</em></li>` : ''}</ul>`
+      ? `<ul class="items">${c.items.slice(0, 8).map((i) => {
+          const label = escapeHtml(i.file_name_original || i.title || i.id.slice(0, 8));
+          const statusSpan = `<span style="color:${i.status === 'current' ? '#94a3b8' : '#b45309'};">(${escapeHtml(i.status)})</span>`;
+          const delBtn = `<button onclick="deleteLibraryDoc('${escapeHtml(i.id)}', '${escapeHtml((i.file_name_original || i.title || '').replace(/'/g, "\\'").slice(0, 60))}')" title="Hard-delete this document + its storage file" style="margin-left:6px; background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:1px 5px; border-radius:4px; font-size:10px; cursor:pointer;">🗑️</button>`;
+          return `<li>${label} ${statusSpan} ${delBtn}</li>`;
+        }).join('')}${c.items.length > 8 ? `<li><em>+${c.items.length - 8} more</em></li>` : ''}</ul>`
       : '<em style="color:#94a3b8;">none</em>';
     return `
       <tr class="${rowClass}">
@@ -364,6 +369,19 @@ function wireDesignGuidelinesUpload(communityId) {
     if (e.dataTransfer.files.length > 0) uploadDesignGuidelines(communityId, e.dataTransfer.files);
   };
   input.onchange = () => { if (input.files.length > 0) uploadDesignGuidelines(communityId, input.files); };
+}
+
+async function deleteLibraryDoc(docId, label) {
+  if (!confirm(`Hard-delete this library document?\n\n${label || docId}\n\nRemoves the database row + the storage file. Irreversible.`)) return;
+  try {
+    const r = await authedFetch('/api/documents/' + encodeURIComponent(docId), { method: 'DELETE' });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    // Refresh the audit so the deleted doc disappears + counts update
+    await onCommunityChange();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
 }
 
 async function uploadDesignGuidelines(communityId, fileList) {
