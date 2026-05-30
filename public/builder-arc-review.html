@@ -387,6 +387,7 @@
     <a href="/">← Platform</a>
     <a href="#" id="uploadMasterPlanBtn">📐 Upload master plan</a>
     <a href="#" id="bulkUploadMasterPlansBtn">📚 Bulk upload plans</a>
+    <a href="#" id="masterPlanLibraryBtn">📒 Plan library</a>
     <a href="#" id="refreshBtn">Refresh</a>
   </div>
 </header>
@@ -534,6 +535,54 @@
         <button type="button" onclick="bulkBackToStep1()" style="padding:10px 18px; background:#fff; border:1px solid #d0d7de; color:#475569; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">← Drop more files</button>
         <button type="button" id="bulkCommitBtn" onclick="bulkCommitAll()" style="padding:10px 22px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Register all selected</button>
       </div>
+    </div>
+  </div>
+</div>
+
+<!-- Master plan library modal — read-only view of every registered master plan
+     across all builders + communities. The "did my upload land" answer. Also
+     surfaces orphan plans (no community approval) so they can be cleaned up. -->
+<div id="masterPlanLibraryModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:24px 16px; overflow-y:auto;">
+  <div style="background:#fff; max-width:1200px; width:100%; border-radius:12px; padding:24px 28px; box-shadow:0 8px 32px rgba(0,0,0,0.3); font-family:var(--font-sans, system-ui);">
+    <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
+      <h2 style="margin:0; font-family:var(--font-serif, Georgia); font-size:22px; color:var(--navy, #1A3050);">📒 Master plan library</h2>
+      <button onclick="closeMasterPlanLibrary()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
+    </div>
+    <p style="margin:0 0 14px; font-size:13px; color:#475569; line-height:1.5;">
+      Every master plan registered in the library. Future submissions that match a plan number + elevation here auto-fast-track at the pre-approved communities.
+    </p>
+    <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; font-size:13px; color:#1a3a5c;">
+      <label style="display:flex; align-items:center; gap:6px; font-weight:500;">Builder
+        <select id="libFilterBuilder" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          <option value="">All</option>
+        </select>
+      </label>
+      <label style="display:flex; align-items:center; gap:6px; font-weight:500;">Community
+        <select id="libFilterCommunity" style="padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          <option value="">All</option>
+        </select>
+      </label>
+      <div style="margin-left:auto; align-self:center; color:#475569;" id="libCount">—</div>
+    </div>
+    <div style="max-height:60vh; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
+      <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+        <thead style="background:#1A3050; color:#fff; position:sticky; top:0;">
+          <tr>
+            <th style="padding:8px 10px; text-align:left;">Builder</th>
+            <th style="padding:8px 10px; text-align:left;">Plan #</th>
+            <th style="padding:8px 10px; text-align:left;">Plan name</th>
+            <th style="padding:8px 10px; text-align:left;">Elev</th>
+            <th style="padding:8px 10px; text-align:right;">Sqft</th>
+            <th style="padding:8px 10px; text-align:center;">Stories</th>
+            <th style="padding:8px 10px; text-align:left;">Pre-approved at</th>
+            <th style="padding:8px 10px; text-align:left;">Registered</th>
+            <th style="padding:8px 10px; text-align:center;">PDF</th>
+          </tr>
+        </thead>
+        <tbody id="libGridBody">
+          <tr><td colspan="9" style="padding:24px; text-align:center; color:#94a3b8;">Loading…</td></tr>
+        </tbody>
+      </table>
     </div>
   </div>
 </div>
@@ -1383,6 +1432,107 @@ document.getElementById('bulkUploadMasterPlansBtn').addEventListener('click', (e
   e.preventDefault();
   openBulkMasterPlanModal();
 });
+
+// ----------------------------------------------------------------------------
+// Master plan library — "what's actually been uploaded" view
+// ----------------------------------------------------------------------------
+let _libPlansCache = [];
+let _libBuildersById = {};
+let _libCommunitiesById = {};
+
+document.getElementById('masterPlanLibraryBtn').addEventListener('click', (e) => {
+  e.preventDefault();
+  openMasterPlanLibrary();
+});
+
+function closeMasterPlanLibrary() {
+  document.getElementById('masterPlanLibraryModal').style.display = 'none';
+}
+
+async function openMasterPlanLibrary() {
+  document.getElementById('masterPlanLibraryModal').style.display = 'flex';
+  document.getElementById('libGridBody').innerHTML =
+    `<tr><td colspan="9" style="padding:24px; text-align:center; color:#94a3b8;">Loading…</td></tr>`;
+  document.getElementById('libCount').textContent = '—';
+
+  // Populate filter dropdowns from the same endpoints the modals use
+  try {
+    const [bRes, cRes] = await Promise.all([
+      api('GET', '/api/builder-applications/builder-companies'),
+      api('GET', '/api/builder-applications/active-communities'),
+    ]);
+    const builders = bRes.builder_companies || [];
+    const communities = cRes.communities || cRes || [];
+    _libBuildersById = Object.fromEntries(builders.map((b) => [b.id, b]));
+    _libCommunitiesById = Object.fromEntries(communities.map((c) => [c.id, c]));
+    const bSel = document.getElementById('libFilterBuilder');
+    bSel.innerHTML = '<option value="">All</option>' +
+      builders.map((b) => `<option value="${escapeHtml(b.id)}">${escapeHtml(b.company_name)}</option>`).join('');
+    const cSel = document.getElementById('libFilterCommunity');
+    cSel.innerHTML = '<option value="">All</option>' +
+      communities.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    bSel.onchange = renderLibraryRows;
+    cSel.onchange = renderLibraryRows;
+  } catch (_) {
+    // non-fatal — list still loads, filters just won't have options
+  }
+
+  try {
+    const r = await api('GET', '/api/builder-applications/master-plans');
+    _libPlansCache = r.master_plans || [];
+    renderLibraryRows();
+  } catch (e) {
+    document.getElementById('libGridBody').innerHTML =
+      `<tr><td colspan="9" style="padding:24px; text-align:center; color:#b91c1c;">Couldn't load plans: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function renderLibraryRows() {
+  const builderFilter = document.getElementById('libFilterBuilder').value;
+  const communityFilter = document.getElementById('libFilterCommunity').value;
+  const tbody = document.getElementById('libGridBody');
+  const countEl = document.getElementById('libCount');
+
+  let rows = _libPlansCache.slice();
+  if (builderFilter) rows = rows.filter((p) => p.builder_company_id === builderFilter);
+  if (communityFilter) {
+    rows = rows.filter((p) => (p.community_approvals || [])
+      .some((a) => a.community_id === communityFilter && !a.retired_at));
+  }
+
+  countEl.textContent = `${rows.length} plan${rows.length === 1 ? '' : 's'}`;
+
+  if (rows.length === 0) {
+    tbody.innerHTML = `<tr><td colspan="9" style="padding:24px; text-align:center; color:#94a3b8;">No plans match.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map((p) => {
+    const builderName = p.builder_company?.company_name || _libBuildersById[p.builder_company_id]?.company_name || '—';
+    const approvals = (p.community_approvals || []).filter((a) => !a.retired_at);
+    const approvalNames = approvals.map((a) => a.community?.name || _libCommunitiesById[a.community_id]?.name).filter(Boolean);
+    const approvalsCell = approvalNames.length === 0
+      ? `<span style="color:#b45309;">⚠ none</span>`
+      : escapeHtml(approvalNames.join(', '));
+    const createdAt = p.created_at ? new Date(p.created_at).toLocaleDateString() : '—';
+    const pdfCell = p.library_document_id
+      ? `<a href="/api/builder-applications/master-plans/${encodeURIComponent(p.id)}/pdf" target="_blank" style="color:var(--gold, #b8860b); text-decoration:none; font-weight:600;">View</a>`
+      : `<span style="color:#94a3b8;">—</span>`;
+    return `
+      <tr style="border-bottom:1px solid #e2e8f0;">
+        <td style="padding:8px 10px;">${escapeHtml(builderName)}</td>
+        <td style="padding:8px 10px; font-family:var(--font-mono); font-weight:600;">${escapeHtml(p.plan_number || '—')}</td>
+        <td style="padding:8px 10px;">${escapeHtml(p.plan_name || '')}</td>
+        <td style="padding:8px 10px;">${escapeHtml(p.elevation || '—')}</td>
+        <td style="padding:8px 10px; text-align:right;">${p.square_footage ? Number(p.square_footage).toLocaleString() : '—'}</td>
+        <td style="padding:8px 10px; text-align:center;">${escapeHtml(String(p.stories || '—'))}</td>
+        <td style="padding:8px 10px;">${approvalsCell}</td>
+        <td style="padding:8px 10px; color:#475569;">${escapeHtml(createdAt)}</td>
+        <td style="padding:8px 10px; text-align:center;">${pdfCell}</td>
+      </tr>
+    `;
+  }).join('');
+}
 
 // Drop-zone wiring
 (function wireBulkDrop() {

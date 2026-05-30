@@ -1719,7 +1719,11 @@ router.get('/master-plans', async (req, res) => {
       .select(`
         *,
         builder_company:builder_companies(id, company_name),
-        community_approvals:master_plan_community_approvals(community_id, approved_at, approved_by, retired_at)
+        library_document:library_documents(id, title, storage_bucket, storage_path),
+        community_approvals:master_plan_community_approvals(
+          community_id, approved_at, approved_by, retired_at,
+          community:communities(id, name)
+        )
       `)
       .order('plan_number');
 
@@ -1738,6 +1742,33 @@ router.get('/master-plans', async (req, res) => {
     res.json({ master_plans: plans, total: plans.length });
   } catch (err) {
     console.error('[builder_applications] master plans list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GET /api/builder-applications/master-plans/:id/pdf
+// Redirects to a short-lived signed URL for the underlying plan PDF.
+// Used by the master plan library "View" link.
+// ============================================================================
+router.get('/master-plans/:id/pdf', async (req, res) => {
+  try {
+    const { data: plan, error: planErr } = await supabase
+      .from('master_plans')
+      .select('id, library_document_id, library_document:library_documents(storage_bucket, storage_path)')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (planErr) throw planErr;
+    if (!plan) return res.status(404).json({ error: 'plan_not_found' });
+    const bucket = plan.library_document?.storage_bucket;
+    const path = plan.library_document?.storage_path;
+    if (!bucket || !path) return res.status(404).json({ error: 'plan_pdf_missing' });
+    const { data: signed, error: signErr } = await supabase
+      .storage.from(bucket).createSignedUrl(path, 60 * 10);  // 10 min
+    if (signErr) throw signErr;
+    res.redirect(signed.signedUrl);
+  } catch (err) {
+    console.error('[builder_applications] master plan pdf failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
