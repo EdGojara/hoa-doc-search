@@ -1666,15 +1666,10 @@ router.post('/master-plans/bulk-commit', express.json({ limit: '256kb' }), async
         if (!row.plan_number) { failed.push({ row, error: 'plan_number required' }); continue; }
         if (!row.elevation) { failed.push({ row, error: 'elevation required' }); continue; }
 
-        // If the library_doc was pre-approved for a SPECIFIC community at upload,
-        // update its community_id to the first pre-approval (for the matrix view).
-        if (communityIds[0]) {
-          try {
-            await supabase.from('library_documents')
-              .update({ community_id: communityIds[0] })
-              .eq('id', row.library_document_id);
-          } catch (_) {}
-        }
+        // Community pre-approval lives ONLY in master_plan_community_approvals
+        // below. Do not mutate library_documents.community_id — a master plan
+        // can be approved at multiple communities, and storing one of them on
+        // the PDF row was a single-source-of-truth violation.
 
         const { data: plan, error: planErr } = await supabase
           .from('master_plans')
@@ -1730,6 +1725,224 @@ router.post('/master-plans/bulk-commit', express.json({ limit: '256kb' }), async
     });
   } catch (err) {
     console.error('[bulk-commit]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GET /api/builder-applications/master-plans/orphans
+// ----------------------------------------------------------------------------
+// Returns library_documents rows with category='master_plan_pdf' that have
+// NO master_plans row linking back. These are PDFs that landed via the bulk
+// extract step but never got registered as plans — either the operator
+// closed the modal between steps, the commit failed for some rows, or the
+// hash-collision bug rejected them before today's fix.
+//
+// Placed BEFORE the dynamic /master-plans/:id routes to avoid Express
+// matching "orphans" as a UUID and 500-ing.
+// ============================================================================
+router.get('/master-plans/orphans', async (req, res) => {
+  try {
+    // All master_plan PDFs
+    const { data: docs, error: docsErr } = await supabase
+      .from('library_documents')
+      .select('id, title, file_name_original, file_path, storage_bucket, uploaded_at')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('category', 'master_plan_pdf')
+      .order('uploaded_at', { ascending: false });
+    if (docsErr) throw docsErr;
+
+    if (!docs || docs.length === 0) {
+      return res.json({ ok: true, orphans: [], total: 0 });
+    }
+
+    // Which of those are already linked from master_plans?
+    const docIds = docs.map((d) => d.id);
+    const { data: linked, error: linkedErr } = await supabase
+      .from('master_plans')
+      .select('library_document_id')
+      .in('library_document_id', docIds);
+    if (linkedErr) throw linkedErr;
+    const linkedSet = new Set((linked || []).map((r) => r.library_document_id));
+
+    const orphans = docs.filter((d) => !linkedSet.has(d.id));
+    res.json({ ok: true, orphans, total: orphans.length });
+  } catch (err) {
+    console.error('[builder_applications] orphans list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// GET /api/builder-applications/master-plans/orphans/:library_document_id/pdf
+// ----------------------------------------------------------------------------
+// Redirects to a short-lived signed URL for the orphan PDF. Same pattern as
+// the registered-plan PDF endpoint but scoped to library_documents directly.
+// ============================================================================
+router.get('/master-plans/orphans/:library_document_id/pdf', async (req, res) => {
+  try {
+    const { data: doc, error: docErr } = await supabase
+      .from('library_documents')
+      .select('id, category, storage_bucket, file_path')
+      .eq('id', req.params.library_document_id)
+      .maybeSingle();
+    if (docErr) throw docErr;
+    if (!doc) return res.status(404).json({ error: 'library_document_not_found' });
+    if (doc.category !== 'master_plan_pdf') {
+      return res.status(400).json({ error: 'not a master plan PDF' });
+    }
+    if (!doc.storage_bucket || !doc.file_path) return res.status(404).json({ error: 'pdf_missing' });
+    const { data: signed, error: signErr } = await supabase
+      .storage.from(doc.storage_bucket).createSignedUrl(doc.file_path, 60 * 10);
+    if (signErr) throw signErr;
+    res.redirect(signed.signedUrl);
+  } catch (err) {
+    console.error('[builder_applications] orphan pdf failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/master-plans/orphans/:library_document_id/register
+// ----------------------------------------------------------------------------
+// Body: { builder_company_id, plan_number, plan_name?, elevation,
+//         square_footage?, stories?, community_ids: [uuid, ...] }
+// Promotes an orphan library_documents row into a master_plans row + community
+// approvals. Same shape as a single bulk-commit row, scoped to one PDF.
+// ============================================================================
+router.post('/master-plans/orphans/:library_document_id/register',
+  express.json({ limit: '64kb' }),
+  async (req, res) => {
+    try {
+      const { requireAdmin } = require('./users');
+      const ctx = await requireAdmin(req, res);
+      if (!ctx) return;
+
+      const libId = req.params.library_document_id;
+      const body = req.body || {};
+      if (!body.builder_company_id) return res.status(400).json({ error: 'builder_company_id required' });
+      if (!body.plan_number) return res.status(400).json({ error: 'plan_number required' });
+      if (!body.elevation) return res.status(400).json({ error: 'elevation required' });
+
+      // Confirm the orphan actually exists + is a master plan PDF
+      const { data: doc, error: docErr } = await supabase
+        .from('library_documents')
+        .select('id, category, management_company_id')
+        .eq('id', libId)
+        .maybeSingle();
+      if (docErr) throw docErr;
+      if (!doc) return res.status(404).json({ error: 'library_document_not_found' });
+      if (doc.category !== 'master_plan_pdf') {
+        return res.status(400).json({ error: 'library_document is not a master plan PDF' });
+      }
+
+      // Confirm builder belongs to Bedrock
+      const { data: company } = await supabase
+        .from('builder_companies')
+        .select('id, company_name')
+        .eq('id', body.builder_company_id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .maybeSingle();
+      if (!company) return res.status(404).json({ error: 'builder_company_not_found' });
+
+      // Insert master_plans row
+      const { data: plan, error: planErr } = await supabase
+        .from('master_plans')
+        .insert({
+          builder_company_id: company.id,
+          plan_number: String(body.plan_number).trim(),
+          plan_name: (body.plan_name || '').trim() || null,
+          elevation: String(body.elevation).trim(),
+          square_footage: body.square_footage ? parseInt(body.square_footage, 10) : null,
+          stories: body.stories ? parseFloat(body.stories) : null,
+          status: 'approved',
+          library_document_id: libId,
+        })
+        .select('id, plan_number, elevation')
+        .single();
+      if (planErr) {
+        if (planErr.code === '23505') {
+          return res.status(409).json({ error: `duplicate master plan: ${body.plan_number} / ${body.elevation}` });
+        }
+        throw planErr;
+      }
+
+      // Pre-approve at the requested communities
+      const communityIds = Array.isArray(body.community_ids) ? body.community_ids.filter(Boolean) : [];
+      const approvals = [];
+      for (const cid of communityIds) {
+        try {
+          await supabase.from('master_plan_community_approvals').insert({
+            master_plan_id: plan.id,
+            community_id: cid,
+            approved_by: 'orphan_recovery',
+          });
+          approvals.push(cid);
+        } catch (_) {}
+      }
+
+      res.json({ ok: true, master_plan: plan, approved_at: approvals });
+    } catch (err) {
+      console.error('[builder_applications] orphan register failed:', err.message);
+      res.status(500).json({ error: safeErrorMessage(err) });
+    }
+  });
+
+// ============================================================================
+// DELETE /api/builder-applications/master-plans/orphans/:library_document_id
+// ----------------------------------------------------------------------------
+// Hard-deletes an orphan master_plan PDF. Refuses to delete if the library
+// document is linked from a master_plans row (use the master_plans retire
+// endpoint instead). Removes the storage object best-effort.
+// ============================================================================
+router.delete('/master-plans/orphans/:library_document_id', async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const libId = req.params.library_document_id;
+
+    // Refuse to delete if linked
+    const { data: linked, error: linkedErr } = await supabase
+      .from('master_plans')
+      .select('id')
+      .eq('library_document_id', libId)
+      .limit(1);
+    if (linkedErr) throw linkedErr;
+    if (linked && linked.length > 0) {
+      return res.status(409).json({
+        error: 'library_document is linked from a master plan — retire the plan instead of deleting the PDF',
+      });
+    }
+
+    // Get storage info before delete
+    const { data: doc, error: docErr } = await supabase
+      .from('library_documents')
+      .select('id, category, storage_bucket, file_path')
+      .eq('id', libId)
+      .maybeSingle();
+    if (docErr) throw docErr;
+    if (!doc) return res.status(404).json({ error: 'library_document_not_found' });
+    if (doc.category !== 'master_plan_pdf') {
+      return res.status(400).json({ error: 'not a master plan PDF — refusing to delete' });
+    }
+
+    // Delete row first (so even if storage delete fails, no dangling DB ref)
+    const { error: delErr } = await supabase
+      .from('library_documents')
+      .delete()
+      .eq('id', libId);
+    if (delErr) throw delErr;
+
+    // Best-effort storage cleanup
+    if (doc.file_path && doc.storage_bucket) {
+      try { await supabase.storage.from(doc.storage_bucket).remove([doc.file_path]); } catch (_) {}
+    }
+
+    res.json({ ok: true, deleted: libId });
+  } catch (err) {
+    console.error('[builder_applications] orphan delete failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
