@@ -77,21 +77,56 @@ Return ONLY valid JSON, no preamble:
 
 If you can identify the plan number + at least one elevation, return what you can. If you cannot identify even the plan number, return {"elevations":[], "ai_confidence":"low", "ai_notes":"explain why"}.`;
 
+// Trim a PDF to the first maxPages pages and return a new buffer. Used to
+// keep master-plan PDF extractions under Claude's API limits (100 pages,
+// 32 MB per document). The cover sheet + schedule of plans — which carry
+// plan_number, plan_name, elevation, sqft — are virtually always in the
+// first few pages; pages beyond that are construction drawings that don't
+// help with metadata extraction. The original full PDF stays in storage
+// for the operator-facing View PDF link.
+async function trimPdfToFirstPages(pdfBuffer, maxPages) {
+  try {
+    const { PDFDocument } = require('pdf-lib');
+    const src = await PDFDocument.load(pdfBuffer, { ignoreEncryption: true });
+    const total = src.getPageCount();
+    if (total <= maxPages) return { buffer: pdfBuffer, total_pages: total, trimmed: false };
+    const dst = await PDFDocument.create();
+    const indices = Array.from({ length: maxPages }, (_, i) => i);
+    const copied = await dst.copyPages(src, indices);
+    copied.forEach((p) => dst.addPage(p));
+    const trimmedBytes = await dst.save();
+    return { buffer: Buffer.from(trimmedBytes), total_pages: total, trimmed: true };
+  } catch (e) {
+    // If pdf-lib can't parse, fall back to sending the original and let
+    // Claude reject it — better than silently dropping the extraction.
+    console.warn('[master-plan] pdf trim failed, sending original:', e.message);
+    return { buffer: pdfBuffer, total_pages: null, trimmed: false };
+  }
+}
+
 // Run AI extraction on a master-plan PDF buffer. Returns the parsed object
 // or null if extraction couldn't produce structured JSON. Throws if the
-// Anthropic SDK / API key isn't configured.
+// Anthropic SDK / API key isn't configured. PDFs > 10 pages are trimmed
+// to the first 10 before sending to Claude (the cover sheet + schedule
+// of plans live there; full construction drawings exceed Claude's API limits).
 async function extractMasterPlanFromPdfBuffer(pdfBuffer) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
   const Anthropic = require('@anthropic-ai/sdk');
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+  const { buffer: claudeBuffer, total_pages, trimmed } = await trimPdfToFirstPages(pdfBuffer, 10);
+  if (trimmed) {
+    console.log(`[master-plan] trimmed PDF from ${total_pages} pages to 10 for Claude`);
+  }
+
   const resp = await anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 800,
     messages: [{
       role: 'user',
       content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: pdfBuffer.toString('base64') } },
-        { type: 'text', text: MASTER_PLAN_EXTRACT_PROMPT },
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: claudeBuffer.toString('base64') } },
+        { type: 'text', text: MASTER_PLAN_EXTRACT_PROMPT + (trimmed ? `\n\nNote: this is the first 10 pages of a ${total_pages}-page construction set — the cover sheet and schedule of plans should be in this slice.` : '') },
       ],
     }],
   });
@@ -1610,27 +1645,11 @@ If you can identify the plan number + at least one elevation, return what you ca
         let extracted = null;
         let aiRaw = null;
         try {
-          const resp = await anthropic.messages.create({
-            model: 'claude-sonnet-4-5',
-            max_tokens: 600,
-            messages: [{
-              role: 'user',
-              content: [
-                {
-                  type: 'document',
-                  source: { type: 'base64', media_type: 'application/pdf', data: file.buffer.toString('base64') },
-                },
-                { type: 'text', text: EXTRACT_PROMPT },
-              ],
-            }],
-          });
-          const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
-          aiRaw = txt;
-          // Strip code fences if Claude wrapped the JSON
-          const jsonMatch = txt.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            extracted = JSON.parse(jsonMatch[0]);
-          }
+          // Use the shared helper which trims oversized PDFs to the first
+          // 10 pages before sending to Claude (page-count + size limits).
+          const result = await extractMasterPlanFromPdfBuffer(file.buffer);
+          extracted = result.extracted;
+          aiRaw = result.raw;
         } catch (aiErr) {
           console.warn('[bulk-extract] AI extraction failed for', filename, '·', aiErr.message);
           extracted = null;
