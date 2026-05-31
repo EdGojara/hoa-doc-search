@@ -6418,6 +6418,171 @@ async function _storagePathToDataUri(storagePath, fallbackMime = 'image/jpeg') {
   }
 }
 
+// ============================================================================
+// POST /api/nominations/cycles/:id/pre-flight-check
+// ----------------------------------------------------------------------------
+// AI scan over every on_slate nomination in a cycle BEFORE the Annual Meeting
+// Notice generates. Catches typos, internal inconsistencies (bio year vs.
+// years_in_community), sensitive-info leaks (phone/address in bio text),
+// length/truncation risks, and formatting issues. Surfaces flagged rows so
+// staff can fix via the audit-edit modal before the ballot prints.
+//
+// The principle: Bedrock owns the output. If a typo lands on the ballot,
+// homeowners blame Bedrock, not the candidate. This is the encode-Ed move
+// — what Ed would catch in 5 minutes reading every bio, done across all
+// candidates in 10 seconds.
+//
+// AI doesn't fix anything; it flags + suggests. Operator stays the decider.
+//
+// Returns: {
+//   ok: true,
+//   cycle_id,
+//   total_checked,
+//   total_flags,
+//   nominations: [{
+//     id, nominee_name,
+//     flags: [{ category, severity, message, suggestion }]
+//   }]
+// }
+// ============================================================================
+app.post('/api/nominations/cycles/:id/pre-flight-check', async (req, res) => {
+  try {
+    // Load all on_slate nominations for this cycle. Pre-flight is meant
+    // to be the last check before the Notice generates — only the candidates
+    // who are actually going on the ballot matter.
+    const { data: nominations, error: loadErr } = await supabase
+      .from('nominations')
+      .select('id, nominee_name, nominee_bio, years_in_community, nominee_email, nominee_phone, nominee_address')
+      .eq('cycle_id', req.params.id)
+      .eq('status', 'on_slate')
+      .order('nominee_name');
+    if (loadErr) return res.status(500).json({ error: loadErr.message });
+    if (!nominations || nominations.length === 0) {
+      return res.json({ ok: true, cycle_id: req.params.id, total_checked: 0, total_flags: 0, nominations: [] });
+    }
+
+    if (!process.env.ANTHROPIC_API_KEY) {
+      return res.status(503).json({ error: 'ANTHROPIC_API_KEY not configured — AI pre-flight unavailable' });
+    }
+    let Anthropic, anthropic;
+    try {
+      Anthropic = require('@anthropic-ai/sdk');
+      anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+    } catch (e) {
+      return res.status(500).json({ error: 'Anthropic SDK unavailable: ' + e.message });
+    }
+
+    // Current year for date-math calibration. The candidate is writing in
+    // 2026; if their bio says "served 30 years and counting" without
+    // matching the years_in_community, the model should flag it.
+    const currentYear = new Date().getFullYear();
+
+    const PRE_FLIGHT_PROMPT = (n) => `You are reviewing one candidate's nomination for an HOA board election ballot. The current year is ${currentYear}.
+
+Your job is to flag PROBLEMS that would embarrass either the candidate OR the management company if they appeared in print on the mailed ballot. Be conservative — flag only ACTUAL issues, not stylistic preferences. The candidate's voice is theirs; preserve it.
+
+Candidate data:
+- Name: ${JSON.stringify(n.nominee_name || '')}
+- Years in community (structured field, prints under name): ${JSON.stringify(n.years_in_community || '')}
+- Bio (prints under name on the ballot):
+"""
+${n.nominee_bio || '(no bio)'}
+"""
+
+Flag any of these categories. Return EMPTY array if nothing's wrong — most candidates will have zero flags.
+
+CATEGORIES:
+1. internal_consistency — bio narrative contradicts the years_in_community field. Example: bio says "in 2015 after a year here" → implies resident since ~2014, but years field says "Since April 2024". Math doesn't line up. SEVERITY: warning.
+2. date_math — dates in the bio don't compute against current year (${currentYear}). Example: "I've lived here 30 years" but the candidate moved in 2018. SEVERITY: warning.
+3. typo — obvious misspelling (NOT stylistic choices, NOT regional spelling). Examples: "managment" → "management", "comittee" → "committee". SEVERITY: warning.
+4. sensitive_info — phone number, email address, or street address appearing INSIDE the bio text (those fields print separately on the row already; duplicating in the narrative is unprofessional). SEVERITY: info.
+5. length — bio is unusually short (under 30 chars; reads as not-finished) or unusually long (over 800 chars; will truncate or push the ballot to overflow). SEVERITY: info if short, warning if long.
+6. formatting — ALL-CAPS PHRASES, weird unicode (smart quotes that didn't translate, broken characters), excessive line breaks. SEVERITY: info.
+7. profanity_or_inappropriate — language that doesn't belong on an official ballot. SEVERITY: blocker.
+
+Do NOT flag:
+- Voice/style preferences (terse vs. flowery, formal vs. casual — both are fine).
+- Grammar choices the candidate made deliberately (rhetorical questions, fragments, etc.).
+- Minor punctuation variation.
+- Long words or technical jargon.
+
+Return ONLY valid JSON, no preamble:
+{
+  "flags": [
+    {
+      "category": "internal_consistency",
+      "severity": "warning",
+      "message": "Bio says 'In 2015, after a year in the community' (resident since ~2014) but years_in_community field reads 'Since April 2024'. Year math doesn't line up.",
+      "suggestion": "Confirm with candidate or fix years_in_community to 'Since 2014' to match the bio."
+    }
+  ]
+}
+
+If no issues, return: { "flags": [] }`;
+
+    const results = [];
+    let totalFlags = 0;
+
+    for (const n of nominations) {
+      try {
+        const resp = await anthropic.messages.create({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 800,
+          messages: [{ role: 'user', content: PRE_FLIGHT_PROMPT(n) }],
+        });
+        const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
+        let flags = [];
+        const jsonMatch = txt.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          try {
+            const parsed = JSON.parse(jsonMatch[0]);
+            if (Array.isArray(parsed.flags)) {
+              // Defensive normalization — strip unexpected keys, clamp severity values
+              flags = parsed.flags
+                .map((f) => ({
+                  category: String(f.category || 'other'),
+                  severity: ['blocker', 'warning', 'info'].includes(f.severity) ? f.severity : 'info',
+                  message: String(f.message || '').slice(0, 500),
+                  suggestion: f.suggestion ? String(f.suggestion).slice(0, 500) : null,
+                }))
+                .slice(0, 10);  // cap per-nominee at 10 flags to avoid runaway responses
+            }
+          } catch (parseErr) {
+            console.warn('[pre-flight] JSON parse failed for', n.nominee_name, '·', parseErr.message);
+          }
+        }
+        totalFlags += flags.length;
+        results.push({
+          id: n.id,
+          nominee_name: n.nominee_name,
+          flags,
+        });
+      } catch (perNomErr) {
+        console.warn('[pre-flight] AI call failed for', n.nominee_name, '·', perNomErr.message);
+        // Still include this nominee in the result so the UI shows "AI check failed"
+        // rather than silently dropping them
+        results.push({
+          id: n.id,
+          nominee_name: n.nominee_name,
+          flags: [],
+          ai_error: perNomErr.message,
+        });
+      }
+    }
+
+    res.json({
+      ok: true,
+      cycle_id: req.params.id,
+      total_checked: nominations.length,
+      total_flags: totalFlags,
+      nominations: results,
+    });
+  } catch (err) {
+    console.error('[pre-flight-check] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // POST /api/nominations/cycles/:id/annual-meeting-notice
 // Generates the 4-page Annual Meeting Notice + Voting Instructions + Proxy/
 // Absentee Ballot + Candidate Statements PDF. Pulls every nomination with
