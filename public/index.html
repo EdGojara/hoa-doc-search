@@ -28328,9 +28328,22 @@ ${questionsPage}
     const reason = prompt('Reason for deletion (logged in audit):\n(e.g., "test submission", "duplicate", "submitted in error")');
     if (reason === null) return;  // cancelled at second prompt
     try {
+      // Admin-gated endpoint — needs the Supabase JWT in Authorization
+      // so the server can resolve the user role to 'admin'. Without
+      // this header, resolveUserRole returns 'unknown' → 403 "admin
+      // role required". (Scar: hit this twice tonight — the staff
+      // cookie alone gets the page rendered but admin endpoints need
+      // the Bearer JWT.)
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        if (window.supa) {
+          const { data: { session } } = await window.supa.auth.getSession();
+          if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+        }
+      } catch (_) {}
       const r = await fetch(`/api/nominations/${nominationId}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ reason: reason || null }),
       });
       const j = await r.json().catch(() => ({}));
