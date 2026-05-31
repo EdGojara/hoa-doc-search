@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -11,13 +11,13 @@
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
 
-    .header { background: #1a3a5c; color: white; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
-    .header-mark { width: 36px; height: 46px; flex-shrink: 0; display: flex; align-items: center; }
+    .header { background: #0B1D34; color: white; padding: 18px 24px; display: flex; align-items: center; gap: 18px; }
+    .header-mark { height: 58px; flex-shrink: 0; display: flex; align-items: center; }
     .header-mark img,
-    .header-mark svg { width: 100%; height: 100%; display: block; object-fit: contain; }
-    .header-text h1 { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 600; letter-spacing: 0.02em; line-height: 1.1; text-transform: uppercase; }
+    .header-mark svg { height: 100%; width: auto; display: block; }
+    .header-text h1 { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; font-size: 24px; font-weight: 600; letter-spacing: 0.025em; line-height: 1.1; text-transform: uppercase; }
     .header-text h1 em { font-style: normal; color: #D4AF37; font-weight: 600; }
-    .header-text p { font-family: 'Inter', -apple-system, sans-serif; font-size: 11px; opacity: 0.75; margin-top: 3px; letter-spacing: 0.10em; text-transform: uppercase; }
+    .header-text p { font-family: 'Inter', -apple-system, sans-serif; font-size: 11px; opacity: 0.75; margin-top: 4px; letter-spacing: 0.14em; text-transform: uppercase; }
     .header-spacer { flex: 1; }
     .header-voice-link {
       background: rgba(255,255,255,0.12);
@@ -36,7 +36,7 @@
     .header-voice-link:hover { background: rgba(255,255,255,0.22); }
 
     .community-bar { background: #f8f9fa; border-bottom: 1px solid #e0e0e0; padding: 10px 16px; display: flex; align-items: center; gap: 10px; }
-    .community-bar label { font-size: 13px; font-weight: 600; color: #1a3a5c; white-space: nowrap; }
+    .community-bar label { font-size: 13px; font-weight: 600; color: #0B1D34; white-space: nowrap; }
     .community-bar select { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 12px; font-size: 14px; outline: none; background: white; color: #1a1a1a; cursor: pointer; }
     .community-bar select:focus { border-color: #2d6a9f; }
 
@@ -53,7 +53,7 @@
     .message.user { align-self: flex-end; flex-direction: row-reverse; }
     .message.assistant { align-self: flex-start; }
     .avatar { width: 32px; height: 32px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; flex-shrink: 0; margin-top: 4px; }
-    .assistant .avatar { background: #1a3a5c; color: white; }
+    .assistant .avatar { background: #0B1D34; color: white; }
     .user .avatar { background: #2d6a9f; color: white; }
     .bubble { padding: 12px 16px; border-radius: 18px; line-height: 1.6; font-size: 14px; }
     .assistant .bubble { background: white; color: #1a1a1a; border-bottom-left-radius: 4px; box-shadow: 0 1px 2px rgba(0,0,0,0.1); }
@@ -64,48 +64,48 @@
     .no-community span { font-size: 32px; display: block; margin-bottom: 12px; }
 
     .suggestions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 20px 12px; }
-    .suggestion-btn { background: white; border: 1px solid #d0d7de; border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: #1a3a5c; transition: all 0.2s; }
-    .suggestion-btn:hover { background: #1a3a5c; color: white; border-color: #1a3a5c; }
+    .suggestion-btn { background: white; border: 1px solid #d0d7de; border-radius: 20px; padding: 8px 14px; font-size: 13px; cursor: pointer; color: #0B1D34; transition: all 0.2s; }
+    .suggestion-btn:hover { background: #0B1D34; color: white; border-color: #0B1D34; }
 
     /* askEd mode picker — single AI surface, four task-shaped presets. */
     .ed-mode-btn {
       background: white; border: 1px solid #d0d7de; border-radius: 999px;
       padding: 7px 14px; font-size: 13px; font-weight: 500; cursor: pointer;
-      color: #1a3a5c; transition: all 0.15s;
+      color: #0B1D34; transition: all 0.15s;
       display: inline-flex; align-items: center; gap: 4px;
     }
-    .ed-mode-btn:hover { border-color: #1a3a5c; }
-    .ed-mode-btn.active { background: #1a3a5c; color: white; border-color: #1a3a5c; box-shadow: 0 2px 6px rgba(26, 58, 92, 0.18); }
+    .ed-mode-btn:hover { border-color: #0B1D34; }
+    .ed-mode-btn.active { background: #0B1D34; color: white; border-color: #0B1D34; box-shadow: 0 2px 6px rgba(26, 58, 92, 0.18); }
 
     .chat-input-area { background: white; border-top: 1px solid #e0e0e0; padding: 12px 16px; display: flex; gap: 10px; align-items: flex-end; }
     .chat-input-area textarea { flex: 1; border: 1px solid #d0d7de; border-radius: 20px; padding: 10px 16px; font-size: 14px; resize: none; outline: none; max-height: 120px; font-family: inherit; line-height: 1.4; }
     .chat-input-area textarea:focus { border-color: #2d6a9f; }
     .chat-input-area textarea:disabled { background: #f5f5f5; }
-    .send-btn { background: #1a3a5c; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.2s; }
+    .send-btn { background: #0B1D34; color: white; border: none; border-radius: 50%; width: 40px; height: 40px; cursor: pointer; display: flex; align-items: center; justify-content: center; flex-shrink: 0; transition: background 0.2s; }
     .send-btn:hover { background: #2d6a9f; }
     .send-btn:disabled { background: #ccc; cursor: not-allowed; }
 
     .two-panel { flex: 1; display: flex; overflow: hidden; }
     .panel { flex: 1; display: flex; flex-direction: column; padding: 16px; gap: 10px; overflow-y: auto; }
     .panel:first-child { border-right: 1px solid #e0e0e0; }
-    .panel h3 { font-size: 14px; font-weight: 600; color: #1a3a5c; flex-shrink: 0; }
+    .panel h3 { font-size: 14px; font-weight: 600; color: #0B1D34; flex-shrink: 0; }
     .panel textarea { border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; resize: none; outline: none; font-family: inherit; line-height: 1.6; }
     .panel textarea:focus { border-color: #2d6a9f; }
 
     .output-box { flex: 1; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; font-size: 14px; line-height: 1.8; color: #1a1a1a; overflow-y: auto; font-family: inherit; white-space: pre-wrap; background: white; min-height: 300px; }
     .output-box.placeholder { color: #aaa; display: flex; align-items: center; justify-content: center; white-space: normal; text-align: center; }
 
-    .action-btn { background: #1a3a5c; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
+    .action-btn { background: #0B1D34; color: white; border: none; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: background 0.2s; flex-shrink: 0; }
     .action-btn:hover { background: #2d6a9f; }
     .action-btn:disabled { background: #ccc; cursor: not-allowed; }
-    .secondary-btn { background: white; color: #1a3a5c; border: 1px solid #1a3a5c; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
+    .secondary-btn { background: white; color: #0B1D34; border: 1px solid #0B1D34; border-radius: 8px; padding: 10px 20px; font-size: 14px; font-weight: 500; cursor: pointer; transition: all 0.2s; flex-shrink: 0; }
     .secondary-btn:hover { background: #f0f4f8; }
 
   .upload-area { border: 2px dashed #d0d7de; border-radius: 8px; padding: 16px; text-align: center; cursor: pointer; transition: all 0.15s; flex-shrink: 0; }
 .upload-area:hover { border-color: #2d6a9f; background: #f8f9ff; }
 .upload-area.has-file { border-color: #2d6a9f; background: #f0f4ff; }
-.upload-area.drag-over { border-color: #1a3a5c; background: #e8f1fb; transform: scale(1.01); border-style: solid; }
-.upload-area.drag-over p { color: #1a3a5c; font-weight: 600; }
+.upload-area.drag-over { border-color: #0B1D34; background: #e8f1fb; transform: scale(1.01); border-style: solid; }
+.upload-area.drag-over p { color: #0B1D34; font-weight: 600; }
     .upload-area p { font-size: 13px; color: #666; margin-top: 4px; }
     .upload-area input { display: none; }
 
@@ -123,7 +123,7 @@
     .playbook-entry .response-preview { color: #555; line-height: 1.5; }
 
     .admin-panel { background: #f0f4f8; border-radius: 8px; padding: 16px; margin-top: 10px; }
-    .admin-panel h4 { font-size: 13px; font-weight: 600; color: #1a3a5c; margin-bottom: 10px; }
+    .admin-panel h4 { font-size: 13px; font-weight: 600; color: #0B1D34; margin-bottom: 10px; }
     .admin-panel input, .admin-panel textarea, .admin-panel select {
       width: 100%; border: 1px solid #d0d7de; border-radius: 6px; padding: 8px 10px;
       font-size: 13px; font-family: inherit; margin-bottom: 8px; outline: none;
@@ -140,7 +140,7 @@
     @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); } 30% { transform: translateY(-6px); } }
 
     .welcome { text-align: center; padding: 30px 20px; color: #666; }
-    .welcome h2 { color: #1a3a5c; margin-bottom: 8px; font-size: 20px; }
+    .welcome h2 { color: #0B1D34; margin-bottom: 8px; font-size: 20px; }
     .welcome p { font-size: 14px; line-height: 1.6; }
 
     .review-badge { display: inline-block; padding: 3px 10px; border-radius: 12px; font-size: 12px; font-weight: 600; margin-bottom: 8px; }
@@ -152,16 +152,16 @@
     .vw-inner { max-width: 1100px; margin: 0 auto; }
     .vw-step { background: white; border-radius: 12px; padding: 20px 24px; margin-bottom: 16px; border: 1px solid #e3e8ef; }
     .vw-step-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
-    .vw-step-num { width: 28px; height: 28px; background: #1a3a5c; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+    .vw-step-num { width: 28px; height: 28px; background: #0B1D34; color: white; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
     .vw-step-num.disabled { background: #c5cdd9; }
     .vw-step-num.complete { background: #2d7a3a; }
-    .vw-step-title { font-size: 16px; font-weight: 600; color: #1a3a5c; }
+    .vw-step-title { font-size: 16px; font-weight: 600; color: #0B1D34; }
     .vw-step-subtitle { font-size: 13px; color: #888; margin-top: 2px; }
 
     .vw-path-toggle { display: flex; gap: 8px; margin-bottom: 16px; }
     .vw-path-btn { flex: 1; padding: 12px 16px; background: white; border: 2px solid #e3e8ef; border-radius: 8px; cursor: pointer; font-size: 13px; color: #555; text-align: left; transition: all 0.15s; }
     .vw-path-btn:hover { border-color: #2d6a9f; }
-    .vw-path-btn.active { border-color: #1a3a5c; background: #f0f4f8; color: #1a3a5c; }
+    .vw-path-btn.active { border-color: #0B1D34; background: #f0f4f8; color: #0B1D34; }
     .vw-path-btn .path-title { font-weight: 600; display: block; margin-bottom: 2px; }
     .vw-path-btn .path-sub { font-size: 12px; color: #888; }
     .vw-path-btn.active .path-sub { color: #555; }
@@ -173,38 +173,38 @@
     .vw-field input:focus, .vw-field select:focus, .vw-field textarea:focus { border-color: #2d6a9f; }
     .vw-field-full { grid-column: 1 / -1; }
 
-    .vw-bid-pill { display: inline-flex; align-items: center; gap: 8px; background: #e8f1fb; color: #1a3a5c; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-top: 8px; }
+    .vw-bid-pill { display: inline-flex; align-items: center; gap: 8px; background: #e8f1fb; color: #0B1D34; padding: 6px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; margin-top: 8px; }
 
     .vw-proposals-list { display: flex; flex-direction: column; gap: 8px; margin-top: 12px; }
     .vw-proposal-card { display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f8fafc; border: 1px solid #e3e8ef; border-radius: 8px; }
     .vw-proposal-card.originating { background: #fff8e7; border-color: #f0c674; }
-    .vw-proposal-icon { width: 36px; height: 36px; background: #1a3a5c; color: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
+    .vw-proposal-icon { width: 36px; height: 36px; background: #0B1D34; color: white; border-radius: 8px; display: flex; align-items: center; justify-content: center; font-size: 14px; font-weight: 600; flex-shrink: 0; }
     .vw-proposal-meta { flex: 1; min-width: 0; }
     .vw-proposal-vendor { font-size: 14px; font-weight: 600; color: #1a1a1a; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .vw-proposal-detail { font-size: 12px; color: #666; margin-top: 2px; }
-    .vw-proposal-amount { font-size: 14px; font-weight: 600; color: #1a3a5c; font-variant-numeric: tabular-nums; }
+    .vw-proposal-amount { font-size: 14px; font-weight: 600; color: #0B1D34; font-variant-numeric: tabular-nums; }
     .vw-proposal-remove { background: none; border: none; color: #c0392b; cursor: pointer; font-size: 18px; padding: 4px 8px; }
 
     .vw-comparison { background: white; border-radius: 12px; padding: 24px; border: 1px solid #e3e8ef; margin-top: 16px; }
-    .vw-comparison-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #1a3a5c; }
-    .vw-comparison-title { font-size: 18px; font-weight: 600; color: #1a3a5c; }
-    .vw-recommendation-box { background: #f5f8fc; border-left: 4px solid #1a3a5c; padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
-    .vw-recommendation-label { font-size: 11px; color: #1a3a5c; letter-spacing: 0.08em; font-weight: 600; margin-bottom: 6px; }
+    .vw-comparison-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 20px; padding-bottom: 16px; border-bottom: 2px solid #0B1D34; }
+    .vw-comparison-title { font-size: 18px; font-weight: 600; color: #0B1D34; }
+    .vw-recommendation-box { background: #f5f8fc; border-left: 4px solid #0B1D34; padding: 16px 20px; border-radius: 0 8px 8px 0; margin: 16px 0; }
+    .vw-recommendation-label { font-size: 11px; color: #0B1D34; letter-spacing: 0.08em; font-weight: 600; margin-bottom: 6px; }
     .vw-recommendation-vendor { font-size: 17px; font-weight: 600; color: #1a1a1a; margin-bottom: 6px; }
     .vw-recommendation-rationale { font-size: 14px; color: #555; line-height: 1.6; }
 
-    .vw-section-title { font-size: 13px; font-weight: 600; color: #1a3a5c; letter-spacing: 0.06em; margin: 20px 0 10px 0; }
+    .vw-section-title { font-size: 13px; font-weight: 600; color: #0B1D34; letter-spacing: 0.06em; margin: 20px 0 10px 0; }
     .vw-comp-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-    .vw-comp-table th { background: #1a3a5c; color: white; text-align: left; padding: 10px 12px; font-weight: 500; font-size: 12px; }
+    .vw-comp-table th { background: #0B1D34; color: white; text-align: left; padding: 10px 12px; font-weight: 500; font-size: 12px; }
     .vw-comp-table th.right { text-align: right; }
     .vw-comp-table td { padding: 10px 12px; border-bottom: 1px solid #eee; }
     .vw-comp-table td.right { text-align: right; font-variant-numeric: tabular-nums; }
     .vw-comp-table tr:nth-child(even) td { background: #fafafa; }
     .vw-comp-table .missing { color: #c0392b; font-style: italic; }
     .vw-comp-table .total-row td { background: #f5f8fc; font-weight: 600; }
-    .vw-comp-table .grand-total-row td { background: #1a3a5c; color: white; font-weight: 600; }
+    .vw-comp-table .grand-total-row td { background: #0B1D34; color: white; font-weight: 600; }
 
-    .vw-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e3e8ef; border-top-color: #1a3a5c; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
+    .vw-spinner { display: inline-block; width: 16px; height: 16px; border: 2px solid #e3e8ef; border-top-color: #0B1D34; border-radius: 50%; animation: spin 0.8s linear infinite; vertical-align: middle; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     .vw-status-msg { font-size: 13px; color: #555; padding: 8px 12px; background: #f5f8fc; border-radius: 6px; margin-top: 8px; }
@@ -470,7 +470,7 @@
         style="display:none; padding:10px 16px; font-size:13px; background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; border-radius:10px; cursor:pointer;">⏹ Stop talking</button>
       <span id="quickStatus" style="font-size:13px; color:#666;"></span>
     </div>
-    <div id="quickResponse" style="margin-top:18px; padding:16px 20px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; line-height:1.6; font-size:15px; color:#1a3a5c; display:none; white-space:pre-wrap;"></div>
+    <div id="quickResponse" style="margin-top:18px; padding:16px 20px; border:1px solid #e2e8f0; border-radius:10px; background:#fff; line-height:1.6; font-size:15px; color:#0B1D34; display:none; white-space:pre-wrap;"></div>
     <audio id="quickAudio" preload="auto" style="display:none;"></audio>
   </div>
 </div>
@@ -781,7 +781,7 @@
        Bounded height so the top working area gets the priority space. -->
   <div data-drafts-panel="acc_review" style="margin:10px 24px 0; padding:10px 14px; background:#fff; border:1px solid #e3e8ef; border-radius:10px; flex-shrink:0;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; flex-wrap:wrap; gap:8px;">
-      <h3 style="margin:0; font-size:14px; color:#1a3a5c;">🗂️ Saved drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(resume work in progress)</span></h3>
+      <h3 style="margin:0; font-size:14px; color:#0B1D34;">🗂️ Saved drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(resume work in progress)</span></h3>
       <button class="secondary-btn" onclick="Drafts.refreshPanel('acc_review')" style="font-size:11px; padding:4px 10px;">Refresh</button>
     </div>
     <div data-drafts-list="acc_review" style="font-size:12.5px; color:#6B7280; max-height:90px; overflow-y:auto;">No saved drafts yet.</div>
@@ -836,7 +836,7 @@
       <p id="edModeDescription" style="font-size:13px; color:#666;">One place to ask anything. Pick a mode below.</p>
       <div style="display: flex; gap: 6px; flex-wrap: wrap; margin: 2px 0 6px;">
         <a href="#" onclick="event.preventDefault(); switchTab('training'); setTimeout(() => trainingOpenModule('asked-foundations'), 50);"
-           style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #f1f5fb; border: 1px solid #d8e2ed; border-radius: 14px; font-size: 11px; color: #1a3a5c; text-decoration: none; font-weight: 600;">
+           style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #f1f5fb; border: 1px solid #d8e2ed; border-radius: 14px; font-size: 11px; color: #0B1D34; text-decoration: none; font-weight: 600;">
           📚 University · askEd Foundations
         </a>
         <a href="/ask-ed-chat.html" title="Open the full askEd surface — voice or text, multi-turn, document-aware"
@@ -948,7 +948,7 @@
             <button class="action-btn" onclick="addToPlaybook()" style="width:100%">Save to Playbook</button>
           </div>
           <div style="margin-top:16px;">
-            <h4 style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:10px;">📚 Playbook Entries</h4>
+            <h4 style="font-size:13px; font-weight:600; color:#0B1D34; margin-bottom:10px;">📚 Playbook Entries</h4>
             <div id="playbookList" style="display:flex; flex-direction:column; gap:8px;">
               <p style="font-size:13px; color:#888;">Loading...</p>
             </div>
@@ -1206,7 +1206,7 @@
       <!-- Saved vendor workflow drafts -->
       <div data-drafts-panel="vendor_workflow" style="margin-top:16px; background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:12px 14px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-          <h3 style="margin:0; font-size:14px; color:#1a3a5c;">🗂️ Saved workflow drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
+          <h3 style="margin:0; font-size:14px; color:#0B1D34;">🗂️ Saved workflow drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
           <button class="secondary-btn" onclick="Drafts.refreshPanel('vendor_workflow')" style="font-size:11px; padding:4px 8px;">Refresh</button>
         </div>
         <div data-drafts-list="vendor_workflow" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
@@ -1850,7 +1850,7 @@
            ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc';"
            ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('homesUploadFile').files=dt.files; homesUpdateDropLabel(); }">
         <div style="font-size:20px; color:#5a7390;">📥</div>
-        <div id="homesUploadDropLabel" style="font-size:12px; font-weight:600; color:#1a3a5c; margin-top:4px;">
+        <div id="homesUploadDropLabel" style="font-size:12px; font-weight:600; color:#0B1D34; margin-top:4px;">
           Drag &amp; drop CSV / Excel here
         </div>
         <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file</div>
@@ -1882,7 +1882,7 @@
              ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc';"
              ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('homesMethodsImportFile').files=dt.files; homesMethodsImportUpdateLabel(); }">
           <div style="font-size:18px; color:#5a7390;">📥</div>
-          <div id="homesMethodsImportDropLabel" style="font-size:11.5px; font-weight:600; color:#1a3a5c; margin-top:2px;">Drag or click to pick xlsx</div>
+          <div id="homesMethodsImportDropLabel" style="font-size:11.5px; font-weight:600; color:#0B1D34; margin-top:2px;">Drag or click to pick xlsx</div>
         </div>
         <input type="file" id="homesMethodsImportFile" accept=".xlsx,.xls" style="display:none;" onchange="homesMethodsImportUpdateLabel()">
         <button class="action-btn" onclick="homesMethodsImportUpload()" id="homesMethodsImportBtn" style="font-size:12.5px; padding:8px 14px;">🔍 Preview diff</button>
@@ -3823,7 +3823,7 @@
       dz.addEventListener(ev, (e) => {
         e.preventDefault(); e.stopPropagation();
         dz.style.background = '#eef6fb';
-        dz.style.borderColor = '#1a3a5c';
+        dz.style.borderColor = '#0B1D34';
       });
     });
     ['dragleave','drop'].forEach((ev) => {
@@ -4234,7 +4234,7 @@
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
           <div style="flex:1; min-width:0;">
             <div style="font-size:13px; font-weight:700; color:${typeColor};">${typeLabel}</div>
-            <div style="font-size:12px; color:#1a3a5c; margin-top:2px;">
+            <div style="font-size:12px; color:#0B1D34; margin-top:2px;">
               ${residency.contacts?.id ? `<a href="#" onclick="event.preventDefault(); homesOpenContactProfile('${residency.contacts.id}');" style="color:#1E2761; text-decoration:underline; text-decoration-style:dotted;">${escapeHtml(residency.contacts.full_name || '')}</a>` : residentName}
               ${residentEmail ? ` · ✉ ${escapeHtml(residentEmail)}` : ''}
               ${residentPhone ? ` · 📞 ${escapeHtml(residentPhone)}` : ''}
@@ -4556,7 +4556,7 @@
           <div style="border:1px solid ${n.pinned ? '#fef3c7' : '#e2e8f0'}; background:${n.pinned ? '#fffbeb' : '#fff'}; border-radius:8px; padding:8px 10px; margin-bottom:6px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
               <div style="flex:1; min-width:0;">
-                <div style="font-size:12.5px; color:#1a3a5c; white-space:pre-wrap; word-break:break-word;">${escapeHtml(n.note_text)}</div>
+                <div style="font-size:12.5px; color:#0B1D34; white-space:pre-wrap; word-break:break-word;">${escapeHtml(n.note_text)}</div>
                 <div style="font-size:10.5px; color:#94A3B8; margin-top:4px;">
                   ${escapeHtml(n.category)} · ${escapeHtml(n.author_email)} · ${new Date(n.created_at).toLocaleString()}${commTag}${propTag}
                 </div>
@@ -4630,7 +4630,7 @@
                 <div>
                   <span style="font-size:11px; color:#6B7280;">${icon} ${dirArrow} ${escapeHtml(i.type || '')}${delivery}</span>${cls}
                 </div>
-                <div style="color:#1a3a5c; margin-top:2px;">${escapeHtml(subj)}</div>
+                <div style="color:#0B1D34; margin-top:2px;">${escapeHtml(subj)}</div>
               </div>
               <div style="font-size:10.5px; color:#94A3B8; white-space:nowrap; flex-shrink:0;">${ts ? new Date(ts).toLocaleDateString() : ''}</div>
             </div>
@@ -5870,7 +5870,7 @@
   <div style="margin-bottom:24px; padding:18px; background:#fff; border:1px solid #e3e8ef; border-radius:10px;">
     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
       <div>
-        <h3 style="margin:0 0 4px 0; font-size:15px; color:#1a3a5c;">📑 Branded monthly statements</h3>
+        <h3 style="margin:0 0 4px 0; font-size:15px; color:#0B1D34;">📑 Branded monthly statements</h3>
         <p style="margin:0; font-size:12px; color:#666;">Upload a Vantaca balance sheet PDF — AI extracts the numbers and re-renders it on Bedrock letterhead with community logo and "Reviewed by Bedrock" findings.</p>
       </div>
     </div>
@@ -5901,7 +5901,7 @@
 
     <div style="margin-top:18px; border-top:1px solid #e2e8f0; padding-top:14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-        <div style="font-weight:600; color:#1a3a5c; font-size:13px;">📋 Past branded statements</div>
+        <div style="font-weight:600; color:#0B1D34; font-size:13px;">📋 Past branded statements</div>
         <button class="secondary-btn" onclick="finLoadHistory()" style="font-size:11px; padding:4px 10px;">Refresh</button>
       </div>
       <div id="fin-history" style="border:1px solid #e2e8f0; border-radius:6px; min-height:50px;">
@@ -6971,7 +6971,7 @@
   <div style="max-width: 1100px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom:18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏘️ Community Profile</h2>
+        <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">🏘️ Community Profile</h2>
         <p style="font-size:13px; color:#666;">Operational facts AskEd reads on every question for this community. Set expiration dates on anything that changes seasonally.</p>
       </div>
       <select id="profCommunitySelect" class="draft-type-select" onchange="profOnCommunityChange()" style="min-width:240px;">
@@ -6988,7 +6988,7 @@
       <!-- ===== Profile (structured) ===== -->
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-          <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">📌 Profile fields</h3>
+          <h3 style="font-size:15px; font-weight:700; color:#0B1D34;">📌 Profile fields</h3>
           <span style="font-size:11px; color:#888;">Auto-saved when you click Save</span>
         </div>
         <div class="prof-grid" style="display:grid; grid-template-columns: 1fr 1fr; gap:12px 18px;">
@@ -7031,7 +7031,7 @@
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
           <div>
-            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🎨 Community brand assets</h3>
+            <h3 style="font-size:15px; font-weight:700; color:#0B1D34;">🎨 Community brand assets</h3>
             <p style="font-size:12px; color:#888; margin-top:2px;">Upload the Association's logo. It will appear alongside Bedrock's mark on board packets, violation letters, and other customer-facing artifacts. PNG or JPG, ideally 400px+ wide with a transparent background.</p>
           </div>
         </div>
@@ -7054,7 +7054,7 @@
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
           <div>
-            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">⚖️ Letter &amp; enforcement settings</h3>
+            <h3 style="font-size:15px; font-weight:700; color:#0B1D34;">⚖️ Letter &amp; enforcement settings</h3>
             <p style="font-size:12px; color:#888; margin-top:2px;">Drives every violation letter generated for this community — sender, fees, cure deadlines, payment routing (lockbox), and the master fines toggle.</p>
           </div>
         </div>
@@ -7075,7 +7075,7 @@
 
         <!-- Per-stage fees -->
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
-          <div style="font-size:12px; font-weight:700; color:#1a3a5c; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Admin fees per letter (dollars)</div>
+          <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Admin fees per letter (dollars)</div>
           <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;">
             <label class="prof-fld"><span>Courtesy 1</span><input id="lc-fee-courtesy1" type="number" step="1" min="0" placeholder="0" /></label>
             <label class="prof-fld"><span>Courtesy 2</span><input id="lc-fee-courtesy2" type="number" step="1" min="0" placeholder="25" /></label>
@@ -7087,7 +7087,7 @@
 
         <!-- Per-stage cure days -->
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
-          <div style="font-size:12px; font-weight:700; color:#1a3a5c; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Cure period (days)</div>
+          <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">Cure period (days)</div>
           <div style="display:grid; grid-template-columns: repeat(3, 1fr); gap:10px;">
             <label class="prof-fld"><span>Courtesy 1</span><input id="lc-cure-courtesy1" type="number" step="1" min="1" placeholder="20" /></label>
             <label class="prof-fld"><span>Courtesy 2</span><input id="lc-cure-courtesy2" type="number" step="1" min="1" placeholder="20" /></label>
@@ -7109,7 +7109,7 @@
           <label style="display:flex; gap:10px; align-items:flex-start; cursor:pointer;">
             <input id="lc-bundle-209-separate" type="checkbox" style="margin-top:3px; flex-shrink:0; transform:scale(1.15);">
             <div style="flex:1;">
-              <div style="font-size:13px; color:#1a3a5c; font-weight:600;">Keep §209 certified letters separate (one envelope per violation)</div>
+              <div style="font-size:13px; color:#0B1D34; font-weight:600;">Keep §209 certified letters separate (one envelope per violation)</div>
               <div style="font-size:11px; color:#78350f; margin-top:3px; line-height:1.4;">
                 When ON, the Drafts queue does NOT bundle certified §209 / fine-assessed letters even when the same property has multiple violations. Each gets its own letter + envelope. Courtesy stages (1 and 2) still combine. Recommended when the board / counsel prefers per-violation procedural clarity at the highest-risk stage.
               </div>
@@ -7191,7 +7191,7 @@
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
           <div>
-            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">📞 Contacts</h3>
+            <h3 style="font-size:15px; font-weight:700; color:#0B1D34;">📞 Contacts</h3>
             <p style="font-size:12px; color:#888; margin-top:2px;">Pool company, landscape, security, attorney, board members — anyone you need to reach. Phone is tap-to-dial. Rows turn yellow if the contract expired or it's been over a year since you verified the info. Multiple contacts per vendor are fine — add the account manager, the field supervisor, and the owner as separate rows.</p>
           </div>
           <div style="display:flex; gap:6px;">
@@ -7270,7 +7270,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
           <div>
-            <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">📝 Facts (with expiration tracking)</h3>
+            <h3 style="font-size:15px; font-weight:700; color:#0B1D34;">📝 Facts (with expiration tracking)</h3>
             <p style="font-size:12px; color:#888; margin-top:2px;">Add anything ad-hoc — pool hours, swim party rules, holiday office closures. Set an expires date for seasonal items so AskEd flags them as stale.</p>
           </div>
           <button class="secondary-btn" onclick="profShowAddFact()" style="font-size:13px;">+ Add fact</button>
@@ -7312,7 +7312,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <!-- ===== Computed (auto-pulled from existing tables) ===== -->
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:20px; margin-bottom:24px;">
         <div style="margin-bottom:14px;">
-          <h3 style="font-size:15px; font-weight:700; color:#1a3a5c;">🔗 Auto-pulled from other data</h3>
+          <h3 style="font-size:15px; font-weight:700; color:#0B1D34;">🔗 Auto-pulled from other data</h3>
           <p style="font-size:12px; color:#888; margin-top:2px;">These come from your vendor contracts table. Click "Override" to replace with manual values (e.g., the contract says one contact but you call a different field rep).</p>
         </div>
         <div id="prof-computed-list">
@@ -7332,12 +7332,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     .prof-fld { display:flex; flex-direction:column; gap:4px; font-size:12px; }
     .prof-fld span { font-weight:600; color:#445; }
     .prof-fld input, .prof-fld textarea, .prof-fld select { padding:8px 10px; border:1px solid #c0d0e0; border-radius:6px; font:inherit; font-size:13px; }
-    .prof-fld input:focus, .prof-fld textarea:focus, .prof-fld select:focus { outline:none; border-color:#1a3a5c; }
+    .prof-fld input:focus, .prof-fld textarea:focus, .prof-fld select:focus { outline:none; border-color:#0B1D34; }
     .fact-row { display:grid; grid-template-columns: 110px 1fr 200px 130px; gap:12px; padding:10px 12px; border:1px solid #e3e8ef; border-radius:8px; margin-bottom:8px; align-items:center; background:#fff; }
     .fact-row.stale { background:#fffaf0; border-color:#e8c97a; }
     .fact-cat { font-size:11px; font-weight:700; text-transform:uppercase; color:#5a7390; letter-spacing:0.4px; }
     .fact-body { font-size:13px; color:#222; }
-    .fact-label { font-weight:600; color:#1a3a5c; margin-bottom:2px; }
+    .fact-label { font-weight:600; color:#0B1D34; margin-bottom:2px; }
     .fact-meta { font-size:11px; color:#888; }
     .fact-stale-tag { display:inline-block; background:#e8c97a; color:#5a3e00; padding:2px 8px; border-radius:99px; font-size:10px; font-weight:700; margin-left:6px; }
     .fact-actions button { font-size:11px; padding:4px 9px; border:1px solid #c0d0e0; background:#fff; border-radius:4px; cursor:pointer; margin-right:4px; }
@@ -7354,7 +7354,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   <div style="max-width: 1180px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📧 Email Intake</h2>
+        <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">📧 Email Intake</h2>
         <p style="font-size:13px; color:#666;">Paste an email thread → trustEd extracts facts, vendors, decisions, and action items → approve to promote into the Community Facts library.</p>
       </div>
       <button class="primary-btn" onclick="inShowNewModal()" style="padding:9px 18px;">+ Paste new email</button>
@@ -7363,10 +7363,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <!-- Drag-and-drop zone -->
     <div id="in-drop-zone" style="border:2px dashed #c0d0e0; border-radius:10px; padding:24px; text-align:center; background:#f7f9fc; margin-bottom:14px; transition: all 0.2s; cursor:pointer;">
       <div style="font-size:28px; color:#5a7390;">📥</div>
-      <div style="font-size:14px; font-weight:600; color:#1a3a5c; margin-top:6px;">Drag &amp; drop email files here</div>
+      <div style="font-size:14px; font-weight:600; color:#0B1D34; margin-top:6px;">Drag &amp; drop email files here</div>
       <div style="font-size:12px; color:#5a7390; margin-top:4px;">
         Accepts <strong>.eml</strong>, <strong>.txt</strong>, <strong>.pdf</strong>, or direct drag from <strong>Outlook</strong> / Gmail — or
-        <button onclick="document.getElementById('in-file-picker').click(); event.stopPropagation();" style="background:none; border:none; color:#1a3a5c; text-decoration:underline; cursor:pointer; font:inherit; font-size:12px; padding:0;">click to pick files</button>
+        <button onclick="document.getElementById('in-file-picker').click(); event.stopPropagation();" style="background:none; border:none; color:#0B1D34; text-decoration:underline; cursor:pointer; font:inherit; font-size:12px; padding:0;">click to pick files</button>
       </div>
       <div style="font-size:11px; color:#888; margin-top:8px;">
         Outlook direct drag captures the body text. If you also want headers + attachments preserved, use <strong>Save As → .eml</strong> first.
@@ -7379,7 +7379,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
     <!-- Queue progress (only visible while batch is running) -->
     <div id="in-queue" style="display:none; background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-bottom:14px;">
-      <div style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Processing files…</div>
+      <div style="font-size:13px; font-weight:600; color:#0B1D34; margin-bottom:8px;">Processing files…</div>
       <div id="in-queue-items" style="display:flex; flex-direction:column; gap:6px;"></div>
     </div>
 
@@ -7411,7 +7411,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   <div id="in-new-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
     <div style="background:#fff; border-radius:12px; max-width:780px; width:100%; max-height:90vh; overflow-y:auto; padding:24px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-        <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Paste an email thread for extraction</h3>
+        <h3 style="font-size:18px; font-weight:700; color:#0B1D34;">Paste an email thread for extraction</h3>
         <button onclick="inHideNewModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
       </div>
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
@@ -7434,7 +7434,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   <style>
     .in-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 80px 1fr 130px 110px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; }
-    .in-row:hover { border-color:#1a3a5c; }
+    .in-row:hover { border-color:#0B1D34; }
     .in-status-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
     .in-status-pending { background:#fef3c7; color:#92400e; }
     .in-status-extracted { background:#dbeafe; color:#1e3a8a; }
@@ -7446,10 +7446,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     .in-urgency-medium { color:#b45309; font-weight:600; }
     .in-urgency-low { color:#5a7390; }
     .extract-block { background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-bottom:12px; }
-    .extract-block h4 { font-size:12px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
+    .extract-block h4 { font-size:12px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
     .extract-item { padding:8px 10px; background:#fff; border:1px solid #f0f2f5; border-radius:6px; margin-bottom:6px; font-size:13px; line-height:1.5; }
-    .extract-item .ei-label { font-weight:600; color:#1a3a5c; margin-right:6px; }
-    .extract-item .ei-tag { display:inline-block; padding:1px 7px; border-radius:99px; background:#e8f0f8; color:#1a3a5c; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; margin-left:4px; }
+    .extract-item .ei-label { font-weight:600; color:#0B1D34; margin-right:6px; }
+    .extract-item .ei-tag { display:inline-block; padding:1px 7px; border-radius:99px; background:#e8f0f8; color:#0B1D34; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.3px; margin-left:4px; }
     .extract-item .ei-meta { color:#666; font-size:11px; margin-top:3px; }
     .confidence-high { color:#16a34a; }
     .confidence-medium { color:#b45309; }
@@ -7511,7 +7511,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     ['dragenter', 'dragover'].forEach(ev => {
       zone.addEventListener(ev, (e) => {
         e.preventDefault(); e.stopPropagation();
-        zone.style.borderColor = '#1a3a5c';
+        zone.style.borderColor = '#0B1D34';
         zone.style.background = '#e8f0f8';
       });
     });
@@ -7586,7 +7586,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       row.style.cssText = 'display:grid; grid-template-columns: 24px 1fr 120px 80px; gap:10px; padding:8px 10px; background:#fcfcfd; border:1px solid #f0f2f5; border-radius:6px; font-size:12px; align-items:center;';
       row.innerHTML = `
         <span class="q-icon" style="font-size:14px;">⏳</span>
-        <span class="q-name" style="font-weight:600; color:#1a3a5c;">${inEsc(f.name)} <span style="font-weight:400; color:#888;">(${(f.size/1024).toFixed(1)} kb)</span></span>
+        <span class="q-name" style="font-weight:600; color:#0B1D34;">${inEsc(f.name)} <span style="font-weight:400; color:#888;">(${(f.size/1024).toFixed(1)} kb)</span></span>
         <span class="q-status" style="color:#888;">queued</span>
         <span class="q-action" style="text-align:right;"></span>
       `;
@@ -7626,7 +7626,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           row.querySelector('.q-status').textContent = 'duplicate';
           const link = document.createElement('a');
           link.href = '#'; link.textContent = 'view original';
-          link.style.cssText = 'color:#1a3a5c; font-size:11px;';
+          link.style.cssText = 'color:#0B1D34; font-size:11px;';
           link.onclick = (e) => { e.preventDefault(); inOpenDetail(payload.existing.id); };
           row.querySelector('.q-action').appendChild(link);
           processed++;
@@ -7663,7 +7663,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         row.querySelector('.q-status').textContent = payload.supersedes ? 'supersedes earlier' : 'extracted';
         const open = document.createElement('a');
         open.href = '#'; open.textContent = 'open';
-        open.style.cssText = 'color:#1a3a5c; font-size:11px;';
+        open.style.cssText = 'color:#0B1D34; font-size:11px;';
         open.onclick = (e) => { e.preventDefault(); inOpenDetail(payload.intake.id); };
         row.querySelector('.q-action').appendChild(open);
       } catch (err) {
@@ -7747,7 +7747,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div class="in-row" onclick="inOpenDetail('${i.id}')">
         <div><span class="in-status-pill in-status-${i.extraction_status}">${i.extraction_status}</span></div>
         <div>
-          <div style="font-weight:600; color:#1a3a5c;">${inEsc(i.extracted_summary || i.subject || '(no summary)')}</div>
+          <div style="font-weight:600; color:#0B1D34;">${inEsc(i.extracted_summary || i.subject || '(no summary)')}</div>
           <div style="font-size:11px; color:#5a7390; margin-top:3px;">
             ${inEsc(i.community?.name || '— no community —')} · ${new Date(i.ingested_at).toLocaleDateString()}
             ${i.board_relevant ? ' · <span style="color:#1e3a8a; font-weight:600;">📋 Board relevant</span>' : ''}
@@ -7856,7 +7856,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <!-- Summary -->
         <div class="extract-block">
           <h4>📝 Summary</h4>
-          <div style="font-size:14px; color:#1a3a5c; font-weight:600;">${inEsc(d.summary || i.extracted_summary || '(no summary)')}</div>
+          <div style="font-size:14px; color:#0B1D34; font-weight:600;">${inEsc(d.summary || i.extracted_summary || '(no summary)')}</div>
           <div style="font-size:11px; color:#5a7390; margin-top:8px;">
             Topic: <strong>${inEsc(d.topic || '—')}</strong> ·
             Urgency: <span class="in-urgency-${i.urgency || 'low'}">${i.urgency || '—'}</span> ·
@@ -7959,7 +7959,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:16px;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px;">
           <div style="flex:1;">
-            <h2 style="font-size:18px; font-weight:700; color:#1a3a5c;">${inEsc(i.subject || '(no subject)')}</h2>
+            <h2 style="font-size:18px; font-weight:700; color:#0B1D34;">${inEsc(i.subject || '(no subject)')}</h2>
             <div style="font-size:12px; color:#5a7390; margin-top:4px;">
               <span class="in-status-pill in-status-${i.extraction_status}">${i.extraction_status}</span>
               · ${inEsc(i.community?.name || 'no community')} · Ingested ${new Date(i.ingested_at).toLocaleString()}
@@ -7990,7 +7990,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div id="in-violation-attach" style="margin-top:14px;"></div>
 
       <details style="background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-top:14px;">
-        <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">📄 Original email thread (raw)</summary>
+        <summary style="cursor:pointer; font-weight:600; color:#0B1D34;">📄 Original email thread (raw)</summary>
         <pre style="white-space:pre-wrap; font-size:12px; color:#444; margin-top:10px; padding:12px; background:#fff; border:1px solid #f0f2f5; border-radius:6px; max-height:400px; overflow-y:auto;">${inEsc(i.raw_content)}</pre>
       </details>
     `;
@@ -8034,7 +8034,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div style="background:#f8fafc; border:1px dashed #cbd5e1; border-radius:8px; padding:14px;">
           <div style="display:flex; justify-content:space-between; align-items:center; gap:12px;">
             <div>
-              <div style="font-weight:700; color:#1a3a5c; margin-bottom:2px;">🏷️ Owner reply on a violation?</div>
+              <div style="font-weight:700; color:#0B1D34; margin-bottom:2px;">🏷️ Owner reply on a violation?</div>
               <div style="font-size:12px; color:#64748b;">If this email is about an open violation, attach it so the response lands on that violation's timeline.</div>
             </div>
           </div>
@@ -8061,7 +8061,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       }
       const positive = cs.filter((c) => c.score > 0);
       const header = positive.length > 0
-        ? `<div style="font-weight:600; color:#1a3a5c; margin-bottom:6px;">🎯 Likely matches</div>`
+        ? `<div style="font-weight:600; color:#0B1D34; margin-bottom:6px;">🎯 Likely matches</div>`
         : `<div style="font-weight:600; color:#475569; margin-bottom:6px;">All open violations in this community (no signals matched)</div>`;
       const rows = cs.map((c) => {
         const addr = [c.street_address, c.unit].filter(Boolean).join(' ');
@@ -8073,14 +8073,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         return `
           <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 10px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:6px;">
             <div style="flex:1; min-width:0;">
-              <div style="font-size:13px; color:#1a3a5c; font-weight:600;">${inEsc(addr || '(unknown address)')}</div>
+              <div style="font-size:13px; color:#0B1D34; font-weight:600;">${inEsc(addr || '(unknown address)')}</div>
               <div style="font-size:11.5px; color:#475569;">
                 ${inEsc(c.category_label || 'uncategorized')} · <span style="background:#f1f5f9; padding:1px 5px; border-radius:3px; font-size:10.5px;">${inEsc(stage)}</span> · opened ${opened}
                 ${c.owner_name ? ` · ${inEsc(c.owner_name)}` : ''}
               </div>
               ${reasonText}
             </div>
-            <button onclick="inAttachToViolation('${c.violation_id}')" style="background:#1a3a5c; border:none; color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">Attach →</button>
+            <button onclick="inAttachToViolation('${c.violation_id}')" style="background:#0B1D34; border:none; color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">Attach →</button>
           </div>`;
       }).join('');
       cWrap.innerHTML = header + rows;
@@ -8188,7 +8188,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:16px; margin-bottom:18px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
         <div>
-          <h3 style="margin:0; font-size:16px; color:#1a3a5c;">📋 Past ACC decisions <span style="color:#94A3B8; font-weight:400; font-size:13px;">(decisions made through trustEd)</span></h3>
+          <h3 style="margin:0; font-size:16px; color:#0B1D34;">📋 Past ACC decisions <span style="color:#94A3B8; font-weight:400; font-size:13px;">(decisions made through trustEd)</span></h3>
           <p style="margin:4px 0 0 0; font-size:12px; color:#666;">Every letter generated through the Review tab is saved here. One-tap re-download of the homeowner letter or the complete packet (letter + application + photos + brochures).</p>
         </div>
         <div style="display:flex; gap:6px; align-items:center;">
@@ -8205,7 +8205,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🏗️ Imported ARC history <span style="color:#94A3B8; font-weight:500; font-size:14px;">(pre-trustEd letters)</span></h2>
+        <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">🏗️ Imported ARC history <span style="color:#94A3B8; font-weight:500; font-size:14px;">(pre-trustEd letters)</span></h2>
         <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. trustEd extracts structured fields — review → save. The AI assessment engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
       </div>
     </div>
@@ -8253,7 +8253,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <!-- Drop zone -->
     <div id="ah-drop-zone" style="border:2px dashed #c0d0e0; border-radius:10px; padding:28px 24px; text-align:center; background:#f7f9fc; margin-bottom:18px; cursor:pointer; transition: all 0.2s;">
       <div style="font-size:36px; color:#5a7390; pointer-events:none;">📥</div>
-      <div style="font-size:15px; font-weight:600; color:#1a3a5c; margin-top:8px; pointer-events:none;">Click anywhere here or drop ARC decision letters</div>
+      <div style="font-size:15px; font-weight:600; color:#0B1D34; margin-top:8px; pointer-events:none;">Click anywhere here or drop ARC decision letters</div>
       <div style="font-size:12px; color:#5a7390; margin-top:4px; pointer-events:none;">
         Accepts <strong>PDF</strong>, <strong>image</strong> (jpg/png), <strong>.eml</strong>, or <strong>.txt</strong>
       </div>
@@ -8265,7 +8265,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
     <!-- Extraction queue -->
     <div id="ah-queue" style="display:none; background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:14px; margin-bottom:14px;">
-      <div style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Processing…</div>
+      <div style="font-size:13px; font-weight:600; color:#0B1D34; margin-bottom:8px;">Processing…</div>
       <div id="ah-queue-items" style="display:flex; flex-direction:column; gap:8px;"></div>
     </div>
 
@@ -8287,13 +8287,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <div id="ah-review-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
       <div style="background:#fff; border-radius:12px; max-width:720px; width:100%; max-height:92vh; overflow-y:auto; padding:24px;">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-          <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Review extracted decision</h3>
+          <h3 style="font-size:18px; font-weight:700; color:#0B1D34;">Review extracted decision</h3>
           <button onclick="ahHideReviewModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
         </div>
         <div id="ah-review-meta" style="font-size:12px; color:#666; margin-bottom:14px;"></div>
         <div id="ah-review-form" style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;"></div>
         <details style="margin-top:14px;">
-          <summary style="cursor:pointer; font-size:12px; font-weight:600; color:#1a3a5c;">📄 Source excerpt (first 600 chars)</summary>
+          <summary style="cursor:pointer; font-size:12px; font-weight:600; color:#0B1D34;">📄 Source excerpt (first 600 chars)</summary>
           <pre id="ah-review-excerpt" style="white-space:pre-wrap; font-size:11px; color:#555; padding:10px; background:#f7f9fc; border:1px solid #e3e8ef; border-radius:4px; max-height:200px; overflow-y:auto; margin-top:8px;"></pre>
         </details>
         <div style="text-align:right; margin-top:16px;">
@@ -8307,9 +8307,9 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   <style>
     .ah-row { background:#fff; border:1px solid #e3e8ef; border-radius:8px; padding:12px 16px; display:grid; grid-template-columns: 110px 1fr 130px 90px 60px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; font-size:13px; }
-    .ah-row:hover { border-color:#1a3a5c; }
+    .ah-row:hover { border-color:#0B1D34; }
     .ah-row .date { color:#5a7390; font-weight:600; }
-    .ah-row .addr { font-weight:700; color:#1a3a5c; }
+    .ah-row .addr { font-weight:700; color:#0B1D34; }
     .ah-row .summary { color:#444; font-size:12px; margin-top:3px; }
     .ah-decision-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
     .ah-approved { background:#dcfce7; color:#166534; }
@@ -8318,7 +8318,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     .ah-withdrawn { background:#e0e7ff; color:#3730a3; }
     .ah-tabled { background:#e2e8f0; color:#475569; }
     .ah-pending { background:#f1f5f9; color:#475569; }
-    .ah-project-chip { display:inline-block; padding:2px 9px; border-radius:99px; font-size:10px; font-weight:600; background:#e8f0f8; color:#1a3a5c; text-transform:capitalize; }
+    .ah-project-chip { display:inline-block; padding:2px 9px; border-radius:99px; font-size:10px; font-weight:600; background:#e8f0f8; color:#0B1D34; text-transform:capitalize; }
     .ahq-row { display:grid; grid-template-columns: 24px 1fr 130px 80px; gap:10px; padding:8px 10px; background:#fcfcfd; border:1px solid #f0f2f5; border-radius:6px; font-size:12px; align-items:center; }
   </style>
 </div>
@@ -8379,7 +8379,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     ['dragenter','dragover'].forEach(ev => {
       zone.addEventListener(ev, (e) => {
         e.preventDefault(); e.stopPropagation();
-        zone.style.borderColor = '#1a3a5c';
+        zone.style.borderColor = '#0B1D34';
         zone.style.background = '#e8f0f8';
       });
     });
@@ -8416,7 +8416,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       row.className = 'ahq-row';
       row.innerHTML = `
         <span class="icon" style="font-size:14px;">⏳</span>
-        <span style="font-weight:600; color:#1a3a5c;">${ahEsc(file.name)} <span style="font-weight:400; color:#888;">(${(file.size/1024).toFixed(1)} kb)</span></span>
+        <span style="font-weight:600; color:#0B1D34;">${ahEsc(file.name)} <span style="font-weight:400; color:#888;">(${(file.size/1024).toFixed(1)} kb)</span></span>
         <span class="status" style="color:#888;">extracting…</span>
         <span class="action" style="text-align:right;"></span>
       `;
@@ -8757,7 +8757,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div class="ev-detail-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
           <div style="flex:1;">
-            <h2 style="font-size:20px; font-weight:700; color:#1a3a5c;">${ahEsc(d.property_address || 'No address recorded')}</h2>
+            <h2 style="font-size:20px; font-weight:700; color:#0B1D34;">${ahEsc(d.property_address || 'No address recorded')}</h2>
             <div style="font-size:13px; color:#5a7390; margin-top:4px;">
               ${ahEsc(d.community?.name || '')}${d.homeowner_name ? ' · ' + ahEsc(d.homeowner_name) : ''}${d.decided_at ? ' · ' + new Date(d.decided_at).toLocaleDateString() : ''}
             </div>
@@ -8774,13 +8774,13 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       </div>
 
       <div class="ev-detail-card">
-        <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Summary</h3>
+        <h3 style="font-size:13px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Summary</h3>
         <div style="font-size:14px; line-height:1.6;">${ahEsc(d.summary || '—')}</div>
       </div>
 
       ${d.project_description ? `
         <div class="ev-detail-card">
-          <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Project description</h3>
+          <h3 style="font-size:13px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Project description</h3>
           <div style="font-size:14px; line-height:1.6; white-space:pre-wrap;">${ahEsc(d.project_description)}</div>
         </div>` : ''
       }
@@ -8794,14 +8794,14 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
       ${d.reasoning ? `
         <div class="ev-detail-card">
-          <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Reasoning</h3>
+          <h3 style="font-size:13px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px;">Reasoning</h3>
           <div style="font-size:14px; line-height:1.6; white-space:pre-wrap;">${ahEsc(d.reasoning)}</div>
         </div>` : ''
       }
 
       ${d.source_excerpt ? `
         <details style="margin-top:14px; background:#fcfcfd; border:1px solid #e3e8ef; border-radius:8px; padding:14px;">
-          <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">📄 Source excerpt</summary>
+          <summary style="cursor:pointer; font-weight:600; color:#0B1D34;">📄 Source excerpt</summary>
           <pre style="white-space:pre-wrap; font-size:12px; color:#444; margin-top:10px; padding:12px; background:#fff; border:1px solid #f0f2f5; border-radius:4px; max-height:300px; overflow-y:auto;">${ahEsc(d.source_excerpt)}</pre>
           <div style="font-size:11px; color:#888; margin-top:6px;">From: ${ahEsc(d.source_filename || 'unknown')}</div>
         </details>` : ''
@@ -8844,7 +8844,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <span id="ah-edit-status" style="margin-left:6px; font-size:12px;"></span>
       </div>
       <div class="ev-detail-card">
-        <h3 style="font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:12px;">Edit decision</h3>
+        <h3 style="font-size:13px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:12px;">Edit decision</h3>
         <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px 14px;">
           ${fld('property_address', 'Property address', d.property_address)}
           ${fld('homeowner_name', 'Homeowner name', d.homeowner_name)}
@@ -8975,12 +8975,12 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             <div style="display:grid; grid-template-columns: 80px 1fr 120px 90px 60px; gap:10px; padding:10px 12px; margin-bottom:6px; border:2px solid ${ri === 0 ? '#86efac' : '#e3e8ef'}; border-radius:6px; background:${ri === 0 ? '#f0fdf4' : '#fff'}; font-size:12px; align-items:center;">
               <div style="font-weight:700; color:${ri === 0 ? '#166534' : '#888'};">${ri === 0 ? '✓ KEEP' : '✗ DELETE'}</div>
               <div>
-                <div style="color:#1a3a5c; font-weight:600;">${ahEsc(r.summary || r.project_description || '(no summary)')}</div>
+                <div style="color:#0B1D34; font-weight:600;">${ahEsc(r.summary || r.project_description || '(no summary)')}</div>
                 <div style="color:#888; font-size:11px; margin-top:2px;">From: ${ahEsc(r.source_filename || 'unknown')} · Added ${new Date(r.created_at).toLocaleString()}</div>
               </div>
               <div style="font-size:11px;">${r.manually_edited ? '<span style="color:#1e3a8a;">✓ verified</span>' : '<span style="color:#888;">not edited</span>'}</div>
               <div style="font-size:11px; color:${r.extraction_confidence === 'high' ? '#16a34a' : r.extraction_confidence === 'medium' ? '#d97706' : '#dc2626'};">● ${ahEsc(r.extraction_confidence || '?')}</div>
-              <div style="text-align:right;"><button onclick="ahOpenDetail('${r.id}')" style="background:none; border:none; color:#1a3a5c; cursor:pointer; font-size:11px; text-decoration:underline;">view</button></div>
+              <div style="text-align:right;"><button onclick="ahOpenDetail('${r.id}')" style="background:none; border:none; color:#0B1D34; cursor:pointer; font-size:11px; text-decoration:underline;">view</button></div>
             </div>
           `).join('')}
         </div>
@@ -9033,7 +9033,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   <div style="max-width: 1280px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📋 ACC Queue</h2>
+        <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">📋 ACC Queue</h2>
         <p style="font-size:13px; color:#666; max-width:720px;">Applications submitted by homeowners. trustEd has already drafted a recommendation for each — your job is to review, approve/modify/deny, and send the response. <strong>Speed matters</strong> — the homeowner saw the preliminary preview the moment they submitted, and they're waiting on the official decision.</p>
       </div>
       <div style="text-align:right;">
@@ -9074,10 +9074,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 
   <style>
     .acc-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 140px 1fr 180px 130px 110px; gap:14px; align-items:center; cursor:pointer; transition: all 0.12s; }
-    .acc-row:hover { border-color:#1a3a5c; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(26,58,92,0.08); }
+    .acc-row:hover { border-color:#0B1D34; transform: translateY(-1px); box-shadow: 0 2px 8px rgba(26,58,92,0.08); }
     .acc-row.urgent { border-left: 4px solid #ea580c; }
-    .acc-row .ref { font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#1a3a5c; font-weight:600; }
-    .acc-row .submitter { font-weight:700; color:#1a3a5c; font-size:14px; }
+    .acc-row .ref { font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#0B1D34; font-weight:600; }
+    .acc-row .submitter { font-weight:700; color:#0B1D34; font-size:14px; }
     .acc-row .addr { font-size:12px; color:#5a7390; margin-top:2px; }
     .acc-row .summary { font-size:12px; color:#444; margin-top:5px; line-height:1.45; }
     .acc-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
@@ -9098,16 +9098,16 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     .acc-stats-pill.red { background:#fee2e2; color:#991b1b; }
 
     .acc-card { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:14px; }
-    .acc-card h3 { font-size:13px; font-weight:700; color:#1a3a5c; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
+    .acc-card h3 { font-size:13px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:10px; }
     .acc-ai-card { background: linear-gradient(135deg, #fafbff 0%, #f1f5fa 100%); border-color:#c5d3e8; }
-    .acc-ai-card h3 { color:#1a3a5c; }
+    .acc-ai-card h3 { color:#0B1D34; }
     .acc-ai-actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:14px; }
     .acc-action-btn { padding:9px 18px; border-radius:8px; font:inherit; font-size:13px; font-weight:600; cursor:pointer; border: 1px solid transparent; }
     .acc-action-btn.approve { background:#16a34a; color:#fff; border-color:#15803d; }
-    .acc-action-btn.modify { background:#1a3a5c; color:#fff; border-color:#0f2942; }
+    .acc-action-btn.modify { background:#0B1D34; color:#fff; border-color:#0f2942; }
     .acc-action-btn.conditional { background:#d97706; color:#fff; border-color:#b45309; }
     .acc-action-btn.deny { background:#dc2626; color:#fff; border-color:#b91c1c; }
-    .acc-action-btn.more-info { background:#fff; color:#1a3a5c; border-color:#1a3a5c; }
+    .acc-action-btn.more-info { background:#fff; color:#0B1D34; border-color:#0B1D34; }
     .acc-action-btn:active { transform: scale(0.97); }
     .acc-action-btn:hover { filter: brightness(1.05); }
 
@@ -9304,8 +9304,8 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <div class="acc-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
           <div>
-            <div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#1a3a5c; font-weight:700; margin-bottom:6px;">${accEsc(a.reference_number)}</div>
-            <h2 style="font-size:22px; font-weight:700; color:#1a3a5c;">${accEsc(a.submitter_name)} — ${accEsc(a.property_address)}</h2>
+            <div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:12px; color:#0B1D34; font-weight:700; margin-bottom:6px;">${accEsc(a.reference_number)}</div>
+            <h2 style="font-size:22px; font-weight:700; color:#0B1D34;">${accEsc(a.submitter_name)} — ${accEsc(a.property_address)}</h2>
             <div style="font-size:13px; color:#5a7390; margin-top:4px;">
               ${accEsc(a.community?.name || '')} · ${accEsc(a.submitter_email)}${a.submitter_phone ? ' · ' + accEsc(a.submitter_phone) : ''}${submitted ? ' · Submitted ' + accEsc(submitted) : ''}
             </div>
@@ -9367,7 +9367,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       ${audit ? `
         <div class="acc-card" style="background:#f8fafc;">
           <details>
-            <summary style="cursor:pointer; font-weight:600; color:#1a3a5c;">
+            <summary style="cursor:pointer; font-weight:600; color:#0B1D34;">
               📊 Retrieval &amp; audit
               <span style="font-weight:400; font-size:12px; color:#5a7390; margin-left:8px;">
                 ${audit.retrieved_chunk_count || 0} chunks · ${audit.community_chunk_count || 0} community · ${audit.law_general_chunk_count || 0} reference${audit.contamination_ratio != null ? ` · contamination ${Math.round((audit.contamination_ratio || 0) * 100)}%` : ''}
@@ -9502,7 +9502,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           <h3>📒 Response history</h3>
           ${accCurrent.responses.map(r => `
             <div style="padding:10px 0; border-bottom:1px solid #f0f2f5; font-size:13px;">
-              <div style="font-weight:600; color:#1a3a5c;">${accEsc(r.response_type)} ${r.action_at ? '<span style="font-weight:400; color:#888; font-size:11px;">' + new Date(r.action_at).toLocaleString() + '</span>' : ''}${r.action_by_name ? '<span style="font-weight:400; color:#5a7390; font-size:11px; margin-left:6px;">by ' + accEsc(r.action_by_name) + '</span>' : ''}</div>
+              <div style="font-weight:600; color:#0B1D34;">${accEsc(r.response_type)} ${r.action_at ? '<span style="font-weight:400; color:#888; font-size:11px;">' + new Date(r.action_at).toLocaleString() + '</span>' : ''}${r.action_by_name ? '<span style="font-weight:400; color:#5a7390; font-size:11px; margin-left:6px;">by ' + accEsc(r.action_by_name) + '</span>' : ''}</div>
               ${r.message_to_owner ? `<div style="white-space:pre-wrap; margin-top:5px; color:#444;">${accEsc(r.message_to_owner)}</div>` : ''}
               ${r.internal_notes ? `<div style="margin-top:5px; padding:6px 10px; background:#f5f8fc; border-radius:4px; font-size:11px; color:#5a7390;"><strong>Internal:</strong> ${accEsc(r.internal_notes)}</div>` : ''}
             </div>
@@ -9643,7 +9643,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <div style="max-width: 1180px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">📰 Recaps</h2>
+        <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">📰 Recaps</h2>
         <p style="font-size:13px; color:#666;">Generate audience-tailored summaries: boards get the high-signal view, your team gets the operational detail. Filter applied by your <strong>board_visible</strong> flags on decisions.</p>
       </div>
       <button class="primary-btn" onclick="rcShowNewModal()" style="padding:9px 18px;">+ Generate recap</button>
@@ -9675,7 +9675,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <div id="rc-new-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
     <div style="background:#fff; border-radius:12px; max-width:540px; width:100%; max-height:90vh; overflow-y:auto; padding:24px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-        <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Generate a recap</h3>
+        <h3 style="font-size:18px; font-weight:700; color:#0B1D34;">Generate a recap</h3>
         <button onclick="rcHideNewModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
       </div>
       <div style="display:grid; grid-template-columns: 1fr; gap:10px;">
@@ -9707,13 +9707,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   <style>
     .rc-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 100px 1fr 200px 100px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; }
-    .rc-row:hover { border-color:#1a3a5c; }
+    .rc-row:hover { border-color:#0B1D34; }
     .rc-aud-board { background:#dbeafe; color:#1e3a8a; }
     .rc-aud-internal { background:#fef3c7; color:#92400e; }
     .rc-aud-community { background:#dcfce7; color:#166534; }
     .rc-aud-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
     .recap-content { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:24px; font-size:14px; line-height:1.65; color:#1f2937; }
-    .recap-content h1, .recap-content h2 { color:#1a3a5c; font-weight:700; margin: 16px 0 8px; }
+    .recap-content h1, .recap-content h2 { color:#0B1D34; font-weight:700; margin: 16px 0 8px; }
     .recap-content h2 { font-size:16px; }
     .recap-content h1 { font-size:20px; }
     .recap-content ul, .recap-content ol { margin: 8px 0 8px 20px; }
@@ -9781,7 +9781,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div class="rc-row" onclick="rcOpenDetail('${r.id}')">
         <div><span class="rc-aud-pill rc-aud-${r.audience}">${r.audience}</span></div>
         <div>
-          <div style="font-weight:600; color:#1a3a5c;">${inEsc(r.title || r.community?.name + ' recap')}</div>
+          <div style="font-weight:600; color:#0B1D34;">${inEsc(r.title || r.community?.name + ' recap')}</div>
           <div style="font-size:11px; color:#5a7390; margin-top:3px;">${inEsc(r.community?.name || '—')} · ${r.period_start} → ${r.period_end}</div>
         </div>
         <div style="font-size:12px; color:#666;">Generated ${new Date(r.generated_at).toLocaleDateString()}</div>
@@ -9863,7 +9863,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:16px;">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px; flex-wrap:wrap;">
           <div>
-            <h2 style="font-size:18px; font-weight:700; color:#1a3a5c;">${inEsc(r.title || 'Recap')}</h2>
+            <h2 style="font-size:18px; font-weight:700; color:#0B1D34;">${inEsc(r.title || 'Recap')}</h2>
             <div style="font-size:12px; color:#5a7390; margin-top:4px;">
               <span class="rc-aud-pill rc-aud-${r.audience}">${r.audience}</span>
               · ${inEsc(r.community?.name || '—')} · ${r.period_start} → ${r.period_end}
@@ -9942,7 +9942,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <div style="max-width: 1180px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
-        <h2 style="font-size:22px; font-weight:700; color:#1a3a5c; margin-bottom:4px;">🎉 Community Events</h2>
+        <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">🎉 Community Events</h2>
         <p style="font-size:13px; color:#666;">Plan events, track vendor costs over time, capture waivers + attendance digitally.</p>
       </div>
       <button class="primary-btn" onclick="evShowCreateModal()" style="padding:9px 18px;">+ New event</button>
@@ -9982,7 +9982,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <div id="ev-create-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:center; justify-content:center; padding:20px;">
     <div style="background:#fff; border-radius:12px; max-width:560px; width:100%; max-height:90vh; overflow-y:auto; padding:24px;">
       <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-        <h3 style="font-size:18px; font-weight:700; color:#1a3a5c;">Plan a new event</h3>
+        <h3 style="font-size:18px; font-weight:700; color:#0B1D34;">Plan a new event</h3>
         <button onclick="evHideCreateModal()" style="background:none; border:none; font-size:24px; cursor:pointer; color:#888;">×</button>
       </div>
       <div class="prof-grid" style="display:grid; grid-template-columns: 1fr; gap:10px;">
@@ -10032,7 +10032,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <!-- Saved event drafts panel — sits below the filter bar, above the list -->
   <div data-drafts-panel="event_plan" style="margin: 0 0 18px 0; background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:12px 14px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-      <h3 style="margin:0; font-size:14px; color:#1a3a5c;">🗂️ Saved event drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
+      <h3 style="margin:0; font-size:14px; color:#0B1D34;">🗂️ Saved event drafts <span style="font-weight:400; color:#94A3B8; font-size:11px;">(work in progress)</span></h3>
       <button class="secondary-btn" onclick="Drafts.refreshPanel('event_plan')" style="font-size:11px; padding:4px 8px;">Refresh</button>
     </div>
     <div data-drafts-list="event_plan" style="font-size:13px; color:#6B7280;">No saved drafts yet.</div>
@@ -10040,10 +10040,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   <style>
     .ev-row { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:14px 18px; display:grid; grid-template-columns: 1fr 200px 160px 100px; gap:14px; align-items:center; cursor:pointer; transition: border-color 0.12s; }
-    .ev-row:hover { border-color:#1a3a5c; }
-    .ev-row .ev-name { font-weight:700; color:#1a3a5c; font-size:14px; }
+    .ev-row:hover { border-color:#0B1D34; }
+    .ev-row .ev-name { font-weight:700; color:#0B1D34; font-size:14px; }
     .ev-row .ev-sub { font-size:12px; color:#5a7390; margin-top:3px; }
-    .ev-row .ev-cost { font-size:13px; color:#1a3a5c; font-weight:600; text-align:right; }
+    .ev-row .ev-cost { font-size:13px; color:#0B1D34; font-weight:600; text-align:right; }
     .ev-row .ev-cost-sub { font-size:11px; color:#888; }
     .ev-row .ev-att { font-size:13px; text-align:center; color:#445; }
     .ev-status-pill { display:inline-block; padding:3px 10px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.4px; }
@@ -10054,7 +10054,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     .ev-detail-card { background:#fff; border:1px solid #e3e8ef; border-radius:10px; padding:18px; margin-bottom:16px; }
     .ev-vendor-row { display:grid; grid-template-columns: 140px 1fr 120px 120px 100px 70px; gap:10px; padding:10px 12px; border:1px solid #e3e8ef; border-radius:6px; margin-bottom:6px; font-size:13px; align-items:center; }
-    .ev-vendor-row .role-chip { display:inline-block; background:#e8f0f8; color:#1a3a5c; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }
+    .ev-vendor-row .role-chip { display:inline-block; background:#e8f0f8; color:#0B1D34; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:0.3px; }
 
     .ev-sig-row { display:grid; grid-template-columns: 1fr 200px 100px 70px; gap:10px; padding:8px 12px; border-bottom:1px solid #f0f2f5; font-size:13px; align-items:center; }
     .ev-sig-row:last-child { border-bottom:none; }
@@ -10062,9 +10062,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     .ev-sig-guest { background:#fef3c7; color:#92400e; font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; text-transform:uppercase; letter-spacing:0.3px; }
     .ev-sig-minor { background:#e0e7ff; color:#3730a3; font-size:10px; font-weight:700; padding:2px 7px; border-radius:99px; text-transform:uppercase; letter-spacing:0.3px; margin-left:4px; }
 
-    .qr-box { background:#fff; border:2px solid #1a3a5c; border-radius:12px; padding:20px; text-align:center; }
+    .qr-box { background:#fff; border:2px solid #0B1D34; border-radius:12px; padding:20px; text-align:center; }
     .qr-box img { width:200px; height:200px; }
-    .qr-url { font-family: 'SF Mono', Consolas, monospace; font-size:11px; color:#1a3a5c; margin-top:8px; word-break: break-all; }
+    .qr-url { font-family: 'SF Mono', Consolas, monospace; font-size:11px; color:#0B1D34; margin-top:8px; word-break: break-all; }
   </style>
 </div>
 
@@ -11218,14 +11218,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </h2>
       <p style="font-size: 13px; color: #64748b; margin: 0;">Walk or drive a community, photograph properties and common areas. GPS + compass heading capture automatically.</p>
       <a href="#" onclick="event.preventDefault(); switchTab('training'); setTimeout(() => trainingOpenModule('inspection-capture'), 50);"
-         style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 4px 10px; background: #f1f5fb; border: 1px solid #d8e2ed; border-radius: 16px; font-size: 11.5px; color: #1a3a5c; text-decoration: none; font-weight: 600;">
+         style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; padding: 4px 10px; background: #f1f5fb; border: 1px solid #d8e2ed; border-radius: 16px; font-size: 11.5px; color: #0B1D34; text-decoration: none; font-weight: 600;">
         📚 University · Field Inspection Capture
       </a>
       <!-- Deep-link to Community Map for the selected community. Convenient
            when you spot a violation hotspot on inspection and want to see
            it cross-referenced with AR / occupancy / ACC layers. -->
       <a href="#" id="inspToCommunityMapLink" onclick="event.preventDefault(); inspOpenCommunityMap();"
-         style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; margin-left: 8px; padding: 4px 10px; background: #f5f0e1; border: 1px solid var(--gold, #D4AF37); border-radius: 16px; font-size: 11.5px; color: #1a3a5c; text-decoration: none; font-weight: 600;">
+         style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; margin-left: 8px; padding: 4px 10px; background: #f5f0e1; border: 1px solid var(--gold, #D4AF37); border-radius: 16px; font-size: 11.5px; color: #0B1D34; text-decoration: none; font-weight: 600;">
         🗺️ View this community on the Community Map
       </a>
     </div>
@@ -11304,7 +11304,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             🌍 Geocode all communities
           </button>
         </div>
-        <div id="inspGeocodeAllStatus" style="display:none; margin-top: 10px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; color: #1a3a5c; line-height: 1.5;"></div>
+        <div id="inspGeocodeAllStatus" style="display:none; margin-top: 10px; padding: 10px 12px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 12px; color: #0B1D34; line-height: 1.5;"></div>
       </div>
     </div>
 
@@ -11395,10 +11395,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
         <!-- Staged-wide chip (shown only after a wide is staged) -->
         <div id="inspWidePairChip" style="display:none; background:#fff; border:1px solid #d8e2ed; border-radius:10px; padding:8px 10px; margin-bottom: 8px; display:flex; align-items:center; gap:10px;">
-          <div id="inspWideThumb" style="width:42px; height:42px; border-radius:6px; background:#1a3a5c; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px;">🏠</div>
+          <div id="inspWideThumb" style="width:42px; height:42px; border-radius:6px; background:#0B1D34; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px;">🏠</div>
           <div style="flex:1; min-width:0;">
             <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; font-weight:600;">Pairing with</div>
-            <div id="inspWidePairLabel" style="font-size:12.5px; color:#1a3a5c; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Wide shot · uploading…</div>
+            <div id="inspWidePairLabel" style="font-size:12.5px; color:#0B1D34; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Wide shot · uploading…</div>
           </div>
           <button type="button" onclick="inspEndPropertyPair()" style="background:#f8fafc; border:1px solid #cbd5e1; color:#475569; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">Done with property</button>
         </div>
@@ -11436,7 +11436,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
           <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">Captured this session</h3>
-          <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #1a3a5c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
+          <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #0B1D34; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
         </div>
         <div id="inspPhotoList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px;">
           <div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No photos yet — tap Capture above to start.</div>
@@ -11545,7 +11545,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                  ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
                  ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('inspVViFile').files=dt.files; }">
               <div style="font-size:20px; color:#5a7390;">📥</div>
-              <div style="font-size:12px; font-weight:600; color:#1a3a5c; margin-top:4px;">Drop the Vantaca violations export here</div>
+              <div style="font-size:12px; font-weight:600; color:#0B1D34; margin-top:4px;">Drop the Vantaca violations export here</div>
               <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file — supports <strong>PDF</strong> (AI extracts the rows automatically) or .csv / .xlsx / .xls</div>
             </div>
             <input type="file" id="inspVViFile" accept=".csv,.xlsx,.xls,.pdf,application/pdf" style="display:none;">
@@ -11970,11 +11970,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
         <div style="display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap;">
           <a id="cmapAprLookupLink" href="#" target="_blank" rel="noopener"
-             style="background:#f5f0e1; color:#1a3a5c; border:1px solid var(--gold, #D4AF37); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">
+             style="background:#f5f0e1; color:#0B1D34; border:1px solid var(--gold, #D4AF37); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">
             🔗 Look up on FBCAD
           </a>
           <a id="cmapAprLookupLinkHcad" href="#" target="_blank" rel="noopener"
-             style="background:#f5f0e1; color:#1a3a5c; border:1px solid var(--gold, #D4AF37); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">
+             style="background:#f5f0e1; color:#0B1D34; border:1px solid var(--gold, #D4AF37); padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; text-decoration:none;">
             🔗 Look up on HCAD
           </a>
         </div>
@@ -12590,7 +12590,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         return `<div style="display:flex; gap:10px; padding:6px 0; border-bottom:1px dashed #e2e8f0;">
           <div style="font-size:16px;">${channelIcon(rcpt.channel)}</div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:11.5px; color:#1a3a5c;">
+            <div style="font-size:11.5px; color:#0B1D34;">
               <strong>${escapeHtml(rcpt.channel.replace(/_/g, ' '))}</strong>
               · ${escapeHtml(rcpt.to_address || '—')}
               ${rcpt.vendor ? ` · via ${escapeHtml(rcpt.vendor)}` : ''}
@@ -14831,15 +14831,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const previewSrc = p._local_preview || (p.signed_url || '');
       const imgHtml = previewSrc
         ? `<img src="${previewSrc}" style="width:100%; height:100%; object-fit:cover;" />`
-        : `<div style="width:100%; height:100%; background:#1a3a5c;"></div>`;
+        : `<div style="width:100%; height:100%; background:#0B1D34;"></div>`;
       // Role chip: wide shots get a navy chip, close-ups get a gold chip,
       // singles get no chip (default behavior). The pair tells operators
       // visually which photo is the identifier vs. the evidence.
       let roleChip = '';
       if (p.photo_role === 'wide') {
-        roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#1a3a5c; color:#fff; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🏠 WIDE</div>`;
+        roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#0B1D34; color:#fff; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🏠 WIDE</div>`;
       } else if (p.photo_role === 'close_up') {
-        roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#D4AF37; color:#1a3a5c; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🔍 ISSUE</div>`;
+        roleChip = `<div style="position:absolute; top:5px; left:6px; padding:2px 7px; background:#D4AF37; color:#0B1D34; font-size:9.5px; font-weight:700; border-radius:99px; letter-spacing:0.04em;">🔍 ISSUE</div>`;
       }
       const pairedBorder = p.paired_wide_photo_id ? 'border: 2px solid #D4AF37;' : '';
       const photoKey = String(p.id || '');
@@ -16596,7 +16596,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const closedActions = isClosed ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             <button type="button" onclick="inspResume('${i.id}')"
-                    style="background: #fff; color: #1a3a5c; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                    style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
               🔓 Reopen &amp; resume
             </button>
@@ -16607,7 +16607,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${analyzeBtn}
             <button type="button" onclick="inspResume('${i.id}')"
-                    style="background: #fff; color: #1a3a5c; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                    style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze, then Finalize when done.">
               📷 Resume
             </button>
@@ -16628,7 +16628,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         return `
           <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid #f1f5f9; gap: 12px; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 180px;">
-              <div style="font-size: 13px; color: #1a3a5c; font-weight: 600;">${modeLabel} ${escapeHtml(community)}</div>
+              <div style="font-size: 13px; color: #0B1D34; font-weight: 600;">${modeLabel} ${escapeHtml(community)}</div>
               <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${date} · ${photoStr} · ${statusLabel}</div>
             </div>
             ${actions}
@@ -17114,20 +17114,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <a href="#training-overview" class="training-nav-link"
            onclick="event.preventDefault(); trainingOpenModule('overview');"
            style="text-decoration: none; color: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; cursor: pointer;">
-          <div style="font-size: 13px; font-weight: 600; color: #1a3a5c; line-height: 1.3;">🏛️ Overview</div>
+          <div style="font-size: 13px; font-weight: 600; color: #0B1D34; line-height: 1.3;">🏛️ Overview</div>
           <div style="font-size: 12px; color: #475569; margin-top: 2px; line-height: 1.35;">Role tracks &amp; badges</div>
         </a>
         <a href="#training-asked-foundations" class="training-nav-link active"
            onclick="event.preventDefault(); trainingOpenModule('asked-foundations');"
            style="text-decoration: none; color: inherit; padding: 10px 12px; border-radius: 8px; background: #f1f5fb; border: 1px solid #d8e2ed; cursor: pointer;">
-          <div style="font-size: 13px; font-weight: 600; color: #1a3a5c; line-height: 1.3;">📘 Module 1 <span class="uni-mod-status" data-mod="asked-foundations" style="font-size: 10px; color: #94a3b8;"></span></div>
+          <div style="font-size: 13px; font-weight: 600; color: #0B1D34; line-height: 1.3;">📘 Module 1 <span class="uni-mod-status" data-mod="asked-foundations" style="font-size: 10px; color: #94a3b8;"></span></div>
           <div style="font-size: 12px; color: #475569; margin-top: 2px; line-height: 1.35;">askEd Foundations</div>
           <div style="font-size: 10px; color: #94a3b8; margin-top: 4px;">15-20 min · Required</div>
         </a>
         <a href="#training-inspection-capture" class="training-nav-link"
            onclick="event.preventDefault(); trainingOpenModule('inspection-capture');"
            style="text-decoration: none; color: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; cursor: pointer;">
-          <div style="font-size: 13px; font-weight: 600; color: #1a3a5c; line-height: 1.3;">📷 Module 2 <span class="uni-mod-status" data-mod="inspection-capture" style="font-size: 10px; color: #94a3b8;"></span></div>
+          <div style="font-size: 13px; font-weight: 600; color: #0B1D34; line-height: 1.3;">📷 Module 2 <span class="uni-mod-status" data-mod="inspection-capture" style="font-size: 10px; color: #94a3b8;"></span></div>
           <div style="font-size: 12px; color: #475569; margin-top: 2px; line-height: 1.35;">Field Inspection Capture</div>
           <div style="font-size: 10px; color: #94a3b8; margin-top: 4px;">20-25 min · Inspector</div>
         </a>
@@ -17803,7 +17803,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const requiredList = t.required.map((m) => {
           const label = UNI_MODULE_LABELS[m] || m.replace(/-/g, ' ');
           const ok = completed.has(m);
-          return `<li style="margin-bottom: 3px;">${ok ? '<span style="color:#16a34a;">✓</span>' : '<span style="color:#cbd5e1;">○</span>'} <a href="#" onclick="event.preventDefault(); trainingOpenModule('${m}');" style="color: #1a3a5c; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">${label}</a></li>`;
+          return `<li style="margin-bottom: 3px;">${ok ? '<span style="color:#16a34a;">✓</span>' : '<span style="color:#cbd5e1;">○</span>'} <a href="#" onclick="event.preventDefault(); trainingOpenModule('${m}');" style="color: #0B1D34; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">${label}</a></li>`;
         }).join('');
         const comingList = (t.coming_soon || []).map((m) => {
           const label = UNI_MODULE_LABELS[m] || m.replace(/-/g, ' ');
@@ -17831,7 +17831,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <div style="height: 100%; width: ${pct}%; background: ${earned ? '#16a34a' : '#0B1D34'}; transition: width 0.3s ease;"></div>
             </div>
             <div style="font-size: 12px; color: #475569;">
-              <div style="font-weight: 600; color: #1a3a5c; margin-bottom: 4px;">Required modules</div>
+              <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">Required modules</div>
               <ul style="list-style: none; padding: 0; margin: 0;">${requiredList}</ul>
               ${comingHtml}
             </div>
@@ -18055,7 +18055,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div class="ev-detail-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap;">
           <div>
-            <h2 style="font-size:22px; font-weight:700; color:#1a3a5c;">${evEsc(e.name)}</h2>
+            <h2 style="font-size:22px; font-weight:700; color:#0B1D34;">${evEsc(e.name)}</h2>
             <div style="font-size:13px; color:#5a7390; margin-top:4px;">
               ${evEsc(e.community?.name || '')} · ${dateStr} · ${timeStr}${e.location ? ' · ' + evEsc(e.location) : ''}
             </div>
@@ -18088,7 +18088,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <div class="qr-url">${evEsc(publicUrl)}</div>
           </div>
           <div>
-            <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:6px;">Print this QR for the entrance</h3>
+            <h3 style="font-size:14px; font-weight:700; color:#0B1D34; margin-bottom:6px;">Print this QR for the entrance</h3>
             <p style="font-size:13px; color:#475569; line-height:1.5; margin-bottom:10px;">Anyone who scans it lands on the waiver + sign-in form. Pre-registered guests get the fast lane at check-in.</p>
             <div style="display:flex; flex-wrap:wrap; gap:6px;">
               <a href="${publicUrl}" target="_blank" class="secondary-btn" style="text-decoration:none; display:inline-block; font-size:13px;">↗ Open public page</a>
@@ -18102,16 +18102,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div class="ev-detail-card">
         <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:18px; flex-wrap:wrap;">
           <div style="flex:1; min-width:240px;">
-            <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:6px;">🪪 Staff check-in</h3>
+            <h3 style="font-size:14px; font-weight:700; color:#0B1D34; margin-bottom:6px;">🪪 Staff check-in</h3>
             <p style="font-size:13px; color:#475569; line-height:1.5;">Staff opens <code>${evEsc(location.origin)}/event/${evEsc(e.slug)}/checkin</code> on their phone and enters the 6-digit code below. Their screen shows pre-registered attendees (green) and a walk-up button (red).</p>
           </div>
           <div style="text-align:center;">
             ${e.staff_checkin_code
-              ? `<div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:28px; font-weight:700; color:#1a3a5c; letter-spacing:4px; padding:8px 20px; background:#e8f0f8; border-radius:8px;">${evEsc(e.staff_checkin_code)}</div>
+              ? `<div style="font-family: ui-monospace, SFMono-Regular, monospace; font-size:28px; font-weight:700; color:#0B1D34; letter-spacing:4px; padding:8px 20px; background:#e8f0f8; border-radius:8px;">${evEsc(e.staff_checkin_code)}</div>
                  <button class="secondary-btn" onclick="evRotateCheckinCode('${e.id}')" style="margin-top:6px; font-size:11px;">🔄 Rotate code</button>`
               : `<button class="primary-btn" onclick="evRotateCheckinCode('${e.id}')" style="padding:10px 20px;">Generate code</button>`
             }
-            <div style="margin-top:6px;"><a href="/event/${evEsc(e.slug)}/checkin" target="_blank" style="font-size:11px; color:#1a3a5c;">↗ Open check-in page</a></div>
+            <div style="margin-top:6px;"><a href="/event/${evEsc(e.slug)}/checkin" target="_blank" style="font-size:11px; color:#0B1D34;">↗ Open check-in page</a></div>
           </div>
         </div>
       </div>
@@ -18119,21 +18119,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Cost summary -->
       <div class="ev-detail-card">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-          <h3 style="font-size:14px; font-weight:700; color:#1a3a5c;">💰 Vendors &amp; costs</h3>
+          <h3 style="font-size:14px; font-weight:700; color:#0B1D34;">💰 Vendors &amp; costs</h3>
           <button class="secondary-btn" onclick="evShowAddVendor()" style="font-size:13px;">+ Add vendor</button>
         </div>
         <div style="display:grid; grid-template-columns: repeat(4, 1fr); gap:12px; margin-bottom:14px;">
           <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Budget</div>
-            <div style="font-size:18px; font-weight:700; color:#1a3a5c;">$${(e.budget_estimated || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+            <div style="font-size:18px; font-weight:700; color:#0B1D34;">$${(e.budget_estimated || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
           </div>
           <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Vendor estimates</div>
-            <div style="font-size:18px; font-weight:700; color:#1a3a5c;">$${totalEst.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+            <div style="font-size:18px; font-weight:700; color:#0B1D34;">$${totalEst.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
           </div>
           <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Actual spend</div>
-            <div style="font-size:18px; font-weight:700; color:${totalActual > (e.budget_estimated || 0) && (e.budget_estimated || 0) > 0 ? '#c0392b' : '#1a3a5c'};">$${totalActual.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+            <div style="font-size:18px; font-weight:700; color:${totalActual > (e.budget_estimated || 0) && (e.budget_estimated || 0) > 0 ? '#c0392b' : '#0B1D34'};">$${totalActual.toLocaleString(undefined,{maximumFractionDigits:0})}</div>
           </div>
           <div style="background:#f5f8fc; border-radius:8px; padding:12px; text-align:center;">
             <div style="font-size:11px; color:#5a7390; text-transform:uppercase; letter-spacing:0.4px; font-weight:600;">Variance</div>
@@ -18172,7 +18172,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <div class="ev-vendor-row">
                 <span class="role-chip">${evEsc(v.service_role)}</span>
                 <div>
-                  <div style="font-weight:600; color:#1a3a5c;">${evEsc(v.vendor_name_snapshot || v.vendor?.name || '(unnamed)')}</div>
+                  <div style="font-weight:600; color:#0B1D34;">${evEsc(v.vendor_name_snapshot || v.vendor?.name || '(unnamed)')}</div>
                   ${v.service_description ? `<div style="font-size:12px; color:#666; margin-top:2px;">${evEsc(v.service_description)}</div>` : ''}
                 </div>
                 <div style="text-align:right;">Est: <strong>$${(Number(v.estimated_cost) || 0).toLocaleString(undefined,{maximumFractionDigits:0})}</strong></div>
@@ -18193,7 +18193,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Attendance / signatures -->
       <div class="ev-detail-card">
         <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;">
-          <h3 style="font-size:14px; font-weight:700; color:#1a3a5c;">👥 Attendance &amp; signatures (${sigCount})</h3>
+          <h3 style="font-size:14px; font-weight:700; color:#0B1D34;">👥 Attendance &amp; signatures (${sigCount})</h3>
           <div style="font-size:12px; color:#5a7390;">
             ${homeowners} homeowner${homeowners === 1 ? '' : 's'} · ${guests} guest${guests === 1 ? '' : 's'}${minors > 0 ? ' · ' + minors + ' minor' + (minors === 1 ? '' : 's') : ''}
           </div>
@@ -18381,17 +18381,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <button class="secondary-btn" onclick="evBackToList()" style="font-size:13px;">← Back to events list</button>
       </div>
       <div class="ev-detail-card">
-        <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:14px;">📊 Cost trend by service category</h3>
+        <h3 style="font-size:14px; font-weight:700; color:#0B1D34; margin-bottom:14px;">📊 Cost trend by service category</h3>
         ${Object.keys(trendByRole).length === 0
           ? '<div style="font-size:13px; color:#888; padding:20px; text-align:center;">No vendor history yet. Add vendors to events to see cost trends appear here.</div>'
           : Object.entries(trendByRole).map(([role, years]) => `
             <div style="margin-bottom:18px;">
-              <div style="font-weight:700; color:#1a3a5c; font-size:13px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px;">${evEsc(role)}</div>
+              <div style="font-weight:700; color:#0B1D34; font-size:13px; margin-bottom:6px; text-transform:uppercase; letter-spacing:0.3px;">${evEsc(role)}</div>
               <div style="display:grid; grid-template-columns: repeat(${Math.min(years.length, 8)}, 1fr); gap:8px;">
                 ${years.map(y => `
                   <div style="background:#f5f8fc; border-radius:6px; padding:10px; text-align:center;">
                     <div style="font-size:11px; color:#666;">${y.year}</div>
-                    <div style="font-size:16px; font-weight:700; color:#1a3a5c;">$${Math.round(y.avg_cost).toLocaleString()}</div>
+                    <div style="font-size:16px; font-weight:700; color:#0B1D34;">$${Math.round(y.avg_cost).toLocaleString()}</div>
                     <div style="font-size:10px; color:#888;">${y.count} event${y.count === 1 ? '' : 's'} avg</div>
                   </div>`).join('')}
               </div>
@@ -18400,12 +18400,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
 
       <div class="ev-detail-card">
-        <h3 style="font-size:14px; font-weight:700; color:#1a3a5c; margin-bottom:14px;">📋 Vendor history — who did what, how much</h3>
+        <h3 style="font-size:14px; font-weight:700; color:#0B1D34; margin-bottom:14px;">📋 Vendor history — who did what, how much</h3>
         ${Object.keys(byRole).length === 0
           ? '<div style="font-size:13px; color:#888; padding:20px; text-align:center;">No data yet.</div>'
           : Object.entries(byRole).map(([role, items]) => `
             <details style="margin-bottom:10px;" ${items.length > 0 ? 'open' : ''}>
-              <summary style="cursor:pointer; padding:8px 10px; background:#f5f8fc; border-radius:6px; font-weight:600; color:#1a3a5c;">
+              <summary style="cursor:pointer; padding:8px 10px; background:#f5f8fc; border-radius:6px; font-weight:600; color:#0B1D34;">
                 ${evEsc(role)} <span style="font-weight:400; color:#888; font-size:12px;">(${items.length} entries)</span>
               </summary>
               <div style="margin-top:8px;">
@@ -18414,7 +18414,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                     <div>${evEsc(i.vendor_name_snapshot || '—')}</div>
                     <div style="color:#666;">${evEsc(i.event?.name || '')} · ${evEsc(i.event?.community?.name || '')}</div>
                     <div style="text-align:right;">${i.delivery_date ? new Date(i.delivery_date).toLocaleDateString() : (i.event?.scheduled_start_at ? new Date(i.event.scheduled_start_at).toLocaleDateString() : '')}</div>
-                    <div style="text-align:right; font-weight:600; color:#1a3a5c;">$${(Number(i.actual_cost ?? i.estimated_cost ?? 0)).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
+                    <div style="text-align:right; font-weight:600; color:#0B1D34;">$${(Number(i.actual_cost ?? i.estimated_cost ?? 0)).toLocaleString(undefined,{maximumFractionDigits:0})}</div>
                   </div>`).join('')}
               </div>
             </details>`).join('')
@@ -18444,12 +18444,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const w = window.open('', '_blank', 'width=720,height=860');
       w.document.write(`
         <html><head><title>Event Email Blast</title>
-        <style>body{font-family:Inter,Arial,sans-serif; padding:16px; background:#f5f8fc;} .actions{display:flex; gap:8px; margin-bottom:12px;} button{padding:8px 16px; background:#1a3a5c; color:#fff; border:none; border-radius:6px; cursor:pointer; font:inherit; font-size:13px;}</style>
+        <style>body{font-family:Inter,Arial,sans-serif; padding:16px; background:#f5f8fc;} .actions{display:flex; gap:8px; margin-bottom:12px;} button{padding:8px 16px; background:#0B1D34; color:#fff; border:none; border-radius:6px; cursor:pointer; font:inherit; font-size:13px;}</style>
         </head><body>
         <div class="actions">
           <button onclick="document.execCommand('copy'); alert('Note: select the iframe content first, then Ctrl+C to copy.');">Tips</button>
           <button onclick="window.print()">🖨 Print</button>
-          <a href="${j.plain_text_url}" target="_blank" style="padding:8px 16px; background:#fff; color:#1a3a5c; border:1px solid #c0d0e0; border-radius:6px; text-decoration:none; font-size:13px;">↗ Event URL</a>
+          <a href="${j.plain_text_url}" target="_blank" style="padding:8px 16px; background:#fff; color:#0B1D34; border:1px solid #c0d0e0; border-radius:6px; text-decoration:none; font-size:13px;">↗ Event URL</a>
         </div>
         <iframe srcdoc='${j.html.replace(/'/g, "&apos;").replace(/\n/g, ' ')}' style="width:100%; height:760px; border:1px solid #c0d0e0; background:#fff;"></iframe>
         <p style="font-size:12px; color:#666; margin-top:10px;">To send via Outlook: Switch to your Outlook compose window, paste this HTML, or print as PDF and attach. Most modern Outlook clients honor pasted HTML formatting.</p>
@@ -19248,7 +19248,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       status.textContent = `${j.stats.total_rows} rows · ${j.stats.with_vantaca_id} have Vantaca IDs · ${j.stats.with_email} have emails`;
-      status.style.color = '#1a3a5c';
+      status.style.color = '#0B1D34';
       const preview = document.getElementById('prof-roster-preview');
       preview.innerHTML = `
         <div style="font-size:12px; color:#666; margin-bottom:6px;">First 10 rows (preview):</div>
@@ -20695,12 +20695,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     picker.id = 'scenarioPicker';
     picker.style.cssText = 'background:#f5f8fc; border:1px solid #d8e2ed; border-radius:8px; padding:14px 16px; margin-top:12px;';
     picker.innerHTML = `
-      <div style="font-size:11px; letter-spacing:0.08em; color:#1a3a5c; font-weight:600; margin-bottom:8px;">PICK A SCENARIO TO EXPORT</div>
+      <div style="font-size:11px; letter-spacing:0.08em; color:#0B1D34; font-weight:600; margin-bottom:8px;">PICK A SCENARIO TO EXPORT</div>
       <div style="font-size:13px; color:#555; margin-bottom:10px;">Multiple response options were generated. Choose the one that matches the situation:</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
         ${scenarios.map(s => `
           <div style="flex:1; min-width:200px; background:white; border:1px solid #d0d7de; border-radius:8px; padding:10px 12px;">
-            <div style="font-size:13px; font-weight:600; color:#1a3a5c; margin-bottom:6px;">Scenario ${s.letter}</div>
+            <div style="font-size:13px; font-weight:600; color:#0B1D34; margin-bottom:6px;">Scenario ${s.letter}</div>
             <div style="font-size:12px; color:#666; margin-bottom:10px; line-height:1.4;">${escapeHtml(s.title)}</div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
               <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="copyScenario('${s.letter}')">📋 Copy</button>
@@ -20904,7 +20904,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         a.click();
         URL.revokeObjectURL(url);
         output.className = 'output-box';
-        output.innerHTML = `<div style="text-align:center; padding:20px;"><div style="font-size:40px; margin-bottom:12px;">✅</div><div style="font-size:16px; font-weight:600; color:#1a3a5c; margin-bottom:8px;">Mailing Document Generated</div><div style="font-size:13px; color:#888; margin-top:8px;">Your download should start automatically.</div></div>`;
+        output.innerHTML = `<div style="text-align:center; padding:20px;"><div style="font-size:40px; margin-bottom:12px;">✅</div><div style="font-size:16px; font-weight:600; color:#0B1D34; margin-bottom:8px;">Mailing Document Generated</div><div style="font-size:13px; color:#888; margin-top:8px;">Your download should start automatically.</div></div>`;
       } else {
         const data = await res.json();
         if (data.requiresConfirmation) {
@@ -21826,7 +21826,7 @@ async function downloadVwRFP() {
 
     const nbHtml = (nbSummary || addBacks.length)
       ? `<div style="background:#f5f8fc; border:1px solid #d8e2ed; border-radius:6px; padding:12px 16px; margin:14px 0;">
-          <div style="font-size:11px; color:#1a3a5c; letter-spacing:0.08em; font-weight:600;">NORMALIZATION BASIS</div>
+          <div style="font-size:11px; color:#0B1D34; letter-spacing:0.08em; font-weight:600;">NORMALIZATION BASIS</div>
           ${nbSummary ? `<div style="font-size:13px; color:#333; margin-top:6px; line-height:1.6;">${escapeHtml(nbSummary)}</div>` : ''}
           ${addBacksHtml}
         </div>`
@@ -21901,7 +21901,7 @@ async function downloadVwRFP() {
         <div style="margin-top: 28px; padding: 20px 24px; background: #f7f9fc; border-radius: 12px; border: 1px solid #e3e8ef;">
           <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px;">
             <div>
-              <div style="font-size: 11px; color: #1a3a5c; letter-spacing: 0.08em; font-weight: 600;">SUGGESTED PACKET FORMAT</div>
+              <div style="font-size: 11px; color: #0B1D34; letter-spacing: 0.08em; font-weight: 600;">SUGGESTED PACKET FORMAT</div>
               <div style="font-size: 17px; font-weight: 600; color: #1a1a1a; margin-top: 4px;">${tierIcon}&nbsp;&nbsp;${tierLabel}</div>
               <div style="font-size: 13px; color: #555; margin-top: 4px;">${escapeHtml(tierRec.rationale)}</div>
             </div>
@@ -21996,7 +21996,7 @@ async function downloadVwRFP() {
     const logoPath = logoMap[community];
     const logoHtml = logoPath
       ? `<img src="${window.location.origin}${logoPath}" style="max-height:64px; max-width:200px;" alt="${escapeHtml(community)}" />`
-      : `<div style="display:inline-block; padding:8px 14px; background:#1a3a5c; color:white; font-size:11px; letter-spacing:0.08em; font-weight:600; border-radius:3px;">${escapeHtml(community).toUpperCase()}</div>`;
+      : `<div style="display:inline-block; padding:8px 14px; background:#0B1D34; color:white; font-size:11px; letter-spacing:0.08em; font-weight:600; border-radius:3px;">${escapeHtml(community).toUpperCase()}</div>`;
 
     const styles = `
       @page { size: letter; margin: 0; }
@@ -22005,10 +22005,10 @@ async function downloadVwRFP() {
       .page { padding: 0.65in 0.75in; min-height: 11in; position: relative; page-break-after: always; }
       .page:last-of-type { page-break-after: auto; }
       .eyebrow { font-size: 10px; letter-spacing: 0.18em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; }
-      .eyebrow-accent { font-size: 10px; letter-spacing: 0.22em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; }
+      .eyebrow-accent { font-size: 10px; letter-spacing: 0.22em; color: #0B1D34; font-weight: 600; text-transform: uppercase; }
       .label { font-size: 10px; letter-spacing: 0.14em; color: #9aa0a8; font-weight: 500; text-transform: uppercase; }
       h1.headline { font-size: 22px; font-weight: 500; color: #14283d; margin: 14px 0 0 0; line-height: 1.4; letter-spacing: -0.01em; }
-      h2.section { font-size: 11px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; margin: 24px 0 10px 0; }
+      h2.section { font-size: 11px; letter-spacing: 0.18em; color: #0B1D34; font-weight: 600; text-transform: uppercase; margin: 24px 0 10px 0; }
       h2.section.warn { color: #8a6818; }
       .num { font-variant-numeric: tabular-nums; }
       table.cost { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 4px; }
@@ -22020,7 +22020,7 @@ async function downloadVwRFP() {
       table.cost tr td.normalized { font-weight: 600; color: #14283d; }
       .also-bid { font-size: 11.5px; color: #888; margin-top: 8px; font-style: italic; }
       .nb-box { background: #f5f8fc; border: 1px solid #d8e2ed; border-radius: 4px; padding: 12px 16px; margin: 18px 0; }
-      .nb-label { font-size: 10px; color: #1a3a5c; letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
+      .nb-label { font-size: 10px; color: #0B1D34; letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
       .nb-summary { font-size: 12.5px; color: #2a2f3a; margin-top: 6px; line-height: 1.6; }
       .nb-list { margin: 6px 0 0 0; padding-left: 16px; font-size: 11.5px; color: #555; line-height: 1.6; }
       .switch-box { border-radius: 4px; padding: 14px 18px; margin: 14px 0; border: 2px solid; }
@@ -22029,8 +22029,8 @@ async function downloadVwRFP() {
       .switch-label { font-size: 10px; letter-spacing: 0.14em; font-weight: 600; text-transform: uppercase; }
       .switch-verdict { font-size: 17px; font-weight: 600; margin-top: 3px; }
       .switch-detail { font-size: 12px; color: #555; margin-top: 6px; line-height: 1.55; }
-      .rec-box { background: #f7f9fc; border-left: 3px solid #1a3a5c; padding: 18px 22px; border-radius: 0 4px 4px 0; margin: 18px 0; }
-      .rec-label { font-size: 10px; letter-spacing: 0.18em; color: #1a3a5c; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
+      .rec-box { background: #f7f9fc; border-left: 3px solid #0B1D34; padding: 18px 22px; border-radius: 0 4px 4px 0; margin: 18px 0; }
+      .rec-label { font-size: 10px; letter-spacing: 0.18em; color: #0B1D34; font-weight: 600; text-transform: uppercase; margin-bottom: 6px; }
       .rec-headline { font-size: 14px; font-weight: 500; color: #14283d; line-height: 1.65; }
       ul.wwcm { margin: 6px 0 0 0; padding-left: 18px; }
       ul.wwcm li { font-size: 12.5px; color: #2a2f3a; line-height: 1.65; margin-bottom: 6px; }
@@ -22098,7 +22098,7 @@ async function downloadVwRFP() {
           });
           const sections = Object.keys(grouped).map(k => `
             <div style="margin-bottom:10px;">
-              <div style="font-size:11px; color:#1a3a5c; letter-spacing:0.08em; font-weight:600; text-transform:uppercase; margin-bottom:4px;">${escapeHtml(labels[k] || k)}</div>
+              <div style="font-size:11px; color:#0B1D34; letter-spacing:0.08em; font-weight:600; text-transform:uppercase; margin-bottom:4px;">${escapeHtml(labels[k] || k)}</div>
               <ul style="margin:0; padding-left:18px; list-style:disc;">
                 ${grouped[k].map(b => {
                   const vendorScope = (b.applies_to_proposal_indexes || []).map(i => norm.find(n => n.proposal_index === i)?.vendor_name).filter(Boolean).join(', ');
@@ -24392,7 +24392,7 @@ ${questionsPage}
         if (!hasData || isSkipped) return '';
         if (narrative) {
           const nt = narrative.length > 600 ? narrative.slice(0, 600) + '…' : narrative;
-          return `<div style="margin-top:8px; background:#fffbeb; border-left:3px solid #d4af37; padding:8px 12px; border-radius:0 4px 4px 0; font-size:12.5px; color:#1a3a5c; line-height:1.5; white-space:pre-wrap;">${escapeHtml(nt)}</div>`;
+          return `<div style="margin-top:8px; background:#fffbeb; border-left:3px solid #d4af37; padding:8px 12px; border-radius:0 4px 4px 0; font-size:12.5px; color:#0B1D34; line-height:1.5; white-space:pre-wrap;">${escapeHtml(nt)}</div>`;
         }
         return `<div style="margin-top:6px; background:#fafafa; padding:6px 8px; border-radius:4px; font-family:monospace; font-size:10px; color:#666; max-height:80px; overflow:hidden;">${escapeHtml(previewText)}${JSON.stringify(s.input_data).length > 280 ? '…' : ''}</div>`;
       })();
