@@ -1,16 +1,16 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>askEd · Bedrock Intelligence</title>
 <link rel="manifest" href="/manifest.json">
-<meta name="theme-color" content="#1A3050">
+<meta name="theme-color" content="#0B1D34">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="askEd">
 <link rel="stylesheet" href="/brand.css">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -43,7 +43,7 @@
   .brand-block svg { width: 28px; height: 35px; }
   .brand-block .wm {
     font-family: var(--font-serif); font-size: 16px; font-weight: 500;
-    color: #1A3050; line-height: 1.1;
+    color: #0B1D34; line-height: 1.1;
   }
   .brand-block .wm em { color: #D4AF37; font-style: italic; }
   .brand-block .sub {
@@ -60,7 +60,7 @@
     cursor: pointer; text-decoration: none;
     transition: all 0.15s ease;
   }
-  .pill:hover { border-color: #D4AF37; color: #1A3050; }
+  .pill:hover { border-color: #D4AF37; color: #0B1D34; }
   .pill select {
     border: none; background: transparent;
     font-family: inherit; font-size: 13px; color: inherit;
@@ -91,7 +91,7 @@
   .empty-state h1 {
     font-family: var(--font-serif);
     font-size: 28px; font-weight: 500;
-    color: #1A3050;
+    color: #0B1D34;
     margin: 0 0 8px;
   }
   .empty-state h1 em { color: #D4AF37; font-style: italic; }
@@ -108,7 +108,7 @@
     transition: all 0.15s ease;
   }
   .quickstart button:hover {
-    border-color: #D4AF37; color: #1A3050;
+    border-color: #D4AF37; color: #0B1D34;
     background: #FFFBEF;
   }
 
@@ -126,7 +126,7 @@
     word-wrap: break-word;
   }
   .bubble.user {
-    background: #1A3050; color: white;
+    background: #0B1D34; color: white;
     border-bottom-right-radius: 4px;
   }
   .bubble.assistant {
@@ -139,7 +139,7 @@
   .bubble.assistant.thinking {
     color: var(--ink-light);
   }
-  .bubble.assistant strong { color: #1A3050; }
+  .bubble.assistant strong { color: #0B1D34; }
   .bubble.assistant em { color: var(--ink-mid); }
   .bubble.assistant code {
     background: #F5F4ED;
@@ -158,7 +158,7 @@
   .bubble.assistant p:last-child { margin-bottom: 0; }
   .bubble.assistant h2, .bubble.assistant h3 {
     font-family: var(--font-serif);
-    color: #1A3050;
+    color: #0B1D34;
     font-size: 17px; font-weight: 500;
     margin: 14px 0 8px;
   }
@@ -171,7 +171,7 @@
   }
   .attach-chip {
     background: rgba(26, 48, 80, 0.08);
-    color: #1A3050;
+    color: #0B1D34;
     border-radius: 12px;
     padding: 3px 10px;
     font-size: 11px;
@@ -213,14 +213,14 @@
     font-size: 11.5px;
     font-family: var(--font-mono);
     letter-spacing: 0.03em;
-    color: #1A3050;
+    color: #0B1D34;
     margin-bottom: 6px;
     display: inline-flex; align-items: center; gap: 6px;
     max-width: 78%;
   }
   .tool-status .dot {
     width: 6px; height: 6px; border-radius: 50%;
-    background: #1A3050;
+    background: #0B1D34;
     animation: dotPulse 1.2s ease-in-out infinite;
   }
 
@@ -240,7 +240,7 @@
     letter-spacing: 0.04em;
     transition: all 0.12s ease;
   }
-  .bubble-action:hover { border-color: #D4AF37; color: #1A3050; }
+  .bubble-action:hover { border-color: #D4AF37; color: #0B1D34; }
 
   /* ----- Composer ----- */
   .composer-wrap {
@@ -301,9 +301,9 @@
     border-radius: 10px;
     transition: all 0.12s ease;
   }
-  .icon-btn:hover { color: #1A3050; background: rgba(26, 48, 80, 0.06); }
+  .icon-btn:hover { color: #0B1D34; background: rgba(26, 48, 80, 0.06); }
   .send-btn {
-    background: #1A3050; color: white;
+    background: #0B1D34; color: white;
     border: none; border-radius: 10px;
     width: 38px; height: 38px;
     display: flex; align-items: center; justify-content: center;
@@ -327,7 +327,7 @@
   /* Streaming caret */
   .caret {
     display: inline-block; width: 6px; height: 14px;
-    background: #1A3050; vertical-align: -2px;
+    background: #0B1D34; vertical-align: -2px;
     animation: blink 1s steps(2) infinite;
     margin-left: 2px;
   }
@@ -351,7 +351,7 @@
     user-select: none;
   }
   .pill.toggle.on {
-    background: #FFFBEF; border-color: #D4AF37; color: #1A3050;
+    background: #FFFBEF; border-color: #D4AF37; color: #0B1D34;
   }
   .pill.toggle input { display: none; }
   .pill .voice-select-wrap {
@@ -361,7 +361,7 @@
   .pill.toggle.on .voice-select-wrap { display: inline-flex; }
 
   /* Per-bubble speak button (replaces standalone Replay) */
-  .bubble-action.speak.playing { color: #1A3050; border-color: #D4AF37; }
+  .bubble-action.speak.playing { color: #0B1D34; border-color: #D4AF37; }
 
   /* Floating stop-talking pill — visible while TTS is playing */
   .stop-tts {
@@ -379,7 +379,7 @@
   /* Install banner — Android Chrome A2HS */
   .install-banner {
     position: fixed; bottom: 16px; left: 16px; right: 16px;
-    background: #1A3050; color: white;
+    background: #0B1D34; color: white;
     padding: 12px 16px; border-radius: 12px;
     display: none; align-items: center; gap: 12px;
     box-shadow: 0 6px 20px rgba(26,48,80,0.3);
@@ -388,7 +388,7 @@
   }
   .install-banner.show { display: flex; }
   .install-banner button {
-    background: #D4AF37; color: #1A3050; border: none;
+    background: #D4AF37; color: #0B1D34; border: none;
     padding: 6px 14px; border-radius: 6px; cursor: pointer;
     font-weight: 600; font-family: inherit;
   }
@@ -400,7 +400,7 @@
   /* Toast */
   .toast {
     position: fixed; bottom: 90px; left: 50%; transform: translateX(-50%) translateY(8px);
-    background: #1A3050; color: white;
+    background: #0B1D34; color: white;
     padding: 10px 18px; border-radius: 8px;
     font-size: 13px; opacity: 0;
     transition: opacity 0.2s ease, transform 0.2s ease;

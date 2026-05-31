@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
@@ -14,7 +14,7 @@
     .header { background: #1a3a5c; color: white; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
     .header-mark { width: 28px; height: 36px; flex-shrink: 0; display: flex; align-items: center; }
     .header-mark svg { width: 100%; height: 100%; display: block; }
-    .header-text h1 { font-family: 'Playfair Display', Georgia, serif; font-size: 19px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.1; }
+    .header-text h1 { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; font-size: 19px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.1; }
     .header-text h1 em { font-style: italic; color: #D4AF37; font-weight: 500; }
     .header-text p { font-family: 'Inter', -apple-system, sans-serif; font-size: 11px; opacity: 0.7; margin-top: 3px; letter-spacing: 0.08em; text-transform: uppercase; }
     .header-spacer { flex: 1; }
@@ -41,8 +41,8 @@
 
     .tabs { display: flex; background: #EFEDE4; border-top: 1px solid #D4AF37; border-bottom: 3px solid #D4AF37; overflow-x: auto; box-shadow: 0 1px 2px rgba(26,48,80,0.04); }
     .tab { padding: 12px 16px; font-size: 13px; font-weight: 500; cursor: pointer; color: #4a4a4a; border-bottom: 2px solid transparent; margin-bottom: -1px; transition: all 0.2s; white-space: nowrap; }
-    .tab.active { color: #1A3050; background: #FAFAF6; border-bottom-color: #1A3050; }
-    .tab:hover { color: #1A3050; background: #E5E3DA; }
+    .tab.active { color: #0B1D34; background: #FAFAF6; border-bottom-color: #0B1D34; }
+    .tab:hover { color: #0B1D34; background: #E5E3DA; }
 
     .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
     .tab-content.active { display: flex; }
@@ -263,9 +263,9 @@
       if (me && me.is_active === false) {
         await window.supa.auth.signOut();
         document.body.innerHTML = '<div style="max-width:520px; margin:80px auto; padding:24px; font-family:Inter,sans-serif; text-align:center;">'
-          + '<h2 style="color:#1A3050;">Account deactivated</h2>'
+          + '<h2 style="color:#0B1D34;">Account deactivated</h2>'
           + '<p style="color:#475569;">Your Bedrock access has been turned off by an administrator. If this looks wrong, contact your administrator.</p>'
-          + '<a href="/login.html" style="color:#1A3050; text-decoration:underline;">Sign in as a different user</a></div>';
+          + '<a href="/login.html" style="color:#0B1D34; text-decoration:underline;">Sign in as a different user</a></div>';
         document.body.style.visibility = 'visible';
         return;
       }
@@ -804,7 +804,7 @@
   <div style="max-width: 1300px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:20px; flex-wrap:wrap; gap:12px;">
       <div>
-        <h2 style="margin:0 0 4px 0; color:#1A3050;">🏠 Home</h2>
+        <h2 style="margin:0 0 4px 0; color:#0B1D34;">🏠 Home</h2>
         <p id="homeWelcome" style="color:#64748b; font-size:13.5px; margin:0;">Pick the modules that matter to you. Your selection is saved per-user.</p>
       </div>
       <button type="button" onclick="homeOpenCustomize()" class="secondary-btn" style="padding:8px 14px; font-size:13px;">⚙️ Customize tiles</button>
@@ -819,7 +819,7 @@
 <div id="homeCustomizeModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
   <div style="background:#fff; border-radius:14px; max-width:760px; width:100%; padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
-      <h3 style="margin:0; color:#1A3050;">⚙️ Customize home tiles</h3>
+      <h3 style="margin:0; color:#0B1D34;">⚙️ Customize home tiles</h3>
       <button type="button" onclick="homeCloseCustomize()" style="background:none; border:none; font-size:22px; color:#64748b; cursor:pointer;">×</button>
     </div>
     <p style="color:#64748b; font-size:12.5px; margin:0 0 14px 0;">Check the tiles you want on your home screen. They'll appear in the order you check them (top-down, left-right). Max 24 tiles.</p>
@@ -843,7 +843,7 @@
           📚 University · askEd Foundations
         </a>
         <a href="/ask-ed-chat.html" title="Open the full askEd surface — voice or text, multi-turn, document-aware"
-           style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #FFFBEF; border: 1px solid #D4AF37; border-radius: 14px; font-size: 11px; color: #1A3050; text-decoration: none; font-weight: 600;">
+           style="display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; background: #FFFBEF; border: 1px solid #D4AF37; border-radius: 14px; font-size: 11px; color: #0B1D34; text-decoration: none; font-weight: 600;">
           🧠 Open askEd (voice + chat)
         </a>
       </div>
@@ -6551,7 +6551,7 @@
 <div class="tab-content" id="tab-appraisal" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
   <div style="max-width: 1080px; margin: 0 auto;">
     <div style="margin-bottom: 18px;">
-      <h2 style="margin: 0; font-size: 22px; color: #1A3050;">🏛️ County Appraisal Records</h2>
+      <h2 style="margin: 0; font-size: 22px; color: #0B1D34;">🏛️ County Appraisal Records</h2>
       <p style="margin: 6px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
         Drop a FBCAD or HCAD property roll CSV for a community — the system AI-detects the column mapping, matches each row to a property in the spine, and shows you the preview before anything persists. Approved records light up the Community Map's <strong>tenure / investor / value / recent-sale</strong> layers and surface "per county" ownership for cross-reference against Vantaca. County records are CANONICAL for legal ownership; Vantaca is canonical for the assessment payer.
       </p>
@@ -6581,12 +6581,12 @@
       </div>
       <div id="appraisal-dropzone"
            ondrop="apprHandleDrop(event)"
-           ondragover="event.preventDefault(); this.style.borderColor='#1A3050'; this.style.background='#eef3f9';"
+           ondragover="event.preventDefault(); this.style.borderColor='#0B1D34'; this.style.background='#eef3f9';"
            ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#fafafa';"
            style="border: 2px dashed #d0d7de; border-radius: 8px; padding: 28px; text-align: center; background: #fafafa; cursor: pointer; transition: all 120ms;"
            onclick="document.getElementById('appraisal-file-input').click();">
         <div style="font-size: 26px;">🏛️</div>
-        <div style="font-size: 13.5px; font-weight: 600; color: #1A3050; margin-top: 6px;">Drop a FBCAD / HCAD property roll CSV here</div>
+        <div style="font-size: 13.5px; font-weight: 600; color: #0B1D34; margin-top: 6px;">Drop a FBCAD / HCAD property roll CSV here</div>
         <div style="font-size: 12px; color: #6B7280; margin-top: 4px;">
           or click to pick a file · <strong>tip:</strong> filter the full county roll to your community's ZIP in Excel before uploading
         </div>
@@ -6668,7 +6668,7 @@
                 else                          badge = { bg: '#dcfce7', fg: '#166534', txt: `${pct}% coverage` };
                 const dateStr = c.latest_pull_date ? `last pull ${c.latest_pull_date}` : '';
                 return `<tr style="border-bottom:1px solid #f1f5f9;">
-                  <td style="padding:8px 10px; font-weight:600; color:#1A3050;">${escapeHtml(c.name)}</td>
+                  <td style="padding:8px 10px; font-weight:600; color:#0B1D34;">${escapeHtml(c.name)}</td>
                   <td style="padding:8px 10px; color:#475569;">${c.with_appraisal_data} of ${c.total_properties} properties · ${dateStr}</td>
                   <td style="padding:8px 10px; text-align:right;">
                     <span style="background:${badge.bg}; color:${badge.fg}; padding:3px 10px; border-radius:99px; font-size:11px; font-weight:600;">${badge.txt}</span>
@@ -6678,7 +6678,7 @@
             </tbody>
           </table>
           <div style="font-size:11px; color:#94a3b8; margin-top:10px; line-height:1.5;">
-            Cadence: county certified rolls publish annually (FBCAD ~July, HCAD ~May). Re-pull quarterly if you want to catch mid-year deed transfers earlier. Pull filtered CSVs from <a href="https://fbcad.org/" target="_blank" style="color:#1A3050;">FBCAD</a> and <a href="https://hcad.org/" target="_blank" style="color:#1A3050;">HCAD</a> open-data portals.
+            Cadence: county certified rolls publish annually (FBCAD ~July, HCAD ~May). Re-pull quarterly if you want to catch mid-year deed transfers earlier. Pull filtered CSVs from <a href="https://fbcad.org/" target="_blank" style="color:#0B1D34;">FBCAD</a> and <a href="https://hcad.org/" target="_blank" style="color:#0B1D34;">HCAD</a> open-data portals.
           </div>
         `;
       } catch (e) {
@@ -10088,7 +10088,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 <div class="tab-content" id="tab-portalusers" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
   <div style="max-width: 1100px; margin: 0 auto;">
     <div style="margin-bottom: 18px;">
-      <h2 style="margin: 0; font-size: 22px; color: #1A3050;">🔐 Portal Users</h2>
+      <h2 style="margin: 0; font-size: 22px; color: #0B1D34;">🔐 Portal Users</h2>
       <p style="margin: 4px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
         Manage who can access the board portal + homeowner portal. Invite by email, scope to specific communities (board) or properties (homeowner), generate magic-link invites. Magic-link auth is now live on both portals — click <strong>Open ↗</strong> next to either portal to launch the showcase in demo mode. To enable a real community, flip <code>communities.portal_active = TRUE</code> + populate <code>portal_module_config</code> per the homeowner portal showcase memory.
       </p>
@@ -10096,7 +10096,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     <!-- Quick links + counts -->
     <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 18px;">
-      <div class="panel" style="margin: 0; border-left: 3px solid #1A3050;">
+      <div class="panel" style="margin: 0; border-left: 3px solid #0B1D34;">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
           <div>
             <h3 style="margin: 0; font-size: 16px;">🏠 Board Portal</h3>
@@ -10165,15 +10165,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   </div>
 
   <style>
-    .pu-filter-btn.pu-active { background: #1A3050; color: white; border-color: #1A3050; }
+    .pu-filter-btn.pu-active { background: #0B1D34; color: white; border-color: #0B1D34; }
     .pu-user-row { padding: 10px 0; border-bottom: 1px solid #f1f5f9; }
     .pu-user-row:last-child { border-bottom: none; }
     .pu-status-badge { padding: 1px 8px; border-radius: 99px; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
     .pu-status-invited { background: #fef3c7; color: #78350f; }
     .pu-status-active  { background: #dcfce7; color: #166534; }
     .pu-status-revoked { background: #fee2e2; color: #7f1d1d; }
-    .pu-action-btn { background: white; border: 1px solid #d0d7de; padding: 3px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; color: #1A3050; }
-    .pu-action-btn:hover { border-color: #1A3050; background: #f1f5fb; }
+    .pu-action-btn { background: white; border: 1px solid #d0d7de; padding: 3px 10px; font-size: 11px; border-radius: 6px; cursor: pointer; color: #0B1D34; }
+    .pu-action-btn:hover { border-color: #0B1D34; background: #f1f5fb; }
     .pu-action-btn.danger { color: #b91c1c; }
     .pu-action-btn.danger:hover { background: #fef2f2; border-color: #b91c1c; }
   </style>
@@ -10430,7 +10430,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 <div class="tab-content" id="tab-ownerar" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
   <div style="max-width: 980px; margin: 0 auto;">
     <div style="margin-bottom: 18px;">
-      <h2 style="margin: 0; font-size: 22px; color: #1A3050;">💵 Owner Receivables</h2>
+      <h2 style="margin: 0; font-size: 22px; color: #0B1D34;">💵 Owner Receivables</h2>
       <p style="margin: 4px 0 0; font-size: 13px; color: #6B7280; line-height: 1.5;">
         Drop a Vantaca AR Aging PDF — the system extracts each property's balance, aging buckets, and status (at-legal, payment plan, etc.). Review the preview, then approve to publish the snapshot. Boards see the latest balance on their property tile <strong>labeled as-of [date]</strong>. Vantaca remains the live ledger; this is visibility infrastructure.
       </p>
@@ -10476,12 +10476,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
       <div id="ar-dropzone"
            ondrop="arHandleDrop(event)"
-           ondragover="event.preventDefault(); this.style.borderColor='#1A3050'; this.style.background='#eef3f9';"
+           ondragover="event.preventDefault(); this.style.borderColor='#0B1D34'; this.style.background='#eef3f9';"
            ondragleave="this.style.borderColor='#d0d7de'; this.style.background='#fafafa';"
            style="border: 2px dashed #d0d7de; border-radius: 8px; padding: 28px; text-align: center; background: #fafafa; cursor: pointer; transition: all 120ms;"
            onclick="document.getElementById('ar-file-input').click();">
         <div style="font-size: 26px;">📄</div>
-        <div style="font-size: 13.5px; font-weight: 600; color: #1A3050; margin-top: 6px;">Drag &amp; drop the Vantaca AR Aging PDF here</div>
+        <div style="font-size: 13.5px; font-weight: 600; color: #0B1D34; margin-top: 6px;">Drag &amp; drop the Vantaca AR Aging PDF here</div>
         <div style="font-size: 12px; color: #6B7280; margin-top: 4px;">or click to pick a file</div>
         <input type="file" id="ar-file-input" accept="application/pdf" style="display:none;" onchange="arHandleFile(this.files[0])">
       </div>
@@ -10600,14 +10600,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
           <thead>
             <tr style="background:#eef2ff;">
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Match</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Address</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Owner</th>
-              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Balance</th>
-              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">31-60</th>
-              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">61-90</th>
-              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">90+</th>
-              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #1A3050; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Match</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Address</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Owner</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Balance</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">31-60</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">61-90</th>
+              <th style="text-align:right; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">90+</th>
+              <th style="text-align:left; padding:8px 10px; border-bottom:2px solid #0B1D34; font-size:10px; text-transform:uppercase; letter-spacing:0.06em;">Status</th>
             </tr>
           </thead>
           <tbody>
@@ -10758,7 +10758,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                   <td style="padding:8px 10px; width:38px;">
                     <span style="display:inline-block; background:${s.bg}; color:${s.fg}; border-radius:99px; padding:3px 8px; font-size:11px; font-weight:600;">${s.icon}</span>
                   </td>
-                  <td style="padding:8px 10px; font-weight:600; color:#1A3050;">${escapeHtml(c.community_name)}</td>
+                  <td style="padding:8px 10px; font-weight:600; color:#0B1D34;">${escapeHtml(c.community_name)}</td>
                   <td style="padding:8px 10px; color:#475569;">${ageStr}</td>
                   <td style="padding:8px 10px; text-align:right;">
                     <button class="secondary-btn" onclick="arJumpToUpload('${escapeHtml(c.community_id)}')"
@@ -10811,7 +10811,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const fmtMoney = (v) => v == null ? '—' : '$' + Number(v).toLocaleString('en-US', { maximumFractionDigits: 0 });
         const latest = trend[trend.length - 1];
         if (headerEl) {
-          headerEl.innerHTML = `<strong style="color:#1A3050; font-size:13px;">${fmtMoney(latest.total_outstanding)}</strong> outstanding as of ${latest.month_end}`;
+          headerEl.innerHTML = `<strong style="color:#0B1D34; font-size:13px;">${fmtMoney(latest.total_outstanding)}</strong> outstanding as of ${latest.month_end}`;
         }
         // Build sparkline
         const W = chartEl.clientWidth || 600;
@@ -10832,8 +10832,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <!-- Gradient fill under the line -->
             <defs>
               <linearGradient id="arTrendGrad" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stop-color="#1A3050" stop-opacity="0.18"/>
-                <stop offset="100%" stop-color="#1A3050" stop-opacity="0"/>
+                <stop offset="0%" stop-color="#0B1D34" stop-opacity="0.18"/>
+                <stop offset="100%" stop-color="#0B1D34" stop-opacity="0"/>
               </linearGradient>
             </defs>
             <!-- Horizontal grid lines (4 lines at 0/25/50/75% of max) -->
@@ -10842,9 +10842,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               return `<line x1="${P}" y1="${y}" x2="${W - P}" y2="${y}" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="2,3"/>`;
             }).join('')}
             <path d="${areaD}" fill="url(#arTrendGrad)"/>
-            <path d="${pathD}" fill="none" stroke="#1A3050" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
+            <path d="${pathD}" fill="none" stroke="#0B1D34" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
             ${points.map((p, i) => `
-              <circle cx="${p[0]}" cy="${p[1]}" r="3" fill="#1A3050" stroke="#fff" stroke-width="1.5">
+              <circle cx="${p[0]}" cy="${p[1]}" r="3" fill="#0B1D34" stroke="#fff" stroke-width="1.5">
                 <title>${labels[i]}: ${fmtMoney(trend[i].total_outstanding)} · ${trend[i].at_legal_count} at legal · ${trend[i].in_collections_count} collections</title>
               </circle>
             `).join('')}
@@ -10910,7 +10910,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <div style="max-width: 1280px; margin: 0 auto;">
 
     <div style="margin-bottom: 14px;">
-      <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 4px; letter-spacing: -0.01em;">
+      <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 4px; letter-spacing: -0.01em;">
         📞 <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Calls</em> &amp; Follow-ups
       </h2>
       <p style="font-size: 13px; color: #64748b; margin: 0;">
@@ -11037,7 +11037,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <tr class="calls-row" data-id="${c.id}" style="border-top: 1px solid #f1f5f9; cursor: pointer;" onclick="callsToggleExpand('${c.id}')">
             <td style="padding: 10px 12px; white-space: nowrap; font-size: 12px; color: #475569;">${callsFmtTime(c.started_at)}</td>
             <td style="padding: 10px 12px;">
-              <div style="font-weight: 600; color: #1A3050;">${escapeHtml(c.caller_display_name || 'Unknown')}</div>
+              <div style="font-weight: 600; color: #0B1D34;">${escapeHtml(c.caller_display_name || 'Unknown')}</div>
               <div style="font-size: 11.5px; color: #64748b;">${escapeHtml(c.caller_phone || '')}</div>
             </td>
             <td style="padding: 10px 12px; font-size: 12px; color: #475569;">${escapeHtml(c.community_name || '—')}</td>
@@ -11050,13 +11050,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <td colspan="7" style="padding: 12px 18px; border-top: 1px solid #f1f5f9;">
               <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 18px;">
                 <div>
-                  <div style="font-weight: 600; color: #1A3050; margin-bottom: 4px; font-size: 12px;">Transcript</div>
+                  <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px; font-size: 12px;">Transcript</div>
                   <pre id="transcript-${c.id}" style="font-size: 12px; color: #1f2937; white-space: pre-wrap; word-wrap: break-word; max-height: 280px; overflow-y: auto; background: #fff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px;">loading…</pre>
                 </div>
                 <div>
-                  <div style="font-weight: 600; color: #1A3050; margin-bottom: 4px; font-size: 12px;">Brief</div>
+                  <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px; font-size: 12px;">Brief</div>
                   <pre id="brief-${c.id}" style="font-size: 11px; color: #475569; white-space: pre-wrap; word-wrap: break-word; background: #fff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px;">loading…</pre>
-                  <div style="font-weight: 600; color: #1A3050; margin: 10px 0 4px; font-size: 12px;">Internal notes</div>
+                  <div style="font-weight: 600; color: #0B1D34; margin: 10px 0 4px; font-size: 12px;">Internal notes</div>
                   <pre id="notes-${c.id}" style="font-size: 11px; color: #475569; white-space: pre-wrap; word-wrap: break-word; background: #fff; border: 1px solid #e2e8f0; padding: 10px; border-radius: 6px; max-height: 100px; overflow-y: auto;">${escapeHtml(c.internal_notes || '(none)')}</pre>
                   <textarea id="newnote-${c.id}" placeholder="Add a note…" style="width: 100%; margin-top: 6px; padding: 6px 8px; font-size: 12px; border: 1px solid #d0d7de; border-radius: 6px; resize: vertical; min-height: 50px;"></textarea>
                   <div style="display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap;">
@@ -11216,7 +11216,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     <!-- Header -->
     <div style="margin-bottom: 18px;">
-      <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 4px; letter-spacing: -0.01em;">
+      <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 4px; letter-spacing: -0.01em;">
         Community <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Inspection</em>
       </h2>
       <p style="font-size: 13px; color: #64748b; margin: 0;">Walk or drive a community, photograph properties and common areas. GPS + compass heading capture automatically.</p>
@@ -11239,7 +11239,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          draft letter (appears in the Drafts queue below). -->
     <div id="inspReviewSection" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
-        <h3 style="font-size: 15px; color: var(--navy, #1A3050); margin: 0;">🔍 Review queue · <span style="font-weight: 400; color: #64748b;">observations pending confirm</span></h3>
+        <h3 style="font-size: 15px; color: var(--navy, #0B1D34); margin: 0;">🔍 Review queue · <span style="font-weight: 400; color: #64748b;">observations pending confirm</span></h3>
         <div style="display: flex; gap: 6px;">
           <button id="inspReviewAnalyzeBtn" class="secondary-btn" onclick="inspReviewRunAnalyze()" style="font-size: 11px; padding: 4px 10px;" title="Run AI analysis on the latest captured inspection (matches photos to violations + creates observation rows)">▶ Run analysis</button>
           <button class="secondary-btn" onclick="inspReviewLoad()" style="font-size: 11px; padding: 4px 10px;">↻ Refresh</button>
@@ -11250,7 +11250,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     <!-- Start-session card (visible when no active session) -->
     <div id="inspStartCard" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 18px; margin-bottom: 14px;">
-      <h3 style="font-size: 15px; color: var(--navy, #1A3050); margin: 0 0 12px;">Start a new inspection</h3>
+      <h3 style="font-size: 15px; color: var(--navy, #0B1D34); margin: 0 0 12px;">Start a new inspection</h3>
 
       <div style="margin-bottom: 10px;">
         <label style="display: block; font-size: 12px; font-weight: 600; color: #475569; margin-bottom: 5px;">Community</label>
@@ -11284,7 +11284,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
            start-inspection panel stays uncluttered. -->
       <div style="margin-top: 12px; padding-top: 12px; border-top: 1px dashed #e2e8f0;">
         <button type="button" id="manualVioOpenBtn" onclick="manualVioOpen()"
-                style="width: 100%; padding: 12px; background: #fff; border: 1px dashed #cbd5e1; color: var(--navy, #1A3050); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
+                style="width: 100%; padding: 12px; background: #fff; border: 1px dashed #cbd5e1; color: var(--navy, #0B1D34); border-radius: 10px; font-size: 14px; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px;">
           📥 Add manual violation
         </button>
         <div style="font-size: 11.5px; color: #64748b; margin-top: 6px; text-align: center; line-height: 1.4;">
@@ -11303,7 +11303,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <strong style="color:#475569;">Map setup</strong> · new community? Geocode every community in the portfolio that's missing lat/lng coordinates.
           </div>
           <button type="button" id="inspGeocodeAllBtn" onclick="inspGeocodeAllCommunities()"
-                  style="padding: 6px 12px; background: #fff; color: var(--navy, #1A3050); border: 1px solid var(--gold, #D4AF37); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
+                  style="padding: 6px 12px; background: #fff; color: var(--navy, #0B1D34); border: 1px solid var(--gold, #D4AF37); border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;">
             🌍 Geocode all communities
           </button>
         </div>
@@ -11315,7 +11315,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <div id="inspActivePanel" style="display: none;">
 
       <!-- Session header with stats -->
-      <div style="background: var(--navy, #1A3050); color: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;">
+      <div style="background: var(--navy, #0B1D34); color: #fff; border-radius: 12px; padding: 14px 16px; margin-bottom: 14px;">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
           <div>
             <div id="inspSessionCommunity" style="font-family: var(--font-serif, Georgia); font-size: 17px; font-weight: 500;">—</div>
@@ -11337,7 +11337,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="display: flex; gap: 6px; margin-bottom: 12px; align-items: center; flex-wrap: wrap;">
         <button type="button" id="inspViewListBtn" class="ed-mode-btn active" onclick="inspSetView('list')">📋 List</button>
         <button type="button" id="inspViewMapBtn"  class="ed-mode-btn"        onclick="inspSetView('map')">🗺️ Map</button>
-        <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: auto;">
+        <div id="inspSelectedPropChip" style="display:none; padding: 5px 10px; background: var(--gold, #D4AF37); color: var(--navy, #0B1D34); border-radius: 999px; font-size: 12px; font-weight: 700; margin-left: auto;">
           📍 <span id="inspSelectedPropLabel">—</span>
           <span onclick="inspClearSelectedProperty()" style="margin-left: 6px; cursor: pointer; opacity: 0.7;">✕</span>
         </div>
@@ -11350,8 +11350,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div id="inspMapStatus" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 8px 8px 0 0; padding: 8px 12px; font-size: 11px; color: #64748b; border-bottom: none;">Loading map…</div>
         <div id="inspMapEl" style="width: 100%; height: 55vh; min-height: 320px; background: #f1f5f9; border-left: 1px solid #e2e8f0; border-right: 1px solid #e2e8f0;"></div>
         <div style="background:#fff; border:1px solid #e2e8f0; border-top:none; border-radius:0 0 12px 12px; padding:8px 12px; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
-          <button type="button" id="inspCoverageBtn" onclick="inspToggleCoverage()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">🗺️ Show coverage</button>
-          <button type="button" id="inspBoundaryBtn" onclick="inspBoundaryToggle()" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Draw or redraw the community perimeter">✏️ Draw boundary</button>
+          <button type="button" id="inspCoverageBtn" onclick="inspToggleCoverage()" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">🗺️ Show coverage</button>
+          <button type="button" id="inspBoundaryBtn" onclick="inspBoundaryToggle()" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:5px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Draw or redraw the community perimeter">✏️ Draw boundary</button>
           <div id="inspBoundaryHint" style="display:none; flex:1; min-width:240px; font-size:11.5px; color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:6px; padding:5px 10px;"></div>
           <div id="inspCoverageBanner" style="display:none; flex:1; min-width:200px; font-size:12px; color:#475569; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px; padding:5px 10px;"></div>
         </div>
@@ -11422,7 +11422,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              max-width:560px + centered so it doesn't stretch across a wide
              laptop browser. -->
         <label for="inspPhotoInput" id="inspCaptureBtn" onclick="inspTriggerCaptureNoClick()"
-                style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: 560px; margin: 0 auto; z-index: 60; padding: 18px; background: var(--gold, #D4AF37); color: var(--navy, #1A3050); border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box;">
+                style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: 560px; margin: 0 auto; z-index: 60; padding: 18px; background: var(--gold, #D4AF37); color: var(--navy, #0B1D34); border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box;">
           <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
           <span id="inspCaptureLabel">Take photo</span>
         </label>
@@ -11438,7 +11438,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Recently captured photos in this session -->
       <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px;">
         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">Captured this session</h3>
+          <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">Captured this session</h3>
           <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #1a3a5c; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
         </div>
         <div id="inspPhotoList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px;">
@@ -11452,7 +11452,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          Also auto-fires daily at 06:00 Central via the scheduler. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">⏰ Cure-lapse processor <span style="color:#64748b; font-weight:500;">— violations past their cure date</span></h3>
+        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">⏰ Cure-lapse processor <span style="color:#64748b; font-weight:500;">— violations past their cure date</span></h3>
         <div>
           <button class="secondary-btn" onclick="inspCureLapsePreview()" style="font-size:11px; padding:4px 10px; margin-right:4px;">🔍 Preview</button>
           <button class="action-btn" id="inspCureLapseProcessBtn" onclick="inspCureLapseProcess()" style="font-size:12px; padding:5px 14px;" disabled>⚙ Process all</button>
@@ -11470,7 +11470,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          which to approve in bulk, rejects the wrong ones. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">📄 Drafts queue <span style="color:#64748b; font-weight:500;">— awaiting review</span></h3>
+        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">📄 Drafts queue <span style="color:#64748b; font-weight:500;">— awaiting review</span></h3>
         <div style="display:flex; gap:6px;">
           <button class="secondary-btn" onclick="inspDraftsLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
           <button class="action-btn" id="inspDraftsApproveAllBtn" onclick="inspDraftsApproveSelected()" style="font-size:12px; padding:5px 14px; background:#16a34a; border-color:#16a34a;" disabled>✓ Approve selected (0)</button>
@@ -11487,7 +11487,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          multi-page PDF + marks them printed. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">📬 Mail Queue <span style="color:#64748b; font-weight:500;">— approved, ready to print</span></h3>
+        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">📬 Mail Queue <span style="color:#64748b; font-weight:500;">— approved, ready to print</span></h3>
         <button class="secondary-btn" onclick="inspMailQueueLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
       </div>
       <div id="inspMailQueuePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px;">
@@ -11501,7 +11501,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          fines disabled and no auto-fines fire. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0;">💰 Fine Queue <span style="color:#64748b; font-weight:500;">— assessed, awaiting posting to Vantaca</span></h3>
+        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">💰 Fine Queue <span style="color:#64748b; font-weight:500;">— assessed, awaiting posting to Vantaca</span></h3>
         <div>
           <button class="secondary-btn" onclick="inspVViOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;" title="Import historical violations from a Vantaca export">📥 Import Vantaca history</button>
           <button class="secondary-btn" onclick="inspBulkLetterAttachOpen()" style="font-size:11px; padding:4px 10px; margin-right:4px;" title="Bulk-attach Vantaca letter PDFs to existing imported violations">📎 Bulk attach letters</button>
@@ -11516,7 +11516,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     <!-- Recent sessions (visible always, below the active workflow) -->
     <div style="margin-top: 20px;">
-      <h3 style="font-size: 14px; color: var(--navy, #1A3050); margin: 0 0 10px;">Recent inspections</h3>
+      <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0 0 10px;">Recent inspections</h3>
       <div id="inspRecentList" style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 10px;">
         <div style="color: #94a3b8; font-size: 12px; text-align: center; padding: 12px 0;">Loading…</div>
       </div>
@@ -11525,7 +11525,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <!-- VANTACA VIOLATION IMPORT MODAL -->
     <div id="inspVViModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center;">
       <div style="background:#fff; border-radius:14px; max-width:920px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
-        <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
+        <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">📥 Import historical violations from Vantaca</div>
             <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">Imported rows: source=vantaca_import · weight 0.5 · unreviewed</div>
@@ -11555,7 +11555,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">PDF: any Vantaca violation history report. CSV/Excel expected columns: Account # / Property Address · Violation Type · Violation Date · Status/Stage (optional) · Resolved Date (optional)</div>
           </div>
           <div style="display:flex; gap:8px;">
-            <button id="inspVViPreviewBtn" onclick="inspVViPreview()" style="background:#1A3050; color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">🔍 Preview diff</button>
+            <button id="inspVViPreviewBtn" onclick="inspVViPreview()" style="background:#0B1D34; color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">🔍 Preview diff</button>
             <button id="inspVViApplyBtn" onclick="inspVViApply()" disabled style="background:#16a34a; color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; opacity:0.5;">✓ Apply import</button>
           </div>
           <div id="inspVViStatus" style="font-size:12.5px; margin-top:10px;"></div>
@@ -11567,7 +11567,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <!-- BULK LETTER ATTACH MODAL -->
     <div id="inspBulkLAModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:flex-start; justify-content:center;">
       <div style="background:#fff; border-radius:14px; max-width:700px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column; margin-top:4vh;">
-        <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
+        <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">📎 Bulk attach Vantaca letter PDFs</div>
             <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px;">Files all letter PDFs to their violations in one batch</div>
@@ -11619,11 +11619,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div id="inspBulkLADropZone"
                style="border:2px dashed #d0d7de; border-radius:8px; padding:28px; text-align:center; background:#fafafa; cursor:pointer; margin-bottom:14px;"
                onclick="document.getElementById('inspBulkLAFiles').click()"
-               ondragover="event.preventDefault(); this.style.borderColor='#1A3050'; this.style.background='#eef3f9';"
+               ondragover="event.preventDefault(); this.style.borderColor='#0B1D34'; this.style.background='#eef3f9';"
                ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#fafafa';"
                ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#fafafa'; const dt=new DataTransfer(); for (const f of event.dataTransfer.files) dt.items.add(f); document.getElementById('inspBulkLAFiles').files=dt.files; inspBulkLetterAttachUpdateFileList();">
             <div style="font-size:26px;">📄📄📄</div>
-            <div style="font-size:13.5px; font-weight:600; color:#1A3050; margin-top:6px;">Drag &amp; drop ALL Vantaca letter PDFs here</div>
+            <div style="font-size:13.5px; font-weight:600; color:#0B1D34; margin-top:6px;">Drag &amp; drop ALL Vantaca letter PDFs here</div>
             <div style="font-size:11.5px; color:#6B7280; margin-top:4px;">Or click to multi-select (Ctrl+A in the file dialog). Up to 50 PDFs per batch.</div>
             <input type="file" id="inspBulkLAFiles" accept="application/pdf" multiple style="display:none;" onchange="inspBulkLetterAttachUpdateFileList()">
           </div>
@@ -11641,7 +11641,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <!-- FINE SCHEDULE MANAGER MODAL -->
     <div id="inspFineScheduleModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center;">
       <div style="background:#fff; border-radius:14px; max-width:900px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
-        <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
+        <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">⚙ Fine Schedule</div>
             <div id="inspFSCommunityLabel" style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">—</div>
@@ -11662,7 +11662,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
        2026-05-28. -->
   <div id="manualVioModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center; overflow-y:auto;">
     <div style="background:#fff; border-radius:14px; max-width:640px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
-      <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+      <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
         <div>
           <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">Add manual violation</div>
           <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">Neighbor or board report · force-mow walk-up</div>
@@ -11762,7 +11762,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                  onchange="manualVioPhotoSelected(this)"
                  style="position:absolute; left:-9999px; top:0; width:1px; height:1px; opacity:0;">
           <label for="manualVioPhotoInput" id="manualVioAddPhotoBtn"
-                 style="display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px; background:#f8fafc; border:1px dashed #94a3b8; color:var(--navy, #1A3050); border-radius:10px; font-size:14px; font-weight:600; cursor:pointer;">
+                 style="display:flex; align-items:center; justify-content:center; gap:8px; width:100%; padding:14px; background:#f8fafc; border:1px dashed #94a3b8; color:var(--navy, #0B1D34); border-radius:10px; font-size:14px; font-weight:600; cursor:pointer;">
             📸 Add photos
           </label>
           <div id="manualVioPhotoList" style="display:none; margin-top:8px; display:grid; grid-template-columns:repeat(auto-fill, minmax(80px, 1fr)); gap:6px;"></div>
@@ -11774,7 +11774,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <!-- Submit + error -->
         <div id="manualVioError" style="display:none; padding:8px 12px; background:#fef2f2; border:1px solid #fecaca; border-radius:8px; color:#991b1b; font-size:13px; margin-bottom:12px;"></div>
         <button type="button" id="manualVioSubmitBtn" onclick="manualVioSubmit()"
-                style="width:100%; padding:14px; background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; border-radius:10px; font-size:15px; font-weight:700; cursor:pointer;">
+                style="width:100%; padding:14px; background:var(--gold, #D4AF37); color:var(--navy, #0B1D34); border:none; border-radius:10px; font-size:15px; font-weight:700; cursor:pointer;">
           Create violation
         </button>
       </div>
@@ -11785,7 +11785,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
        Shows full enforcement + ownership context for one property. -->
   <div id="inspPropertyDetailModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center;">
     <div style="background:#fff; border-radius:14px; max-width:780px; width:100%; max-height:90vh; overflow:hidden; display:flex; flex-direction:column;">
-      <div style="background: var(--navy, #1A3050); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+      <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
         <div>
           <div id="inspPDAddress" style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">—</div>
           <div id="inspPDMeta" style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">—</div>
@@ -11820,7 +11820,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <!-- Header row: community picker + AR snapshot freshness + watermark -->
   <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:14px 18px; margin-bottom:14px; display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
     <div style="display:flex; align-items:center; gap:8px;">
-      <span style="font-family:Georgia, serif; font-size:18px; color:var(--navy, #1A3050); font-weight:500;">
+      <span style="font-family:Georgia, serif; font-size:18px; color:var(--navy, #0B1D34); font-weight:500;">
         Community <em style="color:var(--gold, #D4AF37); font-style:italic; font-weight:500;">Map</em>
       </span>
     </div>
@@ -11895,7 +11895,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <div id="cmapSidePanel" style="display:none; width:380px; max-height:72vh; overflow-y:auto;
                                     background:#fff; border:1px solid #d0d7de; border-radius:10px;
                                     box-shadow:0 4px 12px rgba(0,0,0,0.05);">
-      <div style="background:var(--navy, #1A3050); color:#fff; padding:12px 16px;
+      <div style="background:var(--navy, #0B1D34); color:#fff; padding:12px 16px;
                   border-radius:10px 10px 0 0; display:flex; justify-content:space-between; align-items:center;">
         <div style="font-weight:600; font-size:14px;" id="cmapSPTitle">Property</div>
         <button onclick="cmapCloseSidePanel()" type="button"
@@ -11911,9 +11911,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <style>
     .cmap-chip {
       padding: 7px 13px;
-      border: 1px solid var(--navy, #1A3050);
+      border: 1px solid var(--navy, #0B1D34);
       background: #fff;
-      color: var(--navy, #1A3050);
+      color: var(--navy, #0B1D34);
       border-radius: 99px;
       font-size: 12.5px;
       font-weight: 600;
@@ -11922,7 +11922,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     .cmap-chip:hover { background: #f1f5f9; }
     .cmap-chip.active {
-      background: var(--navy, #1A3050);
+      background: var(--navy, #0B1D34);
       color: #fff;
     }
     .cmap-basemap {
@@ -11937,7 +11937,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     .cmap-basemap.active {
       background: #fff;
-      color: var(--navy, #1A3050);
+      color: var(--navy, #0B1D34);
       box-shadow: 0 1px 2px rgba(0,0,0,0.08);
     }
     .cmap-pin {
@@ -11959,14 +11959,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
        style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9000; align-items:flex-start; justify-content:center; padding-top:5vh;">
     <div style="background:#fff; width:520px; max-width:95vw; max-height:90vh; overflow-y:auto;
                 border-radius:12px; box-shadow:0 12px 32px rgba(0,0,0,0.25);">
-      <div style="background:var(--navy, #1A3050); color:#fff; padding:14px 20px; border-radius:12px 12px 0 0;
+      <div style="background:var(--navy, #0B1D34); color:#fff; padding:14px 20px; border-radius:12px 12px 0 0;
                   display:flex; justify-content:space-between; align-items:center;">
         <div style="font-weight:600;">Verify / update county appraisal</div>
         <button type="button" onclick="cmapCloseAppraisalEditor()"
                 style="background:rgba(255,255,255,0.15); color:#fff; border:none; padding:4px 10px; border-radius:6px; font-size:12px; cursor:pointer;">✕ Close</button>
       </div>
       <div style="padding:18px 22px;">
-        <div id="cmapAprModalAddress" style="font-size:14px; font-weight:600; color:#1A3050; margin-bottom:4px;">—</div>
+        <div id="cmapAprModalAddress" style="font-size:14px; font-weight:600; color:#0B1D34; margin-bottom:4px;">—</div>
         <div style="font-size:11.5px; color:#64748b; margin-bottom:14px; line-height:1.5;">
           Open the county's property search in a new tab and copy the values over. Pull date defaults to today; back-date if you're recording an earlier snapshot.
         </div>
@@ -12056,7 +12056,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <button type="button" onclick="cmapCloseAppraisalEditor()"
                   style="background:#fff; color:#475569; border:1px solid #d0d7de; padding:7px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Cancel</button>
           <button type="button" onclick="cmapSaveAppraisalRecord()" id="cmapAprSaveBtn"
-                  style="background:#1A3050; color:#fff; border:none; padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Save record</button>
+                  style="background:#0B1D34; color:#fff; border:none; padding:7px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Save record</button>
         </div>
       </div>
     </div>
@@ -12247,7 +12247,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div onclick="inspOpenPropertyDetail('${p.property_id}')"
              style="display:grid; grid-template-columns: minmax(170px, 1.5fr) minmax(140px, 1.4fr) 70px 50px 50px 60px; gap:8px; padding:9px 12px; border-bottom:1px solid #f1f5f9; font-size:13px; cursor:pointer; align-items:center;"
              onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background='#fff'">
-          <div style="font-weight:600; color:#1A3050;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</div>
+          <div style="font-weight:600; color:#0B1D34;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</div>
           <div style="color:#475569; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;" title="${escapeHtml(p.owner_name || '')}">${escapeHtml(p.owner_name || '—')}</div>
           <div style="font-size:11.5px; color:#64748b;">${fmtLastInsp(p.last_inspected_at)}</div>
           <div style="text-align:center;">${vBadge(p.violation_count_open, 'open')}</div>
@@ -12305,7 +12305,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // Counts strip
     const stat = (label, value, tone) => `
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:8px 10px; text-align:center; flex:1; min-width:90px;">
-        <div style="font-size:20px; font-weight:700; color:${tone || '#1A3050'}; line-height:1;">${value}</div>
+        <div style="font-size:20px; font-weight:700; color:${tone || '#0B1D34'}; line-height:1;">${value}</div>
         <div style="font-size:10.5px; color:#64748b; letter-spacing:0.04em; text-transform:uppercase; margin-top:3px;">${label}</div>
       </div>`;
 
@@ -12367,7 +12367,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                const stageColor = stage === 'cured' || stage === 'closed' ? '#15803d'
                                 : stage === 'certified_209' ? '#b45309'
                                 : stage === 'fine_assessed' ? '#b91c1c'
-                                : stage === 'voided' || stage === 'superseded' ? '#94a3b8' : '#1A3050';
+                                : stage === 'voided' || stage === 'superseded' ? '#94a3b8' : '#0B1D34';
                const showLetterBtn = isOpenStage(stage) && v.quality_status !== 'superseded';
                const showQualityActions = v.quality_status !== 'superseded' && v.quality_status !== 'verified';
                // Show review notes inline under the row when this violation
@@ -12392,14 +12392,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                    <td style="padding:6px 8px; text-align:right; white-space:nowrap;">
                      ${showQualityActions ? `<button onclick="inspViolationVerify('${v.id}')" title="Mark as verified (full weight)" style="background:#fff; border:1px solid #bbf7d0; color:#166534; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">✓ Verify</button>` : ''}
                      ${v.quality_status !== 'superseded' ? `<button onclick="inspViolationCorrect('${v.id}')" title="Correct or void this record" style="background:#fff; border:1px solid #fecaca; color:#b91c1c; padding:3px 7px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer; margin-right:3px;">⚠ Correct</button>` : ''}
-                     ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#1A3050; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
+                     ${showLetterBtn ? `<button onclick="inspGenerateLetter('${v.id}', this)" style="background:#0B1D34; color:#fff; border:none; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">📄 Letter</button>` : ''}
                    </td>
                  </tr>${reviewNotesRow}`;
              }).join('')}
            </tbody>
          </table>
          <div style="text-align:right; padding:8px 0 4px 0;">
-           <button onclick="inspViolationAddPrior('${escapeHtml(d.property.id)}')" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">+ Add prior violation</button>
+           <button onclick="inspViolationAddPrior('${escapeHtml(d.property.id)}')" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">+ Add prior violation</button>
          </div>`;
 
     // Recent observations
@@ -12441,7 +12441,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                  <td style="padding:6px 8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
                  <td style="padding:6px 8px;">
                    ${isLetterType(i.type)
-                     ? `<a href="#" onclick="event.preventDefault(); inspEvidenceToggle('${i.id}')" style="color:#1A3050; font-size:11px; font-weight:600; text-decoration:none;">📡 Show trail</a>`
+                     ? `<a href="#" onclick="event.preventDefault(); inspEvidenceToggle('${i.id}')" style="color:#0B1D34; font-size:11px; font-weight:600; text-decoration:none;">📡 Show trail</a>`
                      : '<span style="color:#cbd5e1; font-size:11px;">—</span>'}
                  </td>
                </tr>
@@ -12459,7 +12459,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px;">
           <div style="font-size:10.5px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px;">Owner</div>
           ${owner ? `
-            <div style="font-size:14px; font-weight:600; color:#1A3050;">${escapeHtml(owner.full_name || '—')}</div>
+            <div style="font-size:14px; font-weight:600; color:#0B1D34;">${escapeHtml(owner.full_name || '—')}</div>
             ${owner.email ? `<div style="font-size:12px; color:#475569;">${escapeHtml(owner.email)}</div>` : ''}
             ${owner.phone ? `<div style="font-size:12px; color:#475569;">${escapeHtml(owner.phone)}</div>` : ''}
             ${owner.mailing_address ? `<div style="font-size:11.5px; color:#94a3b8; margin-top:3px;">Mail: ${escapeHtml(owner.mailing_address)}</div>` : ''}
@@ -12469,7 +12469,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px;">
           <div style="font-size:10.5px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px;">Residency</div>
           <div style="margin-bottom:3px;">${resBadge}</div>
-          ${residency && residency.resident_name ? `<div style="font-size:13px; font-weight:600; color:#1A3050; margin-top:5px;">${escapeHtml(residency.resident_name)}</div>` : ''}
+          ${residency && residency.resident_name ? `<div style="font-size:13px; font-weight:600; color:#0B1D34; margin-top:5px;">${escapeHtml(residency.resident_name)}</div>` : ''}
           ${residency && residency.lease_end_date ? `<div style="font-size:11.5px; color:#94a3b8; margin-top:3px;">Lease ends ${new Date(residency.lease_end_date).toLocaleDateString()}</div>` : ''}
           ${resType === 'renter' && (!residency || !residency.resident_name) ? '<div style="font-size:11.5px; color:#b45309; margin-top:5px;">Tenant identity not on file</div>' : ''}
         </div>
@@ -12477,7 +12477,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
       <!-- Counts strip -->
       <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:14px;">
-        ${stat('Open', counts.violations_open || 0, counts.violations_open ? '#b91c1c' : '#1A3050')}
+        ${stat('Open', counts.violations_open || 0, counts.violations_open ? '#b91c1c' : '#0B1D34')}
         ${stat('YTD', counts.violations_ytd || 0, '#b45309')}
         ${stat('Lifetime', counts.violations_lifetime || 0)}
         ${stat('Certified prior', counts.violations_certified_lifetime || 0, '#b45309')}
@@ -12492,25 +12492,25 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
       <!-- Violations -->
       <details open style="margin-bottom:10px;">
-        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Violation history (${(d.violations || []).length})</summary>
+        <summary style="cursor:pointer; font-weight:700; color:#0B1D34; font-size:13px; padding:6px 0;">Violation history (${(d.violations || []).length})</summary>
         <div style="margin-top:6px;">${viosHtml}</div>
       </details>
 
       <!-- Observations -->
       <details style="margin-bottom:10px;">
-        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Recent observations (${(d.observations_recent || []).length})</summary>
+        <summary style="cursor:pointer; font-weight:700; color:#0B1D34; font-size:13px; padding:6px 0;">Recent observations (${(d.observations_recent || []).length})</summary>
         <div style="margin-top:6px;">${obsHtml}</div>
       </details>
 
       <!-- Interactions -->
       <details style="margin-bottom:10px;">
-        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Interactions (${(d.interactions || []).length})</summary>
+        <summary style="cursor:pointer; font-weight:700; color:#0B1D34; font-size:13px; padding:6px 0;">Interactions (${(d.interactions || []).length})</summary>
         <div style="margin-top:6px;">${interactionsHtml}</div>
       </details>
 
       <!-- Inspections -->
       <details>
-        <summary style="cursor:pointer; font-weight:700; color:#1A3050; font-size:13px; padding:6px 0;">Inspection history (${(d.inspections || []).length})</summary>
+        <summary style="cursor:pointer; font-weight:700; color:#0B1D34; font-size:13px; padding:6px 0;">Inspection history (${(d.inspections || []).length})</summary>
         <div style="margin-top:6px;">
           ${(d.inspections || []).length === 0
             ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">Never inspected.</div>'
@@ -12606,7 +12606,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>`;
       }).join('');
       body.innerHTML = `
-        <div style="font-weight:700; color:#1A3050; margin-bottom:6px;">📡 Multi-channel delivery trail</div>
+        <div style="font-weight:700; color:#0B1D34; margin-bottom:6px;">📡 Multi-channel delivery trail</div>
         ${rows}
         <div style="font-size:10.5px; color:#94a3b8; margin-top:8px; font-style:italic;">When a homeowner says they never received the notice, the trail above is the evidence. Each row is a separate attempt; together they're hard to dispute.</div>
       `;
@@ -12976,7 +12976,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (isCovered) coveredCount++;
       // Special-track override wins over stage-based color — the operator
       // needs to see "this needs force-mow action" before "this is at §209."
-      const color = (specialTrack && SPECIAL_TRACK_COLORS[specialTrack]) || STAGE_COLORS[stage] || '#1A3050';
+      const color = (specialTrack && SPECIAL_TRACK_COLORS[specialTrack]) || STAGE_COLORS[stage] || '#0B1D34';
       // Properties WITH open violations get a slightly bigger pin so they
       // pop visually when driving past — easy to spot at-a-glance.
       const size = (stage || specialTrack) ? 22 : 18;
@@ -13030,7 +13030,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // Status line with a Run Geocoder button when geo data is missing.
     // The button is inline in the status line itself so the call-to-action
     // is right where the problem is visible.
-    const geocodeBtn = (label) => `<button type="button" onclick="inspRunGeocoder()" id="inspRunGeocoderBtn" style="margin-left:8px; padding:4px 10px; background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;">${label}</button>`;
+    const geocodeBtn = (label) => `<button type="button" onclick="inspRunGeocoder()" id="inspRunGeocoderBtn" style="margin-left:8px; padding:4px 10px; background:var(--gold, #D4AF37); color:var(--navy, #0B1D34); border:none; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer;">${label}</button>`;
 
     // Build the violation-stage legend inline — only shows stages that
     // actually exist on this community's map.
@@ -13324,7 +13324,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         el.style.height = '24px';
         el.style.boxShadow = '0 2px 8px rgba(212,175,55,0.5)';
       } else {
-        const oc = m._origColor || '#1A3050';
+        const oc = m._origColor || '#0B1D34';
         const os = m._origSize || 18;
         // Restore covered-ring on deselect too — otherwise tapping any pin
         // would visually clear the operator's route-progress indicator.
@@ -13351,7 +13351,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     for (const m of inspState.propertyMarkers) {
       const el = m._el;
       if (!el) continue;
-      const oc = m._origColor || '#1A3050';
+      const oc = m._origColor || '#0B1D34';
       const os = m._origSize || 18;
       const isCovered = !!m._origIsCovered;
       el.style.background = oc;
@@ -13850,24 +13850,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         body.innerHTML = `
           <div style="text-align:center; padding:14px 6px;">
             <div style="font-size:42px; line-height:1; margin-bottom:8px;">✅</div>
-            <div style="font-family:var(--font-serif, Georgia); font-size:19px; color:var(--navy, #1A3050); font-weight:600; margin-bottom:6px;">Violation created</div>
+            <div style="font-family:var(--font-serif, Georgia); font-size:19px; color:var(--navy, #0B1D34); font-weight:600; margin-bottom:6px;">Violation created</div>
             <div style="color:#475569; font-size:13.5px; margin-bottom:14px; line-height:1.5;">
               <strong>${escapeHtml(propLabel)}</strong><br>
               Stage <strong>${escapeHtml((j.current_stage || '').replace(/_/g, ' '))}</strong> · ${escapeHtml(photosLine)}
             </div>
             <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; font-size:11.5px; color:#64748b; margin-bottom:16px; line-height:1.5; text-align:left;">
-              <strong style="color:#1A3050;">What happens next:</strong><br>
+              <strong style="color:#0B1D34;">What happens next:</strong><br>
               • The violation is now on the property's record (quality: verified)<br>
               • AI is reviewing the photo${(j.photos_uploaded || 0) === 1 ? '' : 's'} — if it disagrees, the violation will be re-flagged for your review<br>
               • You can draft the certified force-mow letter from the Drafts queue when ready
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
               <button type="button" onclick="manualVioViewProperty('${escapeHtml(propertyId)}', '${escapeHtml(propLabel.replace(/'/g, '&apos;'))}')"
-                      style="flex:1; min-width:140px; padding:12px 14px; background:var(--navy, #1A3050); color:#fff; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">
+                      style="flex:1; min-width:140px; padding:12px 14px; background:var(--navy, #0B1D34); color:#fff; border:none; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">
                 🏠 View property
               </button>
               <button type="button" onclick="manualVioReset()"
-                      style="flex:1; min-width:140px; padding:12px 14px; background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer;">
+                      style="flex:1; min-width:140px; padding:12px 14px; background:var(--gold, #D4AF37); color:var(--navy, #0B1D34); border:none; border-radius:8px; font-size:13px; font-weight:700; cursor:pointer;">
                 ➕ Add another
               </button>
               <button type="button" onclick="manualVioClose()"
@@ -14077,7 +14077,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         if (!el) continue;
         const isSelected = m._propertyId === inspState.selectedPropertyId;
         if (!isSelected) {
-          el.style.background = '#1A3050';
+          el.style.background = '#0B1D34';
           el.style.width = '18px';
           el.style.height = '18px';
         }
@@ -14155,13 +14155,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         id: 'insp-boundary-fill',
         type: 'fill',
         source: 'insp-boundary',
-        paint: { 'fill-color': '#1A3050', 'fill-opacity': 0.06 },
+        paint: { 'fill-color': '#0B1D34', 'fill-opacity': 0.06 },
       });
       map.addLayer({
         id: 'insp-boundary-outline',
         type: 'line',
         source: 'insp-boundary',
-        paint: { 'line-color': '#1A3050', 'line-width': 2, 'line-opacity': 0.55, 'line-dasharray': [3, 2] },
+        paint: { 'line-color': '#0B1D34', 'line-width': 2, 'line-opacity': 0.55, 'line-dasharray': [3, 2] },
       });
     }
   }
@@ -14660,9 +14660,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   // Given a photo row, return a status label + tone color for the tile overlay.
   function inspPhotoStatusFor(photo) {
-    if (photo.pending) return { label: '⬆ Uploading', color: '#1A3050', bg: 'rgba(15,23,42,0.7)' };
+    if (photo.pending) return { label: '⬆ Uploading', color: '#0B1D34', bg: 'rgba(15,23,42,0.7)' };
     if (photo.failed)  return { label: '⚠ Failed', color: '#fff', bg: 'rgba(185,28,28,0.85)' };
-    if (!photo.id || photo.id.startsWith('queue-')) return { label: '⬆ Uploading', color: '#1A3050', bg: 'rgba(15,23,42,0.7)' };
+    if (!photo.id || photo.id.startsWith('queue-')) return { label: '⬆ Uploading', color: '#0B1D34', bg: 'rgba(15,23,42,0.7)' };
     // Look up matching observation by inspection_photo_id
     const obs = (inspState.observations || []).find((o) => o.photo_id === photo.id);
     if (!obs) {
@@ -15283,7 +15283,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const stageColor = stage === 'certified_209' ? '#b45309'
                        : stage === 'courtesy_2' ? '#b45309'
                        : stage === 'fine_assessed' ? '#b91c1c'
-                       : '#1A3050';
+                       : '#0B1D34';
       const addr = first.property ? `${first.property.street_address || '—'}${first.property.unit ? ' #' + first.property.unit : ''}` : '—';
       const ownerLine = first.owner ? escapeHtml(first.owner.full_name || '—') : '—';
       const allSelected = members.every((m) => inspDraftsSelected.has(m.interaction_id));
@@ -15324,7 +15324,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const stageColor = stage === 'certified_209' ? '#b45309'
                      : stage === 'courtesy_2' ? '#b45309'
                      : stage === 'fine_assessed' ? '#b91c1c'
-                     : '#1A3050';
+                     : '#0B1D34';
     const cureDate = d.violation && d.violation.cure_period_ends_at
       ? new Date(d.violation.cure_period_ends_at).toLocaleDateString() : '—';
     const confidence = d.observation && d.observation.ai_confidence;
@@ -15342,7 +15342,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         ${photoCol}
         <div style="flex:1; min-width:0;">
           <div style="font-size:11px; font-weight:700; color:#78350f; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:2px;">Item ${subIndex || '?'}</div>
-          <div style="font-size:13px; color:#1A3050; font-weight:600; margin-bottom:2px;">${escapeHtml(d.violation && d.violation.category_label || '—')}</div>
+          <div style="font-size:13px; color:#0B1D34; font-weight:600; margin-bottom:2px;">${escapeHtml(d.violation && d.violation.category_label || '—')}</div>
           <div style="font-size:11.5px; color:#78350f; margin-bottom:3px;">Cure by ${cureDate}${confidence ? ` · <span style="color:${confColor};">AI confidence: ${escapeHtml(confidence)}</span>` : ''}</div>
           ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
           <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
@@ -15358,17 +15358,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       ${photoCol}
       <div style="flex:1; min-width:0;">
         <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:4px;">
-          <span style="font-weight:700; color:#1A3050; font-size:14px;">${escapeHtml(d.property && d.property.street_address || '—')}${d.property && d.property.unit ? ' #' + escapeHtml(d.property.unit) : ''}</span>
+          <span style="font-weight:700; color:#0B1D34; font-size:14px;">${escapeHtml(d.property && d.property.street_address || '—')}${d.property && d.property.unit ? ' #' + escapeHtml(d.property.unit) : ''}</span>
           <span style="color:${stageColor}; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.05em;">${escapeHtml(stage || '—').replace(/_/g, ' ')}</span>
           ${isCertified ? `<span style="background:#fecaca; color:#7f1d1d; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.05em;">CERTIFIED MAIL</span>` : ''}
         </div>
         <div style="font-size:12px; color:#475569; margin-bottom:3px;">→ ${ownerLine}</div>
-        <div style="font-size:12px; color:#1A3050; margin-bottom:3px;">${escapeHtml(d.violation && d.violation.category_label || '—')} · cure by ${cureDate}</div>
+        <div style="font-size:12px; color:#0B1D34; margin-bottom:3px;">${escapeHtml(d.violation && d.violation.category_label || '—')} · cure by ${cureDate}</div>
         ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
         <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
           ${confidence ? `<span style="color:${confColor}; font-weight:600;">AI confidence: ${escapeHtml(confidence)}</span>` : ''}
-          ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#1A3050; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
-          <button onclick="inspDraftsRegenerateLetter('${d.violation_id || ''}', this)" style="background:none; border:1px solid #d0d7de; color:#1A3050; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
+          ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#0B1D34; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
+          <button onclick="inspDraftsRegenerateLetter('${d.violation_id || ''}', this)" style="background:none; border:1px solid #d0d7de; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
           <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
         </div>
       </div>
@@ -15521,13 +15521,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="border:1px solid #e2e8f0; border-radius:10px; padding:14px; background:${fc ? '#f8fafc' : '#fafafa'};">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
             <div>
-              <div style="font-size:12px; font-weight:700; color:#1A3050; text-transform:uppercase; letter-spacing:0.05em;">📨 First-Class Mail</div>
+              <div style="font-size:12px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.05em;">📨 First-Class Mail</div>
               <div style="font-size:11.5px; color:#64748b; margin-top:2px;">Stuff envelopes, mail standard</div>
             </div>
-            <div style="font-size:32px; font-weight:700; color:${fc ? '#1A3050' : '#cbd5e1'}; line-height:1;">${fc}</div>
+            <div style="font-size:32px; font-weight:700; color:${fc ? '#0B1D34' : '#cbd5e1'}; line-height:1;">${fc}</div>
           </div>
           <button onclick="inspMailQueueLockAndDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
-                  style="width:100%; padding:9px; background:${fc ? '#1A3050' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
+                  style="width:100%; padding:9px; background:${fc ? '#0B1D34' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
             ${fc ? '🔒 Lock dates + print' : 'Nothing pending'}
           </button>
           <button onclick="inspMailQueueDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
@@ -15560,7 +15560,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
       <div style="margin-top:10px; text-align:right;">
         <button onclick="inspMailQueueToggleDetails()" id="inspMailQueueDetailsBtn"
-                style="background:none; border:1px solid #cbd5e1; color:#1A3050; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">
+                style="background:none; border:1px solid #cbd5e1; color:#0B1D34; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">
           📋 Show letters
         </button>
       </div>
@@ -15608,12 +15608,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           ? '<span style="background:#fecaca; color:#7f1d1d; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:700;">CERTIFIED</span>'
           : '<span style="background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:700;">FIRST-CLASS</span>';
         const previewBtn = L.letter_url
-          ? `<a href="${escapeHtml(L.letter_url)}" target="_blank" rel="noopener" title="Open the letter PDF in a new tab" style="background:#fff; color:#1A3050; border:1px solid #cbd5e1; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; flex-shrink:0; text-decoration:none;">📄 Preview</a>`
+          ? `<a href="${escapeHtml(L.letter_url)}" target="_blank" rel="noopener" title="Open the letter PDF in a new tab" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; flex-shrink:0; text-decoration:none;">📄 Preview</a>`
           : `<span style="color:#94a3b8; font-size:11px; padding:4px 8px;">PDF unavailable</span>`;
         return `
           <div style="display:flex; gap:8px; align-items:flex-start; padding:8px; border-bottom:1px solid #f1f5f9;">
             <div style="flex:1; min-width:0;">
-              <div style="font-size:12.5px; color:#1A3050; font-weight:600;">${escapeHtml(L.property_address || '—')}${L.owner_name ? ' · ' + escapeHtml(L.owner_name) : ''}</div>
+              <div style="font-size:12.5px; color:#0B1D34; font-weight:600;">${escapeHtml(L.property_address || '—')}${L.owner_name ? ' · ' + escapeHtml(L.owner_name) : ''}</div>
               <div style="font-size:11px; color:#64748b; margin-top:2px;">${escapeHtml(typeLabel[L.type] || L.type)} ${dmChip} · ${escapeHtml(L.community_name || '—')} · approved ${ageStr}</div>
             </div>
             ${previewBtn}
@@ -15754,7 +15754,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                 ? `${escapeHtml(i.property.street_address || '—')}${i.property.unit ? ' #' + escapeHtml(i.property.unit) : ''}`
                 : '—';
               return `<tr style="border-bottom:1px solid #f1f5f9;">
-                <td style="padding:7px 10px; font-weight:600; color:#1A3050;">${addr}</td>
+                <td style="padding:7px 10px; font-weight:600; color:#0B1D34;">${addr}</td>
                 <td style="padding:7px 10px; color:#475569;">${escapeHtml(i.property && i.property.owner_name || '—')}</td>
                 <td style="padding:7px 10px; color:#64748b;">${escapeHtml(i.communities && i.communities.name || '—')}</td>
                 <td style="padding:7px 10px;">${escapeHtml(i.category_label || '—')}</td>
@@ -15846,7 +15846,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="background:${comm.fines_enabled ? '#dcfce7' : '#f1f5f9'}; border:1px solid ${comm.fines_enabled ? '#bbf7d0' : '#d0d7de'}; border-radius:10px; padding:14px; margin-bottom:18px;">
         <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
           <div>
-            <div style="font-size:13px; font-weight:700; color:#1A3050; letter-spacing:0.04em; text-transform:uppercase;">Community-wide fine enforcement</div>
+            <div style="font-size:13px; font-weight:700; color:#0B1D34; letter-spacing:0.04em; text-transform:uppercase;">Community-wide fine enforcement</div>
             <div style="font-size:14px; margin-top:6px; color:${comm.fines_enabled ? '#166534' : '#475569'};">
               <strong>${comm.fines_enabled ? '✓ ENABLED' : '⏸ PAUSED'}</strong>
               ${comm.fines_enabled_set_by_board_date ? ` · set ${new Date(comm.fines_enabled_set_by_board_date).toLocaleDateString()}` : ''}
@@ -15867,7 +15867,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const isCommDefault = s.source_row === 'community_default';
       const effective = s.effective_fines_enabled;
       return `<tr style="border-bottom:1px solid #f1f5f9;">
-        <td style="padding:8px 10px; font-weight:600; color:#1A3050;">${escapeHtml(s.category_label)}</td>
+        <td style="padding:8px 10px; font-weight:600; color:#0B1D34;">${escapeHtml(s.category_label)}</td>
         <td style="padding:8px 10px; text-align:center;">
           ${effective
             ? '<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">ENABLED</span>'
@@ -15879,7 +15879,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <td style="padding:8px 10px; text-align:right; color:#475569;">${s.recurring_offense_amount != null ? '$' + Number(s.recurring_offense_amount).toFixed(2) : '—'}</td>
         <td style="padding:8px 10px; font-size:10.5px; color:${isCommDefault ? '#92400e' : '#64748b'};">${isCommDefault ? 'community default' : (hasSchedule ? 'category-specific' : '—')}</td>
         <td style="padding:8px 10px; text-align:right;">
-          <button onclick="inspFineRowEdit('${s.category_id}', '${escapeHtml(s.category_label)}')" style="background:#1A3050; color:#fff; border:none; padding:4px 11px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">Edit</button>
+          <button onclick="inspFineRowEdit('${s.category_id}', '${escapeHtml(s.category_label)}')" style="background:#0B1D34; color:#fff; border:none; padding:4px 11px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">Edit</button>
         </td>
       </tr>`;
     }).join('');
@@ -15887,10 +15887,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     body.innerHTML = masterBlock + `
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
         <div>
-          <div style="font-size:12.5px; font-weight:700; color:#1A3050; text-transform:uppercase; letter-spacing:0.04em;">Per-category schedule</div>
+          <div style="font-size:12.5px; font-weight:700; color:#0B1D34; text-transform:uppercase; letter-spacing:0.04em;">Per-category schedule</div>
           <div style="font-size:11.5px; color:#64748b; margin-top:3px;">Set the community default row (covers all categories) and/or override per category.</div>
         </div>
-        <button onclick="inspFineRowEdit(null, 'Community default — all categories')" style="background:#fff; border:1px solid #d0d7de; color:#1A3050; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">⚙ Set community default</button>
+        <button onclick="inspFineRowEdit(null, 'Community default — all categories')" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">⚙ Set community default</button>
       </div>
       <div style="overflow-x:auto;">
         <table style="width:100%; border-collapse:collapse; font-size:12px;">
@@ -16076,10 +16076,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const addr = v.property
         ? `${escapeHtml(v.property.street_address || '')}${v.property.unit ? ' #' + escapeHtml(v.property.unit) : ''}`
         : '—';
-      const stageColor = v.current_stage === 'certified_209' ? '#b91c1c' : v.current_stage === 'courtesy_2' ? '#b45309' : '#1A3050';
+      const stageColor = v.current_stage === 'certified_209' ? '#b91c1c' : v.current_stage === 'courtesy_2' ? '#b45309' : '#0B1D34';
       const overdueColor = v.days_overdue > 30 ? '#b91c1c' : v.days_overdue > 7 ? '#b45309' : '#475569';
       return `<tr style="border-bottom:1px solid #f1f5f9;">
-        <td style="padding:7px 10px; font-weight:600; color:#1A3050;">${addr}</td>
+        <td style="padding:7px 10px; font-weight:600; color:#0B1D34;">${addr}</td>
         <td style="padding:7px 10px; color:#475569;">${escapeHtml(v.property && v.property.owner_name || '—')}</td>
         <td style="padding:7px 10px; color:${stageColor}; font-weight:600;">${escapeHtml(v.current_stage.replace(/_/g, ' '))}</td>
         <td style="padding:7px 10px; color:${overdueColor}; font-weight:600;">${v.days_overdue}d overdue</td>
@@ -16177,7 +16177,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const totalBytes = Array.from(files).reduce((s, f) => s + f.size, 0);
     const mb = (totalBytes / (1024 * 1024)).toFixed(1);
     wrap.innerHTML = `
-      <strong style="color:#1A3050;">${files.length} PDF${files.length === 1 ? '' : 's'} selected</strong> (${mb} MB total)
+      <strong style="color:#0B1D34;">${files.length} PDF${files.length === 1 ? '' : 's'} selected</strong> (${mb} MB total)
       <div style="font-size:11px; color:#94a3b8; margin-top:4px; max-height:80px; overflow-y:auto;">
         ${Array.from(files).slice(0, 20).map((f) => escapeHtml(f.name)).join(' · ')}
         ${files.length > 20 ? ` ...and ${files.length - 20} more` : ''}
@@ -16241,7 +16241,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                 <tbody>
                   ${j.matched.map((m) => `<tr style="border-top:1px solid #f1f5f9;">
                     <td style="padding:4px 8px; color:#475569;">${escapeHtml(m.filename)}</td>
-                    <td style="padding:4px 8px; color:#1A3050;">${escapeHtml(m.property_address || m.property_id)}</td>
+                    <td style="padding:4px 8px; color:#0B1D34;">${escapeHtml(m.property_address || m.property_id)}</td>
                     <td style="padding:4px 8px;">${escapeHtml(m.stage_at_send)}</td>
                     <td style="padding:4px 8px;">${escapeHtml(m.sent_at)}</td>
                     <td style="padding:4px 8px; color:#94a3b8;">${escapeHtml(m.matched_via)}</td>
@@ -16258,7 +16258,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <div style="font-size:11.5px; color:#78350f; font-weight:600; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">⚠ Unmatched — need manual attach (${j.unmatched_count})</div>
             <div style="max-height:160px; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px; padding:8px;">
               ${j.unmatched.map((u) => `<div style="padding:3px 0; font-size:11.5px; border-top:1px solid #f1f5f9;">
-                <strong style="color:#1A3050;">${escapeHtml(u.filename)}</strong>
+                <strong style="color:#0B1D34;">${escapeHtml(u.filename)}</strong>
                 <span style="color:#78350f; margin-left:6px;">${escapeHtml(u.reason)}</span>
               </div>`).join('')}
             </div>
@@ -16426,7 +16426,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function inspVViRenderDiff(j) {
     const wrap = document.getElementById('inspVViDiff');
     const mapping = Object.entries(j.mapping || {}).map(([f, m]) =>
-      `<div style="font-size:11.5px;"><span style="color:#1A3050; font-weight:600;">${escapeHtml(f)}</span> ← ${escapeHtml(m.header)}</div>`
+      `<div style="font-size:11.5px;"><span style="color:#0B1D34; font-weight:600;">${escapeHtml(f)}</span> ← ${escapeHtml(m.header)}</div>`
     ).join('');
     const sample = (j.sample_rows || []).slice(0, 3).map((r) =>
       `<tr><td style="padding:3px 6px;">${r._source_row}</td><td style="padding:3px 6px;">${escapeHtml(r.vantaca_account_id || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.street_address || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.category_label || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.opened_at || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.stage || '—')}</td></tr>`
@@ -16434,11 +16434,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     wrap.innerHTML = `
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
-        <div style="font-size:12px; font-weight:700; color:#1A3050; margin-bottom:6px;">Column mapping</div>
+        <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:6px;">Column mapping</div>
         ${mapping || '<span style="color:#94a3b8; font-size:12px;">No columns detected.</span>'}
       </div>
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
-        <div style="font-size:12px; font-weight:700; color:#1A3050; margin-bottom:6px;">Sample rows (first 3)</div>
+        <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:6px;">Sample rows (first 3)</div>
         <table style="width:100%; border-collapse:collapse; font-size:11.5px;">
           <thead><tr style="color:#64748b;"><th style="text-align:left; padding:3px 6px;">Row</th><th style="text-align:left; padding:3px 6px;">Account</th><th style="text-align:left; padding:3px 6px;">Address</th><th style="text-align:left; padding:3px 6px;">Category</th><th style="text-align:left; padding:3px 6px;">Date</th><th style="text-align:left; padding:3px 6px;">Stage</th></tr></thead>
           <tbody>${sample}</tbody>
@@ -16469,7 +16469,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             These Vantaca categories don't exist in trustEd's canonical list. Click the button below to add them as new canonical categories (one-time setup per community batch), then re-resolve to import.
           </div>
           <button onclick="inspVViBulkAddCategories()" type="button"
-                  style="background:#1A3050; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">
+                  style="background:#0B1D34; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">
             + Add ${j.unresolved_category_count} as new canonical categories &amp; re-resolve
           </button>
         </div>
@@ -16615,7 +16615,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               📷 Resume
             </button>
             <button type="button" onclick="inspFinalize('${i.id}')"
-                    style="background: var(--navy, #1A3050); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                    style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Mark this inspection as the permanent record (status: closed). It will stay visible here as 🔒 Finalized — staff can still Reopen if a correction is needed.">
               🔒 Finalize
             </button>
@@ -16909,14 +16909,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
      ============================================================================= -->
 <div class="tab-content" id="tab-team" style="overflow-y: auto; padding: 24px; background: #f4f5f7;">
   <div style="max-width: 1100px; margin: 0 auto;">
-    <h2 style="margin: 0 0 6px; color: #1A3050; font-size: 24px; font-weight: 600;">👥 Team management</h2>
+    <h2 style="margin: 0 0 6px; color: #0B1D34; font-size: 24px; font-weight: 600;">👥 Team management</h2>
     <p style="margin: 0 0 18px; color: #5a7390; font-size: 14px;">
       Manage who has access to Bedrock and at what role. The role decides what each person can see — admins see everything, staff see the customer-facing surfaces, assistants see a minimum slice.
     </p>
 
     <!-- Onboarding instructions -->
     <div style="background: #fff; border: 1px solid #d9dfea; border-radius: 10px; padding: 16px 18px; margin-bottom: 18px;">
-      <div style="font-weight: 600; color: #1A3050; margin-bottom: 8px;">🔑 How to add a team member</div>
+      <div style="font-weight: 600; color: #0B1D34; margin-bottom: 8px;">🔑 How to add a team member</div>
       <ol style="margin: 0 0 10px 18px; padding: 0; color: #475569; font-size: 13px; line-height: 1.7;">
         <li>Send them this sign-in link: <code id="teamSigninUrl" style="background: #f1f5f9; padding: 2px 6px; border-radius: 4px; user-select: all;">/login.html</code> <button onclick="teamCopySigninUrl()" style="background: none; border: 1px solid #c0d0e0; color: #1E2761; border-radius: 4px; padding: 1px 8px; cursor: pointer; font-size: 11px;">Copy</button></li>
         <li>They sign in with their Microsoft 365 account (whatever email you have on file for them).</li>
@@ -16932,7 +16932,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <!-- Team table -->
     <div style="background: #fff; border: 1px solid #d9dfea; border-radius: 10px; padding: 0; overflow: hidden;">
       <div style="padding: 14px 18px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between;">
-        <div style="font-weight: 600; color: #1A3050;">Current team <span id="teamCount" style="font-weight: 400; color: #94A3B8; font-size: 13px;"></span></div>
+        <div style="font-weight: 600; color: #0B1D34;">Current team <span id="teamCount" style="font-weight: 400; color: #94A3B8; font-size: 13px;"></span></div>
         <button onclick="teamLoad()" style="background: none; border: 1px solid #c0d0e0; color: #1E2761; border-radius: 6px; padding: 6px 12px; cursor: pointer; font-size: 12px;">🔄 Refresh</button>
       </div>
       <div id="teamTableWrap" style="overflow-x: auto;">
@@ -17107,7 +17107,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   <!-- Curriculum index — left sidebar with module list -->
   <div style="display: flex; min-height: calc(100dvh - 100px); max-width: 1280px; margin: 0 auto;">
     <aside style="width: 260px; background: #fff; border-right: 1px solid #e2e8f0; padding: 22px 18px; flex-shrink: 0;">
-      <div style="font-family: var(--font-serif, Georgia); font-size: 19px; font-weight: 500; color: var(--navy, #1A3050); letter-spacing: -0.01em; line-height: 1.15;">
+      <div style="font-family: var(--font-serif, Georgia); font-size: 19px; font-weight: 500; color: var(--navy, #0B1D34); letter-spacing: -0.01em; line-height: 1.15;">
         Bedrock <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">University</em>
       </div>
       <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-top: 5px;">Operator Competency</div>
@@ -17197,7 +17197,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Overview — role tracks + badge wall. Hidden until selected. -->
       <article id="module-overview" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Bedrock University · Overview</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Role <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Tracks</em>
         </h1>
         <p style="font-size: 14px; color: #64748b; margin: 0 0 12px;">Each role earns its badge by completing the modules that cover that workflow. Modules add as the platform builds out — you'll never have to "wait until everything is ready" to start.</p>
@@ -17208,34 +17208,34 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
         <div id="uni-track-cards" style="display: grid; grid-template-columns: 1fr; gap: 14px; margin: 24px 0;"></div>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Why we built this</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Why we built this</h2>
         <p>Most HOA management firms train their staff by shadowing a senior manager for a few months and hoping institutional knowledge transfers. It doesn't, consistently — which is why most firms are held hostage by their most experienced people. Bedrock University is the structured alternative: every operator competency is documented as a module, every module ends in a try-it task, every role earns a visible badge.</p>
         <p>The point isn't credentials. It's that a new hire can become productive in week one because the system itself teaches them how to use it — not by reading a manual, but by doing the work with the module open next to them.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">A note on iteration</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">A note on iteration</h2>
         <p>The platform is moving fast. If a module mentions a button that isn't where it says it is, or a workflow that's changed since the module was written — flag it to Ed. The modules update as the platform stabilizes; we're shipping training alongside the work rather than waiting for a "finished" state that would never arrive.</p>
       </article>
 
       <!-- Module 1 — askEd Foundations. -->
       <article id="module-asked-foundations" class="training-module">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 1 · Foundations</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           askEd <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Foundations</em>
         </h1>
         <p style="font-size: 13px; color: #64748b; margin: 0 0 28px;">15-20 min read · finish with the practice exercise</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this matters</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this matters</h2>
         <p>askEd helps you handle homeowner and board communications, look up community-specific facts, and review drafts before they go out. Used well, it lets you respond faster and more consistently — and catches small things you might miss when you're rushed.</p>
         <p>What matters most is the quality of what we send. Everything askEd produces still passes through you before it reaches a homeowner or a board. This module covers how to use each mode and what to verify before sending.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Four modes</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Four modes</h2>
         <p>askEd has four modes, picked by the pills at the top of the askEd tab. The mode changes the framing for what you need — pick the one that matches the task in front of you.</p>
 
         <table style="width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14px;">
           <thead>
             <tr style="background: #f1f5fb;">
-              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #1A3050); font-weight: 600; color: var(--navy, #1A3050); width: 30%;">Mode</th>
-              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #1A3050); font-weight: 600; color: var(--navy, #1A3050);">When to use</th>
+              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #0B1D34); font-weight: 600; color: var(--navy, #0B1D34); width: 30%;">Mode</th>
+              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #0B1D34); font-weight: 600; color: var(--navy, #0B1D34);">When to use</th>
             </tr>
           </thead>
           <tbody>
@@ -17246,7 +17246,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </tbody>
         </table>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What "good" looks like — the 5-point check</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What "good" looks like — the 5-point check</h2>
         <p>Before you send anything askEd produced, verify these five things. If any fails, edit:</p>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 8px;"><strong>Facts are correct.</strong> Names, dates, addresses, contract amounts — check them against the source. The AI is usually right but occasionally invents details that sound plausible.</li>
@@ -17255,11 +17255,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 8px;"><strong>Sign-off is canonical.</strong> Always "Bedrock Association Management" — never a personal name in the signature.</li>
           <li style="margin-bottom: 8px;"><strong>Empathy is present when needed.</strong> If the homeowner expressed frustration, the response acknowledges it before answering. Cold replies — even technically correct ones — create the next escalation.</li>
         </ol>
-        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #1A3050); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
+        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #0B1D34); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
           <strong>Rule of thumb:</strong> if you're rewriting more than half of what the response said, mention it to Ed — it's the kind of thing he wants to know about.
         </p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">When to escalate — never send</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">When to escalate — never send</h2>
         <p>Push the message to Ed (or whoever is senior on shift) <strong>before</strong> drafting or sending when any of these surface:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">Anyone mentions a lawyer, lawsuit, "legal action," or attorney representation</li>
@@ -17272,7 +17272,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ul>
         <p>For these, the platform IS still useful — use Advisor mode to think through how to respond, but route the final response through Ed before sending.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Common pitfalls to catch</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Common pitfalls to catch</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>Cold or dismissive tone</strong> — add a warm acknowledgment at the top</li>
           <li style="margin-bottom: 6px;"><strong>Fabricated rule</strong> — AI cited a rule that's not actually in the docs (rare but happens; the 5-point check catches it)</li>
@@ -17282,7 +17282,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 6px;"><strong>Wrong jurisdiction</strong> — pointing a homeowner at the HOA for something the city enforces, or vice versa</li>
         </ul>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Practice now (do this once)</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Practice now (do this once)</h2>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 8px;">Open the <strong>🧠 askEd</strong> tab.</li>
           <li style="margin-bottom: 8px;">Pick any community in the dropdown above.</li>
@@ -17293,10 +17293,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ol>
         <p>Time-box this to ~20 minutes. The point isn't to master every mode in one sitting; it's to feel the difference between them and know which one to reach for in real work.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">If something looks off</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">If something looks off</h2>
         <p>If askEd gives wrong information, misses something important, or gives you output you have to heavily rewrite — mention it to Ed. A quick email with a screenshot and what you wished the response had said is plenty. He'd rather hear about it than not.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Mastery signals</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Mastery signals</h2>
         <p>You're using askEd well when:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">You're using all four modes routinely — not just Draft</li>
@@ -17312,12 +17312,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
         <div class="uni-mod-footer" data-mod="asked-foundations" style="margin-top: 24px; padding: 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;">
           <div>
-            <div style="font-size: 13px; font-weight: 700; color: var(--navy, #1A3050);">Finished this module?</div>
+            <div style="font-size: 13px; font-weight: 700; color: var(--navy, #0B1D34);">Finished this module?</div>
             <div style="font-size: 12px; color: #64748b; margin-top: 2px;">Marking complete updates your role progress on the Overview page.</div>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
             <span class="uni-mod-completed-badge" style="display: none; background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">✓ Completed</span>
-            <button class="uni-mod-complete-btn" onclick="uniMarkComplete('asked-foundations')" style="background: var(--navy, #1A3050); color: #fff; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">Mark module complete</button>
+            <button class="uni-mod-complete-btn" onclick="uniMarkComplete('asked-foundations')" style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">Mark module complete</button>
             <button class="uni-mod-uncomplete-btn" onclick="uniMarkIncomplete('asked-foundations')" style="display: none; background: #fff; border: 1px solid #cbd5e1; color: #475569; padding: 9px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;">Reset</button>
           </div>
         </div>
@@ -17326,16 +17326,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 2 — Field Inspection Capture. -->
       <article id="module-inspection-capture" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 2 · Inspector Track</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Field Inspection <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Capture</em>
         </h1>
         <p style="font-size: 13px; color: #64748b; margin: 0 0 28px;">20-25 min · finish with one real inspection walk</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this matters</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this matters</h2>
         <p>Field inspections are how Bedrock documents what's actually happening at a community. Done well, they create a defensible audit trail — every photo timestamped, GPS-tagged, AI-categorized, and linked to the right property. Done poorly, they're a stack of phone pictures nobody can sort through later.</p>
         <p>The consistency matters as much as the photo itself. A community that gets walked once a month produces a fair-housing record we can stand behind: <em>"every property was inspected, every violation was opened on the same standard, every letter went out in the same window."</em> That's the structural advantage. Your job during the walk is to make the system's job easy.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What happens behind the scenes</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What happens behind the scenes</h2>
         <p>Every photo you capture flows through this pipeline — automatically, in the background, while you keep walking:</p>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>Your phone tags it</strong> with GPS coordinates, compass heading, and capture time.</li>
@@ -17346,7 +17346,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ol>
         <p>This whole flow is invisible during the walk. You're not waiting for analysis — you're capturing.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Before you start a walk</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Before you start a walk</h2>
         <p>Open the <strong>Inspect</strong> tab on your phone. Three things to check before tapping <em>Start session</em>:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>Right community is selected.</strong> The dropdown at the top is what scopes everything that follows. Wrong community = photos snap to the wrong property database.</li>
@@ -17354,14 +17354,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 6px;"><strong>Phone has location permission.</strong> If iOS is asking every time, allow "While Using." Without it, photos can't snap to properties.</li>
         </ul>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Three modes — pick the right one</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Three modes — pick the right one</h2>
         <p>The mode determines how aggressively the system snaps photos to properties and how it expects the data to look. Pick wrong and you create cleanup work for yourself later.</p>
 
         <table style="width: 100%; border-collapse: collapse; margin: 18px 0; font-size: 14px;">
           <thead>
             <tr style="background: #f1f5fb;">
-              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #1A3050); font-weight: 600; color: var(--navy, #1A3050); width: 28%;">Mode</th>
-              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #1A3050); font-weight: 600; color: var(--navy, #1A3050);">When to use</th>
+              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #0B1D34); font-weight: 600; color: var(--navy, #0B1D34); width: 28%;">Mode</th>
+              <th style="text-align: left; padding: 10px 12px; border-bottom: 2px solid var(--navy, #0B1D34); font-weight: 600; color: var(--navy, #0B1D34);">When to use</th>
             </tr>
           </thead>
           <tbody>
@@ -17372,7 +17372,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </tbody>
         </table>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">The wide + close-up pattern</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">The wide + close-up pattern</h2>
         <p>Every property you capture gets two kinds of shots, in this order:</p>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 8px;"><strong>🏠 Wide shot first</strong> — frames the whole front of the house, ideally with the address visible (number on the curb, mailbox, plaque). This is the <em>wrong-house insurance</em>. If a homeowner ever challenges the citation, the wide shot proves which property we documented.</li>
@@ -17380,11 +17380,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ol>
         <p>For a property with three issues, the right pattern is <strong>1 wide + 3 close-ups</strong>, all paired together. When you're done at that property, tap <strong>"Done with property"</strong> to start a fresh pair for the next house.</p>
 
-        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #1A3050); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
+        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #0B1D34); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
           <strong>Why we do it this way:</strong> the wide shot lands on every violation letter alongside the close-up. When a homeowner calls saying "that's not my house," the wide shot ends the conversation in 30 seconds — there's the address number, there's their door, there's the issue. The single most defensible inspection record we can produce.
         </p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">How to capture well</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">How to capture well</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 8px;"><strong>Stand still when you tap Capture.</strong> The GPS+heading lock is sharpest for the half-second the photo is taken. Walking-and-snapping degrades the property snap.</li>
           <li style="margin-bottom: 8px;"><strong>Wide first, every time.</strong> Default behavior — first tap on a new property captures the wide. Resist the temptation to skip it for "obvious" houses. The wide shot is for the conversation 6 weeks from now, not this moment.</li>
@@ -17395,11 +17395,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 8px;"><strong>Skip the obvious-not-a-violation shots.</strong> A perfectly-maintained yard doesn't need a wide+close-up. If you wouldn't write a letter about it, don't capture it.</li>
         </ul>
 
-        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #1A3050); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
+        <p style="background: #f1f5fb; border-left: 3px solid var(--navy, #0B1D34); padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 18px 0; font-size: 13.5px;">
           <strong>Rule of thumb:</strong> the photo is the evidence. If someone challenges the violation six weeks later, will this photo (timestamped, GPS-tagged, with the issue clearly visible) be enough? If not, take a better one now while you're standing there.
         </p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">After the walk — Drafts queue review</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">After the walk — Drafts queue review</h2>
         <p>Back at the office (or on your phone over coffee), open the <strong>Drafts queue</strong> in the Inspect tab. Each photo the system categorized as a likely violation has a draft letter waiting. Your job:</p>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 8px;"><strong>Look at the photo.</strong> Does it show what the draft says it shows? If the system wrote "yard not maintained" but the photo is actually a parked trailer — that's a miscategorization.</li>
@@ -17408,7 +17408,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 8px;"><strong>Approve in bulk or one-by-one.</strong> Select all the ones that look good, click Approve. The rejected ones go back for correction or get voided.</li>
         </ol>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Quality status — Verified vs. Corrected</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Quality status — Verified vs. Corrected</h2>
         <p>Every violation has a quality status that signals how trustworthy the record is for later analysis. As an inspector, you control two of them:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>✓ Verified</strong> — you reviewed the photo, the categorization is right, the address is right. Full weight on this record going forward. Use liberally — most are verified.</li>
@@ -17416,7 +17416,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ul>
         <p>Don't agonize. If you're 80% confident, mark Verified. If you're not, correct it — the audit trail is cleaner if "uncertainty" is captured at correction time, not buried in your memory.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">When to escalate — pause before approving</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">When to escalate — pause before approving</h2>
         <p>Some categories of inspection findings need Ed's eyes before they become letters. Push to him rather than approving:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">Structural / safety issues (collapsing fence, sagging roof, exposed electrical) — these are bigger than a deed-restriction letter</li>
@@ -17426,7 +17426,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 6px;">Anything where you feel "this could blow up" — escalation is never the wrong choice</li>
         </ul>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Common pitfalls</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Common pitfalls</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>Mode mismatch</strong> — driving with Walk-through selected, or mounting the phone in Drive-by mode. Check the mode pill at the top before you start moving.</li>
           <li style="margin-bottom: 6px;"><strong>Capturing the same yard from three angles</strong> — pick the best frame and move on; duplicates create duplicate violations.</li>
@@ -17435,7 +17435,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 6px;"><strong>Skipping the wrong-house check</strong> — the highest-cost error is mailing a violation to the wrong address. Two minutes of address-verification is cheaper than one apology call.</li>
         </ul>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Practice now (do this once, with a real community)</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Practice now (do this once, with a real community)</h2>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 8px;">Open the <strong>Inspect</strong> tab. Pick a community where Bedrock manages a real book.</li>
           <li style="margin-bottom: 8px;">Verify the community has a boundary loaded (top of the panel). If not, stop and ask Ed.</li>
@@ -17447,10 +17447,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ol>
         <p>Time-box this to ~25 minutes. The point isn't to perfect the workflow on day one; it's to feel the rhythm: capture → AI does its work → you review → letters land in the mail queue. Once that loop feels natural, the rest is volume.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">If something looks off</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">If something looks off</h2>
         <p>If the system consistently mis-categorizes something (e.g. mistakes mulch for unmaintained yard), the photo snapped to the wrong house, or a draft letter quotes a governing doc section that isn't right — flag it to Ed with a screenshot. Pattern errors are how the platform gets better; one-off corrections only fix that one violation.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Mastery signals</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Mastery signals</h2>
         <p>You're inspecting well when:</p>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">You can do a full walk-through of a 200-property community in under 2 hours without capturing junk</li>
@@ -17466,12 +17466,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
         <div class="uni-mod-footer" data-mod="inspection-capture" style="margin-top: 24px; padding: 18px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 10px; display: flex; justify-content: space-between; align-items: center; gap: 14px; flex-wrap: wrap;">
           <div>
-            <div style="font-size: 13px; font-weight: 700; color: var(--navy, #1A3050);">Finished this module?</div>
+            <div style="font-size: 13px; font-weight: 700; color: var(--navy, #0B1D34);">Finished this module?</div>
             <div style="font-size: 12px; color: #64748b; margin-top: 2px;">Mark complete once you've done at least one real walk-through.</div>
           </div>
           <div style="display: flex; gap: 8px; align-items: center;">
             <span class="uni-mod-completed-badge" style="display: none; background: #dcfce7; color: #166534; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600;">✓ Completed</span>
-            <button class="uni-mod-complete-btn" onclick="uniMarkComplete('inspection-capture')" style="background: var(--navy, #1A3050); color: #fff; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">Mark module complete</button>
+            <button class="uni-mod-complete-btn" onclick="uniMarkComplete('inspection-capture')" style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 9px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer;">Mark module complete</button>
             <button class="uni-mod-uncomplete-btn" onclick="uniMarkIncomplete('inspection-capture')" style="display: none; background: #fff; border: 1px solid #cbd5e1; color: #475569; padding: 9px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;">Reset</button>
           </div>
         </div>
@@ -17488,7 +17488,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 3 — Drafts Queue Review (placeholder). -->
       <article id="module-drafts-queue-review" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 3 · DRV Operator Track</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Drafts Queue <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Review</em>
         </h1>
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border: 2px dashed #d4af37; border-radius: 12px; padding: 22px; margin: 24px 0;">
@@ -17499,7 +17499,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <p style="margin: 0 0 10px; color: #78350f; font-size: 14px; line-height: 1.55;">This module isn't written yet. The underlying workflow (Drafts queue, approve/reject flow, mail-merge to PDF) is still iterating — Phase 6c-6e shipped in the last two weeks, with quality + corrections layered on top this week. Writing the module now would lock us into content that gets stale by month-end.</p>
           <p style="margin: 0; color: #78350f; font-size: 13px;">For now: shadow Ed on a Drafts queue review session, or open the Inspect tab → Drafts queue and try it on real drafts. The workflow is intuitive; the module will document the edge cases once we know what they are.</p>
         </div>
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">The Drafts queue lifecycle — from AI-categorized photo to mail-ready PDF</li>
           <li style="margin-bottom: 6px;">Per-photo review etiquette — what to look at first, what's safe to skim</li>
@@ -17516,7 +17516,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 4 — Cure-Lapse Handling (placeholder). -->
       <article id="module-cure-lapse-handling" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 4 · DRV Operator Track</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Cure-Lapse <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Handling</em>
         </h1>
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border: 2px dashed #d4af37; border-radius: 12px; padding: 22px; margin: 24px 0;">
@@ -17527,7 +17527,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <p style="margin: 0 0 10px; color: #78350f; font-size: 14px; line-height: 1.55;">The daily cure-lapse processor just shipped (auto-bumps violations past their cure date, fires at 06:00 Central). It needs a week of real-world runs before we know which edge cases to document — does the board-review flag fire correctly when fines are paused? Do certified §209 lapses behave on weekends? Writing the module today is premature.</p>
           <p style="margin: 0; color: #78350f; font-size: 13px;">For now: check the "Last automatic run" indicator on the Inspect tab → Cure-lapse panel daily for the next two weeks. Flag anything weird to Ed.</p>
         </div>
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">How the cure-lapse processor decides what to escalate</li>
           <li style="margin-bottom: 6px;">The four-stage ladder: courtesy 1 → courtesy 2 → certified §209 → fine assessed</li>
@@ -17543,7 +17543,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 5 — Fine Assessment & Schedules (placeholder). -->
       <article id="module-fine-assessment" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 5 · DRV Operator Track</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Fine Assessment &amp; <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Schedules</em>
         </h1>
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border: 2px dashed #d4af37; border-radius: 12px; padding: 22px; margin: 24px 0;">
@@ -17554,7 +17554,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <p style="margin: 0 0 10px; color: #78350f; font-size: 14px; line-height: 1.55;">Per-category fine schedules + the Fine Queue shipped last week (Bundle 3). The default-off master toggle is intentional — most boards haven't signed off on fine amounts yet. Until the schedules are populated for each community and the board has approved them, this module would teach a workflow that nobody is running.</p>
           <p style="margin: 0; color: #78350f; font-size: 13px;">For now: do not assess fines without explicit board approval per community. The system won't auto-fire until the community master toggle is on AND the category schedule is filled in.</p>
         </div>
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">Reading the fine schedule UI — community master + per-category overrides</li>
           <li style="margin-bottom: 6px;">First / second / third / recurring offense amounts — when each applies</li>
@@ -17570,7 +17570,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 6 — Email Intake Basics (placeholder). -->
       <article id="module-email-intake-basics" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 6 · Email Triage Track</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Email Intake <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Basics</em>
         </h1>
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border: 2px dashed #d4af37; border-radius: 12px; padding: 22px; margin: 24px 0;">
@@ -17581,7 +17581,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <p style="margin: 0 0 10px; color: #78350f; font-size: 14px; line-height: 1.55;">The Email Intelligence intake module is stable but the workflow for what to do with extracted facts vs. decisions vs. action items is still being refined. We're also adding owner-reply attachment, near-duplicate detection, and recap generation in parallel. The module gets written once the intake → review → promote → recap loop has felt right for a few weeks.</p>
           <p style="margin: 0; color: #78350f; font-size: 13px;">For now: paste any homeowner thread into Email Intelligence → review the extraction → approve to library. Don't over-think dedup or supersession; the system handles those.</p>
         </div>
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">When to paste an email into intake (and when to skip it)</li>
           <li style="margin-bottom: 6px;">Reading the extraction — facts, decisions, action items, vendor mentions</li>
@@ -17597,7 +17597,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 8 — Homeowner Advisory Panel (placeholder). -->
       <article id="module-homeowner-advisory-panel" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 8 · Foundations</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Homeowner Advisory <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Panel</em>
         </h1>
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border: 2px dashed #d4af37; border-radius: 12px; padding: 22px; margin: 24px 0;">
@@ -17609,16 +17609,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <p style="margin: 0; color: #78350f; font-size: 13px;">For now: every operator should know we run this panel and what it's for. If a homeowner asks about it, the short answer is: "Bedrock convenes a panel of homeowners across our communities each cycle to tell us where we're falling short. It's a deliberate way to hear from people who've been critical of how we work."</p>
         </div>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this is — and what it isn't</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this is — and what it isn't</h2>
         <p>The Advisory Panel exists for one reason: to make sure Bedrock hears from homeowners we'd otherwise only see complain on Facebook or at meetings. Most management firms run satisfaction surveys nobody fills out. We run a deliberate, structured, small-group panel where the loudest critics get a seat at the table — and a charter that keeps the conversation productive.</p>
         <p><strong>It is:</strong> a service-feedback channel. The panel tells Bedrock how we should deliver our work — letter quality, response times, enforcement consistency, communication, what's broken about how we operate.</p>
         <p><strong>It is not:</strong> a policy body. Panel discussions don't decide ACC standards, fine schedules, or rule changes — that's the board's role at each community. We're crystal-clear about this in every session.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this exists</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Why this exists</h2>
         <p>When a homeowner is angry about how we managed a violation, an amenity, or a board communication, two things happen: they tell other homeowners, and they don't tell us — at least not in any form we can act on. The panel reverses that. Instead of arguing on Facebook, we invite the critic into a room where we have to listen and they have to be specific. The result is feedback we can actually use, and a measurable shift in how those critics describe Bedrock to their neighbors.</p>
         <p>It's also a franchise-grade story competitors can't match. Spectrum, Associa, and the large regionals send Net Promoter Score emails. Bedrock has a Homeowner Advisory Panel.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">Panel composition (10 seats)</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">Panel composition (10 seats)</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;"><strong>5 vocal critics</strong> — homeowners who've been publicly or directly critical of how Bedrock works. Sourced by name from Facebook screenshots, board meetings, formal complaints, and community-manager nominations.</li>
           <li style="margin-bottom: 6px;"><strong>3 constructive engaged homeowners</strong> — not necessarily satisfied, but pragmatic; they model productive conversation.</li>
@@ -17626,7 +17626,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ul>
         <p>Term is six months with optional re-up. Every community in our portfolio gets at least one seat where possible.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">The charter — what panelists agree to</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">The charter — what panelists agree to</h2>
         <ol style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">Current on dues; no active legal action against Bedrock or their HOA.</li>
           <li style="margin-bottom: 6px;">Chatham House Rule — what's said in the room stays in the room. Themes are shareable; attribution is not.</li>
@@ -17637,7 +17637,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </ol>
         <p>Violations = removal, no re-recycle next cycle.</p>
 
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover (once written)</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover (once written)</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">How operators talk about the panel when a homeowner asks</li>
           <li style="margin-bottom: 6px;">How to recognize and route panel-relevant feedback that surfaces in everyday operations</li>
@@ -17653,7 +17653,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <!-- Module 7 — Owner Reply → Violation Attachment (placeholder). -->
       <article id="module-owner-reply-attachment" class="training-module" style="display: none;">
         <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Module 7 · Email Triage Track</div>
-        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #1A3050); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
           Owner Reply → <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Violation</em>
         </h1>
         <div style="background: linear-gradient(135deg, #fef3c7 0%, #fffbeb 100%); border: 2px dashed #d4af37; border-radius: 12px; padding: 22px; margin: 24px 0;">
@@ -17664,7 +17664,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <p style="margin: 0 0 10px; color: #78350f; font-size: 14px; line-height: 1.55;">This workflow shipped today — when an intake might be about an open violation, the system suggests candidate violations and the operator attaches with one click. Needs a few weeks of real owner replies before we know what the operator actually trips on (false matches? missed matches? attaching to the wrong household?).</p>
           <p style="margin: 0; color: #78350f; font-size: 13px;">For now: open any Email Intelligence intake → scroll past the extraction blocks. If the dashed "Owner reply on a violation?" panel suggests a match, eyeball the address + score reasons before clicking Attach.</p>
         </div>
-        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #1A3050); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What this module will cover</h2>
         <ul style="padding-left: 22px;">
           <li style="margin-bottom: 6px;">How the candidate-matching scorer works (address signals, sender match, recency)</li>
           <li style="margin-bottom: 6px;">When to trust the top match vs. when to scroll the full list</li>
@@ -17824,14 +17824,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <div style="display: flex; align-items: center; gap: 10px;">
                 <span style="font-size: 28px;">${t.badge}</span>
                 <div>
-                  <div style="font-family: var(--font-serif, Georgia); font-size: 19px; font-weight: 500; color: var(--navy, #1A3050); line-height: 1.2;">${t.label}</div>
+                  <div style="font-family: var(--font-serif, Georgia); font-size: 19px; font-weight: 500; color: var(--navy, #0B1D34); line-height: 1.2;">${t.label}</div>
                   <div style="font-size: 12px; color: #64748b; margin-top: 2px;">${t.summary}</div>
                 </div>
               </div>
               ${statusPill}
             </div>
             <div style="height: 6px; background: #e2e8f0; border-radius: 3px; overflow: hidden; margin: 10px 0 12px;">
-              <div style="height: 100%; width: ${pct}%; background: ${earned ? '#16a34a' : '#1A3050'}; transition: width 0.3s ease;"></div>
+              <div style="height: 100%; width: ${pct}%; background: ${earned ? '#16a34a' : '#0B1D34'}; transition: width 0.3s ease;"></div>
             </div>
             <div style="font-size: 12px; color: #475569;">
               <div style="font-weight: 600; color: #1a3a5c; margin-bottom: 4px;">Required modules</div>
@@ -19803,7 +19803,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                 onmouseover="this.style.transform='translateY(-2px)'; this.style.boxShadow='0 6px 18px rgba(15,23,42,0.08)'; this.style.borderColor='#cbd5e1';"
                 onmouseout="this.style.transform=''; this.style.boxShadow=''; this.style.borderColor='#e2e8f0';">
           <div style="font-size:30px; line-height:1;">${t.icon}</div>
-          <div style="font-size:15px; font-weight:700; color:#1A3050;">${escapeHtml(t.label)}</div>
+          <div style="font-size:15px; font-weight:700; color:#0B1D34;">${escapeHtml(t.label)}</div>
           <div style="font-size:11.5px; color:#64748b; line-height:1.4;">${escapeHtml(t.note || '')}</div>
         </button>`;
     }).join('');
@@ -19828,7 +19828,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <label style="display:flex; gap:8px; align-items:flex-start; padding:8px 10px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; cursor:pointer;">
             <input type="checkbox" data-tile-key="${escapeHtml(key)}" ${checked} style="margin-top:2px;">
             <div style="flex:1; min-width:0;">
-              <div style="font-size:13px; color:#1A3050; font-weight:600;">${def.icon} ${escapeHtml(def.label)}</div>
+              <div style="font-size:13px; color:#0B1D34; font-weight:600;">${def.icon} ${escapeHtml(def.label)}</div>
               <div style="font-size:11px; color:#64748b;">${escapeHtml(def.note || '')}</div>
             </div>
           </label>`;
@@ -20653,20 +20653,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       output.textContent = data.guidance;
       if (Array.isArray(data.sources) && data.sources.length > 0) {
         const srcBlock = document.createElement('div');
-        srcBlock.style.cssText = 'margin-top:16px; padding:12px 14px; background:#f8fafc; border-left:3px solid #1A3050; border-radius:0 6px 6px 0; font-size:12px; color:#475569;';
+        srcBlock.style.cssText = 'margin-top:16px; padding:12px 14px; background:#f8fafc; border-left:3px solid #0B1D34; border-radius:0 6px 6px 0; font-size:12px; color:#475569;';
         const items = data.sources.map((s) => {
           const ocrTag = s.ocr
             ? ' <span style="font-size:10.5px; color:#92400e; background:#fef3c7; padding:1px 5px; border-radius:3px;">🔍 OCR\'d — spot-check</span>'
             : '';
           const matchTag = (s.sources && s.sources.length >= 2)
-            ? ` <span style="font-size:10.5px; color:#1A3050; opacity:0.6;">(${s.sources.join('+')})</span>`
+            ? ` <span style="font-size:10.5px; color:#0B1D34; opacity:0.6;">(${s.sources.join('+')})</span>`
             : '';
           const fname = String(s.filename || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
           const cname = String(s.community || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-          return `<li style="margin-bottom:4px;"><strong style="color:#1A3050;">${fname}</strong> <span style="opacity:0.7;">— ${cname} · ${s.chunk_count} chunk${s.chunk_count === 1 ? '' : 's'}</span>${matchTag}${ocrTag}</li>`;
+          return `<li style="margin-bottom:4px;"><strong style="color:#0B1D34;">${fname}</strong> <span style="opacity:0.7;">— ${cname} · ${s.chunk_count} chunk${s.chunk_count === 1 ? '' : 's'}</span>${matchTag}${ocrTag}</li>`;
         }).join('');
         srcBlock.innerHTML = `
-          <div style="font-weight:700; color:#1A3050; margin-bottom:8px; font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;">Based on these documents</div>
+          <div style="font-weight:700; color:#0B1D34; margin-bottom:8px; font-size:11.5px; letter-spacing:0.04em; text-transform:uppercase;">Based on these documents</div>
           <ul style="margin:0; padding-left:18px; line-height:1.5;">${items}</ul>
           <div style="margin-top:8px; font-size:10.5px; color:#94a3b8; line-height:1.5;">If the doc you expected isn't here, the system may not have it indexed yet — check the Documents tab.</div>
         `;
@@ -22614,7 +22614,7 @@ ${questionsPage}
           <div style="background:#fffbeb; border:1px solid #f3d894; border-left:4px solid #d4af37; border-radius:8px; padding:14px 16px; margin-bottom:8px;">
             <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
               <div style="flex:1; min-width:0;">
-                <div style="font-family:var(--font-serif, Georgia); font-size:16px; font-weight:500; color:var(--navy, #1A3050);">⚖️ ${escapeHtml(d.title)}</div>
+                <div style="font-family:var(--font-serif, Georgia); font-size:16px; font-weight:500; color:var(--navy, #0B1D34);">⚖️ ${escapeHtml(d.title)}</div>
                 ${meta ? `<div style="font-size:11.5px; color:#78350f; margin-top:3px;">${escapeHtml(meta)}</div>` : ''}
                 <div style="font-size:11px; color:#94a3b8; margin-top:4px;">${d.page_count || '?'} pages · ${d.chunk_count || 0} sections indexed · ingested ${new Date(d.ingested_at).toLocaleDateString()}</div>
                 ${d.notes ? `<div style="color:#78350f; font-size:11.5px; margin-top:4px; font-style:italic;">${escapeHtml(d.notes)}</div>` : ''}
@@ -22626,13 +22626,13 @@ ${questionsPage}
       el.innerHTML = `
         ${legalDocs.length > 0 ? `
           <div style="margin-bottom:18px;">
-            <h3 style="font-family:var(--font-serif, Georgia); font-size:18px; font-weight:500; color:var(--navy, #1A3050); margin:0 0 4px;">📚 Law <em style="font-style:italic; color:var(--gold, #D4AF37); font-weight:500;">Library</em></h3>
+            <h3 style="font-family:var(--font-serif, Georgia); font-size:18px; font-weight:500; color:var(--navy, #0B1D34); margin:0 0 4px;">📚 Law <em style="font-style:italic; color:var(--gold, #D4AF37); font-weight:500;">Library</em></h3>
             <p style="font-size:11.5px; color:#64748b; margin:0 0 10px;">Statute references the platform applies as the legal lens when triangulating answers. Reference only — confirm with counsel for legal advice.</p>
             ${legalCards}
           </div>` : ''}
         ${opDocs.length > 0 ? `
           <div>
-            <h3 style="font-family:var(--font-serif, Georgia); font-size:18px; font-weight:500; color:var(--navy, #1A3050); margin:0 0 10px;">🛠️ Operational Library</h3>
+            <h3 style="font-family:var(--font-serif, Georgia); font-size:18px; font-weight:500; color:var(--navy, #0B1D34); margin:0 0 10px;">🛠️ Operational Library</h3>
             ${opTable}
           </div>` : ''}
       `;
@@ -24404,7 +24404,7 @@ ${questionsPage}
         ? `ondragover="packetsDragOver(event, this)" ondragleave="packetsDragLeave(event, this)" ondrop="packetsDropOnCard(event, '${s.section_key}', this)"`
         : '';
       const dropHint = supportsDrop
-        ? `<div class="packets-drop-hint" style="display:none; pointer-events:none; position:absolute; inset:0; background:rgba(212,175,55,0.18); border:2px dashed #D4AF37; border-radius:6px; align-items:center; justify-content:center; color:#1A3050; font-weight:700; font-size:13px;">📥 Drop PDF here to extract this section</div>`
+        ? `<div class="packets-drop-hint" style="display:none; pointer-events:none; position:absolute; inset:0; background:rgba(212,175,55,0.18); border:2px dashed #D4AF37; border-radius:6px; align-items:center; justify-content:center; color:#0B1D34; font-weight:700; font-size:13px;">📥 Drop PDF here to extract this section</div>`
         : '';
 
       return `<div data-section-card="${s.section_key}" data-section-status="${s.status}" style="position:relative; border:1px solid #e0e0e0; border-left:4px solid ${statusColor}; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white; ${cardOpacity}" ${dropAttrs}>
@@ -29220,7 +29220,7 @@ ${questionsPage}
     if (!count || count <= 0) return { color: '#cbd5e1', label: '0 decisions' };
     if (count <= 3)           return { color: '#94B3C7', label: '1–3 decisions' };
     if (count <= 7)           return { color: '#5A7FA0', label: '4–7 decisions' };
-    return                       { color: '#1A3050', label: '8+ decisions' };
+    return                       { color: '#0B1D34', label: '8+ decisions' };
   }
 
   // ---- Tenure: how long the current owner has held the property ----
@@ -29231,7 +29231,7 @@ ${questionsPage}
     short:      { color: '#C9A53A', label: '1–3 years' },
     medium:     { color: '#94B3C7', label: '4–7 years' },
     long:       { color: '#5A7FA0', label: '8–14 years' },
-    very_long:  { color: '#1A3050', label: '15+ years' },
+    very_long:  { color: '#0B1D34', label: '15+ years' },
     unknown:    { color: '#cbd5e1', label: 'No county data' },
   };
   // ---- Investor flag: county records show owner mailing ≠ property address ----
@@ -29246,7 +29246,7 @@ ${questionsPage}
   const CMAP_VALUE_COLORS = {
     low:     { color: '#94B3C7', label: 'Lower third' },
     mid:     { color: '#5A7FA0', label: 'Middle third' },
-    high:    { color: '#1A3050', label: 'Upper third' },
+    high:    { color: '#0B1D34', label: 'Upper third' },
     unknown: { color: '#cbd5e1', label: 'No county data' },
   };
   // ---- Recent sale: changed hands within last 365 days ----
@@ -29659,10 +29659,10 @@ ${questionsPage}
 
     const addrLine = `${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}`;
     const ownerBlock = p.owner_name
-      ? `<div style="font-size:14px; font-weight:600; color:#1A3050;">${escapeHtml(p.owner_name)}</div>
+      ? `<div style="font-size:14px; font-weight:600; color:#0B1D34;">${escapeHtml(p.owner_name)}</div>
          <div style="font-size:12.5px; color:#475569; margin-top:2px;">
-           ${p.owner_email ? `<a href="mailto:${escapeHtml(p.owner_email)}" style="color:#1A3050;">${escapeHtml(p.owner_email)}</a><br>` : ''}
-           ${p.owner_phone ? `<a href="tel:${escapeHtml(p.owner_phone)}" style="color:#1A3050;">${escapeHtml(p.owner_phone)}</a>` : ''}
+           ${p.owner_email ? `<a href="mailto:${escapeHtml(p.owner_email)}" style="color:#0B1D34;">${escapeHtml(p.owner_email)}</a><br>` : ''}
+           ${p.owner_phone ? `<a href="tel:${escapeHtml(p.owner_phone)}" style="color:#0B1D34;">${escapeHtml(p.owner_phone)}</a>` : ''}
          </div>
          ${p.owned_since ? `<div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Owned since ${fmtDate(p.owned_since)}</div>` : ''}`
       : '<div style="color:#94a3b8; font-size:12.5px;">No owner of record</div>';
@@ -29694,7 +29694,7 @@ ${questionsPage}
       ? '<div style="color:#94a3b8; font-size:12.5px;">No open violations</div>'
       : vios.map((v) => `
           <div style="padding:8px 0; border-top:1px solid #f1f5f9;">
-            <div style="font-size:12.5px; color:#1A3050; font-weight:600;">${escapeHtml(v.violation_type || 'Violation')}</div>
+            <div style="font-size:12.5px; color:#0B1D34; font-weight:600;">${escapeHtml(v.violation_type || 'Violation')}</div>
             <div style="font-size:11.5px; color:#475569; margin-top:2px;">
               Stage: ${escapeHtml(v.current_stage || '—')} · opened ${fmtDate(v.opened_at)}
             </div>
@@ -29716,7 +29716,7 @@ ${questionsPage}
 
     body.innerHTML = `
       <div style="margin-bottom:14px;">
-        <div style="font-size:15px; font-weight:600; color:#1A3050;">${addrLine}</div>
+        <div style="font-size:15px; font-weight:600; color:#0B1D34;">${addrLine}</div>
         ${p.lot_number ? `<div style="font-size:11.5px; color:#94a3b8;">Lot ${escapeHtml(p.lot_number)}</div>` : ''}
       </div>
       ${section('Owner', ownerBlock)}
@@ -29787,7 +29787,7 @@ ${questionsPage}
       const renderViolation = (v) => {
         const lettersHtml = (v.letters || []).map((l) => {
           const downloadLink = l.library_document_id
-            ? `<a href="#" onclick="event.preventDefault(); cmapDownloadLetter('${l.id}', this)" style="color:#1A3050; text-decoration:underline;">📄 PDF</a>`
+            ? `<a href="#" onclick="event.preventDefault(); cmapDownloadLetter('${l.id}', this)" style="color:#0B1D34; text-decoration:underline;">📄 PDF</a>`
             : '<span style="color:#94a3b8;">no PDF on file</span>';
           const sourceBadge = l.source === 'vantaca_import'
             ? '<span style="background:#fef3c7; color:#78350f; padding:1px 6px; border-radius:99px; font-size:9.5px; font-weight:600; margin-left:4px;">Vantaca</span>'
@@ -29806,12 +29806,12 @@ ${questionsPage}
 
         const continuationBtn = v.is_open && v.suggested_next_stage
           ? `<button onclick="cmapAdvanceStage('${v.id}', '${v.suggested_next_stage}', '${escapeHtml(v.category_label || 'violation')}')" type="button"
-                     style="background:var(--gold, #D4AF37); color:var(--navy, #1A3050); border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
+                     style="background:var(--gold, #D4AF37); color:var(--navy, #0B1D34); border:none; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
               → ${escapeHtml(stageLabel[v.suggested_next_stage] || v.suggested_next_stage)}
             </button>`
           : '';
         const addLetterBtn = `<button onclick="cmapAttachLetter('${v.id}', '${escapeHtml(v.current_stage)}')" type="button"
-                     style="background:#fff; color:#1A3050; border:1px solid #d0d7de; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
+                     style="background:#fff; color:#0B1D34; border:1px solid #d0d7de; padding:4px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:6px;">
               + Attach letter
             </button>`;
         // Special-category renderer: lawn 10-day certified force-mow path
@@ -29829,7 +29829,7 @@ ${questionsPage}
                style="padding:10px; margin-bottom:8px; background:#fafafa; border:1px solid #e2e8f0; border-radius:6px;">
             <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
               <div>
-                <span style="font-weight:600; color:#1A3050;">${escapeHtml(v.category_label || 'Violation')}</span>
+                <span style="font-weight:600; color:#0B1D34;">${escapeHtml(v.category_label || 'Violation')}</span>
                 <span style="background:${color}; color:#fff; padding:2px 8px; border-radius:99px; font-size:10px; font-weight:600; margin-left:6px;">
                   ${escapeHtml(stageLabel[v.current_stage] || v.current_stage)}
                 </span>
@@ -30080,7 +30080,7 @@ ${questionsPage}
               No county data yet for this property.
             </div>
             <button onclick="cmapOpenAppraisalEditor('${escapeHtml(propertyId)}', null)" type="button"
-                    style="background:#1A3050; color:#fff; border:none; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">
+                    style="background:#0B1D34; color:#fff; border:none; padding:5px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer;">
               + Verify / add from county
             </button>
           </div>
@@ -30107,7 +30107,7 @@ ${questionsPage}
               <span style="font-weight:400; text-transform:none; color:#94a3b8;"> · as of ${fmtDate(latest.pull_date)}</span>
             </div>
             <button onclick='cmapOpenAppraisalEditor(${JSON.stringify(propertyId)}, ${JSON.stringify(latest)})' type="button"
-                    style="background:transparent; color:#1A3050; border:1px solid #d0d7de; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">
+                    style="background:transparent; color:#0B1D34; border:1px solid #d0d7de; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;">
               ✎ Verify / update
             </button>
           </div>

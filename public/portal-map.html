@@ -1,18 +1,18 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Community Map · Bedrock Homeowner Portal</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
 <style>
   * { box-sizing: border-box; }
   :root {
-    --navy: #1A3050;
+    --navy: #0B1D34;
     --navy-soft: #2A4870;
-    --navy-deep: #0B1424;
+    --navy-deep: #0B1D34;
     --gold: #D4AF37;
     --gold-bright: #e8c96e;
     --gold-faint: rgba(212, 175, 55, 0.08);
@@ -24,7 +24,7 @@
     --rule: #E5E3DA;
     --shadow-soft: 0 1px 3px rgba(26, 48, 80, 0.06), 0 4px 12px rgba(26, 48, 80, 0.04);
     --shadow-hover: 0 4px 12px rgba(26, 48, 80, 0.1), 0 12px 32px rgba(26, 48, 80, 0.08);
-    --font-serif: 'Playfair Display', Georgia, serif;
+    --font-serif: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
     --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
     --radius: 10px;
@@ -98,7 +98,7 @@
     box-shadow: -8px 0 24px rgba(26, 48, 80, 0.04);
   }
   .detail-hero {
-    background: linear-gradient(135deg, #1A3050 0%, #2A4870 100%);
+    background: linear-gradient(135deg, #0B1D34 0%, #2A4870 100%);
     color: var(--cream);
     padding: 24px 26px 22px;
     position: relative;
@@ -651,7 +651,7 @@ function renderMap(data) {
     const bdy = L.geoJSON(data.boundary, {
       style: {
         color: '#D4AF37', weight: 3,
-        fillColor: '#1A3050', fillOpacity: 0.04,
+        fillColor: '#0B1D34', fillOpacity: 0.04,
         dashArray: '8 6', opacity: 0.95,
       },
     }).addTo(map);

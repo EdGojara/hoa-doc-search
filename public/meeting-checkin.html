@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
 <meta charset="UTF-8">
@@ -6,7 +6,7 @@
 <title>Meeting Check-in · Bedrock</title>
 <link rel="stylesheet" href="/brand.css">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,500;0,600;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
   * { box-sizing: border-box; }
   :root {
@@ -16,7 +16,7 @@
     --ink-mid: #4a4a4a;
     --ink-light: #7a7a7a;
     --rule-light: #E5E3DA;
-    --navy: #1A3050;
+    --navy: #0B1D34;
     --gold: #D4AF37;
     --good: #1a7a35;
     --bad:  #962a2a;
@@ -410,7 +410,7 @@ async function initBedrockAuth() {
       staff.placeholder = '';
       staff.title = 'Signed in as ' + (me.email || me.full_name) + ' — auto-attributed';
       staff.style.background = '#f5f4ed';
-      staff.style.color = '#1a3050';
+      staff.style.color = '#0B1D34';
       staff.style.fontWeight = '600';
     }
   } catch (e) {
