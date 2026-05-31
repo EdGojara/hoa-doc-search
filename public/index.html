@@ -12,11 +12,12 @@
     body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #f0f2f5; height: 100vh; display: flex; flex-direction: column; }
 
     .header { background: #1a3a5c; color: white; padding: 16px 20px; display: flex; align-items: center; gap: 14px; }
-    .header-mark { width: 28px; height: 36px; flex-shrink: 0; display: flex; align-items: center; }
-    .header-mark svg { width: 100%; height: 100%; display: block; }
-    .header-text h1 { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; font-size: 19px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.1; }
-    .header-text h1 em { font-style: italic; color: #D4AF37; font-weight: 500; }
-    .header-text p { font-family: 'Inter', -apple-system, sans-serif; font-size: 11px; opacity: 0.7; margin-top: 3px; letter-spacing: 0.08em; text-transform: uppercase; }
+    .header-mark { width: 36px; height: 46px; flex-shrink: 0; display: flex; align-items: center; }
+    .header-mark img,
+    .header-mark svg { width: 100%; height: 100%; display: block; object-fit: contain; }
+    .header-text h1 { font-family: 'Cormorant Garamond', 'Playfair Display', Georgia, serif; font-size: 20px; font-weight: 600; letter-spacing: 0.02em; line-height: 1.1; text-transform: uppercase; }
+    .header-text h1 em { font-style: normal; color: #D4AF37; font-weight: 600; }
+    .header-text p { font-family: 'Inter', -apple-system, sans-serif; font-size: 11px; opacity: 0.75; margin-top: 3px; letter-spacing: 0.10em; text-transform: uppercase; }
     .header-spacer { flex: 1; }
     .header-voice-link {
       background: rgba(255,255,255,0.12);
@@ -300,15 +301,11 @@
 </script>
 
 <div class="header">
-  <div class="header-mark" aria-label="Bedrock cornerstone mark">
-    <svg viewBox="0 0 88 110" xmlns="http://www.w3.org/2000/svg" preserveAspectRatio="xMidYMid meet">
-      <polygon points="0,0 88,0 84,28 4,28" fill="#D4AF37"/>
-      <polygon points="5,34 83,34 78,68 10,68" fill="#D4AF37"/>
-      <polygon points="11,74 77,74 73,110 15,110" fill="#D4AF37"/>
-    </svg>
+  <div class="header-mark" aria-label="Bedrock mark">
+    <img src="/brand-assets/bedrock-mark.svg" alt="Bedrock mark">
   </div>
   <div class="header-text">
-    <h1>Bedrock <em>Intelligence</em></h1>
+    <h1>BEDROCK <em>INTELLIGENCE</em></h1>
     <p>trustEd · operations platform</p>
   </div>
   <div class="header-spacer"></div>
