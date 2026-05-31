@@ -27735,12 +27735,16 @@ ${questionsPage}
       document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'}`;
 
       // Show/hide the Close + Reopen buttons based on the cycle's status.
-      // open    → Close button visible (the path forward to close the period)
+      // planned → Close button visible (skip-open path: cycle was created
+      //           but never explicitly flipped to "open"; nominations still
+      //           accepted via the date check, but operationally done)
+      // open    → Close button visible (normal path)
       // closed  → Reopen button visible (admin-fix if closed by mistake)
-      // planned / finalized → both hidden (no action available from this UI)
+      // finalized → both hidden (terminal state)
       const closeBtn = document.getElementById('nomCloseCycleBtn');
       const reopenBtn = document.getElementById('nomReopenCycleBtn');
-      if (closeBtn) closeBtn.style.display = cycle.status === 'open' ? 'inline-block' : 'none';
+      const canClose = cycle.status === 'open' || cycle.status === 'planned';
+      if (closeBtn) closeBtn.style.display = canClose ? 'inline-block' : 'none';
       if (reopenBtn) reopenBtn.style.display = cycle.status === 'closed' ? 'inline-block' : 'none';
       // Hydrate the electronic-voting toggle from the saved cycle so the
       // form reflects what's stored when staff reopens an existing cycle.

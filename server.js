@@ -6135,8 +6135,14 @@ app.patch('/api/nominations/cycles/:id', async (req, res) => {
     // permitted for operator-fix scenarios (operator hit Close by mistake before the
     // real deadline). closed→finalized happens after the slate is locked + the Annual
     // Meeting Notice is generated. finalized is terminal.
+    // In practice, the "planned" → "open" transition is often skipped — the
+    // cycle gets created with status='planned' and the public form just
+    // accepts nominations anyway because /api/nominations/public checks the
+    // open/close DATES, not the status string. So a cycle can be sitting in
+    // 'planned' even though homeowners have been submitting for weeks. When
+    // the operator hits Close, allow planned → closed directly.
     const STATUS_TRANSITIONS = {
-      planned: new Set(['open']),
+      planned: new Set(['open', 'closed']),  // skip-open path: planned → closed
       open: new Set(['closed', 'planned']),
       closed: new Set(['finalized', 'open']),
       finalized: new Set(),
