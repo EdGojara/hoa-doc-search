@@ -1510,6 +1510,8 @@
         <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF <span style="font-weight:400; color:#94A3B8; font-size:11px;">(includes tear-off form)</span></button>
         <button class="secondary-btn" id="nomPaperFormBtn" onclick="nomGeneratePaperForm()" disabled style="opacity:0.5;">📝 Paper form only</button>
         <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5;" title="Pulls every nomination on the slate and generates the 4-page Annual Meeting Notice + ballot + bios">🗳️ Annual Meeting Notice <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate is set)</span></button>
+        <button id="nomCloseCycleBtn" onclick="nomCloseCycle()" style="display:none; background:#b45309; color:#fff; border:1px solid #b45309; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;" title="Mark this cycle's nomination period as closed. No new submissions accepted after this; ready to lock the slate + generate the Annual Meeting Notice.">🛑 Close call for nominations</button>
+        <button id="nomReopenCycleBtn" onclick="nomReopenCycle()" style="display:none; background:#fff; color:#475569; border:1px solid #cbd5e1; font-size:13px; padding:7px 14px; border-radius:8px; cursor:pointer;" title="Reopen the cycle (admin-fix if you closed it by mistake)">↩ Reopen</button>
         <span id="nomDraftStatus" style="font-size:12px; color:#6B7280; flex-basis:100%; margin-top:4px;"></span>
       </div>
       <div id="nomCreateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
@@ -27681,6 +27683,15 @@ ${questionsPage}
     if (cycle) {
       document.getElementById('nomPanelTitle').textContent = `${cycle.community_name} — ${cycle.annual_meeting_date}`;
       document.getElementById('nomPanelMeta').textContent = `${cycle.status} · ${cycle.seats_open} seat${cycle.seats_open === 1 ? '' : 's'}`;
+
+      // Show/hide the Close + Reopen buttons based on the cycle's status.
+      // open    → Close button visible (the path forward to close the period)
+      // closed  → Reopen button visible (admin-fix if closed by mistake)
+      // planned / finalized → both hidden (no action available from this UI)
+      const closeBtn = document.getElementById('nomCloseCycleBtn');
+      const reopenBtn = document.getElementById('nomReopenCycleBtn');
+      if (closeBtn) closeBtn.style.display = cycle.status === 'open' ? 'inline-block' : 'none';
+      if (reopenBtn) reopenBtn.style.display = cycle.status === 'closed' ? 'inline-block' : 'none';
       // Hydrate the electronic-voting toggle from the saved cycle so the
       // form reflects what's stored when staff reopens an existing cycle.
       try {
@@ -28192,6 +28203,74 @@ ${questionsPage}
       alert('Paper form render failed: ' + e.message);
     } finally {
       btn.disabled = false; btn.innerHTML = originalLabel;
+    }
+  }
+
+  // Close the call for nominations on the active cycle. Flips status to
+  // 'closed', writes an audit event, refreshes the UI. After close: no new
+  // member submissions accepted; the next operator step is to lock the slate
+  // (order + bios) then click 🗳️ Annual Meeting Notice to generate the ballot.
+  async function nomCloseCycle() {
+    if (!nomActiveCycleId) { alert('No active cycle selected.'); return; }
+    const cycle = nomCycles.find(c => c.id === nomActiveCycleId);
+    const confirmMsg =
+      `Close the call for nominations?\n\n` +
+      `Community: ${cycle ? cycle.community_name : '(unknown)'}\n` +
+      `Meeting date: ${cycle ? cycle.annual_meeting_date : '(unknown)'}\n\n` +
+      `After closing, no new nominations can be submitted by members. ` +
+      `Internal staff entries still work for slate adjustments.\n\n` +
+      `If you close by mistake, the Reopen button puts it back to "open".\n\n` +
+      `Proceed?`;
+    if (!confirm(confirmMsg)) return;
+    const btn = document.getElementById('nomCloseCycleBtn');
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.textContent = '⏳ Closing…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'closed' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Refresh the cycle list + reopen this cycle so the buttons update
+      await nomLoadCycles();
+      await nomOpenCycle(nomActiveCycleId);
+      alert(`Nominations closed.\n\nNext steps:\n  1. Confirm the slate (candidate order + bios)\n  2. Click 🗳️ Annual Meeting Notice to generate ballot + bios PDF\n  3. Mail + email the notice to members (Texas §209.0056 — 10–60 day notice)`);
+    } catch (e) {
+      alert('Close failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  }
+
+  // Reopen the cycle — admin-fix path for closed-by-mistake. PATCH status
+  // back to 'open'. Server-side guard rejects this if the cycle is already
+  // finalized (terminal state).
+  async function nomReopenCycle() {
+    if (!nomActiveCycleId) { alert('No active cycle selected.'); return; }
+    if (!confirm('Reopen this cycle for nominations?\n\nUse this only if the close was a mistake. Members will be able to submit nominations again.')) return;
+    const btn = document.getElementById('nomReopenCycleBtn');
+    btn.disabled = true;
+    const orig = btn.innerHTML;
+    btn.textContent = '⏳ Reopening…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'open' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await nomLoadCycles();
+      await nomOpenCycle(nomActiveCycleId);
+    } catch (e) {
+      alert('Reopen failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
     }
   }
 

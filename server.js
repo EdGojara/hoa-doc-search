@@ -6127,8 +6127,20 @@ app.get('/api/nominations/cycles/:id', async (req, res) => {
 // without leaking arbitrary client writes into the cycle row.
 app.patch('/api/nominations/cycles/:id', async (req, res) => {
   try {
-    const ALLOWED = new Set(['candidate_sort_mode']);
+    const ALLOWED = new Set(['candidate_sort_mode', 'status']);
     const VALID_SORT_MODES = new Set(['alphabetical', 'incumbents_first', 'manual']);
+    const VALID_STATUSES = new Set(['planned', 'open', 'closed', 'finalized']);
+    // Allowed status transitions (key = current status, value = set of allowed targets).
+    // The cycle can advance forward in normal use; backward moves (closed→open) are
+    // permitted for operator-fix scenarios (operator hit Close by mistake before the
+    // real deadline). closed→finalized happens after the slate is locked + the Annual
+    // Meeting Notice is generated. finalized is terminal.
+    const STATUS_TRANSITIONS = {
+      planned: new Set(['open']),
+      open: new Set(['closed', 'planned']),
+      closed: new Set(['finalized', 'open']),
+      finalized: new Set(),
+    };
     const body = req.body || {};
     const patch = {};
     for (const [k, v] of Object.entries(body)) {
@@ -6139,7 +6151,32 @@ app.patch('/api/nominations/cycles/:id', async (req, res) => {
         error: `candidate_sort_mode must be one of: ${[...VALID_SORT_MODES].join(', ')}`,
       });
     }
+    if ('status' in patch && !VALID_STATUSES.has(patch.status)) {
+      return res.status(400).json({
+        error: `status must be one of: ${[...VALID_STATUSES].join(', ')}`,
+      });
+    }
     if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing to update' });
+
+    // If status is changing, verify the transition is legal given the current value
+    if ('status' in patch) {
+      const { data: current } = await supabase
+        .from('nomination_cycles')
+        .select('status')
+        .eq('id', req.params.id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .maybeSingle();
+      if (!current) return res.status(404).json({ error: 'cycle not found' });
+      if (current.status !== patch.status) {
+        const allowed = STATUS_TRANSITIONS[current.status] || new Set();
+        if (!allowed.has(patch.status)) {
+          return res.status(400).json({
+            error: `illegal status transition: ${current.status} → ${patch.status}. Allowed from "${current.status}": ${[...allowed].join(', ') || 'none (terminal)'}`,
+          });
+        }
+      }
+    }
+
     patch.updated_at = new Date().toISOString();
 
     const { data, error } = await supabase
@@ -6151,6 +6188,19 @@ app.patch('/api/nominations/cycles/:id', async (req, res) => {
       .single();
     if (error) return res.status(500).json({ error: error.message });
     if (!data) return res.status(404).json({ error: 'cycle not found' });
+
+    // Audit log — capture status transitions so we can prove when the operator
+    // closed the period. Falls back silently if the audit table doesn't exist yet.
+    if ('status' in patch) {
+      try {
+        await supabase.from('nomination_events').insert({
+          cycle_id: data.id,
+          event_type: 'status_change',
+          event_data: { new_status: patch.status, changed_at: patch.updated_at },
+        });
+      } catch (_) { /* audit best-effort */ }
+    }
+
     res.json({ cycle: data });
   } catch (err) {
     res.status(500).json({ error: err.message });
