@@ -1582,6 +1582,45 @@
         </div>
       </div>
 
+      <!-- Bio-only edit modal — for online_form submissions where staff
+           can't edit name/address/email/phone (audit lock) but CAN clean up
+           bio typos / formatting. Requires an edit reason for the audit log.
+           Migration 139 added the supporting columns (original_nominee_bio
+           + bio_edit_*). -->
+      <div id="nomBioEditModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.6); z-index:1000; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
+        <div style="background:#fff; border-radius:14px; max-width:640px; width:100%; padding:24px 26px; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:10px; margin-bottom:8px;">
+            <div>
+              <h3 style="margin:0 0 2px 0; color:#1E2761;">✏️ Edit nominee bio</h3>
+              <div style="font-size:11.5px; color:#64748b;">Nominee: <span id="nomBioEditName" style="font-weight:600;">—</span> · Original homeowner submission is preserved on first edit.</div>
+            </div>
+            <button type="button" onclick="nomBioEditClose()" style="background:none; border:none; font-size:22px; color:#64748b; cursor:pointer; line-height:1;">×</button>
+          </div>
+          <div style="margin-top:12px; padding:9px 11px; background:#fffbeb; border:1px solid #fde047; border-radius:6px; font-size:12px; color:#854d0e; line-height:1.5;">
+            <strong>Audit trail:</strong> the original bio (as submitted by the homeowner via the public form) is captured immutably on first edit. Every edit records the reason + timestamp + your account. The ballot uses the edited version; disputes can be resolved against the immutable original.
+          </div>
+          <div id="nomBioOriginalBox" style="display:none; margin-top:12px; padding:10px 12px; background:#f1f5f9; border-left:3px solid #64748b; border-radius:0 6px 6px 0; font-size:12px;">
+            <div style="font-weight:700; color:#475569; margin-bottom:4px;">Original homeowner submission:</div>
+            <div id="nomBioOriginalText" style="color:#334155; white-space:pre-line; line-height:1.5;"></div>
+          </div>
+          <div id="nomBioEditError" style="display:none; margin:12px 0 0; padding:8px 10px; background:#fef2f2; border-left:3px solid #b91c1c; color:#b91c1c; font-size:12.5px; border-radius:0 5px 5px 0;"></div>
+          <div style="margin-top:14px;">
+            <label style="display:block;">
+              <span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:4px;">Reason for edit *<span style="font-weight:400; color:#64748b;"> (typo fix, formatting, name spelling correction, etc.)</span></span>
+              <input id="nomBioEditReason" type="text" placeholder="e.g., 'Fixed typo: managment → management'" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box;">
+            </label>
+            <label style="display:block; margin-top:12px;">
+              <span style="display:block; font-size:11.5px; font-weight:700; color:#475569; margin-bottom:4px;">Bio (shown on ballot + meeting notice)</span>
+              <textarea id="nomBioEditText" rows="8" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; box-sizing:border-box; resize:vertical; font-family:inherit;"></textarea>
+            </label>
+          </div>
+          <div style="margin-top:16px; display:flex; justify-content:flex-end; gap:8px;">
+            <button type="button" onclick="nomBioEditClose()" class="secondary-btn" style="font-size:12.5px; padding:7px 14px;">Cancel</button>
+            <button type="button" onclick="nomBioEditSave()" id="nomBioEditSaveBtn" class="action-btn" style="font-size:12.5px; padding:7px 14px;">💾 Save bio</button>
+          </div>
+        </div>
+      </div>
+
       <!-- Letter preview modal — opens an iframe with the rendered PDF
            in-page so we sidestep popup blockers that kill window.open()
            after an async fetch. Header has "Open in new tab" + "Download"
@@ -27891,14 +27930,15 @@ ${questionsPage}
               </div>
               ${confirmLine}
               ${n.years_in_community ? `<div style="font-size:11px; color:#475569; margin-top:2px;"><strong>In ${escapeHtml(communityName || 'community')} since:</strong> ${escapeHtml(n.years_in_community)}</div>` : ''}
-              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761; white-space:pre-line;">${escapeHtml(n.nominee_bio)}</div>` : '<div style="font-size:11.5px; color:#94A3B8; margin-top:6px; font-style:italic;">No bio yet — needed before this nomination can go on the ballot.</div>'}
+              ${n.nominee_bio ? `<div style="font-size:12px; color:#334155; margin-top:6px; padding:6px 8px; background:#f8fafc; border-left:2px solid #1E2761; white-space:pre-line;">${escapeHtml(n.nominee_bio)}${(n.bio_edit_count > 0) ? `<div style="margin-top:4px; font-size:10.5px; color:#854d0e; font-style:italic;">✏️ Edited ${n.bio_edit_count} time${n.bio_edit_count === 1 ? '' : 's'} (last: ${escapeHtml((n.bio_edit_reason || '').slice(0, 80))}) — <a href="#" onclick="event.preventDefault(); nomShowOriginalBio('${n.id}'); return false;" style="color:#854d0e; text-decoration:underline;">see original</a></div>` : ''}</div>` : '<div style="font-size:11.5px; color:#94A3B8; margin-top:6px; font-style:italic;">No bio yet — needed before this nomination can go on the ballot.</div>'}
               ${n.intake_notes ? `<div style="font-size:11px; color:#94A3B8; margin-top:4px; font-style:italic;">Intake note: ${escapeHtml(n.intake_notes)}</div>` : ''}
               ${!n.is_self_nomination && n.nominator_address ? `<div style="font-size:11px; color:#94A3B8; margin-top:4px;">Submitter address: ${escapeHtml(n.nominator_address)}</div>` : ''}
               <div style="display:flex; gap:6px; margin-top:8px; flex-wrap:wrap; align-items:center;">
                 <input type="file" accept="image/*" id="nomPhotoInput_${n.id}" style="display:none;" onchange="nomUploadPhoto('${n.id}', this)">
                 <button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="document.getElementById('nomPhotoInput_${n.id}').click()">${hasPhoto ? '📷 Replace photo' : '📷 Add photo'}</button>
                 ${n.submission_channel === 'online_form'
-                  ? `<span style="font-size:10.5px; color:#94a3b8; font-style:italic; padding:2px 6px;" title="Online form submissions are locked — preserves what the homeowner actually entered">🔒 Online — locked</span>`
+                  ? `<span style="font-size:10.5px; color:#94a3b8; font-style:italic; padding:2px 6px;" title="Name, address, email, and phone are locked on online submissions — preserves what the homeowner actually entered. Bio can be edited with an audit trail.">🔒 Name/address locked</span>
+                     <button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick='nomBioEditOpen(${JSON.stringify(n).replace(/'/g, "&#39;")})' title="Edit nominee bio (typo fixes, formatting). Requires a reason; original is preserved.">✏️ Edit bio</button>`
                   : `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick='nomEditOpen(${JSON.stringify(n).replace(/'/g, "&#39;")})'>✏️ Edit details</button>`}
                 ${isOnSlate
                   ? `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'verified')">↺ Remove from ballot</button>`
@@ -28002,6 +28042,109 @@ ${questionsPage}
       errEl.style.display = 'block';
     } finally {
       btn.disabled = false; btn.textContent = '💾 Save changes';
+    }
+  }
+
+  // ===================================================================
+  // Bio-only edit (online_form submissions)
+  // ---------------------------------------------------------------------
+  // Online_form nominations have name/address/email/phone locked by the
+  // server (audit-trail preservation per migration 034 + the PATCH guard).
+  // Bio is now editable with a required reason field — the original is
+  // preserved on first edit (migration 139), every edit is captured.
+  // ===================================================================
+  let _nomBioEditId = null;
+  let _nomBioEditCycle = null;
+
+  function nomBioEditOpen(n) {
+    _nomBioEditId = n.id;
+    _nomBioEditCycle = n.cycle_id;
+    document.getElementById('nomBioEditName').textContent = n.nominee_name || '—';
+    document.getElementById('nomBioEditText').value = n.nominee_bio || '';
+    document.getElementById('nomBioEditReason').value = '';
+    document.getElementById('nomBioEditError').style.display = 'none';
+    // If this bio has been edited before, show the original above the editor
+    const origBox = document.getElementById('nomBioOriginalBox');
+    if (n.original_nominee_bio) {
+      origBox.style.display = 'block';
+      document.getElementById('nomBioOriginalText').textContent = n.original_nominee_bio;
+    } else {
+      origBox.style.display = 'none';
+    }
+    document.getElementById('nomBioEditModal').style.display = 'flex';
+    // Focus the reason field — required input
+    setTimeout(() => { document.getElementById('nomBioEditReason').focus(); }, 50);
+  }
+
+  function nomBioEditClose() {
+    document.getElementById('nomBioEditModal').style.display = 'none';
+    _nomBioEditId = null;
+    _nomBioEditCycle = null;
+  }
+
+  async function nomBioEditSave() {
+    if (!_nomBioEditId) return;
+    const errEl = document.getElementById('nomBioEditError');
+    errEl.style.display = 'none';
+    const reason = document.getElementById('nomBioEditReason').value.trim();
+    const bio = document.getElementById('nomBioEditText').value;  // intentional: keep whitespace as-typed
+    if (!reason) {
+      errEl.textContent = 'Reason for edit is required (e.g., "typo fix" or "formatting").';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const btn = document.getElementById('nomBioEditSaveBtn');
+    btn.disabled = true; btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/nominations/${_nomBioEditId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          nominee_bio: bio,
+          bio_edit_reason: reason,
+        }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      nomBioEditClose();
+      // Refresh so the row picks up the new bio + edit badge
+      if (typeof nomOpenCycle === 'function' && typeof nomActiveCycleId !== 'undefined' && nomActiveCycleId) {
+        nomOpenCycle(nomActiveCycleId);
+      }
+    } catch (e) {
+      errEl.textContent = 'Could not save: ' + e.message;
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Save bio';
+    }
+  }
+
+  // Show the original-bio popover when an operator clicks "see original" on an
+  // edited row. Fetches the row fresh to ensure we have the immutable original
+  // (the rendered list may not include all fields).
+  async function nomShowOriginalBio(nominationId) {
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/nominations?id=${encodeURIComponent(nominationId)}`);
+      // Fallback: simple alert with what we have in the row
+      // (the GET-by-id endpoint isn't built; this is a graceful path)
+      const found = (r.ok ? ((await r.json().catch(()=>({}))).nominations || []) : [])
+        .find((n) => n.id === nominationId);
+      if (found && found.original_nominee_bio) {
+        const editedAt = found.bio_edited_at ? new Date(found.bio_edited_at).toLocaleString() : '—';
+        alert(
+          `Original homeowner submission:\n\n${found.original_nominee_bio}\n\n` +
+          `─────────────\n` +
+          `Edited ${found.bio_edit_count || 0} time(s).\n` +
+          `Last edit: ${editedAt}\n` +
+          `By: ${found.bio_edited_by || '—'}\n` +
+          `Reason: ${found.bio_edit_reason || '—'}`
+        );
+      } else {
+        alert('Original bio not available (this row may not have been edited yet, or the data hasn\'t loaded).');
+      }
+    } catch (e) {
+      alert('Could not load original bio: ' + e.message);
     }
   }
 

@@ -6585,16 +6585,51 @@ app.patch('/api/nominations/:id', async (req, res) => {
       .maybeSingle();
     if (!prior) return res.status(404).json({ error: 'nomination not found' });
 
-    // GUARD: nominee_* fields are immutable on online_form submissions.
-    // The homeowner submitted those values themselves; staff editing them
-    // afterward would destroy the audit trail of what the homeowner said.
-    // (Paper/email/in-person intakes don't have this constraint — they
-    // were typed by staff from a paper form or phone call to begin with.)
-    const triedToEditNomineeFields = NOMINEE_FIELDS.some((k) => k in patch);
-    if (triedToEditNomineeFields && prior.submission_channel === 'online_form') {
+    // GUARD: nominee_* fields are immutable on online_form submissions —
+    // WITH ONE EXCEPTION: nominee_bio. Bios get typos, formatting glitches,
+    // line-break weirdness from copy-paste. Sending the Annual Meeting
+    // Notice/ballot with embarrassing typos in candidate bios is its own
+    // legal-and-reputational risk, so we permit edits to nominee_bio AS
+    // LONG AS the original is preserved (in original_nominee_bio) and
+    // every edit captures who/when/why (migration 139).
+    //
+    // Other nominee_* fields (name, address, email, phone) stay locked.
+    // Those are identity + delivery fields where staff editing has a
+    // different risk profile — if Bedrock changes a homeowner's recorded
+    // address after they submitted, the homeowner can rightly object.
+    const NON_BIO_NOMINEE_FIELDS = NOMINEE_FIELDS.filter((k) => k !== 'nominee_bio');
+    const triedToEditNonBioFields = NON_BIO_NOMINEE_FIELDS.some((k) => k in patch);
+    if (triedToEditNonBioFields && prior.submission_channel === 'online_form') {
       return res.status(403).json({
-        error: 'online_form submissions cannot be edited (preserves what the homeowner actually submitted). Only status and manager_notes are editable on online nominations.',
+        error: 'online_form submissions cannot have name/address/email/phone edited (preserves what the homeowner actually submitted). nominee_bio is editable with a bio_edit_reason; manager_notes is always editable.',
       });
+    }
+
+    // If nominee_bio is being edited on an online_form submission, require
+    // an edit reason + capture the audit trail. Migration 139 added the
+    // supporting columns (original_nominee_bio + bio_edited_*).
+    if ('nominee_bio' in patch && prior.submission_channel === 'online_form') {
+      const reason = String((req.body && req.body.bio_edit_reason) || '').trim();
+      if (!reason) {
+        return res.status(400).json({
+          error: 'bio_edit_reason is required when editing nominee_bio on an online_form submission (e.g., "typo fix", "formatting", "name spelling correction"). Captures why the bio was changed for the audit log.',
+        });
+      }
+      // Re-read prior with the audit columns so we know if this is the first
+      // edit (in which case we need to capture the original).
+      const { data: priorBio } = await supabase
+        .from('nominations')
+        .select('nominee_bio, original_nominee_bio, bio_edit_count')
+        .eq('id', req.params.id)
+        .maybeSingle();
+      if (priorBio && !priorBio.original_nominee_bio) {
+        // First edit — preserve the original homeowner-submitted text.
+        patch.original_nominee_bio = priorBio.nominee_bio || '';
+      }
+      patch.bio_edited_at = new Date().toISOString();
+      patch.bio_edited_by = String((req.body && req.body.actor) || 'staff');
+      patch.bio_edit_reason = reason;
+      patch.bio_edit_count = (priorBio?.bio_edit_count || 0) + 1;
     }
 
     const { data, error } = await supabase
