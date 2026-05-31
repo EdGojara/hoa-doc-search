@@ -448,6 +448,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/builders\/status\/[^/]+$/,            // /builders/status/:reference — builder submission status lookup
   /^\/august-meadows-submission-form\.html$/, // standalone printable form for DRB's June batch (Karla's email-form workflow)
   /^\/forms\/august-meadows-submission\.pdf$/, // server-rendered PDF version of the same form (puppeteer print)
+  /^\/brand-preview\.html$/,                  // brand identity preview page (the new 2026-05-31 refresh)
+  /^\/brand-assets\//,                        // static brand assets (mark, lockup, email logos)
   /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
   /^\/portal-login\.html$/,                 // magic-link entry page
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)

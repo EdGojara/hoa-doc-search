@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Brand Preview · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  body {
+    margin: 0; padding: 0;
+    background: #F2F4F7;
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #0B1D34;
+  }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 40px 32px; }
+  h1.page {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 600;
+    font-size: 36px;
+    letter-spacing: 0.02em;
+    margin: 0 0 4px;
+    color: #0B1D34;
+  }
+  h1.page em { font-style: normal; color: #D4AF37; }
+  .lede {
+    font-size: 14px; color: #6B7280; margin: 0 0 32px;
+  }
+  .section {
+    background: #fff; border-radius: 12px;
+    padding: 28px 32px; margin-bottom: 24px;
+    box-shadow: 0 1px 3px rgba(15,23,42,0.04);
+    border: 1px solid #e2e8f0;
+  }
+  .section h2 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 600;
+    font-size: 22px;
+    margin: 0 0 4px;
+    color: #0B1D34;
+    letter-spacing: 0.01em;
+  }
+  .section .help {
+    font-size: 12.5px; color: #6B7280;
+    margin: 0 0 18px;
+  }
+  /* ----- Mark previews ----- */
+  .mark-row {
+    display: flex; align-items: flex-end; gap: 36px; flex-wrap: wrap;
+    padding: 24px 0;
+    border-top: 1px solid #f1f5f9;
+  }
+  .mark-cell { text-align: center; }
+  .mark-cell img { display: block; margin: 0 auto 8px; }
+  .mark-cell .label {
+    font-size: 11px; color: #6B7280; text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+  .mark-row.dark {
+    background: #0B1D34; border-radius: 10px; margin-top: 18px;
+    padding: 28px 24px;
+  }
+  .mark-row.dark .label { color: #a8b2c4; }
+
+  /* ----- Color palette ----- */
+  .palette { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+  .swatch {
+    border-radius: 8px; overflow: hidden;
+    border: 1px solid #e2e8f0;
+  }
+  .swatch .chip { height: 110px; }
+  .swatch .meta {
+    background: #fff; padding: 10px 12px;
+    font-size: 12px;
+  }
+  .swatch .meta strong { display: block; font-size: 13px; color: #0B1D34; }
+  .swatch .meta .hex { font-family: 'JetBrains Mono', monospace; color: #6B7280; }
+
+  /* ----- Typography ----- */
+  .type-sample {
+    padding: 14px 0; border-top: 1px solid #f1f5f9;
+  }
+  .type-sample:first-child { border-top: 0; padding-top: 0; }
+  .type-sample .label {
+    font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+    color: #6B7280; margin-bottom: 4px;
+  }
+  .type-sample .demo { color: #0B1D34; }
+  .type-sample.serif .demo {
+    font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 600;
+    font-size: 32px; letter-spacing: 0.02em;
+  }
+  .type-sample.serif-italic .demo {
+    font-family: 'Cormorant Garamond', Georgia, serif; font-weight: 400;
+    font-style: italic; font-size: 24px;
+  }
+  .type-sample.sans .demo {
+    font-family: 'Inter', sans-serif; font-weight: 500; font-size: 22px;
+  }
+  .type-sample.mono .demo {
+    font-family: 'JetBrains Mono', monospace; font-weight: 400; font-size: 14px;
+    letter-spacing: 0.04em;
+  }
+
+  /* ----- Lockups (rendered) ----- */
+  .lockup-row {
+    padding: 28px 0; border-top: 1px solid #f1f5f9;
+    display: flex; align-items: flex-start; gap: 36px;
+  }
+  .lockup-row:first-of-type { border-top: 0; padding-top: 0; }
+  .lockup-row .lockup-preview {
+    background: #0B1D34; padding: 28px 36px; border-radius: 10px;
+    flex: 1;
+  }
+  .lockup-row .lockup-preview.light {
+    background: #fff; border: 1px solid #e2e8f0;
+  }
+  .lockup-row .lockup-meta {
+    font-size: 12.5px; color: #6B7280;
+    max-width: 280px; line-height: 1.5;
+  }
+  .lockup-row .lockup-meta h3 {
+    font-size: 14px; color: #0B1D34; margin: 0 0 6px;
+  }
+  .lockup-row .lockup-meta code {
+    background: #F2F4F7; padding: 1px 6px; border-radius: 4px;
+    font-family: 'JetBrains Mono', monospace; font-size: 11px;
+    color: #0B1D34;
+  }
+
+  /* Rendered wordmarks */
+  .wm {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 600; letter-spacing: 0.02em;
+    text-transform: uppercase;
+  }
+  .wm.on-dark { color: #fff; }
+  .wm.on-light { color: #0B1D34; }
+  .wm .accent { color: #D4AF37; }
+  .pillars {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px; letter-spacing: 0.18em;
+    color: #D4AF37; text-transform: uppercase;
+    margin-top: 8px;
+  }
+  .product-line {
+    font-family: 'Inter', sans-serif;
+    font-size: 11px; letter-spacing: 0.10em;
+    color: #a8b2c4; text-transform: uppercase;
+    margin-top: 4px;
+  }
+  .horizontal-lockup {
+    display: flex; align-items: center; gap: 16px;
+  }
+
+  /* ----- Designer's full lockup file ----- */
+  .designer-lockup {
+    text-align: center; padding: 24px;
+    background: #0B1D34; border-radius: 10px;
+  }
+  .designer-lockup img { max-width: 100%; height: auto; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <h1 class="page">Brand <em>Preview</em></h1>
+  <p class="lede">2026-05-31 refresh. Heritage Gold (<code style="font-family:JetBrains Mono,monospace;">#D4AF37</code>) preserved; deep navy refined; Cormorant Garamond replaces Playfair as the serif. Three sub-brands ladder up to a single parent identity.</p>
+
+  <!-- THE MARK -->
+  <div class="section">
+    <h2>The Mark</h2>
+    <p class="help">The master B-mark — gold letterform with stepped-column internals, evoking foundation + architecture. Same SVG file serves every size from 16px favicon to 200px hero treatment.</p>
+    <div class="mark-row">
+      <div class="mark-cell"><img src="/brand-assets/bedrock-mark.svg" style="height:24px;"><div class="label">24px</div></div>
+      <div class="mark-cell"><img src="/brand-assets/bedrock-mark.svg" style="height:48px;"><div class="label">48px</div></div>
+      <div class="mark-cell"><img src="/brand-assets/bedrock-mark.svg" style="height:96px;"><div class="label">96px</div></div>
+      <div class="mark-cell"><img src="/brand-assets/bedrock-mark.svg" style="height:160px;"><div class="label">160px (hero)</div></div>
+    </div>
+    <div class="mark-row dark">
+      <div class="mark-cell"><img src="/brand-assets/bedrock-mark.svg" style="height:64px;"><div class="label">On deep navy bg</div></div>
+      <div class="mark-cell"><img src="/brand-assets/bedrock-mark.svg" style="height:64px;"><div class="label">Same mark — gold-on-navy</div></div>
+    </div>
+  </div>
+
+  <!-- COLOR PALETTE -->
+  <div class="section">
+    <h2>Color Palette</h2>
+    <p class="help">Heritage Gold + Deep Navy carry the recognition equity. Stone + Light Gray are new neutral tokens for muted UI text and subtle surface fills on light backgrounds.</p>
+    <div class="palette">
+      <div class="swatch">
+        <div class="chip" style="background:#0B1D34;"></div>
+        <div class="meta"><strong>Deep Navy</strong><span class="hex">#0B1D34</span></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#D4AF37;"></div>
+        <div class="meta"><strong>Heritage Gold</strong><span class="hex">#D4AF37</span></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#6B7280;"></div>
+        <div class="meta"><strong>Stone</strong><span class="hex">#6B7280</span></div>
+      </div>
+      <div class="swatch">
+        <div class="chip" style="background:#F2F4F7; border:1px solid #e2e8f0;"></div>
+        <div class="meta"><strong>Light Gray</strong><span class="hex">#F2F4F7</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- TYPOGRAPHY -->
+  <div class="section">
+    <h2>Typography</h2>
+    <p class="help">Cormorant Garamond replaces Playfair Display for serif treatments — more refined letterforms, same "established + careful" register. Inter (sans) and JetBrains Mono (mono) retained.</p>
+    <div class="type-sample serif">
+      <div class="label">Cormorant Garamond Semibold — wordmarks, headlines</div>
+      <div class="demo">BEDROCK <span style="color:#D4AF37;">INTELLIGENCE</span></div>
+    </div>
+    <div class="type-sample serif-italic">
+      <div class="label">Cormorant Garamond Italic — accents</div>
+      <div class="demo">Built on a foundation of trust.</div>
+    </div>
+    <div class="type-sample sans">
+      <div class="label">Inter Medium — UI body, navigation</div>
+      <div class="demo">Community simplified — modern HOA operations.</div>
+    </div>
+    <div class="type-sample mono">
+      <div class="label">JetBrains Mono — references, taglines, code</div>
+      <div class="demo">TRUST · CLARITY · INTELLIGENCE</div>
+    </div>
+  </div>
+
+  <!-- LOCKUPS -->
+  <div class="section">
+    <h2>Brand Lockups</h2>
+    <p class="help">Three named lockups per the brand architecture. Each renderer pulls the lockup matching its audience: corporate/marketing → parent; homeowner correspondence → service (BAM); operator platform → tech (BI).</p>
+
+    <div class="lockup-row">
+      <div class="lockup-preview">
+        <div class="horizontal-lockup">
+          <img src="/brand-assets/bedrock-mark.svg" style="height:56px;">
+          <div>
+            <div class="wm on-dark" style="font-size:28px;">BEDROCK</div>
+            <div class="pillars">TRUST · CLARITY · INTELLIGENCE</div>
+          </div>
+        </div>
+      </div>
+      <div class="lockup-meta">
+        <h3>Parent</h3>
+        Use on corporate website, press, master decks. <code>BRAND.parentLockupVertical()</code>
+      </div>
+    </div>
+
+    <div class="lockup-row">
+      <div class="lockup-preview">
+        <div class="horizontal-lockup">
+          <img src="/brand-assets/bedrock-mark.svg" style="height:48px;">
+          <div>
+            <div class="wm on-dark" style="font-size:22px;">BEDROCK <span class="accent">INTELLIGENCE</span></div>
+            <div class="product-line">trustEd · operations platform</div>
+          </div>
+        </div>
+      </div>
+      <div class="lockup-meta">
+        <h3>Tech (Bedrock Intelligence)</h3>
+        Use on trustEd app UI, login screens, board pitch decks. <code>BRAND.techLockupHorizontal()</code>
+      </div>
+    </div>
+
+    <div class="lockup-row">
+      <div class="lockup-preview light">
+        <div class="horizontal-lockup">
+          <img src="/brand-assets/bedrock-mark.svg" style="height:48px;">
+          <div>
+            <div class="wm on-light" style="font-size:22px;">BEDROCK <span class="accent">ASSOCIATION MANAGEMENT</span></div>
+            <div style="font-family:'JetBrains Mono',monospace; font-size:10px; letter-spacing:0.18em; color:#6B7280; text-transform:uppercase; margin-top:4px;">COMMUNITY · SIMPLIFIED</div>
+          </div>
+        </div>
+      </div>
+      <div class="lockup-meta">
+        <h3>Service (Bedrock Association Management)</h3>
+        Use on homeowner letters, board correspondence, BAM letterhead. <code>BRAND.serviceLockupHorizontal()</code>
+      </div>
+    </div>
+  </div>
+
+  <!-- DESIGNER'S FULL LOCKUP -->
+  <div class="section">
+    <h2>Designer's Master Lockup</h2>
+    <p class="help">The full horizontal lockup as delivered by the brand designer — for letterhead, business cards, hero treatments. Lives at <code>/brand-assets/bedrock-lockup.svg</code>.</p>
+    <div class="designer-lockup">
+      <img src="/brand-assets/bedrock-lockup.svg" style="max-height:200px; width:auto;">
+    </div>
+  </div>
+
+  <!-- WHERE THIS SHOWS UP -->
+  <div class="section">
+    <h2>Where this shows up</h2>
+    <p class="help">Cascading from <code>lib/brand.js</code> + <code>public/brand.css</code> (single sources of truth), every customer-facing surface picks up the new identity automatically.</p>
+    <ul style="font-size:13px; color:#475569; line-height:1.8; padding-left:20px;">
+      <li>Every page in <code>public/</code> — admin tools, portal, login</li>
+      <li>Every server-rendered PDF — builder letters, violation letters, postcards, AR reminders, board packets</li>
+      <li>Email templates with brand signatures</li>
+      <li>The printable submission form (<code>/august-meadows-submission-form.html</code>)</li>
+      <li>Server-generated PDF version (<code>/forms/august-meadows-submission.pdf</code>)</li>
+    </ul>
+    <p style="font-size:12.5px; color:#6B7280; margin-top:18px;">Historical artifacts already in <code>library_documents</code> (signed board minutes, past violation letters) stay as-is — not retroactively rebranded. Going-forward renders use the new identity.</p>
+  </div>
+
+</div>
+</body>
+</html>
