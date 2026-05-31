@@ -6700,6 +6700,81 @@ app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
   }
 });
 
+// ============================================================================
+// DELETE /api/nominations/:id — admin-only hard delete of a nomination row
+// ----------------------------------------------------------------------------
+// Used to scrub test submissions / bad data from the system. Cascade
+// behavior:
+//   - nomination_events (audit log) has NO FK to nominations by design
+//     (migration 048 — events survive nomination deletion) so audit
+//     history is retained automatically.
+//   - photo_storage_path + scanned_form_path objects in storage become
+//     orphans — daily storage-sweep job handles those.
+//   - We log a 'deleted' audit event to nomination_events before the
+//     row goes away, so the audit log shows "this nomination existed
+//     and was deleted by X on Y for reason Z."
+// ============================================================================
+app.delete('/api/nominations/:id', async (req, res) => {
+  try {
+    const role = await resolveUserRole(req);
+    if (role !== 'admin') return res.status(403).json({ error: 'admin role required' });
+
+    const { data: prior } = await supabase
+      .from('nominations')
+      .select('id, cycle_id, nominee_name, nominee_email, status, submission_channel, photo_storage_path, scanned_form_path')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (!prior) return res.status(404).json({ error: 'nomination not found' });
+
+    // Log the deletion to nomination_events FIRST so the audit trail
+    // captures it even if the storage cleanup or row delete fails later.
+    try {
+      await nomLogEvent({
+        nomination_id: prior.id,
+        cycle_id: prior.cycle_id,
+        nominee_name: prior.nominee_name,
+        event_type: 'deleted',
+        actor: req.body?.actor || 'admin',
+        payload: {
+          status_at_deletion: prior.status,
+          submission_channel: prior.submission_channel,
+          reason: req.body?.reason || null,
+        },
+      });
+    } catch (auditErr) {
+      console.warn('[nominations.delete] audit log failed (non-fatal):', auditErr.message);
+    }
+
+    // Delete the row
+    const { error: delErr } = await supabase
+      .from('nominations')
+      .delete()
+      .eq('id', req.params.id);
+    if (delErr) return res.status(500).json({ error: delErr.message });
+
+    // Best-effort storage cleanup
+    const orphanPaths = [];
+    if (prior.photo_storage_path) orphanPaths.push(prior.photo_storage_path);
+    if (prior.scanned_form_path) orphanPaths.push(prior.scanned_form_path);
+    if (orphanPaths.length > 0) {
+      try { await supabase.storage.from('documents').remove(orphanPaths); } catch (_) {}
+    }
+
+    res.json({
+      ok: true,
+      deleted: {
+        id: prior.id,
+        nominee_name: prior.nominee_name,
+        status_at_deletion: prior.status,
+      },
+      storage_objects_removed: orphanPaths.length,
+    });
+  } catch (err) {
+    console.error('[nominations.delete] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.patch('/api/nominations/:id', async (req, res) => {
   try {
     // Two whitelists:

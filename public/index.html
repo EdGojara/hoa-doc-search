@@ -27954,6 +27954,7 @@ ${questionsPage}
                 ${isOnSlate
                   ? `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'verified')">↺ Remove from ballot</button>`
                   : `<button class="action-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'on_slate')">✓ Put on ballot</button>`}
+                <button data-admin-only class="secondary-btn" style="font-size:11px; padding:4px 9px; background:#fff; border:1px solid #fecaca; color:#b91c1c;" onclick="nomDeleteRow('${n.id}', '${escapeHtml((n.nominee_name || '').replace(/'/g, "&#39;"))}')" title="Hard-delete this nomination (admin only). Audit log retains a 'deleted' event so the history shows it existed.">🗑️ Delete</button>
               </div>
               </div>
             </div>
@@ -28302,6 +28303,44 @@ ${questionsPage}
       }
     } catch (e) {
       alert('Could not load original bio: ' + e.message);
+    }
+  }
+
+  // ===================================================================
+  // Hard-delete a nomination row (admin only)
+  // ---------------------------------------------------------------------
+  // Used to scrub test submissions / bad data. Type-to-confirm pattern
+  // because it's irreversible — operator must type the nominee's name
+  // to proceed. Audit log retains a 'deleted' event (migration 141).
+  // ===================================================================
+  async function nomDeleteRow(nominationId, nomineeName) {
+    const typed = prompt(
+      `Hard-delete this nomination?\n\n` +
+      `Nominee: ${nomineeName || '(unknown)'}\n\n` +
+      `This removes the row from the database. The audit log keeps a "deleted" event so the history shows it existed (per CLAUDE.md association_record discipline). Photo + scanned-form storage objects become orphans for the sweep job.\n\n` +
+      `Irreversible. To confirm, type the nominee's name exactly:\n${nomineeName}`
+    );
+    if (typed === null) return;  // cancelled
+    if (typed.trim() !== (nomineeName || '').trim()) {
+      alert('Name didn\'t match. Delete cancelled.');
+      return;
+    }
+    const reason = prompt('Reason for deletion (logged in audit):\n(e.g., "test submission", "duplicate", "submitted in error")');
+    if (reason === null) return;  // cancelled at second prompt
+    try {
+      const r = await fetch(`/api/nominations/${nominationId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason || null }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Refresh the cycle so the deleted row disappears
+      if (typeof nomOpenCycle === 'function' && typeof nomActiveCycleId !== 'undefined' && nomActiveCycleId) {
+        nomOpenCycle(nomActiveCycleId);
+      }
+    } catch (e) {
+      alert('Delete failed: ' + e.message);
     }
   }
 
