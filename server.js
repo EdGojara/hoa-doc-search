@@ -6597,39 +6597,73 @@ app.patch('/api/nominations/:id', async (req, res) => {
     // Those are identity + delivery fields where staff editing has a
     // different risk profile — if Bedrock changes a homeowner's recorded
     // address after they submitted, the homeowner can rightly object.
-    const NON_BIO_NOMINEE_FIELDS = NOMINEE_FIELDS.filter((k) => k !== 'nominee_bio');
-    const triedToEditNonBioFields = NON_BIO_NOMINEE_FIELDS.some((k) => k in patch);
-    if (triedToEditNonBioFields && prior.submission_channel === 'online_form') {
+    //
+    // PUBLIC_PROFILE_FIELDS = the subset staff can clean up with audit:
+    //   nominee_bio (typos, formatting)               — migration 139
+    //   years_in_community (e.g., "2024" → "2014")    — migration 140
+    // These print on the ballot / Annual Meeting Notice, so accuracy matters
+    // and the audit trail keeps the discipline intact.
+    const PUBLIC_PROFILE_FIELDS = new Set(['nominee_bio', 'years_in_community']);
+    const LOCKED_NOMINEE_FIELDS = NOMINEE_FIELDS.filter((k) => !PUBLIC_PROFILE_FIELDS.has(k));
+    const triedToEditLockedFields = LOCKED_NOMINEE_FIELDS.some((k) => k in patch);
+    if (triedToEditLockedFields && prior.submission_channel === 'online_form') {
       return res.status(403).json({
-        error: 'online_form submissions cannot have name/address/email/phone edited (preserves what the homeowner actually submitted). nominee_bio is editable with a bio_edit_reason; manager_notes is always editable.',
+        error: 'online_form submissions cannot have name/address/email/phone edited (preserves what the homeowner actually submitted). nominee_bio + years_in_community are editable with a public_profile_edit_reason; manager_notes is always editable.',
       });
     }
 
-    // If nominee_bio is being edited on an online_form submission, require
-    // an edit reason + capture the audit trail. Migration 139 added the
-    // supporting columns (original_nominee_bio + bio_edited_*).
-    if ('nominee_bio' in patch && prior.submission_channel === 'online_form') {
-      const reason = String((req.body && req.body.bio_edit_reason) || '').trim();
-      if (!reason) {
+    // If a public-profile field is being edited on an online_form
+    // submission, require an edit reason + capture the audit trail.
+    // Migrations 139 (bio) and 140 (years) added the supporting columns.
+    const editingBio   = ('nominee_bio' in patch) && prior.submission_channel === 'online_form';
+    const editingYears = ('years_in_community' in patch) && prior.submission_channel === 'online_form';
+    if (editingBio || editingYears) {
+      // The frontend can pass either a single shared reason field
+      // (public_profile_edit_reason) OR per-field reasons (bio_edit_reason,
+      // years_edit_reason). The shared field is the cleaner UX since one
+      // operator action typically corrects one underlying issue.
+      const shared = String((req.body && req.body.public_profile_edit_reason) || '').trim();
+      const bioReason   = shared || String((req.body && req.body.bio_edit_reason) || '').trim();
+      const yearsReason = shared || String((req.body && req.body.years_edit_reason) || '').trim();
+      if (editingBio && !bioReason) {
         return res.status(400).json({
-          error: 'bio_edit_reason is required when editing nominee_bio on an online_form submission (e.g., "typo fix", "formatting", "name spelling correction"). Captures why the bio was changed for the audit log.',
+          error: 'public_profile_edit_reason (or bio_edit_reason) is required when editing nominee_bio on an online_form submission.',
         });
       }
+      if (editingYears && !yearsReason) {
+        return res.status(400).json({
+          error: 'public_profile_edit_reason (or years_edit_reason) is required when editing years_in_community on an online_form submission.',
+        });
+      }
+
       // Re-read prior with the audit columns so we know if this is the first
-      // edit (in which case we need to capture the original).
-      const { data: priorBio } = await supabase
+      // edit for each field (and need to capture the original).
+      const { data: priorProfile } = await supabase
         .from('nominations')
-        .select('nominee_bio, original_nominee_bio, bio_edit_count')
+        .select('nominee_bio, original_nominee_bio, bio_edit_count, years_in_community, original_years_in_community, years_edit_count')
         .eq('id', req.params.id)
         .maybeSingle();
-      if (priorBio && !priorBio.original_nominee_bio) {
-        // First edit — preserve the original homeowner-submitted text.
-        patch.original_nominee_bio = priorBio.nominee_bio || '';
+      const actor = String((req.body && req.body.actor) || 'staff');
+      const now = new Date().toISOString();
+
+      if (editingBio) {
+        if (priorProfile && !priorProfile.original_nominee_bio) {
+          patch.original_nominee_bio = priorProfile.nominee_bio || '';
+        }
+        patch.bio_edited_at = now;
+        patch.bio_edited_by = actor;
+        patch.bio_edit_reason = bioReason;
+        patch.bio_edit_count = (priorProfile?.bio_edit_count || 0) + 1;
       }
-      patch.bio_edited_at = new Date().toISOString();
-      patch.bio_edited_by = String((req.body && req.body.actor) || 'staff');
-      patch.bio_edit_reason = reason;
-      patch.bio_edit_count = (priorBio?.bio_edit_count || 0) + 1;
+      if (editingYears) {
+        if (priorProfile && priorProfile.original_years_in_community == null) {
+          patch.original_years_in_community = priorProfile.years_in_community || '';
+        }
+        patch.years_edited_at = now;
+        patch.years_edited_by = actor;
+        patch.years_edit_reason = yearsReason;
+        patch.years_edit_count = (priorProfile?.years_edit_count || 0) + 1;
+      }
     }
 
     const { data, error } = await supabase
