@@ -1503,38 +1503,61 @@
         <div style="font-size:11px; color:#94A3B8; margin-top:4px;">Homeowners will submit at <code id="nomSlugPreview">app.bedrocktxai.com/nominate/&lt;slug&gt;</code> &mdash; works on any device, can be hyperlinked from email.</div>
       </div>
 
+      <!-- Create-cycle form actions ONLY. Running the cycle (close, pre-flight,
+           annual meeting notice, reopen) lives in the cycle panel on the right,
+           next to the live data those actions operate on. -->
       <div style="display:flex; gap:8px; margin-top:14px; flex-wrap:wrap;">
         <button id="nomSaveDraftBtn" onclick="nomSaveDraft()" class="action-btn">💾 Save</button>
         <button id="nomPreviewBtn" onclick="nomPreviewLetter()" style="background:#7c3aed; color:#fff; border:1px solid #7c3aed; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;">👁️ Preview</button>
         <button id="nomCreateBtn" onclick="nomCreateCycle()" style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;">✓ Finalize cycle</button>
         <button class="secondary-btn" id="nomLetterBtn" onclick="nomGenerateLetter()" disabled style="opacity:0.5;">📄 Generate letter PDF <span style="font-weight:400; color:#94A3B8; font-size:11px;">(includes tear-off form)</span></button>
         <button class="secondary-btn" id="nomPaperFormBtn" onclick="nomGeneratePaperForm()" disabled style="opacity:0.5;">📝 Paper form only</button>
-        <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:8px; cursor:pointer;" title="AI scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review (AI)</button>
-        <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5;" title="Pulls every nomination on the slate and generates the 4-page Annual Meeting Notice + ballot + bios">🗳️ Annual Meeting Notice <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate is set)</span></button>
-        <button id="nomCloseCycleBtn" onclick="nomCloseCycle()" style="display:none; background:#b45309; color:#fff; border:1px solid #b45309; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600;" title="Mark this cycle's nomination period as closed. No new submissions accepted after this; ready to lock the slate + generate the Annual Meeting Notice.">🛑 Close call for nominations</button>
-        <button id="nomReopenCycleBtn" onclick="nomReopenCycle()" style="display:none; background:#fff; color:#475569; border:1px solid #cbd5e1; font-size:13px; padding:7px 14px; border-radius:8px; cursor:pointer;" title="Reopen the cycle (admin-fix if you closed it by mistake)">↩ Reopen</button>
-        <div id="nomPreFlightResult" style="display:none; flex-basis:100%; margin-top:10px;"></div>
         <span id="nomDraftStatus" style="font-size:12px; color:#6B7280; flex-basis:100%; margin-top:4px;"></span>
       </div>
       <div id="nomCreateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
     </div>
 
-    <!-- RIGHT: cycle list + nominations -->
+    <!-- RIGHT: cycle list + nominations
+         Two cycle list buckets so the operator can see at a glance what's
+         live vs. what's already finished. Active = planned + open;
+         Recent = closed + finalized. -->
     <div>
-      <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:14px;">
+      <!-- ACTIVE NOMINATIONS — the cycle(s) currently taking nominations or
+           awaiting next steps. Most operator action happens here. -->
+      <div style="border:1px solid #c7d2fe; border-radius:10px; padding:14px; background:#fff; margin-bottom:14px;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
-          <h3 style="margin:0; font-size:15px; color:#1E2761;">Recent cycles</h3>
+          <h3 style="margin:0; font-size:15px; color:#1E2761;">⚡ Active nominations</h3>
           <button class="secondary-btn" onclick="nomLoadCycles()" style="font-size:12px; padding:4px 10px;">↻ Refresh</button>
         </div>
-        <div id="nomCyclesList" style="font-size:13px; color:#6B7280;">No cycles yet.</div>
+        <div id="nomActiveCyclesList" style="font-size:13px; color:#6B7280;">No active cycles.</div>
       </div>
 
-      <div id="nomCyclePanel" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
+      <!-- RECENT CYCLES — closed or finalized. Historical reference, mostly
+           for pulling prior-year letter / voice / candidate info. -->
+      <div style="border:1px solid #e2e8f0; border-radius:10px; padding:14px; background:#fff; margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+          <h3 style="margin:0; font-size:15px; color:#475569;">📁 Recent cycles <span style="font-weight:400; color:#94A3B8; font-size:12px;">(closed + finalized)</span></h3>
+        </div>
+        <div id="nomRecentCyclesList" style="font-size:13px; color:#6B7280;">No past cycles.</div>
+      </div>
+
+      <div id="nomCyclePanel" style="display:none; border:2px solid #1E2761; border-radius:10px; padding:14px; background:#fff;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
           <h3 style="margin:0; font-size:15px; color:#1E2761;" id="nomPanelTitle">Nominations</h3>
           <div style="font-size:12px; color:#6B7280;" id="nomPanelMeta"></div>
         </div>
         <div id="nomPublicLinkBox" style="font-size:12px; color:#475569; margin-bottom:10px;"></div>
+
+        <!-- MANAGE-THIS-CYCLE actions. Lives with the live data those actions
+             affect, not with the create-cycle form on the left. Buttons
+             show/hide based on cycle.status — see nomOpenCycle(). -->
+        <div style="margin:0 0 12px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; display:flex; gap:8px; flex-wrap:wrap;">
+          <button id="nomCloseCycleBtn" onclick="nomCloseCycle()" style="display:none; background:#b45309; color:#fff; border:1px solid #b45309; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Mark this cycle's nomination period as closed. No new submissions accepted after this; ready to lock the slate + generate the Annual Meeting Notice.">🛑 Close call for nominations</button>
+          <button id="nomReopenCycleBtn" onclick="nomReopenCycle()" style="display:none; background:#fff; color:#475569; border:1px solid #cbd5e1; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Reopen the cycle (admin-fix if you closed it by mistake)">↩ Reopen</button>
+          <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="AI scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review (AI)</button>
+          <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Pulls every nomination on the slate and generates the 4-page Annual Meeting Notice + ballot + bios">🗳️ Annual Meeting Notice <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
+          <div id="nomPreFlightResult" style="display:none; flex-basis:100%; margin-top:8px;"></div>
+        </div>
 
         <!-- Prior cycles for this community — surfaces the reference letters
              from previous years so staff can see what voice/format/term/
@@ -27649,7 +27672,10 @@ ${questionsPage}
   async function nomLoadCycles() {
     const community = nomSelectedCommunity();
     if (!community) {
-      document.getElementById('nomCyclesList').textContent = 'Pick a community first.';
+      const a = document.getElementById('nomActiveCyclesList');
+      const r2 = document.getElementById('nomRecentCyclesList');
+      if (a) a.textContent = 'Pick a community first.';
+      if (r2) r2.textContent = '';
       return;
     }
     try {
@@ -27657,12 +27683,24 @@ ${questionsPage}
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       nomCycles = j.cycles || [];
-      const list = document.getElementById('nomCyclesList');
+      const activeList = document.getElementById('nomActiveCyclesList');
+      const recentList = document.getElementById('nomRecentCyclesList');
+
       if (nomCycles.length === 0) {
-        list.textContent = 'No cycles yet — fill out the form on the left to start one.';
+        if (activeList) activeList.textContent = 'No active cycles — fill out the form on the left to start one.';
+        if (recentList) recentList.textContent = 'No past cycles.';
         return;
       }
-      list.innerHTML = nomCycles.map((c) => `
+
+      // Bucket the cycles: planned + open = active (live or about to be);
+      // closed + finalized = recent (historical). Backward-compat: any
+      // status string we don't recognize falls into "recent" so it's at
+      // least visible somewhere.
+      const ACTIVE_STATUSES = new Set(['planned', 'open']);
+      const activeCycles = nomCycles.filter((c) => ACTIVE_STATUSES.has(c.status));
+      const recentCycles = nomCycles.filter((c) => !ACTIVE_STATUSES.has(c.status));
+
+      const renderRow = (c) => `
         <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; padding:8px 10px; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:6px; background:${c.id === nomActiveCycleId ? '#eef2ff' : '#fff'}; cursor:pointer;"
              onclick="nomOpenCycle('${c.id}')"
              title="Click anywhere on this row to open the cycle">
@@ -27675,9 +27713,24 @@ ${questionsPage}
                   style="background:none; border:1px solid #d0d7de; color:#b91c1c; font-size:11px; padding:4px 9px; border-radius:6px; cursor:pointer; white-space:nowrap;"
                   title="Delete this cycle">Delete</button>
         </div>
-      `).join('');
+      `;
+
+      if (activeList) {
+        activeList.innerHTML = activeCycles.length > 0
+          ? activeCycles.map(renderRow).join('')
+          : '<em style="color:#94A3B8;">No active cycles right now. Fill out the form on the left to start one.</em>';
+      }
+      if (recentList) {
+        recentList.innerHTML = recentCycles.length > 0
+          ? recentCycles.map(renderRow).join('')
+          : '<em style="color:#94A3B8;">No past cycles yet.</em>';
+      }
     } catch (e) {
-      document.getElementById('nomCyclesList').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+      const errMsg = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+      const a = document.getElementById('nomActiveCyclesList');
+      const r2 = document.getElementById('nomRecentCyclesList');
+      if (a) a.innerHTML = errMsg;
+      if (r2) r2.innerHTML = '';
     }
   }
 
