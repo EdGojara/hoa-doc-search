@@ -6406,10 +6406,20 @@ app.post('/api/nominations/preview-letter', upload.any(), async (req, res) => {
 //   - drop_off: enabled if the cycle has an onsite drop-off configured
 //   - in_person: always enabled (it's the annual meeting)
 function buildVotingMethodsFromCycle(cycle) {
-  const closeDate = cycle.nominations_close_at || null;
-  const closeTime = cycle.nominations_close_time || '5:00 PM';
+  // Voting cutoff = when ballots must be received. Independent of
+  // nominations_close_at (which is when the public nomination form
+  // closes). Falls back to nominations_close_at only if no explicit
+  // voting cutoff is set on the cycle (backward-compat for cycles
+  // saved before migration 142).
+  const closeDate = cycle.voting_cutoff_at || cycle.nominations_close_at || null;
+  const closeTime = cycle.voting_cutoff_time || cycle.nominations_close_time || '4:00 PM';
   const userMethods = cycle.voting_methods || {};
-  const onlineCfg = (userMethods.online && userMethods.online.enabled)
+  // Either the online voting toggle in voting_methods OR the
+  // electronic_voting_offered boolean — both signals are kept in sync
+  // by /meeting-config but we accept either as truth here.
+  const onlineOn = !!((userMethods.online && userMethods.online.enabled)
+    || cycle.electronic_voting_offered);
+  const onlineCfg = onlineOn
     ? { enabled: true, close_date: closeDate, close_time: closeTime }
     : { enabled: false };
   const onsite = cycle.onsite_drop_off || {};
@@ -6455,6 +6465,71 @@ async function _storagePathToDataUri(storagePath, fallbackMime = 'image/jpeg') {
     return null;
   }
 }
+
+// ============================================================================
+// PATCH /api/nominations/cycles/:id/meeting-config
+// ----------------------------------------------------------------------------
+// Edit the meeting + voting config from the Annual Meeting Notice tab.
+// Separated from the generic cycle PATCH so the AMN surface owns these
+// fields cleanly (per Ed 2026-06-01: meeting + nominations are different
+// concerns; voting config belongs with the meeting, not the nomination
+// cycle form).
+//
+// Allowed body fields:
+//   annual_meeting_time          string  (e.g., "6:30 PM")
+//   voting_cutoff_at             date    (when ballots must be received)
+//   voting_cutoff_time           string  (e.g., "4:00 PM")
+//   electronic_voting_offered    boolean
+//
+// Also updates voting_methods.online.enabled so the renderer's smart-
+// defaults builder picks up the change immediately on next generate.
+// ============================================================================
+app.patch('/api/nominations/cycles/:id/meeting-config',
+  express.json({ limit: '16kb' }),
+  async (req, res) => {
+    try {
+      const body = req.body || {};
+      const patch = {};
+      if ('annual_meeting_time' in body) patch.annual_meeting_time = body.annual_meeting_time;
+      if ('voting_cutoff_at' in body) patch.voting_cutoff_at = body.voting_cutoff_at;
+      if ('voting_cutoff_time' in body) patch.voting_cutoff_time = body.voting_cutoff_time;
+      if ('electronic_voting_offered' in body) patch.electronic_voting_offered = !!body.electronic_voting_offered;
+
+      // Mirror the electronic-voting flag into voting_methods.online.enabled
+      // so the renderer + display layer have one consistent signal.
+      if ('electronic_voting_offered' in body) {
+        const { data: current } = await supabase
+          .from('nomination_cycles')
+          .select('voting_methods')
+          .eq('id', req.params.id)
+          .maybeSingle();
+        const vm = (current && current.voting_methods) || {};
+        vm.online = vm.online || {};
+        vm.online.enabled = !!body.electronic_voting_offered;
+        patch.voting_methods = vm;
+      }
+
+      if (Object.keys(patch).length === 0) {
+        return res.status(400).json({ error: 'nothing to update' });
+      }
+      patch.updated_at = new Date().toISOString();
+
+      const { data, error } = await supabase
+        .from('nomination_cycles')
+        .update(patch)
+        .eq('id', req.params.id)
+        .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+        .select()
+        .single();
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data) return res.status(404).json({ error: 'cycle not found' });
+
+      res.json({ cycle: data });
+    } catch (err) {
+      console.error('[meeting-config] failed:', err.message);
+      res.status(500).json({ error: err.message });
+    }
+  });
 
 // ============================================================================
 // POST /api/nominations/cycles/:id/mark-notice-sent

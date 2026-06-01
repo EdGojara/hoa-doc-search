@@ -1478,18 +1478,15 @@
         </ul>
       </details>
 
-      <!-- Electronic voting toggle — captured here on the cycle but NOT
-           displayed on the Call for Nominations letter. It drives the
-           voting-methods section of the separate Annual Meeting Notice
-           document later in the cycle. -->
-      <div style="margin-top:12px; padding:10px 14px; background:#fff; border:1px solid #d0d7de; border-radius:8px;">
-        <label style="display:flex; align-items:flex-start; gap:8px; font-size:13px; color:#334155; cursor:pointer;">
-          <input type="checkbox" id="nomElectronicVoting">
-          <span><strong>📱 This community will offer electronic voting</strong> for the upcoming election
-            <span style="color:#94A3B8; font-weight:400;">— captured here for planning; appears later on the Annual Meeting Notice / Ballot, not on this Call for Nominations letter.</span>
-          </span>
-        </label>
-      </div>
+      <!-- Electronic voting toggle was previously here but moved to the
+           Annual Meeting Notice tab where it belongs (it's a voting-config
+           field, not a nominations-config field). Same is true of voting
+           cutoff dates — those live with the meeting, not the nomination
+           cycle. Ed's UX framing 2026-06-01: "meeting and nominations
+           are different — need separate dates." -->
+      <!-- Hidden input retained so form state machinery doesn't break;
+           value is now managed via the AMN tab. -->
+      <input type="checkbox" id="nomElectronicVoting" style="display:none;">
 
       <div style="margin-top:10px;">
         <div class="section-label">Reference: prior year letter (optional)</div>
@@ -1843,8 +1840,33 @@
           <div style="font-size:12.5px; color:#475569; margin-top:2px;" id="amnMeetingMeta">—</div>
         </div>
 
+        <!-- Meeting + voting config — editable here on the AMN tab.
+             These fields used to live on the Call for Nominations form
+             but logically belong with the meeting, not the nominations.
+             Moved 2026-06-01 per Ed's framing. -->
+        <h4 style="margin:14px 0 6px 0; font-size:13px; color:#1E2761;">Meeting &amp; voting config</h4>
+        <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">Edit the meeting time, voting cutoff, and electronic-voting toggle here. These print on the Notice + Ballot the way you configure them below.</p>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:12px;">
+          <label style="font-size:11.5px; color:#475569;">Meeting time
+            <input type="text" id="amnMeetingTime" placeholder="6:30 PM" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:3px;">
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Voting cutoff date<span style="color:#94A3B8; font-weight:400;"> — when ballots must be received</span>
+            <input type="date" id="amnVotingCutoffDate" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:3px;">
+          </label>
+          <label style="font-size:11.5px; color:#475569;">Voting cutoff time
+            <input type="text" id="amnVotingCutoffTime" placeholder="4:00 PM" style="width:100%; padding:6px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-top:3px;">
+          </label>
+          <label style="font-size:11.5px; color:#475569; display:flex; align-items:center; gap:6px; padding-top:18px;">
+            <input type="checkbox" id="amnElectronicVoting"> <span>📱 Offer electronic / online voting</span>
+          </label>
+          <div style="grid-column: 1 / -1; display:flex; gap:8px; align-items:center; margin-top:4px;">
+            <button id="amnSaveConfigBtn" onclick="amnSaveConfig()" class="secondary-btn" style="font-size:12px; padding:6px 14px;">💾 Save config</button>
+            <span id="amnConfigStatus" style="font-size:11.5px; color:#94A3B8;"></span>
+          </div>
+        </div>
+
         <h4 style="margin:14px 0 6px 0; font-size:13px; color:#1E2761;">Voting methods on the Notice</h4>
-        <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">Smart defaults applied automatically. You can override the editor later — for now, the Notice generates with mail + email + in-person enabled, plus online if the electronic-voting toggle is on, plus drop-off if you configured one on the cycle.</p>
+        <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">Smart defaults applied automatically based on the config above. The Notice generates with mail + email + in-person enabled, plus online if electronic-voting is on, plus drop-off if configured.</p>
         <div id="amnVotingMethodsList" style="font-size:12.5px; color:#334155; padding-left:6px;"></div>
 
         <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Slate <span id="amnSlateCount" style="color:#94A3B8; font-weight:400; font-size:11px;"></span></h4>
@@ -29120,6 +29142,48 @@ ${questionsPage}
     ));
   }
 
+  // Save the meeting + voting config edits made on the AMN tab. These
+  // fields used to live on the Call for Nominations form (electronic
+  // voting, meeting time) or weren't editable anywhere (voting cutoff).
+  // Now they're all editable here, where they belong with the meeting.
+  async function amnSaveConfig() {
+    if (!amnCurrentCycleId) { alert('Pick a cycle first.'); return; }
+    const status = document.getElementById('amnConfigStatus');
+    const btn = document.getElementById('amnSaveConfigBtn');
+    btn.disabled = true;
+    const orig = btn.textContent;
+    btn.textContent = '⏳ Saving…';
+    status.textContent = 'Saving…';
+    status.style.color = '#475569';
+    try {
+      const body = {
+        annual_meeting_time: document.getElementById('amnMeetingTime').value || null,
+        voting_cutoff_at: document.getElementById('amnVotingCutoffDate').value || null,
+        voting_cutoff_time: document.getElementById('amnVotingCutoffTime').value || null,
+        electronic_voting_offered: document.getElementById('amnElectronicVoting').checked,
+      };
+      const r = await fetch(`/api/nominations/cycles/${amnCurrentCycleId}/meeting-config`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.textContent = '✓ Saved. Regenerate the Notice to apply.';
+      status.style.color = '#166534';
+      // Refresh the cycle so amnLoadCycle re-renders with the new values
+      const idx = amnAllCycles.findIndex((c) => c.id === amnCurrentCycleId);
+      if (idx >= 0 && j.cycle) amnAllCycles[idx] = j.cycle;
+      await amnLoadCycle();
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+      status.style.color = '#b91c1c';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  }
+
   async function amnLoadCycles() {
     const sel = document.getElementById('amnCycleSelect');
     if (!sel) return;
@@ -29165,25 +29229,47 @@ ${questionsPage}
     if (cycle.term_years) meta.push(`${cycle.term_years}-year term`);
     document.getElementById('amnMeetingMeta').textContent = meta.join(' · ');
 
-    // Render the voting methods that will print on the Notice — these mirror
-    // the smart-defaults builder on the server (buildVotingMethodsFromCycle).
+    // Populate the meeting + voting config editors. Voting cutoff defaults
+    // to meeting_date - 5 days at 4:00 PM (Canyon Gate convention) when
+    // not yet set on the cycle.
+    const mtEl = document.getElementById('amnMeetingTime');
+    const vcDateEl = document.getElementById('amnVotingCutoffDate');
+    const vcTimeEl = document.getElementById('amnVotingCutoffTime');
+    const evEl = document.getElementById('amnElectronicVoting');
+    if (mtEl) mtEl.value = cycle.annual_meeting_time || '';
+    if (vcDateEl) {
+      vcDateEl.value = cycle.voting_cutoff_at || (() => {
+        if (!cycle.annual_meeting_date) return '';
+        const d = new Date(cycle.annual_meeting_date + 'T12:00:00');
+        d.setDate(d.getDate() - 5);
+        return d.toISOString().slice(0, 10);
+      })();
+    }
+    if (vcTimeEl) vcTimeEl.value = cycle.voting_cutoff_time || '4:00 PM';
+    if (evEl) evEl.checked = !!(cycle.voting_methods && cycle.voting_methods.online && cycle.voting_methods.online.enabled)
+      || !!cycle.electronic_voting_offered;
+    document.getElementById('amnConfigStatus').textContent = '';
+
+    // Render the voting methods that will print on the Notice — driven by
+    // the config block above + smart defaults for mail/email/in-person.
     const vmList = document.getElementById('amnVotingMethodsList');
     const vm = cycle.voting_methods || {};
-    const closeDate = cycle.nominations_close_at || '(no close date)';
-    const closeTime = cycle.nominations_close_time || '5:00 PM';
+    const cutoffDate = cycle.voting_cutoff_at || (vcDateEl ? vcDateEl.value : '') || '(no cutoff date)';
+    const cutoffTime = cycle.voting_cutoff_time || '4:00 PM';
     const methods = [];
-    if (vm.online && vm.online.enabled) {
-      methods.push(`✓ <strong>Online voting</strong> — close ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)}`);
+    const onlineOn = (vm.online && vm.online.enabled) || cycle.electronic_voting_offered;
+    if (onlineOn) {
+      methods.push(`✓ <strong>Online voting</strong> — close ${escapeHtml(cutoffDate)} at ${escapeHtml(cutoffTime)}`);
     } else {
-      methods.push(`<span style="color:#94A3B8;">○ Online voting — disabled (toggle in Call for Nominations cycle form)</span>`);
+      methods.push(`<span style="color:#94A3B8;">○ Online voting — disabled (toggle in Meeting &amp; voting config above)</span>`);
     }
-    methods.push(`✓ <strong>Mail-in</strong> — receive by ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)} · Bedrock address`);
-    methods.push(`✓ <strong>Email</strong> — receive by ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)} · info@bedrocktx.com`);
+    methods.push(`✓ <strong>Mail-in</strong> — receive by ${escapeHtml(cutoffDate)} at ${escapeHtml(cutoffTime)} · Bedrock address`);
+    methods.push(`✓ <strong>Email</strong> — receive by ${escapeHtml(cutoffDate)} at ${escapeHtml(cutoffTime)} · info@bedrocktx.com`);
     if (cycle.onsite_drop_off && cycle.onsite_drop_off.enabled) {
       const loc = cycle.onsite_drop_off.location_name || 'on-site office';
-      methods.push(`✓ <strong>Drop-off</strong> at ${escapeHtml(loc)} — receive by ${escapeHtml(closeDate)} at ${escapeHtml(closeTime)}`);
+      methods.push(`✓ <strong>Drop-off</strong> at ${escapeHtml(loc)} — receive by ${escapeHtml(cutoffDate)} at ${escapeHtml(cutoffTime)}`);
     } else {
-      methods.push(`<span style="color:#94A3B8;">○ Drop-off — disabled (toggle in Call for Nominations cycle form)</span>`);
+      methods.push(`<span style="color:#94A3B8;">○ Drop-off — disabled (configure on the Call for Nominations cycle form)</span>`);
     }
     methods.push(`✓ <strong>In person</strong> — at the meeting`);
     vmList.innerHTML = methods.map((m) => `<div style="padding:3px 0;">${m}</div>`).join('');
