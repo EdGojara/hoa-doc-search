@@ -5915,15 +5915,20 @@ async function _renderHtmlToPdf(html, opts = {}) {
     if (opts.pageNumbers) {
       // displayHeaderFooter overrides preferCSSPageSize on margins, so we
       // re-set explicit margins that leave room for the footer template.
+      // Bottom margin is generous (0.95in) because the footer carries up
+      // to 3 lines: entity name, address line, page number.
       pdfOpts.displayHeaderFooter = true;
       pdfOpts.preferCSSPageSize = false;
-      pdfOpts.margin = { top: '0.5in', right: '0.85in', bottom: '0.55in', left: '0.85in' };
+      pdfOpts.margin = { top: '0.5in', right: '0.85in', bottom: '0.95in', left: '0.85in' };
       pdfOpts.headerTemplate = '<div></div>';  // empty header
-      // Footer: small grey "Page X of Y" centered. inline styles only —
-      // puppeteer doesn't load the page's stylesheet in the footer iframe.
+      // Footer template — inline styles only (puppeteer doesn't load the
+      // page's stylesheet). Combines optional entity-line HTML passed via
+      // opts.pageFooterHtml with the standard Page X of Y line.
+      const footerEntity = opts.pageFooterHtml || '';
       pdfOpts.footerTemplate = `
-        <div style="width:100%; font-family:Arial, sans-serif; font-size:9pt; color:#475569; text-align:center; padding:0 0.85in;">
-          Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+        <div style="width:100%; font-family:Arial, sans-serif; font-size:8pt; color:#475569; text-align:center; padding:0 0.85in; line-height:1.45;">
+          ${footerEntity}
+          <div>Page <span class="pageNumber"></span> of <span class="totalPages"></span></div>
         </div>`;
     }
     return await page.pdf(pdfOpts);
@@ -6730,7 +6735,16 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
           : new Date().getFullYear(),
       },
     });
-    const buf = await _renderHtmlToPdf(html, { pageNumbers: true });
+    // Build the per-page footer content: association legal name + Bedrock
+    // management firm contact. Page X of Y is added by the renderer.
+    const assocLegal = cycle.association_legal_name
+      || `${cycle.community_name || 'Association'} Association, Inc.`;
+    const escAssoc = String(assocLegal).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const pageFooterHtml = `
+      <div>${escAssoc} &nbsp;|&nbsp; c/o Bedrock Association Management, LLC</div>
+      <div>12808 W Airport Blvd, Ste 253, Sugar Land, TX 77478 &nbsp;|&nbsp; (832) 588-2485 &nbsp;|&nbsp; bedrocktx.com</div>
+    `;
+    const buf = await _renderHtmlToPdf(html, { pageNumbers: true, pageFooterHtml });
 
     // Save the rendered PDF to storage so it's recoverable later and
     // tied to the cycle for posterity.
