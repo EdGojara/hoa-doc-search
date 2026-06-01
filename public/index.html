@@ -1546,6 +1546,14 @@
           <h3 style="margin:0; font-size:15px; color:#1E2761;" id="nomPanelTitle">Nominations</h3>
           <div style="font-size:12px; color:#6B7280;" id="nomPanelMeta"></div>
         </div>
+
+        <!-- Workflow breadcrumb — operator always knows where in the
+             election cycle this row sits + what the immediate next action
+             is. Done steps = green ✓, current step = navy filled + bold,
+             upcoming = grey outline. Rendered by nomRenderBreadcrumb()
+             whenever a cycle is opened or its state changes. -->
+        <div id="nomBreadcrumb" style="margin-bottom:10px;"></div>
+
         <div id="nomPublicLinkBox" style="font-size:12px; color:#475569; margin-bottom:10px;"></div>
 
         <!-- MANAGE-THIS-CYCLE actions. Lives with the live data those actions
@@ -27799,6 +27807,10 @@ ${questionsPage}
       const canClose = cycle.status === 'open' || cycle.status === 'planned';
       if (closeBtn) closeBtn.style.display = canClose ? 'inline-block' : 'none';
       if (reopenBtn) reopenBtn.style.display = cycle.status === 'closed' ? 'inline-block' : 'none';
+
+      // Render the workflow breadcrumb so the operator always sees where
+      // they are in the election cycle + what the next step is.
+      nomRenderBreadcrumb(cycle);
       // Hydrate the electronic-voting toggle from the saved cycle so the
       // form reflects what's stored when staff reopens an existing cycle.
       try {
@@ -28613,6 +28625,108 @@ ${questionsPage}
     } finally {
       btn.disabled = false; btn.innerHTML = originalLabel;
     }
+  }
+
+  // Render the cycle's workflow breadcrumb at the top of the cycle panel.
+  // Six phases, status + DB column derived:
+  //   1. Created     (always done if cycle exists)
+  //   2. Receiving   (planned/open, or any nominations received)
+  //   3. Closed      (status = closed / finalized)
+  //   4. Notice      (notice_pdf_storage_path is set)
+  //   5. Voting      (after notice is ready, before meeting date)
+  //   6. Meeting     (meeting date <= today)
+  // The CURRENT step is the first non-done step. A "Next:" callout under
+  // the breadcrumb spells out the immediate action for the current step.
+  function nomRenderBreadcrumb(cycle) {
+    const target = document.getElementById('nomBreadcrumb');
+    if (!target || !cycle) return;
+    const todayIso = new Date().toISOString().slice(0, 10);
+    const meetingDate = cycle.annual_meeting_date || '';
+    const meetingHeld = meetingDate && meetingDate < todayIso;
+    const meetingToday = meetingDate && meetingDate === todayIso;
+    const noticeReady = !!cycle.notice_pdf_storage_path || !!cycle.notice_generated_at;
+    const isClosed = cycle.status === 'closed' || cycle.status === 'finalized';
+    const isReceiving = cycle.status === 'planned' || cycle.status === 'open';
+    const hasNominations = (cycle.nominations_count || 0) > 0;
+
+    const steps = [
+      {
+        key: 'created',
+        label: 'Created',
+        icon: '📝',
+        done: true,
+        next: 'Cycle saved. Share the public form link with members so they can submit nominations.',
+      },
+      {
+        key: 'receiving',
+        label: 'Receiving',
+        icon: '📨',
+        done: isClosed || noticeReady || meetingHeld,
+        next: 'Nominations are coming in. Click 🛑 Close call for nominations when ready (typically when the close-by date has passed or you have enough candidates for the seats).',
+      },
+      {
+        key: 'closed',
+        label: 'Closed',
+        icon: '🛑',
+        done: noticeReady || meetingHeld,
+        next: 'Call is closed. Click 🔍 Pre-flight review (AI) to scan every nomination for typos / inconsistencies, fix any flagged rows, then 🗳️ Annual Meeting Notice to generate the ballot.',
+      },
+      {
+        key: 'notice',
+        label: 'Notice',
+        icon: '🗳️',
+        done: meetingHeld || meetingToday,
+        next: 'Annual Meeting Notice is generated. Mail + email it to members (Texas §209.0056 requires 10–60 days\' notice before the meeting).',
+      },
+      {
+        key: 'voting',
+        label: 'Voting',
+        icon: '✉️',
+        done: meetingHeld,
+        next: 'Notice is out; voting period is running in the separate ballot app. Nothing to do here until the meeting.',
+      },
+      {
+        key: 'meeting',
+        label: 'Meeting',
+        icon: '🪑',
+        done: meetingHeld,
+        next: meetingHeld
+          ? 'Annual meeting has happened. Cycle complete.'
+          : `Annual meeting is ${meetingDate ? `on ${meetingDate}` : 'pending — set a date in the cycle config'}. Use the Meeting Check-in page for live sign-in + quorum tracking on the day.`,
+      },
+    ];
+
+    // Current step = the first non-done step
+    let currentIdx = steps.findIndex((s) => !s.done);
+    if (currentIdx === -1) currentIdx = steps.length - 1;  // all done — keep meeting highlighted
+
+    const pillRow = steps.map((s, idx) => {
+      const isDone = idx < currentIdx;
+      const isCurrent = idx === currentIdx;
+      let bg, color, border, weight;
+      if (isDone) {
+        bg = '#dcfce7'; color = '#166534'; border = '#bbf7d0'; weight = '500';
+      } else if (isCurrent) {
+        bg = '#1E2761'; color = '#fff'; border = '#1E2761'; weight = '700';
+      } else {
+        bg = '#f1f5f9'; color = '#94A3B8'; border = '#e2e8f0'; weight = '500';
+      }
+      const prefix = isDone ? '✓ ' : (isCurrent ? '➤ ' : '');
+      return `<div style="flex:0 0 auto; padding:6px 10px; background:${bg}; color:${color}; border:1px solid ${border}; border-radius:999px; font-size:11.5px; font-weight:${weight}; white-space:nowrap; display:flex; align-items:center; gap:4px;">
+        <span>${s.icon}</span><span>${prefix}${s.label}</span>
+      </div>`;
+    }).join('<div style="flex:0 0 auto; color:#cbd5e1; font-size:14px; align-self:center;">→</div>');
+
+    const current = steps[currentIdx];
+    const nextStepBox = `
+      <div style="margin-top:8px; padding:8px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:12.5px; color:#334155; line-height:1.5;">
+        <strong style="color:#1E2761;">Next:</strong> ${current.next}
+      </div>`;
+
+    target.innerHTML = `
+      <div style="display:flex; flex-wrap:wrap; gap:6px; align-items:center;">${pillRow}</div>
+      ${nextStepBox}
+    `;
   }
 
   // Close the call for nominations on the active cycle. Flips status to
