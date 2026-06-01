@@ -5893,7 +5893,11 @@ const { renderPaperFormHTML } = require('./lib/nominations/paper_form');
 // Render an HTML string to a PDF Buffer via puppeteer. Shared helper used by
 // the Call for Nominations letter + the standalone Paper Nomination Form so
 // both endpoints share the same browser config + margin behavior.
-async function _renderHtmlToPdf(html) {
+// Render HTML to PDF via puppeteer. Options:
+//   pageNumbers: boolean — when true, prints a "Page X of Y" footer
+//     on every page (Canyon Gate / Bedrock packet convention). Adds
+//     bottom margin to make room for the injected footer.
+async function _renderHtmlToPdf(html, opts = {}) {
   const puppeteer = _puppeteer_lazy();
   const browser = await puppeteer.launch({
     headless: 'new',
@@ -5902,12 +5906,27 @@ async function _renderHtmlToPdf(html) {
   try {
     const page = await browser.newPage();
     try { await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 }); } catch (_) {}
-    return await page.pdf({
+    const pdfOpts = {
       format: 'Letter',
       printBackground: true,
       margin: { top: 0, right: 0, bottom: 0, left: 0 },
       preferCSSPageSize: true,
-    });
+    };
+    if (opts.pageNumbers) {
+      // displayHeaderFooter overrides preferCSSPageSize on margins, so we
+      // re-set explicit margins that leave room for the footer template.
+      pdfOpts.displayHeaderFooter = true;
+      pdfOpts.preferCSSPageSize = false;
+      pdfOpts.margin = { top: '0.5in', right: '0.85in', bottom: '0.55in', left: '0.85in' };
+      pdfOpts.headerTemplate = '<div></div>';  // empty header
+      // Footer: small grey "Page X of Y" centered. inline styles only —
+      // puppeteer doesn't load the page's stylesheet in the footer iframe.
+      pdfOpts.footerTemplate = `
+        <div style="width:100%; font-family:Arial, sans-serif; font-size:9pt; color:#475569; text-align:center; padding:0 0.85in;">
+          Page <span class="pageNumber"></span> of <span class="totalPages"></span>
+        </div>`;
+    }
+    return await page.pdf(pdfOpts);
   } finally { try { await browser.close(); } catch (_) {} }
 }
 
@@ -6711,7 +6730,7 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
           : new Date().getFullYear(),
       },
     });
-    const buf = await _renderHtmlToPdf(html);
+    const buf = await _renderHtmlToPdf(html, { pageNumbers: true });
 
     // Save the rendered PDF to storage so it's recoverable later and
     // tied to the cycle for posterity.
