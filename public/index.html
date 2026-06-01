@@ -1563,7 +1563,7 @@
           <button id="nomCloseCycleBtn" onclick="nomCloseCycle()" style="display:none; background:#b45309; color:#fff; border:1px solid #b45309; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Mark this cycle's nomination period as closed. No new submissions accepted after this; ready to lock the slate + generate the Annual Meeting Notice.">🛑 Close call for nominations</button>
           <button id="nomReopenCycleBtn" onclick="nomReopenCycle()" style="display:none; background:#fff; color:#475569; border:1px solid #cbd5e1; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Reopen the cycle (admin-fix if you closed it by mistake)">↩ Reopen</button>
           <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="AI scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review (AI)</button>
-          <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Pulls every nomination on the slate and generates the 4-page Annual Meeting Notice + ballot + bios">🗳️ Annual Meeting Notice <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
+          <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Opens the Annual Meeting Notice tab with this cycle pre-selected. From there you configure voting methods + generate the 4-page Notice / Ballot / Bios PDF.">🗳️ Annual Meeting Notice → <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
           <button id="nomMarkSentBtn" onclick="nomMarkNoticeSent()" style="display:none; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Record that the Annual Meeting Notice was mailed + emailed to members. Advances the breadcrumb from 🗳️ Notice → ✉️ Voting and writes the audit trail (date + channels) per Texas §209.0056.">✉️ Mark notice sent</button>
           <button id="nomFinalizeBtn" onclick="nomFinalizeCycle()" style="display:none; background:#15803d; color:#fff; border:1px solid #15803d; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Lock this cycle into terminal 'finalized' status — the meeting is held, winners are known, no more edits expected. Cycle moves into the Recent bucket.">🔒 Finalize cycle</button>
           <div id="nomPreFlightResult" style="display:none; flex-basis:100%; margin-top:8px;"></div>
@@ -28684,7 +28684,7 @@ ${questionsPage}
         label: 'Closed',
         icon: '🛑',
         done: noticeReady || meetingHeld,
-        next: 'Call is closed. Click 🔍 Pre-flight review (AI) to scan every nomination for typos / inconsistencies, fix any flagged rows, then 🗳️ Annual Meeting Notice to generate the ballot.',
+        next: 'Call is closed. Click 🔍 Pre-flight review (AI) to scan every nomination for typos / inconsistencies, fix any flagged rows, then 🗳️ Annual Meeting Notice → to open the Notice tab with this cycle loaded for generating the ballot.',
       },
       {
         key: 'notice',
@@ -28890,33 +28890,52 @@ ${questionsPage}
     }
   }
 
-  // Generate the 4-page Annual Meeting Notice + Ballot + Bios PDF. Pulls
-  // every on_slate nomination, embeds their photos, applies smart voting-
-  // methods defaults. Disabled in the UI until at least 1 nomination is
-  // on the slate — see slateCount check in nomOpenCycle.
+  // Navigate to the Annual Meeting Notice sub-tab with THIS cycle pre-
+  // selected in the dropdown. The AMN tab has the proper controls for
+  // configuring voting methods, candidate sort, and generating the PDF
+  // — clicking this button from the cycle panel just teleports the
+  // operator there with the right cycle already loaded, so they don't
+  // have to navigate tabs + find their cycle in a dropdown.
+  //
+  // Implements Ed's "every step has a next step" UX principle: the
+  // cycle panel's 🗳️ button = "go to the next step's screen" rather
+  // than "do everything inline here."
   async function nomGenerateAnnualNotice() {
     if (!nomActiveCycleId) { alert('Save the cycle first.'); return; }
-    const btn = document.getElementById('nomAnnualNoticeBtn');
-    const originalLabel = btn.innerHTML;
-    btn.disabled = true; btn.textContent = '⏳ Rendering (15–20s)…';
+    const targetCycleId = nomActiveCycleId;
+
+    // Switch to the AMN sub-tab. Different codebases use slightly
+    // different tab-switching plumbing — try the most-likely entry
+    // points in order, fall back to clicking the sub-tab button.
     try {
-      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/annual-meeting-notice`, { method: 'POST' });
-      if (!r.ok) {
-        const j = await r.json().catch(() => ({}));
-        throw new Error(j.error || `HTTP ${r.status}`);
+      if (typeof window.switchTab === 'function') {
+        window.switchTab('ameetingnotice');
+      } else {
+        const subBtn = Array.from(document.querySelectorAll('.tab-subbtn'))
+          .find((b) => (b.getAttribute('onclick') || '').includes("'ameetingnotice'"));
+        if (subBtn) subBtn.click();
       }
-      const blob = await r.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `annual-meeting-notice.pdf`;
-      a.click();
-      URL.revokeObjectURL(url);
-    } catch (e) {
-      alert('Annual Meeting Notice render failed: ' + e.message);
-    } finally {
-      btn.disabled = false; btn.innerHTML = originalLabel;
-    }
+    } catch (_) { /* best-effort */ }
+
+    // After the tab activates, reload the cycle dropdown + pre-select
+    // this cycle. Tiny delay lets the tab-render + load fire first.
+    setTimeout(async () => {
+      try {
+        if (typeof amnLoadCycles === 'function') {
+          await amnLoadCycles();
+        }
+        const sel = document.getElementById('amnCycleSelect');
+        if (sel) {
+          sel.value = targetCycleId;
+          if (typeof amnLoadCycle === 'function') {
+            await amnLoadCycle();
+          }
+          try { sel.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) {}
+        }
+      } catch (e) {
+        console.warn('AMN handoff failed:', e.message);
+      }
+    }, 200);
   }
 
   // =========================================================================
