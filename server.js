@@ -6127,9 +6127,10 @@ app.get('/api/nominations/cycles/:id', async (req, res) => {
 // without leaking arbitrary client writes into the cycle row.
 app.patch('/api/nominations/cycles/:id', async (req, res) => {
   try {
-    const ALLOWED = new Set(['candidate_sort_mode', 'status']);
+    const ALLOWED = new Set(['candidate_sort_mode', 'status', 'notice_sent_channels']);
     const VALID_SORT_MODES = new Set(['alphabetical', 'incumbents_first', 'manual']);
     const VALID_STATUSES = new Set(['planned', 'open', 'closed', 'finalized']);
+    const VALID_NOTICE_CHANNELS = new Set(['mail', 'email', 'portal']);
     // Allowed status transitions (key = current status, value = set of allowed targets).
     // The cycle can advance forward in normal use; backward moves (closed→open) are
     // permitted for operator-fix scenarios (operator hit Close by mistake before the
@@ -6423,6 +6424,77 @@ async function _storagePathToDataUri(storagePath, fallbackMime = 'image/jpeg') {
     return null;
   }
 }
+
+// ============================================================================
+// POST /api/nominations/cycles/:id/mark-notice-sent
+// ----------------------------------------------------------------------------
+// Records that the Annual Meeting Notice was actually mailed/emailed to
+// members. Distinct from notice_generated_at (PDF was rendered).
+//
+// Body: { channels: ['mail', 'email'], sent_by? }
+//
+// Refuses if notice_pdf_storage_path is NULL (can't mark sent before
+// it's been generated). Advances the workflow breadcrumb from
+// "🗳️ Notice" → "✉️ Voting" so the operator sees they're past the
+// generate step.
+// ============================================================================
+app.post('/api/nominations/cycles/:id/mark-notice-sent', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const channels = Array.isArray(body.channels) ? body.channels.filter(Boolean) : [];
+    const validChannels = new Set(['mail', 'email', 'portal']);
+    const cleanChannels = channels
+      .map((c) => String(c).toLowerCase().trim())
+      .filter((c) => validChannels.has(c));
+    if (cleanChannels.length === 0) {
+      return res.status(400).json({
+        error: 'channels array required — pick at least one of: mail, email, portal',
+      });
+    }
+
+    // Verify cycle exists + notice has been generated
+    const { data: cycle, error: loadErr } = await supabase
+      .from('nomination_cycles')
+      .select('id, notice_pdf_storage_path, notice_sent_at, status')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (loadErr) return res.status(500).json({ error: loadErr.message });
+    if (!cycle) return res.status(404).json({ error: 'cycle not found' });
+    if (!cycle.notice_pdf_storage_path) {
+      return res.status(400).json({
+        error: 'cannot mark notice sent — no notice PDF has been generated yet. Click 🗳️ Annual Meeting Notice first.',
+      });
+    }
+
+    const now = new Date().toISOString();
+    const { data, error: updErr } = await supabase
+      .from('nomination_cycles')
+      .update({
+        notice_sent_at: now,
+        notice_sent_by: String(body.sent_by || 'staff'),
+        notice_sent_channels: cleanChannels,
+        updated_at: now,
+      })
+      .eq('id', req.params.id)
+      .select()
+      .single();
+    if (updErr) return res.status(500).json({ error: updErr.message });
+
+    // Audit event
+    try {
+      await supabase.from('nomination_events').insert({
+        cycle_id: data.id,
+        event_type: 'notice_sent',
+        event_data: { channels: cleanChannels, sent_at: now, sent_by: data.notice_sent_by },
+      });
+    } catch (_) { /* best-effort */ }
+
+    res.json({ cycle: data });
+  } catch (err) {
+    console.error('[mark-notice-sent] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // ============================================================================
 // POST /api/nominations/cycles/:id/pre-flight-check

@@ -1564,6 +1564,8 @@
           <button id="nomReopenCycleBtn" onclick="nomReopenCycle()" style="display:none; background:#fff; color:#475569; border:1px solid #cbd5e1; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Reopen the cycle (admin-fix if you closed it by mistake)">↩ Reopen</button>
           <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="AI scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review (AI)</button>
           <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Pulls every nomination on the slate and generates the 4-page Annual Meeting Notice + ballot + bios">🗳️ Annual Meeting Notice <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
+          <button id="nomMarkSentBtn" onclick="nomMarkNoticeSent()" style="display:none; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Record that the Annual Meeting Notice was mailed + emailed to members. Advances the breadcrumb from 🗳️ Notice → ✉️ Voting and writes the audit trail (date + channels) per Texas §209.0056.">✉️ Mark notice sent</button>
+          <button id="nomFinalizeBtn" onclick="nomFinalizeCycle()" style="display:none; background:#15803d; color:#fff; border:1px solid #15803d; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Lock this cycle into terminal 'finalized' status — the meeting is held, winners are known, no more edits expected. Cycle moves into the Recent bucket.">🔒 Finalize cycle</button>
           <div id="nomPreFlightResult" style="display:none; flex-basis:100%; margin-top:8px;"></div>
         </div>
 
@@ -27804,9 +27806,22 @@ ${questionsPage}
       // finalized → both hidden (terminal state)
       const closeBtn = document.getElementById('nomCloseCycleBtn');
       const reopenBtn = document.getElementById('nomReopenCycleBtn');
+      const markSentBtn = document.getElementById('nomMarkSentBtn');
+      const finalizeBtn = document.getElementById('nomFinalizeBtn');
       const canClose = cycle.status === 'open' || cycle.status === 'planned';
+      const noticeReady = !!(cycle.notice_pdf_storage_path || cycle.notice_generated_at);
+      const noticeSent = !!cycle.notice_sent_at;
       if (closeBtn) closeBtn.style.display = canClose ? 'inline-block' : 'none';
-      if (reopenBtn) reopenBtn.style.display = cycle.status === 'closed' ? 'inline-block' : 'none';
+      if (reopenBtn) reopenBtn.style.display = cycle.status === 'closed' && !noticeSent ? 'inline-block' : 'none';
+      // Mark-sent button appears once the notice PDF exists but hasn't been
+      // marked sent yet. Hidden after the operator confirms it went out.
+      if (markSentBtn) markSentBtn.style.display = noticeReady && !noticeSent ? 'inline-block' : 'none';
+      // Finalize button appears when the cycle is past the meeting date OR
+      // notice has been sent + status is closed (operator can declare done).
+      // Hidden when already finalized.
+      const meetingHeld = cycle.annual_meeting_date && cycle.annual_meeting_date < new Date().toISOString().slice(0, 10);
+      const canFinalize = cycle.status === 'closed' && (noticeSent || meetingHeld);
+      if (finalizeBtn) finalizeBtn.style.display = canFinalize ? 'inline-block' : 'none';
 
       // Render the workflow breadcrumb so the operator always sees where
       // they are in the election cycle + what the next step is.
@@ -28763,6 +28778,84 @@ ${questionsPage}
       alert(`Nominations closed.\n\nNext steps:\n  1. Confirm the slate (candidate order + bios)\n  2. Click 🗳️ Annual Meeting Notice to generate ballot + bios PDF\n  3. Mail + email the notice to members (Texas §209.0056 — 10–60 day notice)`);
     } catch (e) {
       alert('Close failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  }
+
+  // Mark the Annual Meeting Notice as actually mailed/emailed. Operator
+  // picks which channels they used (mail, email, or both). Advances the
+  // breadcrumb from "🗳️ Notice" → "✉️ Voting". Distinct from generating
+  // the PDF — that step just renders; this step says "Bedrock sent it."
+  async function nomMarkNoticeSent() {
+    if (!nomActiveCycleId) { alert('No active cycle.'); return; }
+    // Channel-selection confirm using prompt() for a simple ask — most
+    // communities go out on both mail + email. Default both checked.
+    const channelStr = prompt(
+      'Which channels did the notice go out on?\n\n' +
+      'Type ANY combination of: mail, email, portal\n' +
+      'Comma-separate if more than one.\n\n' +
+      'Default: mail, email',
+      'mail, email'
+    );
+    if (channelStr === null) return;
+    const channels = channelStr.split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+    if (channels.length === 0) { alert('At least one channel is required.'); return; }
+    const btn = document.getElementById('nomMarkSentBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = '⏳ Marking…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/mark-notice-sent`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channels }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await nomLoadCycles();
+      await nomOpenCycle(nomActiveCycleId);
+      alert(`Notice marked sent via: ${channels.join(', ')}\n\nThe cycle now sits in the "Voting" phase. Next step: wait for the meeting.`);
+    } catch (e) {
+      alert('Mark sent failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  }
+
+  // Finalize the cycle — flips status closed → finalized. Terminal state.
+  // Used after the annual meeting is held + winners are known. Cycle moves
+  // into the Recent bucket and the breadcrumb shows all-done.
+  async function nomFinalizeCycle() {
+    if (!nomActiveCycleId) { alert('No active cycle.'); return; }
+    const cycle = nomCycles.find(c => c.id === nomActiveCycleId);
+    if (!confirm(
+      `Finalize this cycle?\n\n` +
+      `Community: ${cycle ? cycle.community_name : '(unknown)'}\n` +
+      `Meeting: ${cycle ? cycle.annual_meeting_date : '(unknown)'}\n\n` +
+      `Terminal state — the cycle moves into the Recent bucket and the slate is locked. ` +
+      `Use this after the annual meeting has been held and the winners are known.\n\n` +
+      `Proceed?`
+    )) return;
+    const btn = document.getElementById('nomFinalizeBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = '⏳ Finalizing…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'finalized' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await nomLoadCycles();
+      await nomOpenCycle(nomActiveCycleId);
+      alert('Cycle finalized. It now lives in the Recent cycles bucket for future-year reference.');
+    } catch (e) {
+      alert('Finalize failed: ' + e.message);
     } finally {
       btn.disabled = false;
       btn.innerHTML = orig;
