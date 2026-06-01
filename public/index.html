@@ -29257,14 +29257,44 @@ ${questionsPage}
     list.innerHTML = '<span style="color:#94A3B8; font-style:italic;">Re-generate at any time using the green button — the latest version is always the current cycle data.</span>';
   }
 
-  // Auto-load cycles when the Annual Meeting Notice tab is activated.
-  document.addEventListener('DOMContentLoaded', () => {
-    document.querySelectorAll('.tab-subbtn').forEach((b) => {
-      if (b.getAttribute('onclick') && b.getAttribute('onclick').includes("'ameetingnotice'")) {
-        b.addEventListener('click', () => { amnLoadCycles(); amnLoadRecent(); });
+  // Auto-load cycles whenever the Annual Meeting Notice tab activates.
+  // Wraps switchTab so it fires regardless of whether the operator clicked
+  // the sub-tab pill directly OR was teleported here from the cycle panel's
+  // 🗳️ handoff button. Uses the DOMContentLoaded-retry pattern from
+  // CLAUDE.md (#IIFE-script-wrap scar) so the wrap doesn't silently no-op
+  // when switchTab is declared later in the file.
+  //
+  // Previous version queried for `.tab-subbtn` which doesn't exist — the
+  // sub-tabs render as `.tab-sub` via renderTabSubbar(). That listener
+  // attached to NOTHING; the AMN dropdown never auto-refreshed when the
+  // operator switched tabs, which is the bug Ed hit after closing the
+  // Waterview cycle ("it says closed but doesn't show up on annual
+  // meeting notice page unless I click on it from nominations page").
+  function _wireAmnTabHook() {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return false;
+    if (orig.__amnWrapped) return true;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'ameetingnotice') {
+        // Defer so the tab content is in the DOM before we touch its elements
+        setTimeout(() => {
+          try { if (typeof amnLoadCycles === 'function') amnLoadCycles(); } catch (_) {}
+          try { if (typeof amnLoadRecent === 'function') amnLoadRecent(); } catch (_) {}
+        }, 50);
       }
-    });
-  });
+      return r;
+    };
+    window.switchTab.__amnWrapped = true;
+    return true;
+  }
+  if (!_wireAmnTabHook()) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _wireAmnTabHook);
+    } else {
+      setTimeout(_wireAmnTabHook, 0);
+    }
+  }
 
   // =========================================================================
   // Drafts — generic "save in progress" / "resume saved drafts" framework.
