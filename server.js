@@ -6862,7 +6862,12 @@ app.patch('/api/nominations/:id', async (req, res) => {
     //                    submitted via the public form; paper/email/in-person
     //                    intakes are typed by staff and are inherently
     //                    correctable).
-    const STATUS_FIELDS = ['status', 'manager_notes', 'ballot_order'];
+    // STATUS_FIELDS = operator-only metadata, always editable regardless of
+    // how the nomination was submitted. is_incumbent belongs here because
+    // it's not something the homeowner submits — it's a board-roster fact
+    // Bedrock applies after seeing the slate (e.g., "this person currently
+    // sits on the board, mark them as incumbent so the ballot reflects it").
+    const STATUS_FIELDS = ['status', 'manager_notes', 'ballot_order', 'is_incumbent'];
     const NOMINEE_FIELDS = [
       'nominee_name', 'nominee_address', 'nominee_email', 'nominee_phone',
       'nominee_bio', 'years_in_community',

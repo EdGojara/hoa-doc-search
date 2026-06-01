@@ -28038,6 +28038,9 @@ ${questionsPage}
                 ${isOnSlate
                   ? `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'verified')">↺ Remove from ballot</button>`
                   : `<button class="action-btn" style="font-size:11px; padding:4px 9px;" onclick="nomUpdateStatus('${n.id}', 'on_slate')">✓ Put on ballot</button>`}
+                ${n.is_incumbent
+                  ? `<button class="secondary-btn" style="font-size:11px; padding:4px 9px; background:#eef2ff; border:1px solid #c7d2fe; color:#1E2761; font-weight:600;" onclick="nomToggleIncumbent('${n.id}', false)" title="Mark this candidate as NOT a current board member. Removes the (incumbent) tag from the ballot.">⭐ Incumbent — unmark</button>`
+                  : `<button class="secondary-btn" style="font-size:11px; padding:4px 9px;" onclick="nomToggleIncumbent('${n.id}', true)" title="Mark this candidate as a current board member. The ballot will print '(incumbent)' next to their name, and if the cycle uses 'incumbents first' sort they'll be listed at the top.">+ Mark incumbent</button>`}
                 <button data-admin-only class="secondary-btn" style="font-size:11px; padding:4px 9px; background:#fff; border:1px solid #fecaca; color:#b91c1c;" onclick="nomDeleteRow('${n.id}', '${escapeHtml((n.nominee_name || '').replace(/'/g, "&#39;"))}')" title="Hard-delete this nomination (admin only). Audit log retains a 'deleted' event so the history shows it existed.">🗑️ Delete</button>
               </div>
               </div>
@@ -28438,6 +28441,29 @@ ${questionsPage}
       }
     } catch (e) {
       alert('Delete failed: ' + e.message);
+    }
+  }
+
+  // Toggle the is_incumbent flag on a nomination. PATCH only — no
+  // confirmation needed; the operator can flip back instantly if they
+  // misclicked. The AMN renderer already handles the flag (prints
+  // "(incumbent)" on the ballot + sorts incumbents first when the
+  // cycle is configured for that order).
+  async function nomToggleIncumbent(id, newValue) {
+    try {
+      const r = await fetch(`/api/nominations/${id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_incumbent: !!newValue }),
+      });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Refresh the cycle so the row re-renders with the new badge + toggle state
+      if (typeof nomOpenCycle === 'function' && typeof nomActiveCycleId !== 'undefined' && nomActiveCycleId) {
+        nomOpenCycle(nomActiveCycleId);
+      }
+    } catch (e) {
+      alert('Could not update incumbent status: ' + e.message);
     }
   }
 
