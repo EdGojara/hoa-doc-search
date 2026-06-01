@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Agent Training Console · Bedrock Intelligence</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="/brand.css">
+<style>
+  body {
+    margin: 0; padding: 0; background: #F2F4F7;
+    font-family: 'Inter', system-ui, sans-serif;
+    color: #0B1D34;
+  }
+  .topbar {
+    background: #0B1D34; color: #fff; padding: 14px 24px;
+    display: flex; align-items: center; gap: 16px;
+  }
+  .topbar img { height: 38px; }
+  .topbar .wm {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 600; font-size: 22px;
+    letter-spacing: 0.02em;
+  }
+  .topbar .wm em { font-style: normal; color: #D4AF37; }
+  .topbar a {
+    margin-left: auto; color: #a8b2c4; text-decoration: none;
+    font-size: 13px;
+  }
+  .topbar a:hover { color: #D4AF37; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 280px 1fr 360px;
+    height: calc(100vh - 66px);
+  }
+  .panel-left, .panel-right {
+    background: #fff; border-right: 1px solid #e2e8f0;
+    padding: 18px 20px; overflow-y: auto;
+  }
+  .panel-right { border-right: 0; border-left: 1px solid #e2e8f0; }
+  .panel-center {
+    background: #fff; display: flex; flex-direction: column;
+    overflow: hidden;
+  }
+  h2 {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 600; font-size: 18px;
+    margin: 0 0 12px; color: #0B1D34;
+  }
+  label {
+    display: block; font-size: 11px; font-weight: 700;
+    color: #475569; margin: 14px 0 4px;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  select, input[type="text"], textarea {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid #d0d7de; border-radius: 6px;
+    font-family: inherit; font-size: 13px;
+    box-sizing: border-box;
+  }
+  textarea { resize: vertical; min-height: 60px; }
+
+  /* Persona pills */
+  .persona-row {
+    display: flex; gap: 6px; margin-bottom: 6px;
+  }
+  .persona-pill {
+    flex: 1; padding: 8px 10px;
+    border: 2px solid #cbd5e1; border-radius: 8px;
+    cursor: pointer; text-align: center;
+    font-size: 13px; font-weight: 600; color: #475569;
+    background: #fff;
+  }
+  .persona-pill.active {
+    background: #0B1D34; color: #fff; border-color: #0B1D34;
+  }
+  .persona-pill.active.claire {
+    background: #1E2761; border-color: #1E2761;
+  }
+  .persona-pill.active.asked {
+    background: #166534; border-color: #166534;
+  }
+  .persona-desc {
+    font-size: 11px; color: #6B7280; line-height: 1.4;
+    padding: 6px 10px; background: #F2F4F7; border-radius: 6px;
+    margin-top: 4px;
+  }
+
+  /* Chat surface */
+  .chat-header {
+    padding: 14px 22px;
+    border-bottom: 1px solid #e2e8f0;
+    background: #F8FAFC;
+    display: flex; align-items: center; gap: 14px;
+  }
+  .chat-header .agent-name {
+    font-family: 'Cormorant Garamond', Georgia, serif;
+    font-weight: 600; font-size: 20px;
+  }
+  .chat-header .agent-name.claire { color: #1E2761; }
+  .chat-header .agent-name.asked { color: #166534; }
+  .chat-header .badge {
+    background: #fef3c7; color: #854d0e;
+    padding: 3px 8px; border-radius: 999px;
+    font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+  }
+  .chat-header .ctx {
+    margin-left: auto; font-size: 12px; color: #6B7280;
+  }
+  .chat-history {
+    flex: 1; overflow-y: auto;
+    padding: 18px 24px;
+    display: flex; flex-direction: column; gap: 14px;
+  }
+  .msg-row {
+    display: flex;
+  }
+  .msg-row.user { justify-content: flex-end; }
+  .msg-bubble {
+    max-width: 78%;
+    padding: 10px 14px; border-radius: 14px;
+    font-size: 13.5px; line-height: 1.5;
+    white-space: pre-wrap;
+  }
+  .msg-bubble.user {
+    background: #0B1D34; color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .msg-bubble.assistant {
+    background: #F2F4F7; color: #0B1D34;
+    border-bottom-left-radius: 4px;
+  }
+  .msg-bubble.system-empty {
+    background: transparent; color: #94A3B8; font-style: italic;
+    text-align: center; width: 100%;
+    border: 1px dashed #cbd5e1; padding: 14px;
+  }
+  .msg-meta {
+    font-size: 10.5px; color: #94A3B8;
+    margin-top: 4px;
+    display: flex; gap: 8px; align-items: center;
+  }
+  .msg-action {
+    font-size: 11px; color: #1E2761;
+    cursor: pointer; text-decoration: underline;
+    background: none; border: 0; padding: 0;
+  }
+  .msg-action:hover { color: #D4AF37; }
+
+  .reasoning-pane {
+    margin-top: 6px;
+    background: #fffbeb; border: 1px solid #fde047;
+    border-radius: 8px; padding: 8px 12px;
+    font-size: 12px;
+  }
+  .reasoning-pane h4 {
+    margin: 0 0 4px; font-size: 11.5px; color: #854d0e;
+    font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  }
+  .reasoning-pane .pb-entry {
+    margin-top: 4px; padding: 6px 8px;
+    background: #fff; border-radius: 4px; font-size: 11.5px;
+    border-left: 2px solid #D4AF37;
+  }
+  .reasoning-pane .pb-entry .sim {
+    font-family: 'JetBrains Mono', monospace; font-size: 10px;
+    color: #6B7280;
+  }
+
+  /* Input bar */
+  .chat-input-bar {
+    border-top: 1px solid #e2e8f0;
+    padding: 12px 18px; background: #fff;
+    display: flex; gap: 10px;
+  }
+  .chat-input-bar textarea {
+    flex: 1; resize: none; min-height: 48px; max-height: 120px;
+    font-size: 13.5px;
+  }
+  .chat-input-bar button {
+    padding: 8px 18px;
+    background: #0B1D34; color: #fff;
+    border: 0; border-radius: 6px;
+    font-weight: 600; font-size: 13px;
+    cursor: pointer;
+  }
+  .chat-input-bar button:disabled {
+    background: #94A3B8; cursor: not-allowed;
+  }
+
+  /* Right panel — playbook capture */
+  .panel-right h3 {
+    font-family: 'Cormorant Garamond', serif;
+    font-weight: 600; font-size: 16px; margin: 0 0 4px;
+    color: #0B1D34;
+  }
+  .panel-right .help {
+    font-size: 12px; color: #6B7280; line-height: 1.5;
+    margin-bottom: 14px;
+  }
+  .pe-status {
+    margin-top: 12px; padding: 8px 12px;
+    border-radius: 6px; font-size: 12.5px;
+    display: none;
+  }
+  .pe-status.ok { background: #dcfce7; color: #166534; }
+  .pe-status.err { background: #fef2f2; color: #991b1b; }
+  .save-btn {
+    width: 100%; padding: 10px;
+    background: #D4AF37; color: #0B1D34;
+    border: 0; border-radius: 6px;
+    font-weight: 700; font-size: 13px;
+    cursor: pointer; margin-top: 6px;
+  }
+  .save-btn:hover { background: #e8c96e; }
+  .save-btn:disabled { background: #cbd5e1; color: #6B7280; cursor: not-allowed; }
+
+  .pin-row {
+    display: flex; gap: 8px; margin-top: 4px;
+  }
+  .pin-row label {
+    margin: 0; flex: 1; padding: 6px 8px;
+    border: 1px solid #cbd5e1; border-radius: 6px;
+    font-size: 11.5px; text-align: center; cursor: pointer;
+    text-transform: none; letter-spacing: 0;
+  }
+  .pin-row input[type="checkbox"] { margin-right: 4px; }
+
+  .access-denied {
+    max-width: 540px; margin: 80px auto;
+    padding: 28px 36px;
+    background: #fef2f2; border: 1px solid #fecaca;
+    border-radius: 12px;
+  }
+  .access-denied h2 {
+    color: #991b1b; margin-bottom: 8px;
+  }
+  .access-denied p { color: #7f1d1d; line-height: 1.5; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <img src="/brand-assets/bedrock-mark.svg" alt="Bedrock">
+  <div class="wm">trustEd <em>·</em> Agent Training Console</div>
+  <a href="/">← Platform</a>
+</div>
+
+<!-- Non-admin gate -->
+<div id="adminBlock" class="access-denied" style="display:none;">
+  <h2>Admin role required</h2>
+  <p>The Agent Training Console is restricted to Bedrock admin operators. Corrections saved here propagate to live customer-facing AI surfaces (Claire on calls, askEd on staff chat).</p>
+  <p>If you need access, ask Ed to update your role in the Team tab.</p>
+</div>
+
+<div id="trainingApp" class="layout" style="display:none;">
+
+  <!-- LEFT: setup / context -->
+  <div class="panel-left">
+    <h2>Setup</h2>
+
+    <label>Agent</label>
+    <div class="persona-row">
+      <div class="persona-pill active claire" data-agent="claire" onclick="setAgent('claire')">🎙️ Claire</div>
+      <div class="persona-pill" data-agent="asked" onclick="setAgent('asked')">💬 askEd</div>
+    </div>
+    <div class="persona-desc" id="agentDesc">
+      Homeowner-facing voice agent. Hard refusal on §209 / waivers / fining. Warm + brief tone.
+    </div>
+
+    <label>Community context</label>
+    <select id="communitySel" onchange="onCommunityChange()">
+      <option value="">— Generic (no community) —</option>
+    </select>
+    <div style="font-size:11px; color:#6B7280; margin-top:4px;">
+      Picks the right facts + docs for retrieval. Leave generic to test rule-based logic only.
+    </div>
+
+    <label>Scenario seed (optional)</label>
+    <select id="scenarioSel" onchange="onScenarioChange()">
+      <option value="">— Pick a starting scenario —</option>
+      <optgroup label="Homeowner inquiries">
+        <option>Calling about a violation letter they received</option>
+        <option>Asking when the next board meeting is</option>
+        <option>Disputing an assessment fee</option>
+        <option>Asking about pool hours</option>
+        <option>Reporting suspicious activity at the gate</option>
+        <option>Threatening to call an attorney</option>
+      </optgroup>
+      <optgroup label="ARC / building">
+        <option>Wants to install a fence</option>
+        <option>Wants to paint their house</option>
+        <option>Builder asking about new construction submission</option>
+      </optgroup>
+      <optgroup label="Staff questions (askEd)">
+        <option>What's the quorum for an annual meeting?</option>
+        <option>Can the board waive a fine?</option>
+        <option>How long is the cure period under §209?</option>
+        <option>What does the management agreement say about termination?</option>
+      </optgroup>
+    </select>
+
+    <label style="margin-top:18px;">Reset</label>
+    <button class="save-btn" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; font-weight:500;" onclick="resetConversation()">↺ Start new conversation</button>
+  </div>
+
+  <!-- CENTER: chat -->
+  <div class="panel-center">
+    <div class="chat-header">
+      <div class="agent-name claire" id="chatAgentName">🎙️ Claire</div>
+      <div class="badge">TRAINING MODE</div>
+      <div class="ctx" id="chatCtx">No community selected</div>
+    </div>
+    <div class="chat-history" id="chatHistory">
+      <div class="msg-bubble system-empty">
+        Type a message as the caller or staffer. Claire/askEd's response will appear here. Click "🔍 Reasoning" on any AI turn to see which playbook entries + docs were used.
+      </div>
+    </div>
+    <div class="chat-input-bar">
+      <textarea id="chatInput" placeholder="Type as the caller (or staffer for askEd)…" onkeydown="handleInputKey(event)"></textarea>
+      <button id="sendBtn" onclick="sendTurn()">Send</button>
+    </div>
+  </div>
+
+  <!-- RIGHT: playbook capture -->
+  <div class="panel-right">
+    <h3>Save a correction</h3>
+    <p class="help">
+      Spot a wrong / weak answer? Capture the correction here. It gets embedded + saved to the playbook, and the NEXT real call/chat with the same situation uses your guidance.
+    </p>
+
+    <label>Applies to</label>
+    <div class="pin-row">
+      <label><input type="checkbox" id="appliesClaire" checked> 🎙️ Claire</label>
+      <label><input type="checkbox" id="appliesAsked" checked> 💬 askEd</label>
+    </div>
+
+    <label>Category</label>
+    <select id="peCategory">
+      <option value="training_correction">Training correction</option>
+      <option value="refusal_rule">Refusal rule (don't answer X)</option>
+      <option value="escalation_trigger">Escalation trigger (handoff on Y)</option>
+      <option value="tone">Tone / voice</option>
+      <option value="factual">Factual accuracy</option>
+      <option value="handoff_protocol">Handoff protocol</option>
+      <option value="compliance">Compliance / statutory</option>
+      <option value="other">Other</option>
+    </select>
+
+    <label>What situation does this cover?</label>
+    <textarea id="peSituation" rows="3" placeholder="e.g., Homeowner asks about a specific fine amount they owe"></textarea>
+
+    <label>What the AI SHOULD say (the rule)</label>
+    <textarea id="peResponse" rows="4" placeholder="e.g., Never quote specific fine amounts to homeowners; offer to send a written breakdown + transfer to the team for fine questions."></textarea>
+
+    <label>Why (reasoning — optional)</label>
+    <textarea id="peReasoning" rows="2" placeholder="e.g., Fine amounts often have disputed back-history; saying 'you owe $X' on a call commits Bedrock to a number that might not match the ledger."></textarea>
+
+    <label>Operator notes (optional)</label>
+    <textarea id="peNotes" rows="2" placeholder="e.g., Found this when Mrs. Hodges called 2026-05-31 angry about her late fee."></textarea>
+
+    <button id="saveBtn" class="save-btn" onclick="savePlaybookEntry()">💾 Save to playbook</button>
+    <div id="peStatus" class="pe-status"></div>
+
+    <hr style="margin:22px 0; border:0; border-top:1px solid #e2e8f0;">
+    <h3>Recent entries</h3>
+    <p class="help">Last 10 corrections you've taught the system.</p>
+    <div id="recentEntries" style="font-size:12px; color:#6B7280;">Loading…</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// ----- Supabase auth bootstrap (admin check) -----
+window.supa = null;
+window._isAdmin = false;
+(async function boot() {
+  try {
+    const cfgRes = await fetch('/api/auth/config');
+    const cfg = await cfgRes.json();
+    if (!cfg.enabled) return;
+    if (!window.supabase) {
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = 'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2';
+        s.onload = resolve; s.onerror = reject;
+        document.head.appendChild(s);
+      });
+    }
+    window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    // Verify admin role
+    try {
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (session?.access_token) {
+        const me = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + session.access_token } }).then((r) => r.json());
+        window._isAdmin = me?.user?.role === 'admin';
+      }
+    } catch (_) {}
+  } catch (e) {
+    console.warn('boot failed:', e.message);
+  }
+  if (window._isAdmin) {
+    document.getElementById('trainingApp').style.display = 'grid';
+    loadCommunities();
+    loadRecentEntries();
+  } else {
+    document.getElementById('adminBlock').style.display = 'block';
+  }
+})();
+
+// ----- State -----
+let _agent = 'claire';
+let _history = [];   // [{role: 'user'|'assistant', content, _reasoning?}]
+
+function setAgent(a) {
+  _agent = a;
+  // Toggle pill active state
+  document.querySelectorAll('.persona-pill').forEach((p) => {
+    p.classList.toggle('active', p.dataset.agent === a);
+    p.classList.toggle('claire', p.dataset.agent === 'claire');
+    p.classList.toggle('asked', p.dataset.agent === 'asked');
+  });
+  // Update header name + color
+  const nameEl = document.getElementById('chatAgentName');
+  nameEl.className = 'agent-name ' + a;
+  nameEl.textContent = a === 'claire' ? '🎙️ Claire' : '💬 askEd';
+  // Update description
+  document.getElementById('agentDesc').textContent = a === 'claire'
+    ? 'Homeowner-facing voice agent. Hard refusal on §209 / waivers / fining. Warm + brief tone.'
+    : 'Staff-facing chat. Direct + technical. Always cites sources + statutes. No refusal — staff is the decision-maker.';
+  // Adjust which "applies_to" boxes are pre-checked: train current agent first
+  document.getElementById('appliesClaire').checked = a === 'claire';
+  document.getElementById('appliesAsked').checked = a === 'asked';
+}
+
+function onCommunityChange() {
+  const sel = document.getElementById('communitySel');
+  const txt = sel.options[sel.selectedIndex].textContent;
+  document.getElementById('chatCtx').textContent = sel.value ? `Context: ${txt}` : 'No community selected';
+}
+
+function onScenarioChange() {
+  const sel = document.getElementById('scenarioSel');
+  if (sel.value) {
+    document.getElementById('chatInput').value = sel.options[sel.selectedIndex].textContent;
+    sel.value = '';
+  }
+}
+
+function resetConversation() {
+  _history = [];
+  document.getElementById('chatHistory').innerHTML = '<div class="msg-bubble system-empty">Conversation reset. Type a new message as the caller or staffer.</div>';
+}
+
+function handleInputKey(e) {
+  if (e.key === 'Enter' && !e.shiftKey) {
+    e.preventDefault();
+    sendTurn();
+  }
+}
+
+async function loadCommunities() {
+  try {
+    const r = await fetch('/api/communities');
+    if (!r.ok) return;
+    const j = await r.json();
+    const sel = document.getElementById('communitySel');
+    (j.communities || j || []).forEach((c) => {
+      const o = document.createElement('option');
+      o.value = c.id;
+      o.textContent = c.name;
+      sel.appendChild(o);
+    });
+  } catch (_) {}
+}
+
+async function sendTurn() {
+  const input = document.getElementById('chatInput');
+  const text = input.value.trim();
+  if (!text) return;
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true;
+  btn.textContent = '⏳';
+
+  // Add user message to history + UI
+  _history.push({ role: 'user', content: text });
+  appendMessage('user', text);
+  input.value = '';
+
+  // Clear placeholder bubble if present
+  const placeholder = document.querySelector('.msg-bubble.system-empty');
+  if (placeholder) placeholder.parentElement.remove();
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/agent-training/turn', {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({
+        agent: _agent,
+        community_id: document.getElementById('communitySel').value || null,
+        history: _history.slice(0, -1),  // exclude the just-pushed user message
+        message: text,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+    _history.push({ role: 'assistant', content: j.response, _reasoning: j.reasoning });
+    appendMessage('assistant', j.response, j.reasoning);
+  } catch (e) {
+    appendMessage('assistant', `[Error: ${e.message}]`);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Send';
+    input.focus();
+  }
+}
+
+function appendMessage(role, content, reasoning) {
+  const hist = document.getElementById('chatHistory');
+  const row = document.createElement('div');
+  row.className = 'msg-row ' + role;
+
+  const bubble = document.createElement('div');
+  bubble.className = 'msg-bubble ' + role;
+  bubble.textContent = content;
+
+  const wrapper = document.createElement('div');
+  wrapper.style.maxWidth = '82%';
+  wrapper.appendChild(bubble);
+
+  if (role === 'assistant') {
+    const meta = document.createElement('div');
+    meta.className = 'msg-meta';
+    const reasoningBtn = document.createElement('button');
+    reasoningBtn.className = 'msg-action';
+    reasoningBtn.textContent = '🔍 Reasoning';
+    reasoningBtn.onclick = () => {
+      const existing = wrapper.querySelector('.reasoning-pane');
+      if (existing) { existing.remove(); return; }
+      const pane = renderReasoningPane(reasoning);
+      wrapper.appendChild(pane);
+    };
+    meta.appendChild(reasoningBtn);
+    const useBtn = document.createElement('button');
+    useBtn.className = 'msg-action';
+    useBtn.textContent = '✏️ Correct this answer';
+    useBtn.onclick = () => stageCorrection(content);
+    meta.appendChild(useBtn);
+    wrapper.appendChild(meta);
+  }
+
+  row.appendChild(wrapper);
+  hist.appendChild(row);
+  hist.scrollTop = hist.scrollHeight;
+}
+
+function renderReasoningPane(reasoning) {
+  const pane = document.createElement('div');
+  pane.className = 'reasoning-pane';
+  if (!reasoning) {
+    pane.innerHTML = '<em>No reasoning data</em>';
+    return pane;
+  }
+  const pb = reasoning.playbook_entries || [];
+  const docs = reasoning.docs_retrieved_count || 0;
+  let html = `<h4>What the AI used</h4>`;
+  html += `<div style="font-size:11.5px; margin-bottom:6px;">Docs retrieved: <strong>${docs}</strong> · Playbook entries: <strong>${pb.length}</strong></div>`;
+  if (pb.length === 0) {
+    html += `<em style="font-size:11px; color:#94a3b8;">No matching playbook entries.</em>`;
+  } else {
+    pb.forEach((e) => {
+      const sit = (e.situation || '').slice(0, 120);
+      html += `<div class="pb-entry">
+        <div class="sim">sim ${(e.similarity || 0).toFixed(3)} · ${e.category || '-'} · applies: ${(e.applies_to || []).join(', ')}</div>
+        <div style="margin-top:2px;">${escapeHtml(sit)}</div>
+      </div>`;
+    });
+  }
+  pane.innerHTML = html;
+  return pane;
+}
+
+function stageCorrection(wrongResponse) {
+  document.getElementById('peSituation').value = _history.length > 1
+    ? _history[_history.length - 2].content
+    : '';
+  document.getElementById('peResponse').value = '';
+  document.getElementById('peReasoning').value = '';
+  document.getElementById('peNotes').value = `AI was correcting: "${wrongResponse.slice(0, 120)}..."`;
+  document.getElementById('peSituation').scrollIntoView({ behavior: 'smooth', block: 'center' });
+  document.getElementById('peResponse').focus();
+}
+
+async function savePlaybookEntry() {
+  const status = document.getElementById('peStatus');
+  const btn = document.getElementById('saveBtn');
+  const situation = document.getElementById('peSituation').value.trim();
+  const response = document.getElementById('peResponse').value.trim();
+  if (!situation || !response) {
+    status.className = 'pe-status err';
+    status.style.display = 'block';
+    status.textContent = 'Both "situation" and "what the AI should say" are required.';
+    return;
+  }
+  const appliesTo = [];
+  if (document.getElementById('appliesClaire').checked) appliesTo.push('claire');
+  if (document.getElementById('appliesAsked').checked) appliesTo.push('asked');
+  if (appliesTo.length === 0) {
+    status.className = 'pe-status err';
+    status.style.display = 'block';
+    status.textContent = 'Pick at least one persona (Claire, askEd, or both).';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = '⏳ Saving + embedding…';
+  status.style.display = 'none';
+
+  // Capture the full dialogue as context
+  const dialogue = JSON.stringify(_history.map((t) => ({ role: t.role, content: t.content })));
+
+  try {
+    const headers = { 'Content-Type': 'application/json' };
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) {}
+    const r = await fetch('/api/agent-training/playbook-entry', {
+      method: 'POST', headers,
+      body: JSON.stringify({
+        applies_to: appliesTo,
+        category: document.getElementById('peCategory').value,
+        situation,
+        response,
+        reasoning: document.getElementById('peReasoning').value.trim() || null,
+        training_notes: document.getElementById('peNotes').value.trim() || null,
+        training_dialogue: dialogue,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+    status.className = 'pe-status ok';
+    status.style.display = 'block';
+    status.textContent = `✓ Saved (${appliesTo.join(' + ')}). The next call/chat that matches this situation will use your guidance.`;
+    document.getElementById('peSituation').value = '';
+    document.getElementById('peResponse').value = '';
+    document.getElementById('peReasoning').value = '';
+    document.getElementById('peNotes').value = '';
+    loadRecentEntries();
+  } catch (e) {
+    status.className = 'pe-status err';
+    status.style.display = 'block';
+    status.textContent = '✗ ' + e.message;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = '💾 Save to playbook';
+  }
+}
+
+async function loadRecentEntries() {
+  const target = document.getElementById('recentEntries');
+  try {
+    const r = await fetch('/api/agent-training/playbook-entries?limit=10');
+    const j = await r.json();
+    const entries = j.entries || [];
+    if (entries.length === 0) {
+      target.innerHTML = '<em>No playbook entries yet.</em>';
+      return;
+    }
+    target.innerHTML = entries.map((e) => `
+      <div style="margin-bottom:8px; padding:8px 10px; background:#F2F4F7; border-radius:6px; border-left:3px solid #D4AF37;">
+        <div style="font-size:11px; color:#6B7280;">${(e.applies_to || []).join(' · ')} · ${e.category || '-'} · ${new Date(e.created_at).toLocaleDateString()}</div>
+        <div style="margin-top:3px; font-weight:600; color:#0B1D34; font-size:12px;">${escapeHtml((e.situation || '').slice(0, 100))}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    target.innerHTML = `<em style="color:#b91c1c;">${escapeHtml(e.message)}</em>`;
+  }
+}
+
+function escapeHtml(s) {
+  return String(s || '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+</script>
+
+</body>
+</html>

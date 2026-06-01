@@ -62,6 +62,11 @@ async function embedQuery(text) {
 async function getRelevantPlaybook(situationText, options = {}) {
   const matchCount = options.matchCount || DEFAULT_MATCH_COUNT;
   const similarityThreshold = options.similarityThreshold ?? DEFAULT_SIMILARITY_THRESHOLD;
+  // Agent filter (migration 142). When set, only entries with this agent
+  // in their applies_to array come back. Defaults to no filter (returns
+  // universal + both-agent entries) for backward compatibility with
+  // existing callers that don't pass agent.
+  const agent = options.agent || null;
 
   // No text = nothing to match against. Return empty rather than throwing —
   // callers can still proceed with no playbook context.
@@ -73,9 +78,13 @@ async function getRelevantPlaybook(situationText, options = {}) {
   try {
     const queryEmbedding = await embedQuery(situationText);
 
+    // Fetch more than needed if filtering by agent, so we have a buffer
+    // after the per-agent filter trims results. 3x ratio is generous;
+    // tune later if observability suggests over-fetching.
+    const fetchCount = agent ? matchCount * 3 : matchCount;
     const { data, error } = await supabase.rpc('match_playbook', {
       query_embedding: queryEmbedding,
-      match_count: matchCount,
+      match_count: fetchCount,
       similarity_threshold: similarityThreshold
     });
 
@@ -84,7 +93,20 @@ async function getRelevantPlaybook(situationText, options = {}) {
       return [];
     }
 
-    const entries = data || [];
+    let entries = data || [];
+
+    // Agent-scope filter: keep only entries whose applies_to array
+    // contains the requested agent. If the RPC doesn't return
+    // applies_to (legacy entries pre-migration), treat as universal
+    // so we don't accidentally hide entries from older deployments.
+    if (agent && entries.length > 0) {
+      entries = entries.filter((e) => {
+        if (!e.applies_to) return true;  // universal-by-omission
+        if (!Array.isArray(e.applies_to)) return true;
+        if (e.applies_to.length === 0) return true;
+        return e.applies_to.includes(agent);
+      }).slice(0, matchCount);
+    }
 
     // Log what got matched. This is the transparency layer — if a query
     // pulls weird entries, you'll see it in the Render logs immediately.

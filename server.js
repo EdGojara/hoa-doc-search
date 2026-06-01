@@ -450,6 +450,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/forms\/august-meadows-submission\.pdf$/, // server-rendered PDF version of the same form (puppeteer print)
   /^\/brand-preview\.html$/,                  // brand identity preview page (the new 2026-05-31 refresh)
   /^\/brand-assets\//,                        // static brand assets (mark, lockup, email logos)
+  /^\/agent-training\.html$/,                 // admin-only AI training console — admin check happens inside the page
   /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
   /^\/portal-login\.html$/,                 // magic-link entry page
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)
@@ -916,6 +917,12 @@ app.use('/api/community-map', communityMapRouter);
 // missed deed transfers Vantaca didn't pick up. See migration 122.
 const { router: appraisalRouter } = require('./api/appraisal');
 app.use('/api/appraisal', appraisalRouter);
+
+// Agent Training Console — admin-only surface for talking to Claire/askEd in
+// text-mode, reviewing playbook + retrieval, and saving corrections back to
+// the unified playbook. See api/agent_training.js for the full architecture.
+const { router: agentTrainingRouter } = require('./api/agent_training');
+app.use('/api/agent-training', agentTrainingRouter);
 
 // PDF export of the printable submission form so Ed can email Karla a static
 // attachment alongside the live link. Renders the existing HTML form via
