@@ -335,4 +335,159 @@ router.post('/communities/:id/roster-import/preview', upload.single('file'), asy
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /api/communities/:id/roster-import/apply
+// multipart/form-data with file field 'file' + form field 'verified_by'
+// Re-runs validation; refuses to write if ANY validation error present
+// (atomic — all rows valid or nothing writes). Updates properties +
+// contacts in place, stamps data_verified_at + verified_by +
+// verified_source = 'template_import' on every written row.
+// ----------------------------------------------------------------------------
+router.post('/communities/:id/roster-import/apply', upload.single('file'), async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+    const verifiedBy = (req.body?.verified_by || '').trim();
+    if (!verifiedBy) return res.status(400).json({ error: 'verified_by required (operator identifier)' });
+
+    const { data: comm } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community not found' });
+
+    const rows = parseUploadedFile(req.file.buffer, req.file.originalname);
+    if (rows.length === 0) return res.status(400).json({ error: 'no rows parsed from file' });
+
+    // Re-validate every row — never trust the preview's pass
+    const allErrors = [];
+    for (let i = 0; i < rows.length; i++) {
+      allErrors.push(...validateRow(rows[i], i + 2));
+    }
+
+    // Pull existing properties + their current owner contact for matching
+    const PAGE = 1000;
+    let existing = [];
+    {
+      let from = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('v_current_property_owners')
+          .select('property_id, vantaca_account_id, owner_contact_id')
+          .eq('community_id', communityId)
+          .range(from, from + PAGE - 1);
+        if (error) return res.status(500).json({ error: error.message });
+        if (!data || data.length === 0) break;
+        existing = existing.concat(data);
+        if (data.length < PAGE) break;
+        from += PAGE;
+        if (from > 100000) break;
+      }
+    }
+    const byVantacaId = new Map();
+    for (const e of existing) {
+      if (e.vantaca_account_id) byVantacaId.set(String(e.vantaca_account_id), e);
+    }
+
+    // Resolve every row to a property_id + contact_id (or error). Phase 1
+    // requires both — net-new rows error out so this commit is purely
+    // an "update verified" operation.
+    const resolvedRows = [];
+    rows.forEach((r, idx) => {
+      const rowNum = idx + 2;
+      const vid = (r.vantaca_account_id || '').trim();
+      if (!vid) {
+        allErrors.push({ row: rowNum, field: 'vantaca_account_id', message: 'required' });
+        return;
+      }
+      const match = byVantacaId.get(vid);
+      if (!match) {
+        allErrors.push({ row: rowNum, field: 'vantaca_account_id', message: `no existing property with vantaca_account_id="${vid}"` });
+        return;
+      }
+      if (!match.owner_contact_id) {
+        allErrors.push({ row: rowNum, field: 'full_name', message: 'no current owner contact linked to this property — manual fix required before template import can run' });
+        return;
+      }
+      resolvedRows.push({ rowNum, row: r, property_id: match.property_id, contact_id: match.owner_contact_id });
+    });
+
+    if (allErrors.length > 0) {
+      return res.status(409).json({
+        error: 'validation_failed',
+        message: `Refused to apply: ${allErrors.length} validation error${allErrors.length > 1 ? 's' : ''}. Fix the CSV and re-upload.`,
+        errors: allErrors.slice(0, 200),
+        errors_truncated: allErrors.length > 200
+      });
+    }
+
+    // All rows pass — write them in chunks. Two passes: properties then
+    // contacts. Each update stamps the verified columns. NULL out
+    // mailing_address explicitly when the cell is blank (means "use
+    // property address"), per the verification rule.
+    const nowIso = new Date().toISOString();
+    const propsToWrite = resolvedRows.map(({ property_id, row }) => ({
+      id: property_id,
+      patch: {
+        street_address:    (row.street_address || '').trim() || null,
+        unit:              (row.unit || '').trim() || null,
+        city:              (row.city || '').trim() || null,
+        state:             (row.state || '').trim().toUpperCase() || null,
+        zip:               (row.zip || '').trim() || null,
+        lot_number:        (row.lot_number || '').trim() || null,
+        property_type:     (row.property_type || '').trim() || null,
+        data_verified_at:  nowIso,
+        verified_by:       verifiedBy,
+        verified_source:   'template_import',
+        updated_at:        nowIso
+      }
+    }));
+    const contactsToWrite = resolvedRows.map(({ contact_id, row }) => ({
+      id: contact_id,
+      patch: {
+        full_name:         (row.full_name || '').trim() || null,
+        primary_email:     (row.primary_email || '').trim() || null,
+        primary_phone:     (row.primary_phone || '').trim() || null,
+        mailing_address:   (row.mailing_address || '').trim() || null, // empty → NULL = "same as property"
+        data_verified_at:  nowIso,
+        verified_by:       verifiedBy,
+        verified_source:   'template_import',
+        updated_at:        nowIso
+      }
+    }));
+
+    let propertiesWritten = 0;
+    let contactsWritten = 0;
+    const writeErrors = [];
+
+    // Serial updates — Supabase doesn't expose a transactional batch
+    // through its JS client for per-row patches. Chunk loops with
+    // explicit error capture so a single bad row doesn't kill the rest.
+    for (const p of propsToWrite) {
+      const { error } = await supabase.from('properties').update(p.patch).eq('id', p.id);
+      if (error) writeErrors.push({ table: 'properties', id: p.id, message: error.message });
+      else propertiesWritten++;
+    }
+    for (const c of contactsToWrite) {
+      const { error } = await supabase.from('contacts').update(c.patch).eq('id', c.id);
+      if (error) writeErrors.push({ table: 'contacts', id: c.id, message: error.message });
+      else contactsWritten++;
+    }
+
+    console.log(`[roster-import/apply] community=${comm.name} verified_by=${verifiedBy} properties=${propertiesWritten} contacts=${contactsWritten} errors=${writeErrors.length}`);
+
+    res.json({
+      community: { id: comm.id, name: comm.name },
+      verified_by: verifiedBy,
+      verified_at: nowIso,
+      properties_written: propertiesWritten,
+      contacts_written: contactsWritten,
+      write_errors: writeErrors,
+      message: writeErrors.length === 0
+        ? `Successfully verified ${propertiesWritten} properties and ${contactsWritten} contacts for ${comm.name}. These rows are now protected from future Vantaca-sync overwrites.`
+        : `Wrote ${propertiesWritten + contactsWritten} rows but hit ${writeErrors.length} errors — review the write_errors array.`
+    });
+  } catch (err) {
+    console.error('[roster-import/apply]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 module.exports = { router };
