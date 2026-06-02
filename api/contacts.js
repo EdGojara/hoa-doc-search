@@ -608,12 +608,25 @@ router.get('/communities', async (req, res) => {
 router.get('/properties', async (req, res) => {
   try {
     const communityId = req.query.community_id;
-    let q = supabase.from('v_current_property_owners').select('*');
-    if (communityId) q = q.eq('community_id', communityId);
-    q = q.order('street_address').limit(2000);
-    const { data, error } = await q;
-    if (error) return res.status(500).json({ error: error.message });
-    res.json({ properties: data || [] });
+    // Paginated — .limit(2000) was getting silently clamped to 1000 by
+    // Supabase PostgREST's server-side cap (CLAUDE.md scar 2026-06-01).
+    // Walk pages of 1000 until exhausted so Waterview's 1171 properties
+    // all return.
+    const PAGE = 1000;
+    let all = [];
+    let from = 0;
+    while (true) {
+      let q = supabase.from('v_current_property_owners').select('*');
+      if (communityId) q = q.eq('community_id', communityId);
+      const { data, error } = await q.order('street_address').range(from, from + PAGE - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      all = all.concat(data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+      if (from > 100000) break;
+    }
+    res.json({ properties: all });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

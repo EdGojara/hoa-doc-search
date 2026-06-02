@@ -2020,7 +2020,7 @@
   <!-- Bottom row: property list (filterable by community) -->
   <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-      <h3 style="margin:0; font-size:14px; color:#1E2761;">Properties</h3>
+      <h3 style="margin:0; font-size:14px; color:#1E2761;">Properties &amp; Owners <span style="font-weight:400; color:#94A3B8; font-size:12px;">— click any field to edit</span></h3>
       <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
         <select id="homesListCommunity" onchange="homesLoadProperties()" style="font-size:12.5px; padding:5px 8px; border:1px solid #d0d7de; border-radius:6px;">
           <option value="">All communities</option>
@@ -2039,7 +2039,16 @@
         <span id="homesListCount" style="font-size:11.5px; color:#94A3B8;"></span>
       </div>
     </div>
-    <div id="homesPropertyList" style="font-size:13px; color:#6B7280; max-height:520px; overflow-y:auto;">Loading…</div>
+
+    <!-- Data-completeness health card + filter chips. Surfaces the
+         "ready to mail" picture at a glance and lets the operator
+         drill into the rows that need attention. -->
+    <div id="homesHealthBar" style="display:none; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:10px;">
+      <div id="homesHealthSummary" style="font-size:12.5px; color:#475569; margin-bottom:6px;"></div>
+      <div style="display:flex; gap:6px; flex-wrap:wrap;" id="homesHealthChips"></div>
+    </div>
+
+    <div id="homesPropertyList" style="font-size:13px; color:#6B7280; max-height:620px; overflow-y:auto;">Loading…</div>
   </div>
 
   <!-- Property detail modal -->
@@ -4162,25 +4171,164 @@
     return escapeHtml(name);
   }
 
+  // Active completeness filter — set by clicking a chip in the health bar.
+  // null = no filter. Otherwise: 'incomplete_geo' | 'no_email' | 'absentee' | 'vacant'
+  let homesActiveFilter = null;
+
+  // Classify a property row for the health-bar filter chips. The
+  // categorizations match what the bedrock-vote bridge cares about.
+  function homesClassifyRow(p) {
+    const flags = {};
+    // Incomplete geo: missing city OR missing zip on the PROPERTY record.
+    flags.incomplete_geo = !p.city || !p.zip;
+    // No email on the current owner contact.
+    flags.no_email = !p.owner_email;
+    // Vacant: no current owner.
+    flags.vacant = !p.owner_contact_id || !p.owner_name;
+    // Absentee: owner has a mailing address AND it doesn't look like the
+    // property address (heuristic: different ZIP, OR different first-line
+    // street number). For mailing labels this is the case where we must
+    // use the owner's mailing address, not the property address.
+    const mail = (p.owner_mailing_address || '').trim();
+    if (mail && p.street_address) {
+      const mailZip = (mail.match(/\b(\d{5})(-\d{4})?\b/) || [])[1] || null;
+      const propZipSet = !!p.zip;
+      const sameZip = propZipSet && mailZip && mailZip === p.zip;
+      const startsWithPropStreet = mail.toLowerCase().startsWith(
+        (p.street_address || '').toLowerCase().slice(0, Math.min(12, (p.street_address || '').length))
+      );
+      flags.absentee = !sameZip && !startsWithPropStreet;
+    } else {
+      flags.absentee = false;
+    }
+    return flags;
+  }
+
+  function homesRenderHealthBar(allRows) {
+    const bar = document.getElementById('homesHealthBar');
+    const summary = document.getElementById('homesHealthSummary');
+    const chips = document.getElementById('homesHealthChips');
+    if (!bar || !summary || !chips) return;
+    if (allRows.length === 0) { bar.style.display = 'none'; return; }
+    const totals = { incomplete_geo: 0, no_email: 0, absentee: 0, vacant: 0, complete: 0 };
+    for (const p of allRows) {
+      const f = homesClassifyRow(p);
+      if (f.incomplete_geo) totals.incomplete_geo++;
+      if (f.no_email) totals.no_email++;
+      if (f.absentee) totals.absentee++;
+      if (f.vacant) totals.vacant++;
+      if (!f.incomplete_geo && !f.no_email && !f.vacant) totals.complete++;
+    }
+    bar.style.display = 'block';
+    const pct = allRows.length > 0 ? Math.round((totals.complete / allRows.length) * 100) : 0;
+    summary.innerHTML = `<b>${totals.complete} of ${allRows.length}</b> rows ready for vote-mailing (${pct}%). Click a chip to filter.`;
+    const chipDef = [
+      { key: null,              label: `All (${allRows.length})`,                   bg: '#fff', color: '#475569' },
+      { key: 'incomplete_geo',  label: `⚠ Missing city/zip (${totals.incomplete_geo})`, bg: '#fef2f2', color: '#991b1b' },
+      { key: 'no_email',        label: `No email (${totals.no_email})`,            bg: '#fffbeb', color: '#92400e' },
+      { key: 'absentee',        label: `Mailing ≠ property (${totals.absentee})`,  bg: '#eff6ff', color: '#1e40af' },
+      { key: 'vacant',          label: `Vacant (${totals.vacant})`,                bg: '#f3f4f6', color: '#6B7280' }
+    ];
+    chips.innerHTML = chipDef.map(c => {
+      const active = homesActiveFilter === c.key;
+      return `<button onclick="homesSetFilter(${c.key === null ? 'null' : `'${c.key}'`})"
+        style="font-size:11.5px; padding:4px 10px; border-radius:14px; border:1px solid ${active ? '#1E2761' : '#cbd5e1'}; background:${active ? '#1E2761' : c.bg}; color:${active ? '#fff' : c.color}; cursor:pointer; font-weight:${active ? 700 : 500};">${c.label}</button>`;
+    }).join('');
+  }
+
+  function homesSetFilter(key) {
+    homesActiveFilter = key;
+    homesListPage = 1;
+    homesRenderProperties();
+  }
+
+  // Inline-edit helper. Stamps a small input over a table cell, calls the
+  // appropriate PATCH endpoint on blur (autosave), and re-renders.
+  async function homesSaveCell(rowId, table, field, newValue) {
+    try {
+      const url = table === 'contacts' ? `/api/contacts/${rowId}` : `/api/properties/${rowId}`;
+      const body = {}; body[field] = newValue;
+      const r = await fetch(url, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      // Reflect change in the in-memory cache so subsequent renders show it.
+      for (const p of homesPropertiesCache) {
+        if (table === 'properties' && p.property_id === rowId) p[field] = newValue;
+        if (table === 'contacts' && p.owner_contact_id === rowId) {
+          if (field === 'mailing_address') p.owner_mailing_address = newValue;
+          if (field === 'primary_email')   p.owner_email           = newValue;
+        }
+      }
+      homesRenderProperties();
+    } catch (e) {
+      alert('Save failed: ' + e.message);
+      homesRenderProperties();
+    }
+  }
+
+  // Render an editable inline cell. `currentValue` shows when not editing;
+  // clicking the cell swaps to an <input>. Blur (or Enter) saves.
+  function homesEditableCell(rowId, table, field, currentValue, opts) {
+    opts = opts || {};
+    const display = currentValue == null || currentValue === '' ? '<span style="color:#94A3B8; font-style:italic;">—</span>' : escapeHtml(String(currentValue));
+    const inputId = `inp-${table}-${rowId}-${field}`;
+    const isFlagged = opts.flagged;
+    const bgStyle = isFlagged ? 'background:#fef2f2;' : '';
+    return `<span class="hr-cell" data-row="${rowId}" data-table="${table}" data-field="${field}"
+      style="display:inline-block; min-width:${opts.minWidth || 60}px; padding:2px 4px; border-radius:4px; cursor:text; ${bgStyle}"
+      onclick="event.stopPropagation(); homesBeginEdit('${inputId}', this);">${display}</span>
+      <input id="${inputId}" type="text" value="${escapeHtml(String(currentValue || ''))}"
+        style="display:none; width:${opts.minWidth || 60}px; padding:2px 4px; font-size:12px; border:1px solid #1E2761; border-radius:4px;"
+        onblur="homesEndEdit('${rowId}', '${table}', '${field}', this)"
+        onkeydown="if(event.key==='Enter'){this.blur();} if(event.key==='Escape'){this.value=this.defaultValue; this.blur();}"
+        onclick="event.stopPropagation();">`;
+  }
+  function homesBeginEdit(inputId, cell) {
+    cell.style.display = 'none';
+    const inp = document.getElementById(inputId);
+    if (inp) { inp.style.display = 'inline-block'; inp.focus(); inp.select(); }
+  }
+  function homesEndEdit(rowId, table, field, inp) {
+    const newVal = inp.value.trim();
+    const oldVal = inp.defaultValue;
+    if (newVal === oldVal) {
+      inp.style.display = 'none';
+      const cell = inp.previousElementSibling;
+      if (cell) cell.style.display = 'inline-block';
+      return;
+    }
+    homesSaveCell(rowId, table, field, newVal === '' ? null : newVal);
+  }
+
   function homesRenderProperties() {
     const list = document.getElementById('homesPropertyList');
     const countEl = document.getElementById('homesListCount');
     const pageInfo = document.getElementById('homesListPageInfo');
     const q = (document.getElementById('homesListSearch').value || '').toLowerCase().trim();
-    const filtered = !q ? homesPropertiesCache : homesPropertiesCache.filter((p) => {
+
+    // Render the health bar against the FULL community cache (unfiltered)
+    // so the totals always reflect the whole community, not just the
+    // current text search / chip filter.
+    homesRenderHealthBar(homesPropertiesCache);
+
+    let filtered = !q ? homesPropertiesCache : homesPropertiesCache.filter((p) => {
       return (p.street_address || '').toLowerCase().includes(q)
           || (p.owner_name || '').toLowerCase().includes(q)
           || (p.owner_email || '').toLowerCase().includes(q)
-          || (p.owner_phone || '').toLowerCase().includes(q);
+          || (p.owner_phone || '').toLowerCase().includes(q)
+          || (p.city || '').toLowerCase().includes(q)
+          || (p.zip || '').toLowerCase().includes(q)
+          || (p.owner_mailing_address || '').toLowerCase().includes(q);
     });
+    if (homesActiveFilter) {
+      filtered = filtered.filter(p => homesClassifyRow(p)[homesActiveFilter]);
+    }
     countEl.textContent = `${filtered.length} of ${homesPropertiesCache.length}`;
     if (filtered.length === 0) {
-      list.innerHTML = '<div style="padding:10px; color:#94A3B8; font-style:italic;">No properties match. Upload a Vantaca export to populate, or add manually.</div>';
+      list.innerHTML = '<div style="padding:10px; color:#94A3B8; font-style:italic;">No properties match. Try clearing the filter, or upload a Vantaca export to populate.</div>';
       if (pageInfo) pageInfo.textContent = '0 of 0';
       return;
     }
 
-    // Pagination — slice the filtered array based on homesListPage + page size
     const pageSizeEl = document.getElementById('homesListPageSize');
     const pageSize = pageSizeEl ? Number(pageSizeEl.value) || 50 : 50;
     const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
@@ -4193,29 +4341,42 @@
       pageInfo.textContent = `${start + 1}-${end} of ${filtered.length} (p${homesListPage}/${totalPages})`;
     }
 
-    list.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+    list.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
-        <tr style="border-bottom:1.5px solid #1E2761; color:#475569; position:sticky; top:0; background:#fff;">
+        <tr style="border-bottom:1.5px solid #1E2761; color:#475569; position:sticky; top:0; background:#fff; z-index:2;">
           <th style="text-align:left; padding:5px 6px;">Address</th>
+          <th style="text-align:left; padding:5px 6px;">City</th>
+          <th style="text-align:left; padding:5px 6px;">St</th>
+          <th style="text-align:left; padding:5px 6px;">ZIP</th>
           <th style="text-align:left; padding:5px 6px;">Owner</th>
           <th style="text-align:left; padding:5px 6px;">Email</th>
-          <th style="text-align:left; padding:5px 6px;">Phone</th>
-          <th style="text-align:left; padding:5px 6px;">Owned since</th>
+          <th style="text-align:left; padding:5px 6px;">Mailing addr (if different)</th>
+          <th style="text-align:left; padding:5px 6px;">Status</th>
         </tr>
       </thead>
       <tbody>
-        ${pageRows.map((p) => `
-          <tr style="border-bottom:1px solid #e2e8f0; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">
-            <td style="padding:5px 6px; font-weight:600; color:#1E2761;">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
+        ${pageRows.map((p) => {
+          const f = homesClassifyRow(p);
+          const status = f.vacant ? '<span style="color:#6B7280;">vacant</span>'
+            : f.incomplete_geo ? '<span style="color:#991b1b; font-weight:600;">⚠ incomplete</span>'
+            : f.absentee ? '<span style="color:#1e40af;">absentee</span>'
+            : '<span style="color:#15803d;">✓ ready</span>';
+          return `
+          <tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:5px 6px; font-weight:600; color:#1E2761; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
+            <td style="padding:5px 6px;">${homesEditableCell(p.property_id, 'properties', 'city', p.city, { minWidth: 90, flagged: !p.city })}</td>
+            <td style="padding:5px 6px;">${homesEditableCell(p.property_id, 'properties', 'state', p.state || 'TX', { minWidth: 32 })}</td>
+            <td style="padding:5px 6px;">${homesEditableCell(p.property_id, 'properties', 'zip', p.zip, { minWidth: 60, flagged: !p.zip })}</td>
             <td style="padding:5px 6px;" ${p.owner_contact_id ? `onclick="event.stopPropagation(); homesOpenContactProfile('${p.owner_contact_id}');"` : ''}>
               ${p.owner_contact_id
-                ? `<span style="color:#1E2761; text-decoration:underline; text-decoration-style:dotted;">${renderOwnerCell(p.owner_name)}</span>`
+                ? `<span style="color:#1E2761; text-decoration:underline; text-decoration-style:dotted; cursor:pointer;">${renderOwnerCell(p.owner_name)}</span>`
                 : renderOwnerCell(p.owner_name)}
             </td>
-            <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_email || '')}</td>
-            <td style="padding:5px 6px; color:#475569;">${escapeHtml(p.owner_phone || '')}</td>
-            <td style="padding:5px 6px; color:#94A3B8;">${escapeHtml(p.owned_since || '')}</td>
-          </tr>`).join('')}
+            <td style="padding:5px 6px;">${p.owner_contact_id ? homesEditableCell(p.owner_contact_id, 'contacts', 'primary_email', p.owner_email, { minWidth: 160, flagged: !p.owner_email }) : '<span style="color:#94A3B8;">—</span>'}</td>
+            <td style="padding:5px 6px; max-width:240px;">${p.owner_contact_id ? homesEditableCell(p.owner_contact_id, 'contacts', 'mailing_address', p.owner_mailing_address, { minWidth: 200 }) : '<span style="color:#94A3B8;">—</span>'}</td>
+            <td style="padding:5px 6px;">${status}</td>
+          </tr>`;
+        }).join('')}
       </tbody>
     </table>`;
   }
