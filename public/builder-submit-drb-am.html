@@ -539,19 +539,18 @@
         </div>
       </section>
 
-      <!-- SECTION 4 — PDF attachment (AI extraction) -->
+      <!-- SECTION 4 — PDF attachment -->
       <section class="card">
         <div class="head">
           <h2>Submission packet</h2>
-          <span class="hint">One PDF, AI extracts the rest</span>
+          <span class="hint">Upload your submission PDF</span>
         </div>
         <label class="dropzone" id="dropzone" for="pdfInput">
           <div id="dzText">
             <div class="big-text">📄 Drop your submission PDF here</div>
             <div class="small-text">or click to choose a file</div>
             <div class="ai-pitch">
-              <strong>How this saves Karla 20 minutes per submission:</strong><br>
-              Upload one PDF — site plan, elevations, material schedule — and Bedrock's AI extracts brick + stone colors, masonry percentages by elevation, siding, trim, roof material, fence specs, paint palette, and option-tag selections automatically. No retyping. The structured data lands in our review queue alongside the source PDF you uploaded.
+              Upload a single PDF that includes the site plan, elevations, and material schedule. We'll capture the spec details from the document — no separate retyping required.
             </div>
           </div>
         </label>
@@ -680,7 +679,7 @@
     dz.classList.add('has-file');
     $('dzText').innerHTML = `
       <div class="big-text">✓ ${escapeHtml(f.name)}</div>
-      <div class="small-text">${(f.size / 1024 / 1024).toFixed(2)} MB · ready for AI extraction</div>
+      <div class="small-text">${(f.size / 1024 / 1024).toFixed(2)} MB · ready to upload</div>
       <div class="ai-pitch">Click to choose a different PDF.</div>
     `;
   }
