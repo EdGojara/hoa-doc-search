@@ -155,8 +155,43 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
       residencies_created:   0,
       emails_updated:        0,
       phones_updated:        0,
+      // Counters for changes that were SKIPPED because the target row
+      // has data_verified_at set — protects template-import work from
+      // being silently overwritten by Vantaca syncs. Operator sees these
+      // counts in the apply summary and knows to handle the changes
+      // manually if a verified row's data really did change.
+      skipped_verified_property_changes: 0,
+      skipped_verified_emails:           0,
+      skipped_verified_phones:           0,
     };
     const today = new Date().toISOString().slice(0, 10);
+
+    // Pre-fetch verified status for every property + contact that this
+    // apply might touch. One query each, build sets for O(1) lookup in
+    // the loops below. Properties + contacts in this batch are bounded
+    // (max ~hundreds per sync), so the .in() lookups are safe.
+    const targetPropIds = new Set();
+    (diff.property_field_changes || []).forEach(i => targetPropIds.add(i.property_id));
+    const targetContactIds = new Set();
+    (diff.email_additions || []).forEach(i => targetContactIds.add(i.contact_id));
+    (diff.phone_additions || []).forEach(i => targetContactIds.add(i.contact_id));
+
+    const verifiedPropertyIds = new Set();
+    if (targetPropIds.size > 0) {
+      const { data: vp } = await supabase
+        .from('properties')
+        .select('id, data_verified_at')
+        .in('id', Array.from(targetPropIds));
+      (vp || []).forEach(p => { if (p.data_verified_at) verifiedPropertyIds.add(p.id); });
+    }
+    const verifiedContactIds = new Set();
+    if (targetContactIds.size > 0) {
+      const { data: vc } = await supabase
+        .from('contacts')
+        .select('id, data_verified_at')
+        .in('id', Array.from(targetContactIds));
+      (vc || []).forEach(c => { if (c.data_verified_at) verifiedContactIds.add(c.id); });
+    }
 
     // Helper: find or create a contact by name + email. Match is fuzzy on name
     // and exact on email (when both provided).
@@ -236,6 +271,11 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
       const select = apply.property_field_changes === 'all' ? null : new Set(apply.property_field_changes);
       for (const item of diff.property_field_changes) {
         if (select && !select.has(item.property_id)) continue;
+        // Verified-row protection: don't overwrite operator-signed truth
+        if (verifiedPropertyIds.has(item.property_id)) {
+          applied.skipped_verified_property_changes += 1;
+          continue;
+        }
         const patch = { updated_at: new Date().toISOString() };
         for (const [field, change] of Object.entries(item.changes)) patch[field] = change.to;
         const { error: uErr } = await supabase.from('properties').update(patch).eq('id', item.property_id);
@@ -355,6 +395,10 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
       const select = apply.email_additions === 'all' ? null : new Set(apply.email_additions);
       for (const item of diff.email_additions) {
         if (select && !select.has(item.contact_id)) continue;
+        if (verifiedContactIds.has(item.contact_id)) {
+          applied.skipped_verified_emails += 1;
+          continue;
+        }
         const { error: eErr } = await supabase
           .from('contacts')
           .update({ primary_email: item.new_email, updated_at: new Date().toISOString() })
@@ -369,6 +413,10 @@ router.post('/contacts/vantaca/apply/:id', express.json({ limit: '50mb' }), asyn
       const select = apply.phone_additions === 'all' ? null : new Set(apply.phone_additions);
       for (const item of diff.phone_additions) {
         if (select && !select.has(item.contact_id)) continue;
+        if (verifiedContactIds.has(item.contact_id)) {
+          applied.skipped_verified_phones += 1;
+          continue;
+        }
         const { error: pErr } = await supabase
           .from('contacts')
           .update({ primary_phone: item.new_phone, updated_at: new Date().toISOString() })
