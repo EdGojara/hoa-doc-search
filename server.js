@@ -742,6 +742,8 @@ app.use('/api/billing', billingRouter);
 // upload/diff/apply workflow. Schema in migration 049.
 const { router: contactsRouter } = require('./api/contacts');
 app.use('/api', contactsRouter);
+const { router: rosterImportRouter } = require('./api/roster_import');
+app.use('/api', rosterImportRouter);
 
 // Inspections — drive/walk-through capture flow. Backs the DRV + memory-
 // layer foundation (migration 050). v1 endpoints handle session create,
