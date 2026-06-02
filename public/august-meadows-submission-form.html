@@ -277,6 +277,41 @@
       window.prompt('Copy this URL to send to the builder:', url);
     });
   }
+
+  // Bulletproof placeholder hiding on print. CSS-only approaches were
+  // unreliable — Chrome's print preview sometimes ignored
+  // `color:transparent`. This physically removes the placeholder
+  // attribute right before print and restores it right after, so the
+  // PDF is guaranteed clean regardless of browser. Fires for both
+  // window.print() and Ctrl+P / Cmd+P.
+  (function () {
+    const elementsToScrub = () =>
+      document.querySelectorAll('input[placeholder], textarea[placeholder]');
+    const stashed = new WeakMap();
+    function stripPlaceholders() {
+      elementsToScrub().forEach((el) => {
+        if (el.placeholder) {
+          stashed.set(el, el.placeholder);
+          el.placeholder = '';
+        }
+      });
+    }
+    function restorePlaceholders() {
+      elementsToScrub().forEach((el) => {
+        const saved = stashed.get(el);
+        if (saved) el.placeholder = saved;
+      });
+    }
+    window.addEventListener('beforeprint', stripPlaceholders);
+    window.addEventListener('afterprint', restorePlaceholders);
+    // matchMedia covers Safari which doesn't always fire beforeprint
+    if (window.matchMedia) {
+      const mql = window.matchMedia('print');
+      mql.addEventListener && mql.addEventListener('change', (m) => {
+        if (m.matches) stripPlaceholders(); else restorePlaceholders();
+      });
+    }
+  })();
 </script>
 
 <div class="page">
@@ -478,6 +513,7 @@
     <br><br>
     <strong>Standard review SLA:</strong> 5 business days · <strong>Fast-track:</strong> 2 business days when the plan + elevation match a pre-approved master plan on file with Bedrock.<br>
     <strong>Review fee:</strong> $150 per submission, invoiced after the approval letter is issued.<br>
+    <strong>Transfer fee:</strong> $100 per approved lot.<br>
     <strong>Questions:</strong> Ed Gojara · 346-440-1422 · egojara@bedrocktx.com
   </footer>
 
