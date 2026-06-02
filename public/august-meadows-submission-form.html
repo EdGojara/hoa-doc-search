@@ -228,6 +228,27 @@
     .fld input, .fld select, .fld textarea {
       border-bottom-color: #000;
     }
+    /* Hide placeholder hint text in print/PDF — the "e.g." examples
+       were appearing on the printed form, making it look pre-filled
+       when it wasn't. Browsers render placeholders by default; we
+       wipe them on print so a builder receives a genuinely blank form. */
+    input::placeholder,
+    textarea::placeholder,
+    select::placeholder {
+      color: transparent !important;
+      opacity: 0 !important;
+    }
+    /* Some browsers (older Firefox) honor -moz-placeholder */
+    input::-moz-placeholder,
+    textarea::-moz-placeholder {
+      color: transparent !important;
+      opacity: 0 !important;
+    }
+    input::-webkit-input-placeholder,
+    textarea::-webkit-input-placeholder {
+      color: transparent !important;
+      opacity: 0 !important;
+    }
   }
 
   /* Small-screen courtesy — though this is intended for print/desktop */
@@ -241,8 +262,22 @@
 
 <div class="controls">
   <button class="secondary" onclick="window.location.reload()">Reset</button>
+  <button class="secondary" onclick="copyFormLink(this)">🔗 Copy link to send to builder</button>
   <button onclick="window.print()">🖨️ Print / Save as PDF</button>
 </div>
+<script>
+  function copyFormLink(btn) {
+    const url = window.location.origin + window.location.pathname;
+    navigator.clipboard.writeText(url).then(() => {
+      const orig = btn.textContent;
+      btn.textContent = '✓ Link copied! Paste into your email';
+      setTimeout(() => { btn.textContent = orig; }, 2500);
+    }).catch(() => {
+      // Fallback for older browsers — show prompt with the URL pre-selected
+      window.prompt('Copy this URL to send to the builder:', url);
+    });
+  }
+</script>
 
 <div class="page">
 
