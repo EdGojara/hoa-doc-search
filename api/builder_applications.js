@@ -3146,17 +3146,22 @@ router.get('/public/master-plans', async (req, res) => {
 
     if (!plans || plans.length === 0) return res.json({ master_plans: [], total: 0 });
 
-    // Filter to plans that have an active (non-retired) approval for this community
+    // Filter: include a plan unless it's been EXPLICITLY RETIRED at this
+    // community. Plans without any approval rows still show (matches the
+    // admin Plan Library behavior — if a plan is in the builder's library
+    // it's assumed available everywhere they build). Plans explicitly
+    // retired at this community via master_plan_community_approvals are
+    // excluded.
     const planIds = plans.map((p) => p.id);
-    const { data: approvals } = await supabase
+    const { data: retiredHere } = await supabase
       .from('master_plan_community_approvals')
       .select('master_plan_id')
       .in('master_plan_id', planIds)
       .eq('community_id', comm.id)
-      .is('retired_at', null);
+      .not('retired_at', 'is', null);
 
-    const approvedAtCommunity = new Set((approvals || []).map((a) => a.master_plan_id));
-    const filtered = plans.filter((p) => approvedAtCommunity.has(p.id));
+    const retiredSet = new Set((retiredHere || []).map((a) => a.master_plan_id));
+    const filtered = plans.filter((p) => !retiredSet.has(p.id));
 
     res.json({
       master_plans: filtered,
