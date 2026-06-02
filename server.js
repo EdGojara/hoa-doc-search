@@ -7060,7 +7060,13 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
           owner_name: o.owner_name.trim(),
           mailing_address: mailing,
           email: o.owner_email || null,
-          vote_weight: 1
+          vote_weight: 1,
+          // Diagnostic fields — only used by the preview UI, stripped on real push
+          _raw_owner_mailing: o.owner_mailing_address || null,
+          _raw_street: o.street_address || null,
+          _raw_city: o.city || null,
+          _raw_state: o.state || null,
+          _raw_zip: o.zip || null
         };
       });
 

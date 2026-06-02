@@ -28927,23 +28927,31 @@ ${questionsPage}
 
       const sampleHtml = (j.voters_sample || []).length === 0
         ? `<div style="color:#94a3b8; font-style:italic;">No voters in roster.</div>`
-        : `<table style="width:100%; font-size:12px; border-collapse:collapse; background:#fff;">
+        : `<table style="width:100%; font-size:11.5px; border-collapse:collapse; background:#fff;">
              <thead><tr style="background:#f8fafc; text-align:left;">
                <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Lot</th>
                <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Owner</th>
-               <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Mailing</th>
+               <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Composed mailing → bedrock-vote</th>
+               <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Raw owner_mailing</th>
+               <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Raw property fields</th>
                <th style="padding:6px 8px; border-bottom:1px solid #e2e8f0;">Email</th>
              </tr></thead>
              <tbody>
-               ${(j.voters_sample || []).map(v => `
+               ${(j.voters_sample || []).map(v => {
+                 const rawProp = `${v._raw_street || '∅'} | ${v._raw_city || '∅'} | ${v._raw_state || '∅'} | ${v._raw_zip || '∅'}`;
+                 return `
                  <tr>
                    <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${escapeHtml(v.lot_number || '')}</td>
                    <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9;">${escapeHtml(v.owner_name || '')}</td>
-                   <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9; color:#475569;">${escapeHtml(v.mailing_address || '')}</td>
+                   <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9; color:#475569; font-weight:500;">${escapeHtml(v.mailing_address || '(empty)')}</td>
+                   <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9; color:#94a3b8; font-family:monospace; font-size:11px;">${escapeHtml(v._raw_owner_mailing || '∅ NULL')}</td>
+                   <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9; color:#94a3b8; font-family:monospace; font-size:11px;">${escapeHtml(rawProp)}</td>
                    <td style="padding:5px 8px; border-bottom:1px solid #f1f5f9; color:${v.email ? '#16a34a' : '#94a3b8'};">${escapeHtml(v.email || '(none)')}</td>
-                 </tr>`).join('')}
+                 </tr>`;
+               }).join('')}
              </tbody>
-           </table>`;
+           </table>
+           <div style="font-size:10.5px; color:#94a3b8; margin-top:4px;">∅ NULL = the underlying database field is empty. If "Composed mailing" is missing city/state/zip, look at the raw columns above to see which source has the gap.</div>`;
 
       panel.style.display = 'block';
       panel.innerHTML = `
