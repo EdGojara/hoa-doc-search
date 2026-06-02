@@ -391,9 +391,13 @@
 <!-- =============================================================
      6. Fees
      ============================================================= -->
-<h2 class="section-block"><span class="num">6.</span> ARC review fee</h2>
-<p>The new-construction architectural review fee at <span class="community-name">this community</span> is <strong id="reviewFee">—</strong> per submission. The fee compensates the reviewer's time and covers structured documentation, letter generation, archive, and the lifetime master-library benefit.</p>
-<p>Fees are billed monthly to <span class="builder-name">your company</span> against submissions filed during the period. Master plan library submissions and lot-by-lot submissions are each treated as individual review submissions.</p>
+<h2 class="section-block"><span class="num">6.</span> ARC fees</h2>
+<p>Two separate fees apply at <span class="community-name">this community</span>:</p>
+<ul style="margin: 8px 0 12px 22px; padding: 0;">
+  <li style="margin-bottom: 6px;"><strong>Review fee:</strong> <strong id="reviewFee">$150</strong> per submission. Invoiced after the approval letter is issued.</li>
+  <li><strong>Transfer fee:</strong> <strong id="transferFee">$100</strong> per approved lot.</li>
+</ul>
+<p>The review fee compensates the reviewer's time and covers structured documentation, letter generation, archive, and the lifetime master-library benefit. Fees are billed monthly to <span class="builder-name">your company</span> against submissions filed during the period. Master plan library submissions and lot-by-lot submissions are each treated as individual review submissions.</p>
 
 <!-- =============================================================
      7. Contact
@@ -472,7 +476,8 @@
   const contact = param('contact', 'Karla');
   const slug = (param('slug', '') || community.toLowerCase().replace(/[^a-z0-9]+/g, '-')).trim();
   const portal = `builders.bedrocktxai.com/${slug}`;
-  const fee = param('fee', '$350');
+  const fee = param('fee', '$150');
+  const transferFee = param('transfer_fee', '$100');
   const slaStandard = param('sla', '5 business days');
   const slaFast = param('sla_fast', '2 business days');
 
@@ -492,6 +497,8 @@
   document.getElementById('slaStandard').textContent = slaStandard;
   document.getElementById('slaFast').textContent = slaFast;
   document.getElementById('reviewFee').textContent = fee;
+  const tf = document.getElementById('transferFee');
+  if (tf) tf.textContent = transferFee;
 
   // Inline replacement: any element with class .community-name or .builder-name
   document.querySelectorAll('.community-name').forEach((el) => { el.textContent = community; });
