@@ -6895,6 +6895,16 @@ app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
 // UUID). Re-clicking the button after a successful push returns the
 // existing bedrock-vote election without creating a duplicate.
 // ============================================================================
+// Helper: validate that a composed mailing address looks USPS-deliverable.
+// Requires a 5-digit ZIP somewhere in the string. Returns true if valid.
+// Used as the final gate before shipping a voter roster to bedrock-vote —
+// the system MUST not ship a label without a ZIP, because that envelope
+// is undeliverable and the homeowner is disenfranchised silently.
+function _isCompleteMailingAddress(mailing) {
+  if (!mailing || typeof mailing !== 'string') return false;
+  return /\b\d{5}(-\d{4})?\b/.test(mailing);
+}
+
 // Helper: find the most common city/state/zip combination across an
 // array of property rows. Used as a community-level fallback when an
 // individual property has NULL city/state/zip (Vantaca sync gap).
@@ -6938,10 +6948,16 @@ function _modalCommunityGeo(owners) {
 // communityGeo is { city, state, zip } from _modalCommunityGeo —
 // pre-computed once per push so we don't re-scan per voter.
 function _composeMailingAddress(o, communityGeo) {
-  // Property's own geo, falling back to community modal if missing
-  const effectiveCity  = o.city  || communityGeo.city  || '';
-  const effectiveState = o.state || communityGeo.state || 'TX';
-  const effectiveZip   = o.zip   || communityGeo.zip   || '';
+  // Three-tier fallback chain for geo:
+  //   1. Property's own city/state/zip (preferred)
+  //   2. Community default from communities table (explicit, always set)
+  //   3. Community modal from properties table (last-ditch, may be empty)
+  // communityGeo arg now has shape { city, state, zip, defaultCity, defaultState, defaultZip }
+  // where the default* fields come from the communities table (migration 147)
+  // and the bare fields come from the modal derivation.
+  const effectiveCity  = o.city  || communityGeo.defaultCity  || communityGeo.city  || '';
+  const effectiveState = o.state || communityGeo.defaultState || communityGeo.state || 'TX';
+  const effectiveZip   = o.zip   || communityGeo.defaultZip   || communityGeo.zip   || '';
 
   const propertyAddressParts = [
     (o.street_address || '') + (o.unit ? ` ${o.unit}` : ''),
@@ -7083,9 +7099,21 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       }
     }
 
-    // Pre-compute the community's modal city/state/zip ONCE — used as
-    // fallback for any property with NULL geo (Vantaca-sync-gap case).
-    const communityGeo = _modalCommunityGeo(ownersRaw || []);
+    // Three-tier geo fallback — same as the live push endpoint.
+    const { data: commRow } = await supabase
+      .from('communities')
+      .select('city, state, zip')
+      .eq('id', cycle.community_id)
+      .maybeSingle();
+    const modalGeo = _modalCommunityGeo(ownersRaw || []);
+    const communityGeo = {
+      defaultCity:  commRow?.city  || '',
+      defaultState: commRow?.state || 'TX',
+      defaultZip:   commRow?.zip   || '',
+      city:  modalGeo.city,
+      state: modalGeo.state,
+      zip:   modalGeo.zip
+    };
     const voters = (ownersRaw || [])
       .filter(o => o.owner_name && o.owner_name.trim())
       .map(o => {
@@ -7129,6 +7157,15 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
 
     const votersWithEmail = voters.filter(v => v.email).length;
     const votersWithMailing = voters.filter(v => v.mailing_address).length;
+    // Validate every voter has a 5-digit ZIP — addresses missing ZIP are
+    // undeliverable. Surface count + samples so the operator can fix data
+    // before the actual push (which refuses with HTTP 409 if any incomplete).
+    const incompleteMailings = voters.filter(v => !_isCompleteMailingAddress(v.mailing_address));
+    const incompleteSample = incompleteMailings.slice(0, 10).map(v => ({
+      lot_number: v.lot_number,
+      owner_name: v.owner_name,
+      mailing_address: v.mailing_address
+    }));
 
     // Sample: first 10 + last 5 (deduped) so the operator can eyeball
     // a representative slice without dumping the whole list into the
@@ -7163,8 +7200,13 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         email_coverage_pct: voters.length > 0
           ? Math.round((votersWithEmail / voters.length) * 1000) / 10
           : 0,
-        voters_with_mailing_address: votersWithMailing
+        voters_with_mailing_address: votersWithMailing,
+        voters_with_incomplete_mailing: incompleteMailings.length,
+        community_default_city:  commRow?.city  || null,
+        community_default_state: commRow?.state || null,
+        community_default_zip:   commRow?.zip   || null
       },
+      incomplete_mailing_sample: incompleteSample,
       nominations_status_breakdown: (allNominationsRaw || []).reduce((acc, n) => {
         acc[n.status || 'unknown'] = (acc[n.status || 'unknown'] || 0) + 1;
         return acc;
@@ -7179,12 +7221,14 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         has_voters: voters.length > 0,
         has_voting_cutoff: !!(cycle.voting_cutoff_at || cycle.annual_meeting_date),
         voter_count_matches_properties: voterCountMatchesProperties,
+        all_mailings_complete: incompleteMailings.length === 0,
         ready_to_push: ['closed', 'finalized'].includes(cycle.status)
           && !!cycle.notice_sent_at
           && candidates.length > 0
           && voters.length > 0
           && !!(cycle.voting_cutoff_at || cycle.annual_meeting_date)
-          && voterCountMatchesProperties  // BLOCK push when truncation detected
+          && voterCountMatchesProperties     // BLOCK on truncation
+          && incompleteMailings.length === 0 // BLOCK on incomplete addresses
       }
     });
   } catch (err) {
@@ -7285,12 +7329,27 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       return res.status(400).json({ error: 'No property owners found for this community. Run the Vantaca owner sync first.' });
     }
 
-    // Pre-compute the community's modal city/state/zip ONCE so we can
-    // fall back to it for any property with NULL geo. Handles the
-    // Vantaca-sync-gap case where ~14% of Waterview properties were
-    // missing city/state/zip — without this, those envelopes printed
-    // street-only and were undeliverable.
-    const communityGeo = _modalCommunityGeo(ownersRaw);
+    // Three-tier geo fallback:
+    //   1. Each property's own city/state/zip
+    //   2. Community default from communities table (migration 147 —
+    //      Ed seeds explicitly so it's always reliable)
+    //   3. Modal derivation from the majority of properties (backup)
+    // Fetch the community defaults so we can pass them into the composer.
+    const { data: commRow } = await supabase
+      .from('communities')
+      .select('city, state, zip')
+      .eq('id', cycle.community_id)
+      .maybeSingle();
+    const modalGeo = _modalCommunityGeo(ownersRaw);
+    const communityGeo = {
+      defaultCity:  commRow?.city  || '',
+      defaultState: commRow?.state || 'TX',
+      defaultZip:   commRow?.zip   || '',
+      city:  modalGeo.city,
+      state: modalGeo.state,
+      zip:   modalGeo.zip
+    };
+
     const voters = ownersRaw
       .filter(o => o.owner_name && o.owner_name.trim())  // exclude vacant / unrecorded
       .map(o => {
@@ -7304,6 +7363,22 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
           vote_weight: 1
         };
       });
+
+    // HARD VALIDATION: every mailing address must have a 5-digit ZIP.
+    // If any are incomplete, REFUSE the push — undeliverable envelopes
+    // are a disenfranchisement issue, not an acceptable error rate.
+    const incomplete = voters.filter(v => !_isCompleteMailingAddress(v.mailing_address));
+    if (incomplete.length > 0) {
+      const sample = incomplete.slice(0, 10).map(v => `${v.lot_number}: ${v.owner_name} → "${v.mailing_address}"`);
+      console.error(`[push-to-vote] REFUSED: ${incomplete.length} voters have incomplete mailing addresses (no 5-digit ZIP)`);
+      return res.status(409).json({
+        error: `Refused: ${incomplete.length} of ${voters.length} voters have mailing addresses missing a 5-digit ZIP. Pushing these to bedrock-vote would result in undeliverable mail. Backfill the property records (or set the community default city/state/zip in the communities table) before retrying.`,
+        incomplete_count: incomplete.length,
+        total_count: voters.length,
+        community_default_geo: { city: commRow?.city || null, state: commRow?.state || null, zip: commRow?.zip || null },
+        sample_incomplete: sample
+      });
+    }
 
     if (voters.length === 0) {
       return res.status(400).json({ error: 'No eligible voters after filtering. All properties in this community appear to lack a current owner record.' });

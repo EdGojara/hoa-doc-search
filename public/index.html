@@ -28979,6 +28979,22 @@ ${questionsPage}
           </div>
           ` : ''}
 
+          ${s.voters_with_incomplete_mailing > 0 ? `
+          <div style="margin-bottom:14px; padding:12px 14px; background:#fef2f2; border:2px solid #dc2626; border-radius:8px;">
+            <div style="font-size:14px; font-weight:800; color:#991b1b; margin-bottom:6px;">⚠️ ${s.voters_with_incomplete_mailing} INCOMPLETE MAILING ADDRESS${s.voters_with_incomplete_mailing > 1 ? 'ES' : ''} — push will be refused</div>
+            <div style="font-size:13px; color:#7f1d1d; line-height:1.5;">
+              ${s.voters_with_incomplete_mailing} of ${s.voter_count} voters have a mailing address with no 5-digit ZIP. Those envelopes would be undeliverable — homeowners silently disenfranchised. Push endpoint will refuse with HTTP 409 until fixed.
+              <br><br>
+              <b>Community default:</b> ${s.community_default_city || '(not set)'} / ${s.community_default_state || '(not set)'} / ${s.community_default_zip || '(not set)'} — these are stored on the communities table and used as the per-property fallback. ${!s.community_default_zip ? '<b style="color:#dc2626;">Community default ZIP is NOT SET — set it in the communities table to backfill all missing addresses at once.</b>' : ''}
+              <br><br>
+              <b>Examples (first 10):</b>
+              <div style="font-family:monospace; font-size:11.5px; background:#fff; border:1px solid #fecaca; border-radius:6px; padding:8px; margin-top:4px; max-height:200px; overflow-y:auto;">
+              ${(j.incomplete_mailing_sample || []).map(r => `${escapeHtml(r.lot_number || '?')} · ${escapeHtml(r.owner_name)} → "${escapeHtml(r.mailing_address || '(empty)')}"`).join('<br>')}
+              </div>
+            </div>
+          </div>
+          ` : ''}
+
           <div style="font-size:13px; font-weight:700; color:#1E2761; margin-bottom:6px;">Readiness</div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:12.5px; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid #e2e8f0; border-radius:6px;">
             <div>${fmtCheck(rdy.cycle_status_ok)} Cycle is closed or finalized</div>
@@ -28987,6 +29003,7 @@ ${questionsPage}
             <div>${fmtCheck(rdy.has_voters)} At least one eligible voter</div>
             <div>${fmtCheck(rdy.has_voting_cutoff)} Voting cutoff date is set</div>
             <div>${fmtCheck(rdy.voter_count_matches_properties)} Voter count matches property count (${s.total_properties_in_view}/${s.properties_canonical})</div>
+            <div>${fmtCheck(rdy.all_mailings_complete)} All mailing addresses have ZIP (${s.voter_count - s.voters_with_incomplete_mailing}/${s.voter_count})</div>
             <div style="grid-column:1 / -1; margin-top:4px;"><b>${rdy.ready_to_push ? '<span style="color:#16a34a;">READY TO PUSH</span>' : '<span style="color:#dc2626;">NOT YET READY</span>'}</b></div>
           </div>
 
