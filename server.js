@@ -6949,6 +6949,64 @@ function _modalCommunityGeo(owners) {
 //
 // communityGeo is { city, state, zip } from _modalCommunityGeo —
 // pre-computed once per push so we don't re-scan per voter.
+// Helper: build a complete mailing object with BOTH structured fields
+// (street/city/state/zip) and the single composed string. The structured
+// fields are now the canonical form bedrock-vote uses for rendering —
+// eliminates parsing-error class of bugs where comma-splitting silently
+// drops the city/state/zip line on the printed label.
+// Three cases (in priority order):
+//   (a) owner_mailing_address has a 5-digit ZIP → parse it as the owner's
+//       real out-of-band mailing (e.g. snowbird, LLC, lawyer). If the
+//       parse cleanly yields 4 structured parts, use them; otherwise
+//       pass through as single + leave structured NULL so the renderer's
+//       fallback parser kicks in.
+//   (b) owner_mailing_address has only street (no ZIP) → it's an
+//       incomplete copy of the property address; use the property's
+//       structured geo, with community defaults filling gaps.
+//   (c) owner_mailing_address is empty → owner-occupied; use property's
+//       structured geo.
+function _composeMailing(o, communityGeo) {
+  const effectiveCity  = o.city  || communityGeo.defaultCity  || communityGeo.city  || '';
+  const effectiveState = o.state || communityGeo.defaultState || communityGeo.state || 'TX';
+  const effectiveZip   = o.zip   || communityGeo.defaultZip   || communityGeo.zip   || '';
+  const propStreet = (o.street_address || '') + (o.unit ? ` ${o.unit}` : '');
+
+  const ownerMail = (o.owner_mailing_address || '').trim();
+  const HAS_ZIP = /\b(\d{5})(-\d{4})?\b/;
+
+  if (ownerMail && HAS_ZIP.test(ownerMail)) {
+    // Case (a) — absentee with real mailing. Attempt structured parse.
+    const parts = ownerMail.split(',').map(p => p.trim()).filter(Boolean);
+    if (parts.length >= 3) {
+      const stateZip = parts[parts.length - 1];
+      const stateZipMatch = stateZip.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
+      if (stateZipMatch) {
+        const street = parts.slice(0, parts.length - 2).join(', ');
+        const city   = parts[parts.length - 2];
+        const state  = stateZipMatch[1].toUpperCase();
+        const zip    = stateZipMatch[2];
+        return { street, city, state, zip, single: ownerMail };
+      }
+    }
+    // Couldn't structured-parse; pass through as single + structured NULL
+    return { street: null, city: null, state: null, zip: null, single: ownerMail };
+  }
+
+  if (ownerMail) {
+    // Case (b) — incomplete street-only mailing. Treat as owner-occupied.
+    const street = ownerMail;
+    const single = [street, effectiveCity, (effectiveState + ' ' + effectiveZip).trim()].filter(Boolean).join(', ');
+    return { street, city: effectiveCity, state: effectiveState, zip: effectiveZip, single };
+  }
+
+  // Case (c) — owner-occupied, no contact mailing. Use property geo.
+  const single = [propStreet, effectiveCity, (effectiveState + ' ' + effectiveZip).trim()].filter(Boolean).join(', ');
+  return { street: propStreet, city: effectiveCity, state: effectiveState, zip: effectiveZip, single };
+}
+
+// Back-compat: _composeMailingAddress returns just the single string
+// (legacy callers in this file). Internal forwarder so I don't break
+// anyone else who imports this.
 function _composeMailingAddress(o, communityGeo) {
   // Three-tier fallback chain for geo:
   //   1. Property's own city/state/zip (preferred)
@@ -7119,7 +7177,8 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
     const voters = (ownersRaw || [])
       .filter(o => o.owner_name && o.owner_name.trim())
       .map(o => {
-        const mailing = _composeMailingAddress(o, communityGeo);
+        const m = _composeMailing(o, communityGeo);
+        const mailing = m.single;
         const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
         return {
           lot_number: lotNum,
@@ -7355,12 +7414,20 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
     const voters = ownersRaw
       .filter(o => o.owner_name && o.owner_name.trim())  // exclude vacant / unrecorded
       .map(o => {
-        const mailing = _composeMailingAddress(o, communityGeo);
+        const m = _composeMailing(o, communityGeo);
         const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
         return {
           lot_number: lotNum,
           owner_name: o.owner_name.trim(),
-          mailing_address: mailing,
+          // Structured mailing fields — canonical form bedrock-vote
+          // uses for label rendering. No more parsing the single string.
+          mailing_street: m.street,
+          mailing_city:   m.city,
+          mailing_state:  m.state,
+          mailing_zip:    m.zip,
+          // Legacy single-string mailing_address — kept so the search/
+          // QR/back-compat paths in bedrock-vote keep working.
+          mailing_address: m.single,
           email: o.owner_email || null,
           vote_weight: 1
         };
