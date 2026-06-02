@@ -228,6 +228,26 @@
     .fld input, .fld select, .fld textarea {
       border-bottom-color: #000;
     }
+    /* Belt-and-suspenders for <input type="date"> — the JS swap to
+       type="text" should already kill the calendar widget, but if a
+       browser swallows the beforeprint event we still want a clean
+       print. These hide the Chrome/Edge native calendar icon AND
+       the "mm/dd/yyyy" inner text. */
+    input[type="date"]::-webkit-calendar-picker-indicator {
+      display: none !important;
+      -webkit-appearance: none !important;
+    }
+    input[type="date"]::-webkit-datetime-edit,
+    input[type="date"]::-webkit-datetime-edit-year-field,
+    input[type="date"]::-webkit-datetime-edit-month-field,
+    input[type="date"]::-webkit-datetime-edit-day-field,
+    input[type="date"]::-webkit-datetime-edit-text {
+      color: transparent !important;
+      visibility: hidden !important;
+    }
+    input[type="date"] {
+      color: transparent !important;
+    }
     /* Hide placeholder hint text in print/PDF — the "e.g." examples
        were appearing on the printed form, making it look pre-filled
        when it wasn't. Browsers render placeholders by default; we
