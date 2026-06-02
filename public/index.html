@@ -4294,7 +4294,9 @@
 
   // Classify a property row for the health-bar filter chips. The
   // categorizations match what the bedrock-vote bridge cares about.
-  function homesClassifyRow(p) {
+  // communityGeo is optional — needed only for the label_has_issues
+  // flag (everything else is row-local).
+  function homesClassifyRow(p, communityGeo) {
     const flags = {};
     // Incomplete geo: missing city OR missing zip on the PROPERTY record.
     flags.incomplete_geo = !p.city || !p.zip;
@@ -4330,6 +4332,18 @@
     } else {
       flags.incomplete_mailing = false;
     }
+    // Label-has-issues: would the printed bedrock-vote mailing label be
+    // broken? Superset of incomplete_geo + incomplete_mailing — also
+    // catches absentee-with-unparseable-mailing cases that fall through
+    // the simpler classifiers. Only computed if communityGeo provided
+    // (otherwise we'd report false positives for properties whose own
+    // geo is NULL but the community default would fill in).
+    if (communityGeo) {
+      const lbl = homesComposeLabelPreview(p, communityGeo);
+      flags.label_has_issues = !lbl.complete || (lbl.issues && lbl.issues.length > 0);
+    } else {
+      flags.label_has_issues = false;
+    }
     return flags;
   }
 
@@ -4339,18 +4353,19 @@
     const chips = document.getElementById('homesHealthChips');
     if (!bar || !summary || !chips) return;
     if (allRows.length === 0) { bar.style.display = 'none'; return; }
-    const totals = { incomplete_geo: 0, incomplete_mailing: 0, no_email: 0, absentee: 0, vacant: 0, complete: 0 };
+    const cg = homesGetCommunityGeo(document.getElementById('homesListCommunity')?.value || '');
+    const totals = { incomplete_geo: 0, incomplete_mailing: 0, label_has_issues: 0, no_email: 0, absentee: 0, vacant: 0, complete: 0 };
     for (const p of allRows) {
-      const f = homesClassifyRow(p);
+      const f = homesClassifyRow(p, cg);
       if (f.incomplete_geo) totals.incomplete_geo++;
       if (f.incomplete_mailing) totals.incomplete_mailing++;
+      if (f.label_has_issues) totals.label_has_issues++;
       if (f.no_email) totals.no_email++;
       if (f.absentee) totals.absentee++;
       if (f.vacant) totals.vacant++;
-      // "Ready" = enough data to mail a ballot. Email-missing is a soft
-      // miss (no online voting link, but paper ballot still works).
-      // Incomplete property geo OR incomplete contact mailing = hard miss.
-      if (!f.incomplete_geo && !f.incomplete_mailing && !f.vacant) totals.complete++;
+      // "Ready" = label would print cleanly. label_has_issues is the
+      // authoritative gate — supersets the individual flags below.
+      if (!f.label_has_issues && !f.vacant) totals.complete++;
     }
     bar.style.display = 'block';
     const pct = allRows.length > 0 ? Math.round((totals.complete / allRows.length) * 100) : 0;
@@ -4361,6 +4376,7 @@
     summary.innerHTML = `<b>${totals.complete} of ${allRows.length}</b> rows ready for vote-mailing (${pct}%). Click a chip to filter.${cleanBtn}`;
     const chipDef = [
       { key: null,                 label: `All (${allRows.length})`,                          bg: '#fff', color: '#475569' },
+      { key: 'label_has_issues',   label: `📬⚠ Label would print broken (${totals.label_has_issues})`, bg: '#fef2f2', color: '#991b1b' },
       { key: 'incomplete_geo',     label: `⚠ Property missing city/zip (${totals.incomplete_geo})`, bg: '#fef2f2', color: '#991b1b' },
       { key: 'incomplete_mailing', label: `⚠ Mailing addr missing zip (${totals.incomplete_mailing})`, bg: '#fef2f2', color: '#991b1b' },
       { key: 'no_email',           label: `No email (${totals.no_email})`,                   bg: '#fffbeb', color: '#92400e' },
@@ -4603,7 +4619,8 @@
           || (p.owner_mailing_address || '').toLowerCase().includes(q);
     });
     if (homesActiveFilter) {
-      filtered = filtered.filter(p => homesClassifyRow(p)[homesActiveFilter]);
+      const filterGeo = homesGetCommunityGeo(document.getElementById('homesListCommunity')?.value || '');
+      filtered = filtered.filter(p => homesClassifyRow(p, filterGeo)[homesActiveFilter]);
     }
     countEl.textContent = `${filtered.length} of ${homesPropertiesCache.length}`;
     if (filtered.length === 0) {
