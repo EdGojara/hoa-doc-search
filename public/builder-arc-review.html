@@ -492,7 +492,7 @@
       <button onclick="closeBulkMasterPlanModal()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
     </div>
     <p style="margin:0 0 14px; font-size:13px; color:#475569; line-height:1.5;">
-      Drop multiple plan PDFs at once. The AI extracts plan number, elevation, square footage, and stories from each. Review the grid, correct anything wrong, then commit all at once. Each plan auto-fast-tracks at any community you pre-approve here.
+      Drop multiple plan PDFs at once. The system extracts plan number, elevation, square footage, and stories from each. Review the grid, correct anything wrong, then commit all at once. Each plan auto-fast-tracks at any community you pre-approve here.
     </p>
 
     <!-- Step 1: Builder + communities + drop zone -->
@@ -512,7 +512,7 @@
       <div id="bulkDropZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:40px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.15s;">
         <div style="font-size:36px; margin-bottom:8px;">📄</div>
         <div style="font-size:14px; color:#475569; font-weight:600;">Drop plan PDFs here, or click to select</div>
-        <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 30 PDFs per batch · ~3–6 sec per file for AI extraction</div>
+        <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 30 PDFs per batch · ~3–6 sec per file</div>
         <input id="bulkFileInput" type="file" accept="application/pdf" multiple style="display:none;">
       </div>
       <div id="bulkProgress" style="display:none; padding:12px; background:#eff6ff; border:1px solid #93c5fd; border-radius:6px; font-size:13px; color:#1e3a8a;"></div>
@@ -522,7 +522,7 @@
     <!-- Step 2: Review grid -->
     <div id="bulkStep2" style="display:none; flex-direction:column; gap:12px;">
       <div style="background:#fffbeb; border:1px solid #fde047; border-radius:6px; padding:10px 12px; font-size:12.5px; color:#854d0e; line-height:1.5;">
-        <strong>Review before commit.</strong> AI extraction is 95% accurate but worth a glance on each row. Correct any wrong values; uncheck rows you want to skip. The 🔍 OCR badge means the PDF was scanned — extraction may need a closer look. Confidence is the AI's self-assessment.
+        <strong>Review before commit.</strong> Extraction is 95% accurate but worth a glance on each row. Correct any wrong values; uncheck rows you want to skip. The 🔍 OCR badge means the PDF was scanned — extraction may need a closer look.
       </div>
       <div style="max-height:50vh; overflow-y:auto; border:1px solid #e2e8f0; border-radius:6px;">
         <table id="bulkGrid" style="width:100%; border-collapse:collapse; font-size:12.5px;">
@@ -574,7 +574,7 @@
         <div>
           <h3 style="margin:0 0 4px; font-size:14px; font-weight:600; color:#854d0e;">⚠ Uploaded but not registered</h3>
           <p style="margin:0; font-size:12px; color:#475569; line-height:1.5;">
-            One click runs AI extraction + auto-registers every orphan using the builder inferred from the filename and that builder's pre-approved communities. Anything the AI can't parse stays here for manual fill.
+            One click runs extraction + auto-registers every orphan using the builder inferred from the filename and that builder's pre-approved communities. Anything the system can't parse stays here for manual fill.
           </p>
         </div>
         <button id="libOrphanAutoAllBtn" onclick="autoRegisterAllOrphans()" style="padding:9px 16px; background:var(--gold, #D4AF37); color:#0B1D34; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer; white-space:nowrap;">🪄 Auto-register all</button>
@@ -634,7 +634,7 @@
       <button onclick="closeAutoCreateModal()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
     </div>
     <p style="margin:0 0 14px; font-size:13px; color:#475569; line-height:1.5;">
-      Drop the builder's plot plan (required) + their color/material selection sheet (optional). AI extracts lot, plan, builder, and selections — auto-matches to a pre-approved master plan if it can. You review + commit as a draft submission.
+      Drop the builder's plot plan (required) + their color/material selection sheet (optional). The system extracts lot, plan, builder, and selections — auto-matches to a pre-approved master plan if it can. You review + commit as a draft submission.
     </p>
 
     <!-- Step 1: drop zones -->
@@ -1825,7 +1825,7 @@ async function acPopulateReviewStep() {
   // Resolution banner
   const banner = document.getElementById('acResolutionBanner');
   const lines = [];
-  lines.push(`<strong>AI extraction:</strong> ${ex.ai_confidence || '?'} confidence`);
+  lines.push(`<strong>Extraction:</strong> ${ex.ai_confidence || '?'} confidence`);
   if (ex.ai_notes) lines.push(`<span style="color:#854d0e;">${escapeHtml(ex.ai_notes)}</span>`);
   if (resolved?.community) lines.push(`Community auto-matched: <strong>${escapeHtml(resolved.community.name)}</strong>`);
   else lines.push(`<span style="color:#b91c1c;">Community NOT auto-matched — pick manually</span>`);
@@ -2153,7 +2153,7 @@ function setOrphanStatus(libDocId, kind, text) {
 async function autoFillOrphan(libDocId, silent) {
   const btn = silent ? null : document.querySelector(`[data-orphan-autofill-btn="${libDocId}"]`);
   if (btn) { btn.disabled = true; btn.textContent = '🪄 Extracting…'; }
-  setOrphanStatus(libDocId, 'progress', 'Running AI extraction…');
+  setOrphanStatus(libDocId, 'progress', 'Processing…');
   try {
     const headers = {};
     try {
@@ -2191,7 +2191,7 @@ async function autoFillOrphan(libDocId, silent) {
     if (elevCount === 0) {
       // AI couldn't parse — surface the reason so operator knows what to do
       const reason = j.ai_notes || 'AI couldn\'t identify plan_number + elevation';
-      setOrphanStatus(libDocId, 'error', `AI extract empty (${j.ai_confidence || 'low'}): ${reason}${builderNote}`);
+      setOrphanStatus(libDocId, 'error', `Extraction empty (${j.ai_confidence || 'low'}): ${reason}${builderNote}`);
     } else {
       const multi = elevCount > 1 ? ` · PDF has ${elevCount} elevations — use 🪄 Auto-register all to register them all` : '';
       setOrphanStatus(libDocId, 'success', `AI: ${j.ai_confidence || 'low'} confidence${multi}${builderNote}`);
@@ -2208,7 +2208,7 @@ async function autoFillOrphan(libDocId, silent) {
 async function autoRegisterAllOrphans() {
   const btn = document.getElementById('libOrphanAutoAllBtn');
   if (!_libOrphansCache || _libOrphansCache.length === 0) return;
-  if (!confirm(`Run AI extraction + auto-register on all ${_libOrphansCache.length} orphan PDF(s)?\n\nBuilder is inferred from each PDF's title.\nCommunity pre-approval uses the builder's active communities.\nDuplicates are skipped.\n\nProceed?`)) return;
+  if (!confirm(`Run extraction + auto-register on all ${_libOrphansCache.length} orphan PDF(s)?\n\nBuilder is inferred from each PDF's title.\nCommunity pre-approval uses the builder's active communities.\nDuplicates are skipped.\n\nProceed?`)) return;
 
   const initialBtnText = btn.textContent;
   btn.disabled = true;
@@ -2221,7 +2221,7 @@ async function autoRegisterAllOrphans() {
     const o = _libOrphansCache[i];
     const name = o.file_name_original || o.title || o.id.slice(0, 8);
     btn.textContent = `🪄 Working ${i + 1} / ${_libOrphansCache.length}…`;
-    setOrphanStatus(o.id, 'progress', 'Running AI + registering…');
+    setOrphanStatus(o.id, 'progress', 'Processing + registering…');
     try {
       const headers = { 'Content-Type': 'application/json' };
       try {

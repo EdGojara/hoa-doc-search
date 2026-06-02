@@ -692,14 +692,14 @@
       <div class="image-previews" id="imagePreviews"></div>
       <div class="section-label" style="margin-top:8px;">Decision Override (optional)</div>
       <select class="draft-type-select" id="accDecision">
-        <option value="">— Let AI review and recommend —</option>
+        <option value="">— Let the system review and recommend —</option>
         <option value="approved with conditions">Approve with Conditions</option>
         <option value="approved no conditions">Approve — No Conditions</option>
         <option value="incomplete">Request Missing Information</option>
         <option value="denied">Deny Application</option>
       </select>
       <div class="section-label" style="margin-top:8px;">Additional Notes (optional)</div>
-      <textarea id="accConditions" placeholder="Any special notes for the AI to factor in..." style="min-height:60px;"></textarea>
+      <textarea id="accConditions" placeholder="Any special notes for the system to factor in..." style="min-height:60px;"></textarea>
       <div class="section-label" style="margin-top:8px;">Additional Context (optional)</div>
       <textarea id="accContext" placeholder="Add helpful context..." style="min-height:60px;"></textarea>
       <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:8px;">
@@ -1559,7 +1559,7 @@
         <div style="margin:0 0 12px; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; display:flex; gap:8px; flex-wrap:wrap;">
           <button id="nomCloseCycleBtn" onclick="nomCloseCycle()" style="display:none; background:#b45309; color:#fff; border:1px solid #b45309; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Mark this cycle's nomination period as closed. No new submissions accepted after this; ready to lock the slate + generate the Annual Meeting Notice.">🛑 Close call for nominations</button>
           <button id="nomReopenCycleBtn" onclick="nomReopenCycle()" style="display:none; background:#fff; color:#475569; border:1px solid #cbd5e1; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Reopen the cycle (admin-fix if you closed it by mistake)">↩ Reopen</button>
-          <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="AI scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review (AI)</button>
+          <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review</button>
           <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Opens the Annual Meeting Notice tab with this cycle pre-selected. From there you configure voting methods + generate the 4-page Notice / Ballot / Bios PDF.">🗳️ Annual Meeting Notice → <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
           <button id="nomMarkSentBtn" onclick="nomMarkNoticeSent()" style="display:none; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Record that the Annual Meeting Notice was mailed + emailed to members. Advances the breadcrumb from 🗳️ Notice → ✉️ Voting and writes the audit trail (date + channels) per Texas §209.0056.">✉️ Mark notice sent</button>
           <button id="nomPreviewVotePushBtn" onclick="nomPreviewVotePush()" style="background:#fff; color:#6b21a8; border:1px solid #d8b4fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Preview what would get pushed to bedrock-vote — candidate list, voter roster, email coverage. Read-only, doesn't push anything. Works at any cycle status.">👁️ Preview vote push</button>
@@ -6461,7 +6461,7 @@
     <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:12px; flex-wrap:wrap; gap:8px;">
       <div>
         <h3 style="margin:0 0 4px 0; font-size:15px; color:#0B1D34;">📑 Branded monthly statements</h3>
-        <p style="margin:0; font-size:12px; color:#666;">Upload a Vantaca balance sheet PDF — AI extracts the numbers and re-renders it on Bedrock letterhead with community logo and "Reviewed by Bedrock" findings.</p>
+        <p style="margin:0; font-size:12px; color:#666;">Upload a Vantaca balance sheet PDF — the system extracts the numbers and re-renders it on Bedrock letterhead with community logo and "Reviewed by Bedrock" findings.</p>
       </div>
     </div>
     <div id="fin-community-hint" style="margin-bottom:10px; padding:8px 12px; background:#f1f5fb; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:12px; color:#1E2761;">
@@ -6600,7 +6600,7 @@
           </select>
         </div>
         <div>
-          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Default category (optional, AI may override)</label>
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Default category (optional, system may override)</label>
           <select id="vendors-upload-category" style="padding:8px; width:100%; font-size:14px;">
             <option value="">— Auto-detect from invoice —</option>
             <option value="landscaping">Landscaping</option>
@@ -6862,7 +6862,7 @@
         <div style="display:flex; gap:6px; align-items:center;">
           <button class="secondary-btn" onclick="docsLoadCoverage()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
           <button class="secondary-btn" data-admin-only onclick="location.href='/admin-library-audit.html'" style="font-size:12px; padding:6px 14px;" title="Per-community document inventory — admin only">📒 Library audit</button>
-          <button class="secondary-btn" data-admin-only onclick="location.href='/agent-training.html'" style="font-size:12px; padding:6px 14px; background:#fffbeb; border:1px solid #fde047; color:#854d0e;" title="Train Claire (voice) + askEd (staff chat) by chatting with them in text mode, reviewing reasoning, and saving corrections to the unified playbook. Corrections take effect on the next real call/chat — no redeploy.">🎙️ Train AI</button>
+          <button class="secondary-btn" data-admin-only onclick="location.href='/agent-training.html'" style="font-size:12px; padding:6px 14px; background:#fffbeb; border:1px solid #fde047; color:#854d0e;" title="Train Claire (voice) + askEd (staff chat) by chatting with them in text mode, reviewing reasoning, and saving corrections to the unified playbook. Corrections take effect on the next real call/chat — no redeploy.">🎙️ Train agents</button>
           <button class="secondary-btn" onclick="docsApplyMigrations()" id="docsApplyMigBtn" style="font-size:12px; padding:6px 14px;" title="Apply migrations/*.sql that haven't landed yet. Bypasses the Supabase SQL editor by connecting via DATABASE_URL.">🗄️ Apply pending migrations</button>
           <button class="secondary-btn" onclick="docsQueueThinExtractionReindex()" id="docsThinReindexBtn" style="font-size:12px; padding:6px 14px;" title="Find docs marked 'indexed' but with suspiciously thin extracted text (likely uploaded pre-OCR pipeline) and re-queue them for OCR reprocessing">🔍 Re-OCR suspect scans</button>
           <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
@@ -7736,7 +7736,7 @@
              Migration 135 stores all of this as one JSONB column. -->
         <div style="background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; padding:12px 14px; margin-bottom:14px;">
           <div style="font-size:12px; font-weight:700; color:#1e3a8a; margin-bottom:8px; text-transform:uppercase; letter-spacing:0.04em;">🧱 Builder ARC standards</div>
-          <p style="font-size:11px; color:#1e3a8a; margin:0 0 10px; line-height:1.5;">Objective specifications from the community's design guidelines. The AI review pipeline checks each new construction submission against these rules FIRST, then references the Design Guidelines PDF for nuance.</p>
+          <p style="font-size:11px; color:#1e3a8a; margin:0 0 10px; line-height:1.5;">Objective specifications from the community's design guidelines. The review pipeline checks each new construction submission against these rules FIRST, then references the Design Guidelines PDF for nuance.</p>
           <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px 12px;">
             <label class="prof-fld"><span>Min square footage</span><input id="bas-min-sqft" type="number" min="0" placeholder="e.g., 1500" /></label>
             <label class="prof-fld"><span>Roof pitch — sides (min)</span><input id="bas-roof-sides" type="text" placeholder="e.g., 8:12" /></label>
@@ -7757,7 +7757,7 @@
             <label class="prof-fld"><span>Additional standards / notes (free-form)</span>
               <textarea id="bas-notes" rows="3" placeholder="e.g., 'Two-story dwellings must be adjacent to a single-story; color palette adjacency prohibited; fence height max 6ft'"></textarea>
             </label>
-            <div style="font-size:10.5px; color:#1e3a8a; margin-top:4px;">The AI review reads this verbatim. Use it for rules you couldn't structure into the fields above.</div>
+            <div style="font-size:10.5px; color:#1e3a8a; margin-top:4px;">The review reads this verbatim. Use it for rules you couldn't structure into the fields above.</div>
           </div>
         </div>
 
@@ -7793,7 +7793,7 @@
 
         <div id="prof-paste-email-form" style="display:none; background:#f5f8fc; border:1px solid #c0d0e0; border-radius:8px; padding:14px; margin-bottom:14px;">
           <div style="margin-bottom:8px; font-size:13px; color:#555;">
-            Paste an email body or signature block. AI extracts the contact (vendor, name, role, phone, email, notes) and pre-fills the add-contact form below for you to review and save.
+            Paste an email body or signature block. The system extracts the contact (vendor, name, role, phone, email, notes) and pre-fills the add-contact form below for you to review and save.
           </div>
           <textarea id="prof-paste-email-text" rows="6" placeholder="From: Joe Smith <joe@bluewater.com>
 Subject: Re: Pool service this week
@@ -8797,7 +8797,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">
       <div>
         <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">🏗️ Imported ARC history <span style="color:#94A3B8; font-weight:500; font-size:14px;">(pre-trustEd letters)</span></h2>
-        <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. trustEd extracts structured fields — review → save. The AI assessment engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
+        <p style="font-size:13px; color:#666; max-width:700px;">Drop past ARC approval/denial letters or meeting-minute excerpts. trustEd extracts structured fields — review → save. The review engine uses these as <strong>informational context</strong> (not binding precedent) when reviewing new applications.</p>
       </div>
     </div>
 
@@ -8990,7 +8990,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
   async function ahProcessFiles(files) {
     const communityId = document.getElementById('ah-filter-community').value;
     if (!communityId) {
-      alert('Pick a community at the top filter first — the community context matters for AI extraction.');
+      alert('Pick a community at the top filter first — the community context matters for extraction.');
       const sel = document.getElementById('ah-filter-community');
       if (sel) sel.focus();
       return;
@@ -9818,7 +9818,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
              <span style="font-size:12px; color:#444;">${accEsc((a.assessment_summary || '').slice(0, 80) || (a.application_data?.request_type ? a.application_data.request_type.replace(/_/g,' ') : '—'))}</span>
            </div>`
         : `<div>
-             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">AI assessment</strong>
+             <strong style="display:block; color:#5a7390; font-size:11px; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">System assessment</strong>
              ${a.assessment_status ? `<span class="acc-pill acc-pill-${a.assessment_status === 'likely_approved' ? 'likely' : a.assessment_status === 'concerns_identified' ? 'concerns' : a.assessment_status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(a.assessment_status)}</span>` : ''}
            </div>`;
 
@@ -9918,7 +9918,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
             <div style="flex:1;">
               <h3 style="margin:0 0 6px; color:#991b1b;">Held for review — do not send without manager edit</h3>
               <p style="margin:0 0 10px; font-size:13px; color:#7f1d1d; line-height:1.55;">
-                The AI assessment for this application tripped one or more safety checks. The draft below is shown for context but is NOT safe to send as-is. Review the flags, edit the message, or click Re-assess after addressing the underlying issue (e.g., ingest the community's CC&Rs if missing).
+                The system assessment for this application tripped one or more safety checks. The draft below is shown for context but is NOT safe to send as-is. Review the flags, edit the message, or click Re-assess after addressing the underlying issue (e.g., ingest the community's CC&Rs if missing).
               </p>
               ${audit.hold_reason ? `<div style="font-size:11px; color:#5a7390; margin-bottom:8px;"><strong>Hold codes:</strong> ${accEsc(audit.hold_reason)}</div>` : ''}
               ${(audit.guards_fired || []).length > 0 ? `
@@ -10000,7 +10000,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
       <!-- AI assessment -->
       ${latestAssess ? `
         <div class="acc-card acc-ai-card${heldForReview ? '' : ''}">
-          <h3>🤖 Preliminary AI assessment${heldForReview ? ' <span style="font-size:13px; font-weight:400; color:#991b1b;">— held for review</span>' : ''}</h3>
+          <h3>Preliminary system assessment${heldForReview ? ' <span style="font-size:13px; font-weight:400; color:#991b1b;">— held for review</span>' : ''}</h3>
           <div style="display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px;">
             <span class="acc-pill acc-pill-${latestAssess.status === 'likely_approved' ? 'likely' : latestAssess.status === 'concerns_identified' ? 'concerns' : latestAssess.status === 'incomplete' ? 'incomplete' : 'manual'}">${accFormatAssessmentStatus(latestAssess.status)}</span>
             <span style="font-size:11px; color:#5a7390; align-self:center;">Confidence: <strong>${accEsc(latestAssess.confidence || '—')}</strong></span>
@@ -10031,7 +10031,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
               </ul>
             </details>` : ''
           }
-        </div>` : '<div class="acc-card">No AI assessment yet. <button class="secondary-btn" onclick="accReassess(\'' + a.id + '\')" style="font-size:13px;">Run one now</button></div>'
+        </div>` : '<div class="acc-card">No assessment yet. <button class="secondary-btn" onclick="accReassess(\'' + a.id + '\')" style="font-size:13px;">Run one now</button></div>'
       }
 
       <!-- Action buttons + draft response editor -->
@@ -10056,7 +10056,7 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
         <div style="margin-top:10px; padding:8px 12px; background:#f0fdf4; border:1px solid #86efac; border-radius:6px;">
           <label style="display:flex; gap:8px; align-items:flex-start; cursor:pointer; font-size:12px; color:#166534;">
             <input id="acc-promote" type="checkbox" checked style="margin-top:2px;" />
-            <span><strong>Add this decision to the ACC History library</strong> — your decision becomes precedent for future AI assessments at ${accEsc(a.community?.name || 'this community')}. The system gets sharper with every approval / denial you finalize.</span>
+            <span><strong>Add this decision to the ACC History library</strong> — your decision becomes precedent for future assessments at ${accEsc(a.community?.name || 'this community')}. The system gets sharper with every approval / denial you finalize.</span>
           </label>
         </div>
         <div class="acc-ai-actions">
@@ -11829,7 +11829,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom: 8px; flex-wrap: wrap; gap: 8px;">
         <h3 style="font-size: 15px; color: var(--navy, #0B1D34); margin: 0;">🔍 Review queue · <span style="font-weight: 400; color: #64748b;">observations pending confirm</span></h3>
         <div style="display: flex; gap: 6px;">
-          <button id="inspReviewAnalyzeBtn" class="secondary-btn" onclick="inspReviewRunAnalyze()" style="font-size: 11px; padding: 4px 10px;" title="Run AI analysis on the latest captured inspection (matches photos to violations + creates observation rows)">▶ Run analysis</button>
+          <button id="inspReviewAnalyzeBtn" class="secondary-btn" onclick="inspReviewRunAnalyze()" style="font-size: 11px; padding: 4px 10px;" title="Run analysis on the latest captured inspection (matches photos to violations + creates observation rows)">▶ Run analysis</button>
           <button class="secondary-btn" onclick="inspReviewLoad()" style="font-size: 11px; padding: 4px 10px;">↻ Refresh</button>
         </div>
       </div>
@@ -12137,7 +12137,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                  ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('inspVViFile').files=dt.files; }">
               <div style="font-size:20px; color:#5a7390;">📥</div>
               <div style="font-size:12px; font-weight:600; color:#0B1D34; margin-top:4px;">Drop the Vantaca violations export here</div>
-              <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file — supports <strong>PDF</strong> (AI extracts the rows automatically) or .csv / .xlsx / .xls</div>
+              <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file — supports <strong>PDF</strong> (rows extract automatically) or .csv / .xlsx / .xls</div>
             </div>
             <input type="file" id="inspVViFile" accept=".csv,.xlsx,.xls,.pdf,application/pdf" style="display:none;">
             <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">PDF: any Vantaca violation history report. CSV/Excel expected columns: Account # / Property Address · Violation Type · Violation Date · Status/Stage (optional) · Resolved Date (optional)</div>
@@ -14446,7 +14446,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; font-size:11.5px; color:#64748b; margin-bottom:16px; line-height:1.5; text-align:left;">
               <strong style="color:#0B1D34;">What happens next:</strong><br>
               • The violation is now on the property's record (quality: verified)<br>
-              • AI is reviewing the photo${(j.photos_uploaded || 0) === 1 ? '' : 's'} — if it disagrees, the violation will be re-flagged for your review<br>
+              • The system is reviewing the photo${(j.photos_uploaded || 0) === 1 ? '' : 's'} — if anything looks off, the violation will be re-flagged for your review<br>
               • You can draft the certified force-mow letter from the Drafts queue when ready
             </div>
             <div style="display:flex; gap:8px; flex-wrap:wrap;">
@@ -15604,7 +15604,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             unlinkedHtml = `
               <div style="background:#fffbeb; border-left:3px solid #b45309; border-radius:0 6px 6px 0; padding:10px 12px; margin-bottom:12px;">
                 <div style="font-weight:700; color:#78350f; margin-bottom:4px;">⚠ ${photos.length} photo${photos.length === 1 ? '' : 's'} need property assignment${ju.community_name ? ' — ' + escapeHtml(ju.community_name) : ''}</div>
-                <div style="font-size:11.5px; color:#78350f; margin-bottom:8px;">These photos uploaded without a property tied (no map-tap, no polygon match). Pick a property below to run AI analysis + create the observation, or 🗑️ delete if the capture was wrong.</div>
+                <div style="font-size:11.5px; color:#78350f; margin-bottom:8px;">These photos uploaded without a property tied (no map-tap, no polygon match). Pick a property below to run analysis + create the observation, or 🗑️ delete if the capture was wrong.</div>
                 ${photos.map(inspReviewRenderUnlinkedPhoto).join('')}
               </div>`;
           }
@@ -15632,7 +15632,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           ? `<img src="${escapeHtml(p.photo_url)}" style="width:64px; height:64px; object-fit:cover; border-radius:4px; border:1px solid #d6cf89; flex-shrink:0;" />`
           : '<div style="width:64px; height:64px; background:#f1f5f9; border-radius:4px; flex-shrink:0;"></div>'}
         <div style="flex:1; min-width:0;">
-          <div style="font-size:11.5px; color:#78350f; margin-bottom:4px;">${ts}${p.ai_detected_house_number ? ` · AI saw house #${escapeHtml(p.ai_detected_house_number)}` : ''}${propsList.length === 0 ? ' · <em style="color:#b45309;">no properties loaded yet</em>' : ''}</div>
+          <div style="font-size:11.5px; color:#78350f; margin-bottom:4px;">${ts}${p.ai_detected_house_number ? ` · detected house #${escapeHtml(p.ai_detected_house_number)}` : ''}${propsList.length === 0 ? ' · <em style="color:#b45309;">no properties loaded yet</em>' : ''}</div>
           <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
             <select id="unlinked-prop-${p.id}" style="flex:1; min-width:200px; padding:5px 8px; font-size:12px; border:1px solid #d6cf89; border-radius:4px; background:#fff;">
               <option value="">— pick property —</option>
@@ -15705,7 +15705,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:3px;">
             <strong style="font-size:13px;">${addr}</strong>
             <span style="background:${sevBg}; color:${sevFg}; padding:1px 8px; border-radius:99px; font-size:10px; font-weight:700; text-transform:uppercase;">${escapeHtml(o.severity || '—')}</span>
-            ${o.ai_confidence ? `<span style="color:${confColor}; font-weight:600; font-size:11px;">AI ${escapeHtml(o.ai_confidence)}</span>` : ''}
+            ${o.ai_confidence ? `<span style="color:${confColor}; font-weight:600; font-size:11px;">${escapeHtml(o.ai_confidence)}</span>` : ''}
           </div>
           <div style="font-size:11.5px; color:#475569; margin-bottom:3px;">${escapeHtml(category.label || 'uncategorized')}</div>
           ${o.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px; line-height:1.4;">"${escapeHtml(o.ai_description)}"</div>` : ''}
@@ -15931,7 +15931,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="flex:1; min-width:0;">
           <div style="font-size:11px; font-weight:700; color:#78350f; text-transform:uppercase; letter-spacing:0.05em; margin-bottom:2px;">Item ${subIndex || '?'}</div>
           <div style="font-size:13px; color:#0B1D34; font-weight:600; margin-bottom:2px;">${escapeHtml(d.violation && d.violation.category_label || '—')}</div>
-          <div style="font-size:11.5px; color:#78350f; margin-bottom:3px;">Cure by ${cureDate}${confidence ? ` · <span style="color:${confColor};">AI confidence: ${escapeHtml(confidence)}</span>` : ''}</div>
+          <div style="font-size:11.5px; color:#78350f; margin-bottom:3px;">Cure by ${cureDate}${confidence ? ` · <span style="color:${confColor};">Confidence: ${escapeHtml(confidence)}</span>` : ''}</div>
           ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
           <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
             <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">✕ Drop this item from the bundle</button>
@@ -15954,7 +15954,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="font-size:12px; color:#0B1D34; margin-bottom:3px;">${escapeHtml(d.violation && d.violation.category_label || '—')} · cure by ${cureDate}</div>
         ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
         <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
-          ${confidence ? `<span style="color:${confColor}; font-weight:600;">AI confidence: ${escapeHtml(confidence)}</span>` : ''}
+          ${confidence ? `<span style="color:${confColor}; font-weight:600;">Confidence: ${escapeHtml(confidence)}</span>` : ''}
           ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#0B1D34; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
           <button onclick="inspDraftsRegenerateLetter('${d.violation_id || ''}', this)" style="background:none; border:1px solid #d0d7de; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
           <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
@@ -17168,7 +17168,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const analyzeBtn = canAnalyze ? `
           <button type="button" onclick="inspAnalyzeFromList('${i.id}', this)"
                   style="background: #15803d; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Run AI vision on each photo in this inspection → create observation rows → populate the Review queue.">
+                  title="Run analysis on each photo in this inspection → create observation rows → populate the Review queue.">
             ▶ Analyze
           </button>
         ` : '';
@@ -17837,7 +17837,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">What "good" looks like — the 5-point check</h2>
         <p>Before you send anything askEd produced, verify these five things. If any fails, edit:</p>
         <ol style="padding-left: 22px;">
-          <li style="margin-bottom: 8px;"><strong>Facts are correct.</strong> Names, dates, addresses, contract amounts — check them against the source. The AI is usually right but occasionally invents details that sound plausible.</li>
+          <li style="margin-bottom: 8px;"><strong>Facts are correct.</strong> Names, dates, addresses, contract amounts — check them against the source. The system is usually right but occasionally invents details that sound plausible.</li>
           <li style="margin-bottom: 8px;"><strong>Tone is warm, not corporate.</strong> Bad: <em>"The Association has determined that..."</em> Good: <em>"We've reviewed your request and..."</em></li>
           <li style="margin-bottom: 8px;"><strong>Jurisdiction is right.</strong> Does this belong with the HOA, or is it actually a city or police matter? Parking on the street, noise after certain hours, abandoned vehicles — many of these are not HOA enforcement. Redirect if not.</li>
           <li style="margin-bottom: 8px;"><strong>Sign-off is canonical.</strong> Always "Bedrock Association Management" — never a personal name in the signature.</li>
@@ -18029,7 +18029,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <li style="margin-bottom: 8px;">Verify the community has a boundary loaded (top of the panel). If not, stop and ask Ed.</li>
           <li style="margin-bottom: 8px;">Tap <strong>Start session</strong>, pick <strong>Walk-through</strong> mode.</li>
           <li style="margin-bottom: 8px;">Walk one short street or one common area. Capture 5-10 photos: half should be actual concerns, half should be "this looks fine" (to test what the system filters out).</li>
-          <li style="margin-bottom: 8px;">End the session. Wait ~5 minutes for the AI categorization to finish.</li>
+          <li style="margin-bottom: 8px;">End the session. Wait ~5 minutes for the categorization to finish.</li>
           <li style="margin-bottom: 8px;">Open the <strong>Drafts queue</strong> below. Review every draft against its photo. Approve the right ones, correct the wrong ones.</li>
           <li style="margin-bottom: 8px;">Open the <strong>Cure-lapse processor</strong> panel and tap Preview — see how the violations you just opened will eventually move through the stages without you doing anything.</li>
         </ol>
@@ -28767,7 +28767,7 @@ ${questionsPage}
     btn.disabled = true;
     btn.textContent = '⏳ Scanning slate…';
     panel.style.display = 'block';
-    panel.innerHTML = `<div style="padding:12px 14px; background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; font-size:13px; color:#1e3a8a;">Running AI pre-flight on every on_slate nomination. ~2 seconds per candidate.</div>`;
+    panel.innerHTML = `<div style="padding:12px 14px; background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; font-size:13px; color:#1e3a8a;">Running pre-flight checks on every on_slate nomination. ~2 seconds per candidate.</div>`;
     try {
       const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/pre-flight-check`, { method: 'POST' });
       const j = await r.json();
@@ -29220,7 +29220,7 @@ ${questionsPage}
         label: 'Closed',
         icon: '🛑',
         done: noticeReady || meetingHeld,
-        next: 'Call is closed. Click 🔍 Pre-flight review (AI) to scan every nomination for typos / inconsistencies, fix any flagged rows, then 🗳️ Annual Meeting Notice → to open the Notice tab with this cycle loaded for generating the ballot.',
+        next: 'Call is closed. Click 🔍 Pre-flight review to scan every nomination for typos / inconsistencies, fix any flagged rows, then 🗳️ Annual Meeting Notice → to open the Notice tab with this cycle loaded for generating the ballot.',
       },
       {
         key: 'notice',

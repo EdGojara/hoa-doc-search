@@ -250,7 +250,7 @@
 <!-- Non-admin gate -->
 <div id="adminBlock" class="access-denied" style="display:none;">
   <h2>Admin role required</h2>
-  <p>The Agent Training Console is restricted to Bedrock admin operators. Corrections saved here propagate to live customer-facing AI surfaces (Claire on calls, askEd on staff chat).</p>
+  <p>The Agent Training Console is restricted to Bedrock admin operators. Corrections saved here propagate to live customer-facing surfaces (Claire on calls, askEd on staff chat).</p>
   <p>If you need access, ask Ed to update your role in the Team tab.</p>
 </div>
 
@@ -314,7 +314,7 @@
     </div>
     <div class="chat-history" id="chatHistory">
       <div class="msg-bubble system-empty">
-        Type a message as the caller or staffer. Claire/askEd's response will appear here. Click "🔍 Reasoning" on any AI turn to see which playbook entries + docs were used.
+        Type a message as the caller or staffer. Claire/askEd's response will appear here. Click "🔍 Reasoning" on any turn to see which playbook entries + docs were used.
       </div>
     </div>
     <div class="chat-input-bar">
@@ -351,7 +351,7 @@
     <label>What situation does this cover?</label>
     <textarea id="peSituation" rows="3" placeholder="e.g., Homeowner asks about a specific fine amount they owe"></textarea>
 
-    <label>What the AI SHOULD say (the rule)</label>
+    <label>What the system SHOULD say (the rule)</label>
     <textarea id="peResponse" rows="4" placeholder="e.g., Never quote specific fine amounts to homeowners; offer to send a written breakdown + transfer to the team for fine questions."></textarea>
 
     <label>Why (reasoning — optional)</label>
@@ -573,7 +573,7 @@ function renderReasoningPane(reasoning) {
   }
   const pb = reasoning.playbook_entries || [];
   const docs = reasoning.docs_retrieved_count || 0;
-  let html = `<h4>What the AI used</h4>`;
+  let html = `<h4>What the system used</h4>`;
   html += `<div style="font-size:11.5px; margin-bottom:6px;">Docs retrieved: <strong>${docs}</strong> · Playbook entries: <strong>${pb.length}</strong></div>`;
   if (pb.length === 0) {
     html += `<em style="font-size:11px; color:#94a3b8;">No matching playbook entries.</em>`;
@@ -609,7 +609,7 @@ async function savePlaybookEntry() {
   if (!situation || !response) {
     status.className = 'pe-status err';
     status.style.display = 'block';
-    status.textContent = 'Both "situation" and "what the AI should say" are required.';
+    status.textContent = 'Both "situation" and "what the system should say" are required.';
     return;
   }
   const appliesTo = [];
