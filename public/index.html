@@ -1563,6 +1563,7 @@
           <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Opens the Annual Meeting Notice tab with this cycle pre-selected. From there you configure voting methods + generate the 4-page Notice / Ballot / Bios PDF.">🗳️ Annual Meeting Notice → <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
           <button id="nomMarkSentBtn" onclick="nomMarkNoticeSent()" style="display:none; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Record that the Annual Meeting Notice was mailed + emailed to members. Advances the breadcrumb from 🗳️ Notice → ✉️ Voting and writes the audit trail (date + channels) per Texas §209.0056.">✉️ Mark notice sent</button>
           <button id="nomPreviewVotePushBtn" onclick="nomPreviewVotePush()" style="background:#fff; color:#6b21a8; border:1px solid #d8b4fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Preview what would get pushed to bedrock-vote — candidate list, voter roster, email coverage. Read-only, doesn't push anything. Works at any cycle status.">👁️ Preview vote push</button>
+          <button id="nomTestPushBtn" onclick="nomTestPushToBedrockVote()" style="background:#fff; color:#9a3412; border:1px solid #fdba74; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Test push to bedrock-vote — creates a real election in bedrock-vote (status=draft, name prefixed with [TEST]) so you can verify the end-to-end bridge before going live. No voting links go out. Delete the test election in bedrock-vote when done. Bypasses the closed-status gate.">🧪 Test push</button>
           <button id="nomSendToVoteBtn" onclick="nomSendToBedrockVote()" style="display:none; background:#7c3aed; color:#fff; border:1px solid #7c3aed; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Push the locked slate + voter roster to bedrock-vote. Creates the election, generates a unique voting link per property owner, and sets up the online ballot. Idempotent: clicking twice returns the existing election rather than duplicating.">🗳️ Send to bedrock-vote</button>
           <button id="nomFinalizeBtn" onclick="nomFinalizeCycle()" style="display:none; background:#15803d; color:#fff; border:1px solid #15803d; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Lock this cycle into terminal 'finalized' status — the meeting is held, winners are known, no more edits expected. Cycle moves into the Recent bucket.">🔒 Finalize cycle</button>
           <div id="nomPreFlightResult" style="display:none; flex-basis:100%; margin-top:8px;"></div>
@@ -28994,6 +28995,58 @@ ${questionsPage}
     } catch (e) {
       panel.style.display = 'block';
       panel.innerHTML = `<div style="padding:10px; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; color:#991b1b;">Preview failed: ${escapeHtml(e.message)}</div>`;
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  }
+
+  // Test push — same endpoint as the production push but with ?test=true
+  // so the server bypasses the closed-status gate and prepends [TEST] to
+  // the election name in bedrock-vote. Lands as 'draft' status like any
+  // imported election; no voting links go out. Operator deletes the test
+  // election in bedrock-vote when done validating.
+  async function nomTestPushToBedrockVote() {
+    if (!nomActiveCycleId) { alert('No active cycle.'); return; }
+    const cycle = nomCycles.find(c => c.id === nomActiveCycleId);
+    if (!confirm(
+      `🧪 TEST push to bedrock-vote?\n\n` +
+      `Community: ${cycle ? cycle.community_name : '(unknown)'}\n` +
+      `Status: ${cycle ? cycle.status : '(unknown)'}\n\n` +
+      `This creates a REAL election in bedrock-vote with name prefixed [TEST] and status='draft'. No voting links are emailed. No homeowners are notified.\n\n` +
+      `Delete the test election in bedrock-vote when you're done validating.\n\n` +
+      `Proceed?`
+    )) return;
+    const btn = document.getElementById('nomTestPushBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = '⏳ Pushing test…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/push-to-vote?test=true`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const lines = [
+        j.already_existed
+          ? `A test election already existed for this cycle. Returning the existing one.`
+          : `🧪 TEST election created in bedrock-vote.`,
+        ``,
+        `Election ID: ${j.election_id}`,
+        `Status: ${j.election_status} (no voting links sent)`,
+        `Candidates: ${j.candidate_count}`,
+        `Voters: ${j.voter_count}`,
+        ``,
+        `Open: ${j.admin_url}`,
+        ``,
+        `When done validating, click 🗑️ Delete on the election card in bedrock-vote to remove the test cleanly.`
+      ];
+      if (confirm(lines.join('\n') + '\n\nOpen bedrock-vote admin now?')) {
+        window.open(j.admin_url, '_blank');
+      }
+    } catch (e) {
+      alert('Test push failed: ' + e.message);
     } finally {
       btn.disabled = false;
       btn.innerHTML = orig;

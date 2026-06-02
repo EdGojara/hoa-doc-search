@@ -7106,8 +7106,15 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       .maybeSingle();
     if (cErr) throw cErr;
     if (!cycle) return res.status(404).json({ error: 'Cycle not found.' });
-    if (!['closed', 'finalized'].includes(cycle.status)) {
-      return res.status(400).json({ error: `Cycle must be closed or finalized before pushing to bedrock-vote (current status: ${cycle.status}).` });
+    // Test mode: bypasses the status gate so the operator can validate
+    // the bridge end-to-end before the cycle reaches production-ready
+    // state. Election still lands in bedrock-vote as 'draft' status —
+    // no voting links go out unless the operator activates it. Election
+    // name prepended with [TEST] so it can't be confused with a real
+    // production election in the bedrock-vote admin.
+    const isTestMode = req.query.test === 'true' || req.body?.test === true;
+    if (!isTestMode && !['closed', 'finalized'].includes(cycle.status)) {
+      return res.status(400).json({ error: `Cycle must be closed or finalized before pushing to bedrock-vote (current status: ${cycle.status}). To do a test run while the cycle is still open, use the Test push button.` });
     }
     if (!cycle.community_id) {
       return res.status(400).json({ error: 'Cycle is missing community_id; cannot resolve voter roster.' });
@@ -7230,10 +7237,12 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       return res.status(400).json({ error: 'Cycle is missing voting_cutoff_at AND annual_meeting_date; one must be set so bedrock-vote knows when to close ballots.' });
     }
 
+    const electionYear = (new Date(cycle.annual_meeting_date || endDate)).getFullYear();
+    const baseElectionName = `${electionYear} Annual Meeting and Board Election`;
     const payload = {
       external_cycle_id: cycle.id,
       community_name: cycle.community_name,
-      election_name: `${(new Date(cycle.annual_meeting_date || endDate)).getFullYear()} Annual Meeting and Board Election`,
+      election_name: isTestMode ? `[TEST] ${baseElectionName}` : baseElectionName,
       start_date: startDate,
       end_date: endDate,
       meeting_date: cycle.annual_meeting_date || null,
