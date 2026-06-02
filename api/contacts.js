@@ -766,6 +766,89 @@ router.post('/properties', express.json(), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// BULK CLEAN incomplete mailing addresses for a community.
+// ---------------------------------------------------------------------------
+// Use case: Vantaca exports populate contacts.mailing_address with just
+// the street ("4902 Beech Fern Drive") for owner-occupied homes,
+// because Vantaca assumes the property's full address is implicit.
+// trustEd inherited that mess. This endpoint finds all contacts in a
+// community whose mailing_address is street-only (matches the property
+// street, no ZIP), and NULLs them out. Setting NULL is more honest than
+// either keeping the broken string or duplicating the property address —
+// it explicitly says "mailing = property, no separate address on file"
+// which is true for owner-occupied homes.
+//
+// Returns the count cleaned + a sample for confirmation.
+// ---------------------------------------------------------------------------
+router.post('/communities/:id/clean-redundant-mailings', express.json(), async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    // Pull all properties + their current owners for this community.
+    const PAGE = 1000;
+    let owners = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('v_current_property_owners')
+        .select('property_id, street_address, owner_contact_id, owner_mailing_address')
+        .eq('community_id', communityId)
+        .range(from, from + PAGE - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      owners = owners.concat(data);
+      if (data.length < PAGE) break;
+      from += PAGE;
+      if (from > 100000) break;
+    }
+    // Find contact_ids where mailing_address is set, doesn't have a 5-digit
+    // zip, AND starts with (or equals) the property street — meaning it's
+    // the same address as the property, just incomplete.
+    const HAS_ZIP = /\b\d{5}(-\d{4})?\b/;
+    const toClean = [];
+    for (const o of owners) {
+      const mail = (o.owner_mailing_address || '').trim();
+      if (!mail) continue;
+      if (HAS_ZIP.test(mail)) continue;
+      if (!o.owner_contact_id || !o.street_address) continue;
+      const propStreet = o.street_address.toLowerCase();
+      if (mail.toLowerCase() === propStreet || mail.toLowerCase().startsWith(propStreet.slice(0, Math.min(12, propStreet.length)))) {
+        toClean.push({
+          contact_id: o.owner_contact_id,
+          property_street: o.street_address,
+          old_mailing: o.owner_mailing_address
+        });
+      }
+    }
+    if (toClean.length === 0) {
+      return res.json({ cleaned: 0, sample: [], message: 'No incomplete mailings matched property street — nothing to clean.' });
+    }
+    // Dry run support — if ?dry_run=true was passed, return the count without writing.
+    if (req.query.dry_run === 'true' || req.body?.dry_run === true) {
+      return res.json({ cleaned: 0, would_clean: toClean.length, sample: toClean.slice(0, 10), dry_run: true });
+    }
+    // NULL them out in chunks. Supabase doesn't support "WHERE id IN (long list)"
+    // cleanly at huge sizes, so chunk by 500.
+    const CHUNK = 500;
+    let updated = 0;
+    for (let i = 0; i < toClean.length; i += CHUNK) {
+      const ids = toClean.slice(i, i + CHUNK).map(r => r.contact_id);
+      const { error } = await supabase
+        .from('contacts')
+        .update({ mailing_address: null, updated_at: new Date().toISOString() })
+        .in('id', ids);
+      if (error) {
+        console.error('[clean-redundant-mailings] chunk failed:', error);
+        return res.status(500).json({ error: error.message, partial_cleaned: updated });
+      }
+      updated += ids.length;
+    }
+    res.json({ cleaned: updated, sample: toClean.slice(0, 10) });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.patch('/properties/:id', express.json(), async (req, res) => {
   try {
     const allowed = ['street_address','unit','city','state','zip','property_type','lot_number','notes','vantaca_account_id'];

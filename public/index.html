@@ -4237,7 +4237,11 @@
     }
     bar.style.display = 'block';
     const pct = allRows.length > 0 ? Math.round((totals.complete / allRows.length) * 100) : 0;
-    summary.innerHTML = `<b>${totals.complete} of ${allRows.length}</b> rows ready for vote-mailing (${pct}%). Click a chip to filter.`;
+    const communityId = document.getElementById('homesListCommunity')?.value || '';
+    const cleanBtn = (totals.incomplete_mailing > 0 && communityId)
+      ? ` &nbsp;<button onclick="homesCleanRedundantMailings()" style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:11.5px; padding:4px 10px; border-radius:6px; cursor:pointer; font-weight:600;" title="One-click bulk: for any contact whose mailing_address is street-only and matches the property street, NULL out the field (= explicitly 'mailing same as property'). Cleans data without losing meaning.">🧹 Bulk-clean redundant mailings</button>`
+      : '';
+    summary.innerHTML = `<b>${totals.complete} of ${allRows.length}</b> rows ready for vote-mailing (${pct}%). Click a chip to filter.${cleanBtn}`;
     const chipDef = [
       { key: null,                 label: `All (${allRows.length})`,                          bg: '#fff', color: '#475569' },
       { key: 'incomplete_geo',     label: `⚠ Property missing city/zip (${totals.incomplete_geo})`, bg: '#fef2f2', color: '#991b1b' },
@@ -4257,6 +4261,38 @@
     homesActiveFilter = key;
     homesListPage = 1;
     homesRenderProperties();
+  }
+
+  // Bulk-clean redundant contact mailing_address values. Server identifies
+  // contacts whose mailing_address is street-only and matches the property
+  // street, then NULLs them out. Dry-run first so the operator sees the
+  // count + sample before committing.
+  async function homesCleanRedundantMailings() {
+    const communityId = document.getElementById('homesListCommunity')?.value;
+    if (!communityId) { alert('Pick a community first.'); return; }
+    try {
+      const dryRes = await fetch(`/api/communities/${communityId}/clean-redundant-mailings?dry_run=true`, { method: 'POST' });
+      const dry = await dryRes.json();
+      if (!dryRes.ok) throw new Error(dry.error || `HTTP ${dryRes.status}`);
+      if (!dry.would_clean) { alert('Nothing to clean — no redundant mailings detected.'); return; }
+      const sampleStr = (dry.sample || []).slice(0, 5).map(r => `  ${r.property_street}  →  "${r.old_mailing}"`).join('\n');
+      const proceed = confirm(
+        `Bulk clean ${dry.would_clean} contact mailings?\n\n` +
+        `These contacts have mailing_address set to just the property street (no city/zip). ` +
+        `Setting them to NULL says "mailing = property" explicitly, which is true for owner-occupied homes ` +
+        `and lets every downstream system use the property address cleanly.\n\n` +
+        `Sample (first 5):\n${sampleStr}\n\n` +
+        `Proceed? This writes to the database.`
+      );
+      if (!proceed) return;
+      const realRes = await fetch(`/api/communities/${communityId}/clean-redundant-mailings`, { method: 'POST' });
+      const real = await realRes.json();
+      if (!realRes.ok) throw new Error(real.error || `HTTP ${realRes.status}`);
+      alert(`Cleaned ${real.cleaned} contact mailings. Reloading roster…`);
+      await homesLoadProperties();
+    } catch (e) {
+      alert('Bulk-clean failed: ' + e.message);
+    }
   }
 
   // Inline-edit helper. Stamps a small input over a table cell, calls the
