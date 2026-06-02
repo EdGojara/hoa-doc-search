@@ -546,16 +546,10 @@
 </div>
 
 <script>
-  // Tiny QoL — auto-populate the submission date with today's date.
-  (function () {
-    const dateInputs = document.querySelectorAll('input[type="date"]');
-    if (dateInputs.length > 0) {
-      const today = new Date().toISOString().slice(0, 10);
-      // Only the submission date (first one) — leave construction start/completion blank
-      const first = document.querySelector('header.lockup input[type="date"]');
-      if (first) first.value = today;
-    }
-  })();
+  // (Previously auto-filled the submission date with today's date —
+  // removed 2026-06-02 because it pre-filled when Ed printed the PDF
+  // to send to builders. Builder should fill in the actual submission
+  // date themselves.)
 </script>
 
 </body>
