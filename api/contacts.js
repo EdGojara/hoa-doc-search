@@ -637,7 +637,7 @@ router.get('/communities', async (req, res) => {
   try {
     let q = supabase
       .from('communities')
-      .select('id, name, legal_name, slug, vantaca_code, total_lots, active')
+      .select('id, name, legal_name, slug, vantaca_code, total_lots, active, city, state, zip')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('name');
     if (req.query.include_inactive !== '1') q = q.eq('active', true);

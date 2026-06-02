@@ -4228,6 +4228,70 @@
   // null = no filter. Otherwise: 'incomplete_geo' | 'no_email' | 'absentee' | 'vacant'
   let homesActiveFilter = null;
 
+  // Mirrors server-side _composeMailing(o, communityGeo) in server.js.
+  // Keep in sync — same algorithm both places so what Ed sees here is
+  // exactly what bedrock-vote prints on the label. Returns
+  // { line2_street, line3_csz, complete: bool, issues: [string] }.
+  function homesComposeLabelPreview(p, communityGeo) {
+    const cg = communityGeo || {};
+    const effCity  = p.city  || cg.city  || '';
+    const effState = p.state || cg.state || 'TX';
+    const effZip   = p.zip   || cg.zip   || '';
+    const propStreet = (p.street_address || '') + (p.unit ? ` ${p.unit}` : '');
+    const ownerMail = (p.owner_mailing_address || '').trim();
+    const HAS_ZIP = /\b(\d{5})(-\d{4})?\b/;
+    const issues = [];
+
+    let line2 = '', line3city = '', line3state = '', line3zip = '';
+    if (ownerMail && HAS_ZIP.test(ownerMail)) {
+      // Case (a) — absentee with real mailing. Attempt structured parse.
+      const parts = ownerMail.split(',').map(s => s.trim()).filter(Boolean);
+      if (parts.length >= 3) {
+        const stateZip = parts[parts.length - 1];
+        const m = stateZip.match(/^([A-Z]{2})\s+(\d{5}(?:-\d{4})?)$/i);
+        if (m) {
+          line2 = parts.slice(0, parts.length - 2).join(', ');
+          line3city = parts[parts.length - 2];
+          line3state = m[1].toUpperCase();
+          line3zip = m[2];
+        } else {
+          line2 = ownerMail;
+          issues.push('absentee mailing didn\'t parse cleanly — manual review');
+        }
+      } else {
+        line2 = ownerMail;
+        issues.push('absentee mailing has zip but no city — manual review');
+      }
+    } else if (ownerMail) {
+      // Case (b) — incomplete street-only mailing
+      line2 = ownerMail; line3city = effCity; line3state = effState; line3zip = effZip;
+    } else {
+      // Case (c) — owner-occupied
+      line2 = propStreet; line3city = effCity; line3state = effState; line3zip = effZip;
+    }
+    if (!line2) issues.push('no street');
+    if (!line3city) issues.push('no city');
+    if (!line3zip) issues.push('no zip');
+    const csz = [line3city, [line3state, line3zip].filter(Boolean).join(' ')].filter(Boolean).join(', ');
+    return {
+      line2_street: line2,
+      line3_csz: csz,
+      complete: line2 && line3city && line3zip,
+      issues
+    };
+  }
+
+  // Cache of community defaults (city/state/zip) keyed by community_id.
+  // Loaded once when the operator picks a community.
+  let homesCommunityGeoCache = {};
+  function homesGetCommunityGeo(communityId) {
+    if (!communityId) return null;
+    if (homesCommunityGeoCache[communityId]) return homesCommunityGeoCache[communityId];
+    const c = (homesCommunitiesCache || []).find(x => x.id === communityId);
+    if (c) homesCommunityGeoCache[communityId] = { city: c.city || '', state: c.state || 'TX', zip: c.zip || '' };
+    return homesCommunityGeoCache[communityId] || null;
+  }
+
   // Classify a property row for the health-bar filter chips. The
   // categorizations match what the bedrock-vote bridge cares about.
   function homesClassifyRow(p) {
@@ -4560,6 +4624,9 @@
       pageInfo.textContent = `${start + 1}-${end} of ${filtered.length} (p${homesListPage}/${totalPages})`;
     }
 
+    // Resolve community geo once per render for the label preview column.
+    const cgForRender = homesGetCommunityGeo(document.getElementById('homesListCommunity')?.value || '');
+
     list.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12px;">
       <thead>
         <tr style="border-bottom:1.5px solid #1E2761; color:#475569; position:sticky; top:0; background:#fff; z-index:2;">
@@ -4570,6 +4637,7 @@
           <th style="text-align:left; padding:5px 6px;">Owner</th>
           <th style="text-align:left; padding:5px 6px;">Email</th>
           <th style="text-align:left; padding:5px 6px;">Mailing addr (if different)</th>
+          <th style="text-align:left; padding:5px 6px; background:#faf5ff; border-left:2px solid #d8b4fe; border-right:2px solid #d8b4fe;" title="The 2-line block that will print on the bedrock-vote mailing label. Computed using the same logic the live push uses. If any field is missing, the system shows what would print so you can fix the data BEFORE generating mailings.">📬 Label preview</th>
           <th style="text-align:left; padding:5px 6px;">Status</th>
         </tr>
       </thead>
@@ -4581,6 +4649,17 @@
             : f.incomplete_mailing ? '<span style="color:#991b1b; font-weight:600;">⚠ mailing no zip</span>'
             : f.absentee ? '<span style="color:#1e40af;">absentee</span>'
             : '<span style="color:#15803d;">✓ ready</span>';
+          // Compose the EXACT label as bedrock-vote will print it.
+          const lbl = homesComposeLabelPreview(p, cgForRender);
+          const street = lbl.line2_street ? escapeHtml(lbl.line2_street) : '<span style="color:#dc2626; font-weight:700;">[missing street]</span>';
+          const csz = lbl.line3_csz ? escapeHtml(lbl.line3_csz) : '<span style="color:#dc2626; font-weight:700;">[missing city/state/zip]</span>';
+          const labelBlock = `
+            <div style="font-family:monospace; font-size:11px; line-height:1.35; ${lbl.complete ? '' : 'background:#fef2f2; padding:2px 4px; border-radius:3px;'}">
+              <div>${escapeHtml(p.owner_name || '[no owner]')}</div>
+              <div>${street}</div>
+              <div>${csz}</div>
+              ${lbl.issues.length ? `<div style="color:#dc2626; font-size:10px; margin-top:2px;">⚠ ${escapeHtml(lbl.issues.join('; '))}</div>` : ''}
+            </div>`;
           return `
           <tr style="border-bottom:1px solid #e2e8f0;">
             <td style="padding:5px 6px; font-weight:600; color:#1E2761; cursor:pointer;" onclick="homesOpenProperty('${p.property_id}')">${escapeHtml(p.street_address || '')}${p.unit ? ' #' + escapeHtml(p.unit) : ''}</td>
@@ -4594,6 +4673,7 @@
             </td>
             <td style="padding:5px 6px;">${p.owner_contact_id ? homesEditableCell(p.owner_contact_id, 'contacts', 'primary_email', p.owner_email, { minWidth: 160, flagged: !p.owner_email }) : '<span style="color:#94A3B8;">—</span>'}</td>
             <td style="padding:5px 6px; max-width:240px;">${p.owner_contact_id ? homesEditableCell(p.owner_contact_id, 'contacts', 'mailing_address', p.owner_mailing_address, { minWidth: 200 }) : '<span style="color:#94A3B8;">—</span>'}</td>
+            <td style="padding:5px 6px; background:#faf5ff; border-left:2px solid #f3e8ff; border-right:2px solid #f3e8ff; min-width:200px;">${labelBlock}</td>
             <td style="padding:5px 6px;">${status}</td>
           </tr>`;
         }).join('')}
