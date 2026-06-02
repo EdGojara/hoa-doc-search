@@ -4201,6 +4201,18 @@
     } else {
       flags.absentee = false;
     }
+    // Incomplete mailing: owner has SOMETHING in mailing_address but no
+    // 5-digit ZIP. These would print undeliverable labels even though the
+    // property record itself is fine. The bridge falls back to appending
+    // the property geo, but only if the property has city/zip — for any
+    // absentee or anyone whose mailing is in a different community, that
+    // fallback is wrong. Surface them so the operator can fix the
+    // contact directly.
+    if (mail) {
+      flags.incomplete_mailing = !/\b\d{5}(-\d{4})?\b/.test(mail);
+    } else {
+      flags.incomplete_mailing = false;
+    }
     return flags;
   }
 
@@ -4210,24 +4222,29 @@
     const chips = document.getElementById('homesHealthChips');
     if (!bar || !summary || !chips) return;
     if (allRows.length === 0) { bar.style.display = 'none'; return; }
-    const totals = { incomplete_geo: 0, no_email: 0, absentee: 0, vacant: 0, complete: 0 };
+    const totals = { incomplete_geo: 0, incomplete_mailing: 0, no_email: 0, absentee: 0, vacant: 0, complete: 0 };
     for (const p of allRows) {
       const f = homesClassifyRow(p);
       if (f.incomplete_geo) totals.incomplete_geo++;
+      if (f.incomplete_mailing) totals.incomplete_mailing++;
       if (f.no_email) totals.no_email++;
       if (f.absentee) totals.absentee++;
       if (f.vacant) totals.vacant++;
-      if (!f.incomplete_geo && !f.no_email && !f.vacant) totals.complete++;
+      // "Ready" = enough data to mail a ballot. Email-missing is a soft
+      // miss (no online voting link, but paper ballot still works).
+      // Incomplete property geo OR incomplete contact mailing = hard miss.
+      if (!f.incomplete_geo && !f.incomplete_mailing && !f.vacant) totals.complete++;
     }
     bar.style.display = 'block';
     const pct = allRows.length > 0 ? Math.round((totals.complete / allRows.length) * 100) : 0;
     summary.innerHTML = `<b>${totals.complete} of ${allRows.length}</b> rows ready for vote-mailing (${pct}%). Click a chip to filter.`;
     const chipDef = [
-      { key: null,              label: `All (${allRows.length})`,                   bg: '#fff', color: '#475569' },
-      { key: 'incomplete_geo',  label: `⚠ Missing city/zip (${totals.incomplete_geo})`, bg: '#fef2f2', color: '#991b1b' },
-      { key: 'no_email',        label: `No email (${totals.no_email})`,            bg: '#fffbeb', color: '#92400e' },
-      { key: 'absentee',        label: `Mailing ≠ property (${totals.absentee})`,  bg: '#eff6ff', color: '#1e40af' },
-      { key: 'vacant',          label: `Vacant (${totals.vacant})`,                bg: '#f3f4f6', color: '#6B7280' }
+      { key: null,                 label: `All (${allRows.length})`,                          bg: '#fff', color: '#475569' },
+      { key: 'incomplete_geo',     label: `⚠ Property missing city/zip (${totals.incomplete_geo})`, bg: '#fef2f2', color: '#991b1b' },
+      { key: 'incomplete_mailing', label: `⚠ Mailing addr missing zip (${totals.incomplete_mailing})`, bg: '#fef2f2', color: '#991b1b' },
+      { key: 'no_email',           label: `No email (${totals.no_email})`,                   bg: '#fffbeb', color: '#92400e' },
+      { key: 'absentee',           label: `Mailing ≠ property (${totals.absentee})`,         bg: '#eff6ff', color: '#1e40af' },
+      { key: 'vacant',             label: `Vacant (${totals.vacant})`,                       bg: '#f3f4f6', color: '#6B7280' }
     ];
     chips.innerHTML = chipDef.map(c => {
       const active = homesActiveFilter === c.key;
@@ -4358,7 +4375,8 @@
         ${pageRows.map((p) => {
           const f = homesClassifyRow(p);
           const status = f.vacant ? '<span style="color:#6B7280;">vacant</span>'
-            : f.incomplete_geo ? '<span style="color:#991b1b; font-weight:600;">⚠ incomplete</span>'
+            : f.incomplete_geo ? '<span style="color:#991b1b; font-weight:600;">⚠ property geo</span>'
+            : f.incomplete_mailing ? '<span style="color:#991b1b; font-weight:600;">⚠ mailing no zip</span>'
             : f.absentee ? '<span style="color:#1e40af;">absentee</span>'
             : '<span style="color:#15803d;">✓ ready</span>';
           return `
