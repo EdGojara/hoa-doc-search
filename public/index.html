@@ -244,6 +244,28 @@
         return;
       }
       window.supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+      // _authFetch — auth-attaching wrapper around fetch(). Same signature
+      // as fetch(); transparently attaches the current Supabase session
+      // JWT as Authorization: Bearer ... so admin-only API endpoints can
+      // recognize the staff session. If no session exists (anonymous
+      // visitor) it just calls fetch() unchanged — public endpoints
+      // still work. Always safe to use instead of bare fetch() for any
+      // call to /api/*.
+      //
+      // The recurring "Approve failed: authentication required" bugs all
+      // came from bare fetch() calls to admin endpoints. Use _authFetch
+      // by default to make that bug class structurally impossible.
+      window._authFetch = async function (url, opts) {
+        opts = opts || {};
+        const headers = Object.assign({}, opts.headers || {});
+        try {
+          const session = (await window.supa.auth.getSession()).data?.session;
+          if (session?.access_token && !headers.Authorization && !headers.authorization) {
+            headers.Authorization = 'Bearer ' + session.access_token;
+          }
+        } catch (_) { /* no session — fall through with whatever headers were given */ }
+        return fetch(url, Object.assign({}, opts, { headers }));
+      };
       const { data: { session } } = await window.supa.auth.getSession();
       if (!session) {
         window.location.replace('/login.html');
@@ -13297,7 +13319,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         // Borrow from any source — quickest is the enforcement_categories table
         // via a tiny dedicated endpoint we add separately. For now we'll prompt
         // for a category slug if cache miss.
-        const r = await fetch('/api/enforcement/categories');
+        const r = await window._authFetch('/api/enforcement/categories');
         if (r.ok) {
           const j = await r.json();
           window._inspCategoriesCache = j.categories || [];
@@ -13333,7 +13355,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!sources[sourcePick]) return;
     const notes = prompt('Notes (optional):') || '';
     try {
-      const r = await fetch('/api/enforcement/violations/manual', {
+      const r = await window._authFetch('/api/enforcement/violations/manual', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -13370,7 +13392,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       // re-route to the force-mow renderer otherwise). Slightly more
       // server work per click; consistency win outweighs it at our
       // letter volume.
-      const r = await fetch('/api/enforcement/generate-letter', {
+      const r = await window._authFetch('/api/enforcement/generate-letter', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
@@ -14118,7 +14140,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // Load categories once
     if (_mvCategories.length === 0) {
       try {
-        const r = await fetch('/api/enforcement/categories');
+        const r = await window._authFetch('/api/enforcement/categories');
         if (r.ok) {
           const j = await r.json();
           _mvCategories = j.categories || [];
@@ -14391,7 +14413,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         }
       } catch (_) { /* fall through — 401 will surface clearly */ }
 
-      const r = await fetch('/api/enforcement/violations/manual', {
+      const r = await window._authFetch('/api/enforcement/violations/manual', {
         method: 'POST',
         body: fd,
         credentials: 'same-origin',
@@ -15295,7 +15317,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   document.addEventListener('DOMContentLoaded', () => {
     setTimeout(async () => {
       try {
-        const r = await fetch('/api/enforcement/categories');
+        const r = await window._authFetch('/api/enforcement/categories');
         if (r.ok) {
           const j = await r.json();
           window._inspCategoriesCache = j.categories || [];
@@ -15803,9 +15825,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       // Auto-bundle pass first — groups multi-violation drafts at the same
       // property into single envelopes (one PDF, shared bundle_id). Idempotent
       // and safe to call repeatedly; bundles that already exist are skipped.
-      try { await fetch('/api/enforcement/drafts/auto-bundle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (_) {}
+      try { await window._authFetch('/api/enforcement/drafts/auto-bundle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (_) {}
 
-      const r = await fetch('/api/enforcement/drafts?limit=100');
+      const r = await window._authFetch('/api/enforcement/drafts?limit=100');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       inspDraftsData = j.drafts || [];
@@ -16048,7 +16070,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const session = (await window.supa.auth.getSession()).data?.session;
       const headers = { 'Content-Type': 'application/json' };
       if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
-      const r = await fetch('/api/enforcement/generate-letter', {
+      const r = await window._authFetch('/api/enforcement/generate-letter', {
         method: 'POST',
         headers,
         body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
@@ -16090,7 +16112,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!wrap) return;
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
     try {
-      const r = await fetch('/api/enforcement/mail-queue/summary');
+      const r = await window._authFetch('/api/enforcement/mail-queue/summary');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       inspMailQueueRender(j.summary);
@@ -16184,7 +16206,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     wrap.style.display = 'block';
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; padding:8px 0;">Loading…</div>';
     try {
-      const r = await fetch('/api/enforcement/mail-queue/letters');
+      const r = await window._authFetch('/api/enforcement/mail-queue/letters');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       const letters = j.letters || [];
@@ -16232,7 +16254,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const original = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '⏳…'; }
     try {
-      const r = await fetch('/api/enforcement/mail-queue/cancel', {
+      const r = await window._authFetch('/api/enforcement/mail-queue/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ interaction_id: interactionId }),
@@ -16258,7 +16280,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       : `Lock dates and print ${label} batch?\n\nToday's date (${todayStr}) will be stamped on every letter, and cure deadlines will be recalculated from today. Do this when you're about to mail.\n\nProceed?`;
     if (!confirm(confirmMsg)) return;
     try {
-      const r = await fetch('/api/enforcement/mail-queue/lock-and-batch', {
+      const r = await window._authFetch('/api/enforcement/mail-queue/lock-and-batch', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delivery_method: deliveryMethod }),
@@ -16289,7 +16311,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const label = deliveryMethod === 'certified_mail' ? 'CERTIFIED' : 'first-class';
     if (!confirm(`Download all pending ${label} letters as one PDF?\n\nThis will:\n• Merge every approved letter into a single multi-page PDF\n• Mark them all as "printed" so they don't appear in the next batch\n• Download immediately to your computer\n\nProceed?`)) return;
     try {
-      const r = await fetch('/api/enforcement/mail-queue/batch-pdf', {
+      const r = await window._authFetch('/api/enforcement/mail-queue/batch-pdf', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ delivery_method: deliveryMethod }),
@@ -16323,7 +16345,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!wrap) return;
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
     try {
-      const r = await fetch('/api/enforcement/fine-queue?status=queued');
+      const r = await window._authFetch('/api/enforcement/fine-queue?status=queued');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       const items = j.queue || [];
@@ -16372,7 +16394,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const ref = prompt('Vantaca charge reference (optional — leave blank if you don\'t track it):') || '';
     if (ref === null) return;
     try {
-      const r = await fetch('/api/enforcement/fine-queue/' + encodeURIComponent(queueId), {
+      const r = await window._authFetch('/api/enforcement/fine-queue/' + encodeURIComponent(queueId), {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ status: 'posted', vantaca_charge_ref: ref || null }),
@@ -16424,7 +16446,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const body = document.getElementById('inspFSBody');
     body.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:30px;">Loading…</div>';
     try {
-      const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId));
+      const r = await window._authFetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId));
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       inspFineScheduleRender(j);
@@ -16515,7 +16537,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
       const dateStr = prompt('Board vote date (YYYY-MM-DD), or leave blank for today:') || '';
       try {
-        const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/community-toggle', {
+        const r = await window._authFetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/community-toggle', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fines_enabled: true, board_minutes_ref: ref.trim(), board_vote_date: dateStr || null }),
@@ -16528,7 +16550,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const reason = prompt('Reason for pausing fines (e.g., "Board declined to authorize fine enforcement"):') || '';
       if (!reason && !confirm('Pause fines with no reason recorded? (Recommended to add a reason for the audit trail.)')) return;
       try {
-        const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/community-toggle', {
+        const r = await window._authFetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/community-toggle', {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fines_enabled: false, disabled_reason: reason || null }),
@@ -16562,7 +16584,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     const ref = prompt('Board minutes / resolution reference (optional but recommended):') || '';
     try {
-      const r = await fetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/row', {
+      const r = await window._authFetch('/api/enforcement/fine-schedule/' + encodeURIComponent(_inspFSCurrentCommunityId) + '/row', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -16634,7 +16656,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const wrap = document.getElementById('inspCureLapsePanel');
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
     try {
-      const r = await fetch('/api/enforcement/cure-lapse/pending?limit=200');
+      const r = await window._authFetch('/api/enforcement/cure-lapse/pending?limit=200');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       _inspCureLapseData = j;
@@ -16700,7 +16722,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const btn = document.getElementById('inspCureLapseProcessBtn');
     btn.disabled = true; btn.textContent = '⏳ Processing…';
     try {
-      const r = await fetch('/api/enforcement/cure-lapse/process', {
+      const r = await window._authFetch('/api/enforcement/cure-lapse/process', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ limit: 200 }),
@@ -16812,7 +16834,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     for (const f of files) fd.append('pdfs', f);
 
     try {
-      const r = await fetch('/api/enforcement/violations/bulk-attach-letters', {
+      const r = await window._authFetch('/api/enforcement/violations/bulk-attach-letters', {
         method: 'POST',
         body: fd,
       });
@@ -16926,7 +16948,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const fd = new FormData();
       fd.append('file', file);
       fd.append('community_id', communityId);
-      const r = await fetch('/api/enforcement/vantaca-violations/preview', { method: 'POST', body: fd });
+      const r = await window._authFetch('/api/enforcement/vantaca-violations/preview', { method: 'POST', body: fd });
       // Server may return HTML on timeout/error — guard against JSON parse errors
       const text = await r.text();
       let j;
@@ -17089,7 +17111,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     status.innerHTML = '⏳ Adding categories…';
     try {
-      const r = await fetch('/api/enforcement/categories/bulk-add', {
+      const r = await window._authFetch('/api/enforcement/categories/bulk-add', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ labels }),
@@ -17130,7 +17152,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const btn = document.getElementById('inspVViApplyBtn');
     btn.disabled = true; btn.textContent = '⏳ Importing…';
     try {
-      const r = await fetch('/api/enforcement/vantaca-violations/apply', {
+      const r = await window._authFetch('/api/enforcement/vantaca-violations/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ community_id: communityId, rows: _inspVViPreviewData.resolved }),
@@ -18512,7 +18534,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (cid) params.set('community_id', cid);
     if (status) params.set('status', status);
     try {
-      const r = await fetch('/api/events?' + params.toString());
+      const r = await window._authFetch('/api/events?' + params.toString());
       const j = await r.json();
       evCurrentList = j.events || [];
       evRenderList();
@@ -18600,7 +18622,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const status = document.getElementById('ev-create-status');
     status.textContent = 'Creating…'; status.style.color = '#888';
     try {
-      const r = await fetch('/api/events', {
+      const r = await window._authFetch('/api/events', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body)
@@ -18619,7 +18641,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ---------- Detail view ----------
   async function evOpenDetail(eventId) {
     try {
-      const r = await fetch('/api/events/' + eventId);
+      const r = await window._authFetch('/api/events/' + eventId);
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       evCurrentDetail = j;
@@ -18838,7 +18860,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const patch = { status: newStatus };
       if (newStatus === 'live' && !evCurrentDetail.event.actual_start_at) patch.actual_start_at = new Date().toISOString();
       if (newStatus === 'completed' && !evCurrentDetail.event.actual_end_at) patch.actual_end_at = new Date().toISOString();
-      const r = await fetch('/api/events/' + evCurrentDetail.event.id, {
+      const r = await window._authFetch('/api/events/' + evCurrentDetail.event.id, {
         method: 'PATCH', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(patch)
       });
@@ -18852,7 +18874,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!evCurrentDetail) return;
     const next = !evCurrentDetail.event.public_signup_enabled;
     try {
-      const r = await fetch('/api/events/' + evCurrentDetail.event.id, {
+      const r = await window._authFetch('/api/events/' + evCurrentDetail.event.id, {
         method: 'PATCH', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ public_signup_enabled: next })
       });
@@ -18877,7 +18899,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     };
     if (!body.vendor_name_snapshot) { alert('Please enter a vendor name.'); return; }
     try {
-      const r = await fetch('/api/events/' + evCurrentDetail.event.id + '/vendors', {
+      const r = await window._authFetch('/api/events/' + evCurrentDetail.event.id + '/vendors', {
         method: 'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify(body)
       });
@@ -18891,7 +18913,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const num = val === '' ? null : Number(val);
     if (val !== '' && isNaN(num)) return;
     try {
-      const r = await fetch('/api/events/vendors/' + rowId, {
+      const r = await window._authFetch('/api/events/vendors/' + rowId, {
         method: 'PATCH', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ actual_cost: num })
       });
@@ -18902,7 +18924,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
   async function evUpdateVendorPayment(rowId, status) {
     try {
-      const r = await fetch('/api/events/vendors/' + rowId, {
+      const r = await window._authFetch('/api/events/vendors/' + rowId, {
         method: 'PATCH', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ payment_status: status })
       });
@@ -18913,7 +18935,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function evDeleteVendor(rowId) {
     if (!confirm('Remove this vendor from the event?')) return;
     try {
-      const r = await fetch('/api/events/vendors/' + rowId, { method: 'DELETE' });
+      const r = await window._authFetch('/api/events/vendors/' + rowId, { method: 'DELETE' });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       evOpenDetail(evCurrentDetail.event.id);
@@ -18930,7 +18952,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function evDeleteEvent(eventId) {
     if (!confirm('Delete this event? Vendors and signatures will also be removed. This cannot be undone.')) return;
     try {
-      const r = await fetch('/api/events/' + eventId, { method: 'DELETE' });
+      const r = await window._authFetch('/api/events/' + eventId, { method: 'DELETE' });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       evBackToList();
@@ -18950,8 +18972,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (cid) params.set('community_id', cid);
     try {
       const [historyR, trendR] = await Promise.all([
-        fetch('/api/events/reports/vendor-history?' + params.toString()).then(r => r.json()),
-        fetch('/api/events/reports/cost-trend?' + params.toString()).then(r => r.json())
+        window._authFetch('/api/events/reports/vendor-history?' + params.toString()).then(r => r.json()),
+        window._authFetch('/api/events/reports/cost-trend?' + params.toString()).then(r => r.json())
       ]);
       evRenderReports(historyR.rows || [], trendR.trend || []);
     } catch (err) {
@@ -19027,7 +19049,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function evRotateCheckinCode(eventId) {
     if (!confirm('Generate a new 6-digit check-in code? Any staff who memorized the old one will need to re-auth.')) return;
     try {
-      const r = await fetch('/api/events/' + eventId + '/generate-checkin-code', { method: 'POST' });
+      const r = await window._authFetch('/api/events/' + eventId + '/generate-checkin-code', { method: 'POST' });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       evOpenDetail(eventId);
@@ -19037,7 +19059,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   async function evGenerateEmailBlast(eventId) {
     try {
-      const r = await fetch('/api/events/' + eventId + '/email-blast');
+      const r = await window._authFetch('/api/events/' + eventId + '/email-blast');
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       // Open in a new window so user can copy or print
@@ -19898,7 +19920,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function profDeleteHomeowner(id) {
     if (!confirm('Remove this homeowner from the roster?')) return;
     try {
-      const r = await fetch('/api/events/roster/' + id, { method: 'DELETE' });
+      const r = await window._authFetch('/api/events/roster/' + id, { method: 'DELETE' });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
       profLoadRoster();
@@ -24271,7 +24293,7 @@ ${questionsPage}
     btn.disabled = true;
     btn.innerHTML = '⏳ Extracting…';
     try {
-      const r = await fetch('/api/documents/legacy/categorize', {
+      const r = await window._authFetch('/api/documents/legacy/categorize', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ legacy_id: legacyId })
@@ -24645,7 +24667,7 @@ ${questionsPage}
   async function formsDelete(docId, label) {
     if (!confirm(`Delete the "${label}" form?\n\nThis removes it from the library and storage permanently.`)) return;
     try {
-      const r = await fetch('/api/documents/' + encodeURIComponent(docId), { method: 'DELETE' });
+      const r = await window._authFetch('/api/documents/' + encodeURIComponent(docId), { method: 'DELETE' });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'failed');
       formsLoadList();
