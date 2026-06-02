@@ -278,37 +278,58 @@
     });
   }
 
-  // Bulletproof placeholder hiding on print. CSS-only approaches were
-  // unreliable — Chrome's print preview sometimes ignored
-  // `color:transparent`. This physically removes the placeholder
-  // attribute right before print and restores it right after, so the
-  // PDF is guaranteed clean regardless of browser. Fires for both
-  // window.print() and Ctrl+P / Cmd+P.
+  // Bulletproof placeholder + date-format hiding on print. CSS-only
+  // approaches were unreliable — Chrome's print preview ignored
+  // `color:transparent` for placeholders, and <input type="date">'s
+  // built-in "mm/dd/yyyy" indicator is rendered by the browser
+  // outside reachable CSS at all.
+  //
+  // Strategy: right before print, (1) clear placeholder attrs on
+  // every input/textarea, (2) for empty <input type="date">, swap
+  // type to "text" so the browser doesn't render its date-format
+  // indicator. Restore everything right after print.
   (function () {
     const elementsToScrub = () =>
       document.querySelectorAll('input[placeholder], textarea[placeholder]');
-    const stashed = new WeakMap();
-    function stripPlaceholders() {
+    const placeholderStash = new WeakMap();
+    const dateStash = new WeakMap();
+
+    function beforePrint() {
+      // Hide placeholders
       elementsToScrub().forEach((el) => {
         if (el.placeholder) {
-          stashed.set(el, el.placeholder);
+          placeholderStash.set(el, el.placeholder);
           el.placeholder = '';
         }
       });
-    }
-    function restorePlaceholders() {
-      elementsToScrub().forEach((el) => {
-        const saved = stashed.get(el);
-        if (saved) el.placeholder = saved;
+      // Hide "mm/dd/yyyy" on empty date inputs by swapping type
+      document.querySelectorAll('input[type="date"]').forEach((el) => {
+        if (!el.value) {
+          dateStash.set(el, true);
+          el.setAttribute('data-was-date', 'true');
+          el.type = 'text';
+        }
       });
     }
-    window.addEventListener('beforeprint', stripPlaceholders);
-    window.addEventListener('afterprint', restorePlaceholders);
+    function afterPrint() {
+      // Restore placeholders
+      elementsToScrub().forEach((el) => {
+        const saved = placeholderStash.get(el);
+        if (saved) el.placeholder = saved;
+      });
+      // Restore date inputs we temporarily swapped to text
+      document.querySelectorAll('input[data-was-date="true"]').forEach((el) => {
+        el.type = 'date';
+        el.removeAttribute('data-was-date');
+      });
+    }
+    window.addEventListener('beforeprint', beforePrint);
+    window.addEventListener('afterprint', afterPrint);
     // matchMedia covers Safari which doesn't always fire beforeprint
     if (window.matchMedia) {
       const mql = window.matchMedia('print');
       mql.addEventListener && mql.addEventListener('change', (m) => {
-        if (m.matches) stripPlaceholders(); else restorePlaceholders();
+        if (m.matches) beforePrint(); else afterPrint();
       });
     }
   })();
