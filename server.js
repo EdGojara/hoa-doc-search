@@ -6864,6 +6864,194 @@ app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
   }
 });
 
+// ============================================================================
+// POST /api/nominations/cycles/:id/push-to-vote
+// ----------------------------------------------------------------------------
+// Outbound bridge: packages a closed nomination cycle into the payload
+// bedrock-vote expects (election fields + candidates + voter roster) and
+// POSTs it to bedrock-vote's /api/elections/ingest endpoint using the
+// shared BEDROCK_BRIDGE_TOKEN.
+//
+// Voter roster strategy (per Ed 2026-06-01):
+//   - One voter per property (one vote per lot, not per deed signer).
+//   - Pulled from v_current_property_owners view, scoped to the cycle's
+//     community_id.
+//   - Excludes properties without a current owner record (vacant /
+//     unrecorded) so we don't generate "owner: null" voting tokens.
+//   - Mailing address: owner_mailing_address if set, else assembled from
+//     the property's physical address fields (most common case).
+//
+// Candidate roster: nominations with status='on_slate' for this cycle.
+// Photos are included as the storage path; bedrock-vote can pull the
+// public URL itself if it wants to display them on the online ballot
+// (v1 just passes the path — bedrock-vote currently shows name + bio
+// only, photos are nice-to-have).
+//
+// Returns:
+//   { election_id, election_status, candidate_count, voter_count,
+//     admin_url, already_existed }
+//
+// Idempotent: bedrock-vote dedupes on external_cycle_id (this cycle's
+// UUID). Re-clicking the button after a successful push returns the
+// existing bedrock-vote election without creating a duplicate.
+// ============================================================================
+app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
+  try {
+    const BRIDGE_TOKEN = process.env.BEDROCK_BRIDGE_TOKEN;
+    const VOTE_BASE_URL = process.env.BEDROCK_VOTE_URL || 'https://vote.bedrocktx.com';
+    if (!BRIDGE_TOKEN) {
+      console.error('[push-to-vote] BEDROCK_BRIDGE_TOKEN env var is missing — bridge disabled');
+      return res.status(503).json({ error: 'Bridge not configured. BEDROCK_BRIDGE_TOKEN env var is missing on this server.' });
+    }
+
+    // 1. Load cycle
+    const { data: cycle, error: cErr } = await supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (cErr) throw cErr;
+    if (!cycle) return res.status(404).json({ error: 'Cycle not found.' });
+    if (!['closed', 'finalized'].includes(cycle.status)) {
+      return res.status(400).json({ error: `Cycle must be closed or finalized before pushing to bedrock-vote (current status: ${cycle.status}).` });
+    }
+    if (!cycle.community_id) {
+      return res.status(400).json({ error: 'Cycle is missing community_id; cannot resolve voter roster.' });
+    }
+
+    // 2. Load candidates (status='on_slate')
+    const { data: candidatesRaw, error: nErr } = await supabase
+      .from('nominations')
+      .select('id, nominee_name, nominee_bio, years_in_community, photo_storage_path, is_incumbent, ballot_order, status')
+      .eq('cycle_id', cycle.id)
+      .eq('status', 'on_slate')
+      .order('ballot_order', { ascending: true, nullsFirst: false })
+      .order('nominee_name', { ascending: true });
+    if (nErr) throw nErr;
+    if (!candidatesRaw || candidatesRaw.length === 0) {
+      return res.status(400).json({ error: 'No candidates on the slate yet (status=on_slate). Approve candidates before pushing to vote.' });
+    }
+
+    const candidates = candidatesRaw.map(c => {
+      // Compose bio with years_in_community + incumbent flag baked in,
+      // since bedrock-vote's ballot UI only renders {name, bio, photo_url}.
+      const bioParts = [];
+      if (c.is_incumbent) bioParts.push('(Incumbent)');
+      if (c.years_in_community) bioParts.push(`Years in community: ${c.years_in_community}`);
+      if (c.nominee_bio) bioParts.push(c.nominee_bio);
+      return {
+        name: c.nominee_name,
+        bio: bioParts.filter(Boolean).join('\n\n'),
+        photo_url: c.photo_storage_path || null  // bedrock-vote can resolve later if needed
+      };
+    });
+
+    // 3. Load voter roster from v_current_property_owners
+    const { data: ownersRaw, error: oErr } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
+      .eq('community_id', cycle.community_id);
+    if (oErr) throw oErr;
+    if (!ownersRaw || ownersRaw.length === 0) {
+      return res.status(400).json({ error: 'No property owners found for this community. Run the Vantaca owner sync first.' });
+    }
+
+    const voters = ownersRaw
+      .filter(o => o.owner_name && o.owner_name.trim())  // exclude vacant / unrecorded
+      .map(o => {
+        // Mailing address: prefer the owner's separate mailing address.
+        // Fall back to the property's physical address (common when owner-
+        // occupied — mailing = property).
+        let mailing = (o.owner_mailing_address || '').trim();
+        if (!mailing) {
+          const parts = [
+            o.street_address + (o.unit ? ` ${o.unit}` : ''),
+            o.city,
+            (o.state || 'TX') + ' ' + (o.zip || '')
+          ].filter(p => p && p.trim());
+          mailing = parts.join(', ');
+        }
+        // Lot number: prefer the platted lot, fall back to physical address
+        // so every voter has SOMETHING in the lot_number column for
+        // identification during reconciliation.
+        const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
+        return {
+          lot_number: lotNum,
+          owner_name: o.owner_name.trim(),
+          mailing_address: mailing,
+          email: o.owner_email || null,
+          vote_weight: 1
+        };
+      });
+
+    if (voters.length === 0) {
+      return res.status(400).json({ error: 'No eligible voters after filtering. All properties in this community appear to lack a current owner record.' });
+    }
+
+    // 4. Build the election payload
+    // start_date = nominations_close_at or today (election open immediately)
+    // end_date = voting_cutoff_at (when ballots stop being accepted)
+    // meeting_date = annual_meeting_date
+    const today = new Date().toISOString().slice(0, 10);
+    const startDate = cycle.nominations_close_at || today;
+    const endDate = cycle.voting_cutoff_at || cycle.annual_meeting_date;
+    if (!endDate) {
+      return res.status(400).json({ error: 'Cycle is missing voting_cutoff_at AND annual_meeting_date; one must be set so bedrock-vote knows when to close ballots.' });
+    }
+
+    const payload = {
+      external_cycle_id: cycle.id,
+      community_name: cycle.community_name,
+      election_name: `${(new Date(cycle.annual_meeting_date || endDate)).getFullYear()} Annual Meeting and Board Election`,
+      start_date: startDate,
+      end_date: endDate,
+      meeting_date: cycle.annual_meeting_date || null,
+      seats_available: cycle.seats_open || 1,
+      candidates,
+      voters
+    };
+
+    // 5. POST to bedrock-vote
+    console.log(`[push-to-vote] Cycle ${cycle.id} → bedrock-vote: ${candidates.length} candidates, ${voters.length} voters`);
+    let voteRes;
+    try {
+      voteRes = await fetch(`${VOTE_BASE_URL}/api/elections/ingest`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Bridge-Token': BRIDGE_TOKEN
+        },
+        body: JSON.stringify(payload)
+      });
+    } catch (netErr) {
+      console.error('[push-to-vote] Network error reaching bedrock-vote:', netErr);
+      return res.status(502).json({ error: `Could not reach bedrock-vote at ${VOTE_BASE_URL}. ${netErr.message}` });
+    }
+
+    const voteJson = await voteRes.json().catch(() => ({}));
+    if (!voteRes.ok) {
+      console.error('[push-to-vote] bedrock-vote returned error:', voteRes.status, voteJson);
+      return res.status(voteRes.status).json({
+        error: voteJson.error || `bedrock-vote returned HTTP ${voteRes.status}`,
+        bedrock_vote_status: voteRes.status
+      });
+    }
+
+    console.log(`[push-to-vote] Success: bedrock-vote election_id=${voteJson.election_id}, already_existed=${voteJson.already_existed}`);
+    return res.json({
+      success: true,
+      ...voteJson,
+      candidate_count: candidates.length,
+      voter_count: voters.length
+    });
+
+  } catch (err) {
+    console.error('[push-to-vote] failed:', err);
+    res.status(500).json({ error: 'Push to vote failed: ' + err.message });
+  }
+});
+
 app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
   try {
     const { data, error } = await supabase

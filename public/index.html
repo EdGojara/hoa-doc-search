@@ -1562,6 +1562,7 @@
           <button class="secondary-btn" id="nomPreFlightBtn" onclick="nomRunPreFlight()" style="background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="AI scan every nomination on the slate — catches typos, inconsistencies (year mismatch between bio and years_in_community), sensitive-info leaks (phone/address in bio), formatting issues. Recommended right before generating the Annual Meeting Notice.">🔍 Pre-flight review (AI)</button>
           <button class="secondary-btn" id="nomAnnualNoticeBtn" onclick="nomGenerateAnnualNotice()" disabled style="opacity:0.5; background:#fff; color:#1E2761; border:1px solid #c7d2fe; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer;" title="Opens the Annual Meeting Notice tab with this cycle pre-selected. From there you configure voting methods + generate the 4-page Notice / Ballot / Bios PDF.">🗳️ Annual Meeting Notice → <span style="font-weight:400; color:#94A3B8; font-size:11px;">(after slate)</span></button>
           <button id="nomMarkSentBtn" onclick="nomMarkNoticeSent()" style="display:none; background:#0ea5e9; color:#fff; border:1px solid #0ea5e9; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Record that the Annual Meeting Notice was mailed + emailed to members. Advances the breadcrumb from 🗳️ Notice → ✉️ Voting and writes the audit trail (date + channels) per Texas §209.0056.">✉️ Mark notice sent</button>
+          <button id="nomSendToVoteBtn" onclick="nomSendToBedrockVote()" style="display:none; background:#7c3aed; color:#fff; border:1px solid #7c3aed; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Push the locked slate + voter roster to bedrock-vote. Creates the election, generates a unique voting link per property owner, and sets up the online ballot. Idempotent: clicking twice returns the existing election rather than duplicating.">🗳️ Send to bedrock-vote</button>
           <button id="nomFinalizeBtn" onclick="nomFinalizeCycle()" style="display:none; background:#15803d; color:#fff; border:1px solid #15803d; font-size:13px; padding:7px 14px; border-radius:6px; cursor:pointer; font-weight:600;" title="Lock this cycle into terminal 'finalized' status — the meeting is held, winners are known, no more edits expected. Cycle moves into the Recent bucket.">🔒 Finalize cycle</button>
           <div id="nomPreFlightResult" style="display:none; flex-basis:100%; margin-top:8px;"></div>
         </div>
@@ -27830,6 +27831,7 @@ ${questionsPage}
       const closeBtn = document.getElementById('nomCloseCycleBtn');
       const reopenBtn = document.getElementById('nomReopenCycleBtn');
       const markSentBtn = document.getElementById('nomMarkSentBtn');
+      const sendToVoteBtn = document.getElementById('nomSendToVoteBtn');
       const finalizeBtn = document.getElementById('nomFinalizeBtn');
       const canClose = cycle.status === 'open' || cycle.status === 'planned';
       const noticeReady = !!(cycle.notice_pdf_storage_path || cycle.notice_generated_at);
@@ -27839,6 +27841,11 @@ ${questionsPage}
       // Mark-sent button appears once the notice PDF exists but hasn't been
       // marked sent yet. Hidden after the operator confirms it went out.
       if (markSentBtn) markSentBtn.style.display = noticeReady && !noticeSent ? 'inline-block' : 'none';
+      // Send-to-bedrock-vote button appears once the notice has been sent
+      // (so we know the slate is locked + members have been notified).
+      // Stays visible through finalization so the operator can re-push if
+      // needed (idempotent on the bedrock-vote side).
+      if (sendToVoteBtn) sendToVoteBtn.style.display = (cycle.status === 'closed' && noticeSent) ? 'inline-block' : 'none';
       // Finalize button appears when the cycle is past the meeting date OR
       // notice has been sent + status is closed (operator can declare done).
       // Hidden when already finalized.
@@ -28877,6 +28884,58 @@ ${questionsPage}
   // Finalize the cycle — flips status closed → finalized. Terminal state.
   // Used after the annual meeting is held + winners are known. Cycle moves
   // into the Recent bucket and the breadcrumb shows all-done.
+  // Push the closed/finalized cycle to bedrock-vote. Server packages the
+  // slate + voter roster and POSTs to bedrock-vote's /ingest endpoint
+  // (authorized via shared BEDROCK_BRIDGE_TOKEN). On success: alert with
+  // the bedrock-vote admin URL and election summary. Idempotent — clicking
+  // a second time returns the existing election (already_existed:true).
+  async function nomSendToBedrockVote() {
+    if (!nomActiveCycleId) { alert('No active cycle.'); return; }
+    const cycle = nomCycles.find(c => c.id === nomActiveCycleId);
+    if (!confirm(
+      `Send to bedrock-vote?\n\n` +
+      `Community: ${cycle ? cycle.community_name : '(unknown)'}\n` +
+      `This will:\n` +
+      `  • Create the election in bedrock-vote\n` +
+      `  • Generate a unique voting link per current property owner\n` +
+      `  • Lock the slate (status='on_slate' candidates only)\n\n` +
+      `Safe to click twice — the bedrock-vote side dedupes on this cycle's ID.\n\n` +
+      `Proceed?`
+    )) return;
+    const btn = document.getElementById('nomSendToVoteBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true;
+    btn.textContent = '⏳ Sending…';
+    try {
+      const r = await fetch(`/api/nominations/cycles/${nomActiveCycleId}/push-to-vote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' }
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const lines = [
+        j.already_existed
+          ? `This cycle was already pushed earlier.`
+          : `Election created in bedrock-vote.`,
+        ``,
+        `Election ID: ${j.election_id}`,
+        `Status: ${j.election_status}`,
+        `Candidates: ${j.candidate_count}`,
+        `Voters: ${j.voter_count}`,
+        ``,
+        `Admin URL: ${j.admin_url}`,
+        ``,
+        `Open the bedrock-vote admin to review + send voting links.`
+      ];
+      alert(lines.join('\n'));
+    } catch (e) {
+      alert('Send to bedrock-vote failed: ' + e.message);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = orig;
+    }
+  }
+
   async function nomFinalizeCycle() {
     if (!nomActiveCycleId) { alert('No active cycle.'); return; }
     const cycle = nomCycles.find(c => c.id === nomActiveCycleId);
