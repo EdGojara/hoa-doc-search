@@ -6942,18 +6942,22 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
     if (nErr) throw nErr;
 
     const onSlate = (allNominationsRaw || []).filter(n => n.status === 'on_slate');
-    const candidates = onSlate.map(c => {
+    const candidates = await Promise.all(onSlate.map(async (c) => {
       const bioParts = [];
       if (c.is_incumbent) bioParts.push('(Incumbent)');
       if (c.years_in_community) bioParts.push(`Years in community: ${c.years_in_community}`);
       if (c.nominee_bio) bioParts.push(c.nominee_bio);
+      // Convert trustEd storage path → base64 data URI so bedrock-vote
+      // (different Supabase project) can render the photo without needing
+      // cross-project storage access. Same helper the AMN renderer uses.
+      const photo_url = await _storagePathToDataUri(c.photo_storage_path);
       return {
         name: c.nominee_name,
         bio: bioParts.filter(Boolean).join('\n\n'),
-        photo_url: c.photo_storage_path || null,
+        photo_url,
         is_incumbent: !!c.is_incumbent
       };
-    });
+    }));
 
     // Voter roster — paginated. .range(0, N) alone doesn't escape
     // Supabase's server-side max_rows ceiling (typically 1000), so we
@@ -7133,19 +7137,24 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       return res.status(400).json({ error: 'No candidates on the slate yet (status=on_slate). Approve candidates before pushing to vote.' });
     }
 
-    const candidates = candidatesRaw.map(c => {
+    const candidates = await Promise.all(candidatesRaw.map(async (c) => {
       // Compose bio with years_in_community + incumbent flag baked in,
       // since bedrock-vote's ballot UI only renders {name, bio, photo_url}.
       const bioParts = [];
       if (c.is_incumbent) bioParts.push('(Incumbent)');
       if (c.years_in_community) bioParts.push(`Years in community: ${c.years_in_community}`);
       if (c.nominee_bio) bioParts.push(c.nominee_bio);
+      // Convert trustEd storage path → base64 data URI so bedrock-vote
+      // (different Supabase project) can render the photo without needing
+      // cross-project storage access. Inline image bytes survive the
+      // network hop and don't expire mid-election like signed URLs would.
+      const photo_url = await _storagePathToDataUri(c.photo_storage_path);
       return {
         name: c.nominee_name,
         bio: bioParts.filter(Boolean).join('\n\n'),
-        photo_url: c.photo_storage_path || null  // bedrock-vote can resolve later if needed
+        photo_url
       };
-    });
+    }));
 
     // 3. Load voter roster from v_current_property_owners — paginated.
     // See preview endpoint for the why (Supabase server-side max_rows
