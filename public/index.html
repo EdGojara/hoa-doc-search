@@ -2004,6 +2004,57 @@
     <div id="homesMethodsImportDiff" style="display:none; margin-top:10px; border-top:1px dashed #cbd5e1; padding-top:10px;"></div>
   </div>
 
+  <!-- ===========================================================================
+       Roster Import — clean-once-verify-forever pattern (2026-06-02).
+       Template-driven import: operator downloads CSV pre-filled with
+       current data → cleans in Excel → uploads → strict validator runs
+       → preview shows valid/error counts → operator confirms → apply
+       writes verified rows. Verified rows survive future Vantaca syncs.
+       =========================================================================== -->
+  <div style="border:1px solid #d8b4fe; border-radius:10px; padding:14px; background:#faf5ff; margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+      <div style="flex:1; min-width:280px;">
+        <h3 style="margin:0 0 4px 0; font-size:14px; color:#6b21a8;">🗂️ Roster Import — clean once, verify forever</h3>
+        <p style="font-size:11.5px; color:#6B7280; margin:0; line-height:1.5;">
+          Download a CSV pre-filled with this community's data → clean in Excel (fix missing zips, NULL out redundant mailings, correct typos) → re-upload → strict validator + preview → apply. Apply stamps every row as <b>operator-verified</b> — future Vantaca syncs surface proposed changes but won't auto-overwrite without your per-row OK. This is the canonical onboarding flow for any new community Bedrock takes on.
+        </p>
+      </div>
+    </div>
+
+    <!-- Step 1: download template -->
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+      <select id="rosterImportCommunity" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px;">
+        <option value="">— Pick community —</option>
+      </select>
+      <button onclick="rosterImportDownloadTemplate('csv', true)" class="secondary-btn" style="font-size:12px; padding:6px 12px; background:#fff; color:#6b21a8; border:1px solid #d8b4fe;" title="Download CSV pre-filled with current data for this community">📥 Download with current data (CSV)</button>
+      <button onclick="rosterImportDownloadTemplate('xlsx', true)" class="secondary-btn" style="font-size:12px; padding:6px 12px; background:#fff; color:#6b21a8; border:1px solid #d8b4fe;">📥 …or as Excel (.xlsx)</button>
+      <button onclick="rosterImportDownloadTemplate('csv', false)" class="secondary-btn" style="font-size:11.5px; padding:6px 12px; background:#fff; color:#94A3B8; border:1px solid #e2e8f0;" title="Empty template with one sample row — for net-new community onboarding">📄 Empty template (new community)</button>
+    </div>
+
+    <!-- Step 2: instructions (always visible) -->
+    <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px 12px; font-size:11.5px; color:#475569; margin-bottom:10px; line-height:1.5;">
+      <b>Fix the CSV in Excel:</b> required = street_address, city, state, zip, full_name. State = 2 letters. ZIP = 5 digits (or ZIP+4). If <b>mailing_address</b> is set it MUST include a 5-digit zip — otherwise leave it blank to mean "mailing = property address." Don't change <b>vantaca_account_id</b> (it's the match key).
+    </div>
+
+    <!-- Step 3: upload -->
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+      <div id="rosterImportDropZone"
+           style="flex:1; min-width:300px; border:2px dashed #d8b4fe; border-radius:8px; padding:12px; text-align:center; background:#fff; cursor:pointer;"
+           onclick="document.getElementById('rosterImportFile').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#6b21a8'; this.style.background='#faf5ff';"
+           ondragleave="this.style.borderColor='#d8b4fe'; this.style.background='#fff';"
+           ondrop="event.preventDefault(); this.style.borderColor='#d8b4fe'; this.style.background='#fff'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('rosterImportFile').files=dt.files; rosterImportUpdateLabel(); }">
+        <div style="font-size:18px; color:#6b21a8;">📤</div>
+        <div id="rosterImportDropLabel" style="font-size:12px; font-weight:600; color:#6b21a8; margin-top:4px;">Drag &amp; drop cleaned CSV/Excel, or click to pick a file</div>
+      </div>
+      <input type="file" id="rosterImportFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="rosterImportUpdateLabel()">
+      <button class="action-btn" onclick="rosterImportPreview()" id="rosterImportPreviewBtn" style="font-size:12.5px; padding:8px 14px;">🔍 Preview &amp; validate</button>
+    </div>
+
+    <!-- Step 4: preview result -->
+    <div id="rosterImportResult" style="display:none;"></div>
+  </div>
+
   <!-- Middle row: diff preview (only visible after an upload) -->
   <div id="homesDiffPanel" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:16px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -3831,11 +3882,13 @@
       }));
       const sel1 = document.getElementById('homesUploadCommunity');
       const sel2 = document.getElementById('homesListCommunity');
+      const sel3 = document.getElementById('rosterImportCommunity');
       const opts = '<option value="">— Pick community —</option>' +
         homesCommunitiesCache.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
       if (sel1) sel1.innerHTML = opts;
       if (sel2) sel2.innerHTML = '<option value="">All communities</option>' +
         homesCommunitiesCache.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+      if (sel3) sel3.innerHTML = opts;
     } catch (e) {
       console.warn('[homes] community load failed', e);
     }
@@ -4255,6 +4308,119 @@
       return `<button onclick="homesSetFilter(${c.key === null ? 'null' : `'${c.key}'`})"
         style="font-size:11.5px; padding:4px 10px; border-radius:14px; border:1px solid ${active ? '#1E2761' : '#cbd5e1'}; background:${active ? '#1E2761' : c.bg}; color:${active ? '#fff' : c.color}; cursor:pointer; font-weight:${active ? 700 : 500};">${c.label}</button>`;
     }).join('');
+  }
+
+  // ============================================================
+  // ROSTER IMPORT — clean-once-verify-forever flow
+  // ============================================================
+  function rosterImportUpdateLabel() {
+    const f = document.getElementById('rosterImportFile');
+    const lbl = document.getElementById('rosterImportDropLabel');
+    if (f.files.length) lbl.innerHTML = '✓ ' + escapeHtml(f.files[0].name) + ' <span style="color:#94A3B8; font-weight:400;">(click Preview to validate)</span>';
+    else lbl.textContent = 'Drag & drop cleaned CSV/Excel, or click to pick a file';
+  }
+
+  async function rosterImportDownloadTemplate(format, includeCurrent) {
+    const cid = document.getElementById('rosterImportCommunity').value;
+    if (!cid) { alert('Pick a community first.'); return; }
+    const url = `/api/communities/${cid}/roster-template?format=${format}&include_current=${includeCurrent ? 'true' : 'false'}`;
+    const a = document.createElement('a');
+    a.href = url;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  async function rosterImportPreview() {
+    const cid = document.getElementById('rosterImportCommunity').value;
+    if (!cid) { alert('Pick a community first.'); return; }
+    const f = document.getElementById('rosterImportFile');
+    if (!f.files.length) { alert('Pick a file to upload first.'); return; }
+    const btn = document.getElementById('rosterImportPreviewBtn');
+    const result = document.getElementById('rosterImportResult');
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.textContent = '⏳ Validating…';
+    try {
+      const fd = new FormData();
+      fd.append('file', f.files[0]);
+      const r = await fetch(`/api/communities/${cid}/roster-import/preview`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const errCount = j.error_count || 0;
+      const totalRows = j.total_rows_parsed || 0;
+      const updateCount = j.update_count || 0;
+      const netNew = j.net_new_count || 0;
+      const fc = j.field_change_totals || {};
+      const changedFields = Object.entries(fc).filter(([_, v]) => v > 0).map(([k, v]) => `${k}: ${v}`).join(' · ') || '(no field changes detected)';
+
+      const errorsHtml = errCount === 0 ? '' : `
+        <div style="margin-top:10px; padding:10px 12px; background:#fef2f2; border:1px solid #fecaca; border-radius:6px;">
+          <div style="font-size:13px; font-weight:700; color:#991b1b; margin-bottom:6px;">⚠ ${errCount} validation error${errCount > 1 ? 's' : ''}${j.errors_truncated ? ' (showing first 200)' : ''}</div>
+          <div style="max-height:260px; overflow-y:auto; font-family:monospace; font-size:11px; background:#fff; border:1px solid #fecaca; border-radius:4px; padding:6px;">
+            ${(j.errors || []).map(e => `Row ${e.row} · ${escapeHtml(e.field)}: ${escapeHtml(e.message)}`).join('<br>')}
+          </div>
+          <div style="margin-top:6px; font-size:12px; color:#7f1d1d;">Fix the CSV in Excel and re-upload to retry. Apply is disabled until 0 errors.</div>
+        </div>`;
+
+      const canApply = errCount === 0 && updateCount > 0;
+      const applyBtnHtml = canApply
+        ? `<div style="margin-top:12px; padding:10px 12px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:6px;">
+            <div style="font-size:13px; font-weight:600; color:#15803d; margin-bottom:8px;">✓ All ${updateCount} rows pass validation — ready to apply</div>
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+              <input type="text" id="rosterImportVerifiedBy" placeholder="Your name (for audit trail)" style="font-size:12.5px; padding:6px 10px; border:1px solid #cbd5e1; border-radius:6px; flex:1; min-width:180px;">
+              <button onclick="rosterImportApply()" class="action-btn" style="font-size:12.5px; padding:8px 16px; background:#15803d; border-color:#15803d;">✓ Apply &amp; mark verified</button>
+            </div>
+          </div>`
+        : '';
+
+      result.style.display = 'block';
+      result.innerHTML = `
+        <div style="border-top:1px dashed #d8b4fe; padding-top:10px; margin-top:10px;">
+          <div style="font-size:13px; font-weight:600; color:#1E2761; margin-bottom:6px;">Preview: ${j.community.name}</div>
+          <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:8px 16px; font-size:12.5px;">
+            <div><b>Total rows parsed</b><br><span style="font-size:18px; font-weight:700; color:#1E2761;">${totalRows}</span></div>
+            <div><b>Will update existing</b><br><span style="font-size:18px; font-weight:700; color:#15803d;">${updateCount}</span></div>
+            <div><b>Net-new (errors)</b><br><span style="font-size:18px; font-weight:700; color:${netNew > 0 ? '#991b1b' : '#94A3B8'};">${netNew}</span></div>
+            <div><b>Validation errors</b><br><span style="font-size:18px; font-weight:700; color:${errCount > 0 ? '#991b1b' : '#15803d'};">${errCount}</span></div>
+          </div>
+          <div style="margin-top:8px; font-size:12px; color:#475569;"><b>Field changes detected:</b> ${escapeHtml(changedFields)}</div>
+          ${errorsHtml}
+          ${applyBtnHtml}
+        </div>
+      `;
+    } catch (e) {
+      result.style.display = 'block';
+      result.innerHTML = `<div style="padding:10px; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; color:#991b1b;">Preview failed: ${escapeHtml(e.message)}</div>`;
+    } finally {
+      btn.disabled = false; btn.innerHTML = orig;
+    }
+  }
+
+  async function rosterImportApply() {
+    const cid = document.getElementById('rosterImportCommunity').value;
+    const f = document.getElementById('rosterImportFile');
+    const verifiedBy = (document.getElementById('rosterImportVerifiedBy').value || '').trim();
+    if (!verifiedBy) { alert('Enter your name for the audit trail before applying.'); return; }
+    if (!confirm(`Apply this roster and mark ${cid ? 'the community' : '?'} as verified by "${verifiedBy}"?\n\nThis writes to the database. Verified rows will be protected from future Vantaca-sync overwrites.`)) return;
+    try {
+      const fd = new FormData();
+      fd.append('file', f.files[0]);
+      fd.append('verified_by', verifiedBy);
+      const r = await fetch(`/api/communities/${cid}/roster-import/apply`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        let msg = j.error || `HTTP ${r.status}`;
+        if (j.message) msg += '\n\n' + j.message;
+        if (j.errors && j.errors.length) msg += '\n\nFirst few errors:\n' + j.errors.slice(0, 5).map(e => `  Row ${e.row}: ${e.field} — ${e.message}`).join('\n');
+        alert(msg);
+        return;
+      }
+      alert(`${j.message}\n\nProperties: ${j.properties_written}\nContacts: ${j.contacts_written}${j.write_errors && j.write_errors.length ? '\nWrite errors: ' + j.write_errors.length : ''}`);
+      // Reload the roster so the verified badges show
+      if (typeof homesLoadProperties === 'function') await homesLoadProperties();
+    } catch (e) {
+      alert('Apply failed: ' + e.message);
+    }
   }
 
   function homesSetFilter(key) {
