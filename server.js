@@ -6955,11 +6955,15 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       };
     });
 
-    // Voter roster — same logic as the live push
+    // Voter roster — same logic as the live push.
+    // .range(0, 49999) hard-caps at 50k rows. Without this, Supabase
+    // PostgREST silently truncates at 1000, which masquerades as a
+    // data gap (caught 2026-06-01 — Waterview returned 1000 of 1171).
     const { data: ownersRaw, error: oErr } = await supabase
       .from('v_current_property_owners')
       .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
-      .eq('community_id', cycle.community_id);
+      .eq('community_id', cycle.community_id)
+      .range(0, 49999);
     if (oErr) throw oErr;
 
     const voters = (ownersRaw || [])
@@ -7104,11 +7108,15 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       };
     });
 
-    // 3. Load voter roster from v_current_property_owners
+    // 3. Load voter roster from v_current_property_owners.
+    // .range(0, 49999) hard-caps at 50k. PostgREST silently truncates
+    // at 1000 without this — silent data loss caught on Waterview
+    // preview (1000/1171). Mirrored on the preview endpoint above.
     const { data: ownersRaw, error: oErr } = await supabase
       .from('v_current_property_owners')
       .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
-      .eq('community_id', cycle.community_id);
+      .eq('community_id', cycle.community_id)
+      .range(0, 49999);
     if (oErr) throw oErr;
     if (!ownersRaw || ownersRaw.length === 0) {
       return res.status(400).json({ error: 'No property owners found for this community. Run the Vantaca owner sync first.' });
