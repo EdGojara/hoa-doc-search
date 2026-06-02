@@ -784,7 +784,13 @@ router.get('/asked-coverage', async (req, res) => {
       for (const c of page) {
         const meta = c.metadata || {};
         if (meta.library_document_id) indexedIds.add(meta.library_document_id);
-        const name = meta.community;
+        // Bucket chunks per community. For chunks WITHOUT a community tag
+        // but WITH a library_document_id (i.e. community-less library
+        // docs), bucket them under 'Unknown' to mirror the libs loop's
+        // bucketing — otherwise the panel shows "39 indexed / 0 chunks"
+        // for the Unknown bucket and the columns visibly disagree.
+        let name = meta.community;
+        if (!name && meta.library_document_id) name = 'Unknown';
         if (name) communityChunkCount[name] = (communityChunkCount[name] || 0) + 1;
       }
       if (page.length < PAGE) break; // last page
