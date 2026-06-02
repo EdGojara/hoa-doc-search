@@ -6895,6 +6895,163 @@ app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
 // UUID). Re-clicking the button after a successful push returns the
 // existing bedrock-vote election without creating a duplicate.
 // ============================================================================
+// ============================================================================
+// GET /api/nominations/cycles/:id/push-to-vote-preview
+// ----------------------------------------------------------------------------
+// Dry-run: returns the exact payload bedrock-vote WOULD receive if the
+// operator clicked "Send to bedrock-vote" right now. Doesn't POST to
+// bedrock-vote, doesn't require notice_sent_at, doesn't require closed
+// status. Lets the operator eyeball the candidate list + voter roster +
+// mailing addresses + email coverage against the live cycle without
+// committing to a push.
+//
+// Returns:
+//   {
+//     cycle: { id, community_name, status, ... },
+//     stats: { candidate_count, voter_count, voters_with_email,
+//              email_coverage_pct, voters_with_mailing_address },
+//     candidates: [...],            // full list — typically small
+//     voters_sample: [...],         // first 10 + last 5 for visual scan
+//     voters_full_available: true   // hint that full list is too long to inline
+//   }
+// ============================================================================
+app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => {
+  try {
+    // Load cycle (no status guard for preview — works on any state)
+    const { data: cycle, error: cErr } = await supabase
+      .from('nomination_cycles')
+      .select('*')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (cErr) throw cErr;
+    if (!cycle) return res.status(404).json({ error: 'Cycle not found.' });
+    if (!cycle.community_id) {
+      return res.status(400).json({ error: 'Cycle is missing community_id; cannot resolve voter roster.' });
+    }
+
+    // Candidates: any status, not just on_slate — preview shows the full
+    // pipeline so the operator can see who would be pushed if they
+    // moved everyone to on_slate.
+    const { data: allNominationsRaw, error: nErr } = await supabase
+      .from('nominations')
+      .select('id, nominee_name, nominee_bio, years_in_community, photo_storage_path, is_incumbent, ballot_order, status')
+      .eq('cycle_id', cycle.id)
+      .order('ballot_order', { ascending: true, nullsFirst: false })
+      .order('nominee_name', { ascending: true });
+    if (nErr) throw nErr;
+
+    const onSlate = (allNominationsRaw || []).filter(n => n.status === 'on_slate');
+    const candidates = onSlate.map(c => {
+      const bioParts = [];
+      if (c.is_incumbent) bioParts.push('(Incumbent)');
+      if (c.years_in_community) bioParts.push(`Years in community: ${c.years_in_community}`);
+      if (c.nominee_bio) bioParts.push(c.nominee_bio);
+      return {
+        name: c.nominee_name,
+        bio: bioParts.filter(Boolean).join('\n\n'),
+        photo_url: c.photo_storage_path || null,
+        is_incumbent: !!c.is_incumbent
+      };
+    });
+
+    // Voter roster — same logic as the live push
+    const { data: ownersRaw, error: oErr } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
+      .eq('community_id', cycle.community_id);
+    if (oErr) throw oErr;
+
+    const voters = (ownersRaw || [])
+      .filter(o => o.owner_name && o.owner_name.trim())
+      .map(o => {
+        let mailing = (o.owner_mailing_address || '').trim();
+        if (!mailing) {
+          const parts = [
+            o.street_address + (o.unit ? ` ${o.unit}` : ''),
+            o.city,
+            (o.state || 'TX') + ' ' + (o.zip || '')
+          ].filter(p => p && p.trim());
+          mailing = parts.join(', ');
+        }
+        const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
+        return {
+          lot_number: lotNum,
+          owner_name: o.owner_name.trim(),
+          mailing_address: mailing,
+          email: o.owner_email || null,
+          vote_weight: 1
+        };
+      });
+
+    // Diagnostics: rows from the view that got filtered out (vacant /
+    // unrecorded properties). Surfacing this so the operator can decide
+    // if the count looks right relative to the known community size.
+    const totalPropertiesInView = (ownersRaw || []).length;
+    const propertiesWithoutOwner = totalPropertiesInView - voters.length;
+
+    const votersWithEmail = voters.filter(v => v.email).length;
+    const votersWithMailing = voters.filter(v => v.mailing_address).length;
+
+    // Sample: first 10 + last 5 (deduped) so the operator can eyeball
+    // a representative slice without dumping the whole list into the
+    // browser UI.
+    const sampleSet = new Set();
+    const sample = [];
+    [...voters.slice(0, 10), ...voters.slice(-5)].forEach(v => {
+      const key = v.lot_number + '|' + v.owner_name;
+      if (!sampleSet.has(key)) { sampleSet.add(key); sample.push(v); }
+    });
+
+    return res.json({
+      cycle: {
+        id: cycle.id,
+        community_name: cycle.community_name,
+        community_id: cycle.community_id,
+        status: cycle.status,
+        annual_meeting_date: cycle.annual_meeting_date,
+        voting_cutoff_at: cycle.voting_cutoff_at,
+        seats_open: cycle.seats_open || 1
+      },
+      stats: {
+        total_nominations: (allNominationsRaw || []).length,
+        on_slate_count: onSlate.length,
+        candidate_count: candidates.length,
+        total_properties_in_view: totalPropertiesInView,
+        properties_without_owner_filtered: propertiesWithoutOwner,
+        voter_count: voters.length,
+        voters_with_email: votersWithEmail,
+        email_coverage_pct: voters.length > 0
+          ? Math.round((votersWithEmail / voters.length) * 1000) / 10
+          : 0,
+        voters_with_mailing_address: votersWithMailing
+      },
+      nominations_status_breakdown: (allNominationsRaw || []).reduce((acc, n) => {
+        acc[n.status || 'unknown'] = (acc[n.status || 'unknown'] || 0) + 1;
+        return acc;
+      }, {}),
+      candidates,
+      voters_sample: sample,
+      voters_full_available: true,
+      readiness: {
+        cycle_status_ok: ['closed', 'finalized'].includes(cycle.status),
+        notice_sent: !!cycle.notice_sent_at,
+        has_candidates: candidates.length > 0,
+        has_voters: voters.length > 0,
+        has_voting_cutoff: !!(cycle.voting_cutoff_at || cycle.annual_meeting_date),
+        ready_to_push: ['closed', 'finalized'].includes(cycle.status)
+          && !!cycle.notice_sent_at
+          && candidates.length > 0
+          && voters.length > 0
+          && !!(cycle.voting_cutoff_at || cycle.annual_meeting_date)
+      }
+    });
+  } catch (err) {
+    console.error('[push-to-vote-preview] failed:', err);
+    res.status(500).json({ error: 'Preview failed: ' + err.message });
+  }
+});
+
 app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
   try {
     const BRIDGE_TOKEN = process.env.BEDROCK_BRIDGE_TOKEN;
