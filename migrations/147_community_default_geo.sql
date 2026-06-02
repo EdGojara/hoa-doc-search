@@ -28,28 +28,33 @@ COMMENT ON COLUMN communities.city  IS 'Default city for outbound mail to this c
 COMMENT ON COLUMN communities.state IS 'Default state for outbound mail. Defaults to TX.';
 COMMENT ON COLUMN communities.zip   IS 'Default 5-digit ZIP for outbound mail. Used as fallback when an individual property record is missing zip.';
 
--- Seed Bedrock's 7 communities. Source: Texas Property Code §209
--- public filings + each community's recorded CCRs.
+-- Seed Bedrock's communities. ONLY single-city communities get a default
+-- seeded here — anything that spans multiple cities/ZIPs is left NULL so
+-- the bridge validation flags it loudly when that community goes to vote
+-- (forcing a proper data fix rather than masking the issue with a wrong
+-- default). Ed 2026-06-01: "some of eaglewood is sugar land and some
+-- houston". State stays 'TX' as a safe TX-portfolio default — it's the
+-- city/zip that vary.
+
 UPDATE communities SET city = 'Richmond',     state = 'TX', zip = '77407'
-  WHERE community_name ILIKE 'Waterview%';
+  WHERE community_name ILIKE 'Waterview%';        -- single city confirmed
 
 UPDATE communities SET city = 'Katy',         state = 'TX', zip = '77494'
-  WHERE community_name ILIKE 'Canyon Gate%';
+  WHERE community_name ILIKE 'Canyon Gate%';      -- single city confirmed
 
-UPDATE communities SET city = 'Houston',      state = 'TX', zip = '77084'
-  WHERE community_name ILIKE 'Lakes of Pine Forest%';
-
-UPDATE communities SET city = 'Houston',      state = 'TX', zip = '77084'
-  WHERE community_name ILIKE 'Eaglewood%';
-
-UPDATE communities SET city = 'Spring',       state = 'TX', zip = '77373'
-  WHERE community_name ILIKE 'Quail Ridge%';
-
-UPDATE communities SET city = 'Bryan',        state = 'TX', zip = '77808'
-  WHERE community_name ILIKE 'Still Creek Ranch%';
-
-UPDATE communities SET city = 'Houston',      state = 'TX', zip = '77073'
-  WHERE community_name ILIKE 'August Meadows%';
+-- Communities NOT seeded with a default (mixed cities or unverified):
+--   • Lakes of Pine Forest   — verify before seeding
+--   • Eaglewood              — mixed Sugar Land / Houston, do NOT seed
+--   • Quail Ridge            — verify before seeding
+--   • Still Creek Ranch      — verify before seeding
+--   • August Meadows         — verify before seeding
+--
+-- For each of these, when you're ready to run their election, either:
+--   (a) set the city/zip per-property in the property editor (preferred
+--       for mixed communities)
+--   (b) set the community default here if the community is actually
+--       single-city
+-- The bridge will refuse to push until the data is correct.
 
 NOTIFY pgrst, 'reload schema';
 
