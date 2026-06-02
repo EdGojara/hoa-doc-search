@@ -6994,6 +6994,21 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
     const totalPropertiesInView = (ownersRaw || []).length;
     const propertiesWithoutOwner = totalPropertiesInView - voters.length;
 
+    // INVARIANT CHECK: cross-check the view's row count against the
+    // canonical properties table count for this community. They MUST
+    // match — if they don't, something silently truncated (the bug we
+    // just hit with PostgREST's 1000-row default) or the view has a
+    // filter the operator doesn't know about. Lesson 2026-06-01 (Ed
+    // caught the truncation by domain knowledge — system should catch
+    // it, not the operator).
+    const { count: propertiesCanonical, error: propCountErr } = await supabase
+      .from('properties')
+      .select('*', { count: 'exact', head: true })
+      .eq('community_id', cycle.community_id);
+    if (propCountErr) throw propCountErr;
+    const voterCountMatchesProperties = totalPropertiesInView === propertiesCanonical;
+    const missingFromView = (propertiesCanonical || 0) - totalPropertiesInView;
+
     const votersWithEmail = voters.filter(v => v.email).length;
     const votersWithMailing = voters.filter(v => v.mailing_address).length;
 
@@ -7021,7 +7036,9 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         total_nominations: (allNominationsRaw || []).length,
         on_slate_count: onSlate.length,
         candidate_count: candidates.length,
-        total_properties_in_view: totalPropertiesInView,
+        properties_canonical: propertiesCanonical,         // truth source
+        total_properties_in_view: totalPropertiesInView,   // what we got
+        properties_missing_from_view: missingFromView,     // gap
         properties_without_owner_filtered: propertiesWithoutOwner,
         voter_count: voters.length,
         voters_with_email: votersWithEmail,
@@ -7043,11 +7060,13 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         has_candidates: candidates.length > 0,
         has_voters: voters.length > 0,
         has_voting_cutoff: !!(cycle.voting_cutoff_at || cycle.annual_meeting_date),
+        voter_count_matches_properties: voterCountMatchesProperties,
         ready_to_push: ['closed', 'finalized'].includes(cycle.status)
           && !!cycle.notice_sent_at
           && candidates.length > 0
           && voters.length > 0
           && !!(cycle.voting_cutoff_at || cycle.annual_meeting_date)
+          && voterCountMatchesProperties  // BLOCK push when truncation detected
       }
     });
   } catch (err) {
@@ -7152,6 +7171,28 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
 
     if (voters.length === 0) {
       return res.status(400).json({ error: 'No eligible voters after filtering. All properties in this community appear to lack a current owner record.' });
+    }
+
+    // INVARIANT: voter count MUST match canonical property count for
+    // this community. If not, something silently truncated or the view
+    // has an unexpected filter — either way, pushing would disenfran-
+    // chise some homeowners. Refuse and surface the gap. (Ed 2026-06-01
+    // caught a 1000/1171 truncation by domain knowledge — system has
+    // to catch this kind of thing, not rely on the operator knowing
+    // every community's home count.)
+    const { count: propertiesCanonical, error: propCountErr } = await supabase
+      .from('properties')
+      .select('*', { count: 'exact', head: true })
+      .eq('community_id', cycle.community_id);
+    if (propCountErr) throw propCountErr;
+    if ((ownersRaw || []).length !== propertiesCanonical) {
+      const gap = (propertiesCanonical || 0) - (ownersRaw || []).length;
+      return res.status(409).json({
+        error: `Voter roster mismatch: ${ (ownersRaw||[]).length } from view vs ${propertiesCanonical} in properties table. Gap of ${gap} homeowners would be disenfranchised. Push refused. Run the Preview to investigate before retrying.`,
+        properties_canonical: propertiesCanonical,
+        voter_count_from_view: (ownersRaw || []).length,
+        gap
+      });
     }
 
     // 4. Build the election payload

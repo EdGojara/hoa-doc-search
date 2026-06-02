@@ -28950,6 +28950,19 @@ ${questionsPage}
             <div><b>Seats open:</b> ${j.cycle.seats_open}</div>
           </div>
 
+          ${!rdy.voter_count_matches_properties ? `
+          <div style="margin-bottom:14px; padding:12px 14px; background:#fef2f2; border:2px solid #dc2626; border-radius:8px;">
+            <div style="font-size:14px; font-weight:800; color:#991b1b; margin-bottom:6px;">⚠️ VOTER ROSTER MISMATCH — push will be refused</div>
+            <div style="font-size:13px; color:#7f1d1d; line-height:1.5;">
+              The community has <b>${s.properties_canonical}</b> properties on record, but the voter roster query returned <b>${s.total_properties_in_view}</b>. Gap of <b>${s.properties_missing_from_view}</b> homeowners.
+              <br><br>
+              Pushing this to bedrock-vote would disenfranchise those ${s.properties_missing_from_view} homeowners (no voting link sent). The live push endpoint will refuse with HTTP 409 until the gap is resolved.
+              <br><br>
+              <b>Causes to investigate:</b> stale Vantaca sync, query truncation, community_id mismatch on those properties, or a filter in the v_current_property_owners view dropping rows.
+            </div>
+          </div>
+          ` : ''}
+
           <div style="font-size:13px; font-weight:700; color:#1E2761; margin-bottom:6px;">Readiness</div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:12.5px; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid #e2e8f0; border-radius:6px;">
             <div>${fmtCheck(rdy.cycle_status_ok)} Cycle is closed or finalized</div>
@@ -28957,13 +28970,14 @@ ${questionsPage}
             <div>${fmtCheck(rdy.has_candidates)} At least one on-slate candidate</div>
             <div>${fmtCheck(rdy.has_voters)} At least one eligible voter</div>
             <div>${fmtCheck(rdy.has_voting_cutoff)} Voting cutoff date is set</div>
-            <div><b>${rdy.ready_to_push ? '<span style="color:#16a34a;">READY TO PUSH</span>' : '<span style="color:#dc2626;">NOT YET READY</span>'}</b></div>
+            <div>${fmtCheck(rdy.voter_count_matches_properties)} Voter count matches property count (${s.total_properties_in_view}/${s.properties_canonical})</div>
+            <div style="grid-column:1 / -1; margin-top:4px;"><b>${rdy.ready_to_push ? '<span style="color:#16a34a;">READY TO PUSH</span>' : '<span style="color:#dc2626;">NOT YET READY</span>'}</b></div>
           </div>
 
           <div style="font-size:13px; font-weight:700; color:#1E2761; margin-bottom:6px;">Voter roster stats</div>
           <div style="font-size:12.5px; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid #e2e8f0; border-radius:6px;">
-            <div><b>${s.voter_count}</b> eligible voters (one per property with a current owner)</div>
-            <div style="color:#475569; margin-top:2px;">From ${s.total_properties_in_view} properties in the community view; ${s.properties_without_owner_filtered} filtered out for missing owner record.</div>
+            <div><b>${s.voter_count}</b> eligible voters (one per property with a current owner) — out of <b>${s.properties_canonical}</b> properties on record for this community ${s.properties_canonical === s.voter_count ? '<span style="color:#16a34a;">✓ matches</span>' : '<span style="color:#dc2626;">⚠ mismatch — see warning above</span>'}.</div>
+            <div style="color:#475569; margin-top:2px;">From ${s.total_properties_in_view} rows in the community view; ${s.properties_without_owner_filtered} filtered out for missing owner record.</div>
             <div style="margin-top:6px;">Email on file: <b>${s.voters_with_email}</b> (${s.email_coverage_pct}%) — these get the online voting link by email.</div>
             <div>Mailing address on file: <b>${s.voters_with_mailing_address}</b> — these get the printed ballot.</div>
           </div>
