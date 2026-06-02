@@ -3110,6 +3110,66 @@ router.post('/master-plans/:id/retire', express.json({ limit: '128kb' }), async 
 // (kill switch: builder_arc_active=FALSE), preventing form-submission attempts
 // against a non-enabled community.
 // ============================================================================
+// ----------------------------------------------------------------------------
+// GET /api/builder-applications/public/master-plans?community=X&builder=Y
+// Public read endpoint — returns master plans approved for the named
+// (community, builder) combo. No sensitive data (just plan number, name,
+// sq ft, stories) so this is safe to expose without admin auth. Powers
+// the plan dropdown on builder portal pages so Karla et al. don't have
+// to type plan numbers from memory.
+// ----------------------------------------------------------------------------
+router.get('/public/master-plans', async (req, res) => {
+  try {
+    const communityName = (req.query.community || '').trim();
+    const builderName = (req.query.builder || '').trim();
+    if (!communityName || !builderName) {
+      return res.status(400).json({ error: 'community and builder query params required' });
+    }
+    const { data: comm } = await supabase
+      .from('communities').select('id, name')
+      .ilike('name', communityName + '%')
+      .maybeSingle();
+    if (!comm) return res.json({ master_plans: [], total: 0, debug: 'community not found' });
+
+    const { data: bc } = await supabase
+      .from('builder_companies').select('id, company_name')
+      .ilike('company_name', builderName + '%')
+      .maybeSingle();
+    if (!bc) return res.json({ master_plans: [], total: 0, debug: 'builder not found' });
+
+    const { data: plans } = await supabase
+      .from('master_plans')
+      .select('id, plan_number, plan_name, elevation, square_footage, stories, default_materials, status')
+      .eq('builder_company_id', bc.id)
+      .eq('status', 'approved')
+      .order('plan_number');
+
+    if (!plans || plans.length === 0) return res.json({ master_plans: [], total: 0 });
+
+    // Filter to plans that have an active (non-retired) approval for this community
+    const planIds = plans.map((p) => p.id);
+    const { data: approvals } = await supabase
+      .from('master_plan_community_approvals')
+      .select('master_plan_id')
+      .in('master_plan_id', planIds)
+      .eq('community_id', comm.id)
+      .is('retired_at', null);
+
+    const approvedAtCommunity = new Set((approvals || []).map((a) => a.master_plan_id));
+    const filtered = plans.filter((p) => approvedAtCommunity.has(p.id));
+
+    res.json({
+      master_plans: filtered,
+      total: filtered.length,
+      community: comm.name,
+      builder: bc.company_name
+    });
+  } catch (err) {
+    console.error('[public/master-plans]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get('/public/community/:slug', async (req, res) => {
   try {
     const { data, error } = await supabase

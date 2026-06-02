@@ -508,14 +508,7 @@
           <div class="field">
             <label>DRB Plan<span class="req">*</span></label>
             <select name="plan_number" id="planSelect" required>
-              <option value="">— Select a plan —</option>
-              <!-- Placeholder DRB plans. Once Karla shares the full plan
-                   inventory we'll seed master_plans rows and load these
-                   from the API. For the demo today, three representative
-                   entries so the UX is clear. -->
-              <option value="6512-A" data-name="The Belmont" data-sqft="2418" data-stories="2">DRB 6512-A · The Belmont · 2,418 sq ft · 2 story</option>
-              <option value="5839-B" data-name="The Carrington" data-sqft="2014" data-stories="1">DRB 5839-B · The Carrington · 2,014 sq ft · 1 story</option>
-              <option value="7140-C" data-name="The Hawthorne" data-sqft="2786" data-stories="2">DRB 7140-C · The Hawthorne · 2,786 sq ft · 2 story</option>
+              <option value="">— Loading plans… —</option>
             </select>
             <div class="helper">Don't see your plan? Email <a href="mailto:builders@bedrocktx.com" style="color:var(--drb-blue);">builders@bedrocktx.com</a> and we'll add it.</div>
           </div>
@@ -605,6 +598,50 @@
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 5500);
   }
+
+  // ---- Plan dropdown: load the full DRB master plan list from the
+  // public API on page load. Fires once at startup; failures fall back
+  // to a graceful empty state with email-us instructions. ----
+  (async function loadMasterPlans() {
+    const sel = $('planSelect');
+    try {
+      const r = await fetch('/api/builder-applications/public/master-plans?community=August%20Meadows&builder=DRB%20Group');
+      const j = await r.json();
+      sel.innerHTML = '<option value="">— Select a plan —</option>';
+      if (!j.master_plans || j.master_plans.length === 0) {
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.disabled = true;
+        opt.textContent = '(no plans on file yet — email us to add)';
+        sel.appendChild(opt);
+        return;
+      }
+      j.master_plans.forEach((p) => {
+        const opt = document.createElement('option');
+        // Compose a "plan_number / elevation" value so the form-side
+        // logic still has a unique identifier
+        const valueKey = p.elevation ? `${p.plan_number}-${p.elevation}` : p.plan_number;
+        opt.value = valueKey;
+        // Build the dropdown label — name + sqft + stories + elevation
+        // when available. Only stick segments in if they exist.
+        const parts = [`DRB ${p.plan_number}${p.elevation ? '-' + p.elevation : ''}`];
+        if (p.plan_name) parts.push(p.plan_name);
+        if (p.square_footage) parts.push(`${Number(p.square_footage).toLocaleString()} sq ft`);
+        if (p.stories) parts.push(`${p.stories} story`);
+        opt.textContent = parts.join(' · ');
+        // Stash detail so the change handler below auto-fills the
+        // dependent fields without an extra API hop
+        opt.dataset.name = p.plan_name || '';
+        opt.dataset.sqft = p.square_footage || '';
+        opt.dataset.stories = p.stories || '';
+        sel.appendChild(opt);
+      });
+    } catch (err) {
+      console.warn('[plan loader] failed', err);
+      sel.innerHTML = '<option value="">— Select a plan —</option>'
+        + '<option value="" disabled>(unable to load — refresh page or email us)</option>';
+    }
+  })();
 
   // ---- Plan dropdown: auto-fill plan_name + sqft + stories ----
   $('planSelect').addEventListener('change', (e) => {
