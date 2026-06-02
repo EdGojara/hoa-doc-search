@@ -977,6 +977,13 @@ app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__d
 app.get('/builders/august-meadows-drb', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'builder-submit-drb-am.html'));
 });
+// Forgiving alias for the most common typo — Ed kept landing on
+// /builders/august-meadows-dr without the trailing 'b' and getting the
+// generic "Unable to load" because that slug doesn't exist. 301 redirect
+// keeps the URL clean in the address bar.
+app.get('/builders/august-meadows-dr', (req, res) => {
+  res.redirect(301, '/builders/august-meadows-drb');
+});
 
 // Public builder submission form — /builders/:slug serves the generic
 // builder-submit.html. The form reads :slug from the path and calls
