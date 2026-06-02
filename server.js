@@ -6895,6 +6895,41 @@ app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
 // UUID). Re-clicking the button after a successful push returns the
 // existing bedrock-vote election without creating a duplicate.
 // ============================================================================
+// Helper: build a complete, USPS-mailable address for a voter row from
+// v_current_property_owners. Three cases:
+//   (a) owner_mailing_address has a 5-digit ZIP → trust it as-is (the
+//       owner provided a complete alt-address, e.g. a renter scenario
+//       where the owner lives elsewhere).
+//   (b) owner_mailing_address has only a street ("123 Main St") with
+//       no ZIP → append the property's city/state/zip. Vantaca exports
+//       sometimes split addresses this way; without this the envelope
+//       arrives undeliverable.
+//   (c) owner_mailing_address is empty → assemble from the property's
+//       physical address (owner-occupied common case).
+// Returns trimmed, comma-joined string. Caught 2026-06-01 when Ed
+// noticed Waterview mailing labels missing city/state/zip.
+function _composeMailingAddress(o) {
+  const propertyAddressParts = [
+    (o.street_address || '') + (o.unit ? ` ${o.unit}` : ''),
+    o.city || '',
+    ((o.state || 'TX') + ' ' + (o.zip || '')).trim()
+  ].filter(p => p && p.trim());
+  const propertyAddress = propertyAddressParts.join(', ');
+
+  const ownerMail = (o.owner_mailing_address || '').trim();
+  if (!ownerMail) return propertyAddress;
+
+  const HAS_ZIP = /\b\d{5}(-\d{4})?\b/;
+  if (HAS_ZIP.test(ownerMail)) return ownerMail;
+
+  // owner_mailing_address has a street but no ZIP → append property
+  // city/state/zip so the envelope is deliverable.
+  const trailingGeo = [o.city, ((o.state || 'TX') + ' ' + (o.zip || '')).trim()]
+    .filter(p => p && p.trim())
+    .join(', ');
+  return trailingGeo ? `${ownerMail}, ${trailingGeo}` : ownerMail;
+}
+
 // Helper: extract surname from "Dr. Roger Vazquez" → "vazquez" for sorting.
 // Strips honorifics + suffixes, takes the last word, lowercases. Per
 // Ed 2026-06-01: ballot convention is alphabetical-by-last-name, not by
@@ -7018,15 +7053,7 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
     const voters = (ownersRaw || [])
       .filter(o => o.owner_name && o.owner_name.trim())
       .map(o => {
-        let mailing = (o.owner_mailing_address || '').trim();
-        if (!mailing) {
-          const parts = [
-            o.street_address + (o.unit ? ` ${o.unit}` : ''),
-            o.city,
-            (o.state || 'TX') + ' ' + (o.zip || '')
-          ].filter(p => p && p.trim());
-          mailing = parts.join(', ');
-        }
+        const mailing = _composeMailingAddress(o);
         const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
         return {
           lot_number: lotNum,
