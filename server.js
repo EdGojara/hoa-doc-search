@@ -6955,16 +6955,29 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       };
     });
 
-    // Voter roster — same logic as the live push.
-    // .range(0, 49999) hard-caps at 50k rows. Without this, Supabase
-    // PostgREST silently truncates at 1000, which masquerades as a
-    // data gap (caught 2026-06-01 — Waterview returned 1000 of 1171).
-    const { data: ownersRaw, error: oErr } = await supabase
-      .from('v_current_property_owners')
-      .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
-      .eq('community_id', cycle.community_id)
-      .range(0, 49999);
-    if (oErr) throw oErr;
+    // Voter roster — paginated. .range(0, N) alone doesn't escape
+    // Supabase's server-side max_rows ceiling (typically 1000), so we
+    // walk pages of 1000 until a partial page indicates we're done.
+    // Caught 2026-06-01 when Waterview returned 1000 of 1171; .range()
+    // by itself was silently clamped.
+    const OWNERS_PAGE = 1000;
+    let ownersRaw = [];
+    {
+      let from = 0;
+      while (true) {
+        const { data: page, error: pageErr } = await supabase
+          .from('v_current_property_owners')
+          .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
+          .eq('community_id', cycle.community_id)
+          .range(from, from + OWNERS_PAGE - 1);
+        if (pageErr) throw pageErr;
+        if (!page || page.length === 0) break;
+        ownersRaw = ownersRaw.concat(page);
+        if (page.length < OWNERS_PAGE) break;
+        from += OWNERS_PAGE;
+        if (from > 100000) break; // safety: any community over 100k properties is unexpected
+      }
+    }
 
     const voters = (ownersRaw || [])
       .filter(o => o.owner_name && o.owner_name.trim())
@@ -7127,16 +7140,27 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       };
     });
 
-    // 3. Load voter roster from v_current_property_owners.
-    // .range(0, 49999) hard-caps at 50k. PostgREST silently truncates
-    // at 1000 without this — silent data loss caught on Waterview
-    // preview (1000/1171). Mirrored on the preview endpoint above.
-    const { data: ownersRaw, error: oErr } = await supabase
-      .from('v_current_property_owners')
-      .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
-      .eq('community_id', cycle.community_id)
-      .range(0, 49999);
-    if (oErr) throw oErr;
+    // 3. Load voter roster from v_current_property_owners — paginated.
+    // See preview endpoint for the why (Supabase server-side max_rows
+    // ceiling defeats .range() on its own).
+    const OWNERS_PAGE = 1000;
+    let ownersRaw = [];
+    {
+      let from = 0;
+      while (true) {
+        const { data: page, error: pageErr } = await supabase
+          .from('v_current_property_owners')
+          .select('property_id, lot_number, street_address, unit, city, state, zip, owner_name, owner_email, owner_mailing_address')
+          .eq('community_id', cycle.community_id)
+          .range(from, from + OWNERS_PAGE - 1);
+        if (pageErr) throw pageErr;
+        if (!page || page.length === 0) break;
+        ownersRaw = ownersRaw.concat(page);
+        if (page.length < OWNERS_PAGE) break;
+        from += OWNERS_PAGE;
+        if (from > 100000) break;
+      }
+    }
     if (!ownersRaw || ownersRaw.length === 0) {
       return res.status(400).json({ error: 'No property owners found for this community. Run the Vantaca owner sync first.' });
     }
