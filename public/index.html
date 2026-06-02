@@ -15997,9 +15997,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const btn = document.getElementById('inspDraftsApproveAllBtn');
     btn.disabled = true; btn.textContent = '⏳ Approving…';
     try {
+      const session = (await window.supa.auth.getSession()).data?.session;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
       const r = await fetch('/api/enforcement/drafts/approve', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ interaction_ids: ids }),
       });
       const j = await r.json();
@@ -16017,9 +16020,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const reason = prompt('Reason for rejecting? (e.g., "wrong property", "no violation visible", "duplicate of earlier draft")') || '';
     if (reason === null) return;  // user cancelled prompt entirely
     try {
+      const session = (await window.supa.auth.getSession()).data?.session;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
       const r = await fetch('/api/enforcement/drafts/reject', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ interaction_id: interactionId, reason }),
       });
       const j = await r.json();
@@ -16039,9 +16045,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const originalLabel = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Regenerating…'; }
     try {
+      const session = (await window.supa.auth.getSession()).data?.session;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
       const r = await fetch('/api/enforcement/generate-letter', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
       });
       const j = await r.json();
