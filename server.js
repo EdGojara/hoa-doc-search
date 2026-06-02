@@ -6895,24 +6895,58 @@ app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
 // UUID). Re-clicking the button after a successful push returns the
 // existing bedrock-vote election without creating a duplicate.
 // ============================================================================
+// Helper: find the most common city/state/zip combination across an
+// array of property rows. Used as a community-level fallback when an
+// individual property has NULL city/state/zip (Vantaca sync gap).
+// The "modal" geo is whatever the majority of properties in the same
+// community report — for Waterview that's Richmond/TX/77407, for
+// Canyon Gate it's something else. Auto-derived, no per-community
+// config needed.
+function _modalCommunityGeo(owners) {
+  const counts = new Map();
+  for (const o of owners) {
+    if (!o.city || !o.state || !o.zip) continue;
+    const key = `${o.city}|${o.state}|${o.zip}`;
+    counts.set(key, (counts.get(key) || 0) + 1);
+  }
+  let best = null;
+  let bestN = 0;
+  for (const [key, n] of counts) {
+    if (n > bestN) { bestN = n; best = key; }
+  }
+  if (!best) return { city: '', state: 'TX', zip: '' };
+  const [city, state, zip] = best.split('|');
+  return { city, state, zip };
+}
+
 // Helper: build a complete, USPS-mailable address for a voter row from
-// v_current_property_owners. Three cases:
+// v_current_property_owners. Four cases:
 //   (a) owner_mailing_address has a 5-digit ZIP → trust it as-is (the
 //       owner provided a complete alt-address, e.g. a renter scenario
 //       where the owner lives elsewhere).
 //   (b) owner_mailing_address has only a street ("123 Main St") with
-//       no ZIP → append the property's city/state/zip. Vantaca exports
-//       sometimes split addresses this way; without this the envelope
-//       arrives undeliverable.
-//   (c) owner_mailing_address is empty → assemble from the property's
-//       physical address (owner-occupied common case).
-// Returns trimmed, comma-joined string. Caught 2026-06-01 when Ed
-// noticed Waterview mailing labels missing city/state/zip.
-function _composeMailingAddress(o) {
+//       no ZIP → append the property's city/state/zip, OR the
+//       community's modal geo if the property's own geo is missing.
+//   (c) owner_mailing_address is empty + property has full geo →
+//       assemble from the property's physical address.
+//   (d) owner_mailing_address is empty + property is missing geo →
+//       use the property street + community's modal geo. This is the
+//       case that hit Waterview 2026-06-01 — ~171 properties had
+//       NULL city/state/zip in the synced data; envelopes printed
+//       street-only and were undeliverable.
+//
+// communityGeo is { city, state, zip } from _modalCommunityGeo —
+// pre-computed once per push so we don't re-scan per voter.
+function _composeMailingAddress(o, communityGeo) {
+  // Property's own geo, falling back to community modal if missing
+  const effectiveCity  = o.city  || communityGeo.city  || '';
+  const effectiveState = o.state || communityGeo.state || 'TX';
+  const effectiveZip   = o.zip   || communityGeo.zip   || '';
+
   const propertyAddressParts = [
     (o.street_address || '') + (o.unit ? ` ${o.unit}` : ''),
-    o.city || '',
-    ((o.state || 'TX') + ' ' + (o.zip || '')).trim()
+    effectiveCity,
+    (effectiveState + ' ' + effectiveZip).trim()
   ].filter(p => p && p.trim());
   const propertyAddress = propertyAddressParts.join(', ');
 
@@ -6922,9 +6956,8 @@ function _composeMailingAddress(o) {
   const HAS_ZIP = /\b\d{5}(-\d{4})?\b/;
   if (HAS_ZIP.test(ownerMail)) return ownerMail;
 
-  // owner_mailing_address has a street but no ZIP → append property
-  // city/state/zip so the envelope is deliverable.
-  const trailingGeo = [o.city, ((o.state || 'TX') + ' ' + (o.zip || '')).trim()]
+  // owner_mailing_address has a street but no ZIP → append geo.
+  const trailingGeo = [effectiveCity, (effectiveState + ' ' + effectiveZip).trim()]
     .filter(p => p && p.trim())
     .join(', ');
   return trailingGeo ? `${ownerMail}, ${trailingGeo}` : ownerMail;
@@ -7050,10 +7083,13 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       }
     }
 
+    // Pre-compute the community's modal city/state/zip ONCE — used as
+    // fallback for any property with NULL geo (Vantaca-sync-gap case).
+    const communityGeo = _modalCommunityGeo(ownersRaw || []);
     const voters = (ownersRaw || [])
       .filter(o => o.owner_name && o.owner_name.trim())
       .map(o => {
-        const mailing = _composeMailingAddress(o);
+        const mailing = _composeMailingAddress(o, communityGeo);
         const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
         return {
           lot_number: lotNum,
@@ -7249,24 +7285,16 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       return res.status(400).json({ error: 'No property owners found for this community. Run the Vantaca owner sync first.' });
     }
 
+    // Pre-compute the community's modal city/state/zip ONCE so we can
+    // fall back to it for any property with NULL geo. Handles the
+    // Vantaca-sync-gap case where ~14% of Waterview properties were
+    // missing city/state/zip — without this, those envelopes printed
+    // street-only and were undeliverable.
+    const communityGeo = _modalCommunityGeo(ownersRaw);
     const voters = ownersRaw
       .filter(o => o.owner_name && o.owner_name.trim())  // exclude vacant / unrecorded
       .map(o => {
-        // Mailing address: prefer the owner's separate mailing address.
-        // Fall back to the property's physical address (common when owner-
-        // occupied — mailing = property).
-        let mailing = (o.owner_mailing_address || '').trim();
-        if (!mailing) {
-          const parts = [
-            o.street_address + (o.unit ? ` ${o.unit}` : ''),
-            o.city,
-            (o.state || 'TX') + ' ' + (o.zip || '')
-          ].filter(p => p && p.trim());
-          mailing = parts.join(', ');
-        }
-        // Lot number: prefer the platted lot, fall back to physical address
-        // so every voter has SOMETHING in the lot_number column for
-        // identification during reconciliation.
+        const mailing = _composeMailingAddress(o, communityGeo);
         const lotNum = (o.lot_number && o.lot_number.trim()) || o.street_address;
         return {
           lot_number: lotNum,
