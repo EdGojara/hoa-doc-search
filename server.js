@@ -6895,6 +6895,32 @@ app.post('/api/nominations/cycles/:id/paper-form', async (req, res) => {
 // UUID). Re-clicking the button after a successful push returns the
 // existing bedrock-vote election without creating a duplicate.
 // ============================================================================
+// Helper: extract surname from "Dr. Roger Vazquez" → "vazquez" for sorting.
+// Strips honorifics + suffixes, takes the last word, lowercases. Per
+// Ed 2026-06-01: ballot convention is alphabetical-by-last-name, not by
+// first name (which is what Postgres .order('name') was doing).
+function _surnameKey(fullName) {
+  if (!fullName) return '';
+  const HONORIFICS = /^(dr|mr|ms|mrs|miss|prof|rev|sir|dame|hon|capt|sgt|lt|maj|col|gen|fr|sr)\.?\s+/i;
+  const SUFFIXES = /\s+(jr|sr|ii|iii|iv|v|esq|md|phd|cpa|cfa)\.?$/i;
+  let s = fullName.trim().replace(HONORIFICS, '').replace(SUFFIXES, '');
+  const tokens = s.trim().split(/\s+/);
+  return (tokens[tokens.length - 1] || '').toLowerCase();
+}
+
+// Helper: stable ballot sort. Incumbents first (group 0), then non-
+// incumbents (group 1). Alphabetical by surname within each group.
+// Returns array with display_order set 1..N matching final order.
+function _sortCandidatesForBallot(candidates) {
+  const sorted = [...candidates].sort((a, b) => {
+    const aInc = a.is_incumbent ? 0 : 1;
+    const bInc = b.is_incumbent ? 0 : 1;
+    if (aInc !== bInc) return aInc - bInc;
+    return _surnameKey(a.name).localeCompare(_surnameKey(b.name));
+  });
+  return sorted.map((c, idx) => ({ ...c, display_order: idx + 1 }));
+}
+
 // ============================================================================
 // GET /api/nominations/cycles/:id/push-to-vote-preview
 // ----------------------------------------------------------------------------
@@ -6942,22 +6968,28 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
     if (nErr) throw nErr;
 
     const onSlate = (allNominationsRaw || []).filter(n => n.status === 'on_slate');
-    const candidates = await Promise.all(onSlate.map(async (c) => {
+    const candidatesUnsorted = await Promise.all(onSlate.map(async (c) => {
       const bioParts = [];
       if (c.is_incumbent) bioParts.push('(Incumbent)');
       if (c.years_in_community) bioParts.push(`Years in community: ${c.years_in_community}`);
       if (c.nominee_bio) bioParts.push(c.nominee_bio);
-      // Convert trustEd storage path → base64 data URI so bedrock-vote
-      // (different Supabase project) can render the photo without needing
-      // cross-project storage access. Same helper the AMN renderer uses.
       const photo_url = await _storagePathToDataUri(c.photo_storage_path);
+      // Diagnostic so operator can see per-candidate why photos aren't
+      // appearing — was a photo uploaded? did the conversion succeed?
+      let photo_status;
+      if (!c.photo_storage_path) photo_status = 'no_photo_on_nomination';
+      else if (!photo_url) photo_status = 'storage_download_failed';
+      else photo_status = `ok_${Math.round(photo_url.length / 1024)}kb`;
       return {
         name: c.nominee_name,
         bio: bioParts.filter(Boolean).join('\n\n'),
         photo_url,
-        is_incumbent: !!c.is_incumbent
+        is_incumbent: !!c.is_incumbent,
+        photo_status,
+        photo_storage_path: c.photo_storage_path || null
       };
     }));
+    const candidates = _sortCandidatesForBallot(candidatesUnsorted);
 
     // Voter roster — paginated. .range(0, N) alone doesn't escape
     // Supabase's server-side max_rows ceiling (typically 1000), so we
@@ -7137,23 +7169,26 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
       return res.status(400).json({ error: 'No candidates on the slate yet (status=on_slate). Approve candidates before pushing to vote.' });
     }
 
-    const candidates = await Promise.all(candidatesRaw.map(async (c) => {
-      // Compose bio with years_in_community + incumbent flag baked in,
-      // since bedrock-vote's ballot UI only renders {name, bio, photo_url}.
+    const candidatesUnsorted = await Promise.all(candidatesRaw.map(async (c) => {
       const bioParts = [];
       if (c.is_incumbent) bioParts.push('(Incumbent)');
       if (c.years_in_community) bioParts.push(`Years in community: ${c.years_in_community}`);
       if (c.nominee_bio) bioParts.push(c.nominee_bio);
-      // Convert trustEd storage path → base64 data URI so bedrock-vote
-      // (different Supabase project) can render the photo without needing
-      // cross-project storage access. Inline image bytes survive the
-      // network hop and don't expire mid-election like signed URLs would.
       const photo_url = await _storagePathToDataUri(c.photo_storage_path);
       return {
         name: c.nominee_name,
         bio: bioParts.filter(Boolean).join('\n\n'),
-        photo_url
+        photo_url,
+        is_incumbent: !!c.is_incumbent
       };
+    }));
+    // Sort incumbents first, then alphabetical by surname. display_order
+    // is set 1..N so bedrock-vote can ORDER BY it on the ballot.
+    const candidates = _sortCandidatesForBallot(candidatesUnsorted).map(c => ({
+      name: c.name,
+      bio: c.bio,
+      photo_url: c.photo_url,
+      display_order: c.display_order
     }));
 
     // 3. Load voter roster from v_current_property_owners — paginated.

@@ -28909,11 +28909,18 @@ ${questionsPage}
 
       const fmtCheck = (b) => b ? '<span style="color:#16a34a;">✓</span>' : '<span style="color:#dc2626;">✗</span>';
 
+      const photoStatusBadge = (status) => {
+        if (!status) return '';
+        if (status.startsWith('ok_')) return `<span style="font-size:11px; color:#16a34a; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; padding:2px 8px; margin-left:6px;">📷 Photo ${status.slice(3).toUpperCase()}</span>`;
+        if (status === 'no_photo_on_nomination') return `<span style="font-size:11px; color:#94a3b8; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; padding:2px 8px; margin-left:6px;" title="No photo uploaded to this nomination in trustEd">No photo</span>`;
+        if (status === 'storage_download_failed') return `<span style="font-size:11px; color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:10px; padding:2px 8px; margin-left:6px;" title="Photo path exists on the nomination but Supabase Storage download failed. Check storage path / bucket permissions.">⚠ Download failed</span>`;
+        return '';
+      };
       const candidatesHtml = (j.candidates || []).length === 0
         ? `<div style="color:#94a3b8; font-style:italic;">No candidates on the slate yet (status='on_slate' filter returned empty). Status breakdown of all nominations: <code>${JSON.stringify(sb)}</code></div>`
         : (j.candidates || []).map((c, i) => `
             <div style="padding:8px 10px; background:#fff; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:6px;">
-              <div style="font-weight:700; color:#1E2761;">${i+1}. ${escapeHtml(c.name)} ${c.is_incumbent ? '<span style="color:#0ea5e9; font-size:11px;">(incumbent)</span>' : ''}</div>
+              <div style="font-weight:700; color:#1E2761;">${i+1}. ${escapeHtml(c.name)} ${c.is_incumbent ? '<span style="color:#0ea5e9; font-size:11px;">(incumbent)</span>' : ''}${photoStatusBadge(c.photo_status)}</div>
               <div style="font-size:12px; color:#475569; white-space:pre-wrap; margin-top:4px;">${escapeHtml(c.bio || '(no bio)')}</div>
             </div>
           `).join('');
