@@ -6976,6 +6976,11 @@
         </div>
       </div>
       <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">Admin-only diagnostic panel. The scheduled documents_auto_reindex job runs daily at 05:00 Central and drains the unindexed queue automatically; this button is only needed if you want to force an immediate backfill. <strong>Re-OCR suspect scans</strong> catches docs uploaded before the OCR pipeline existed — flips them back to pending so the queue re-processes them through the scanned-PDF fallback.</p>
+      <!-- Pending-migrations banner: dry-runs the migration runner on tab
+           load and surfaces anything waiting. Beats Ed having to remember
+           to click "Apply pending migrations" after every Render deploy
+           that ships a new .sql file. -->
+      <div id="docsPendingMigBanner" style="display:none; margin:0 0 10px 0;"></div>
       <div id="docs-coverage-list" style="font-size:13px; color:#6B7280;">Loading coverage…</div>
       <div id="docs-reindex-status" style="margin-top:10px; font-size:12.5px;"></div>
     </div>
@@ -24110,6 +24115,10 @@ ${questionsPage}
   // askEd searches (separate from library_documents which is just the index).
   // =========================================================================
   async function docsLoadCoverage() {
+    // Proactive pending-migrations check fires every time the panel
+    // loads. Running in parallel with the coverage fetch so it doesn't
+    // gate the visible loading state below.
+    docsCheckPendingMigrations().catch((e) => console.warn('[migrations-check]', e));
     const el = document.getElementById('docs-coverage-list');
     if (!el) return;
     el.innerHTML = '<em style="color:#94A3B8;">Loading…</em>';
@@ -24271,6 +24280,67 @@ ${questionsPage}
     } finally {
       btn.disabled = false;
       btn.textContent = orig;
+    }
+  }
+
+  // Proactive pending-migrations check — dry-runs the migration runner
+  // on Documents tab load so the operator sees "⚠️ N waiting" without
+  // having to push the Apply button as a guessing game. Friction-
+  // reduction: the system flags the work, the operator confirms.
+  // Silently no-ops for non-admins (the apply endpoint requires admin
+  // role; calling it without one returns 403, which we just hide).
+  async function docsCheckPendingMigrations() {
+    const banner = document.getElementById('docsPendingMigBanner');
+    const btn = document.getElementById('docsApplyMigBtn');
+    if (!banner) return;
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) {}
+      const r = await fetch('/api/admin/apply-migrations', {
+        method: 'POST', headers, body: JSON.stringify({ dry_run: true }),
+      });
+      if (!r.ok) {
+        // Non-admin or DATABASE_URL missing — hide banner; the existing
+        // Apply button still surfaces those errors when clicked.
+        banner.style.display = 'none';
+        return;
+      }
+      const j = await r.json();
+      const wouldApply = (j.summary?.applied || []).filter((a) => a.status === 'would_apply');
+      const count = wouldApply.length;
+      if (count === 0) {
+        banner.style.display = 'none';
+        if (btn) {
+          btn.style.background = '';
+          btn.style.borderColor = '';
+          btn.style.color = '';
+        }
+        return;
+      }
+      // Pending — surface prominently and pulse the button.
+      const fileList = wouldApply.slice(0, 5).map((a) => escapeHtml(a.filename)).join(', ');
+      const more = count > 5 ? ` (+${count - 5} more)` : '';
+      banner.style.display = 'block';
+      banner.innerHTML = `
+        <div style="background:#fef3c7; border:1px solid #fde047; border-left:4px solid #ca8a04; border-radius:6px; padding:10px 14px; font-size:12.5px; color:#854d0e; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <strong>⚠️ ${count} migration${count === 1 ? '' : 's'} pending</strong> — ${escapeHtml(fileList)}${more}
+          </div>
+          <button onclick="docsApplyMigrations()" style="background:#ca8a04; color:#fff; border:1px solid #a16207; font-size:12.5px; padding:6px 14px; border-radius:6px; cursor:pointer; font-weight:600; white-space:nowrap;">Apply now →</button>
+        </div>`;
+      if (btn) {
+        btn.style.background = '#fef3c7';
+        btn.style.borderColor = '#ca8a04';
+        btn.style.color = '#854d0e';
+        btn.style.fontWeight = '700';
+      }
+    } catch (_) {
+      // Network / auth hiccup — silently hide the banner; nothing user-
+      // actionable to do here.
+      banner.style.display = 'none';
     }
   }
 
