@@ -618,4 +618,180 @@ router.post('/communities/:id/roster-import/apply', upload.single('file'), async
   }
 });
 
+// ----------------------------------------------------------------------------
+// MAILING DELTA — "What's changed since I verified the roster?"
+// ----------------------------------------------------------------------------
+// Compares the canonical trustEd roster against a fresh Vantaca Mailing
+// Addresses Export. Returns categorized deltas:
+//   - transfers              property changed hands (new Vantaca account#)
+//   - real_mailing_changes   matched account, mailing actually differs
+//   - parse_bugs             trustEd has broken fields, Vantaca is clean
+//   - real_name_diffs        name tokens meaningfully different
+//   - format_only_noise      name tokens match, just style differs
+//
+// Preview is read-only. Apply requires per-row approval + verified_by.
+// ----------------------------------------------------------------------------
+const { parseVantacaMailingExport, computeMailingDelta } = require('../lib/contacts/mailing_delta');
+
+router.post('/communities/:id/mailing-delta/preview', upload.single('file'), async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    if (!req.file) return res.status(400).json({ error: 'file_required' });
+
+    const { data: comm } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community not found' });
+
+    // Parse the Vantaca export
+    const vantacaMap = parseVantacaMailingExport(req.file.buffer);
+    if (vantacaMap.size === 0) {
+      return res.status(400).json({ error: 'Vantaca export had no parseable rows — confirm the file has an Account column' });
+    }
+
+    // Pull the canonical trustEd roster for this community
+    const PAGE = 1000;
+    let trusted = [];
+    let from = 0;
+    while (true) {
+      const { data, error } = await supabase
+        .from('v_current_property_owners')
+        .select('vantaca_account_id, street_address, unit, city, state, zip, owner_name, owner_contact_id, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
+        .eq('community_id', communityId)
+        .range(from, from + PAGE - 1);
+      if (error) return res.status(500).json({ error: error.message });
+      if (!data || data.length === 0) break;
+      // Normalize column names to what computeMailingDelta expects
+      for (const r of data) {
+        trusted.push({
+          vantaca_account_id: r.vantaca_account_id,
+          full_name: r.owner_name,
+          street_address: r.street_address,
+          unit: r.unit,
+          city: r.city,
+          state: r.state,
+          zip: r.zip,
+          mailing_street: r.owner_mailing_street,
+          mailing_city:   r.owner_mailing_city,
+          mailing_state:  r.owner_mailing_state,
+          mailing_zip:    r.owner_mailing_zip,
+          owner_contact_id: r.owner_contact_id,
+        });
+      }
+      if (data.length < PAGE) break;
+      from += PAGE;
+      if (from > 100000) break;
+    }
+
+    const delta = computeMailingDelta(trusted, vantacaMap);
+    res.json({
+      community: { id: comm.id, name: comm.name },
+      filename: req.file.originalname,
+      ...delta,
+    });
+  } catch (err) {
+    console.error('[mailing-delta/preview]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Apply approved deltas. Body shape:
+//   {
+//     verified_by: 'ed@bedrocktx.com',
+//     mailing_updates: [
+//       { contact_id, mailing_street, mailing_city, mailing_state, mailing_zip }
+//     ],
+//     name_updates: [
+//       { contact_id, full_name }
+//     ]
+//   }
+// Transfers are NOT applied by this endpoint — they require closing an
+// ownership + creating a new contact + new ownership, which is non-trivial.
+// MVP: surface them in the preview; operator handles via existing tools
+// (manual contact creation + ownership transfer) until Phase 2.
+router.post('/communities/:id/mailing-delta/apply', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const communityId = req.params.id;
+    const verifiedBy = _norm(req.body && req.body.verified_by);
+    if (!verifiedBy) return res.status(400).json({ error: 'verified_by required (operator identifier)' });
+
+    const mailingUpdates = Array.isArray(req.body.mailing_updates) ? req.body.mailing_updates : [];
+    const nameUpdates    = Array.isArray(req.body.name_updates)    ? req.body.name_updates    : [];
+
+    if (mailingUpdates.length === 0 && nameUpdates.length === 0) {
+      return res.status(400).json({ error: 'no updates provided — nothing to apply' });
+    }
+
+    const { data: comm } = await supabase.from('communities').select('id, name').eq('id', communityId).maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community not found' });
+
+    const nowIso = new Date().toISOString();
+    const results = { mailing_updated: 0, name_updated: 0, errors: [] };
+
+    // Compose the legacy single-field mailing_address from the structured
+    // fields so back-compat readers stay in sync (matches the pattern in
+    // the main Roster Import apply endpoint).
+    const composeMailing = (s, c, st, z) => {
+      if (!s && !c && !st && !z) return null;
+      const sz = [st, z].filter(Boolean).join(' ').trim();
+      return [s, c, sz].filter(Boolean).join(', ');
+    };
+
+    for (const u of mailingUpdates) {
+      if (!u.contact_id) {
+        results.errors.push({ kind: 'mailing', message: 'contact_id required', payload: u });
+        continue;
+      }
+      const street = _norm(u.mailing_street) || null;
+      const city   = _norm(u.mailing_city) || null;
+      const state  = _upper(u.mailing_state) || null;
+      const zip    = _norm(u.mailing_zip) || null;
+      const patch = {
+        mailing_street: street,
+        mailing_city:   city,
+        mailing_state:  state,
+        mailing_zip:    zip,
+        mailing_address: composeMailing(street, city, state, zip),
+        data_verified_at: nowIso,
+        verified_by: verifiedBy,
+        verified_source: 'mailing_delta',
+        updated_at: nowIso,
+      };
+      const { error } = await supabase.from('contacts').update(patch).eq('id', u.contact_id);
+      if (error) results.errors.push({ kind: 'mailing', contact_id: u.contact_id, message: error.message });
+      else results.mailing_updated++;
+    }
+
+    for (const u of nameUpdates) {
+      if (!u.contact_id) {
+        results.errors.push({ kind: 'name', message: 'contact_id required', payload: u });
+        continue;
+      }
+      const fullName = _norm(u.full_name);
+      if (!fullName) {
+        results.errors.push({ kind: 'name', contact_id: u.contact_id, message: 'full_name cannot be empty' });
+        continue;
+      }
+      const patch = {
+        full_name: fullName,
+        data_verified_at: nowIso,
+        verified_by: verifiedBy,
+        verified_source: 'mailing_delta',
+        updated_at: nowIso,
+      };
+      const { error } = await supabase.from('contacts').update(patch).eq('id', u.contact_id);
+      if (error) results.errors.push({ kind: 'name', contact_id: u.contact_id, message: error.message });
+      else results.name_updated++;
+    }
+
+    console.log(`[mailing-delta/apply] community=${comm.name} verified_by=${verifiedBy} mailing=${results.mailing_updated} name=${results.name_updated} errors=${results.errors.length}`);
+    res.json({ ok: true, ...results });
+  } catch (err) {
+    console.error('[mailing-delta/apply]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Local helpers used only by the delta apply endpoint
+function _norm(s)  { return String(s == null ? '' : s).trim(); }
+function _upper(s) { return _norm(s).toUpperCase(); }
+
 module.exports = { router };

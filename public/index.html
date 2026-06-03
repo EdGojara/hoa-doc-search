@@ -2185,6 +2185,43 @@
     <div id="rosterImportResult" style="display:none;"></div>
   </div>
 
+  <!-- ===========================================================================
+       Mailing Delta — "What's changed since I verified the roster?" (2026-06-03)
+       Surgical sync: upload a Vantaca Mailing Addresses Export, see exactly
+       what changed (transfers, real mailing-address changes, parse bugs,
+       and name-formatting noise to ignore). Approve per-row before writing.
+       Built after manual reconciliation surfaced the natural categories.
+       =========================================================================== -->
+  <div style="border:1px solid #fde047; border-radius:10px; padding:14px; background:#fffbeb; margin-bottom:16px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:8px;">
+      <div style="flex:1; min-width:280px;">
+        <h3 style="margin:0 0 4px 0; font-size:14px; color:#854d0e;">📬 What's changed since you verified the roster?</h3>
+        <p style="font-size:11.5px; color:#6B7280; margin:0; line-height:1.5;">
+          Upload a fresh <b>Vantaca Mailing Addresses Export</b> (.xlsx) for this community. The system compares it against your verified roster and shows you the real changes (transfers, mailing-address updates, parse bugs) while filtering out formatting noise (e.g., "John &amp; Mary Smith" vs "John Smith &amp; Mary Smith" — same people). Review per-row, approve only the changes you want.
+        </p>
+      </div>
+    </div>
+
+    <!-- Pick community + drop zone + preview button -->
+    <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
+      <select id="mailingDeltaCommunity" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px; background:#fff;">
+        <option value="">— Pick community —</option>
+      </select>
+      <div id="mailingDeltaDropZone"
+           style="flex:1; min-width:280px; border:2px dashed #fde047; border-radius:8px; padding:10px 12px; text-align:center; background:#fff; cursor:pointer;"
+           onclick="document.getElementById('mailingDeltaFile').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#ca8a04'; this.style.background='#fefce8';"
+           ondragleave="this.style.borderColor='#fde047'; this.style.background='#fff';"
+           ondrop="event.preventDefault(); this.style.borderColor='#fde047'; this.style.background='#fff'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('mailingDeltaFile').files=dt.files; mailingDeltaUpdateLabel(); }">
+        <span id="mailingDeltaDropLabel" style="font-size:12px; font-weight:600; color:#854d0e;">📥 Drag &amp; drop Vantaca Mailing Addresses Export</span>
+      </div>
+      <input type="file" id="mailingDeltaFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="mailingDeltaUpdateLabel()">
+      <button class="action-btn" onclick="mailingDeltaPreview()" id="mailingDeltaPreviewBtn" style="font-size:12.5px; padding:8px 14px; background:#ca8a04; border-color:#a16207;">🔍 Compare</button>
+    </div>
+
+    <div id="mailingDeltaResult" style="display:none; margin-top:10px;"></div>
+  </div>
+
   <!-- Middle row: diff preview (only visible after an upload) -->
   <div id="homesDiffPanel" style="display:none; border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff; margin-bottom:16px;">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
@@ -4013,12 +4050,14 @@
       const sel1 = document.getElementById('homesUploadCommunity');
       const sel2 = document.getElementById('homesListCommunity');
       const sel3 = document.getElementById('rosterImportCommunity');
+      const sel4 = document.getElementById('mailingDeltaCommunity');
       const opts = '<option value="">— Pick community —</option>' +
         homesCommunitiesCache.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
       if (sel1) sel1.innerHTML = opts;
       if (sel2) sel2.innerHTML = '<option value="">All communities</option>' +
         homesCommunitiesCache.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
       if (sel3) sel3.innerHTML = opts;
+      if (sel4) sel4.innerHTML = opts;
     } catch (e) {
       console.warn('[homes] community load failed', e);
     }
@@ -4628,6 +4667,220 @@
       alert(`${j.message}\n\nProperties: ${j.properties_written}\nContacts: ${j.contacts_written}${j.write_errors && j.write_errors.length ? '\nWrite errors: ' + j.write_errors.length : ''}`);
       // Reload the roster so the verified badges show
       if (typeof homesLoadProperties === 'function') await homesLoadProperties();
+    } catch (e) {
+      alert('Apply failed: ' + e.message);
+    }
+  }
+
+  // ============================================================
+  // Mailing Delta — "What's changed since you verified?" (2026-06-03)
+  // ============================================================
+  // Cached preview result so the Apply pass can read what's checked
+  // without re-running the comparison on every click.
+  let _mailingDeltaPreview = null;
+
+  function mailingDeltaUpdateLabel() {
+    const f = document.getElementById('mailingDeltaFile');
+    const lbl = document.getElementById('mailingDeltaDropLabel');
+    if (!f.files.length) {
+      lbl.textContent = '📥 Drag & drop Vantaca Mailing Addresses Export';
+      return;
+    }
+    lbl.textContent = `📎 ${f.files[0].name}`;
+  }
+
+  async function mailingDeltaPreview() {
+    const cid = document.getElementById('mailingDeltaCommunity').value;
+    const f = document.getElementById('mailingDeltaFile');
+    const result = document.getElementById('mailingDeltaResult');
+    if (!cid) { alert('Pick a community first.'); return; }
+    if (!f.files.length) { alert('Drop a Vantaca Mailing Addresses Export file first.'); return; }
+    const btn = document.getElementById('mailingDeltaPreviewBtn');
+    const orig = btn.innerHTML;
+    btn.disabled = true; btn.innerHTML = '⏳ Comparing…';
+    result.style.display = 'none';
+    try {
+      const fd = new FormData();
+      fd.append('file', f.files[0]);
+      const r = await fetch(`/api/communities/${cid}/mailing-delta/preview`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _mailingDeltaPreview = j;
+      mailingDeltaRenderPreview(j);
+      result.style.display = 'block';
+      result.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) {
+      result.innerHTML = `<div style="padding:10px; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; color:#991b1b;">Comparison failed: ${escapeHtml(e.message)}</div>`;
+      result.style.display = 'block';
+    } finally {
+      btn.disabled = false; btn.innerHTML = orig;
+    }
+  }
+
+  function mailingDeltaRenderPreview(j) {
+    const result = document.getElementById('mailingDeltaResult');
+    const s = j.summary;
+    const transfers = j.transfers || [];
+    const mailings  = j.real_mailing_changes || [];
+    const parseBugs = j.parse_bugs || [];
+    const names     = j.real_name_diffs || [];
+
+    // Headline counters
+    let html = `
+      <div style="background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+        <div style="font-size:12.5px; color:#475569; line-height:1.6;">
+          <strong>${escapeHtml(j.community.name)}</strong> · trustEd has <strong>${s.trusted_row_count}</strong> rows, Vantaca has <strong>${s.vantaca_row_count}</strong>, matched <strong>${s.matched_count}</strong>.
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+          <span style="background:${transfers.length ? '#fef2f2' : '#f1f5f9'}; color:${transfers.length ? '#991b1b' : '#94A3B8'}; border:1px solid ${transfers.length ? '#fecaca' : '#e2e8f0'}; padding:4px 10px; border-radius:14px; font-size:11.5px; font-weight:600;">🚨 ${transfers.length} ownership transfer${transfers.length === 1 ? '' : 's'}</span>
+          <span style="background:${mailings.length ? '#fef3c7' : '#f1f5f9'}; color:${mailings.length ? '#854d0e' : '#94A3B8'}; border:1px solid ${mailings.length ? '#fde047' : '#e2e8f0'}; padding:4px 10px; border-radius:14px; font-size:11.5px; font-weight:600;">📮 ${mailings.length} mailing change${mailings.length === 1 ? '' : 's'}</span>
+          <span style="background:${parseBugs.length ? '#fef3c7' : '#f1f5f9'}; color:${parseBugs.length ? '#854d0e' : '#94A3B8'}; border:1px solid ${parseBugs.length ? '#fde047' : '#e2e8f0'}; padding:4px 10px; border-radius:14px; font-size:11.5px; font-weight:600;">🐛 ${parseBugs.length} parse bug${parseBugs.length === 1 ? '' : 's'}</span>
+          <span style="background:${names.length ? '#fff' : '#f1f5f9'}; color:${names.length ? '#475569' : '#94A3B8'}; border:1px solid #e2e8f0; padding:4px 10px; border-radius:14px; font-size:11.5px; font-weight:600;">👤 ${names.length} name diff${names.length === 1 ? '' : 's'}</span>
+          <span style="background:#f1f5f9; color:#94A3B8; border:1px solid #e2e8f0; padding:4px 10px; border-radius:14px; font-size:11.5px;">🔇 ${s.format_only_noise_count} format-only noise (ignored)</span>
+        </div>
+      </div>`;
+
+    // Transfers section
+    if (transfers.length > 0) {
+      html += `
+        <div style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+          <h4 style="margin:0 0 4px 0; color:#991b1b; font-size:13px;">🚨 Ownership transfers (${transfers.length})</h4>
+          <p style="font-size:11.5px; color:#6B7280; margin:0 0 8px 0;">Property changed hands — Vantaca closed the old account and opened a new one. This panel surfaces them; transfers need manual handling (close ownership + create new contact + new ownership) which isn't auto-applied yet. Note them and process via the existing ownership tools, then re-run this comparison to confirm.</p>
+          <div style="font-size:12px;">
+            ${transfers.map(tr => `
+              <div style="padding:8px 10px; border:1px solid #fecaca; border-radius:6px; margin-bottom:6px; background:#fef2f2;">
+                <div style="font-weight:600; color:#1E2761;">${escapeHtml(tr.property.street_address)}, ${escapeHtml(tr.property.city)} ${escapeHtml(tr.property.zip)}</div>
+                <div style="margin-top:4px; color:#475569;">
+                  <span style="color:#94A3B8;">OLD (trustEd, account ${escapeHtml(tr.old_account)}):</span> ${escapeHtml(tr.old_owner_name)}<br>
+                  <span style="color:#991b1b; font-weight:600;">NEW (Vantaca, account ${escapeHtml(tr.new_account)}):</span> ${escapeHtml(tr.new_owner_name)}
+                </div>
+              </div>`).join('')}
+          </div>
+        </div>`;
+    }
+
+    // Mailing changes + parse bugs — same UI shape, both write to mailing
+    // fields. Operator checks rows they want to apply.
+    const renderMailingRow = (m, kind) => {
+      const id = `mdr-${kind}-${m.account}`;
+      const sameStreet = (m.trusted.street || '').trim().toLowerCase() === (m.vantaca.street || '').trim().toLowerCase();
+      const sameCity   = (m.trusted.city   || '').trim().toLowerCase() === (m.vantaca.city   || '').trim().toLowerCase();
+      const sameState  = (m.trusted.state  || '').trim().toUpperCase() === (m.vantaca.state  || '').trim().toUpperCase();
+      const sameZip    = String(m.trusted.zip || '').split('-')[0] === String(m.vantaca.zip || '').split('-')[0];
+      const diff = (label, t, v, same) => same
+        ? `<div style="color:#94A3B8; font-size:11px;">${label}: ${escapeHtml(t || '—')}</div>`
+        : `<div style="font-size:11.5px;"><span style="color:#94A3B8;">${label}:</span> <span style="color:#b91c1c; text-decoration:line-through;">${escapeHtml(t || '—')}</span> → <span style="color:#15803d; font-weight:600;">${escapeHtml(v || '—')}</span></div>`;
+      return `
+        <label style="display:flex; gap:10px; padding:8px 10px; border:1px solid ${kind==='parse'?'#fde047':'#e5e7eb'}; border-radius:6px; margin-bottom:6px; background:${kind==='parse'?'#fefce8':'#fff'}; cursor:pointer;" for="${id}">
+          <input type="checkbox" id="${id}" ${kind==='parse'?'checked':''} data-md-mailing-acct="${escapeHtml(m.account)}" data-md-mailing-contact="${escapeHtml(m.contact_id || '')}" data-md-mailing-street="${escapeHtml(m.vantaca.street || '')}" data-md-mailing-city="${escapeHtml(m.vantaca.city || '')}" data-md-mailing-state="${escapeHtml(m.vantaca.state || '')}" data-md-mailing-zip="${escapeHtml(m.vantaca.zip || '')}" style="margin-top:3px;">
+          <div style="flex:1; font-size:12px;">
+            <div style="font-weight:600; color:#1E2761;">${escapeHtml(m.owner_name || '?')} <span style="color:#94A3B8; font-weight:400;">· account ${escapeHtml(m.account)} · ${escapeHtml(m.property_address || '')}</span></div>
+            <div style="margin-top:3px;">
+              ${diff('Street', m.trusted.street, m.vantaca.street, sameStreet)}
+              ${diff('City',   m.trusted.city,   m.vantaca.city,   sameCity)}
+              ${diff('State',  m.trusted.state,  m.vantaca.state,  sameState)}
+              ${diff('ZIP',    m.trusted.zip,    m.vantaca.zip,    sameZip)}
+            </div>
+          </div>
+        </label>`;
+    };
+
+    if (parseBugs.length > 0) {
+      html += `
+        <div style="background:#fff; border:1px solid #fde047; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+          <h4 style="margin:0 0 4px 0; color:#854d0e; font-size:13px;">🐛 trustEd parse bugs (${parseBugs.length}) — checked by default</h4>
+          <p style="font-size:11.5px; color:#6B7280; margin:0 0 8px 0;">trustEd has broken fields (zip blank or state isn't 2 letters); Vantaca has clean data. Safe to copy from Vantaca. Pre-checked because these are corrections, not changes.</p>
+          ${parseBugs.map(m => renderMailingRow(m, 'parse')).join('')}
+        </div>`;
+    }
+
+    if (mailings.length > 0) {
+      html += `
+        <div style="background:#fff; border:1px solid #fde047; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+          <h4 style="margin:0 0 4px 0; color:#854d0e; font-size:13px;">📮 Real mailing changes (${mailings.length}) — review each</h4>
+          <p style="font-size:11.5px; color:#6B7280; margin:0 0 8px 0;">Matched accounts where the mailing address actually differs. Could be a real move, a typo correction, or just a Vantaca data refresh. Check the rows where you want to accept Vantaca's value.</p>
+          ${mailings.map(m => renderMailingRow(m, 'real')).join('')}
+        </div>`;
+    }
+
+    // Name diffs — separate apply path so operator can take only the
+    // ones they want (or none — sometimes Vantaca's name is wrong).
+    if (names.length > 0) {
+      html += `
+        <div style="background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
+          <h4 style="margin:0 0 4px 0; color:#1E2761; font-size:13px;">👤 Name differences (${names.length}) — review each</h4>
+          <p style="font-size:11.5px; color:#6B7280; margin:0 0 8px 0;">Matched accounts where the owner name differs in a meaningful way (not just "&amp;" formatting). Often this is a couple's name written differently between systems; sometimes it's a real legal-name change. Check only the rows where Vantaca has the right value.</p>
+          ${names.map(n => `
+            <label style="display:flex; gap:10px; padding:8px 10px; border:1px solid #e5e7eb; border-radius:6px; margin-bottom:6px; cursor:pointer;" for="mdr-name-${escapeHtml(n.account)}">
+              <input type="checkbox" id="mdr-name-${escapeHtml(n.account)}" data-md-name-acct="${escapeHtml(n.account)}" data-md-name-contact="${escapeHtml(n.contact_id || '')}" data-md-name-value="${escapeHtml(n.vantaca_name)}" style="margin-top:3px;">
+              <div style="flex:1; font-size:12px;">
+                <div><span style="color:#94A3B8;">account ${escapeHtml(n.account)} · ${escapeHtml(n.property_address || '')}</span></div>
+                <div style="margin-top:3px;"><span style="color:#b91c1c; text-decoration:line-through;">${escapeHtml(n.trusted_name)}</span> → <span style="color:#15803d; font-weight:600;">${escapeHtml(n.vantaca_name)}</span></div>
+              </div>
+            </label>`).join('')}
+        </div>`;
+    }
+
+    // Apply controls — only show if there's anything to apply
+    if (transfers.length === 0 && mailings.length === 0 && parseBugs.length === 0 && names.length === 0) {
+      html += `<div style="padding:12px 14px; background:#dcfce7; border:1px solid #bbf7d0; border-radius:8px; color:#166534; font-size:13px;"><strong>✓ Nothing to apply.</strong> trustEd and Vantaca are in sync.</div>`;
+    } else if (mailings.length > 0 || parseBugs.length > 0 || names.length > 0) {
+      html += `
+        <div style="background:#fff; border:1px solid #d0d7de; border-radius:8px; padding:12px 14px; margin-top:6px;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <input type="text" id="mailingDeltaVerifiedBy" placeholder="Your name or email (for audit trail)" style="flex:1; min-width:200px; font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px;">
+            <button class="action-btn" onclick="mailingDeltaApplySelected()" style="font-size:12.5px; padding:8px 14px; background:#15803d; border-color:#15803d;">✓ Apply selected</button>
+          </div>
+          <p style="font-size:11px; color:#94A3B8; margin:6px 0 0 0;">Applied rows are stamped with your name + "mailing_delta" as the verification source. Future Vantaca syncs surface but won't auto-overwrite verified rows.</p>
+        </div>`;
+    }
+
+    result.innerHTML = html;
+  }
+
+  async function mailingDeltaApplySelected() {
+    const cid = document.getElementById('mailingDeltaCommunity').value;
+    const verifiedBy = (document.getElementById('mailingDeltaVerifiedBy')?.value || '').trim();
+    if (!verifiedBy) { alert('Enter your name for the audit trail before applying.'); return; }
+
+    // Collect checked rows from the rendered preview
+    const mailing_updates = [];
+    document.querySelectorAll('[data-md-mailing-acct]').forEach(el => {
+      if (!el.checked) return;
+      mailing_updates.push({
+        contact_id: el.getAttribute('data-md-mailing-contact'),
+        mailing_street: el.getAttribute('data-md-mailing-street'),
+        mailing_city:   el.getAttribute('data-md-mailing-city'),
+        mailing_state:  el.getAttribute('data-md-mailing-state'),
+        mailing_zip:    el.getAttribute('data-md-mailing-zip'),
+      });
+    });
+    const name_updates = [];
+    document.querySelectorAll('[data-md-name-acct]').forEach(el => {
+      if (!el.checked) return;
+      name_updates.push({
+        contact_id: el.getAttribute('data-md-name-contact'),
+        full_name:  el.getAttribute('data-md-name-value'),
+      });
+    });
+
+    if (mailing_updates.length === 0 && name_updates.length === 0) {
+      alert('Nothing checked. Select at least one row to apply.');
+      return;
+    }
+    if (!confirm(`Apply ${mailing_updates.length} mailing update${mailing_updates.length === 1 ? '' : 's'} + ${name_updates.length} name update${name_updates.length === 1 ? '' : 's'}?\n\nVerified by: ${verifiedBy}\n\nThis writes to the database. Verified rows are protected from future Vantaca-sync overwrites.`)) return;
+
+    try {
+      const r = await fetch(`/api/communities/${cid}/mailing-delta/apply`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ verified_by: verifiedBy, mailing_updates, name_updates }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      alert(`✓ Applied.\n\nMailing: ${j.mailing_updated}\nNames: ${j.name_updated}${j.errors && j.errors.length ? '\nErrors: ' + j.errors.length : ''}`);
+      // Re-run preview so the operator sees the now-empty delta
+      await mailingDeltaPreview();
     } catch (e) {
       alert('Apply failed: ' + e.message);
     }
