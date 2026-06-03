@@ -34,7 +34,17 @@
 //   full_name          (required — primary owner name)
 //   primary_email      (optional, format-checked)
 //   primary_phone      (optional, format-checked)
-//   mailing_address    (optional; if set must include a 5-digit ZIP)
+//   mailing_street     (optional; ALL 4 mailing fields blank = mailing = property)
+//   mailing_city       (optional; required if any mailing field is set)
+//   mailing_state      (optional; required if any mailing field is set, 2-letter)
+//   mailing_zip        (optional; required if any mailing field is set, 5-digit)
+//
+// Mailing-address rules (migration 153 — structured fields):
+//   - Leave ALL 4 mailing_* fields blank → "mailing = property address"
+//     (the system uses property street/city/state/zip for the label)
+//   - Fill ALL 4 → structured mailing label (clean, no parsing needed)
+//   - Mixing some-filled / some-blank → validation error (operator must
+//     either fill everything or clear everything; partial = ambiguous)
 // ============================================================================
 
 const express = require('express');
@@ -49,6 +59,12 @@ const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 20 
 
 // Canonical column header — order matters for download templates; case
 // is forgiving on upload (we normalize headers to lowercase + underscore).
+//
+// Mailing fields (mig 153 — structured, replaces single mailing_address):
+// - mailing_street / mailing_city / mailing_state / mailing_zip
+// - ALL blank → mailing = property (the standard case for ~80% of rows)
+// - ALL filled → off-property mailing (the "absentee owner" case)
+// - PARTIAL → validation error
 const TEMPLATE_COLUMNS = [
   'vantaca_account_id',
   'street_address',
@@ -61,10 +77,16 @@ const TEMPLATE_COLUMNS = [
   'full_name',
   'primary_email',
   'primary_phone',
-  'mailing_address',
+  'mailing_street',
+  'mailing_city',
+  'mailing_state',
+  'mailing_zip',
 ];
 
 const REQUIRED_FIELDS = ['street_address', 'city', 'state', 'zip', 'full_name'];
+
+// Mailing-block field set — used by the all-or-nothing validation rule.
+const MAILING_FIELDS = ['mailing_street', 'mailing_city', 'mailing_state', 'mailing_zip'];
 
 // ----------------------------------------------------------------------------
 // Validators — pure functions, no DB
@@ -95,12 +117,43 @@ function validateRow(row, rowIndex) {
   if (row.primary_phone && !RE_PHONE.test(String(row.primary_phone).trim())) {
     errors.push({ row: rowIndex, field: 'primary_phone', message: 'doesn\'t look like a valid phone number' });
   }
-  // If mailing_address is set, it must include a 5-digit ZIP — this is
-  // the rule that ends the street-only-mailings problem at the import
-  // boundary. NULL mailing is OK (means "mailing = property").
-  if (row.mailing_address && String(row.mailing_address).trim()) {
-    if (!/\b\d{5}(-\d{4})?\b/.test(String(row.mailing_address))) {
-      errors.push({ row: rowIndex, field: 'mailing_address', message: 'mailing_address must include a 5-digit ZIP, or leave blank to mean "mailing = property"' });
+  // Mailing block — structured fields (mig 153). All-or-nothing rule:
+  // either all 4 fields are blank (mailing = property), or all 4 are
+  // populated (off-property mailing). Partial fills are a validation
+  // error because "what does the label printer do with a street but
+  // no city?" The legacy single-string mailing_address column is
+  // still read on upload for back-compat — if the operator uploads a
+  // template with the OLD single column, we parse it best-effort into
+  // structured fields below.
+  if (row.mailing_address && !row.mailing_street && !row.mailing_city) {
+    // Back-compat: operator uploaded a template that still has the
+    // old single mailing_address column. Try to parse it now so
+    // downstream logic only deals with structured fields.
+    const m = String(row.mailing_address).trim();
+    const parts = m.split(',').map(s => s.trim());
+    if (parts.length >= 3) {
+      const stateZip = parts[2].split(/\s+/).filter(Boolean);
+      row.mailing_street = parts[0];
+      row.mailing_city   = parts[1];
+      row.mailing_state  = (stateZip[0] || '').toUpperCase();
+      row.mailing_zip    = stateZip[1] || '';
+    } else {
+      errors.push({ row: rowIndex, field: 'mailing_address',
+        message: 'legacy mailing_address column found but could not parse "STREET, CITY, STATE ZIP" shape — please split into mailing_street/mailing_city/mailing_state/mailing_zip columns' });
+    }
+  }
+  const mailingFilled = MAILING_FIELDS.filter(f => row[f] && String(row[f]).trim()).length;
+  if (mailingFilled > 0 && mailingFilled < MAILING_FIELDS.length) {
+    const missing = MAILING_FIELDS.filter(f => !row[f] || !String(row[f]).trim());
+    errors.push({ row: rowIndex, field: 'mailing_block',
+      message: `mailing fields are partial — missing ${missing.join(', ')}. Either fill all four (street + city + state + zip) for off-property mailing, or leave all four blank to mean "mailing = property address"` });
+  }
+  if (mailingFilled === MAILING_FIELDS.length) {
+    if (!RE_ZIP.test(String(row.mailing_zip).trim())) {
+      errors.push({ row: rowIndex, field: 'mailing_zip', message: 'must be 5 digits or 5-digit+4 (e.g. 77407 or 77407-1234)' });
+    }
+    if (!RE_STATE.test(String(row.mailing_state).trim().toUpperCase())) {
+      errors.push({ row: rowIndex, field: 'mailing_state', message: 'must be 2-letter state code (e.g. TX)' });
     }
   }
   return errors;
@@ -146,17 +199,41 @@ router.get('/communities/:id/roster-template', async (req, res) => {
     let rows = [];
     if (includeCurrent) {
       // Pull current state from v_current_property_owners — paginated.
+      // Structured mailing fields (owner_mailing_street/city/state/zip)
+      // were added to the view in mig 153 alongside the new contacts
+      // columns. If structured fields are NULL on a row (legacy contact
+      // never went through Roster Import), we fall back to a best-effort
+      // parse of the legacy owner_mailing_address string so the operator
+      // sees SOMETHING to clean rather than a blank.
       const PAGE = 1000;
       let from = 0;
       while (true) {
         const { data, error } = await supabase
           .from('v_current_property_owners')
-          .select('property_id, vantaca_account_id, street_address, unit, city, state, zip, lot_number, property_type, owner_name, owner_email, owner_phone, owner_mailing_address')
+          .select('property_id, vantaca_account_id, street_address, unit, city, state, zip, lot_number, property_type, owner_name, owner_email, owner_phone, owner_mailing_address, owner_mailing_street, owner_mailing_city, owner_mailing_state, owner_mailing_zip')
           .eq('community_id', communityId)
           .range(from, from + PAGE - 1);
         if (error) return res.status(500).json({ error: error.message });
         if (!data || data.length === 0) break;
         for (const r of data) {
+          // Resolve mailing block:
+          //   1. Prefer structured columns when populated
+          //   2. Else parse the legacy string (best-effort)
+          //   3. Else leave blank (= "mailing = property address")
+          let ms = r.owner_mailing_street || '';
+          let mc = r.owner_mailing_city   || '';
+          let mst = r.owner_mailing_state || '';
+          let mz = r.owner_mailing_zip    || '';
+          if (!ms && !mc && !mz && r.owner_mailing_address) {
+            const parts = String(r.owner_mailing_address).split(',').map(s => s.trim());
+            if (parts.length >= 3) {
+              const sz = parts[2].split(/\s+/).filter(Boolean);
+              ms = parts[0];
+              mc = parts[1];
+              mst = (sz[0] || '').toUpperCase();
+              mz = sz[1] || '';
+            }
+          }
           rows.push({
             vantaca_account_id: r.vantaca_account_id || '',
             street_address:     r.street_address || '',
@@ -169,7 +246,10 @@ router.get('/communities/:id/roster-template', async (req, res) => {
             full_name:          r.owner_name || '',
             primary_email:      r.owner_email || '',
             primary_phone:      r.owner_phone || '',
-            mailing_address:    r.owner_mailing_address || '',
+            mailing_street:     ms,
+            mailing_city:       mc,
+            mailing_state:      mst,
+            mailing_zip:        mz,
           });
         }
         if (data.length < PAGE) break;
@@ -190,7 +270,10 @@ router.get('/communities/:id/roster-template', async (req, res) => {
         full_name:          'Jane & John Doe',
         primary_email:      'janedoe@example.com',
         primary_phone:      '281-555-0100',
-        mailing_address:    '',
+        mailing_street:     '',
+        mailing_city:       '',
+        mailing_state:      '',
+        mailing_zip:        '',
       }];
     }
 
@@ -439,19 +522,42 @@ router.post('/communities/:id/roster-import/apply', upload.single('file'), async
         updated_at:        nowIso
       }
     }));
-    const contactsToWrite = resolvedRows.map(({ contact_id, row }) => ({
-      id: contact_id,
-      patch: {
-        full_name:         (row.full_name || '').trim() || null,
-        primary_email:     (row.primary_email || '').trim() || null,
-        primary_phone:     (row.primary_phone || '').trim() || null,
-        mailing_address:   (row.mailing_address || '').trim() || null, // empty → NULL = "same as property"
-        data_verified_at:  nowIso,
-        verified_by:       verifiedBy,
-        verified_source:   'template_import',
-        updated_at:        nowIso
-      }
-    }));
+    // Compose the legacy single-string mailing_address from structured
+    // fields for back-compat (any consumer still reading the old column
+    // keeps working). Empty mailing block → NULL across the board =
+    // "mailing = property address". Validator above already enforced
+    // all-or-nothing on the structured fields.
+    const composeMailing = (street, city, state, zip) => {
+      if (!street && !city && !state && !zip) return null;
+      const stateZip = [state, zip].filter(Boolean).join(' ').trim();
+      return [street, city, stateZip].filter(Boolean).join(', ');
+    };
+
+    const contactsToWrite = resolvedRows.map(({ contact_id, row }) => {
+      const mStreet = (row.mailing_street || '').trim() || null;
+      const mCity   = (row.mailing_city   || '').trim() || null;
+      const mState  = (row.mailing_state  || '').trim().toUpperCase() || null;
+      const mZip    = (row.mailing_zip    || '').trim() || null;
+      return {
+        id: contact_id,
+        patch: {
+          full_name:         (row.full_name || '').trim() || null,
+          primary_email:     (row.primary_email || '').trim() || null,
+          primary_phone:     (row.primary_phone || '').trim() || null,
+          // Structured mailing fields (mig 153) — canonical going forward.
+          mailing_street:    mStreet,
+          mailing_city:      mCity,
+          mailing_state:     mState,
+          mailing_zip:       mZip,
+          // Composed legacy field — kept in sync for back-compat readers.
+          mailing_address:   composeMailing(mStreet, mCity, mState, mZip),
+          data_verified_at:  nowIso,
+          verified_by:       verifiedBy,
+          verified_source:   'template_import',
+          updated_at:        nowIso
+        }
+      };
+    });
 
     let propertiesWritten = 0;
     let contactsWritten = 0;
