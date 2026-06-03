@@ -12,3 +12,9 @@ ALTER TABLE communities ADD COLUMN IF NOT EXISTS website_url TEXT;
 
 COMMENT ON COLUMN communities.website_url IS
   'Public-facing community website URL (homeowner-facing, not management portal). Used by Annual Meeting Notice and similar mailings to point owners at deeper content (candidate bios, etc.). Nullable — falls back to "online ballot" reference when absent.';
+
+-- Seed known URLs. Idempotent — re-running the migration just rewrites
+-- the same value. Communities without a public site stay NULL so the
+-- AMN renderer falls back to "available on the online ballot".
+UPDATE communities SET website_url = 'https://waterviewestates.info'
+  WHERE name IN ('Waterview Estates', 'Waterview') AND website_url IS NULL;
