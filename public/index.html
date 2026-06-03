@@ -1044,6 +1044,78 @@
   <div class="vw-container">
     <div class="vw-inner">
 
+      <!-- ====================================================================
+           RFP BID COMPARISON — transparency-by-design bid evaluation
+           Built 2026-06-03. Wires to /api/vendors/rfps/* endpoints.
+           Primary workflow: create RFP → upload 8-10 bids → AI extracts
+           structured data → operator eliminates with reasons → top 3
+           finalists → board memo with full audit trail of eliminations.
+           ==================================================================== -->
+      <div style="border:2px solid #1E2761; border-radius:12px; padding:18px 22px; background:linear-gradient(180deg, #fefefe 0%, #f8fafc 100%); margin-bottom:24px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; flex-wrap:wrap; margin-bottom:12px;">
+          <div style="flex:1; min-width:300px;">
+            <h2 style="margin:0 0 4px 0; color:#1E2761; font-size:18px;">🗳️ RFP Bid Comparison</h2>
+            <p style="margin:0; color:#6B7280; font-size:13px; line-height:1.5;">
+              Upload 8-10 bids → structured extraction reads scope + pricing + insurance per bid → eliminate vendors with operator-signed reasons → finalize top 3 for board. Every cut is recorded so transparency is shipped with the recommendation.
+            </p>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <button onclick="rfpToggleNewForm()" class="action-btn" style="font-size:13px; padding:8px 14px;">+ New RFP</button>
+            <button onclick="rfpLoadList()" class="secondary-btn" style="font-size:13px; padding:8px 14px;">↻ Refresh</button>
+          </div>
+        </div>
+
+        <!-- New-RFP form (hidden by default) -->
+        <div id="rfpNewForm" style="display:none; padding:12px 14px; background:#eff6ff; border:1px solid #93c5fd; border-radius:8px; margin-bottom:14px;">
+          <div style="display:grid; grid-template-columns:2fr 2fr 3fr; gap:10px; align-items:flex-end;">
+            <div>
+              <label style="display:block; font-size:11px; font-weight:600; color:#1e40af; margin-bottom:4px;">Community</label>
+              <select id="rfpNewCommunity" style="width:100%; padding:7px 8px; border:1px solid #93c5fd; border-radius:6px; font-size:13px;">
+                <option value="">— Pick community —</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:600; color:#1e40af; margin-bottom:4px;">Service category</label>
+              <select id="rfpNewCategory" style="width:100%; padding:7px 8px; border:1px solid #93c5fd; border-radius:6px; font-size:13px;">
+                <option value="landscape_maintenance">Landscape Maintenance</option>
+                <option value="landscape_construction">Landscape Construction</option>
+                <option value="tree_service">Tree Service</option>
+                <option value="pool_management">Pool Management</option>
+                <option value="janitorial">Janitorial / Cleaning</option>
+                <option value="pressure_washing">Pressure Washing</option>
+                <option value="painting">Painting</option>
+                <option value="repair">General Repair</option>
+                <option value="security">Security Services</option>
+                <option value="pest_control">Pest Control</option>
+                <option value="irrigation">Irrigation Management</option>
+                <option value="insurance">Insurance</option>
+                <option value="legal">Legal Services</option>
+                <option value="accounting">Accounting Services</option>
+                <option value="reserve_study">Reserve Study</option>
+                <option value="engineer_inspection">Engineering / Inspection</option>
+                <option value="management">Management Services</option>
+                <option value="other">Other</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:600; color:#1e40af; margin-bottom:4px;">Title <span style="color:#94a3b8; font-weight:400;">(optional)</span></label>
+              <div style="display:flex; gap:6px;">
+                <input id="rfpNewTitle" type="text" placeholder="e.g. 2026 Landscape — Waterview" style="flex:1; padding:7px 8px; border:1px solid #93c5fd; border-radius:6px; font-size:13px;">
+                <button onclick="rfpCreate()" class="action-btn" style="font-size:13px; padding:7px 14px; white-space:nowrap;">Create</button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Active RFPs list -->
+        <div id="rfpList" style="font-size:13px;">
+          <div style="color:#94a3b8; font-style:italic; padding:14px;">Loading RFPs…</div>
+        </div>
+
+        <!-- Single-RFP detail (shown after click) -->
+        <div id="rfpDetail" style="display:none; margin-top:14px; padding-top:14px; border-top:1px dashed #cbd5e1;"></div>
+      </div>
+
       <!-- STEP 1: Generate or pick the bid request -->
       <div class="vw-step">
         <div class="vw-step-header">
@@ -21551,6 +21623,326 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('mailingWarning').style.display = 'none';
     generateMailing(true);
   }
+
+  // ===========================================================================
+  // RFP BID COMPARISON — UI handlers
+  // Wires the 🗳️ RFP panel to /api/vendors/rfps/* endpoints. Pattern mirrors
+  // the Owner Roster + Nominations modules: server-driven state, optimistic
+  // re-fetch after every mutation, no client cache to fall out of sync.
+  // ===========================================================================
+  let _rfpActiveRfpId = null;
+  let _rfpFilter = 'all'; // 'all' | 'finalist' | 'eliminated' | 'pending'
+
+  async function rfpInitCommunityPicker() {
+    // Reuse the homes communities cache if available, otherwise fetch
+    let list = (typeof homesCommunitiesCache !== 'undefined' && homesCommunitiesCache && homesCommunitiesCache.length)
+      ? homesCommunitiesCache
+      : null;
+    if (!list) {
+      try {
+        const r = await window._authFetch('/api/communities');
+        const j = await r.json();
+        list = (j.communities || j || []).map((c) => ({ id: c.id, name: c.name }));
+      } catch (_) { list = []; }
+    }
+    const sel = document.getElementById('rfpNewCommunity');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— Pick community —</option>' +
+      list.map((c) => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+  }
+
+  function rfpToggleNewForm() {
+    const form = document.getElementById('rfpNewForm');
+    if (!form) return;
+    const showing = form.style.display !== 'none';
+    form.style.display = showing ? 'none' : 'block';
+    if (!showing) rfpInitCommunityPicker();
+  }
+
+  async function rfpCreate() {
+    const community_id = document.getElementById('rfpNewCommunity').value;
+    const service_category = document.getElementById('rfpNewCategory').value;
+    const title = document.getElementById('rfpNewTitle').value.trim();
+    if (!community_id) { alert('Pick a community.'); return; }
+    if (!service_category) { alert('Pick a service category.'); return; }
+    try {
+      const r = await window._authFetch('/api/vendors/rfps', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id, service_category, title: title || null })
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      document.getElementById('rfpNewForm').style.display = 'none';
+      document.getElementById('rfpNewTitle').value = '';
+      await rfpLoadList();
+      rfpOpenDetail(j.rfp.id);
+    } catch (e) { alert('Create RFP failed: ' + e.message); }
+  }
+
+  async function rfpLoadList() {
+    const wrap = document.getElementById('rfpList');
+    if (!wrap) return;
+    wrap.innerHTML = '<div style="color:#94a3b8; font-style:italic; padding:14px;">Loading…</div>';
+    try {
+      const r = await window._authFetch('/api/vendors/rfps');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const rfps = j.rfps || [];
+      if (rfps.length === 0) {
+        wrap.innerHTML = '<div style="color:#94a3b8; font-style:italic; padding:14px; text-align:center;">No RFPs yet. Click <b>+ New RFP</b> above to start your first bid comparison.</div>';
+        return;
+      }
+      wrap.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:13px;">
+        <thead><tr style="border-bottom:1.5px solid #1E2761; color:#475569;">
+          <th style="text-align:left; padding:6px 8px;">Title</th>
+          <th style="text-align:left; padding:6px 8px;">Community</th>
+          <th style="text-align:left; padding:6px 8px;">Category</th>
+          <th style="text-align:left; padding:6px 8px;">Status</th>
+          <th style="text-align:left; padding:6px 8px;">Created</th>
+        </tr></thead><tbody>
+          ${rfps.map(r => `
+            <tr style="border-bottom:1px solid #e2e8f0; cursor:pointer;" onclick="rfpOpenDetail('${r.id}')">
+              <td style="padding:6px 8px; font-weight:600; color:#1E2761;">${escapeHtml(r.title || '(untitled)')}</td>
+              <td style="padding:6px 8px;">${escapeHtml((r.community && r.community.name) || '—')}</td>
+              <td style="padding:6px 8px; color:#475569;">${escapeHtml(r.service_category || '—')}</td>
+              <td style="padding:6px 8px;"><span style="background:#eef2ff; color:#1e40af; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px;">${escapeHtml(r.status)}</span></td>
+              <td style="padding:6px 8px; color:#94a3b8; font-size:11.5px;">${r.created_at ? new Date(r.created_at).toLocaleDateString() : '—'}</td>
+            </tr>
+          `).join('')}
+        </tbody></table>`;
+    } catch (e) {
+      wrap.innerHTML = '<div style="padding:14px; color:#991b1b;">Couldn\'t load RFPs: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  async function rfpOpenDetail(rfpId) {
+    _rfpActiveRfpId = rfpId;
+    const wrap = document.getElementById('rfpDetail');
+    if (!wrap) return;
+    wrap.style.display = 'block';
+    wrap.innerHTML = '<div style="color:#94a3b8; font-style:italic; padding:14px;">Loading RFP…</div>';
+    try {
+      const r = await window._authFetch(`/api/vendors/rfps/${rfpId}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      rfpRenderDetail(j);
+    } catch (e) {
+      wrap.innerHTML = '<div style="padding:14px; color:#991b1b;">Couldn\'t load RFP: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function rfpRenderDetail(data) {
+    const wrap = document.getElementById('rfpDetail');
+    const { rfp, proposals, decision_log } = data;
+    const total = proposals.length;
+    const finalists = proposals.filter(p => p.is_finalist).length;
+    const eliminated = proposals.filter(p => p.eliminated_at).length;
+    const pending = total - finalists - eliminated;
+    const communityName = (rfp.community && rfp.community.name) || '—';
+
+    // Apply active filter
+    let filtered = proposals;
+    if (_rfpFilter === 'finalist')  filtered = proposals.filter(p => p.is_finalist);
+    else if (_rfpFilter === 'eliminated') filtered = proposals.filter(p => p.eliminated_at);
+    else if (_rfpFilter === 'pending') filtered = proposals.filter(p => !p.is_finalist && !p.eliminated_at);
+
+    const chip = (key, label, count, bg, fg) => {
+      const active = _rfpFilter === key;
+      return `<button onclick="rfpSetFilter('${key}')" style="font-size:11.5px; padding:4px 10px; border-radius:14px; border:1px solid ${active ? '#1E2761' : '#cbd5e1'}; background:${active ? '#1E2761' : bg}; color:${active ? '#fff' : fg}; cursor:pointer; font-weight:${active ? 700 : 500};">${label} (${count})</button>`;
+    };
+
+    wrap.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; flex-wrap:wrap; margin-bottom:12px;">
+        <div>
+          <div style="font-size:16px; font-weight:700; color:#1E2761;">${escapeHtml(rfp.title || '(untitled)')}</div>
+          <div style="font-size:12.5px; color:#6B7280; margin-top:2px;">${escapeHtml(communityName)} · ${escapeHtml(rfp.service_category || '—')} · ${escapeHtml(rfp.status)}</div>
+        </div>
+        <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <label class="action-btn" style="font-size:13px; padding:8px 14px; cursor:pointer;">
+            📤 Upload bid PDF
+            <input type="file" id="rfpUploadFile" accept="application/pdf" style="display:none;" onchange="rfpUploadBid()">
+          </label>
+          <button onclick="rfpOpenDetail('${rfp.id}')" class="secondary-btn" style="font-size:13px; padding:8px 14px;">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div style="padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; margin-bottom:12px;">
+        <div style="font-size:12.5px; color:#475569; margin-bottom:6px;">
+          <b>${total}</b> bids received · <b style="color:#15803d;">${finalists}</b> finalists · <b style="color:#991b1b;">${eliminated}</b> eliminated · <b style="color:#92400e;">${pending}</b> under consideration
+          ${finalists >= 3 ? ' &nbsp; <span style="color:#15803d; font-weight:700;">✓ Ready for board memo</span>' : ''}
+        </div>
+        <div style="display:flex; gap:6px; flex-wrap:wrap;">
+          ${chip('all', 'All', total, '#fff', '#475569')}
+          ${chip('finalist', '★ Finalists', finalists, '#f0fdf4', '#15803d')}
+          ${chip('eliminated', '✗ Eliminated', eliminated, '#fef2f2', '#991b1b')}
+          ${chip('pending', '⋯ Under consideration', pending, '#fffbeb', '#92400e')}
+        </div>
+      </div>
+
+      ${filtered.length === 0
+        ? `<div style="padding:30px; text-align:center; color:#94a3b8; font-style:italic; background:#fff; border:1px dashed #e2e8f0; border-radius:8px;">${total === 0 ? 'No bids uploaded yet. Drop a PDF above to extract structured data.' : 'No bids match this filter.'}</div>`
+        : rfpRenderBidsTable(filtered)}
+
+      ${decision_log.length > 0 ? rfpRenderDecisionLog(decision_log) : ''}
+    `;
+  }
+
+  function rfpRenderBidsTable(bids) {
+    return `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+      <thead><tr style="border-bottom:1.5px solid #1E2761; color:#475569;">
+        <th style="text-align:left; padding:6px 8px;">Company</th>
+        <th style="text-align:right; padding:6px 8px;">Total / yr</th>
+        <th style="text-align:center; padding:6px 8px;">Term</th>
+        <th style="text-align:center; padding:6px 8px;">Confidence</th>
+        <th style="text-align:left; padding:6px 8px;">Status</th>
+        <th style="text-align:right; padding:6px 8px;">Actions</th>
+      </tr></thead><tbody>
+        ${bids.map(b => {
+          const ext = b.extracted_data || {};
+          const conf = ext.extraction_confidence || '?';
+          const confColor = conf === 'high' ? '#15803d' : conf === 'low' ? '#dc2626' : '#92400e';
+          const totalFmt = b.total_annual_amount != null
+            ? '$' + Number(b.total_annual_amount).toLocaleString('en-US', { maximumFractionDigits: 0 })
+            : '<span style="color:#94a3b8; font-style:italic;">unparsed</span>';
+          const statusCell = b.is_finalist
+            ? '<span style="background:#dcfce7; color:#15803d; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px;">★ FINALIST</span>'
+            : b.eliminated_at
+              ? `<div><span style="background:#fef2f2; color:#991b1b; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px;">✗ ELIMINATED</span><div style="font-size:11px; color:#7f1d1d; margin-top:3px; max-width:240px;">${escapeHtml(b.eliminated_reason || '')}<div style="color:#94a3b8; font-size:10px;">by ${escapeHtml(b.eliminated_by || '')}</div></div></div>`
+              : '<span style="background:#fffbeb; color:#92400e; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px;">⋯ pending</span>';
+          const actions = b.is_finalist
+            ? `<button onclick="rfpReset('${b.id}')" class="secondary-btn" style="font-size:11.5px; padding:4px 10px;">Reset</button>`
+            : b.eliminated_at
+              ? `<button onclick="rfpReset('${b.id}')" class="secondary-btn" style="font-size:11.5px; padding:4px 10px;">Restore</button>`
+              : `<button onclick="rfpMarkFinalist('${b.id}')" class="secondary-btn" style="font-size:11.5px; padding:4px 10px; background:#dcfce7; color:#15803d; border:1px solid #86efac;">★ Finalist</button>
+                 <button onclick="rfpEliminate('${b.id}')" class="secondary-btn" style="font-size:11.5px; padding:4px 10px; background:#fef2f2; color:#991b1b; border:1px solid #fca5a5;">✗ Eliminate</button>`;
+          return `<tr style="border-bottom:1px solid #e2e8f0;">
+            <td style="padding:6px 8px; font-weight:600; color:#1E2761;">${escapeHtml(b.proposer_company_name || '(unparsed)')}</td>
+            <td style="padding:6px 8px; text-align:right; font-family:monospace;">${totalFmt}</td>
+            <td style="padding:6px 8px; text-align:center;">${b.term_months ? b.term_months + ' mo' : '—'}</td>
+            <td style="padding:6px 8px; text-align:center; color:${confColor}; font-weight:600; font-size:11px; text-transform:uppercase;">${conf}</td>
+            <td style="padding:6px 8px;">${statusCell}</td>
+            <td style="padding:6px 8px; text-align:right; white-space:nowrap;">${actions}</td>
+          </tr>`;
+        }).join('')}
+      </tbody></table>`;
+  }
+
+  function rfpRenderDecisionLog(log) {
+    return `<details style="margin-top:14px;">
+      <summary style="cursor:pointer; font-size:12.5px; color:#475569; padding:6px 0;">📋 Decision audit trail (${log.length} actions)</summary>
+      <div style="font-size:11.5px; font-family:monospace; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px; margin-top:6px; max-height:240px; overflow-y:auto;">
+        ${log.map(e => `<div style="padding:3px 0; border-bottom:1px solid #f1f5f9;">
+          <span style="color:#94a3b8;">${new Date(e.created_at).toLocaleString()}</span> ·
+          <b style="color:#1E2761;">${escapeHtml(e.operator || '?')}</b> ·
+          <span style="color:${e.action === 'eliminate' ? '#991b1b' : e.action === 'mark_finalist' ? '#15803d' : '#475569'};">${escapeHtml(e.action)}</span>
+          ${e.reason ? '· "' + escapeHtml(e.reason) + '"' : ''}
+        </div>`).join('')}
+      </div>
+    </details>`;
+  }
+
+  function rfpSetFilter(k) {
+    _rfpFilter = k;
+    if (_rfpActiveRfpId) rfpOpenDetail(_rfpActiveRfpId);
+  }
+
+  async function rfpUploadBid() {
+    if (!_rfpActiveRfpId) return;
+    const f = document.getElementById('rfpUploadFile');
+    if (!f.files.length) return;
+    const file = f.files[0];
+    f.value = ''; // reset for next upload
+    const wrap = document.getElementById('rfpDetail');
+    const banner = document.createElement('div');
+    banner.style.cssText = 'padding:10px 12px; background:#eff6ff; border:1px solid #93c5fd; border-radius:6px; margin-bottom:10px; font-size:12.5px; color:#1e40af;';
+    banner.innerHTML = `⏳ Extracting "${escapeHtml(file.name)}"… (typically 10-20 seconds)`;
+    wrap.insertBefore(banner, wrap.firstChild);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const r = await window._authFetch(`/api/vendors/rfps/${_rfpActiveRfpId}/proposals`, { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (j.duplicate) {
+        alert('This file was already uploaded to this RFP. Skipped.');
+      }
+      await rfpOpenDetail(_rfpActiveRfpId);
+    } catch (e) {
+      alert('Upload failed: ' + e.message);
+      banner.remove();
+    }
+  }
+
+  async function rfpMarkFinalist(proposalId) {
+    const operator = prompt('Your name (for audit trail):');
+    if (!operator) return;
+    try {
+      const r = await window._authFetch(`/api/vendors/proposals/${proposalId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mark_finalist', operator })
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
+      await rfpOpenDetail(_rfpActiveRfpId);
+    } catch (e) { alert('Mark finalist failed: ' + e.message); }
+  }
+
+  async function rfpEliminate(proposalId) {
+    const reason = prompt('Why are you eliminating this bid? (this gets recorded in the audit trail and shown on the board memo)');
+    if (!reason || !reason.trim()) return;
+    const operator = prompt('Your name (for audit trail):');
+    if (!operator) return;
+    try {
+      const r = await window._authFetch(`/api/vendors/proposals/${proposalId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'eliminate', reason: reason.trim(), operator })
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
+      await rfpOpenDetail(_rfpActiveRfpId);
+    } catch (e) { alert('Eliminate failed: ' + e.message); }
+  }
+
+  async function rfpReset(proposalId) {
+    const operator = prompt('Your name (for audit trail):');
+    if (!operator) return;
+    try {
+      const r = await window._authFetch(`/api/vendors/proposals/${proposalId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'reset', operator })
+      });
+      const j = await r.json();
+      if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
+      await rfpOpenDetail(_rfpActiveRfpId);
+    } catch (e) { alert('Reset failed: ' + e.message); }
+  }
+
+  // Auto-load RFP list when the Vendor tab opens
+  (function () {
+    function _rfpHookSwitchTab() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'vendor') {
+          try { rfpLoadList(); } catch (_) {}
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_rfpHookSwitchTab()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _rfpHookSwitchTab);
+      } else {
+        setTimeout(_rfpHookSwitchTab, 0);
+      }
+    }
+  })();
 
   function setPath(p) {
     vwState.path = p;
