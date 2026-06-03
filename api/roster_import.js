@@ -524,20 +524,42 @@ router.post('/communities/:id/roster-import/apply', upload.single('file'), async
     }));
     // Compose the legacy single-string mailing_address from structured
     // fields for back-compat (any consumer still reading the old column
-    // keeps working). Empty mailing block → NULL across the board =
-    // "mailing = property address". Validator above already enforced
-    // all-or-nothing on the structured fields.
+    // keeps working).
     const composeMailing = (street, city, state, zip) => {
       if (!street && !city && !state && !zip) return null;
       const stateZip = [state, zip].filter(Boolean).join(' ').trim();
       return [street, city, stateZip].filter(Boolean).join(', ');
     };
 
+    // Auto-populate mailing from property fields when the operator
+    // left the mailing block blank — convention: blank in the upload
+    // means "mailing = property address" (owner-occupied). We make
+    // that explicit on apply by copying the property's street/city/
+    // state/zip into the mailing columns. Now every row carries a
+    // self-contained mailing block; downstream label printers don't
+    // need conditional "if blank, fall back to property" logic. The
+    // all-or-nothing validator already ran above, so partial fills
+    // never reach this point.
     const contactsToWrite = resolvedRows.map(({ contact_id, row }) => {
-      const mStreet = (row.mailing_street || '').trim() || null;
-      const mCity   = (row.mailing_city   || '').trim() || null;
-      const mState  = (row.mailing_state  || '').trim().toUpperCase() || null;
-      const mZip    = (row.mailing_zip    || '').trim() || null;
+      const operatorFilledMailing = MAILING_FIELDS.some(f => row[f] && String(row[f]).trim());
+      const propertyStreetWithUnit = [
+        (row.street_address || '').trim(),
+        (row.unit || '').trim(),
+      ].filter(Boolean).join(' ').trim();
+
+      const mStreet = operatorFilledMailing
+        ? ((row.mailing_street || '').trim() || null)
+        : (propertyStreetWithUnit || null);
+      const mCity = operatorFilledMailing
+        ? ((row.mailing_city || '').trim() || null)
+        : ((row.city || '').trim() || null);
+      const mState = operatorFilledMailing
+        ? ((row.mailing_state || '').trim().toUpperCase() || null)
+        : ((row.state || '').trim().toUpperCase() || null);
+      const mZip = operatorFilledMailing
+        ? ((row.mailing_zip || '').trim() || null)
+        : ((row.zip || '').trim() || null);
+
       return {
         id: contact_id,
         patch: {

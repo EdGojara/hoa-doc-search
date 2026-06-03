@@ -2162,7 +2162,7 @@
     <!-- Step 2: instructions (always visible) -->
     <div style="background:#fff; border:1px solid #e2e8f0; border-radius:6px; padding:10px 12px; font-size:11.5px; color:#475569; margin-bottom:10px; line-height:1.5;">
       <b>Fix the CSV in Excel:</b> required = street_address, city, state, zip, full_name. State = 2 letters. ZIP = 5 digits (or ZIP+4). <br>
-      <b>Mailing block (4 columns):</b> mailing_street, mailing_city, mailing_state, mailing_zip — fill ALL four for absentee owners, or leave ALL four blank to mean "mailing = property address." Partial fills will be flagged as errors. <br>
+      <b>Mailing block (4 columns):</b> mailing_street, mailing_city, mailing_state, mailing_zip — fill ALL four for off-property mailings (absentee owners). For owner-occupied homes you can leave all four blank — the system will auto-populate them with the property address on apply (cleaner downstream than the old implicit-blank-means-same convention). Partial fills are still flagged as errors. <br>
       Don't change <b>vantaca_account_id</b> (it's the match key).
     </div>
 
