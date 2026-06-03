@@ -2202,6 +2202,19 @@
       </div>
     </div>
 
+    <!-- Heads-up: Vantaca's "Mailing Addresses Export" returns ALL mailing
+         addresses on file per account (Primary + alternates), not just the
+         Primary one. Confirmed 2026-06-03 on the Findley account
+         (10110203) — Vantaca's contact panel showed both "12828 South Hwy
+         105 West, Conroe TX 77304 (Primary Mailing Address)" and "9203
+         Highway 6 S Suite 124, Houston TX 77083-6387 (Mailing Address)";
+         the export returned the second (alternate) — diff flagged that
+         row as "changed" even though trustEd's Primary matched. Use a
+         filtered Primary-only export if Vantaca offers one. -->
+    <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:9px 12px; margin-bottom:10px; font-size:11.5px; color:#991b1b; line-height:1.5;">
+      <strong>⚠️ Heads-up on the Vantaca report:</strong> the "Mailing Addresses Export" returns <em>all</em> addresses on file per account (Primary + any alternates) — not just the Primary. If a homeowner has more than one mailing address in Vantaca, this comparison may flag the Primary you verified as "changed." Best practice: use a Vantaca report filtered to <strong>Primary Mailing Address only</strong> (or apply a Primary-only filter in the export). Until then, <strong>do not auto-apply mailing changes</strong> — review each one against the Vantaca contact's Primary, not the alternates.
+    </div>
+
     <!-- Pick community + drop zone + preview button -->
     <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-bottom:10px;">
       <select id="mailingDeltaCommunity" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px; background:#fff;">
