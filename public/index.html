@@ -4750,19 +4750,36 @@
 
     // Transfers section
     if (transfers.length > 0) {
+      // One-click claim — each row has a button that posts to the
+      // claim-transfer endpoint. The row replaces itself with a
+      // success/failure status div after the click.
       html += `
         <div style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:12px 14px; margin-bottom:10px;">
-          <h4 style="margin:0 0 4px 0; color:#991b1b; font-size:13px;">🚨 Ownership transfers (${transfers.length})</h4>
-          <p style="font-size:11.5px; color:#6B7280; margin:0 0 8px 0;">Property changed hands — Vantaca closed the old account and opened a new one. This panel surfaces them; transfers need manual handling (close ownership + create new contact + new ownership) which isn't auto-applied yet. Note them and process via the existing ownership tools, then re-run this comparison to confirm.</p>
+          <h4 style="margin:0 0 4px 0; color:#991b1b; font-size:13px;">🚨 Ownership transfers (${transfers.length}) — click 🔄 to claim</h4>
+          <p style="font-size:11.5px; color:#6B7280; margin:0 0 8px 0;">Property changed hands — Vantaca closed the old account and opened a new one. Clicking <strong>🔄 Claim transfer</strong> ends the old ownership in trustEd, creates a new contact for the new owner with the Vantaca mailing address, and stamps everything verified. Old contact + history is preserved for audit.</p>
           <div style="font-size:12px;">
-            ${transfers.map(tr => `
-              <div style="padding:8px 10px; border:1px solid #fecaca; border-radius:6px; margin-bottom:6px; background:#fef2f2;">
-                <div style="font-weight:600; color:#1E2761;">${escapeHtml(tr.property.street_address)}, ${escapeHtml(tr.property.city)} ${escapeHtml(tr.property.zip)}</div>
-                <div style="margin-top:4px; color:#475569;">
-                  <span style="color:#94A3B8;">OLD (trustEd, account ${escapeHtml(tr.old_account)}):</span> ${escapeHtml(tr.old_owner_name)}<br>
-                  <span style="color:#991b1b; font-weight:600;">NEW (Vantaca, account ${escapeHtml(tr.new_account)}):</span> ${escapeHtml(tr.new_owner_name)}
-                </div>
-              </div>`).join('')}
+            ${transfers.map((tr, i) => {
+              const rowId = `mdt-row-${tr.property_id || i}`;
+              const dataPayload = encodeURIComponent(JSON.stringify({
+                property_id:    tr.property_id,
+                old_contact_id: tr.old_contact_id,
+                new_account:    tr.new_account,
+                new_owner_name: tr.new_owner_name,
+                new_mailing:    tr.new_mailing,
+              }));
+              return `
+                <div id="${rowId}" style="padding:8px 10px; border:1px solid #fecaca; border-radius:6px; margin-bottom:6px; background:#fef2f2; display:flex; justify-content:space-between; align-items:flex-start; gap:10px;">
+                  <div style="flex:1;">
+                    <div style="font-weight:600; color:#1E2761;">${escapeHtml(tr.property.street_address)}, ${escapeHtml(tr.property.city)} ${escapeHtml(tr.property.zip)}</div>
+                    <div style="margin-top:4px; color:#475569;">
+                      <span style="color:#94A3B8;">OLD (trustEd, account ${escapeHtml(tr.old_account)}):</span> ${escapeHtml(tr.old_owner_name)}<br>
+                      <span style="color:#991b1b; font-weight:600;">NEW (Vantaca, account ${escapeHtml(tr.new_account)}):</span> ${escapeHtml(tr.new_owner_name)}<br>
+                      <span style="color:#94A3B8;">New mailing:</span> ${escapeHtml(tr.new_mailing.street || '')}, ${escapeHtml(tr.new_mailing.city || '')} ${escapeHtml(tr.new_mailing.state || '')} ${escapeHtml(tr.new_mailing.zip || '')}
+                    </div>
+                  </div>
+                  <button onclick="mailingDeltaClaimTransfer('${rowId}', '${dataPayload}')" style="background:#991b1b; color:#fff; border:1px solid #7f1d1d; padding:6px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap; ${tr.property_id ? '' : 'opacity:0.5; pointer-events:none;'}" ${tr.property_id ? '' : 'disabled title="Missing property_id — re-run preview"'}>🔄 Claim transfer</button>
+                </div>`;
+            }).join('')}
           </div>
         </div>`;
     }
@@ -4923,6 +4940,58 @@
       await mailingDeltaPreview();
     } catch (e) {
       alert('Apply failed: ' + e.message);
+    }
+  }
+
+  // Click handler for the "🔄 Claim transfer" button on each ownership-
+  // transfer row. POSTs to /mailing-delta/claim-transfer which ends the
+  // old ownership, creates a new contact for the new owner, links a new
+  // ownership, and updates the property's canonical Vantaca account #.
+  // On success the row is replaced with a green "claimed" stub; on
+  // failure the row's button is re-enabled so the operator can retry.
+  async function mailingDeltaClaimTransfer(rowId, encodedPayload) {
+    const row = document.getElementById(rowId);
+    if (!row) return;
+    let payload;
+    try { payload = JSON.parse(decodeURIComponent(encodedPayload)); }
+    catch (_) { alert('Could not parse transfer payload.'); return; }
+    const cid = document.getElementById('mailingDeltaCommunity')?.value;
+    if (!cid) { alert('Pick a community first.'); return; }
+    const verifiedBy = prompt(
+      `Claim this transfer?\n\n` +
+      `${payload.new_owner_name} will replace the current owner on ${payload.new_mailing.street}.\n` +
+      `Old ownership will be ended (preserved for audit), new contact created with the Vantaca mailing.\n\n` +
+      `Enter your name or email to record who performed the transfer:`
+    );
+    if (!verifiedBy || !verifiedBy.trim()) return;
+    // Disable the button while the request is in flight.
+    const btn = row.querySelector('button');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Claiming…'; }
+    try {
+      const r = await fetch(`/api/communities/${cid}/mailing-delta/claim-transfer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...payload, verified_by: verifiedBy.trim() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Replace the row's button with a status pill so the operator
+      // sees clear confirmation per-row.
+      const alreadyClaimed = j.already_claimed;
+      row.style.background = '#dcfce7';
+      row.style.borderColor = '#bbf7d0';
+      if (btn) {
+        btn.style.background = '#15803d';
+        btn.style.borderColor = '#15803d';
+        btn.textContent = alreadyClaimed ? '✓ Already claimed' : '✓ Claimed';
+        btn.disabled = true;
+      }
+    } catch (e) {
+      if (btn) {
+        btn.disabled = false;
+        btn.textContent = '🔄 Claim transfer';
+      }
+      alert('Claim failed: ' + e.message);
     }
   }
 
