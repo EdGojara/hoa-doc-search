@@ -6805,6 +6805,28 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
       photo_data_uri: await _storagePathToDataUri(n.photo_storage_path),
     })));
 
+    // Two-version split (added 2026-06): the operator picks whether to
+    // INCLUDE the candidate-statements pages. The mailing version
+    // ("📬 Mailing version") sends include_candidate_bios=false so the
+    // packet is shorter / cheaper to mail. The website version (default
+    // when no flag passed) keeps bios so the PDF posted online has
+    // everything in one document. Bios always remain on the online
+    // ballot regardless of this flag.
+    const includeBios = req.body && req.body.include_candidate_bios === false ? false : true;
+
+    // Pull the community website URL (migration 151). Used by the
+    // voting-instructions section to point homeowners at the
+    // association site for full candidate bios.
+    let communityWebsiteUrl = null;
+    if (cycle.community_id) {
+      const { data: comm } = await supabase
+        .from('communities')
+        .select('website_url')
+        .eq('id', cycle.community_id)
+        .maybeSingle();
+      communityWebsiteUrl = comm && comm.website_url ? comm.website_url : null;
+    }
+
     const html = await renderAnnualMeetingNoticeHTML({
       cycle,
       candidates,
@@ -6817,6 +6839,8 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
         voting_year: cycle.annual_meeting_date
           ? new Date(cycle.annual_meeting_date).getFullYear()
           : new Date().getFullYear(),
+        include_candidate_bios: includeBios,
+        community_website_url: communityWebsiteUrl,
       },
     });
     // Build the per-page footer content: association legal name + Bedrock
@@ -6831,17 +6855,19 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
     const buf = await _renderHtmlToPdf(html, { pageNumbers: true, pageFooterHtml });
 
     // Save the rendered PDF to storage so it's recoverable later and
-    // tied to the cycle for posterity.
+    // tied to the cycle for posterity. Filename distinguishes the
+    // mailing vs. website version so both are preserved.
+    const variantSuffix = includeBios ? 'with_bios' : 'mailing_no_bios';
     try {
       const stem = (cycle.community_name || 'community').replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
-      const storagePath = `nominations/${cycle.id}/${stem}_annual_meeting_notice.pdf`;
+      const storagePath = `nominations/${cycle.id}/${stem}_annual_meeting_notice_${variantSuffix}.pdf`;
       await supabase.storage.from('documents').upload(storagePath, buf, {
         contentType: 'application/pdf', upsert: true,
       });
     } catch (e) { console.warn('[annual-meeting-notice] storage save failed:', e.message); }
 
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="annual_meeting_notice.pdf"`);
+    res.setHeader('Content-Disposition', `attachment; filename="annual_meeting_notice_${variantSuffix}.pdf"`);
     res.send(buf);
   } catch (err) {
     console.error('[nominations/annual-meeting-notice]', err);

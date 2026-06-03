@@ -637,7 +637,7 @@ router.get('/communities', async (req, res) => {
   try {
     let q = supabase
       .from('communities')
-      .select('id, name, legal_name, slug, vantaca_code, total_lots, active, city, state, zip')
+      .select('id, name, legal_name, slug, vantaca_code, total_lots, active, city, state, zip, website_url')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('name');
     if (req.query.include_inactive !== '1') q = q.eq('active', true);
@@ -647,6 +647,67 @@ router.get('/communities', async (req, res) => {
   } catch (err) {
     console.error('[communities.list]', err);
     res.status(500).json({ error: err.message || 'failed to list communities' });
+  }
+});
+
+// Single community fetch — used by the Annual Meeting Notice tab to
+// surface the community's website URL so the operator knows whether
+// the mailing PDF will include the bios callout with a link.
+router.get('/communities/:id', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('communities')
+      .select('id, name, legal_name, slug, vantaca_code, total_lots, active, city, state, zip, website_url')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'community not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('[communities.get]', err);
+    res.status(500).json({ error: err.message || 'failed to fetch community' });
+  }
+});
+
+// Single-community patch. Limited whitelist — only fields the UI
+// surfaces are accepted; everything else is silently ignored to keep
+// the inline-edit flow scoped + safe. Currently supports:
+//   - website_url   (homeowner-facing community site URL, used by AMN)
+//   - city / state / zip   (default geo for new properties)
+router.patch('/communities/:id', express.json(), async (req, res) => {
+  try {
+    const ALLOWED = ['website_url', 'city', 'state', 'zip'];
+    const patch = {};
+    for (const k of ALLOWED) {
+      if (req.body && Object.prototype.hasOwnProperty.call(req.body, k)) {
+        // Treat empty string as NULL — operator clearing a field, not
+        // saving "" which the AMN renderer would mis-interpret as a
+        // present-but-blank URL and print "available at ." with a bad
+        // link.
+        const v = req.body[k];
+        patch[k] = (v === '' || v == null) ? null : v;
+      }
+    }
+    if (Object.keys(patch).length === 0) {
+      return res.status(400).json({ error: 'no editable fields provided' });
+    }
+    if (patch.website_url && !/^https?:\/\//i.test(patch.website_url)) {
+      return res.status(400).json({ error: 'website_url must start with http:// or https://' });
+    }
+    const { data, error } = await supabase
+      .from('communities')
+      .update(patch)
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .select('id, name, website_url, city, state, zip')
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!data) return res.status(404).json({ error: 'community not found' });
+    res.json(data);
+  } catch (err) {
+    console.error('[communities.patch]', err);
+    res.status(500).json({ error: err.message || 'failed to patch community' });
   }
 });
 

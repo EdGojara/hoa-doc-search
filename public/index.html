@@ -1985,9 +1985,17 @@
         <div id="amnSlateList" style="font-size:13px; color:#334155;">—</div>
         <p style="font-size:11.5px; color:#94A3B8; margin:6px 0 0 0;">To add or remove candidates from the slate, go to <strong>Call for Nominations</strong> → open the cycle → click <strong>✓ Put on ballot</strong> on the nomination row.</p>
 
+        <!-- Two-version split (added 2026-06): the mailing version
+             omits candidate biographies to shorten the mailed packet
+             (boards pay per page). The website version keeps bios for
+             posting online. Both versions point homeowners at the
+             online ballot + community website for bios in the voting
+             instructions section. -->
         <div style="display:flex; gap:8px; margin-top:18px; flex-wrap:wrap;">
-          <button id="amnGenerateBtn" onclick="amnGenerate()" disabled style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; opacity:0.5;">🗳️ Generate Annual Meeting Notice</button>
+          <button id="amnGenerateMailingBtn" onclick="amnGenerate(false)" disabled style="background:#15803d; color:#fff; border:1px solid #15803d; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; opacity:0.5;" title="PDF for mailing — omits candidate biographies to shorten the packet. Bios stay on the online ballot + community website.">📬 Mailing version (no bios)</button>
+          <button id="amnGenerateWebsiteBtn" onclick="amnGenerate(true)" disabled style="background:#1e3a8a; color:#fff; border:1px solid #1e3a8a; font-size:14px; padding:8px 16px; border-radius:8px; cursor:pointer; font-weight:600; opacity:0.5;" title="PDF for posting to the community website — includes full candidate biographies and photos.">🌐 Website version (with bios)</button>
         </div>
+        <div id="amnWebsiteUrlHint" style="margin-top:8px; font-size:11.5px; color:#94A3B8;"></div>
         <div id="amnGenerateStatus" style="margin-top:10px; font-size:13px; color:#475569;"></div>
       </div>
     </div>
@@ -2003,12 +2011,17 @@
       </div>
 
       <div style="margin-top:12px; padding:10px 14px; background:#f0f9ff; border:1px solid #c7d2fe; border-radius:8px; font-size:12px; color:#475569;">
-        <strong style="color:#1E2761;">What the Notice contains:</strong>
+        <strong style="color:#1E2761;">Two versions, same notice:</strong>
+        <ul style="margin:6px 0 8px 18px; padding:0;">
+          <li><strong>📬 Mailing version</strong> — Pages 1-3 only. Drops the candidate biographies to shorten the mailed packet (boards pay per page mailed). The voting instructions point homeowners at the online ballot + community website for bios.</li>
+          <li><strong>🌐 Website version</strong> — All pages including Candidate Statements (bios + photos). Posted on the community website so anyone can read who's running before they vote.</li>
+        </ul>
+        <strong style="color:#1E2761;">Pages in order:</strong>
         <ul style="margin:6px 0 0 18px; padding:0;">
           <li>Page 1 — Meeting notice + agenda</li>
-          <li>Page 2 — Voting instructions (each accepted method + TX §209.00592 disclosure)</li>
+          <li>Page 2 — Voting instructions (methods + bios callout + TX §209.00592)</li>
           <li>Page 3 — Proxy / Absentee Ballot (3 options, candidate checkboxes, write-in line, owner info, signature)</li>
-          <li>Page 4 — Candidate Statements (bios + photos, alphabetical)</li>
+          <li>Page 4+ — Candidate Statements (website version only)</li>
         </ul>
       </div>
     </div>
@@ -30594,28 +30607,102 @@ ${questionsPage}
       if (sortSel) sortSel.value = _amnSortMode;
       amnRenderSlate();
       // Enable Generate only when there's at least 1 candidate on slate.
-      const gen = document.getElementById('amnGenerateBtn');
+      // Two-button split (mailing vs. website): both gate on the same
+      // slate-non-empty condition.
+      const mailingBtn = document.getElementById('amnGenerateMailingBtn');
+      const websiteBtn = document.getElementById('amnGenerateWebsiteBtn');
       if (slate.length > 0) {
-        gen.disabled = false; gen.style.opacity = '1';
-        gen.title = `Generate Annual Meeting Notice for ${slate.length} candidate${slate.length === 1 ? '' : 's'}`;
+        if (mailingBtn) { mailingBtn.disabled = false; mailingBtn.style.opacity = '1'; }
+        if (websiteBtn) { websiteBtn.disabled = false; websiteBtn.style.opacity = '1'; }
       } else {
-        gen.disabled = true; gen.style.opacity = '0.5';
-        gen.title = 'Add at least 1 candidate to the slate first';
+        if (mailingBtn) { mailingBtn.disabled = true;  mailingBtn.style.opacity = '0.5'; mailingBtn.title = 'Add at least 1 candidate to the slate first'; }
+        if (websiteBtn) { websiteBtn.disabled = true;  websiteBtn.style.opacity = '0.5'; websiteBtn.title = 'Add at least 1 candidate to the slate first'; }
       }
+
+      // Surface whether the community has a website on file. The Notice
+      // points homeowners at this URL for bios; without it, the mailing
+      // version still works but the callout reads "available on the
+      // online ballot and the association's website" (no URL).
+      try {
+        const hint = document.getElementById('amnWebsiteUrlHint');
+        if (hint && cycle.community_id) {
+          const cr = await fetch(`/api/communities/${cycle.community_id}`);
+          if (cr.ok) {
+            const cj = await cr.json();
+            const url = (cj && (cj.website_url || (cj.community && cj.community.website_url))) || null;
+            if (url) {
+              hint.innerHTML = `🌐 Community website: <strong>${escapeHtml(url)}</strong> — homeowners will be directed here for candidate bios.`;
+              hint.style.color = '#475569';
+            } else {
+              hint.innerHTML = `⚠️ No community website on file. The mailing version will still print, but the bios callout won't include a URL. <a href="javascript:void(0)" onclick="amnPromptForWebsiteUrl('${cycle.community_id}', '${escapeHtml(cycle.community_name || '')}')" style="color:#b45309; font-weight:600;">Add website URL →</a>`;
+              hint.style.color = '#b45309';
+            }
+          }
+        }
+      } catch (_) { /* non-fatal */ }
     } catch (e) {
       document.getElementById('amnSlateList').innerHTML = `<span style="color:#b91c1c;">Couldn't load slate: ${escapeHtml(e.message)}</span>`;
     }
   }
 
-  async function amnGenerate() {
+  // Inline prompt to set the community.website_url. Saves the operator
+  // a round-trip to a separate Community Settings page just to enter
+  // one URL the AMN renderer wants. Used by the "Add website URL →"
+  // link in amnWebsiteUrlHint above.
+  async function amnPromptForWebsiteUrl(communityId, communityName) {
+    const current = '';
+    const next = prompt(`Enter the public-facing website URL for ${communityName || 'this community'}:\n(e.g., https://www.waterviewestates.org)`, current);
+    if (next == null) return;
+    const url = String(next).trim();
+    if (!url) return;
+    // Light validation — require http(s) prefix so the renderer's
+    // link works without surprises.
+    if (!/^https?:\/\//i.test(url)) {
+      alert('URL must start with http:// or https://');
+      return;
+    }
+    try {
+      const r = await fetch(`/api/communities/${communityId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ website_url: url }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      // Reload the AMN panel so the hint refreshes with the new URL.
+      if (typeof amnPickCycle === 'function' && amnCurrentCycleId) {
+        amnPickCycle(amnCurrentCycleId);
+      }
+    } catch (e) {
+      alert(`Couldn't save website URL: ${e.message}`);
+    }
+  }
+
+  async function amnGenerate(includeBios) {
     if (!amnCurrentCycleId) { alert('Pick a cycle first.'); return; }
-    const btn = document.getElementById('amnGenerateBtn');
+    // Coerce defensively — the click handlers pass booleans literally,
+    // but if some other call site invokes without an argument we'd
+    // rather render the bigger "website" version than silently drop
+    // bios. Default to true (legacy behavior).
+    const withBios = includeBios !== false;
+    const mailingBtn = document.getElementById('amnGenerateMailingBtn');
+    const websiteBtn = document.getElementById('amnGenerateWebsiteBtn');
+    const targetBtn = withBios ? websiteBtn : mailingBtn;
     const status = document.getElementById('amnGenerateStatus');
-    const origLabel = btn.innerHTML;
-    btn.disabled = true; btn.textContent = '⏳ Rendering (15–20s)…';
+    const origLabel = targetBtn ? targetBtn.innerHTML : '';
+    if (targetBtn) {
+      targetBtn.disabled = true;
+      targetBtn.textContent = '⏳ Rendering (15–20s)…';
+    }
     status.innerHTML = '';
     try {
-      const r = await fetch(`/api/nominations/cycles/${amnCurrentCycleId}/annual-meeting-notice`, { method: 'POST' });
+      const r = await fetch(`/api/nominations/cycles/${amnCurrentCycleId}/annual-meeting-notice`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ include_candidate_bios: withBios }),
+      });
       if (!r.ok) {
         const j = await r.json().catch(() => ({}));
         throw new Error(j.error || `HTTP ${r.status}`);
@@ -30624,14 +30711,15 @@ ${questionsPage}
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `annual-meeting-notice.pdf`;
+      a.download = withBios ? 'annual-meeting-notice-website.pdf' : 'annual-meeting-notice-mailing.pdf';
       a.click();
       URL.revokeObjectURL(url);
-      status.innerHTML = `<span style="color:#15803d;">✓ Annual Meeting Notice generated and downloaded.</span> The PDF is also saved alongside this cycle in storage.`;
+      const label = withBios ? 'Website version' : 'Mailing version';
+      status.innerHTML = `<span style="color:#15803d;">✓ ${label} generated and downloaded.</span> Also saved alongside this cycle in storage.`;
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">Generate failed: ${escapeHtml(e.message)}</span>`;
     } finally {
-      btn.disabled = false; btn.innerHTML = origLabel;
+      if (targetBtn) { targetBtn.disabled = false; targetBtn.innerHTML = origLabel; }
     }
   }
 
