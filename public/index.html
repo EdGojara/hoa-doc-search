@@ -2055,29 +2055,50 @@
       <div id="homesInferStatus" style="font-size:11.5px; margin-top:6px;"></div>
     </div>
 
-    <div style="border:1px solid #d0d7de; border-radius:10px; padding:14px; background:#fff;">
-      <h3 style="margin:0 0 8px 0; font-size:14px; color:#1E2761;">📤 Upload Vantaca export</h3>
-      <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">CSV or Excel. Auto-detects columns. Preview every change before anything saves.</p>
-      <div class="section-label">Community</div>
-      <select id="homesUploadCommunity" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-bottom:8px;">
-        <option value="">— Pick community —</option>
-      </select>
-      <div id="homesUploadDropZone"
-           style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; background:#f7f9fc; margin-bottom:8px; cursor:pointer; transition:all 0.15s;"
-           onclick="document.getElementById('homesUploadFile').click()"
-           ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
-           ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc';"
-           ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('homesUploadFile').files=dt.files; homesUpdateDropLabel(); }">
-        <div style="font-size:20px; color:#5a7390;">📥</div>
-        <div id="homesUploadDropLabel" style="font-size:12px; font-weight:600; color:#0B1D34; margin-top:4px;">
-          Drag &amp; drop CSV / Excel here
+    <!-- ============================================================
+         VANTACA UPLOAD — LEGACY PANEL (hidden behind disclosure 2026-06-03)
+         ----------------------------------------------------------------
+         Pre-dates the "clean once, verify forever" Roster Import pattern.
+         The Roster Import panel below is now the canonical inbound flow:
+         operator downloads a CSV pre-filled with current data, cleans it
+         outside the system, re-uploads, every row stamps as verified,
+         future Vantaca syncs can't silently overwrite verified data.
+         This panel still works (no API change) but lives behind a
+         disclosure so it doesn't compete with the canonical flow. Open
+         it only when someone hands you a raw Vantaca export and you
+         want to see the diff WITHOUT verifying.
+         ============================================================ -->
+    <details style="border:1px solid #e5e7eb; border-radius:10px; background:#fafbfc;">
+      <summary style="padding:10px 14px; cursor:pointer; font-size:12px; color:#64748b; font-weight:500; user-select:none;">
+        ⚙️ Advanced — Vantaca diff upload (legacy)
+      </summary>
+      <div style="padding:0 14px 14px 14px;">
+        <p style="font-size:11.5px; color:#94A3B8; margin:0 0 10px 0; line-height:1.5;">
+          Superseded by Roster Import (below). Use this only when you need to preview a raw Vantaca export's diff against the spine WITHOUT verifying rows. For onboarding a community or re-syncing after a Vantaca update, use Roster Import instead — it stamps every row as operator-verified so Vantaca can't silently overwrite your work.
+        </p>
+        <h3 style="margin:0 0 8px 0; font-size:14px; color:#1E2761;">📤 Upload Vantaca export</h3>
+        <p style="font-size:11.5px; color:#94A3B8; margin:0 0 8px 0;">CSV or Excel. Auto-detects columns. Preview every change before anything saves.</p>
+        <div class="section-label">Community</div>
+        <select id="homesUploadCommunity" style="width:100%; padding:7px 8px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; margin-bottom:8px;">
+          <option value="">— Pick community —</option>
+        </select>
+        <div id="homesUploadDropZone"
+             style="border:2px dashed #c0d0e0; border-radius:8px; padding:14px; text-align:center; background:#f7f9fc; margin-bottom:8px; cursor:pointer; transition:all 0.15s;"
+             onclick="document.getElementById('homesUploadFile').click()"
+             ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+             ondragleave="this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc';"
+             ondrop="event.preventDefault(); this.style.borderColor='#c0d0e0'; this.style.background='#f7f9fc'; if(event.dataTransfer.files.length){ const dt=new DataTransfer(); dt.items.add(event.dataTransfer.files[0]); document.getElementById('homesUploadFile').files=dt.files; homesUpdateDropLabel(); }">
+          <div style="font-size:20px; color:#5a7390;">📥</div>
+          <div id="homesUploadDropLabel" style="font-size:12px; font-weight:600; color:#0B1D34; margin-top:4px;">
+            Drag &amp; drop CSV / Excel here
+          </div>
+          <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file</div>
         </div>
-        <div style="font-size:11px; color:#5a7390; margin-top:2px;">or click to pick a file</div>
+        <input type="file" id="homesUploadFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="homesUpdateDropLabel()">
+        <button class="action-btn" id="homesUploadBtn" onclick="homesUploadVantaca()" style="width:100%; font-size:13px; padding:8px;">🔍 Preview diff</button>
+        <div id="homesUploadStatus" style="font-size:12px; margin-top:6px;"></div>
       </div>
-      <input type="file" id="homesUploadFile" accept=".csv,.xlsx,.xls" style="display:none;" onchange="homesUpdateDropLabel()">
-      <button class="action-btn" id="homesUploadBtn" onclick="homesUploadVantaca()" style="width:100%; font-size:13px; padding:8px;">🔍 Preview diff</button>
-      <div id="homesUploadStatus" style="font-size:12px; margin-top:6px;"></div>
-    </div>
+    </details>
   </div>
 
   <!-- Bulk Contact Methods Import — 3-tab xlsx (Address / Email / Phone)
