@@ -21716,6 +21716,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // Cache the benchmark for the currently-open RFP so per-bid badge
+  // rendering doesn't need its own fetch.
+  let _rfpBenchmark = null;
+
   async function rfpOpenDetail(rfpId) {
     _rfpActiveRfpId = rfpId;
     const wrap = document.getElementById('rfpDetail');
@@ -21726,10 +21730,38 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const r = await window._authFetch(`/api/vendors/rfps/${rfpId}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Kick off the benchmark fetch in parallel — used by the bid table
+      // render below. Excludes this RFP's own bids so we benchmark against
+      // PRIOR portfolio history, not against ourselves.
+      _rfpBenchmark = null;
+      try {
+        const bmRes = await window._authFetch(`/api/vendors/benchmarks?service_category=${encodeURIComponent(j.rfp.service_category || '')}&exclude_rfp_id=${encodeURIComponent(rfpId)}`);
+        _rfpBenchmark = await bmRes.json();
+      } catch (_) { _rfpBenchmark = null; }
       rfpRenderDetail(j);
     } catch (e) {
       wrap.innerHTML = '<div style="padding:14px; color:#991b1b;">Couldn\'t load RFP: ' + escapeHtml(e.message) + '</div>';
     }
+  }
+
+  // Map a single bid amount to a percentile bucket badge. Returns HTML.
+  // Color coding deliberately doesn't celebrate "lowest" — undercut bids
+  // often indicate missing scope (lowball strategy). Honest pricing
+  // intelligence flags both extremes.
+  function _rfpBenchBadge(amount) {
+    if (_rfpBenchmark == null) return '';
+    if (_rfpBenchmark.insufficient_data) return '';
+    if (amount == null || !Number.isFinite(Number(amount))) return '';
+    const n = Number(amount);
+    const { min, p25, median, p75, max } = _rfpBenchmark.stats || {};
+    if (min == null) return '';
+    let label, bg, fg, title;
+    if (n < min) { label = `< portfolio min`; bg = '#fef2f2'; fg = '#991b1b'; title = `Below the lowest historical bid we've ever received in this category. Scrutinize scope — lowball often hides exclusions.`; }
+    else if (n < p25) { label = `< p25`; bg = '#fffbeb'; fg = '#92400e'; title = `Below the 25th percentile. Lower than 75% of our historical bids. Verify scope completeness before recommending.`; }
+    else if (n <= p75) { label = `p25-p75 (mid)`; bg = '#f0fdf4'; fg = '#15803d'; title = `Within the typical market range for our portfolio. Competitive bid.`; }
+    else if (n <= max) { label = `> p75`; bg = '#fffbeb'; fg = '#92400e'; title = `Above the 75th percentile — higher than 75% of our historical bids. Premium price; justify with quality differentiator.`; }
+    else { label = `> portfolio max`; bg = '#fef2f2'; fg = '#991b1b'; title = `Higher than any historical bid in this category. Outlier.`; }
+    return `<div title="${escapeHtml(title)}" style="display:inline-block; margin-top:3px; font-size:10.5px; font-weight:600; padding:1px 7px; border-radius:9px; background:${bg}; color:${fg}; cursor:help;">${escapeHtml(label)}</div>`;
   }
 
   function rfpRenderDetail(data) {
@@ -21785,6 +21817,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         ? `<div style="padding:30px; text-align:center; color:#94a3b8; font-style:italic; background:#fff; border:1px dashed #e2e8f0; border-radius:8px;">${total === 0 ? 'No bids uploaded yet. Drop a PDF above to extract structured data.' : 'No bids match this filter.'}</div>`
         : rfpRenderBidsTable(filtered)}
 
+      ${rfpRenderBenchmarkPanel()}
       ${decision_log.length > 0 ? rfpRenderDecisionLog(decision_log) : ''}
     `;
   }
@@ -21803,9 +21836,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           const ext = b.extracted_data || {};
           const conf = ext.extraction_confidence || '?';
           const confColor = conf === 'high' ? '#15803d' : conf === 'low' ? '#dc2626' : '#92400e';
-          const totalFmt = b.total_annual_amount != null
+          const totalRaw = b.total_annual_amount != null
             ? '$' + Number(b.total_annual_amount).toLocaleString('en-US', { maximumFractionDigits: 0 })
             : '<span style="color:#94a3b8; font-style:italic;">unparsed</span>';
+          // Per-bid percentile badge — INTERNAL ONLY signal (see _rfpBenchBadge)
+          const benchBadge = _rfpBenchBadge(b.total_annual_amount);
+          const totalFmt = `<div>${totalRaw}</div>${benchBadge}`;
           const statusCell = b.is_finalist
             ? '<span style="background:#dcfce7; color:#15803d; font-size:11px; font-weight:700; padding:2px 8px; border-radius:10px;">★ FINALIST</span>'
             : b.eliminated_at
@@ -21846,6 +21882,50 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function rfpSetFilter(k) {
     _rfpFilter = k;
     if (_rfpActiveRfpId) rfpOpenDetail(_rfpActiveRfpId);
+  }
+
+  // INTERNAL-ONLY benchmark panel — Bedrock portfolio intelligence visible
+  // ONLY in the staff comparison UI. Does NOT render on the board memo PDF
+  // (lib/vendors/board_memo.js excludes this data by design). Marks itself
+  // visually with an INTERNAL USE ONLY banner so an operator screenshot
+  // shared with a board member is at least obviously-not-meant-to-share.
+  function rfpRenderBenchmarkPanel() {
+    if (!_rfpBenchmark) return '';
+    const fmt = (n) => n == null ? '—' : '$' + Math.round(Number(n)).toLocaleString('en-US');
+    if (_rfpBenchmark.insufficient_data) {
+      return `<div style="margin-top:18px; padding:12px 14px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px;">
+        <div style="font-size:11px; font-weight:700; color:#92400e; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:4px;">⚠ Internal use only — Bedrock staff</div>
+        <div style="font-size:12.5px; color:#78350f;">${escapeHtml(_rfpBenchmark.message || 'Benchmark needs more historical bids before it returns useful signal.')}</div>
+      </div>`;
+    }
+    const s = _rfpBenchmark.stats || {};
+    const years = (_rfpBenchmark.by_year || []).slice(-5);
+    return `<div style="margin-top:18px; padding:14px 16px; background:#fef2f2; border:2px solid #fca5a5; border-radius:8px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px;">
+        <div style="font-size:11px; font-weight:700; color:#991b1b; letter-spacing:0.1em; text-transform:uppercase;">🔒 Internal use only — Bedrock staff intelligence</div>
+        <div style="font-size:10.5px; color:#7f1d1d;">Do not share with vendors, boards, or homeowners</div>
+      </div>
+      <div style="font-size:12.5px; color:#1E2761; margin-bottom:8px;">
+        <b>Portfolio benchmark</b> for ${escapeHtml(_rfpBenchmark.service_category || '—')} ·
+        ${_rfpBenchmark.total_bids} historical bid${_rfpBenchmark.total_bids === 1 ? '' : 's'} across
+        ${_rfpBenchmark.unique_communities} ${_rfpBenchmark.unique_communities === 1 ? 'community' : 'communities'}
+      </div>
+      <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:8px 12px; font-size:11.5px; background:#fff; border:1px solid #fecaca; border-radius:6px; padding:10px 12px;">
+        <div><div style="color:#7f1d1d; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Min</div><div style="font-family:monospace; font-weight:700; color:#1E2761;">${fmt(s.min)}</div></div>
+        <div><div style="color:#7f1d1d; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">p25</div><div style="font-family:monospace; font-weight:700; color:#1E2761;">${fmt(s.p25)}</div></div>
+        <div><div style="color:#7f1d1d; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Median</div><div style="font-family:monospace; font-weight:700; color:#15803d;">${fmt(s.median)}</div></div>
+        <div><div style="color:#7f1d1d; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">p75</div><div style="font-family:monospace; font-weight:700; color:#1E2761;">${fmt(s.p75)}</div></div>
+        <div><div style="color:#7f1d1d; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Max</div><div style="font-family:monospace; font-weight:700; color:#1E2761;">${fmt(s.max)}</div></div>
+        <div><div style="color:#7f1d1d; font-size:10px; text-transform:uppercase; letter-spacing:0.05em;">Mean</div><div style="font-family:monospace; font-weight:700; color:#1E2761;">${fmt(s.mean)}</div></div>
+      </div>
+      ${years.length > 1 ? `<div style="margin-top:10px; font-size:11px; color:#7f1d1d;">
+        <b>Median by year:</b>
+        ${years.map(y => `<span style="display:inline-block; margin-right:14px; font-family:monospace;">${y.year}: ${fmt(y.median)} <span style="color:#94a3b8; font-weight:400;">(n=${y.bid_count})</span></span>`).join('')}
+      </div>` : ''}
+      <div style="margin-top:8px; font-size:10.5px; color:#7f1d1d; line-height:1.4;">
+        How to read: each bid above shows a colored badge — <b>p25-p75 (mid)</b> = competitive market range; <b>&lt; p25</b> = below typical, verify scope completeness; <b>&gt; p75</b> = premium price, justify with quality differentiator. Excludes the current RFP's own bids.
+      </div>
+    </div>`;
   }
 
   async function rfpUploadBid() {

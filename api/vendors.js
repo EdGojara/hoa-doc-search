@@ -951,6 +951,120 @@ router.patch('/proposals/:id', express.json(), async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/vendors/benchmarks
+// ----------------------------------------------------------------------------
+// INTERNAL USE ONLY — Bedrock portfolio benchmark intelligence. Aggregates
+// every historical bid in a service category across the management
+// company's communities to compute percentile distribution (min, p25,
+// median, p75, max, mean) plus by-year breakdown.
+//
+// Used by the RFP comparison UI to show "this bid is at p65 of our
+// portfolio for landscape maintenance" — operator gets pricing intel at
+// decision time. This data MUST NOT leak to boards, homeowners, or
+// vendors. The board memo PDF (lib/vendors/board_memo.js) deliberately
+// excludes benchmark data — only the formal recommendation + cut list
+// makes it onto the customer-facing artifact.
+//
+// Query: ?service_category=landscape_maintenance [&exclude_rfp_id=<uuid>]
+// The exclude_rfp_id param prevents the current RFP's own bids from
+// biasing the historical benchmark (don't compare your bids against
+// themselves — apples-to-apples means comparing against PRIOR portfolio
+// experience, not the bids you're evaluating right now).
+// ----------------------------------------------------------------------------
+router.get('/benchmarks', async (req, res) => {
+  try {
+    const category = (req.query.service_category || '').trim();
+    if (!category) return res.status(400).json({ error: 'service_category required' });
+    const excludeRfpId = (req.query.exclude_rfp_id || '').trim() || null;
+
+    // Pull every annualized bid in this category for this management co.
+    // Filter out the current RFP's bids if requested — keeps "your bid vs
+    // PRIOR portfolio history" honest. Limit isn't a concern at portfolio
+    // scale today (low hundreds at most); revisit when an individual
+    // category has 10k+ historical bids.
+    let q = supabase
+      .from('vendor_proposals')
+      .select('id, bid_request_id, total_annual_amount, proposal_date, created_at, community_id')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('service_category', category)
+      .not('total_annual_amount', 'is', null);
+    const { data: rows, error } = await q;
+    if (error) throw error;
+
+    const eligible = (rows || []).filter((r) => {
+      if (excludeRfpId && r.bid_request_id === excludeRfpId) return false;
+      const n = Number(r.total_annual_amount);
+      return Number.isFinite(n) && n > 0;
+    });
+
+    if (eligible.length < 3) {
+      // Below threshold for meaningful percentiles — return shape but
+      // flag insufficient_data so UI doesn't render misleading badges.
+      return res.json({
+        internal_only: true,
+        warning: 'INTERNAL USE ONLY — Bedrock portfolio data. Do not share with vendors, boards, or homeowners.',
+        service_category: category,
+        total_bids: eligible.length,
+        insufficient_data: true,
+        message: `Only ${eligible.length} historical bids in this category — benchmark needs ≥3 to compute percentiles. Run a few more RFPs through the system and this signal sharpens.`
+      });
+    }
+
+    // Sort ascending, compute percentiles + descriptive stats
+    const amounts = eligible.map((r) => Number(r.total_annual_amount)).sort((a, b) => a - b);
+    const pct = (p) => {
+      const idx = (amounts.length - 1) * p;
+      const lo = Math.floor(idx);
+      const hi = Math.ceil(idx);
+      if (lo === hi) return amounts[lo];
+      const w = idx - lo;
+      return amounts[lo] * (1 - w) + amounts[hi] * w;
+    };
+    const mean = amounts.reduce((s, n) => s + n, 0) / amounts.length;
+    const uniqueCommunities = new Set(eligible.map((r) => r.community_id).filter(Boolean)).size;
+
+    // Per-year breakdown for the trend chart (last 5 years)
+    const byYear = {};
+    for (const r of eligible) {
+      const dt = new Date(r.proposal_date || r.created_at);
+      if (isNaN(dt)) continue;
+      const y = dt.getFullYear();
+      if (!byYear[y]) byYear[y] = [];
+      byYear[y].push(Number(r.total_annual_amount));
+    }
+    const byYearStats = Object.entries(byYear)
+      .map(([year, vals]) => {
+        vals.sort((a, b) => a - b);
+        const median = vals.length % 2
+          ? vals[Math.floor(vals.length / 2)]
+          : (vals[vals.length / 2 - 1] + vals[vals.length / 2]) / 2;
+        return { year: Number(year), bid_count: vals.length, median };
+      })
+      .sort((a, b) => a.year - b.year);
+
+    res.json({
+      internal_only: true,
+      warning: 'INTERNAL USE ONLY — Bedrock portfolio data. Do not share with vendors, boards, or homeowners.',
+      service_category: category,
+      total_bids: eligible.length,
+      unique_communities: uniqueCommunities,
+      stats: {
+        min: amounts[0],
+        p25: pct(0.25),
+        median: pct(0.5),
+        p75: pct(0.75),
+        max: amounts[amounts.length - 1],
+        mean
+      },
+      by_year: byYearStats
+    });
+  } catch (err) {
+    console.error('[vendors/benchmarks]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/vendors/rfps/:id/decision-log — audit trail for this RFP
 // ----------------------------------------------------------------------------
 router.get('/rfps/:id/decision-log', async (req, res) => {
