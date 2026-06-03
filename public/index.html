@@ -24415,7 +24415,7 @@ ${questionsPage}
              <span style="font-size:10.5px; color:#94a3b8; margin-left:8px;">these are old migrations whose schema is already past them — marking them acknowledged hides them from future runs</span>
            </div>`
         : '';
-      status.innerHTML = `
+      const resultHtml = `
         <div style="background:${failCount > 0 ? '#fef2f2' : '#dcfce7'}; border:1px solid ${failCount > 0 ? '#fecaca' : '#bbf7d0'}; border-radius:6px; padding:12px 14px; font-size:12.5px;">
           <div style="font-weight:700; color:${failCount > 0 ? '#991b1b' : '#166534'}; margin-bottom:6px;">
             ${s.applied.length} applied · ${s.failed.length} failed · ${s.skipped.length} skipped
@@ -24424,6 +24424,32 @@ ${questionsPage}
           ${ackBtn}
           ${s.applied.length > 0 ? '<div style="margin-top:6px; font-size:11.5px; color:#166534;">Hard-refresh the page so any new schema changes are visible to the UI.</div>' : ''}
         </div>`;
+      status.innerHTML = resultHtml;
+
+      // Also surface the result at the BANNER location so the operator
+      // gets visible confirmation right where they clicked. The pending-
+      // migrations check below then runs to clear the amber banner (the
+      // "Apply now →" button there) so nothing dangles claiming there's
+      // still work to do.
+      const banner = document.getElementById('docsPendingMigBanner');
+      if (banner) {
+        banner.style.display = 'block';
+        banner.innerHTML = resultHtml;
+      }
+
+      // Re-run the pending check. If migrations applied successfully,
+      // wouldApply will now be empty → check function hides the banner.
+      // If applies failed, the amber banner re-renders showing what's
+      // still pending. Either way, the on-screen state matches reality.
+      await docsCheckPendingMigrations();
+      // Scroll the result into view so the operator sees it without
+      // scrolling around. The banner is at the top of the panel so
+      // scrolling it into view is the clearest visual confirmation.
+      if (banner && banner.style.display !== 'none') {
+        banner.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      } else if (status) {
+        status.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     } catch (e) {
       status.innerHTML = `<span style="color:#b91c1c;">✗ ${escapeHtml(e.message)}</span>`;
     } finally {
