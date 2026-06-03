@@ -2202,17 +2202,10 @@
       </div>
     </div>
 
-    <!-- Heads-up: Vantaca's "Mailing Addresses Export" returns ALL mailing
-         addresses on file per account (Primary + alternates), not just the
-         Primary one. Confirmed 2026-06-03 on the Findley account
-         (10110203) — Vantaca's contact panel showed both "12828 South Hwy
-         105 West, Conroe TX 77304 (Primary Mailing Address)" and "9203
-         Highway 6 S Suite 124, Houston TX 77083-6387 (Mailing Address)";
-         the export returned the second (alternate) — diff flagged that
-         row as "changed" even though trustEd's Primary matched. Use a
-         filtered Primary-only export if Vantaca offers one. -->
-    <div style="background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:9px 12px; margin-bottom:10px; font-size:11.5px; color:#991b1b; line-height:1.5;">
-      <strong>⚠️ Heads-up on the Vantaca report:</strong> the "Mailing Addresses Export" returns <em>all</em> addresses on file per account (Primary + any alternates) — not just the Primary. If a homeowner has more than one mailing address in Vantaca, this comparison may flag the Primary you verified as "changed." Best practice: use a Vantaca report filtered to <strong>Primary Mailing Address only</strong> (or apply a Primary-only filter in the export). Until then, <strong>do not auto-apply mailing changes</strong> — review each one against the Vantaca contact's Primary, not the alternates.
+    <!-- Two Vantaca exports work here; the canonical one was identified
+         2026-06-03 after a multi-export shootout on Waterview. -->
+    <div style="background:#ecfeff; border:1px solid #a5f3fc; border-radius:6px; padding:9px 12px; margin-bottom:10px; font-size:11.5px; color:#155e75; line-height:1.5;">
+      <strong>Best Vantaca export to use:</strong> <code>Homeowner Contact Information</code> (3 tabs — Address / Email / Phone). The parser auto-detects it and filters the Address tab to <strong>Primary Mailing = Yes</strong> rows only, eliminating the alt-address noise we hit with the older <code>Mailing Addresses Export</code>. The older export still works as a fallback but may flag false positives when an account has multiple addresses on file.
     </div>
 
     <!-- Pick community + drop zone + preview button -->
