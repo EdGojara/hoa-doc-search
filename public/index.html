@@ -4935,7 +4935,13 @@
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      alert(`✓ Applied.\n\nMailing: ${j.mailing_updated}\nNames: ${j.name_updated}${j.errors && j.errors.length ? '\nErrors: ' + j.errors.length : ''}`);
+      // When errors are returned, surface the first 3 explicitly so the
+      // operator can see WHY rows failed (instead of just "Errors: 14"
+      // which is useless for debugging).
+      const errorDetail = (j.errors && j.errors.length)
+        ? `\n\nFirst few errors:\n${j.errors.slice(0, 3).map(e => `  - [${e.kind}] ${e.message}${e.contact_id ? ' (contact ' + e.contact_id.slice(0,8) + '...)' : ''}`).join('\n')}${j.errors.length > 3 ? `\n  ... and ${j.errors.length - 3} more` : ''}`
+        : '';
+      alert(`${j.mailing_updated === 0 && j.name_updated === 0 ? '⚠️ Nothing applied.' : '✓ Applied.'}\n\nMailing: ${j.mailing_updated}\nNames: ${j.name_updated}${j.errors && j.errors.length ? '\nErrors: ' + j.errors.length : ''}${errorDetail}`);
       // Re-run preview so the operator sees the now-empty delta
       await mailingDeltaPreview();
     } catch (e) {
