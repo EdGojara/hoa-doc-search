@@ -31255,8 +31255,7 @@ ${questionsPage}
   // Nominations after generating the PDF was bad UX (Ed called it out).
   async function amnSendToBedrockVote() {
     if (!amnCurrentCycleId) { alert('Pick a cycle first.'); return; }
-    const cycle = (_amnAllCycles || []).find(c => c.id === amnCurrentCycleId) ||
-                  document.getElementById('amnCommunityName')?.textContent;
+    const cycle = (typeof amnAllCycles !== 'undefined' ? amnAllCycles : []).find(c => c.id === amnCurrentCycleId);
     const cycleLabel = (cycle && cycle.community_name) || 'this cycle';
     if (!confirm(
       `Send to bedrock-vote?\n\n` +
