@@ -21763,6 +21763,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             📤 Upload bid PDF
             <input type="file" id="rfpUploadFile" accept="application/pdf" style="display:none;" onchange="rfpUploadBid()">
           </label>
+          ${finalists > 0 ? `<button onclick="rfpGenerateMemo()" class="action-btn" style="font-size:13px; padding:8px 14px; background:#15803d; border-color:#15803d;" title="Generate the Bedrock-branded board memo PDF. Requires at least 1 finalist (3 ideal). Includes the cut list with reasons.">📋 Generate board memo</button>` : ''}
           <button onclick="rfpOpenDetail('${rfp.id}')" class="secondary-btn" style="font-size:13px; padding:8px 14px;">↻ Refresh</button>
         </div>
       </div>
@@ -21904,6 +21905,68 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (!r.ok) { alert(j.error || `HTTP ${r.status}`); return; }
       await rfpOpenDetail(_rfpActiveRfpId);
     } catch (e) { alert('Eliminate failed: ' + e.message); }
+  }
+
+  async function rfpGenerateMemo() {
+    if (!_rfpActiveRfpId) return;
+    // Fetch current RFP detail so we know the finalists for the picker
+    let detail;
+    try {
+      const r = await window._authFetch(`/api/vendors/rfps/${_rfpActiveRfpId}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      detail = j;
+    } catch (e) { alert('Couldn\'t load RFP: ' + e.message); return; }
+
+    const finalists = (detail.proposals || []).filter(p => p.is_finalist);
+    if (finalists.length === 0) { alert('Mark at least one finalist before generating the memo.'); return; }
+
+    // Operator picks which finalist is the recommendation
+    let recVendorId = finalists[0].id;
+    if (finalists.length > 1) {
+      const choices = finalists.map((f, i) => `${i + 1}. ${f.proposer_company_name || '(unparsed)'} — ${f.total_annual_amount ? '$' + Number(f.total_annual_amount).toLocaleString() : 'unparsed'}/yr`).join('\n');
+      const pick = prompt(`Which finalist are you recommending? Enter the number (1-${finalists.length}):\n\n${choices}`);
+      const idx = parseInt(pick, 10) - 1;
+      if (isNaN(idx) || idx < 0 || idx >= finalists.length) return;
+      recVendorId = finalists[idx].id;
+    }
+    const recVendor = finalists.find(f => f.id === recVendorId);
+
+    const paragraph = prompt(
+      `Your recommendation paragraph for the board (this goes verbatim into the memo):\n\nRecommending: ${recVendor.proposer_company_name}\n\nA few sentences on WHY — e.g., "Best value at acceptable quality. References strong. Crew capacity matches our acreage. Insurance current. Lower bidder excluded due to no workers comp on file."`,
+      ''
+    );
+    if (!paragraph || !paragraph.trim()) return;
+
+    const preparedBy = prompt('Your name + title for the memo signature (e.g., "Ed Gojara, Bedrock Association Management"):', 'Ed Gojara, Bedrock Association Management');
+    if (!preparedBy) return;
+
+    try {
+      const r = await window._authFetch(`/api/vendors/rfps/${_rfpActiveRfpId}/board-memo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recommendation: { vendor_id: recVendorId, paragraph_text: paragraph.trim() },
+          prepared_by: preparedBy.trim()
+        })
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
+      // Download the streamed PDF
+      const blob = await r.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Board_Memo.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      // Refresh detail so status flip is visible
+      rfpOpenDetail(_rfpActiveRfpId);
+    } catch (e) { alert('Memo generation failed: ' + e.message); }
   }
 
   async function rfpReset(proposalId) {

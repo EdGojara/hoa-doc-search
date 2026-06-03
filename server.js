@@ -7547,6 +7547,120 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
   }
 });
 
+// ============================================================================
+// POST /api/vendors/rfps/:id/board-memo
+// ----------------------------------------------------------------------------
+// Generates the Vendor Selection Board Memo PDF for an RFP. Renders via
+// lib/vendors/board_memo.js → HTML → puppeteer → PDF.
+//
+// Body:
+//   {
+//     recommendation: { vendor_id, paragraph_text },  // operator-dictated
+//     prepared_by: 'Ed Gojara, Bedrock Association Management'
+//   }
+//
+// Response: streams the PDF inline (Content-Type: application/pdf) with a
+// download filename derived from community + RFP title. Also flips the RFP
+// status from 'evaluating' → 'recommended' (or leaves it alone if already
+// awarded). PDF is NOT persisted on this endpoint — operator downloads,
+// reviews, attaches to the board packet. Save-to-storage can come later.
+// ============================================================================
+const { renderBoardMemoHTML } = require('./lib/vendors/board_memo');
+app.post('/api/vendors/rfps/:id/board-memo', express.json(), async (req, res) => {
+  try {
+    const rfpId = req.params.id;
+    const { recommendation, prepared_by } = req.body || {};
+    if (!recommendation || !recommendation.vendor_id || !recommendation.paragraph_text) {
+      return res.status(400).json({ error: 'recommendation { vendor_id, paragraph_text } required — operator must dictate the recommendation' });
+    }
+    if (!prepared_by || !String(prepared_by).trim()) {
+      return res.status(400).json({ error: 'prepared_by required (your name for the memo signature)' });
+    }
+
+    // Load RFP + community
+    const { data: rfp, error: rErr } = await supabase
+      .from('bid_requests')
+      .select('*, community:communities(id, name, city, state, zip)')
+      .eq('id', rfpId)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (rErr) throw rErr;
+    if (!rfp) return res.status(404).json({ error: 'RFP not found' });
+
+    // Load all proposals for this RFP
+    const { data: proposals, error: pErr } = await supabase
+      .from('vendor_proposals')
+      .select('*')
+      .eq('bid_request_id', rfpId);
+    if (pErr) throw pErr;
+
+    const finalists = (proposals || []).filter((p) => p.is_finalist);
+    const eliminated = (proposals || []).filter((p) => p.eliminated_at);
+
+    if (finalists.length === 0) {
+      return res.status(400).json({ error: 'No finalists marked. Mark at least one bid as a finalist before generating the board memo.' });
+    }
+
+    // Resolve the recommendation vendor → must be one of the finalists
+    const recVendor = finalists.find((f) => f.id === recommendation.vendor_id);
+    if (!recVendor) {
+      return res.status(400).json({ error: 'recommendation.vendor_id must point to one of the current finalists. Re-pick or mark that vendor as a finalist first.' });
+    }
+
+    // Sort finalists: recommended one first, then by total_annual_amount asc
+    const finalistsSorted = [
+      recVendor,
+      ...finalists.filter((f) => f.id !== recVendor.id).sort((a, b) => (a.total_annual_amount || 0) - (b.total_annual_amount || 0))
+    ];
+
+    // Render HTML → PDF
+    const html = renderBoardMemoHTML({
+      rfp,
+      finalists: finalistsSorted,
+      eliminated,
+      recommendation: {
+        vendor_id: recVendor.id,
+        vendor_name: recVendor.proposer_company_name || '(unparsed)',
+        paragraph_text: recommendation.paragraph_text
+      },
+      prepared_by,
+      prepared_at: new Date().toISOString()
+    });
+
+    const pdf = await _renderHtmlToPdf(html);
+
+    // Bump RFP status to 'recommended' (only if currently earlier in flow)
+    if (['draft', 'collecting', 'evaluating'].includes(rfp.status)) {
+      await supabase
+        .from('bid_requests')
+        .update({ status: 'recommended', selected_proposal_id: recVendor.id, updated_at: new Date().toISOString() })
+        .eq('id', rfpId);
+    }
+
+    // Audit log entry
+    await supabase.from('rfp_decision_log').insert({
+      bid_request_id: rfpId,
+      proposal_id: recVendor.id,
+      action: 'mark_finalist',  // closest existing action — represents the formal recommendation
+      reason: `BOARD MEMO GENERATED — recommended to board. Operator paragraph: ${String(recommendation.paragraph_text).slice(0, 500)}`,
+      operator: prepared_by,
+      before_state: { is_finalist: true, was_recommendation: false },
+      after_state: { is_finalist: true, was_recommendation: true }
+    });
+
+    // Stream the PDF as download
+    const safeName = (rfp.title || rfp.service_category || 'vendor-memo')
+      .replace(/[^A-Za-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="Board_Memo_${safeName}.pdf"`);
+    res.send(pdf);
+  } catch (err) {
+    console.error('[vendors/board-memo]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/nominations/cycles/:id/nominations', async (req, res) => {
   try {
     const { data, error } = await supabase
