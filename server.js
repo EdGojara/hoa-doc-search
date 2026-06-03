@@ -6864,6 +6864,21 @@ app.post('/api/nominations/cycles/:id/annual-meeting-notice', async (req, res) =
       await supabase.storage.from('documents').upload(storagePath, buf, {
         contentType: 'application/pdf', upsert: true,
       });
+      // Stamp the cycle row so the readiness check can see the PDF
+      // exists (mailing version only — that's the canonical packet
+      // the homeowners receive). Without this stamp the Send-to-
+      // bedrock-vote button never appeared on the Call for
+      // Nominations panel because notice_pdf_storage_path stayed
+      // NULL forever. Caught 2026-06-03 mid-Waterview ballot prep.
+      if (!includeBios) {
+        await supabase
+          .from('nomination_cycles')
+          .update({
+            notice_pdf_storage_path: storagePath,
+            notice_generated_at: new Date().toISOString(),
+          })
+          .eq('id', cycle.id);
+      }
     } catch (e) { console.warn('[annual-meeting-notice] storage save failed:', e.message); }
 
     res.setHeader('Content-Type', 'application/pdf');
