@@ -7310,6 +7310,13 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       voters_full_available: true,
       readiness: {
         cycle_status_ok: ['closed', 'finalized'].includes(cycle.status),
+        // Notice readiness was wrongly anchored to "marked sent" — but
+        // the operator can't mark sent until the QR-coded mailing labels
+        // are printed, and those come from bedrock-vote AFTER the push.
+        // Chicken-and-egg caught 2026-06-03. New gate: PDF must be
+        // generated (notice_pdf_storage_path or notice_generated_at).
+        // Mark-sent is the AUDIT step, not the push prerequisite.
+        notice_ready: !!(cycle.notice_pdf_storage_path || cycle.notice_generated_at),
         notice_sent: !!cycle.notice_sent_at,
         has_candidates: candidates.length > 0,
         has_voters: voters.length > 0,
@@ -7317,7 +7324,7 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         voter_count_matches_properties: voterCountMatchesProperties,
         all_mailings_complete: incompleteMailings.length === 0,
         ready_to_push: ['closed', 'finalized'].includes(cycle.status)
-          && !!cycle.notice_sent_at
+          && !!(cycle.notice_pdf_storage_path || cycle.notice_generated_at)  // PDF generated
           && candidates.length > 0
           && voters.length > 0
           && !!(cycle.voting_cutoff_at || cycle.annual_meeting_date)

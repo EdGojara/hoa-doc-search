@@ -29387,11 +29387,13 @@ ${questionsPage}
       // Mark-sent button appears once the notice PDF exists but hasn't been
       // marked sent yet. Hidden after the operator confirms it went out.
       if (markSentBtn) markSentBtn.style.display = noticeReady && !noticeSent ? 'inline-block' : 'none';
-      // Send-to-bedrock-vote button appears once the notice has been sent
-      // (so we know the slate is locked + members have been notified).
-      // Stays visible through finalization so the operator can re-push if
-      // needed (idempotent on the bedrock-vote side).
-      if (sendToVoteBtn) sendToVoteBtn.style.display = (cycle.status === 'closed' && noticeSent) ? 'inline-block' : 'none';
+      // Send-to-bedrock-vote button appears once the AMN PDF is generated
+      // (the slate is locked + ballot is ready). This MUST happen BEFORE
+      // mark-sent because bedrock-vote is where the QR-coded mailing
+      // labels come from — operator can't mark sent until they've
+      // actually mailed, which requires the labels which require the
+      // push. Chicken-and-egg fix 2026-06-03.
+      if (sendToVoteBtn) sendToVoteBtn.style.display = (cycle.status === 'closed' && noticeReady) ? 'inline-block' : 'none';
       // Finalize button appears when the cycle is past the meeting date OR
       // notice has been sent + status is closed (operator can declare done).
       // Hidden when already finalized.
@@ -30542,7 +30544,7 @@ ${questionsPage}
           <div style="font-size:13px; font-weight:700; color:#1E2761; margin-bottom:6px;">Readiness</div>
           <div style="display:grid; grid-template-columns:1fr 1fr; gap:4px 16px; font-size:12.5px; margin-bottom:14px; padding:8px 12px; background:#fff; border:1px solid #e2e8f0; border-radius:6px;">
             <div>${fmtCheck(rdy.cycle_status_ok)} Cycle is closed or finalized</div>
-            <div>${fmtCheck(rdy.notice_sent)} Annual Meeting Notice marked sent</div>
+            <div>${fmtCheck(rdy.notice_ready)} Annual Meeting Notice PDF generated</div>
             <div>${fmtCheck(rdy.has_candidates)} At least one on-slate candidate</div>
             <div>${fmtCheck(rdy.has_voters)} At least one eligible voter</div>
             <div>${fmtCheck(rdy.has_voting_cutoff)} Voting cutoff date is set</div>
