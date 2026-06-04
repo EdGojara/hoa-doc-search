@@ -21844,6 +21844,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function exportScenarioToEmail(letter) {
     const rawBody = getScenarioEmailBody(letter);
     if (!rawBody) { alert('Could not find scenario ' + letter); return; }
+    const placeholders = _detectPlaceholders(rawBody);
+    if (placeholders.length > 0) {
+      alert(
+        'Can\'t export scenario ' + letter + ' — placeholders need to be filled in first:\n\n' +
+        placeholders.map((p) => '  • ' + p).join('\n') +
+        '\n\nEdit the askEd input to mention the specific citation, then re-run.'
+      );
+      return;
+    }
     const body = await _transformForCustomer(rawBody);
     _buildAndDownloadEml(body, letter);
   }
@@ -23943,6 +23952,47 @@ ${questionsPage}
   // staff-grade text into Outlook would leak operator register; one button,
   // one safe path.
 
+  // Detect unfilled placeholders the model emits when it knows it should
+  // cite something specific but the retrieved chunks didn't expose the
+  // citation. Common shape: "Section [X] of Article [X]". Quail Ridge
+  // Airbnb letter 2026-06-04 was the canonical failure — full enforcement
+  // letter rendered with bracketed placeholders that would have shipped to
+  // a homeowner. Root cause: chunking is structurally naive (1000-char
+  // sliding windows, no article/section metadata). Real fix is structure-
+  // aware chunking in lib/library_reindex.js (separate workstream). This
+  // is the safety check that stops the embarrassing failure at export time.
+  const PLACEHOLDER_PATTERNS = [
+    /\[X+\]/g,
+    /\[Y+\]/g,
+    /\[Z+\]/g,
+    /\[#+\]/g,
+    /\[Name\]/gi,
+    /\[Recipient(?:'s)?(?:\s+Name)?\]/gi,
+    /\[Homeowner(?:'s)?(?:\s+Name)?\]/gi,
+    /\[Date\]/gi,
+    /\[Amount\]/gi,
+    /\[Address\]/gi,
+    /\[Property(?:\s+Address)?\]/gi,
+    /\[Phone(?:\s+Number)?\]/gi,
+    /\[Email(?:\s+Address)?\]/gi,
+    /\[Article\s*(?:Number|#|X+|\d*)?\]/gi,
+    /\[Section\s*(?:Number|#|X+|\d*)?\]/gi,
+    /\[Paragraph\s*(?:Number|#|X+|\d*)?\]/gi,
+    /\[Insert\b[^\]]{0,30}\]/gi,
+    /\[Fill\s*(?:in)?\b[^\]]{0,20}\]/gi,
+    /\[TBD\]/gi,
+    /\[TODO\]/gi,
+  ];
+
+  function _detectPlaceholders(text) {
+    const found = new Set();
+    for (const p of PLACEHOLDER_PATTERNS) {
+      const matches = String(text || '').match(p);
+      if (matches) matches.forEach((m) => found.add(m));
+    }
+    return [...found];
+  }
+
   // Transform staff-grade text to customer-facing register via the server's
   // leak filter at customer tier. Citations soften ("Article 5.7" → "the
   // bylaws"), moat language is blocked, document-citation voice converts to
@@ -23979,12 +24029,28 @@ ${questionsPage}
       return;
     }
 
+    const rawEmailBody = extractHowToRespond(guidance);
+
+    // Pre-flight: refuse to ship an email body that still contains unfilled
+    // placeholders ([X], [Name], [Section X], etc.). These mean the model
+    // knew it should cite something specific but couldn't find it in the
+    // retrieved chunks. Sending bracketed placeholders to a homeowner reads
+    // as broken. Operator gets a clear list of what to fix.
+    const placeholders = _detectPlaceholders(rawEmailBody);
+    if (placeholders.length > 0) {
+      alert(
+        'Can\'t export — this answer contains placeholders that need to be filled in first:\n\n' +
+        placeholders.map((p) => '  • ' + p).join('\n') +
+        '\n\nThe system pulled the right document but couldn\'t resolve the exact citation. Open the source document in the Documents tab, find the specific Article/Section, and edit the askEd input to mention it explicitly — then re-run.'
+      );
+      return;
+    }
+
     const btn = document.getElementById('exportEdEmailBtn');
     const originalLabel = btn.textContent;
     btn.disabled = true;
     btn.textContent = '⏳ Preparing email…';
     try {
-      const rawEmailBody = extractHowToRespond(guidance);
       const emailBody = await _transformForCustomer(rawEmailBody);
       _buildAndDownloadEml(emailBody, null);
     } finally {
