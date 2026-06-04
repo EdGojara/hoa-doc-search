@@ -31,23 +31,30 @@ const PDFDocument = require('pdfkit');
 const { BRAND } = require('../lib/brand');
 
 // Draw a 3-tier cornerstone (matching brand SVG) at (x,y) with given height.
-function drawCornerstone(doc, x, y, h) {
-  const w = h * 0.8;
-  const tier = h / 3.4;
-  const inset = w * 0.045;
-  doc.save().fillColor('#D4AF37');
-  // Top tier
-  doc.polygon([x, y], [x + w, y], [x + w - inset * 2, y + tier], [x + inset * 2, y + tier]).fill();
-  // Middle tier
-  doc.polygon(
-    [x + inset, y + tier * 1.1], [x + w - inset, y + tier * 1.1],
-    [x + w - inset * 3, y + tier * 2.1], [x + inset * 3, y + tier * 2.1]
-  ).fill();
-  // Bottom tier
-  doc.polygon(
-    [x + inset * 2.2, y + tier * 2.2], [x + w - inset * 2.2, y + tier * 2.2],
-    [x + w - inset * 4, y + h], [x + inset * 4, y + h]
-  ).fill();
+// New Bedrock "B" master mark — matches lib/brand.js cornerstoneInlineSvg.
+// Two stacked lobes of the B in gold, with three vertical column cutouts
+// in each lobe (top: 3 columns, bottom: 3 columns) painted in navy. SVG
+// path is normalized to a 100x130 viewBox; we translate + scale to draw
+// at the requested (x, y, h). Replaces the prior 3-tier-trapezoid mark
+// that referenced an old brand identity (Ed 2026-06-04).
+function drawBedrockMark(doc, x, y, h) {
+  // SVG viewBox is 100 wide x 130 tall; preserve aspect ratio.
+  const scale = h / 130;
+  doc.save();
+  doc.translate(x, y);
+  doc.scale(scale);
+  // Outer B lobes — gold fill.
+  doc.fillColor('#D4AF37');
+  doc.path('M 10 6 H 60 C 75 6 85 18 85 35 C 85 52 75 64 60 64 H 24 V 6 Z M 10 64 H 65 C 80 64 90 76 90 95 C 90 114 80 126 65 126 H 10 Z').fill();
+  // Column cutouts — navy fill on top of the gold (3 columns in top
+  // lobe, 3 in bottom lobe — matches the inline-SVG version exactly).
+  doc.fillColor('#0B1D34');
+  doc.rect(34, 16, 6, 36).fill();
+  doc.rect(46, 12, 6, 40).fill();
+  doc.rect(58, 16, 6, 36).fill();
+  doc.rect(34, 76, 6, 40).fill();
+  doc.rect(46, 72, 6, 44).fill();
+  doc.rect(58, 76, 6, 40).fill();
   doc.restore();
 }
 
@@ -772,7 +779,7 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
     };
 
     // Brand cornerstone + wordmark
-    try { drawCornerstone(doc, 54, 54, 36); } catch (_) {}
+    try { drawBedrockMark(doc, 54, 54, 36); } catch (e) { console.warn('[meeting-checkin] mark draw failed:', e?.message); }
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050')
        .text(s(BRAND?.service?.name, 'Bedrock Association Management'), 100, 60);
     doc.font('Helvetica').fontSize(8).fillColor('#7a7a7a')
@@ -857,8 +864,20 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
     }
 
     stage = 'pdf-body-attendance';
-    // Attendance log
-    doc.addPage();
+    // Attendance log. Previously this section blindly called doc.addPage()
+    // even when the quorum section had ALREADY auto-paginated, producing
+    // a blank page in between (Ed 2026-06-04: 6 pages for Canyon Gate's
+    // 42-attendee meeting). New behavior: soft break — only add a page if
+    // there isn't enough room for the header + at least 6 rows on the
+    // current page. Otherwise the attendance continues inline.
+    {
+      const HEADER_BLOCK_HEIGHT = 60;
+      const MIN_ROWS_ON_FIRST_PAGE = 6;
+      const PER_ROW = 14;
+      const needed = HEADER_BLOCK_HEIGHT + (MIN_ROWS_ON_FIRST_PAGE * PER_ROW);
+      if (doc.y + needed > 720) doc.addPage();
+      else doc.moveDown(1);
+    }
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#1A3050')
        .text('In-Person Attendance Log');
     doc.font('Helvetica').fontSize(9).fillColor('#7a7a7a')
@@ -882,10 +901,15 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       doc.moveDown(0.2);
 
       doc.font('Helvetica').fontSize(8).fillColor('#1a1a1a');
+      // Deterministic row height — explicit y advance instead of moveDown so
+      // a column's auto-wrap can't drift the cursor and accidentally double-
+      // advance, which is part of how the Canyon Gate PDF ballooned to 6
+      // pages (Ed 2026-06-04). 14pt per row gives clean spacing at 8pt font.
+      const ROW_HEIGHT = 14;
       for (let i = 0; i < attendance.length; i++) {
         const a = attendance[i];
         try {
-          if (doc.y > 720) doc.addPage();
+          if (doc.y + ROW_HEIGHT > 720) doc.addPage();
           const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
           const status =
             a.vote_status_at_checkin === 'voted_online' ? 'Voted online' :
@@ -896,23 +920,30 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
             a.walk_in_ballot_status === 'declined_to_vote' ? 'Declined' :
             'Attended';
           const y0 = doc.y;
-          doc.text(s(time, ''), colX.time, y0, { width: 70 });
-          doc.text(s(a.owner_name, ''), colX.name, y0, { width: 155 });
-          doc.text(s(a.lot_number, ''), colX.lot, y0, { width: 45 });
-          doc.text(s(a.mailing_address, ''), colX.addr, y0, { width: 125 });
-          doc.text(s(status, 'Attended'), colX.status, y0, { width: 90 });
-          doc.moveDown(1.2);
+          // height option on .text() prevents PDFKit from wrapping into the
+          // next row's vertical space — anything too long gets clipped to
+          // ROW_HEIGHT cleanly instead of bleeding down.
+          doc.text(s(time, ''),             colX.time,   y0, { width: 70,  height: ROW_HEIGHT });
+          doc.text(s(a.owner_name, ''),     colX.name,   y0, { width: 155, height: ROW_HEIGHT });
+          doc.text(s(a.lot_number, ''),     colX.lot,    y0, { width: 45,  height: ROW_HEIGHT });
+          doc.text(s(a.mailing_address, ''),colX.addr,   y0, { width: 125, height: ROW_HEIGHT });
+          doc.text(s(status, 'Attended'),   colX.status, y0, { width: 90,  height: ROW_HEIGHT });
+          // Hard-set cursor to next row, ignoring whatever doc.y is now.
+          doc.y = y0 + ROW_HEIGHT;
         } catch (rowErr) {
-          // Don't let one bad row tank the whole PDF. Log and continue.
           console.warn(`[meeting-checkin] attendance row ${i} render error:`, rowErr?.message, 'row=', JSON.stringify(a).slice(0, 200));
         }
       }
     }
 
     stage = 'pdf-body-signature';
-    // Signature block
-    doc.moveDown(2);
-    if (doc.y > 650) doc.addPage();
+    // Signature block. Soft break: 120pt is enough for the certification
+    // paragraph + two signature lines; only add a page if that won't fit
+    // on the current page. Previous threshold (y > 650) was too tight and
+    // could fire even when 70pt of room remained, adding a blank page.
+    doc.moveDown(1.5);
+    const SIG_BLOCK_HEIGHT = 120;
+    if (doc.y + SIG_BLOCK_HEIGHT > 720) doc.addPage();
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050').text('Certification');
     doc.moveDown(0.5);
     doc.font('Helvetica').fontSize(10).fillColor('#1a1a1a')
