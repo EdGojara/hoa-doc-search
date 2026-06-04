@@ -41,22 +41,76 @@ const STORAGE_BUCKET = 'documents';
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
-// Helper: resolve community_id by fuzzy-matching the AI-detected community name.
+// Strip common HOA/POA legal suffixes so "Lake of Pine Forest Homeowners
+// Association, Inc" becomes "Lake of Pine Forest" — better for filenames
+// and fuzzy matching to the community row Bedrock has on file.
+function shortCommunityName(name) {
+  if (!name) return '';
+  let s = String(name).trim();
+  // Strip trailing legal-entity suffixes.
+  s = s.replace(/,?\s*(Inc|LLC|L\.L\.C\.|Corp|Corporation)\.?\s*$/i, '');
+  s = s.replace(/\s+(Homeowners Association|Property Owners Association|Community Association)\s*$/i, '');
+  s = s.replace(/\s+(HOA|POA|CA)\s*$/i, '');
+  // Collapse internal whitespace.
+  s = s.replace(/\s+/g, ' ').trim();
+  return s;
+}
+
+// Build a friendly newsletter filename from community + period + type.
+//   shortCommunityName("Lake of Pine Forest Homeowners Association, Inc")
+//   + "May 2026" -> "Lake of Pine Forest May 2026 DRV report.pdf"
+function buildReportFilename(community, period, kind) {
+  const c = shortCommunityName(community) || 'Community';
+  const p = (period || '').trim();
+  const k = kind || 'report';
+  const stem = [c, p, k].filter(Boolean).join(' ');
+  // Allow spaces in the filename — browsers handle them; cleaner for the user.
+  // Strip illegal filesystem characters only.
+  const safe = stem.replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim();
+  return safe + '.pdf';
+}
+
+// Resolve community_id by fuzzy-matching the AI-detected community name.
+// Tries the input as-is first, then the short (suffix-stripped) form, then
+// handles common variations like "Lake" vs "Lakes" and partial overlaps.
 async function resolveCommunityIdByName(name) {
   if (!name) return null;
   try {
-    const needle = String(name).toLowerCase();
+    const raw = String(name).toLowerCase().trim();
+    const short = shortCommunityName(name).toLowerCase().trim();
     const { data: communities } = await supabase
       .from('communities')
       .select('id, name')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID);
-    for (const c of (communities || [])) {
-      if (String(c.name || '').toLowerCase() === needle) return c.id;
+    const rows = (communities || []).map((c) => ({
+      id: c.id,
+      name: String(c.name || ''),
+      lower: String(c.name || '').toLowerCase(),
+    }));
+    // Exact match (raw or short)
+    for (const c of rows) {
+      if (c.lower === raw || c.lower === short) return c.id;
     }
-    for (const c of (communities || [])) {
-      const cn = String(c.name || '').toLowerCase();
-      if (cn.includes(needle) || needle.includes(cn.split(' ')[0])) return c.id;
+    // Substring match — either side
+    for (const c of rows) {
+      if (c.lower.includes(short) || short.includes(c.lower)) return c.id;
+      if (c.lower.includes(raw) || raw.includes(c.lower)) return c.id;
     }
+    // Token overlap fallback (handles "Lake" vs "Lakes" plural drift) —
+    // pick the community whose tokens overlap the most with input tokens.
+    const inputTokens = new Set(short.split(/\s+/).filter((t) => t.length > 2));
+    let best = null, bestScore = 0;
+    for (const c of rows) {
+      const cTokens = new Set(c.lower.split(/\s+/).filter((t) => t.length > 2));
+      // Treat "lake" and "lakes" as the same token
+      const norm = (s) => s.replace(/s$/, '');
+      const inputNorm = new Set([...inputTokens].map(norm));
+      const cNorm = new Set([...cTokens].map(norm));
+      let overlap = 0;
+      for (const t of inputNorm) if (cNorm.has(t)) overlap += 1;
+      if (overlap > bestScore) { best = c; bestScore = overlap; }
+    }
+    if (best && bestScore >= 2) return best.id;
   } catch (e) {
     console.warn('[reports] community resolution skipped:', e.message);
   }
@@ -226,7 +280,7 @@ router.post('/convert', upload.single('file'), async (req, res) => {
       }
 
       // Upload rendered PDF.
-      const outName = `${finalCommunityName.replace(/[^A-Za-z0-9]+/g, '_')}_DRV_${(finalPeriodLabel || 'Summary').replace(/[^A-Za-z0-9]+/g, '_')}.pdf`;
+      const outName = buildReportFilename(finalCommunityName, finalPeriodLabel, 'DRV report');
       const outPath = `${BEDROCK_MGMT_CO_ID}/reports/output/${reportId}.pdf`;
       const { error: outErr } = await supabase.storage
         .from(STORAGE_BUCKET)
@@ -292,8 +346,8 @@ router.post('/convert', upload.single('file'), async (req, res) => {
           .eq('id', reportId);
         return res.status(500).json({ error: safeErrorMessage(rEr) });
       }
-      const propTag = (vd.parsed.property_address || 'Property').replace(/[^A-Za-z0-9]+/g, '_').slice(0, 40);
-      const outName = `${finalCommunityName.replace(/[^A-Za-z0-9]+/g, '_')}_Violation_${propTag}.pdf`;
+      const propTag = (vd.parsed.property_address || 'Property').replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim().slice(0, 50);
+      const outName = buildReportFilename(finalCommunityName, propTag, 'Violation');
       const outPath = `${BEDROCK_MGMT_CO_ID}/reports/output/${reportId}.pdf`;
       const { error: outErr } = await supabase.storage
         .from(STORAGE_BUCKET).upload(outPath, renderedPdf, { contentType: 'application/pdf', upsert: false });
@@ -493,7 +547,7 @@ router.post('/manual-drv', express.json({ limit: '64kb' }), async (req, res) => 
     // Store as a converted_reports row so it shows up in Past Conversions
     // alongside AI-converted reports. source_file_path is null since there's
     // no source PDF — operator typed the data.
-    const outName = `${b.community_name.replace(/[^A-Za-z0-9]+/g, '_')}_DRV_${(b.period_label || 'Summary').replace(/[^A-Za-z0-9]+/g, '_')}.pdf`;
+    const outName = buildReportFilename(b.community_name, b.period_label, 'DRV report');
     const outPath = `${BEDROCK_MGMT_CO_ID}/reports/output/${reportId}.pdf`;
     const { error: outErr } = await supabase.storage
       .from(STORAGE_BUCKET).upload(outPath, renderedPdf, { contentType: 'application/pdf', upsert: false });
