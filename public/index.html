@@ -985,8 +985,12 @@
       <h3>📋 Guidance</h3>
       <div class="output-box placeholder" id="edOutput">Describe a situation and click "Get Guidance" to see how to handle it.</div>
       <div style="display:flex; gap:8px; flex-wrap:wrap;">
-        <button class="secondary-btn" id="copyEdBtn" onclick="copyText('edOutput')" style="display:none">📋 Copy to Clipboard</button>
-        <button class="secondary-btn" id="copyEdEmailBtn" onclick="copyEmailVersion()" style="display:none">📋 Copy Email Text</button>
+        <!-- Ed 2026-06-04: removed Copy to Clipboard + Copy Email Text. The
+             staff-facing askEd answer is now operator-grade (sections, statute
+             cites, real substance). Copying raw to a homeowner email would
+             leak the operator register. Export to Email is the only path to
+             external — and it runs the body through customer-tier transform
+             on the server before the .eml drops. One button, one safe path. -->
         <button class="secondary-btn" id="exportEdEmailBtn" onclick="exportToEmail()" style="display:none">📧 Export to Email</button>
       </div>
     </div>
@@ -21730,13 +21734,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     const btn = document.getElementById('askEdBtn');
     const output = document.getElementById('edOutput');
-    const copyBtn = document.getElementById('copyEdBtn');
     btn.disabled = true;
     btn.textContent = cfg.buttonLoading;
     output.className = 'output-box';
     output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
-    copyBtn.style.display = 'none';
-    document.getElementById('copyEdEmailBtn').style.display = 'none';
     document.getElementById('exportEdEmailBtn').style.display = 'none';
     // Clear any stale scenario picker before a new run
     const oldPicker = document.getElementById('scenarioPicker');
@@ -21793,13 +21794,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         `;
         output.appendChild(srcBlock);
       }
-      copyBtn.style.display = 'block';
-      // Email export buttons make sense for advisor + draft modes (output is
-      // something you'd actually send); hide for review (it has its own
-      // improved-version section) and quick (terse fact, not an email).
-      const showEmailButtons = edCurrentMode === 'advisor' || edCurrentMode === 'draft';
-      document.getElementById('copyEdEmailBtn').style.display = showEmailButtons ? 'block' : 'none';
-      document.getElementById('exportEdEmailBtn').style.display = showEmailButtons ? 'block' : 'none';
+      // Export to Email shown for advisor + draft modes (output is something
+      // you'd actually send to a homeowner/board); hidden for review (which
+      // has its own improved-version section) and quick (terse fact, not an
+      // email). Customer-tier transformation happens server-side at click
+      // time, not now — see exportToEmail().
+      const showEmailButton = edCurrentMode === 'advisor' || edCurrentMode === 'draft';
+      document.getElementById('exportEdEmailBtn').style.display = showEmailButton ? 'block' : 'none';
       if (cfg.showScenarioPicker) renderScenarioPicker(data.guidance);
     } catch (err) {
       output.textContent = 'Something went wrong. Please try again.';
@@ -21827,7 +21828,6 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <div style="font-size:13px; font-weight:600; color:#0B1D34; margin-bottom:6px;">Scenario ${s.letter}</div>
             <div style="font-size:12px; color:#666; margin-bottom:10px; line-height:1.4;">${escapeHtml(s.title)}</div>
             <div style="display:flex; gap:6px; flex-wrap:wrap;">
-              <button class="secondary-btn" style="font-size:12px; padding:6px 10px;" onclick="copyScenario('${s.letter}')">📋 Copy</button>
               <button class="action-btn" style="font-size:12px; padding:6px 10px;" onclick="exportScenarioToEmail('${s.letter}')">📧 Export</button>
             </div>
           </div>
@@ -21837,17 +21837,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('edOutput').parentElement.appendChild(picker);
   }
 
-  function copyScenario(letter) {
-    const body = getScenarioEmailBody(letter);
-    if (!body) { alert('Could not find scenario ' + letter); return; }
-    navigator.clipboard.writeText(body).then(() => {
-      alert(`Scenario ${letter} copied to clipboard.`);
-    });
-  }
+  // copyScenario() removed 2026-06-04 — same reason as copyEmailVersion().
+  // Raw copy bypasses the customer-tier transform and risks operator-register
+  // text landing in a homeowner inbox. Export is the only path.
 
-  function exportScenarioToEmail(letter) {
-    const body = getScenarioEmailBody(letter);
-    if (!body) { alert('Could not find scenario ' + letter); return; }
+  async function exportScenarioToEmail(letter) {
+    const rawBody = getScenarioEmailBody(letter);
+    if (!rawBody) { alert('Could not find scenario ' + letter); return; }
+    const body = await _transformForCustomer(rawBody);
     _buildAndDownloadEml(body, letter);
   }
 
@@ -23940,18 +23937,38 @@ ${questionsPage}
     return extractHowToRespond(guidance);
   }
 
-  function copyEmailVersion() {
-    const guidance = document.getElementById('edOutput').textContent;
-    if (!guidance) return;
-    const emailText = extractHowToRespond(guidance);
-    navigator.clipboard.writeText(emailText).then(() => {
-      const btn = document.getElementById('copyEdEmailBtn');
-      btn.textContent = '✅ Copied!';
-      setTimeout(() => btn.textContent = '📋 Copy Email Text', 2000);
-    });
+  // copyEmailVersion() removed 2026-06-04 — the only path from askEd to a
+  // homeowner inbox is now Export to Email (which transforms the body to
+  // customer-tier on the server before composing the .eml). Pasting raw
+  // staff-grade text into Outlook would leak operator register; one button,
+  // one safe path.
+
+  // Transform staff-grade text to customer-facing register via the server's
+  // leak filter at customer tier. Citations soften ("Article 5.7" → "the
+  // bylaws"), moat language is blocked, document-citation voice converts to
+  // conversational. Falls back to the original text if the endpoint errors
+  // so a network blip doesn't strand an operator who needs to send an email
+  // (worst case is they ship the staff register — same as before this fix).
+  async function _transformForCustomer(text) {
+    try {
+      const session = (await window.supa.auth.getSession()).data?.session;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      const r = await fetch('/api/transform-for-customer', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ text }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      return j.text || text;
+    } catch (e) {
+      console.warn('[exportToEmail] customer-tier transform failed, shipping raw text:', e.message);
+      return text;
+    }
   }
 
-  function exportToEmail() {
+  async function exportToEmail() {
     const guidance = document.getElementById('edOutput').textContent;
     if (!guidance) return;
 
@@ -23962,8 +23979,20 @@ ${questionsPage}
       return;
     }
 
-    const emailBody = extractHowToRespond(guidance);
-    _buildAndDownloadEml(emailBody, null);
+    const btn = document.getElementById('exportEdEmailBtn');
+    const originalLabel = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⏳ Preparing email…';
+    try {
+      const rawEmailBody = extractHowToRespond(guidance);
+      const emailBody = await _transformForCustomer(rawEmailBody);
+      _buildAndDownloadEml(emailBody, null);
+    } finally {
+      btn.disabled = false;
+      // _buildAndDownloadEml already sets a "✅ Downloaded!" label on success
+      // and reverts after 2s; only restore here if we never reached download.
+      if (btn.textContent === '⏳ Preparing email…') btn.textContent = originalLabel;
+    }
   }
 
   function _buildAndDownloadEml(emailBody, scenarioLetter) {

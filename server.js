@@ -3164,6 +3164,48 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
   }
 });
 
+// ---------------------------------------------------------------------------
+// POST /api/transform-for-customer  (Ed 2026-06-04)
+//
+// Runs arbitrary text through the customer-tier leak filter. Used by the
+// askEd Export to Email button so staff get an operator-grade answer on
+// screen, but the .eml that drops to disk has citations softened, methodology
+// terms blocked, and homeowner-safe voice.
+//
+// Auth required (any logged-in user — staff or admin). Reasons:
+//   1. Don't expose this as a public unauthenticated rewrite API.
+//   2. The set of rewrites is moat info ("if I send X and get back Y, X is
+//      flagged") — keep the surface gated.
+//   3. We're sending Bedrock text through a Bedrock pipeline; basic identity.
+//
+// Body: { text: string }
+// Returns: { text: string } — rewritten text. On block hit the original is
+//   returned with a `blocked` flag so the caller can decide (default to
+//   shipping raw avoids stranding an operator mid-send).
+// ---------------------------------------------------------------------------
+app.post('/api/transform-for-customer', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const role = await resolveUserRole(req);
+    if (role === 'unknown' || role === 'inactive') {
+      return res.status(401).json({ error: 'auth_required' });
+    }
+    const text = req.body && req.body.text;
+    if (typeof text !== 'string' || !text.trim()) {
+      return res.status(400).json({ error: 'text_required' });
+    }
+    const screen = screenForLeaks(text, { audience: 'customer', autoRewrite: true });
+    if (screen.blocks.length > 0) {
+      console.warn('[transform-for-customer] block hit; returning raw text:',
+        screen.blocks.map((b) => `${b.reason} ("${b.matches.slice(0, 2).join('", "')}")`).join('; '));
+      return res.json({ text, blocked: true });
+    }
+    return res.json({ text: screen.text, rewrites: screen.rewrites.length });
+  } catch (err) {
+    console.error('[transform-for-customer] failed:', err.message);
+    return res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // DEPRECATED 2026-05-17 — the "Review My Draft" tab was folded into askEd's
 // Review mode (POST /ask-ed?mode=coach_review). Same coaching prompt, but
 // integrated with the askEd context pipeline (community profile, etc.).
