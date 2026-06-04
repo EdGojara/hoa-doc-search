@@ -21750,8 +21750,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const casualToggle = document.getElementById('edCasualToggle');
       formData.append('tone', (casualToggle && !casualToggle.checked) ? 'formal' : 'casual');
       edSelectedFiles.forEach((f) => formData.append('attachment', f));
+      // Attach Supabase auth token so the server can resolve role and
+      // apply the right leak-filter tier (admin / staff / customer). Without
+      // it, every askEd request is anonymous → customer tier → citations
+      // get softened and staff see a neutered answer. Ed flagged 2026-06-03.
+      // multipart body — set Authorization header only, leave Content-Type
+      // unset so the browser fills the boundary.
+      const askEdSession = (await window.supa.auth.getSession()).data?.session;
+      const askEdHeaders = {};
+      if (askEdSession?.access_token) askEdHeaders.Authorization = 'Bearer ' + askEdSession.access_token;
       const res = await fetch('/ask-ed', {
         method: 'POST',
+        headers: askEdHeaders,
         body: formData
       });
       const data = await res.json();
@@ -27239,7 +27249,12 @@ ${questionsPage}
       form.append('situation', q);
       if (community) form.append('community', community);
       form.append('mode', 'quick');
-      const r = await fetch('/ask-ed', { method: 'POST', body: form });
+      // Attach auth so the server can apply the right leak-filter tier
+      // (admin / staff / customer). See askEd advisor fetch above.
+      const quickSession = (await window.supa.auth.getSession()).data?.session;
+      const quickHeaders = {};
+      if (quickSession?.access_token) quickHeaders.Authorization = 'Bearer ' + quickSession.access_token;
+      const r = await fetch('/ask-ed', { method: 'POST', headers: quickHeaders, body: form });
       const j = await r.json();
       const text = j.guidance || '(no answer)';
       const html = (typeof profLinkify === 'function' ? profLinkify(text) : text);
