@@ -3112,15 +3112,21 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
     // intentionally preserves the more measured phrasing.
     let cleaned = toneFlag === 'casual' ? stripBannedPhrases(guidance) : guidance;
 
-    // IP-leak backstop: even with the new prompt instructions, the model
-    // may still slip and describe methodology, mention "high-frequency
-    // trading", or quote a CC&R Article verbatim. The leak filter
-    // catches these deterministically. Audience = customer (most strict)
-    // because askEd output is staff-facing and staff may forward it to
-    // homeowners/board without thinking.
+    // IP-leak backstop. Tier (Ed 2026-06-03):
+    //   admin (Ed)         → only model names blocked
+    //   authenticated staff → 'staff' tier: full technical substance kept
+    //     (section numbers, statute cites, document titles); ONLY the
+    //     operating-model moat blocked (triangulation, encode-Ed, the
+    //     playbook, workpaper, smell-test, operating model + model names).
+    //     Community managers need the section numbers to do their job;
+    //     softening them to "the bylaws" neuters the tool.
+    //   anyone else        → 'customer' strictness as before. Forward-to-
+    //     homeowner pathways (correspondence drafts, letter renderers,
+    //     etc.) operate at customer tier on their own.
     try {
       const leakRole = await resolveUserRole(req);
-      const audience = leakRole === 'admin' ? 'admin' : 'customer';
+      const audience = leakRole === 'admin' ? 'admin'
+        : (leakRole === 'staff' ? 'staff' : 'customer');
       const screen = screenForLeaks(cleaned, { audience, autoRewrite: true });
       if (screen.blocks.length > 0) {
         console.warn('[ask-ed] response BLOCKED by leak filter:',
