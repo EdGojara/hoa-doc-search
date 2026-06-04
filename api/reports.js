@@ -26,7 +26,7 @@ const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { detectReportType, extractDrvSummary, extractViolationDetail } = require('../lib/reports/extract_vantaca_report');
+const { detectReportType, extractDrvSummary, extractViolationDetail, generateDrvNewsletterCopy } = require('../lib/reports/extract_vantaca_report');
 const { renderBedrockDrvPdf } = require('../lib/reports/render_bedrock_drv');
 const { renderBedrockViolationDetailPdf } = require('../lib/reports/render_bedrock_violation_detail');
 
@@ -194,14 +194,31 @@ router.post('/convert', upload.single('file'), async (req, res) => {
       const finalPeriodLabel = drvExtract.parsed.period_label || periodLabel || '';
       const resolvedCommunityId = communityId || await resolveCommunityIdByName(finalCommunityName);
 
+      // Generate the message paragraphs + top-3-to-watch via a separate
+      // Claude call. Keeps extraction strictly data, narrative strictly
+      // model-generated with tight controls + fallback on parse fail.
+      let copy = { parsed: null };
+      try {
+        copy = await generateDrvNewsletterCopy(
+          finalCommunityName,
+          finalPeriodLabel,
+          drvExtract.parsed.metrics || {},
+          drvExtract.parsed.top_categories || []
+        );
+      } catch (e) {
+        console.warn('[reports] DRV copy gen threw:', e?.message);
+      }
+      const copyOut = copy.parsed || { message_paragraphs: [], top_3_to_watch: [] };
+
       let renderedPdf;
       try {
         renderedPdf = await renderBedrockDrvPdf({
           community_name: finalCommunityName,
           period_label: finalPeriodLabel,
-          summary: drvExtract.parsed.summary || {},
-          by_category: drvExtract.parsed.by_category || [],
-          violations: drvExtract.parsed.violations || [],
+          metrics: drvExtract.parsed.metrics || {},
+          top_categories: drvExtract.parsed.top_categories || [],
+          message_paragraphs: copyOut.message_paragraphs,
+          top_3_to_watch: copyOut.top_3_to_watch,
         });
       } catch (rEr) {
         console.error('[reports] DRV render failed:', rEr.stack || rEr.message);
