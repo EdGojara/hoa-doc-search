@@ -3127,6 +3127,12 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
       const leakRole = await resolveUserRole(req);
       const audience = leakRole === 'admin' ? 'admin'
         : (leakRole === 'staff' ? 'staff' : 'customer');
+      // Diagnostic: surface auth-header-present + role + audience on every
+      // /ask-ed request so we can confirm the front-end is sending the JWT
+      // and the role is resolving correctly. Without this we're guessing at
+      // why customer-tier rewrites keep firing for staff requests
+      // (Ed 2026-06-03). Strip to a couple lines once stable.
+      console.log(`[ask-ed] auth_header=${!!req.headers?.authorization} role=${leakRole} audience=${audience}`);
       const screen = screenForLeaks(cleaned, { audience, autoRewrite: true });
       if (screen.blocks.length > 0) {
         console.warn('[ask-ed] response BLOCKED by leak filter:',
