@@ -21245,13 +21245,28 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Initial render on first page paint — Home is the default active tab,
   // so the grid needs to populate before the user clicks anything. Wait
   // for window.currentUser to be set by the auth bootstrap (~250ms after
-  // login); if it's not ready yet, retry every 100ms up to 3 seconds.
+  // login); if it's not ready yet, retry every 100ms up to 5 seconds.
+  //
+  // Ed 2026-06-04: home tab was stuck on "Loading your tiles..." forever
+  // when currentUser never populated (slow auth, /api/me error, browser
+  // cache issue). Now after the retry budget runs out we render anyway
+  // with the default tile set — better to show SOMETHING than to hang
+  // indefinitely. homeRender + homeGetTiles already handle missing
+  // currentUser gracefully (falls through to HOME_TILE_DEFAULTS).
   (function _wireHomeInitialRender() {
     let attempts = 0;
     const tryRender = () => {
       if (window.currentUser) { homeRender(); return; }
       attempts++;
-      if (attempts < 30) setTimeout(tryRender, 100);
+      if (attempts < 50) {
+        setTimeout(tryRender, 100);
+      } else {
+        // Render anyway with whatever defaults apply. Beats indefinite
+        // loading state. Also logs so we can see in the console that
+        // auth bootstrap never completed.
+        console.warn('[home] auth bootstrap didn\'t populate currentUser within 5s; rendering with defaults');
+        try { homeRender(); } catch (e) { console.warn('[home] fallback render failed:', e?.message); }
+      }
     };
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', tryRender);
