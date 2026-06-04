@@ -124,18 +124,72 @@ function indexBy(arr, key) {
 }
 
 // ----------------------------------------------------------------------------
-// GET /elections — list active elections from voting DB
+// GET /elections — portfolio view of every election across communities,
+// joined with meeting_election_settings so each row carries derived status
+// (scheduled / live / overdue / finalized), meeting date, and the frozen
+// quorum snapshot at finalize time.
+//
+// Status derivation (in priority order):
+//   - 'finalized'  — settings.status == 'finalized' (End Meeting completed)
+//   - 'live'       — meeting_date is today (America/Chicago) AND not finalized
+//   - 'overdue'    — meeting_date is in the past AND not finalized
+//                    (e.g., meeting happened but staff hasn't clicked End
+//                    Meeting yet — surfaces what needs finalizing)
+//   - 'scheduled'  — meeting_date is in the future
+//   - 'unknown'    — no settings row or no meeting_date set
 // ----------------------------------------------------------------------------
 router.get('/elections', async (req, res) => {
   try {
     const voting = getVotingClient();
-    const { data, error } = await voting
-      .from('elections')
-      .select('*')
-      .order('start_date', { ascending: false })
-      .limit(50);
-    if (error) throw error;
-    res.json({ elections: data || [] });
+    const [electionsRes, settingsRes] = await Promise.all([
+      voting.from('elections').select('*').order('start_date', { ascending: false }).limit(100),
+      supabase.from('meeting_election_settings').select('*').limit(500),
+    ]);
+    if (electionsRes.error) throw electionsRes.error;
+    if (settingsRes.error) console.warn('[meeting-checkin] settings sidecar fetch failed:', settingsRes.error.message);
+    const settingsByEid = new Map();
+    for (const s of (settingsRes?.data || [])) {
+      if (s.external_election_id) settingsByEid.set(s.external_election_id, s);
+    }
+    // Today in Central. The simplest reliable form: take 'now' as UTC and
+    // shift back to Central via the locale formatter, then compare YYYY-MM-DD.
+    const todayCentral = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); // YYYY-MM-DD
+    const enriched = (electionsRes.data || []).map((e) => {
+      const s = settingsByEid.get(e.election_id) || null;
+      const meetingDate = s?.meeting_date || null;
+      let meetingStatus = 'unknown';
+      if (s?.status === 'finalized') meetingStatus = 'finalized';
+      else if (meetingDate) {
+        if (meetingDate === todayCentral) meetingStatus = 'live';
+        else if (meetingDate < todayCentral) meetingStatus = 'overdue';
+        else meetingStatus = 'scheduled';
+      }
+      return {
+        ...e,
+        meeting_status: meetingStatus,
+        meeting_date: meetingDate,
+        meeting_time: s?.meeting_time || null,
+        meeting_location: s?.meeting_location || null,
+        finalized_at: s?.finalized_at || null,
+        finalize_quorum_met: s?.finalize_quorum_met ?? null,
+        finalize_present_units: s?.finalize_present_units ?? null,
+        finalize_attended_count: s?.finalize_attended_count ?? null,
+      };
+    });
+    // Sort: live first, then scheduled, then overdue, then finalized (most
+    // recent finalize at top of that bucket). This makes the active work
+    // surface at the top of the portfolio panel.
+    const statusRank = { live: 0, scheduled: 1, overdue: 2, finalized: 3, unknown: 4 };
+    enriched.sort((a, b) => {
+      const r = (statusRank[a.meeting_status] ?? 99) - (statusRank[b.meeting_status] ?? 99);
+      if (r !== 0) return r;
+      // Tiebreaker: meeting_date ascending for upcoming, descending for past.
+      const ad = a.meeting_date || '9999-12-31';
+      const bd = b.meeting_date || '9999-12-31';
+      if (a.meeting_status === 'finalized' || a.meeting_status === 'overdue') return ad < bd ? 1 : -1;
+      return ad < bd ? -1 : 1;
+    });
+    res.json({ elections: enriched, today_central: todayCentral });
   } catch (err) {
     console.error('[meeting-checkin] /elections failed:', err.message);
     res.status(err.code === 'VOTING_DB_NOT_CONFIGURED' ? 503 : 500)
@@ -742,6 +796,25 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
               archiveError = 'library_documents: ' + libErr.message;
             } else {
               archived = libRow;
+              // Portfolio view (Ed 2026-06-04): mark this election as
+              // finalized so the dropdown / status badge / sort order
+              // reflect that End Meeting has been completed. Snapshot
+              // quorum totals at this moment so future portfolio queries
+              // don't need to re-derive them.
+              try {
+                await supabase
+                  .from('meeting_election_settings')
+                  .update({
+                    status: 'finalized',
+                    finalized_at: new Date().toISOString(),
+                    finalize_quorum_met: quorum.quorum_met,
+                    finalize_present_units: quorum.present_units,
+                    finalize_attended_count: attendance.length,
+                  })
+                  .eq('external_election_id', eid);
+              } catch (finErr) {
+                console.warn('[meeting-checkin] finalize-flag update failed:', finErr?.message);
+              }
             }
           }
         } catch (e) {

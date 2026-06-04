@@ -306,6 +306,13 @@
 </div>
 
 <div class="main">
+
+  <!-- Portfolio view — Ed 2026-06-04. Shows every election across the
+       portfolio with its derived meeting status. Click a card to switch
+       check-in to that election. Auto-hides when there's only one
+       election to avoid clutter for single-community operators. -->
+  <div id="portfolioPanel" style="margin-bottom:18px;"></div>
+
   <div class="search-card">
     <div class="search-row">
       <input type="text" id="search" placeholder="Name, property address, or lot # — start typing…" autocomplete="off" autofocus>
@@ -448,18 +455,97 @@ function escapeHtml(s) {
 }
 
 // ---------- Load active election ----------
+// Cache of the last portfolio fetch so the render functions don't need
+// to hit the server on every selection change.
+let portfolioCache = [];
+
+// Render the portfolio panel above the search card. Shows every election
+// across communities with status badge, meeting date, and a click handler
+// that switches check-in to that election. Hides itself when there's only
+// one election (clutter avoidance for single-community operators).
+function renderPortfolioPanel(elections, selectedId) {
+  const panel = document.getElementById('portfolioPanel');
+  if (!panel) return;
+  if (!elections || elections.length <= 1) { panel.innerHTML = ''; return; }
+  const card = (e) => {
+    const isSelected = e.election_id === selectedId;
+    const badge = (() => {
+      switch (e.meeting_status) {
+        case 'live':      return { txt: 'LIVE',      bg: '#dcfce7', fg: '#14532d', border: '#15803d' };
+        case 'scheduled': return { txt: 'SCHEDULED', bg: '#e0e7ff', fg: '#312e81', border: '#4338ca' };
+        case 'overdue':   return { txt: 'NEEDS FINALIZE', bg: '#fef3c7', fg: '#78350f', border: '#b45309' };
+        case 'finalized': return { txt: 'FINALIZED', bg: '#f3f4f6', fg: '#374151', border: '#6b7280' };
+        default:          return { txt: 'NO DATE',   bg: '#fee2e2', fg: '#7f1d1d', border: '#b91c1c' };
+      }
+    })();
+    const dateLabel = e.meeting_date
+      ? new Date(e.meeting_date + 'T12:00:00').toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric' })
+      : '(no date set)';
+    const finalizeLine = e.meeting_status === 'finalized' && e.finalized_at
+      ? `<div style="font-size:10.5px; color:#6b7280; margin-top:4px;">${e.finalize_quorum_met ? '✓ Quorum met' : '✗ Quorum not met'} · ${e.finalize_present_units || 0} present · ${e.finalize_attended_count || 0} in person</div>`
+      : '';
+    return `
+      <div onclick="selectPortfolioElection('${e.election_id}')"
+           style="flex:1; min-width:240px; background:white; border:${isSelected ? '2px' : '1px'} solid ${isSelected ? '#0B1D34' : '#e5e7eb'};
+                  border-radius:8px; padding:12px 14px; cursor:pointer; transition:transform 0.15s; ${isSelected ? 'box-shadow:0 2px 8px rgba(11,29,52,0.12);' : ''}"
+           onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='translateY(0)'">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+          <span style="font-size:9.5px; font-weight:700; letter-spacing:0.06em; padding:3px 7px; border-radius:10px; background:${badge.bg}; color:${badge.fg}; border:1px solid ${badge.border};">${badge.txt}</span>
+          <span style="font-size:11px; color:#6b7280; font-family:var(--font-mono);">${dateLabel}</span>
+        </div>
+        <div style="font-size:14px; font-weight:600; color:#0B1D34; line-height:1.3;">${escapeHtml(e.community_name || '(community)')}</div>
+        <div style="font-size:11.5px; color:#6b7280; margin-top:2px; line-height:1.4;">${escapeHtml(e.election_name || '(election)')}</div>
+        ${finalizeLine}
+      </div>
+    `;
+  };
+  panel.innerHTML = `
+    <div style="font-size:11px; font-weight:700; letter-spacing:0.06em; color:#6b7280; text-transform:uppercase; margin-bottom:8px;">Portfolio</div>
+    <div style="display:flex; gap:10px; flex-wrap:wrap;">
+      ${elections.map(card).join('')}
+    </div>
+  `;
+}
+
+async function selectPortfolioElection(electionId) {
+  const row = portfolioCache.find((e) => e.election_id === electionId);
+  if (!row) return;
+  currentElection = row;
+  localStorage.setItem('meeting-checkin-election', electionId);
+  // Re-render the panel to reflect the new selected state and refresh
+  // the rest of the page for the new election context.
+  renderPortfolioPanel(portfolioCache, electionId);
+  hCommunity.textContent = row.community_name || '(community)';
+  hMeeting.textContent = row.election_name || '';
+  // Refresh attendance + quorum for the newly selected election.
+  try {
+    await Promise.all([refreshStatus(), loadAttendanceLog()]);
+  } catch (_) {}
+}
+
 async function loadActiveElection() {
   try {
     const res = await fetch('/api/meeting-checkin/elections');
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const data = await res.json();
     const elections = data.elections || [];
+    portfolioCache = elections;
 
-    // Pick saved one from localStorage if available, else the first active one
+    // Smart default: prefer LIVE elections (meeting is today), then the
+    // user's last saved selection if it's still non-finalized, then the
+    // earliest SCHEDULED/OVERDUE election, then finalized as last resort.
+    // Replaces the prior "first active" logic which picked Canyon Gate
+    // even after it was finalized — exact bug Ed flagged 2026-06-04.
     const saved = localStorage.getItem('meeting-checkin-election');
-    let chosen = saved && elections.find((e) => e.election_id === saved);
-    if (!chosen) chosen = elections.find((e) => e.status === 'active');
-    if (!chosen) chosen = elections[0];
+    const savedRow = saved && elections.find((e) => e.election_id === saved);
+    const live = elections.find((e) => e.meeting_status === 'live');
+    const upcoming = elections.find((e) => e.meeting_status === 'scheduled' || e.meeting_status === 'overdue');
+    let chosen = live || (savedRow && savedRow.meeting_status !== 'finalized' ? savedRow : null) || upcoming || elections[0];
+
+    // Render the portfolio panel (above search card). Hides itself when
+    // there's only one election so single-community operators don't see
+    // clutter.
+    renderPortfolioPanel(elections, chosen?.election_id || null);
 
     if (!chosen) {
       hCommunity.textContent = 'No elections';
@@ -477,7 +563,12 @@ async function loadActiveElection() {
       for (const e of elections) {
         const opt = document.createElement('option');
         opt.value = e.election_id;
-        opt.textContent = `${e.community_name || ''} — ${e.election_name || ''}`;
+        const statusEmoji =
+          e.meeting_status === 'live' ? '🟢 ' :
+          e.meeting_status === 'finalized' ? '✓ ' :
+          e.meeting_status === 'overdue' ? '⚠ ' :
+          e.meeting_status === 'scheduled' ? '📅 ' : '';
+        opt.textContent = `${statusEmoji}${e.community_name || ''} — ${e.election_name || ''}`;
         if (e.election_id === chosen.election_id) opt.selected = true;
         dropdown.appendChild(opt);
       }
@@ -784,7 +875,12 @@ async function endMeeting() {
     if (archiveError) {
       toast('PDF generated, archive skipped — ' + archiveError, 'warning');
     } else if (archivedId) {
-      toast('Quorum evidence PDF generated + archived ✓', 'success');
+      toast('Quorum evidence PDF generated + archived. Meeting finalized.', 'success');
+      // Reload the portfolio so this election flips to FINALIZED and the
+      // next non-finalized election auto-rotates into focus (Ed 2026-06-04
+      // portfolio-view design: Canyon Gate done → Waterview becomes the
+      // default landing election).
+      await loadActiveElection();
     } else {
       toast('PDF generated (archive disabled)', 'success');
     }
