@@ -24780,9 +24780,18 @@ ${questionsPage}
         const filename = escapeHtml(o.filename);
         const category = escapeHtml(o.category || 'other');
         const preview = escapeHtml((o.first_chunk_preview || '').slice(0, 150));
+        // Filename links to the PDF download endpoint so the operator can
+        // open the actual doc in a new tab to identify which community it
+        // belongs to — preview text alone isn't enough for state filings,
+        // master-plan PDFs, generic Article-III-USE-RESTRICTIONS rips,
+        // etc. (Ed 2026-06-04).
+        const downloadUrl = `/api/documents/${encodeURIComponent(o.id)}/download`;
         return `
           <div style="border:1px solid #e5e7eb; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white;">
-            <div style="font-size:13px; font-weight:600; color:#0B1D34; word-break:break-word;">${filename}</div>
+            <a href="${downloadUrl}" target="_blank" rel="noopener" style="font-size:13px; font-weight:600; color:#0B1D34; text-decoration:none; word-break:break-word; display:inline-flex; align-items:center; gap:6px;">
+              <span>📄 ${filename}</span>
+              <span style="font-size:10px; color:#6B7280; font-weight:400;">(open PDF →)</span>
+            </a>
             <div style="font-size:11.5px; color:#6B7280; margin-top:2px;">category: ${category} · id: <code style="font-size:10.5px;">${o.id}</code></div>
             <div style="font-size:11.5px; color:#475569; margin-top:6px; font-style:italic; line-height:1.4;">${preview || '(no preview)'}</div>
             <div style="display:flex; gap:6px; align-items:center; margin-top:10px;">
