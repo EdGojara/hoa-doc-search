@@ -594,27 +594,50 @@ router.get('/elections/:eid/attendance', async (req, res) => {
 // Body: { archive: true|false (default true) }
 // ----------------------------------------------------------------------------
 router.post('/elections/:eid/generate-pdf', async (req, res) => {
+  // Stage tracker for diagnostic logs — Ed 2026-06-04 saw HTTP 500
+  // finalizing Canyon Gate; without staged logging we can't tell which
+  // call threw. Each stage updates this string so the catch at the
+  // bottom emits exactly where it died.
+  let stage = 'init';
   try {
     const eid = req.params.eid;
     const archive = req.body?.archive !== false;
+    console.log(`[meeting-checkin] generate-pdf start eid=${eid} archive=${archive}`);
 
-    // Pull everything we need for the report
+    // Pull everything we need for the report. Wrap each fetch separately
+    // so a single bad source doesn't take down the whole endpoint.
+    stage = 'init-voting-client';
     const voting = getVotingClient();
+    stage = 'fetch-bedrock-vote-data';
     const [electionRes, votersRes, settingsRes, attRes] = await Promise.all([
-      voting.from('elections').select('*').eq('election_id', eid).maybeSingle(),
-      voting.from('voters').select('voter_id, vote_weight, token_used, vote_method').eq('election_id', eid),
-      supabase.from('meeting_election_settings').select('*').eq('external_election_id', eid).maybeSingle(),
-      supabase.from('meeting_attendance').select('*').eq('external_election_id', eid).order('checked_in_at'),
+      voting.from('elections').select('*').eq('election_id', eid).maybeSingle().then((r) => r).catch((e) => ({ error: e })),
+      voting.from('voters').select('voter_id, vote_weight, token_used, vote_method').eq('election_id', eid).then((r) => r).catch((e) => ({ error: e })),
+      supabase.from('meeting_election_settings').select('*').eq('external_election_id', eid).maybeSingle().then((r) => r).catch((e) => ({ error: e })),
+      supabase.from('meeting_attendance').select('*').eq('external_election_id', eid).order('checked_in_at').then((r) => r).catch((e) => ({ error: e })),
     ]);
-    if (electionRes.error) throw electionRes.error;
-    if (votersRes.error) throw votersRes.error;
-    if (attRes.error) throw attRes.error;
+    if (electionRes.error) {
+      console.error('[meeting-checkin] elections fetch error:', electionRes.error.message || electionRes.error);
+      throw new Error('elections fetch failed: ' + (electionRes.error.message || 'unknown'));
+    }
+    if (votersRes.error) {
+      console.error('[meeting-checkin] voters fetch error:', votersRes.error.message || votersRes.error);
+      throw new Error('voters fetch failed: ' + (votersRes.error.message || 'unknown'));
+    }
+    if (attRes.error) {
+      console.error('[meeting-checkin] attendance fetch error:', attRes.error.message || attRes.error);
+      throw new Error('attendance fetch failed: ' + (attRes.error.message || 'unknown'));
+    }
+    if (settingsRes.error) {
+      // Settings is optional — log and continue with null.
+      console.warn('[meeting-checkin] settings fetch error (continuing without):', settingsRes.error.message || settingsRes.error);
+    }
     const election = electionRes.data;
     const voters = votersRes.data || [];
-    const settings = settingsRes.data;
+    const settings = settingsRes?.data || null;
     const attendance = attRes.data || [];
+    console.log(`[meeting-checkin] fetched: election=${!!election} voters=${voters.length} settings=${!!settings} attendance=${attendance.length}`);
 
-    if (!election) return res.status(404).json({ error: 'election_not_found' });
+    if (!election) return res.status(404).json({ error: 'election_not_found', eid });
 
     // Quorum math (same logic as /status — "presence" basis):
     // Each voter counts once toward quorum if they EITHER voted absentee
@@ -645,18 +668,23 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       short_by: met ? 0 : Math.max(0, threshold - presentUnits),
     };
 
+    stage = 'pdf-init';
     // Stream PDF
     const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('end', async () => {
       const pdfBuffer = Buffer.concat(chunks);
+      console.log(`[meeting-checkin] PDF rendered, size=${pdfBuffer.length} bytes`);
 
-      // Optionally archive
+      // Optionally archive. ALL failure paths are caught so a storage
+      // or library-insert error never blocks the PDF download. The
+      // operator gets the PDF and can re-archive manually if needed.
       let archived = null;
+      let archiveError = null;
       if (archive && settings?.community_id) {
         try {
-          const fileName = `Annual Meeting Quorum Evidence — ${settings.community_name || election.community_name} — ${settings.meeting_date || new Date().toISOString().slice(0,10)}.pdf`;
+          const fileName = `Annual Meeting Quorum Evidence — ${settings.community_name || election.community_name || 'Community'} — ${settings.meeting_date || new Date().toISOString().slice(0,10)}.pdf`;
           const storagePath = `meeting-records/${settings.community_id}/${eid}/${Date.now()}-quorum-evidence.pdf`;
           const { error: upErr } = await supabase.storage
             .from('library')
@@ -664,75 +692,118 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
               contentType: 'application/pdf',
               upsert: true,
             });
-          if (upErr) console.warn('[meeting-checkin] storage upload failed:', upErr.message);
-          const { data: libRow, error: libErr } = await supabase
-            .from('library_documents')
-            .insert({
-              management_company_id: BEDROCK_MGMT_CO_ID,
-              community_id: settings.community_id,
-              category: 'meeting_records',
-              title: fileName,
-              file_path: storagePath,
-              metadata: {
-                election_id: eid,
-                meeting_date: settings.meeting_date,
-                quorum_met: quorum.quorum_met,
-                source: 'meeting-checkin-evidence',
-              },
-            })
-            .select()
-            .single();
-          if (libErr) console.warn('[meeting-checkin] library_documents insert failed:', libErr.message);
-          else archived = libRow;
+          if (upErr) {
+            console.warn('[meeting-checkin] storage upload failed:', upErr.message);
+            archiveError = 'storage: ' + upErr.message;
+          } else {
+            // Try the library_documents insert. If category 'meeting_records'
+            // isn't in document_categories (it isn't seeded as of 2026-06-04),
+            // the FK will reject. Fall back to 'annual_board_meeting_minutes'
+            // which IS seeded (migration 012). The fileName makes it clear
+            // what the doc is regardless of category.
+            const tryInsert = async (cat) => {
+              return supabase
+                .from('library_documents')
+                .insert({
+                  management_company_id: BEDROCK_MGMT_CO_ID,
+                  community_id: settings.community_id,
+                  category: cat,
+                  title: fileName,
+                  file_path: storagePath,
+                  status: 'current',
+                  metadata: {
+                    election_id: eid,
+                    meeting_date: settings.meeting_date,
+                    quorum_met: quorum.quorum_met,
+                    source: 'meeting-checkin-evidence',
+                    intended_category: 'meeting_records',
+                  },
+                })
+                .select()
+                .single();
+            };
+            let { data: libRow, error: libErr } = await tryInsert('meeting_records');
+            if (libErr && /violates|foreign key|check constraint/i.test(libErr.message || '')) {
+              console.warn('[meeting-checkin] meeting_records category rejected, falling back to annual_board_meeting_minutes:', libErr.message);
+              ({ data: libRow, error: libErr } = await tryInsert('annual_board_meeting_minutes'));
+            }
+            if (libErr) {
+              console.warn('[meeting-checkin] library_documents insert failed:', libErr.message);
+              archiveError = 'library_documents: ' + libErr.message;
+            } else {
+              archived = libRow;
+            }
+          }
         } catch (e) {
           console.warn('[meeting-checkin] archive failed:', e.message);
+          archiveError = e.message;
         }
+      } else if (archive && !settings?.community_id) {
+        archiveError = 'no_settings_row';
+        console.warn(`[meeting-checkin] archive skipped — no meeting_election_settings row for eid=${eid}`);
       }
 
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader('Content-Disposition', `inline; filename="meeting-quorum-evidence-${eid.slice(0,8)}.pdf"`);
       res.setHeader('X-Archived-Id', archived?.id || '');
+      if (archiveError) res.setHeader('X-Archive-Error', archiveError.slice(0, 200));
       res.end(pdfBuffer);
     });
+    doc.on('error', (e) => {
+      console.error('[meeting-checkin] PDFKit stream error:', e?.stack || e?.message);
+      if (!res.headersSent) res.status(500).json({ error: 'pdf_stream_error', detail: e?.message });
+    });
 
+    stage = 'pdf-body-header';
     // ===== PDF BODY =====
+    // Null-safety helper — PDFKit's .text() throws on undefined/null.
+    // Every interpolated value goes through this. Defense-in-depth against
+    // the 2026-06-04 Canyon Gate 500 (one undefined field crashed the run).
+    const s = (v, fallback = '') => {
+      if (v == null) return fallback;
+      const str = String(v);
+      return str === 'undefined' || str === 'null' ? fallback : str;
+    };
+
     // Brand cornerstone + wordmark
     try { drawCornerstone(doc, 54, 54, 36); } catch (_) {}
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050')
-       .text(BRAND.service.name, 100, 60);
+       .text(s(BRAND?.service?.name, 'Bedrock Association Management'), 100, 60);
     doc.font('Helvetica').fontSize(8).fillColor('#7a7a7a')
-       .text(BRAND.tagline || 'Community. Simplified.', 100, 76);
+       .text(s(BRAND?.tagline, 'Community. Simplified.'), 100, 76);
 
     doc.moveDown(2);
     doc.font('Helvetica-Bold').fontSize(18).fillColor('#1A3050')
-       .text(`${settings?.community_name || election.community_name}`, 54, 130, { align: 'center' });
+       .text(s(settings?.community_name || election.community_name, 'Community'), 54, 130, { align: 'center' });
     doc.font('Helvetica').fontSize(14).fillColor('#4a4a4a')
-       .text(election.election_name || 'Annual Meeting', { align: 'center' });
+       .text(s(election.election_name, 'Annual Meeting'), { align: 'center' });
     doc.moveDown(0.5);
     doc.font('Helvetica').fontSize(11).fillColor('#7a7a7a')
        .text('Quorum Evidence Record', { align: 'center' });
 
     doc.moveDown(2);
 
+    stage = 'pdf-body-details';
     // Meeting details
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050').text('Meeting Details');
     doc.moveDown(0.3);
     doc.font('Helvetica').fontSize(10).fillColor('#1a1a1a');
     const detLines = [
-      ['Meeting Date', settings?.meeting_date || '(not set)'],
-      ['Meeting Time', settings?.meeting_time || '(not set)'],
-      ['Location', settings?.meeting_location || '(not set)'],
-      ['Election', election.election_name],
-      ['Voting Window', `${election.start_date?.slice(0,10)} → ${election.end_date?.slice(0,10)}`],
+      ['Meeting Date', s(settings?.meeting_date, '(not set)')],
+      ['Meeting Time', s(settings?.meeting_time, '(not set)')],
+      ['Location', s(settings?.meeting_location, '(not set)')],
+      ['Election', s(election.election_name, '(unnamed)')],
+      ['Voting Window', `${s(election.start_date)?.slice(0,10) || '(none)'} → ${s(election.end_date)?.slice(0,10) || '(none)'}`],
       ['Seats Available', String(election.seats_available || 1)],
     ];
     for (const [k, v] of detLines) {
       doc.font('Helvetica-Bold').text(`${k}: `, { continued: true });
-      doc.font('Helvetica').text(v);
+      doc.font('Helvetica').text(s(v, '—'));
     }
 
     doc.moveDown(1);
 
+    stage = 'pdf-body-quorum';
     // Quorum math
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050').text('Quorum Calculation');
     doc.moveDown(0.3);
@@ -779,6 +850,7 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       doc.moveDown(0.5);
     }
 
+    stage = 'pdf-body-attendance';
     // Attendance log
     doc.addPage();
     doc.font('Helvetica-Bold').fontSize(12).fillColor('#1A3050')
@@ -804,40 +876,47 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       doc.moveDown(0.2);
 
       doc.font('Helvetica').fontSize(8).fillColor('#1a1a1a');
-      for (const a of attendance) {
-        if (doc.y > 720) doc.addPage();
-        const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
-        const status =
-          a.vote_status_at_checkin === 'voted_online' ? 'Voted online' :
-          a.vote_status_at_checkin === 'voted_mail'   ? 'Voted mail' :
-          a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in' :
-          a.walk_in_ballot_status === 'entered'       ? 'Walk-in entered' :
-          a.walk_in_ballot_status === 'needed'        ? 'Walk-in pending' :
-          a.walk_in_ballot_status === 'declined_to_vote' ? 'Declined' :
-          'Attended';
-        const y0 = doc.y;
-        doc.text(time, colX.time, y0, { width: 70 });
-        doc.text(a.owner_name || '', colX.name, y0, { width: 155 });
-        doc.text(a.lot_number || '', colX.lot, y0, { width: 45 });
-        doc.text(a.mailing_address || '', colX.addr, y0, { width: 125 });
-        doc.text(status, colX.status, y0, { width: 90 });
-        doc.moveDown(1.2);
+      for (let i = 0; i < attendance.length; i++) {
+        const a = attendance[i];
+        try {
+          if (doc.y > 720) doc.addPage();
+          const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+          const status =
+            a.vote_status_at_checkin === 'voted_online' ? 'Voted online' :
+            a.vote_status_at_checkin === 'voted_mail'   ? 'Voted mail' :
+            a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in' :
+            a.walk_in_ballot_status === 'entered'       ? 'Walk-in entered' :
+            a.walk_in_ballot_status === 'needed'        ? 'Walk-in pending' :
+            a.walk_in_ballot_status === 'declined_to_vote' ? 'Declined' :
+            'Attended';
+          const y0 = doc.y;
+          doc.text(s(time, ''), colX.time, y0, { width: 70 });
+          doc.text(s(a.owner_name, ''), colX.name, y0, { width: 155 });
+          doc.text(s(a.lot_number, ''), colX.lot, y0, { width: 45 });
+          doc.text(s(a.mailing_address, ''), colX.addr, y0, { width: 125 });
+          doc.text(s(status, 'Attended'), colX.status, y0, { width: 90 });
+          doc.moveDown(1.2);
+        } catch (rowErr) {
+          // Don't let one bad row tank the whole PDF. Log and continue.
+          console.warn(`[meeting-checkin] attendance row ${i} render error:`, rowErr?.message, 'row=', JSON.stringify(a).slice(0, 200));
+        }
       }
     }
 
+    stage = 'pdf-body-signature';
     // Signature block
     doc.moveDown(2);
     if (doc.y > 650) doc.addPage();
     doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050').text('Certification');
     doc.moveDown(0.5);
     doc.font('Helvetica').fontSize(10).fillColor('#1a1a1a')
-       .text(`I, the undersigned, certify that I served as Secretary of this annual meeting of ${settings?.community_name || election.community_name} and that the attendance log and quorum calculation above accurately reflect the meeting as held.`,
+       .text(`I, the undersigned, certify that I served as Secretary of this annual meeting of ${s(settings?.community_name || election.community_name, 'the Community')} and that the attendance log and quorum calculation above accurately reflect the meeting as held.`,
          { width: 504 });
 
     doc.moveDown(3);
     const sigY = doc.y;
     doc.moveTo(54, sigY).lineTo(280, sigY).strokeColor('#000').stroke();
-    doc.fontSize(9).fillColor('#7a7a7a').text(`Secretary — ${settings?.secretary_name || '(name)'}`, 54, sigY + 4);
+    doc.fontSize(9).fillColor('#7a7a7a').text(`Secretary — ${s(settings?.secretary_name, '(name)')}`, 54, sigY + 4);
 
     doc.moveTo(310, sigY).lineTo(540, sigY).strokeColor('#000').stroke();
     doc.fontSize(9).fillColor('#7a7a7a').text('Date', 310, sigY + 4);
@@ -851,11 +930,17 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
            54, 760, { align: 'center', width: 504 });
     }
 
+    stage = 'pdf-end';
     doc.end();
   } catch (err) {
-    console.error('[meeting-checkin] generate-pdf failed:', err.stack || err.message);
-    res.status(err.code === 'VOTING_DB_NOT_CONFIGURED' ? 503 : 500)
-       .json({ error: safeErrorMessage(err) });
+    // Diagnostic-first: include the stage so the operator can paste the
+    // log line and we know exactly where it died. Ed 2026-06-04 audit
+    // rule — every silent failure path gets a structured log.
+    console.error(`[meeting-checkin] generate-pdf failed at stage="${stage}":`, err?.stack || err?.message);
+    if (!res.headersSent) {
+      res.status(err?.code === 'VOTING_DB_NOT_CONFIGURED' ? 503 : 500)
+         .json({ error: safeErrorMessage(err), stage });
+    }
   }
 });
 

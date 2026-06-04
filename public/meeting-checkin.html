@@ -760,12 +760,31 @@ async function endMeeting() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ archive: true }),
     });
-    if (!res.ok) throw new Error('HTTP ' + res.status);
+    if (!res.ok) {
+      // Try to parse the error JSON for the diagnostic stage. Ed 2026-06-04:
+      // the bare "HTTP 500" was useless for triage; the server now returns
+      // { error, stage } so we can surface where it actually died.
+      let detail = '';
+      try {
+        const j = await res.json();
+        detail = (j.stage ? ' [' + j.stage + ']' : '') + (j.error ? ': ' + j.error : '');
+      } catch (_) {}
+      throw new Error('HTTP ' + res.status + detail);
+    }
     const blob = await res.blob();
     const url = URL.createObjectURL(blob);
+    // Surface archive errors as a warning (PDF still downloads either way).
+    const archivedId = res.headers.get('X-Archived-Id');
+    const archiveError = res.headers.get('X-Archive-Error');
     // Open in new tab
     window.open(url, '_blank');
-    toast('Quorum evidence PDF generated + archived ✓', 'success');
+    if (archiveError) {
+      toast('PDF generated, archive skipped — ' + archiveError, 'warning');
+    } else if (archivedId) {
+      toast('Quorum evidence PDF generated + archived ✓', 'success');
+    } else {
+      toast('PDF generated (archive disabled)', 'success');
+    }
   } catch (err) {
     toast('PDF generation failed: ' + err.message, 'error');
   }
