@@ -1073,6 +1073,13 @@ app.use('/api/legal-updates', legalUpdatesRouter);
 const reportsRouter = require('./api/reports');
 app.use('/api/reports', reportsRouter);
 
+// Bedrock Connect — community-email broadcast platform. PLACEHOLDER:
+// all routes return 501 with pointers to the spec + UI. Build queued
+// behind Messaging System Phase 1. See templates/bedrock-connect.spec.md
+// for full design.
+const bedrockConnectRouter = require('./api/bedrock_connect');
+app.use('/api/bedrock-connect', bedrockConnectRouter);
+
 // Board Packets — Bedrock board packet generator
 // Endpoints under /api/board-packets/*. See api/board_packets.js and
 // migrations/014_board_packets.sql for the schema.

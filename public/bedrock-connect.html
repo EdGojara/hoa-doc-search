@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bedrock Connect · trustEd</title>
+<link rel="stylesheet" href="/brand.css">
+<style>
+  body { margin: 0; background: #F5F4ED; color: #1a1a1a; font-family: 'Inter', system-ui, sans-serif; }
+  .wrap { max-width: 1100px; margin: 0 auto; padding: 32px 24px 80px; }
+
+  .hero {
+    background: linear-gradient(135deg, #0B1D34 0%, #1E2761 100%);
+    color: white;
+    border-radius: 12px;
+    padding: 36px 40px;
+    margin-bottom: 32px;
+  }
+  .hero .eyebrow {
+    font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: #D4AF37; font-weight: 700; margin-bottom: 12px;
+  }
+  .hero h1 {
+    font-family: 'Cormorant Garamond', serif;
+    font-size: 42px; font-weight: 600; margin: 0 0 10px;
+    line-height: 1.1;
+  }
+  .hero .sub { font-size: 16px; opacity: 0.85; max-width: 720px; line-height: 1.5; }
+  .status-chip {
+    display: inline-block; background: rgba(212, 175, 55, 0.18);
+    color: #D4AF37; padding: 6px 14px; border-radius: 14px;
+    font-size: 11.5px; font-weight: 600; letter-spacing: 0.04em;
+    margin-top: 14px;
+  }
+
+  .registers { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 32px; }
+  .register {
+    background: white; border-radius: 10px; padding: 22px 24px;
+    border: 1px solid #e5e7eb;
+  }
+  .register .badge {
+    display: inline-block; font-size: 10px; letter-spacing: 0.08em;
+    padding: 3px 9px; border-radius: 10px; font-weight: 700;
+    text-transform: uppercase; margin-bottom: 10px;
+  }
+  .badge.eng { background: #fef3c7; color: #92400e; }
+  .badge.ops { background: #dbeafe; color: #1e40af; }
+  .badge.comp { background: #f3e8ff; color: #6b21a8; }
+  .register h3 { font-size: 17px; margin: 0 0 8px; color: #0B1D34; font-weight: 600; }
+  .register p { font-size: 13px; color: #4a4a4a; line-height: 1.55; margin: 0 0 10px; }
+  .register ul { font-size: 12px; color: #6a6a6a; padding-left: 18px; margin: 0; line-height: 1.6; }
+
+  .section-title {
+    font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase;
+    color: #6a6a6a; font-weight: 700; margin: 36px 0 14px;
+  }
+
+  .compare {
+    background: white; border-radius: 10px; border: 1px solid #e5e7eb;
+    overflow: hidden; margin-bottom: 32px;
+  }
+  .compare table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  .compare th, .compare td { padding: 11px 14px; text-align: left; border-bottom: 1px solid #f3f4f6; }
+  .compare thead th { background: #f9fafb; font-size: 11px; letter-spacing: 0.06em; text-transform: uppercase; color: #4a4a4a; }
+  .compare td.no { color: #b91c1c; }
+  .compare td.yes { color: #15803d; font-weight: 600; }
+  .compare td.partial { color: #b45309; }
+  .compare td:first-child { font-weight: 600; color: #0B1D34; }
+
+  .pipeline {
+    background: white; border-radius: 10px; border: 1px solid #e5e7eb;
+    padding: 24px 28px; margin-bottom: 32px;
+  }
+  .pipeline .step {
+    display: flex; align-items: flex-start; gap: 16px; padding: 14px 0;
+    border-bottom: 1px solid #f3f4f6;
+  }
+  .pipeline .step:last-child { border-bottom: 0; }
+  .pipeline .step .num {
+    flex: 0 0 32px; width: 32px; height: 32px; border-radius: 50%;
+    background: #D4AF37; color: white; display: flex; align-items: center;
+    justify-content: center; font-weight: 700; font-size: 14px;
+  }
+  .pipeline .step .content { flex: 1; }
+  .pipeline .step h4 { margin: 0 0 4px; font-size: 14.5px; color: #0B1D34; }
+  .pipeline .step p { margin: 0; font-size: 13px; color: #4a4a4a; line-height: 1.5; }
+
+  .roadmap {
+    background: white; border-radius: 10px; border: 1px solid #e5e7eb;
+    padding: 24px 28px; margin-bottom: 32px;
+  }
+  .phase {
+    padding: 14px 0; border-bottom: 1px solid #f3f4f6;
+    display: flex; gap: 18px; align-items: center;
+  }
+  .phase:last-child { border-bottom: 0; }
+  .phase .label {
+    flex: 0 0 130px; font-size: 11.5px; letter-spacing: 0.04em;
+    font-weight: 700; text-transform: uppercase; color: #6a6a6a;
+  }
+  .phase.active .label { color: #0B1D34; }
+  .phase h4 { margin: 0 0 3px; font-size: 14.5px; color: #0B1D34; }
+  .phase p { margin: 0; font-size: 12.5px; color: #6a6a6a; }
+  .phase .pill {
+    flex: 0 0 auto; font-size: 10px; padding: 4px 10px;
+    border-radius: 10px; font-weight: 700; letter-spacing: 0.06em;
+    text-transform: uppercase;
+  }
+  .phase.now .pill { background: #dcfce7; color: #14532d; }
+  .phase.queued .pill { background: #fef3c7; color: #78350f; }
+  .phase.later .pill { background: #f3f4f6; color: #6a6a6a; }
+
+  .footer {
+    margin-top: 40px; padding: 18px 22px; background: #f9fafb;
+    border-radius: 8px; font-size: 12.5px; color: #6a6a6a; line-height: 1.6;
+  }
+  .footer code { background: #ffffff; padding: 1px 6px; border-radius: 3px; font-size: 11.5px; }
+
+  .back-link {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 13px; color: #4c1d95; text-decoration: none;
+    margin-bottom: 18px;
+  }
+  .back-link:hover { text-decoration: underline; }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <a class="back-link" href="/" >← Back to trustEd</a>
+
+  <div class="hero">
+    <div class="eyebrow">Coming Q3 2026 — after Messaging Phase 1 ships</div>
+    <h1>Bedrock Connect</h1>
+    <div class="sub">
+      Riverstone-quality community email engagement on a Vantaca-replacement-grade
+      infrastructure, with Claire drafting in each community's voice. Every email
+      reads as the community itself, not as Bedrock. Bedrock is invisible plumbing.
+    </div>
+    <div class="status-chip">⌛ PLACEHOLDER — Build queued behind Messaging Phase 1</div>
+  </div>
+
+  <div class="section-title">The three voice registers</div>
+  <div class="registers">
+    <div class="register">
+      <div class="badge eng">Engagement</div>
+      <h3>Warm, community, social</h3>
+      <p>Community events, surveys, newsletters, board candidate spotlights, social.</p>
+      <ul>
+        <li>Hero photo, multiple CTAs</li>
+        <li>"Director of Fun"-style sender</li>
+        <li>Forward-to-neighbor mechanic</li>
+        <li>Per-CTA click tracking</li>
+      </ul>
+    </div>
+    <div class="register">
+      <div class="badge ops">Operational</div>
+      <h3>Clear, actionable, professional</h3>
+      <p>Meeting reminders, maintenance notices, hurricane prep, schedule changes.</p>
+      <ul>
+        <li>Cleaner layout, text-forward</li>
+        <li>Single primary CTA</li>
+        <li>Calendar-friendly</li>
+        <li>Required-deliverable status tracked</li>
+      </ul>
+    </div>
+    <div class="register">
+      <div class="badge comp">Compliance</div>
+      <h3>Formal, legally precise, branded</h3>
+      <p>Violations, fines, §209 cure notices, statutory mailings.</p>
+      <ul>
+        <li>Statutory wording from GLOBAL_RULES</li>
+        <li>Auto-routes to certified mail (Lob) when law requires</li>
+        <li>Audit trail per recipient</li>
+        <li>Cannot be unsubscribed by homeowner</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="section-title">How a blast moves through the system</div>
+  <div class="pipeline">
+    <div class="step">
+      <div class="num">1</div>
+      <div class="content">
+        <h4>Author + draft with Claire</h4>
+        <p>Staff opens Compose, picks register, describes goal in plain English. Claire drafts in the community's voice preset. Staff reviews, edits, previews on desktop + mobile.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <div class="content">
+        <h4>Segmentation + compliance gates</h4>
+        <p>Audience built via community / section / property type / role / interest opt-in. CAN-SPAM footer auto-injected. Compliance category cannot be unsubscribed.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <div class="content">
+        <h4>Deliver via Resend</h4>
+        <p>Community-branded sender domain. Per-recipient delivery row created. Send-time throttling. Statutory mailings that legally require certified mail re-route to Lob automatically.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">4</div>
+      <div class="content">
+        <h4>Track everything</h4>
+        <p>Opens, clicks per CTA, bounces, unsubscribes, forwards, replies. Per-blast view + per-template performance + per-community baselines + portfolio view.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">5</div>
+      <div class="content">
+        <h4>Replies feed messaging — not /dev/null</h4>
+        <p>When a homeowner replies, the message lands in the trustEd messaging inbox as an inbound thread anchored to their property. Vantaca suppresses replies. We treat them as the highest-value engagement signal.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="section-title">vs Vantaca</div>
+  <div class="compare">
+    <table>
+      <thead>
+        <tr>
+          <th>Capability</th>
+          <th>Vantaca</th>
+          <th>Bedrock Connect</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Community-branded (not vendor-branded)</td>
+          <td class="partial">Brand colors only</td>
+          <td class="yes">Full community identity</td>
+        </tr>
+        <tr>
+          <td>AI drafting in community voice</td>
+          <td class="no">No</td>
+          <td class="yes">Claire, learning per community</td>
+        </tr>
+        <tr>
+          <td>Engagement register (events, social)</td>
+          <td class="partial">Clunky / template-only</td>
+          <td class="yes">First-class, Riverstone-grade</td>
+        </tr>
+        <tr>
+          <td>Audience segmentation</td>
+          <td class="partial">Action-item-bound</td>
+          <td class="yes">Full (community / section / role / interest)</td>
+        </tr>
+        <tr>
+          <td>Email scheduling</td>
+          <td class="no">"Coming soon"</td>
+          <td class="yes">Native</td>
+        </tr>
+        <tr>
+          <td>Bulk approval</td>
+          <td class="no">"Coming soon"</td>
+          <td class="yes">Native</td>
+        </tr>
+        <tr>
+          <td>A/B subject line testing</td>
+          <td class="no">No</td>
+          <td class="yes">Native</td>
+        </tr>
+        <tr>
+          <td>Per-CTA click tracking</td>
+          <td class="no">No</td>
+          <td class="yes">Native</td>
+        </tr>
+        <tr>
+          <td>Forward tracking</td>
+          <td class="no">No</td>
+          <td class="yes">Native</td>
+        </tr>
+        <tr>
+          <td>Reply handling</td>
+          <td class="no">Suppressed (Do-Not-Reply panel)</td>
+          <td class="yes">Routed to messaging as inbound thread</td>
+        </tr>
+        <tr>
+          <td>Per-community engagement baselines</td>
+          <td class="no">No</td>
+          <td class="yes">Native</td>
+        </tr>
+        <tr>
+          <td>Certified-mail re-routing on statutory mailings</td>
+          <td class="no">No</td>
+          <td class="yes">Auto via Lob integration</td>
+        </tr>
+        <tr>
+          <td>One-click unsubscribe by category</td>
+          <td class="no">No</td>
+          <td class="yes">Engagement only — operational/compliance protected</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="section-title">Build roadmap</div>
+  <div class="roadmap">
+    <div class="phase now">
+      <div class="label">Now</div>
+      <div class="content" style="flex: 1;">
+        <h4>Messaging System Phase 1 (the active build)</h4>
+        <p>Per-homeowner threads, staff inbox, property-tile dashboard, close-with-agreement flow. Foundation for everything else.</p>
+      </div>
+      <div class="pill">In progress</div>
+    </div>
+    <div class="phase queued">
+      <div class="label">After messaging</div>
+      <div class="content" style="flex: 1;">
+        <h4>Bedrock Connect v1 — this surface</h4>
+        <p>~4-5 focused days. Reuses Resend + existing community/properties/contacts + brand kit. Replies route into the messaging system already shipped.</p>
+      </div>
+      <div class="pill">Queued</div>
+    </div>
+    <div class="phase later">
+      <div class="label">After both</div>
+      <div class="content" style="flex: 1;">
+        <h4>Claire as cross-channel AI</h4>
+        <p>Same Claire persona handles messaging threads, drafts email blasts, takes voice calls — wired in as a layer across all three surfaces.</p>
+      </div>
+      <div class="pill">Later</div>
+    </div>
+  </div>
+
+  <div class="footer">
+    <strong>This page is a placeholder.</strong> The Bedrock Connect surface lives here at <code>/bedrock-connect.html</code> and the API will mount at <code>/api/bedrock-connect/*</code> when build starts. Design spec: <code>templates/bedrock-connect.spec.md</code>. Stub routes: <code>api/bedrock_connect.js</code>. All stub endpoints currently return <code>501 Not Implemented</code> with a clear message pointing here.
+  </div>
+
+</div>
+
+</body>
+</html>
