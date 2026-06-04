@@ -24940,11 +24940,10 @@ ${questionsPage}
       form.append('file', file);
       const r = await fetch('/api/reports/convert', { method: 'POST', headers, body: form });
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
-      const rep = j.report;
-      if (j.duplicate) {
+      const rep = j.report || {};
+      if (r.ok && j.duplicate) {
         status.innerHTML = `<div style="padding:12px 14px; background:#fef3c7; border-left:3px solid #b45309; border-radius:0 6px 6px 0; font-size:13px; color:#78350f;"><strong>Duplicate — already converted.</strong> See the existing row in Past Conversions.</div>`;
-      } else if (rep.status === 'rendered') {
+      } else if (r.ok && rep.status === 'rendered') {
         status.innerHTML = `
           <div style="padding:14px 16px; background:#dcfce7; border-left:3px solid #15803d; border-radius:0 6px 6px 0; font-size:13px; color:#14532d;">
             <strong>✓ Converted.</strong> ${escapeHtml(rep.communities?.name || '')} ${escapeHtml(rep.period_label ? '· ' + rep.period_label : '')}
@@ -24954,15 +24953,29 @@ ${questionsPage}
             </div>
           </div>
         `;
-      } else if (rep.status === 'failed') {
-        status.innerHTML = `<div style="padding:12px 14px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Extraction or render failed.</strong><div style="margin-top:4px; font-size:11.5px;">${escapeHtml(rep.error_message || 'No additional detail.')}</div></div>`;
+      } else if (!r.ok || rep.status === 'failed') {
+        // Failure path — surface the specific detail from the server so we
+        // can diagnose without fishing in Render logs. Show detected type,
+        // stop_reason, structured failure_reason, and a raw_excerpt of
+        // what Claude actually returned.
+        const detail = j.detail || rep.error_message || j.error || 'No additional detail returned.';
+        const stop = j.stop_reason ? `<div style="margin-top:4px; font-size:11px; color:#7f1d1d;">stop_reason: <code>${escapeHtml(j.stop_reason)}</code></div>` : '';
+        const detected = j.detected ? `<div style="margin-top:4px; font-size:11px; color:#7f1d1d;">detected: <code>${escapeHtml(JSON.stringify(j.detected))}</code></div>` : '';
+        const excerpt = j.raw_excerpt ? `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:11.5px; color:#7f1d1d;">Show raw model output (first 600 chars)</summary><pre style="font-size:10.5px; background:#fef2f2; padding:8px 10px; border-radius:4px; margin-top:6px; max-height:240px; overflow:auto; white-space:pre-wrap; color:#7f1d1d;">${escapeHtml(j.raw_excerpt)}</pre></details>` : '';
+        const sourceLink = rep.id ? `<div style="margin-top:8px;"><a href="/api/reports/${encodeURIComponent(rep.id)}/source" target="_blank" rel="noopener" style="font-size:12px; color:#7f1d1d; text-decoration:underline;">View original Vantaca PDF (so you can sanity-check the input)</a></div>` : '';
+        status.innerHTML = `<div style="padding:14px 16px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Conversion failed.</strong><div style="margin-top:6px; font-size:12px; line-height:1.5;">${escapeHtml(detail)}</div>${stop}${detected}${excerpt}${sourceLink}</div>`;
       } else {
-        // 'extracted' but no renderer yet for this type
+        // 'extracted' but no renderer for this type yet
         status.innerHTML = `<div style="padding:12px 14px; background:#fef3c7; border-left:3px solid #b45309; border-radius:0 6px 6px 0; font-size:13px; color:#78350f;"><strong>Type detected: ${escapeHtml(rep.source_type)}.</strong> Source PDF is stored. The Bedrock template for this type isn't built yet — we'll add it as the next report type lands.</div>`;
       }
-      await reportsLoadList();
     } catch (e) {
-      status.innerHTML = `<div style="padding:12px 14px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Conversion failed:</strong> ${escapeHtml(e.message)}</div>`;
+      status.innerHTML = `<div style="padding:12px 14px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Network or unexpected error:</strong> ${escapeHtml(e.message)}</div>`;
+    } finally {
+      // ALWAYS refresh the list — even after a failure the row exists in
+      // the table (status='failed'), so the operator can see what
+      // happened, view the source PDF, and try again. Previously this
+      // call sat after a throw and was unreachable on the failure path.
+      try { await reportsLoadList(); } catch (_) {}
     }
   }
 

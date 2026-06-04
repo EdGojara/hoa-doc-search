@@ -146,17 +146,27 @@ router.post('/convert', upload.single('file'), async (req, res) => {
       }
 
       if (!drvExtract.parsed) {
+        // Surface the structured failure reason from the extractor so the
+        // operator can see whether it was max_tokens, JSON parse, missing
+        // violations array, or empty response. Plus the first 600 chars of
+        // raw so debugging doesn't require fishing in Render logs.
+        const detail = drvExtract.failure_reason || 'DRV summary extraction returned no parseable data';
+        const rawExcerpt = (drvExtract.raw || '').slice(0, 600);
         await supabase
           .from('converted_reports')
           .update({
             status: 'failed',
-            error_message: 'DRV summary extraction returned no parseable data',
+            error_message: detail,
             raw_extraction: drvExtract.raw,
           })
           .eq('id', reportId);
         return res.status(422).json({
           error: 'extraction_failed',
-          report: { ...row, status: 'failed' },
+          detail,
+          raw_excerpt: rawExcerpt,
+          stop_reason: drvExtract.stop_reason || null,
+          detected: detection.parsed,
+          report: { ...row, status: 'failed', error_message: detail },
         });
       }
 
