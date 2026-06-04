@@ -328,7 +328,7 @@ router.get('/', async (req, res) => {
     const status = (req.query.status || 'all').toString();
     let q = supabase
       .from('converted_reports')
-      .select('id, community_id, source_type, period_label, period_start, period_end, source_file_name, output_file_name, status, error_message, extraction_confidence, rendered_at, created_at, communities:community_id(name)', { count: 'exact' })
+      .select('id, community_id, source_type, period_label, period_start, period_end, source_file_name, source_file_path, output_file_name, output_file_path, status, error_message, extraction_confidence, rendered_at, created_at, communities:community_id(name)', { count: 'exact' })
       .order('created_at', { ascending: false });
     if (status !== 'all') q = q.eq('status', status);
     q = q.range(offset, offset + limit - 1);
