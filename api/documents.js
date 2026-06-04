@@ -78,7 +78,7 @@ async function ensureBucket() {
 const STANDARD_CATEGORIES = [
   'annual_budget', 'insurance_dec_page', 'annual_board_meeting_minutes',
   'regular_meeting_minutes', 'reserve_study', 'reserve_report',
-  'bylaws', 'declaration_ccrs', 'rules_and_regulations',
+  'bylaws', 'declaration_ccrs', 'rules_and_regulations', 'legal_update',
   'resolutions_and_policies', 'articles_of_incorporation',
   'annual_financial_statements', 'current_unaudited_financials',
   'w9', 'welcome_package', 'engineers_inspection_report',

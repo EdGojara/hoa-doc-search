@@ -7383,6 +7383,7 @@
           <button class="secondary-btn" onclick="docsQueueThinExtractionReindex()" id="docsThinReindexBtn" style="font-size:12px; padding:6px 14px;" title="Find docs marked 'indexed' but with suspiciously thin extracted text (likely uploaded pre-OCR pipeline) and re-queue them for OCR reprocessing">🔍 Re-OCR suspect scans</button>
           <button class="secondary-btn" onclick="docsRechunkGoverningDocs()" id="docsRechunkGovBtn" style="font-size:12px; padding:6px 14px; background:#fef3c7; border:1px solid #f59e0b; color:#92400e;" title="Force re-chunk + re-embed of every Declaration, Bylaws, and Rules/Regs doc so chunks pick up Article/Section breadcrumb metadata. Run once after the structure-aware chunker ships, then never again unless the chunker logic changes.">📑 Re-chunk governing docs</button>
           <button class="secondary-btn" onclick="docsFixGeneralOrphans()" id="docsFixOrphansBtn" style="font-size:12px; padding:6px 14px; background:#fee2e2; border:1px solid #b91c1c; color:#7f1d1d;" title="List library docs whose community wasn't assigned at upload — these were polluting every community's askEd queries before this fix. Re-assign each to its actual community to make them retrievable by the right community.">🏷️ Fix orphan docs</button>
+          <button class="secondary-btn" onclick="legalUpdatesOpenPanel()" id="legalUpdatesBtn" style="font-size:12px; padding:6px 14px; background:#ede9fe; border:1px solid #6d28d9; color:#4c1d95;" title="Ingest legal updates / agency guidance / court rulings / attorney newsletters so they feed askEd's legal lens. Not legal advice — augments the existing statute layer with current interpretation.">⚖️ Legal Updates</button>
           <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
         </div>
       </div>
@@ -7398,6 +7399,7 @@
            docsLoadOrphans() handler in this file uses the same element id
            for a different feature. Disambiguated 2026-06-04. -->
       <div id="docs-general-orphans-panel" style="margin-top:14px;"></div>
+      <div id="legal-updates-panel" style="margin-top:14px;"></div>
     </div>
 
     <!-- One-shot admin: connect historical knowledge silos to property/contact spine.
@@ -24847,6 +24849,222 @@ ${questionsPage}
     } catch (e) {
       status.style.color = '#b91c1c';
       status.textContent = '✗ Failed: ' + (e.message || 'unknown');
+    }
+  }
+
+  // =========================================================================
+  // Legal Updates — Ed 2026-06-04 build. Upload PDF -> AI extracts metadata
+  // (source publisher, date, jurisdiction, topics, key holding, supersedes)
+  // -> sidecar row in legal_updates -> chunks indexed under 'Law' bucket so
+  // they surface cross-community in askEd retrieval with citation-ready
+  // breadcrumbs. Operator review panel lets you correct extraction before
+  // the record goes live in the lens.
+  // =========================================================================
+  let _legalUpdatesVocab = null;
+
+  async function legalUpdatesOpenPanel() {
+    const panel = document.getElementById('legal-updates-panel');
+    if (!panel) return;
+    panel.innerHTML = '<div style="padding:10px 12px; background:#f5f3ff; border-left:3px solid #6d28d9; border-radius:0 6px 6px 0; font-size:13px; color:#4c1d95;">Loading Legal Updates…</div>';
+    try {
+      if (!_legalUpdatesVocab) {
+        const vRes = await fetch('/api/legal-updates/vocab');
+        _legalUpdatesVocab = await vRes.json();
+      }
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      const headers = session?.access_token ? { Authorization: 'Bearer ' + session.access_token } : {};
+      const listRes = await fetch('/api/legal-updates?status=all&limit=50', { headers });
+      if (!listRes.ok) throw new Error('HTTP ' + listRes.status);
+      const listJson = await listRes.json();
+      const updates = listJson.legal_updates || [];
+
+      const statusBadge = (s) => {
+        const colors = {
+          current:    { bg: '#dcfce7', fg: '#14532d', border: '#15803d' },
+          superseded: { bg: '#fef3c7', fg: '#78350f', border: '#b45309' },
+          historical: { bg: '#e5e7eb', fg: '#374151', border: '#6b7280' },
+        }[s] || { bg: '#f3f4f6', fg: '#374151', border: '#6b7280' };
+        return `<span style="font-size:9.5px; font-weight:700; letter-spacing:0.06em; padding:3px 7px; border-radius:10px; background:${colors.bg}; color:${colors.fg}; border:1px solid ${colors.border};">${s.toUpperCase()}</span>`;
+      };
+
+      const rowsHtml = updates.length === 0
+        ? `<div style="padding:14px; text-align:center; color:#6b7280; font-size:13px; font-style:italic;">No legal updates yet. Drop a PDF in the upload zone above to start the legal lens.</div>`
+        : updates.map((u) => {
+            const docId = u.library_documents?.id;
+            const downloadUrl = docId ? `/api/documents/${encodeURIComponent(docId)}/download` : null;
+            const topics = (u.topics || []).join(', ') || '—';
+            const juris = (u.jurisdiction || []).join(', ') || '—';
+            return `
+              <div style="border:1px solid #e5e7eb; border-radius:6px; padding:10px 12px; margin-bottom:8px; background:white;">
+                <div style="display:flex; gap:8px; align-items:flex-start; justify-content:space-between;">
+                  <div style="flex:1; min-width:0;">
+                    <div style="font-size:13px; font-weight:600; color:#0B1D34;">${escapeHtml(u.source_publisher || '(unknown source)')}</div>
+                    <div style="font-size:11.5px; color:#6b7280; margin-top:2px;">${escapeHtml(u.source_date || '—')} · ${escapeHtml(juris)} · ${escapeHtml(topics)}</div>
+                    <div style="font-size:12.5px; color:#1f2937; margin-top:6px; line-height:1.45;">${escapeHtml(u.key_holding || '(no holding)')}</div>
+                    ${downloadUrl ? `<a href="${downloadUrl}" target="_blank" rel="noopener" style="font-size:11px; color:#6d28d9; text-decoration:none; margin-top:6px; display:inline-block;">📄 Open PDF →</a>` : ''}
+                  </div>
+                  <div style="display:flex; flex-direction:column; gap:6px; align-items:flex-end;">
+                    ${statusBadge(u.status)}
+                    <button onclick="legalUpdatesEdit('${u.id}')" style="font-size:11px; padding:4px 10px; background:white; color:#4c1d95; border:1px solid #6d28d9; border-radius:4px; cursor:pointer;">Edit</button>
+                  </div>
+                </div>
+              </div>
+            `;
+          }).join('');
+
+      panel.innerHTML = `
+        <div style="padding:12px 14px; background:#f5f3ff; border-left:3px solid #6d28d9; border-radius:0 6px 6px 0; margin-bottom:10px;">
+          <strong style="color:#4c1d95; font-size:14px;">⚖️ Legal Updates Library</strong>
+          <div style="font-size:12px; color:#4c1d95; margin-top:4px; line-height:1.5;">
+            Ingest HUD guidance, Texas AG opinions, TX Supreme Court rulings, attorney newsletters (RMWBH, Henry Oddo, Niemann &amp; Heyer), CAI legal updates. AI extracts source, date, jurisdiction, topics, key holding, and supersedes chain at upload. Chunks index to the 'Law' bucket so they surface in every community's askEd queries. <strong>Not legal advice</strong> — augments the existing statute layer with current interpretation.
+          </div>
+        </div>
+
+        <div style="border:2px dashed #c4b5fd; border-radius:8px; padding:18px; text-align:center; background:#fafaff; margin-bottom:12px;">
+          <input type="file" accept="application/pdf" id="legalUpdateFile" style="display:none;" onchange="legalUpdatesUpload(this)">
+          <button onclick="document.getElementById('legalUpdateFile').click()" style="font-size:13px; padding:8px 18px; background:#6d28d9; color:white; border:none; border-radius:6px; cursor:pointer; font-weight:600;">📤 Upload Legal Update PDF</button>
+          <div style="font-size:11px; color:#6b7280; margin-top:8px;">AI will extract source publisher, date, jurisdiction, topics, key holding. You review + correct before it goes live.</div>
+        </div>
+
+        <div id="legal-updates-upload-status" style="margin-bottom:10px;"></div>
+        <div id="legal-updates-list">${rowsHtml}</div>
+      `;
+    } catch (e) {
+      panel.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Failed to load Legal Updates:</strong> ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function legalUpdatesUpload(input) {
+    const file = input.files && input.files[0];
+    const status = document.getElementById('legal-updates-upload-status');
+    if (!file) return;
+    if (file.size > 20 * 1024 * 1024) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;">File too large (max 20MB).</div>`;
+      input.value = '';
+      return;
+    }
+    status.innerHTML = `<div style="padding:10px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:13px; color:#1e3a8a;">⏳ Uploading + AI extracting metadata from <strong>${escapeHtml(file.name)}</strong>… typically 10–30 seconds.</div>`;
+    try {
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      const headers = session?.access_token ? { Authorization: 'Bearer ' + session.access_token } : {};
+      const form = new FormData();
+      form.append('file', file);
+      const r = await fetch('/api/legal-updates', { method: 'POST', headers, body: form });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      input.value = '';
+      if (j.duplicate) {
+        status.innerHTML = `<div style="padding:10px 12px; background:#fef3c7; border-left:3px solid #b45309; border-radius:0 6px 6px 0; font-size:13px; color:#78350f;">Duplicate — this PDF is already in the library. Editing the existing record instead.</div>`;
+      } else {
+        const missing = j.missing_required && j.missing_required.length > 0
+          ? `<div style="font-size:11.5px; color:#7f1d1d; margin-top:4px;">⚠ Extraction couldn't determine: ${j.missing_required.join(', ')}. Edit the record to fill in.</div>`
+          : '';
+        status.innerHTML = `<div style="padding:10px 12px; background:#dcfce7; border-left:3px solid #15803d; border-radius:0 6px 6px 0; font-size:13px; color:#14532d;"><strong>✓ Uploaded.</strong> ${j.legal_update?.source_publisher || ''} · ${j.legal_update?.source_date || ''}. Chunks indexed and available in askEd retrieval.${missing}</div>`;
+      }
+      // Refresh the list and open the editor on the new record.
+      await legalUpdatesOpenPanel();
+      if (j.legal_update?.id) {
+        setTimeout(() => legalUpdatesEdit(j.legal_update.id), 200);
+      }
+    } catch (e) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Upload failed:</strong> ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function legalUpdatesEdit(id) {
+    const status = document.getElementById('legal-updates-upload-status');
+    try {
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      const headers = session?.access_token ? { Authorization: 'Bearer ' + session.access_token } : {};
+      const r = await fetch('/api/legal-updates/' + encodeURIComponent(id), { headers });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      const lu = j.legal_update;
+      const topicsHtml = (_legalUpdatesVocab?.topics || []).map((t) => {
+        const checked = (lu.topics || []).includes(t) ? 'checked' : '';
+        return `<label style="display:inline-flex; align-items:center; gap:4px; margin:2px 6px 2px 0; font-size:11.5px; padding:3px 8px; background:#f3f4f6; border-radius:12px; cursor:pointer;"><input type="checkbox" name="lu-topic" value="${t}" ${checked} style="margin:0;"> ${t}</label>`;
+      }).join('');
+      const jurisHtml = (_legalUpdatesVocab?.jurisdictions || []).map((j) => {
+        const checked = (lu.jurisdiction || []).includes(j) ? 'checked' : '';
+        return `<label style="display:inline-flex; align-items:center; gap:4px; margin:2px 6px 2px 0; font-size:11.5px; padding:3px 8px; background:#f3f4f6; border-radius:12px; cursor:pointer;"><input type="checkbox" name="lu-juris" value="${j}" ${checked} style="margin:0;"> ${j}</label>`;
+      }).join('');
+      const editor = `
+        <div style="border:2px solid #6d28d9; border-radius:8px; padding:14px; background:#fafaff; margin-bottom:10px;">
+          <div style="font-size:13px; font-weight:700; color:#4c1d95; margin-bottom:10px;">Edit Legal Update</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Source Publisher</label>
+              <input id="lu-source" type="text" value="${escapeHtml(lu.source_publisher || '')}" style="width:100%; font-size:12px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Source Date</label>
+              <input id="lu-date" type="date" value="${escapeHtml(lu.source_date || '')}" style="width:100%; font-size:12px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+          </div>
+          <div style="margin-bottom:10px;">
+            <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Key Holding (the citation-ready summary the model will quote)</label>
+            <textarea id="lu-holding" rows="3" style="width:100%; font-size:12px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px; font-family:inherit; resize:vertical;">${escapeHtml(lu.key_holding || '')}</textarea>
+          </div>
+          <div style="margin-bottom:10px;">
+            <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Jurisdiction</label>
+            <div>${jurisHtml}</div>
+          </div>
+          <div style="margin-bottom:10px;">
+            <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Topics</label>
+            <div>${topicsHtml}</div>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+            <div>
+              <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Status</label>
+              <select id="lu-status" style="width:100%; font-size:12px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px;">
+                <option value="current" ${lu.status === 'current' ? 'selected' : ''}>Current</option>
+                <option value="superseded" ${lu.status === 'superseded' ? 'selected' : ''}>Superseded</option>
+                <option value="historical" ${lu.status === 'historical' ? 'selected' : ''}>Historical</option>
+              </select>
+            </div>
+            <div>
+              <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Source URL (optional)</label>
+              <input id="lu-url" type="url" value="${escapeHtml(lu.source_url || '')}" placeholder="https://..." style="width:100%; font-size:12px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px;">
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button onclick="document.getElementById('legal-updates-upload-status').innerHTML=''; legalUpdatesOpenPanel()" style="font-size:12px; padding:7px 14px; background:white; border:1px solid #d0d7de; border-radius:4px; cursor:pointer;">Cancel</button>
+            <button onclick="legalUpdatesSaveEdit('${lu.id}')" style="font-size:12px; padding:7px 14px; background:#6d28d9; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600;">Save</button>
+          </div>
+        </div>
+      `;
+      status.innerHTML = editor;
+    } catch (e) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Load failed:</strong> ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function legalUpdatesSaveEdit(id) {
+    const status = document.getElementById('legal-updates-upload-status');
+    try {
+      const topics = Array.from(document.querySelectorAll('input[name="lu-topic"]:checked')).map((el) => el.value);
+      const jurisdiction = Array.from(document.querySelectorAll('input[name="lu-juris"]:checked')).map((el) => el.value);
+      const patch = {
+        source_publisher: document.getElementById('lu-source').value.trim(),
+        source_date: document.getElementById('lu-date').value || null,
+        key_holding: document.getElementById('lu-holding').value.trim(),
+        topics,
+        jurisdiction,
+        status: document.getElementById('lu-status').value,
+        source_url: document.getElementById('lu-url').value.trim() || null,
+      };
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      const r = await fetch('/api/legal-updates/' + encodeURIComponent(id), {
+        method: 'PATCH', headers, body: JSON.stringify(patch),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      status.innerHTML = `<div style="padding:10px 12px; background:#dcfce7; border-left:3px solid #15803d; border-radius:0 6px 6px 0; font-size:13px; color:#14532d;"><strong>✓ Saved.</strong> Changes take effect on the next askEd query.</div>`;
+      setTimeout(() => legalUpdatesOpenPanel(), 800);
+    } catch (e) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Save failed:</strong> ${escapeHtml(e.message)}</div>`;
     }
   }
 
