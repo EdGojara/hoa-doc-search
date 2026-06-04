@@ -425,4 +425,120 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /manual-drv  — Bypass AI entirely. Operator types the data in; we
+// render the newsletter PDF and store the row. Ed 2026-06-04: shipped after
+// 5 rounds of broken AI extraction so the operator can produce the monthly
+// LOPF newsletter without depending on the detect/extract pipeline.
+//
+// Body (JSON):
+//   {
+//     community_name: string,
+//     period_label: string,          // "May 2026"
+//     period_start: "YYYY-MM-DD" | null,
+//     period_end:   "YYYY-MM-DD" | null,
+//     metrics: {
+//       first_notices_issued, second_notices_issued,
+//       violations_resolved, certified_letters_sent
+//     },
+//     top_categories: [{ category, percentage }],
+//     message_paragraphs: [p1, p2, p3] | null,   // null -> AI fills in
+//     top_3_to_watch:     [s1, s2, s3]   | null,  // null -> AI fills in
+//   }
+// ----------------------------------------------------------------------------
+router.post('/manual-drv', express.json({ limit: '64kb' }), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.community_name) return res.status(400).json({ error: 'community_name_required' });
+    if (!b.period_label)    return res.status(400).json({ error: 'period_label_required' });
+    if (!b.metrics)         return res.status(400).json({ error: 'metrics_required' });
+
+    const reportId = crypto.randomUUID();
+    const communityId = await resolveCommunityIdByName(b.community_name);
+
+    // Use operator-provided copy if given; otherwise generate via AI from
+    // the metrics + top categories. Falls back to deterministic templates
+    // inside generateDrvNewsletterCopy if the model call fails.
+    let messageParagraphs = Array.isArray(b.message_paragraphs) && b.message_paragraphs.length === 3
+      ? b.message_paragraphs
+      : null;
+    let top3 = Array.isArray(b.top_3_to_watch) && b.top_3_to_watch.length === 3
+      ? b.top_3_to_watch
+      : null;
+    if (!messageParagraphs || !top3) {
+      try {
+        const copy = await generateDrvNewsletterCopy(
+          b.community_name, b.period_label, b.metrics, b.top_categories || []
+        );
+        if (copy?.parsed?.message_paragraphs) messageParagraphs = messageParagraphs || copy.parsed.message_paragraphs;
+        if (copy?.parsed?.top_3_to_watch)     top3 = top3 || copy.parsed.top_3_to_watch;
+      } catch (e) { console.warn('[reports/manual-drv] copy gen failed:', e?.message); }
+    }
+
+    let renderedPdf;
+    try {
+      renderedPdf = await renderBedrockDrvPdf({
+        community_name: b.community_name,
+        period_label: b.period_label,
+        metrics: b.metrics,
+        top_categories: b.top_categories || [],
+        message_paragraphs: messageParagraphs || [],
+        top_3_to_watch: top3 || [],
+      });
+    } catch (rEr) {
+      console.error('[reports/manual-drv] render failed:', rEr.stack || rEr.message);
+      return res.status(500).json({ error: safeErrorMessage(rEr) });
+    }
+
+    // Store as a converted_reports row so it shows up in Past Conversions
+    // alongside AI-converted reports. source_file_path is null since there's
+    // no source PDF — operator typed the data.
+    const outName = `${b.community_name.replace(/[^A-Za-z0-9]+/g, '_')}_DRV_${(b.period_label || 'Summary').replace(/[^A-Za-z0-9]+/g, '_')}.pdf`;
+    const outPath = `${BEDROCK_MGMT_CO_ID}/reports/output/${reportId}.pdf`;
+    const { error: outErr } = await supabase.storage
+      .from(STORAGE_BUCKET).upload(outPath, renderedPdf, { contentType: 'application/pdf', upsert: false });
+    if (outErr) {
+      console.error('[reports/manual-drv] output upload failed:', outErr.message);
+      return res.status(500).json({ error: safeErrorMessage(outErr) });
+    }
+
+    const { data: row, error: insErr } = await supabase
+      .from('converted_reports')
+      .insert({
+        id: reportId,
+        community_id: communityId,
+        source_type: 'vantaca_drv_summary',
+        period_label: b.period_label,
+        period_start: b.period_start || null,
+        period_end: b.period_end || null,
+        source_file_path: null,                      // no source — manual entry
+        source_file_name: '(manual entry)',
+        source_file_hash: null,
+        source_file_size_bytes: null,
+        output_file_path: outPath,
+        output_file_name: outName,
+        extraction_confidence: 'high',                // operator-typed = high confidence
+        ai_extracted: {
+          metrics: b.metrics,
+          top_categories: b.top_categories || [],
+          message_paragraphs: messageParagraphs,
+          top_3_to_watch: top3,
+        },
+        status: 'rendered',
+        rendered_at: new Date().toISOString(),
+      })
+      .select()
+      .single();
+    if (insErr) {
+      console.error('[reports/manual-drv] insert failed:', insErr.message);
+      try { await supabase.storage.from(STORAGE_BUCKET).remove([outPath]); } catch (_) {}
+      return res.status(500).json({ error: safeErrorMessage(insErr) });
+    }
+    return res.json({ report: row });
+  } catch (err) {
+    console.error('[reports/manual-drv] failed:', err.stack || err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 module.exports = router;

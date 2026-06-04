@@ -708,6 +708,54 @@
 
     <div id="reportsConvertStatus" style="margin-bottom:20px;"></div>
 
+    <!-- Manual entry path — bypass the AI extraction entirely. Type the
+         data straight in, get the newsletter PDF. Ed 2026-06-04: shipped
+         when the auto-detect/extract path was burning too many iterations.
+         No AI involved unless you want it to fill in the message/bullets. -->
+    <details style="margin-bottom:20px; border:1px solid #c4b5fd; border-radius:8px; padding:0; background:#fafaff;" id="manualDrvDetails">
+      <summary style="cursor:pointer; padding:12px 14px; font-weight:600; color:#4c1d95; font-size:14px;">⌨️ Manual entry — type the data in directly (skip the AI)</summary>
+      <div style="padding:14px;">
+        <div style="font-size:12px; color:#6b7280; margin-bottom:14px; line-height:1.5;">Read the numbers off your Vantaca report and type them in here. Bypasses AI extraction entirely — the renderer gets your data and produces the newsletter PDF immediately. For the message paragraphs and Top 3 bullets, leave them blank and AI generates them from your numbers, or type your own.</div>
+
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:12px;">
+          <div>
+            <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Community Name</label>
+            <input id="mdrvCommunity" type="text" placeholder="Lake of Pine Forest Homeowners Association, Inc" style="width:100%; font-size:12.5px; padding:7px 9px; border:1px solid #d0d7de; border-radius:4px; box-sizing:border-box;">
+          </div>
+          <div>
+            <label style="font-size:11px; font-weight:600; color:#4c1d95; display:block; margin-bottom:3px;">Period Label</label>
+            <input id="mdrvPeriod" type="text" placeholder="May 2026" style="width:100%; font-size:12.5px; padding:7px 9px; border:1px solid #d0d7de; border-radius:4px; box-sizing:border-box;">
+          </div>
+        </div>
+
+        <div style="font-size:11.5px; font-weight:700; color:#4c1d95; margin:14px 0 6px; letter-spacing:0.04em;">METRIC CARDS (4 numbers)</div>
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:8px; margin-bottom:12px;">
+          <div><label style="font-size:11px; color:#374151; display:block; margin-bottom:2px;">First Notices Issued</label><input id="mdrvFirst" type="number" min="0" placeholder="30" style="width:100%; font-size:13px; padding:7px 9px; border:1px solid #d0d7de; border-radius:4px; box-sizing:border-box;"></div>
+          <div><label style="font-size:11px; color:#374151; display:block; margin-bottom:2px;">Second Notices Issued</label><input id="mdrvSecond" type="number" min="0" placeholder="7" style="width:100%; font-size:13px; padding:7px 9px; border:1px solid #d0d7de; border-radius:4px; box-sizing:border-box;"></div>
+          <div><label style="font-size:11px; color:#374151; display:block; margin-bottom:2px;">Violations Resolved</label><input id="mdrvResolved" type="number" min="0" placeholder="93" style="width:100%; font-size:13px; padding:7px 9px; border:1px solid #d0d7de; border-radius:4px; box-sizing:border-box;"></div>
+          <div><label style="font-size:11px; color:#374151; display:block; margin-bottom:2px;">Certified Letters Sent</label><input id="mdrvCertified" type="number" min="0" placeholder="14" style="width:100%; font-size:13px; padding:7px 9px; border:1px solid #d0d7de; border-radius:4px; box-sizing:border-box;"></div>
+        </div>
+
+        <div style="font-size:11.5px; font-weight:700; color:#4c1d95; margin:14px 0 6px; letter-spacing:0.04em;">TOP VIOLATION TYPES (one per line — category, percentage)</div>
+        <div style="font-size:11px; color:#6b7280; margin-bottom:4px;">Format: <code>Category Name | XX</code> (one per line, no % sign needed)</div>
+        <textarea id="mdrvCategories" rows="8" placeholder="Trash Cans/Recycling Containers | 14&#10;Landscaping-Flowerbeds | 13&#10;Sod Yard | 12&#10;Mildew | 7&#10;Storage Of Unapproved Items | 6&#10;Weeds in flowerbeds | 6" style="width:100%; font-size:12px; padding:8px 10px; border:1px solid #d0d7de; border-radius:4px; font-family:monospace; box-sizing:border-box; line-height:1.5;"></textarea>
+
+        <div style="font-size:11.5px; font-weight:700; color:#4c1d95; margin:14px 0 6px; letter-spacing:0.04em;">MESSAGE PARAGRAPHS (optional — leave blank for AI to generate)</div>
+        <textarea id="mdrvMessage" rows="6" placeholder="Paragraph 1: warm opener referencing the resolved number&#10;Paragraph 2: name top 2-3 categories with seasonal context&#10;Paragraph 3: (auto-fills with the standard 'don't be alarmed' boilerplate)" style="width:100%; font-size:12px; padding:8px 10px; border:1px solid #d0d7de; border-radius:4px; font-family:inherit; box-sizing:border-box; line-height:1.5;"></textarea>
+        <div style="font-size:11px; color:#6b7280; margin-top:3px;">Paragraphs separated by blank lines. Leave entire box empty to let AI generate from your numbers.</div>
+
+        <div style="font-size:11.5px; font-weight:700; color:#4c1d95; margin:14px 0 6px; letter-spacing:0.04em;">TOP 3 THINGS TO WATCH (optional — leave blank for AI)</div>
+        <textarea id="mdrvWatch" rows="3" placeholder="Store trash cans out of view after pickup days&#10;Maintain flowerbeds (mulch, weeds, plant health)&#10;Keep yards mowed and edged as growth picks up with warmer weather" style="width:100%; font-size:12px; padding:8px 10px; border:1px solid #d0d7de; border-radius:4px; font-family:inherit; box-sizing:border-box; line-height:1.5;"></textarea>
+        <div style="font-size:11px; color:#6b7280; margin-top:3px;">One bullet per line. Leave empty to auto-generate from top categories.</div>
+
+        <div style="display:flex; gap:8px; justify-content:flex-end; margin-top:16px;">
+          <button onclick="manualDrvFillLopfMay()" style="font-size:12px; padding:8px 16px; background:white; border:1px solid #6d28d9; color:#6d28d9; border-radius:4px; cursor:pointer; font-weight:600;">Fill in May LOPF example</button>
+          <button onclick="manualDrvGenerate()" style="font-size:13px; padding:9px 22px; background:#6d28d9; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:700;">Generate PDF</button>
+        </div>
+        <div id="manualDrvStatus" style="margin-top:12px;"></div>
+      </div>
+    </details>
+
     <div style="margin-bottom:10px;">
       <h3 style="margin:0; font-size:16px; color:#0B1D34;">Past Conversions</h3>
     </div>
@@ -25058,6 +25106,125 @@ ${questionsPage}
       }
     }
   })();
+
+  // =========================================================================
+  // Manual DRV entry — bypass the AI extract path entirely. Operator types
+  // the data straight in, hits Generate, gets the Bedrock newsletter PDF.
+  // Shipped Ed 2026-06-04 after 5 rounds of broken auto-extraction so the
+  // monthly newsletter can ship without depending on the detect pipeline.
+  // =========================================================================
+  function manualDrvFillLopfMay() {
+    document.getElementById('mdrvCommunity').value = 'Lake of Pine Forest Homeowners Association, Inc';
+    document.getElementById('mdrvPeriod').value = 'May 2026';
+    document.getElementById('mdrvFirst').value = '30';
+    document.getElementById('mdrvSecond').value = '7';
+    document.getElementById('mdrvResolved').value = '93';
+    document.getElementById('mdrvCertified').value = '14';
+    document.getElementById('mdrvCategories').value =
+      'Trash Cans/Recycling Containers | 14\n' +
+      'Landscaping-Flowerbeds | 13\n' +
+      'Sod Yard | 12\n' +
+      'Mildew | 7\n' +
+      'Storage Of Unapproved Items | 6\n' +
+      'Weeds in flowerbeds | 6\n' +
+      'Powerwash driveway/sidewalk | 1\n' +
+      'Fishing Violation | 1';
+    document.getElementById('mdrvMessage').value = '';
+    document.getElementById('mdrvWatch').value = '';
+  }
+
+  function _parseManualCategories(text) {
+    return String(text || '').split('\n').map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return null;
+      // Accept "Category | 14" or "Category, 14" or "Category 14%" etc.
+      const m = trimmed.match(/^(.+?)[\s,|]+(\d+(?:\.\d+)?)\s*%?\s*$/);
+      if (!m) return null;
+      const pct = Math.round(parseFloat(m[2]));
+      if (isNaN(pct)) return null;
+      return { category: m[1].trim(), percentage: pct };
+    }).filter(Boolean);
+  }
+
+  function _parseManualParagraphs(text) {
+    const cleaned = String(text || '').trim();
+    if (!cleaned) return null;
+    // Split on blank lines OR single newlines if there are no blank lines
+    let paras = cleaned.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    if (paras.length === 1) {
+      // Fall back to single-newline split if operator didn't double-space
+      paras = cleaned.split(/\n/).map((p) => p.trim()).filter(Boolean);
+    }
+    return paras.slice(0, 3);
+  }
+
+  function _parseManualLines(text) {
+    const cleaned = String(text || '').trim();
+    if (!cleaned) return null;
+    return cleaned.split(/\n/).map((l) => l.trim()).filter(Boolean).slice(0, 3);
+  }
+
+  async function manualDrvGenerate() {
+    const status = document.getElementById('manualDrvStatus');
+    const community = document.getElementById('mdrvCommunity').value.trim();
+    const period = document.getElementById('mdrvPeriod').value.trim();
+    const first = parseInt(document.getElementById('mdrvFirst').value || '0', 10);
+    const second = parseInt(document.getElementById('mdrvSecond').value || '0', 10);
+    const resolved = parseInt(document.getElementById('mdrvResolved').value || '0', 10);
+    const certified = parseInt(document.getElementById('mdrvCertified').value || '0', 10);
+    const cats = _parseManualCategories(document.getElementById('mdrvCategories').value);
+    const messageParas = _parseManualParagraphs(document.getElementById('mdrvMessage').value);
+    const watchItems = _parseManualLines(document.getElementById('mdrvWatch').value);
+
+    if (!community || !period) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;">Community name and period are required.</div>`;
+      return;
+    }
+    if (cats.length === 0) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;">Add at least one violation category. Format: <code>Category Name | 14</code></div>`;
+      return;
+    }
+
+    status.innerHTML = `<div style="padding:10px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:13px; color:#1e3a8a;">⏳ Generating newsletter PDF…</div>`;
+
+    const body = {
+      community_name: community,
+      period_label: period,
+      metrics: {
+        first_notices_issued: first,
+        second_notices_issued: second,
+        violations_resolved: resolved,
+        certified_letters_sent: certified,
+      },
+      top_categories: cats,
+      message_paragraphs: messageParas && messageParas.length === 3 ? messageParas : null,
+      top_3_to_watch: watchItems && watchItems.length === 3 ? watchItems : null,
+    };
+
+    try {
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      const r = await fetch('/api/reports/manual-drv', {
+        method: 'POST', headers, body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'HTTP ' + r.status);
+      const rep = j.report;
+      status.innerHTML = `
+        <div style="padding:14px 16px; background:#dcfce7; border-left:3px solid #15803d; border-radius:0 6px 6px 0; font-size:13px; color:#14532d;">
+          <strong>✓ Generated.</strong> ${escapeHtml(community)} — ${escapeHtml(period)}
+          <div style="margin-top:10px;">
+            <a href="/api/reports/${encodeURIComponent(rep.id)}/rendered" target="_blank" rel="noopener" style="font-size:13px; padding:8px 16px; background:#0B1D34; color:white; text-decoration:none; border-radius:4px; font-weight:600;">📄 Open Bedrock PDF</a>
+          </div>
+        </div>
+      `;
+      // Refresh the past-conversions list so the new row appears.
+      try { await reportsLoadList(); } catch (_) {}
+    } catch (e) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Generate failed:</strong> ${escapeHtml(e.message)}</div>`;
+    }
+  }
 
   // =========================================================================
   // Legal Updates — Ed 2026-06-04 build. Upload PDF -> AI extracts metadata
