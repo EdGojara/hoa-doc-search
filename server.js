@@ -7159,6 +7159,43 @@ function _centralOffsetForDate(year, month, day) {
   return '-05:00';
 }
 
+// _cycleToCanonicalTimestamps(cycle): single source of truth for the
+// trustEd → bedrock-vote timestamp combination. Returns every date
+// field already combined with its time companion + Central offset.
+//
+// WHY THIS EXISTS:
+// The cycle row stores date and time in separate columns
+// (annual_meeting_date + annual_meeting_time, voting_cutoff_at +
+// voting_cutoff_time, etc.). Every consumer that crosses a system
+// boundary needs to combine them. The bridge previously called
+// the date fields directly and dropped the time fields on the floor
+// — that bug shipped end_date (June 22 4 PM displayed as June 21)
+// AND meeting_date (June 23 6 PM displayed as June 22 7 PM) before
+// Ed caught both by eyeball. Per CLAUDE.md "single source of truth":
+// one fact = one canonical place. This helper IS the canonical
+// place for cycle timestamps. Callers use it; never grab the
+// date columns directly.
+//
+// Adding a new date field? Add it here. The bridge picks it up
+// automatically and the cross-check display covers it.
+function _cycleToCanonicalTimestamps(cycle) {
+  if (!cycle) return {};
+  const today = new Date().toISOString().slice(0, 10);
+  return {
+    start: _toCentralTimestamp(
+      cycle.nominations_close_at || today,
+      cycle.nominations_close_time || '12:00 AM'
+    ),
+    end: _toCentralTimestamp(
+      cycle.voting_cutoff_at || cycle.annual_meeting_date,
+      cycle.voting_cutoff_time || '4:00 PM'
+    ),
+    meeting: cycle.annual_meeting_date
+      ? _toCentralTimestamp(cycle.annual_meeting_date, cycle.annual_meeting_time || '6:00 PM')
+      : null,
+  };
+}
+
 // Helper: extract surname from "Dr. Roger Vazquez" → "vazquez" for sorting.
 // Strips honorifics + suffixes, takes the last word, lowercases. Per
 // Ed 2026-06-01: ballot convention is alphabetical-by-last-name, not by
@@ -7371,18 +7408,13 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
     // The display string is what bedrock-vote will show on its
     // election card. If it disagrees with the operator's expectation,
     // the bug is visible BEFORE the push, not after.
-    const today = new Date().toISOString().slice(0, 10);
-    const previewStartDate = _toCentralTimestamp(
-      cycle.nominations_close_at || today,
-      cycle.nominations_close_time || '12:00 AM'
-    );
-    const previewEndDate = _toCentralTimestamp(
-      cycle.voting_cutoff_at || cycle.annual_meeting_date,
-      cycle.voting_cutoff_time || '4:00 PM'
-    );
-    const previewMeetingDate = cycle.annual_meeting_date
-      ? _toCentralTimestamp(cycle.annual_meeting_date, cycle.annual_meeting_time || '6:00 PM')
-      : null;
+    // Single source of truth — see _cycleToCanonicalTimestamps.
+    // Never grab cycle.*_at or cycle.*_date columns directly in code
+    // that exports to bedrock-vote; always go through the helper.
+    const previewTs = _cycleToCanonicalTimestamps(cycle);
+    const previewStartDate   = previewTs.start;
+    const previewEndDate     = previewTs.end;
+    const previewMeetingDate = previewTs.meeting;
     const fmtCentralDisplay = (iso) => {
       if (!iso) return null;
       try {
@@ -7668,25 +7700,19 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
     // _toCentralTimestamp returns 'YYYY-MM-DDTHH:MM:SS-05:00' (CDT,
     // summer) or '-06:00' (CST, winter). Bedrock's Texas portfolio is
     // entirely on Central time so a single timezone assumption is safe.
-    const today = new Date().toISOString().slice(0, 10);
-    const startDate = _toCentralTimestamp(cycle.nominations_close_at || today, cycle.nominations_close_time || '12:00 AM');
-    const endDate = _toCentralTimestamp(cycle.voting_cutoff_at || cycle.annual_meeting_date, cycle.voting_cutoff_time || '4:00 PM');
+    // Single source of truth — see _cycleToCanonicalTimestamps.
+    // Never grab cycle.*_at or cycle.*_date columns directly here.
+    // Adding a new date field? Add it to the helper, not inline.
+    const ts = _cycleToCanonicalTimestamps(cycle);
+    const startDate = ts.start;
+    const endDate = ts.end;
+    const meetingTimestamp = ts.meeting;
     if (!endDate) {
       return res.status(400).json({ error: 'Cycle is missing voting_cutoff_at AND annual_meeting_date; one must be set so bedrock-vote knows when to close ballots.' });
     }
 
     const electionYear = (new Date(cycle.annual_meeting_date || endDate)).getFullYear();
     const baseElectionName = `${electionYear} Annual Meeting and Board Election`;
-    // meeting_date must include the meeting TIME + Central TZ. Same
-    // bug as end_date — sending date-only means bedrock-vote stores
-    // midnight UTC, which renders in Central as the previous evening
-    // at 7 PM. Caught 2026-06-03 — meeting was configured for
-    // 6 PM June 23 but ballot would have printed "annual meeting on
-    // Monday, June 22 at 7:00 PM" (wrong day, wrong time). Combine
-    // with annual_meeting_time (defaults to 6:00 PM, Bedrock convention).
-    const meetingTimestamp = cycle.annual_meeting_date
-      ? _toCentralTimestamp(cycle.annual_meeting_date, cycle.annual_meeting_time || '6:00 PM')
-      : null;
     const payload = {
       external_cycle_id: cycle.id,
       community_name: cycle.community_name,
