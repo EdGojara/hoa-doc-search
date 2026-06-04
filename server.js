@@ -7380,6 +7380,9 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       cycle.voting_cutoff_at || cycle.annual_meeting_date,
       cycle.voting_cutoff_time || '4:00 PM'
     );
+    const previewMeetingDate = cycle.annual_meeting_date
+      ? _toCentralTimestamp(cycle.annual_meeting_date, cycle.annual_meeting_time || '6:00 PM')
+      : null;
     const fmtCentralDisplay = (iso) => {
       if (!iso) return null;
       try {
@@ -7404,12 +7407,16 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         seats_open: cycle.seats_open || 1
       },
       // Dates as bedrock-vote will receive AND display them. Cross-check
-      // these against your configured voting cutoff BEFORE clicking Send.
+      // these against your configured voting cutoff + meeting time
+      // BEFORE clicking Send. Three separate dates so any mismatch
+      // surfaces with the specific field labeled.
       election_dates_preview: {
         start_payload: previewStartDate,
         start_display: fmtCentralDisplay(previewStartDate),
         end_payload: previewEndDate,
         end_display: fmtCentralDisplay(previewEndDate),
+        meeting_payload: previewMeetingDate,
+        meeting_display: fmtCentralDisplay(previewMeetingDate),
       },
       stats: {
         total_nominations: (allNominationsRaw || []).length,
@@ -7670,13 +7677,23 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
 
     const electionYear = (new Date(cycle.annual_meeting_date || endDate)).getFullYear();
     const baseElectionName = `${electionYear} Annual Meeting and Board Election`;
+    // meeting_date must include the meeting TIME + Central TZ. Same
+    // bug as end_date — sending date-only means bedrock-vote stores
+    // midnight UTC, which renders in Central as the previous evening
+    // at 7 PM. Caught 2026-06-03 — meeting was configured for
+    // 6 PM June 23 but ballot would have printed "annual meeting on
+    // Monday, June 22 at 7:00 PM" (wrong day, wrong time). Combine
+    // with annual_meeting_time (defaults to 6:00 PM, Bedrock convention).
+    const meetingTimestamp = cycle.annual_meeting_date
+      ? _toCentralTimestamp(cycle.annual_meeting_date, cycle.annual_meeting_time || '6:00 PM')
+      : null;
     const payload = {
       external_cycle_id: cycle.id,
       community_name: cycle.community_name,
       election_name: isTestMode ? `[TEST] ${baseElectionName}` : baseElectionName,
       start_date: startDate,
       end_date: endDate,
-      meeting_date: cycle.annual_meeting_date || null,
+      meeting_date: meetingTimestamp,
       seats_available: cycle.seats_open || 1,
       candidates,
       voters
@@ -7734,6 +7751,8 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
         start_display: fmtCentralDisplay(startDate),
         end_payload: endDate,
         end_display: fmtCentralDisplay(endDate),
+        meeting_payload: meetingTimestamp,
+        meeting_display: fmtCentralDisplay(meetingTimestamp),
       }
     });
 
