@@ -775,12 +775,38 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       return str === 'undefined' || str === 'null' ? fallback : str;
     };
 
-    // Brand cornerstone + wordmark
-    try { drawBedrockMark(doc, 54, 54, 36); } catch (e) { console.warn('[meeting-checkin] mark draw failed:', e?.message); }
-    doc.font('Helvetica-Bold').fontSize(11).fillColor('#1A3050')
-       .text(s(BRAND?.service?.name, 'Bedrock Association Management'), 100, 60);
+    // Central-time formatter — server runs UTC on Render, so anything that
+    // hits new Date().toLocaleString() unqualified renders in UTC and looks
+    // 5-6 hours off. Per CLAUDE.md timezone rule: format-on-display in
+    // America/Chicago. Used for the per-row check-in time AND the footer.
+    const fmtCentralTime = (iso) => {
+      if (!iso) return '';
+      try {
+        return new Date(iso).toLocaleTimeString('en-US', {
+          hour: 'numeric', minute: '2-digit', timeZone: 'America/Chicago',
+        });
+      } catch (_) { return ''; }
+    };
+    const fmtCentralDateTime = (d) => {
+      try {
+        return d.toLocaleString('en-US', {
+          dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Chicago',
+        }) + ' CT';
+      } catch (_) { return d.toISOString(); }
+    };
+
+    // Brand lockup — bedrock-mark-email-2x.png is the full B + BEDROCK
+    // wordmark, designed for an email header band. At h=40 it's the
+    // canonical brand presentation for this letterhead. No inline text
+    // alongside it — Ed 2026-06-04 saw "Bedrock Association Management"
+    // overlapping the embedded BEDROCK wordmark because the lockup is
+    // wider than I had positioned the text for. Service-line identifier
+    // moves to a small subtitle below.
+    try { drawBedrockMark(doc, 54, 48, 40); } catch (e) { console.warn('[meeting-checkin] mark draw failed:', e?.message); }
+    // Service-line subtitle under the lockup, right-justified to the
+    // visual right-edge of the lockup (approx 220pt wide at h=40).
     doc.font('Helvetica').fontSize(8).fillColor('#7a7a7a')
-       .text(s(BRAND?.tagline, 'Community. Simplified.'), 100, 76);
+       .text('Association Management  ·  Community. Simplified.', 54, 96, { width: 220 });
 
     doc.moveDown(2);
     doc.font('Helvetica-Bold').fontSize(18).fillColor('#1A3050')
@@ -911,7 +937,7 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
         const a = attendance[i];
         try {
           if (doc.y + ROW_HEIGHT > 720) doc.addPage();
-          const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+          const time = fmtCentralTime(a.checked_in_at);
           // Ed 2026-06-04: "Voted online" / "Voted mail" read like the
           // ballot is being cast at the meeting — but absentee voting
           // closed before meeting day. Re-phrased so timing is unambiguous:
@@ -975,7 +1001,7 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       for (let i = 0; i < pageCount; i++) {
         doc.switchToPage(startPage + i);
         doc.font('Helvetica').fontSize(7).fillColor('#bbb')
-           .text(`Generated ${new Date().toLocaleString('en-US')} by ${s(BRAND?.service?.name, 'Bedrock Association Management')} · trustEd platform · page ${i+1} of ${pageCount}`,
+           .text(`Generated ${fmtCentralDateTime(new Date())} by ${s(BRAND?.service?.name, 'Bedrock Association Management')} · trustEd platform · page ${i+1} of ${pageCount}`,
              54, 760, { align: 'center', width: 504 });
       }
     } catch (footerErr) {
