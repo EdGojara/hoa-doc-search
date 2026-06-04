@@ -3125,7 +3125,13 @@ Do not mention you are an AI. Do not apologize. Do not editorialize. Just the fa
       if (screen.blocks.length > 0) {
         console.warn('[ask-ed] response BLOCKED by leak filter:',
           screen.blocks.map((b) => `${b.reason} ("${b.matches.slice(0, 2).join('", "')}")`).join('; '));
-        cleaned = 'I can help with that. Could you ask the question again with a little more detail, or let me know what part of this situation you want to focus on?';
+        // Be honest that this is a safety hold, not a model failure. The old
+        // message ("ask again with more detail") made a held answer look like
+        // a confused AI — masking filter misfires (the 2026-06-03 org-meeting
+        // bug). Citation voice is now a rewrite, so reaching this branch means
+        // a genuinely sensitive phrase (internal methodology / model name) was
+        // in the draft and the full answer is being withheld on purpose.
+        cleaned = 'A complete answer was generated, but it was held back by the content-safety screen before display (it contained wording we don\'t surface here). Try rephrasing, or ask an admin to review this one.';
       } else if (screen.rewrites.length > 0) {
         cleaned = screen.text;
       }
