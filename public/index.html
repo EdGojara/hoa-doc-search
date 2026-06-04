@@ -392,6 +392,9 @@
   <div class="tab" onclick="switchTab('calendar')">🗓️ Calendar</div>
   <div class="tab" onclick="switchTab('perf')">📊 Performance</div>
   <div class="tab" onclick="switchTab('quick')">⚡ Quick</div>
+  <!-- Inbox — Bedrock ↔ homeowner messaging. Master thread list, SLA
+       color dots, three-pane reader, close-with-agreement flow. -->
+  <div class="tab" onclick="switchTab('inbox')">📬 Inbox</div>
   <!-- Reports — Vantaca-to-Bedrock report conversion. Drag-drop a Vantaca
        PDF, AI extracts, Bedrock renders the customer-facing artifact. -->
   <div class="tab" onclick="switchTab('reports')">📑 Reports</div>
@@ -691,6 +694,130 @@
      extracts the structured data, and Bedrock renders a customer-facing
      artifact. Ed 2026-06-04 build — first report type supported is
      vantaca_drv_summary; extensible to AR aging, work orders, etc. -->
+<!-- ===========================================================================
+     Inbox — Bedrock ↔ homeowner messaging. Master thread list with SLA
+     traffic-light dots + two-pane reader (list + detail w/ property context).
+     Phase 1 ships with staff-side surface end-to-end without Claire.
+     ========================================================================= -->
+<div class="tab-content" id="tab-inbox" style="overflow:hidden; padding:0;">
+  <div style="display:flex; height:100%; max-height:calc(100vh - 110px);">
+
+    <!-- LEFT PANE: Thread list -->
+    <div id="inboxListPane" style="flex: 0 0 420px; border-right:1px solid #e5e7eb; background:#fafafa; display:flex; flex-direction:column;">
+      <!-- Filter bar -->
+      <div style="padding:14px 16px; border-bottom:1px solid #e5e7eb; background:white;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:10px;">
+          <h2 style="margin:0; font-size:17px; color:#0B1D34;">📬 Inbox</h2>
+          <button onclick="inboxLoadThreads()" title="Refresh" style="background:none; border:1px solid #d0d7de; border-radius:4px; padding:5px 10px; font-size:12px; cursor:pointer; color:#4a4a4a;">↻</button>
+        </div>
+        <div id="inboxFilters" style="display:flex; gap:5px; flex-wrap:wrap;">
+          <button class="ibx-chip active" data-filter="active" onclick="inboxSetFilter('active')">All Open</button>
+          <button class="ibx-chip" data-filter="awaiting_staff" onclick="inboxSetFilter('awaiting_staff')">My Turn</button>
+          <button class="ibx-chip" data-filter="awaiting_homeowner" onclick="inboxSetFilter('awaiting_homeowner')">Awaiting Them</button>
+          <button class="ibx-chip" data-filter="closure_pending" onclick="inboxSetFilter('closure_pending')">Closing</button>
+          <button class="ibx-chip" data-filter="overdue" onclick="inboxSetFilter('overdue')">Overdue</button>
+          <button class="ibx-chip" data-filter="closed" onclick="inboxSetFilter('closed')">Closed</button>
+        </div>
+      </div>
+      <!-- List body -->
+      <div id="inboxThreadList" style="flex:1; overflow-y:auto;">
+        <div style="padding:30px 20px; text-align:center; color:#9ca3af; font-size:13px;">Loading…</div>
+      </div>
+      <!-- Footer with portfolio metrics -->
+      <div id="inboxFooterMetrics" style="padding:10px 14px; border-top:1px solid #e5e7eb; background:white; font-size:11.5px; color:#6b7280;"></div>
+    </div>
+
+    <!-- RIGHT PANE: Thread detail -->
+    <div id="inboxDetailPane" style="flex:1; overflow-y:auto; background:white;">
+      <div id="inboxEmptyState" style="padding:80px 40px; text-align:center; color:#9ca3af;">
+        <div style="font-size:48px; margin-bottom:14px;">📬</div>
+        <div style="font-size:15px; font-weight:600; color:#4a4a4a; margin-bottom:8px;">Pick a thread to read</div>
+        <div style="font-size:13px;">Threads sorted by most recent activity. Color dots show SLA status — green is healthy, yellow/red need attention, gray is closed.</div>
+      </div>
+      <div id="inboxThreadDetail" style="display:none;"></div>
+    </div>
+
+  </div>
+</div>
+
+<style>
+  /* Filter chip styling */
+  .ibx-chip {
+    background:white; border:1px solid #d0d7de; border-radius:14px;
+    padding:5px 11px; font-size:11.5px; cursor:pointer; color:#4a4a4a;
+    transition:all 0.15s;
+  }
+  .ibx-chip:hover { border-color:#0B1D34; }
+  .ibx-chip.active { background:#0B1D34; border-color:#0B1D34; color:white; font-weight:600; }
+
+  /* Thread row */
+  .ibx-row {
+    padding:12px 14px; border-bottom:1px solid #f0f0f0; cursor:pointer;
+    transition:background 0.1s; position:relative;
+  }
+  .ibx-row:hover { background:#f5f5f7; }
+  .ibx-row.selected { background:#e0e7ff; }
+  .ibx-row .ibx-dot {
+    display:inline-block; width:9px; height:9px; border-radius:50%;
+    margin-right:7px; vertical-align:middle;
+  }
+  .ibx-row .ibx-dot.green { background:#15803d; }
+  .ibx-row .ibx-dot.yellow { background:#f59e0b; }
+  .ibx-row .ibx-dot.red { background:#dc2626; }
+  .ibx-row .ibx-dot.overdue { background:#7f1d1d; }
+  .ibx-row .ibx-dot.gray { background:#9ca3af; }
+  .ibx-row .ibx-prop { font-size:11.5px; color:#6b7280; margin-bottom:3px; }
+  .ibx-row .ibx-subject { font-size:13.5px; color:#0B1D34; font-weight:600; line-height:1.3; margin-bottom:4px; }
+  .ibx-row .ibx-meta { font-size:11px; color:#6b7280; display:flex; align-items:center; gap:8px; }
+  .ibx-row .ibx-action {
+    font-size:10.5px; padding:2px 7px; border-radius:9px;
+    background:#f3f4f6; color:#4b5563; font-weight:500;
+  }
+  .ibx-row .ibx-action.awaiting-staff { background:#fee2e2; color:#7f1d1d; }
+  .ibx-row .ibx-action.awaiting-homeowner { background:#fef3c7; color:#78350f; }
+  .ibx-row .ibx-action.closure { background:#dbeafe; color:#1e3a8a; }
+  .ibx-row .ibx-action.closed { background:#f3f4f6; color:#6b7280; }
+
+  /* Thread detail */
+  .ibx-detail-header { padding:18px 24px 14px; border-bottom:1px solid #e5e7eb; background:#fafafa; }
+  .ibx-detail-prop-context {
+    display:grid; grid-template-columns: repeat(4, 1fr); gap:10px;
+    padding:14px 24px; background:#f9fafb; border-bottom:1px solid #e5e7eb;
+  }
+  .ibx-ctx-card {
+    background:white; border:1px solid #e5e7eb; border-radius:6px;
+    padding:8px 12px;
+  }
+  .ibx-ctx-card .label { font-size:10px; color:#6b7280; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:3px; }
+  .ibx-ctx-card .value { font-size:13px; color:#0B1D34; font-weight:600; }
+
+  .ibx-message {
+    padding:14px 24px; border-bottom:1px solid #f3f4f6;
+  }
+  .ibx-message .ibx-msg-meta { font-size:11px; color:#6b7280; margin-bottom:5px; }
+  .ibx-message .ibx-msg-body { font-size:14px; color:#1a1a1a; line-height:1.55; white-space:pre-wrap; }
+  .ibx-message.from-homeowner { background:white; }
+  .ibx-message.from-staff { background:#f8fafc; }
+  .ibx-message.from-claire { background:#fffbeb; }
+  .ibx-message.from-system { background:#f9fafb; }
+  .ibx-message .ibx-sender-tag {
+    display:inline-block; font-size:10px; padding:2px 6px; border-radius:8px;
+    font-weight:700; margin-right:6px;
+  }
+  .ibx-message .ibx-sender-tag.homeowner { background:#e0e7ff; color:#3730a3; }
+  .ibx-message .ibx-sender-tag.staff { background:#dcfce7; color:#14532d; }
+  .ibx-message .ibx-sender-tag.claire { background:#fef3c7; color:#92400e; }
+  .ibx-message .ibx-sender-tag.system { background:#f3f4f6; color:#4b5563; }
+
+  .ibx-composer { padding:14px 24px 18px; border-top:1px solid #e5e7eb; background:#fafafa; }
+  .ibx-composer textarea {
+    width:100%; min-height:80px; padding:10px 12px; font-size:14px;
+    font-family:inherit; border:1px solid #d0d7de; border-radius:6px;
+    box-sizing:border-box; line-height:1.5; resize:vertical;
+  }
+  .ibx-composer .ibx-actions { margin-top:10px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+</style>
+
 <div class="tab-content" id="tab-reports" style="overflow-y:auto; padding:24px;">
   <div style="max-width:960px; margin:0 auto;">
     <div style="margin-bottom:16px;">
@@ -25110,6 +25237,284 @@ ${questionsPage}
       }
     }
   })();
+
+  // =========================================================================
+  // INBOX — Bedrock ↔ homeowner messaging UI. Phase 1 surface.
+  // - Master thread list with SLA color dots + filter chips
+  // - Two-pane reader (list + detail with property context + reply composer)
+  // - Close-with-agreement flow ("Propose Close" button)
+  // - All endpoints under /api/messaging/* (api/messaging.js)
+  // =========================================================================
+  let inboxState = { filter: 'active', selectedId: null, threads: [], propertyContext: {} };
+
+  function inboxAuthHeaders(extra) {
+    return (async () => {
+      const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
+      const h = Object.assign({ 'Content-Type': 'application/json' }, extra || {});
+      if (session?.access_token) h.Authorization = 'Bearer ' + session.access_token;
+      return h;
+    })();
+  }
+
+  function inboxSetFilter(filter) {
+    inboxState.filter = filter;
+    document.querySelectorAll('.ibx-chip').forEach((el) => {
+      el.classList.toggle('active', el.getAttribute('data-filter') === filter);
+    });
+    inboxLoadThreads();
+  }
+
+  function inboxStatusLabel(s) {
+    const map = {
+      awaiting_staff_first_response: { txt: 'My Turn', cls: 'awaiting-staff' },
+      awaiting_staff_followup: { txt: 'My Turn', cls: 'awaiting-staff' },
+      awaiting_homeowner: { txt: 'Awaiting Them', cls: 'awaiting-homeowner' },
+      awaiting_external: { txt: 'Waiting (External)', cls: '' },
+      closure_pending: { txt: 'Closing', cls: 'closure' },
+      closed: { txt: 'Closed', cls: 'closed' },
+      escalated_to_attorney: { txt: 'Attorney', cls: 'awaiting-staff' },
+    };
+    return map[s] || { txt: s, cls: '' };
+  }
+
+  function inboxTimeAgo(iso) {
+    if (!iso) return '—';
+    const ms = Date.now() - new Date(iso).getTime();
+    const min = Math.floor(ms / 60000);
+    if (min < 1) return 'just now';
+    if (min < 60) return min + 'm ago';
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return hr + 'h ago';
+    const d = Math.floor(hr / 24);
+    if (d < 7) return d + 'd ago';
+    return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  async function inboxLoadThreads() {
+    const listEl = document.getElementById('inboxThreadList');
+    if (!listEl) return;
+    listEl.innerHTML = '<div style="padding:30px 20px; text-align:center; color:#9ca3af; font-size:13px;">Loading…</div>';
+    try {
+      const headers = await inboxAuthHeaders();
+      let url = '/api/messaging/threads?limit=200';
+      const f = inboxState.filter;
+      if (f === 'awaiting_staff') url += '&status=awaiting_staff_first_response,awaiting_staff_followup';
+      else if (f === 'awaiting_homeowner') url += '&status=awaiting_homeowner';
+      else if (f === 'closure_pending') url += '&status=closure_pending';
+      else if (f === 'closed') url += '&include_closed=true&status=closed';
+      // 'active' (default) and 'overdue' filter client-side after fetch
+      const r = await fetch(url, { headers });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      let threads = j.threads || [];
+      if (f === 'overdue') threads = threads.filter((t) => t.sla_color === 'overdue' || t.sla_color === 'red');
+      inboxState.threads = threads;
+      inboxRenderList();
+    } catch (e) {
+      listEl.innerHTML = '<div style="padding:30px 20px; text-align:center; color:#b91c1c; font-size:13px;">Failed to load: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function inboxRenderList() {
+    const listEl = document.getElementById('inboxThreadList');
+    const threads = inboxState.threads;
+    if (threads.length === 0) {
+      listEl.innerHTML = '<div style="padding:60px 20px; text-align:center; color:#9ca3af; font-size:13px;">No threads match this filter.</div>';
+      return;
+    }
+    listEl.innerHTML = threads.map((t) => {
+      const prop = t.properties || {};
+      const community = t.communities?.name || '';
+      const contact = t.contacts || {};
+      const ownerName = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || '(no owner)';
+      const propLine = (prop.street_address || '(no address)') + (community ? ' · ' + community : '');
+      const status = inboxStatusLabel(t.next_action_status);
+      const responder = t.last_responder_type ? t.last_responder_type.charAt(0).toUpperCase() + t.last_responder_type.slice(1) : '—';
+      const isSelected = inboxState.selectedId === t.id;
+      return `
+        <div class="ibx-row ${isSelected ? 'selected' : ''}" onclick="inboxOpenThread('${t.id}')">
+          <div class="ibx-prop"><span class="ibx-dot ${escapeHtml(t.sla_color || 'gray')}"></span>${escapeHtml(propLine)}</div>
+          <div class="ibx-subject">${escapeHtml(t.subject || '(no subject)')}</div>
+          <div class="ibx-meta">
+            <span>${escapeHtml(ownerName)}</span>
+            <span>·</span>
+            <span>${inboxTimeAgo(t.last_message_at || t.created_at)}</span>
+            ${t.last_responder_type ? '<span>·</span><span>last: ' + escapeHtml(responder) + '</span>' : ''}
+            <span style="margin-left:auto;" class="ibx-action ${escapeHtml(status.cls)}">${escapeHtml(status.txt)}</span>
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function inboxOpenThread(threadId) {
+    inboxState.selectedId = threadId;
+    inboxRenderList();
+    document.getElementById('inboxEmptyState').style.display = 'none';
+    const detailEl = document.getElementById('inboxThreadDetail');
+    detailEl.style.display = 'block';
+    detailEl.innerHTML = '<div style="padding:60px 30px; text-align:center; color:#9ca3af;">Loading…</div>';
+    try {
+      const headers = await inboxAuthHeaders();
+      const r = await fetch('/api/messaging/threads/' + encodeURIComponent(threadId), { headers });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const j = await r.json();
+      inboxRenderDetail(j);
+    } catch (e) {
+      detailEl.innerHTML = '<div style="padding:60px 30px; text-align:center; color:#b91c1c;">Failed to load thread: ' + escapeHtml(e.message) + '</div>';
+    }
+  }
+
+  function inboxRenderDetail({ thread, messages, sibling_threads, other_properties }) {
+    const prop = thread.properties || {};
+    const contact = thread.contacts || {};
+    const community = thread.communities?.name || '';
+    const ownerName = [contact.first_name, contact.last_name].filter(Boolean).join(' ') || '(no owner)';
+    const status = inboxStatusLabel(thread.next_action_status);
+
+    const headerHtml = `
+      <div class="ibx-detail-header">
+        <div style="display:flex; align-items:flex-start; justify-content:space-between; gap:14px;">
+          <div style="flex:1;">
+            <div style="font-size:12px; color:#6b7280; margin-bottom:6px;">${escapeHtml((prop.street_address || '') + (community ? ' · ' + community : ''))}</div>
+            <h2 style="margin:0 0 6px; font-size:19px; color:#0B1D34;">${escapeHtml(thread.subject || '(no subject)')}</h2>
+            <div style="font-size:12.5px; color:#4a4a4a;">${escapeHtml(ownerName)}${contact.email_primary ? ' · ' + escapeHtml(contact.email_primary) : ''}</div>
+          </div>
+          <div style="display:flex; gap:6px; flex-shrink:0;">
+            ${thread.next_action_status !== 'closed' ? '<button onclick="inboxProposeClose(\\''+thread.id+'\\')" style="font-size:12px; padding:7px 12px; background:white; border:1px solid #d0d7de; border-radius:5px; cursor:pointer; color:#4a4a4a;">Propose Close</button>' : '<button onclick="inboxReopen(\\''+thread.id+'\\')" style="font-size:12px; padding:7px 12px; background:white; border:1px solid #d0d7de; border-radius:5px; cursor:pointer; color:#4a4a4a;">Reopen</button>'}
+            <span class="ibx-action ${escapeHtml(status.cls)}" style="font-size:11.5px; padding:5px 10px; border-radius:10px; font-weight:600;">${escapeHtml(status.txt)}</span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    const ctxHtml = `
+      <div class="ibx-detail-prop-context">
+        <div class="ibx-ctx-card">
+          <div class="label">Lot</div>
+          <div class="value">${escapeHtml(prop.lot_number || '—')}</div>
+        </div>
+        <div class="ibx-ctx-card">
+          <div class="label">Phone</div>
+          <div class="value">${escapeHtml(contact.phone_primary || '—')}</div>
+        </div>
+        <div class="ibx-ctx-card">
+          <div class="label">Other threads on this property</div>
+          <div class="value">${(sibling_threads || []).length}</div>
+        </div>
+        <div class="ibx-ctx-card">
+          <div class="label">Other properties owned</div>
+          <div class="value">${(other_properties || []).length}</div>
+        </div>
+      </div>
+    `;
+
+    const msgsHtml = (messages || []).map((m) => {
+      const sender = m.sender_type || 'system';
+      const senderLabel = m.sender_display_name || (sender === 'homeowner' ? ownerName : sender.charAt(0).toUpperCase() + sender.slice(1));
+      const time = new Date(m.created_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Chicago' }) + ' CT';
+      return `
+        <div class="ibx-message from-${escapeHtml(sender)}">
+          <div class="ibx-msg-meta">
+            <span class="ibx-sender-tag ${escapeHtml(sender)}">${escapeHtml(sender.toUpperCase())}</span>
+            <strong>${escapeHtml(senderLabel)}</strong> · ${escapeHtml(time)} · via ${escapeHtml(m.channel || 'portal')}
+          </div>
+          <div class="ibx-msg-body">${escapeHtml(m.body_text)}</div>
+        </div>
+      `;
+    }).join('');
+
+    const composerHtml = thread.next_action_status !== 'closed' ? `
+      <div class="ibx-composer">
+        <textarea id="inboxReplyText" placeholder="Type your reply… (sends as you, on behalf of Bedrock)"></textarea>
+        <div class="ibx-actions">
+          <button onclick="inboxSendReply('${thread.id}')" style="font-size:13px; padding:9px 20px; background:#0B1D34; color:white; border:none; border-radius:5px; cursor:pointer; font-weight:600;">Send</button>
+          <span style="font-size:11.5px; color:#6b7280;">Reply delivers via the homeowner's preferred channel (Phase 1: portal). Status auto-updates.</span>
+        </div>
+      </div>
+    ` : `
+      <div style="padding:18px 24px; background:#f3f4f6; color:#6b7280; font-size:13px; text-align:center;">Thread closed — reopen to continue the conversation.</div>
+    `;
+
+    document.getElementById('inboxThreadDetail').innerHTML = headerHtml + ctxHtml + msgsHtml + composerHtml;
+  }
+
+  async function inboxSendReply(threadId) {
+    const txtEl = document.getElementById('inboxReplyText');
+    const body = (txtEl?.value || '').trim();
+    if (!body) { alert('Type a message first.'); return; }
+    try {
+      const headers = await inboxAuthHeaders();
+      const me = window.currentUser || {};
+      const r = await fetch('/api/messaging/threads/' + encodeURIComponent(threadId) + '/messages', {
+        method: 'POST', headers,
+        body: JSON.stringify({
+          sender_type: 'staff',
+          sender_id: me.id || null,
+          sender_display_name: me.full_name || me.email || 'Bedrock Staff',
+          channel: 'portal',
+          body_text: body,
+        }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      txtEl.value = '';
+      await inboxOpenThread(threadId);
+      await inboxLoadThreads();
+    } catch (e) {
+      alert('Send failed: ' + e.message);
+    }
+  }
+
+  async function inboxProposeClose(threadId) {
+    if (!confirm('Propose to close this thread? The homeowner will be told they have 24 hours to reply or it auto-closes. They can object by replying.')) return;
+    try {
+      const headers = await inboxAuthHeaders();
+      const me = window.currentUser || {};
+      const r = await fetch('/api/messaging/threads/' + encodeURIComponent(threadId) + '/propose-close', {
+        method: 'POST', headers,
+        body: JSON.stringify({ staff_id: me.id || null, sender_display_name: me.full_name || 'Bedrock' }),
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      await inboxOpenThread(threadId);
+      await inboxLoadThreads();
+    } catch (e) {
+      alert('Propose close failed: ' + e.message);
+    }
+  }
+
+  async function inboxReopen(threadId) {
+    if (!confirm('Reopen this closed thread?')) return;
+    try {
+      const headers = await inboxAuthHeaders();
+      const r = await fetch('/api/messaging/threads/' + encodeURIComponent(threadId) + '/reopen', {
+        method: 'POST', headers,
+      });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      await inboxOpenThread(threadId);
+      await inboxLoadThreads();
+    } catch (e) {
+      alert('Reopen failed: ' + e.message);
+    }
+  }
+
+  // Auto-load when the Inbox tab opens (DOMContentLoaded retry pattern per
+  // CLAUDE.md IIFE scar — switchTab is defined later in this file).
+  function _wireInboxTabHook() {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return false;
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'inbox') {
+        setTimeout(() => { inboxLoadThreads(); }, 50);
+      }
+      return r;
+    };
+    return true;
+  }
+  if (!_wireInboxTabHook()) {
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _wireInboxTabHook);
+    else setTimeout(_wireInboxTabHook, 0);
+  }
 
   // =========================================================================
   // Manual DRV entry — bypass the AI extract path entirely. Operator types
