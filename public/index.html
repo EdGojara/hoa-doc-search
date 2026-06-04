@@ -7382,7 +7382,7 @@
           <button class="secondary-btn" onclick="docsApplyMigrations()" id="docsApplyMigBtn" style="font-size:12px; padding:6px 14px;" title="Apply migrations/*.sql that haven't landed yet. Bypasses the Supabase SQL editor by connecting via DATABASE_URL.">🗄️ Apply pending migrations</button>
           <button class="secondary-btn" onclick="docsQueueThinExtractionReindex()" id="docsThinReindexBtn" style="font-size:12px; padding:6px 14px;" title="Find docs marked 'indexed' but with suspiciously thin extracted text (likely uploaded pre-OCR pipeline) and re-queue them for OCR reprocessing">🔍 Re-OCR suspect scans</button>
           <button class="secondary-btn" onclick="docsRechunkGoverningDocs()" id="docsRechunkGovBtn" style="font-size:12px; padding:6px 14px; background:#fef3c7; border:1px solid #f59e0b; color:#92400e;" title="Force re-chunk + re-embed of every Declaration, Bylaws, and Rules/Regs doc so chunks pick up Article/Section breadcrumb metadata. Run once after the structure-aware chunker ships, then never again unless the chunker logic changes.">📑 Re-chunk governing docs</button>
-          <button class="secondary-btn" onclick="docsLoadOrphans()" id="docsOrphansBtn" style="font-size:12px; padding:6px 14px; background:#fee2e2; border:1px solid #b91c1c; color:#7f1d1d;" title="List library docs whose community wasn't assigned at upload — these were polluting every community's askEd queries before this fix. Re-assign each to its actual community to make them retrievable by the right community.">🏷️ Fix orphan docs</button>
+          <button class="secondary-btn" onclick="docsFixGeneralOrphans()" id="docsFixOrphansBtn" style="font-size:12px; padding:6px 14px; background:#fee2e2; border:1px solid #b91c1c; color:#7f1d1d;" title="List library docs whose community wasn't assigned at upload — these were polluting every community's askEd queries before this fix. Re-assign each to its actual community to make them retrievable by the right community.">🏷️ Fix orphan docs</button>
           <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
         </div>
       </div>
@@ -7394,7 +7394,10 @@
       <div id="docsPendingMigBanner" style="display:none; margin:0 0 10px 0;"></div>
       <div id="docs-coverage-list" style="font-size:13px; color:#6B7280;">Loading coverage…</div>
       <div id="docs-reindex-status" style="margin-top:10px; font-size:12.5px;"></div>
-      <div id="docs-orphans-panel" style="margin-top:14px;"></div>
+      <!-- Renamed from docs-orphans-panel because a pre-existing
+           docsLoadOrphans() handler in this file uses the same element id
+           for a different feature. Disambiguated 2026-06-04. -->
+      <div id="docs-general-orphans-panel" style="margin-top:14px;"></div>
     </div>
 
     <!-- One-shot admin: connect historical knowledge silos to property/contact spine.
@@ -24746,8 +24749,14 @@ ${questionsPage}
   // wasn't assigned at upload and that ended up in the 'General' bucket).
   // Each row gets a community dropdown + "Assign + retag" button. Ed
   // 2026-06-04 fix for the Quail Ridge Declaration miss.
-  async function docsLoadOrphans() {
-    const panel = document.getElementById('docs-orphans-panel');
+  //
+  // Name disambiguation 2026-06-04: there's a pre-existing docsLoadOrphans()
+  // in this file for a different feature. Function-declaration hoisting
+  // makes the second one win, so clicking my button was a silent no-op.
+  // Renamed to docsFixGeneralOrphans() / docsAssignGeneralOrphan() and
+  // the panel element to docs-general-orphans-panel.
+  async function docsFixGeneralOrphans() {
+    const panel = document.getElementById('docs-general-orphans-panel');
     panel.innerHTML = '<div style="padding:10px 12px; background:#eef2ff; border-left:3px solid #1E2761; border-radius:0 6px 6px 0; font-size:13px;">Loading orphan docs…</div>';
     try {
       const session = window.supa ? (await window.supa.auth.getSession()).data?.session : null;
@@ -24777,13 +24786,13 @@ ${questionsPage}
             <div style="font-size:11.5px; color:#6B7280; margin-top:2px;">category: ${category} · id: <code style="font-size:10.5px;">${o.id}</code></div>
             <div style="font-size:11.5px; color:#475569; margin-top:6px; font-style:italic; line-height:1.4;">${preview || '(no preview)'}</div>
             <div style="display:flex; gap:6px; align-items:center; margin-top:10px;">
-              <select id="orphan-comm-${o.id}" style="flex:1; font-size:12.5px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px;">
+              <select id="general-orphan-comm-${o.id}" style="flex:1; font-size:12.5px; padding:6px 8px; border:1px solid #d0d7de; border-radius:4px;">
                 <option value="">— Assign to community —</option>
                 ${optionsHtml}
               </select>
-              <button onclick="docsAssignOrphan('${o.id}')" style="font-size:12px; padding:6px 12px; background:#0B1D34; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600;">Assign + retag</button>
+              <button onclick="docsAssignGeneralOrphan('${o.id}')" style="font-size:12px; padding:6px 12px; background:#0B1D34; color:white; border:none; border-radius:4px; cursor:pointer; font-weight:600;">Assign + retag</button>
             </div>
-            <div id="orphan-status-${o.id}" style="font-size:11.5px; color:#15803d; margin-top:6px; display:none;"></div>
+            <div id="general-orphan-status-${o.id}" style="font-size:11.5px; color:#15803d; margin-top:6px; display:none;"></div>
           </div>
         `;
       }).join('');
@@ -24803,9 +24812,9 @@ ${questionsPage}
     }
   }
 
-  async function docsAssignOrphan(docId) {
-    const sel = document.getElementById('orphan-comm-' + docId);
-    const status = document.getElementById('orphan-status-' + docId);
+  async function docsAssignGeneralOrphan(docId) {
+    const sel = document.getElementById('general-orphan-comm-' + docId);
+    const status = document.getElementById('general-orphan-status-' + docId);
     const communityId = sel.value;
     if (!communityId) { alert('Pick a community first.'); return; }
     status.style.display = 'block';
@@ -24825,7 +24834,7 @@ ${questionsPage}
       status.style.color = '#15803d';
       status.textContent = `✓ Assigned to ${j.community}. ${j.chunks_retagged || ''} chunks retagged.`;
       // After a beat, reload the orphan list so the fixed doc disappears.
-      setTimeout(() => docsLoadOrphans(), 1500);
+      setTimeout(() => docsFixGeneralOrphans(), 1500);
     } catch (e) {
       status.style.color = '#b91c1c';
       status.textContent = '✗ Failed: ' + (e.message || 'unknown');
