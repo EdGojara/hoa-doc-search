@@ -7087,6 +7087,78 @@ function _composeMailingAddress(o, communityGeo) {
   return trailingGeo ? `${ownerMail}, ${trailingGeo}` : ownerMail;
 }
 
+// _toCentralTimestamp: combines a YYYY-MM-DD date and a time string
+// ("4:00 PM", "16:00", "4:00 p.m.") into a full ISO timestamp anchored
+// at America/Chicago (Central Time). Bedrock's portfolio is 100% Texas
+// so the timezone is fixed; this dodges a moment-timezone dep for one
+// timezone.
+//
+// Output: 'YYYY-MM-DDTHH:MM:SS-05:00' (CDT) or '-06:00' (CST). The
+// offset is chosen by checking whether the date falls within US daylight
+// saving (second Sunday of March through first Sunday of November).
+//
+// Returns null if date is missing or unparseable. Defaults to midnight
+// when time is missing.
+function _toCentralTimestamp(date, time) {
+  if (!date) return null;
+  const dateStr = String(date).slice(0, 10);  // 'YYYY-MM-DD'
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return null;
+
+  // Parse time. Accepts "4:00 PM", "4:00 p.m.", "16:00", "4 PM".
+  let hours = 0, minutes = 0;
+  const t = String(time || '').trim();
+  if (t) {
+    const ampmMatch = t.match(/^(\d{1,2}):?(\d{2})?\s*([apAP])\.?\s*[mM]\.?$/);
+    const h24Match  = t.match(/^(\d{1,2}):(\d{2})$/);
+    if (ampmMatch) {
+      hours = parseInt(ampmMatch[1], 10);
+      minutes = parseInt(ampmMatch[2] || '0', 10);
+      const isPM = ampmMatch[3].toLowerCase() === 'p';
+      if (isPM && hours < 12) hours += 12;
+      if (!isPM && hours === 12) hours = 0;
+    } else if (h24Match) {
+      hours = parseInt(h24Match[1], 10);
+      minutes = parseInt(h24Match[2], 10);
+    }
+  }
+
+  // Pick the Central offset for this date. US DST:
+  //   starts: second Sunday in March, 02:00 local
+  //   ends:   first Sunday in November, 02:00 local
+  // For trustEd's "date + time as Central local" use case, picking the
+  // offset based on the calendar date alone is correct for 99.9% of
+  // cases (only the 1-2 hours around the spring-forward / fall-back
+  // transitions are ambiguous, and HOA voting cutoffs aren't typically
+  // scheduled at 2 AM Sunday).
+  const [Y, M, D] = dateStr.split('-').map(n => parseInt(n, 10));
+  const offset = _centralOffsetForDate(Y, M, D);
+
+  const hh = String(hours).padStart(2, '0');
+  const mm = String(minutes).padStart(2, '0');
+  return `${dateStr}T${hh}:${mm}:00${offset}`;
+}
+
+function _centralOffsetForDate(year, month, day) {
+  // DST runs from second Sunday of March through first Sunday of November.
+  // Outside that window: CST = UTC-6 ('-06:00'). Inside: CDT = UTC-5 ('-05:00').
+  if (month < 3 || month > 11) return '-06:00';
+  if (month > 3 && month < 11) return '-05:00';
+  // Boundary months: compute the actual Sunday.
+  if (month === 3) {
+    // Second Sunday in March
+    const firstDay = new Date(Date.UTC(year, 2, 1)).getUTCDay(); // 0=Sun
+    const secondSunday = 1 + ((7 - firstDay) % 7) + 7;
+    return day >= secondSunday ? '-05:00' : '-06:00';
+  }
+  if (month === 11) {
+    // First Sunday in November
+    const firstDay = new Date(Date.UTC(year, 10, 1)).getUTCDay();
+    const firstSunday = 1 + ((7 - firstDay) % 7);
+    return day >= firstSunday ? '-06:00' : '-05:00';
+  }
+  return '-05:00';
+}
+
 // Helper: extract surname from "Dr. Roger Vazquez" → "vazquez" for sorting.
 // Strips honorifics + suffixes, takes the last word, lowercases. Per
 // Ed 2026-06-01: ballot convention is alphabetical-by-last-name, not by
@@ -7534,9 +7606,21 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
     // start_date = nominations_close_at or today (election open immediately)
     // end_date = voting_cutoff_at (when ballots stop being accepted)
     // meeting_date = annual_meeting_date
+    //
+    // Date+time+timezone combination: trustEd stores the cutoff date
+    // and time separately ("2026-06-22" + "4:00 PM"). Without combining,
+    // bedrock-vote parses the date-only string as midnight UTC, which
+    // displays as the previous evening in Central time (caught 2026-
+    // 06-03 — Waterview cycle showed "Closes Jun 21" in bedrock-vote
+    // when the actual cutoff was June 22 4:00 PM). The helper combines
+    // date + time + Central offset into a proper ISO timestamp.
+    //
+    // _toCentralTimestamp returns 'YYYY-MM-DDTHH:MM:SS-05:00' (CDT,
+    // summer) or '-06:00' (CST, winter). Bedrock's Texas portfolio is
+    // entirely on Central time so a single timezone assumption is safe.
     const today = new Date().toISOString().slice(0, 10);
-    const startDate = cycle.nominations_close_at || today;
-    const endDate = cycle.voting_cutoff_at || cycle.annual_meeting_date;
+    const startDate = _toCentralTimestamp(cycle.nominations_close_at || today, cycle.nominations_close_time || '12:00 AM');
+    const endDate = _toCentralTimestamp(cycle.voting_cutoff_at || cycle.annual_meeting_date, cycle.voting_cutoff_time || '4:00 PM');
     if (!endDate) {
       return res.status(400).json({ error: 'Cycle is missing voting_cutoff_at AND annual_meeting_date; one must be set so bedrock-vote knows when to close ballots.' });
     }
