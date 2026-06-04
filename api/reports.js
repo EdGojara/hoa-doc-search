@@ -73,15 +73,33 @@ router.post('/convert', upload.single('file'), async (req, res) => {
 
     const sourceHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
 
-    // Dedup: if this PDF was already converted, return the existing record.
+    // Dedup logic: only block a re-upload when the prior attempt actually
+    // SUCCEEDED. Failed or stale rows get cleaned up so the new upload
+    // can retry through the updated extraction pipeline. Ed 2026-06-04:
+    // earlier the failed row from the original 8K-token attempt blocked
+    // every retry, masking the diagnostic improvements.
     const { data: existing } = await supabase
       .from('converted_reports')
       .select('*')
       .eq('source_file_hash', sourceHash)
       .neq('status', 'archived')
       .maybeSingle();
-    if (existing) {
+    if (existing && existing.status === 'rendered') {
       return res.json({ duplicate: true, report: existing });
+    }
+    if (existing) {
+      // Stale failed / extracted-without-render row — delete it (cascade
+      // through storage cleanup) before proceeding with a fresh attempt.
+      console.log(`[reports] purging stale ${existing.status} row ${existing.id} to allow retry`);
+      try {
+        if (existing.source_file_path) {
+          await supabase.storage.from(STORAGE_BUCKET).remove([existing.source_file_path]);
+        }
+        if (existing.output_file_path) {
+          await supabase.storage.from(STORAGE_BUCKET).remove([existing.output_file_path]);
+        }
+      } catch (e) { console.warn('[reports] stale storage cleanup skipped:', e.message); }
+      await supabase.from('converted_reports').delete().eq('id', existing.id);
     }
 
     // 1. Auto-detect report type.
