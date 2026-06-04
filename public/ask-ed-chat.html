@@ -503,8 +503,36 @@
 
 <div class="toast" id="toast"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 'use strict';
+
+// Optional Supabase auth boot — non-blocking. If a staffer is logged in
+// (session in localStorage, shared origin with index.html), we'll attach
+// their JWT on /ask-ed-chat-stream fetches so the server can apply the
+// 'staff' leak-filter tier (full technical content, moat stays hidden).
+// If no session exists (anonymous home-screen install, fresh visitor),
+// the helper returns {} and the server treats the call as customer-tier
+// — same behavior the chat surface has had since launch.
+window._chatSupa = null;
+(async function bootChatAuth() {
+  try {
+    const cfgRes = await fetch('/api/auth/config');
+    const cfg = await cfgRes.json();
+    if (cfg.enabled && cfg.supabase_url && cfg.supabase_anon_key && window.supabase) {
+      window._chatSupa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+    }
+  } catch (_) { /* offline / endpoint down — proceed anonymously */ }
+})();
+
+async function chatAuthHeaders() {
+  if (!window._chatSupa) return {};
+  try {
+    const { data: { session } } = await window._chatSupa.auth.getSession();
+    if (session?.access_token) return { Authorization: 'Bearer ' + session.access_token };
+  } catch (_) {}
+  return {};
+}
 
 const messagesEl = document.getElementById('messages');
 const emptyEl    = document.getElementById('emptyState');
@@ -796,6 +824,7 @@ let runStream = async function ({ filesToSend }) {
 
     const res = await fetch('/ask-ed-chat-stream', {
       method: 'POST',
+      headers: await chatAuthHeaders(),
       body: form,
       signal: currentAbort.signal,
     });
@@ -1350,7 +1379,7 @@ runStream = async function patchedRunStream({ filesToSend }) {
     for (const f of filesToSend) form.append('attachment', f, f.name);
 
     const res = await fetch('/ask-ed-chat-stream', {
-      method: 'POST', body: form, signal: currentAbort.signal,
+      method: 'POST', headers: await chatAuthHeaders(), body: form, signal: currentAbort.signal,
     });
     if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
     const reader = res.body.getReader();
