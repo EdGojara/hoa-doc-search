@@ -1080,6 +1080,14 @@ app.use('/api/reports', reportsRouter);
 const bedrockConnectRouter = require('./api/bedrock_connect');
 app.use('/api/bedrock-connect', bedrockConnectRouter);
 
+// Messaging System — Phase 1 build (Ed 2026-06-04 design session).
+// Per-homeowner-per-property conversation threads with SLA enforcement,
+// close-with-agreement flow, master inbox view. Foundation for Bedrock
+// Connect's reply handling + future Claire cross-channel integration.
+// See migrations/161_messaging_system.sql for data model.
+const messagingRouter = require('./api/messaging');
+app.use('/api/messaging', messagingRouter);
+
 // Board Packets — Bedrock board packet generator
 // Endpoints under /api/board-packets/*. See api/board_packets.js and
 // migrations/014_board_packets.sql for the schema.
