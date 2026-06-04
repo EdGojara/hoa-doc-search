@@ -25396,7 +25396,7 @@ ${questionsPage}
             <div style="font-size:12.5px; color:#4a4a4a;">${escapeHtml(ownerName)}${contact.email_primary ? ' · ' + escapeHtml(contact.email_primary) : ''}</div>
           </div>
           <div style="display:flex; gap:6px; flex-shrink:0;">
-            ${thread.next_action_status !== 'closed' ? '<button onclick="inboxProposeClose(\\''+thread.id+'\\')" style="font-size:12px; padding:7px 12px; background:white; border:1px solid #d0d7de; border-radius:5px; cursor:pointer; color:#4a4a4a;">Propose Close</button>' : '<button onclick="inboxReopen(\\''+thread.id+'\\')" style="font-size:12px; padding:7px 12px; background:white; border:1px solid #d0d7de; border-radius:5px; cursor:pointer; color:#4a4a4a;">Reopen</button>'}
+            ${thread.next_action_status !== 'closed' ? `<button onclick="inboxProposeClose('${thread.id}')" style="font-size:12px; padding:7px 12px; background:white; border:1px solid #d0d7de; border-radius:5px; cursor:pointer; color:#4a4a4a;">Propose Close</button>` : `<button onclick="inboxReopen('${thread.id}')" style="font-size:12px; padding:7px 12px; background:white; border:1px solid #d0d7de; border-radius:5px; cursor:pointer; color:#4a4a4a;">Reopen</button>`}
             <span class="ibx-action ${escapeHtml(status.cls)}" style="font-size:11.5px; padding:5px 10px; border-radius:10px; font-weight:600;">${escapeHtml(status.txt)}</span>
           </div>
         </div>
