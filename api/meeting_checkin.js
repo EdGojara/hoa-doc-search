@@ -912,13 +912,17 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
         try {
           if (doc.y + ROW_HEIGHT > 720) doc.addPage();
           const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' }) : '';
+          // Ed 2026-06-04: "Voted online" / "Voted mail" read like the
+          // ballot is being cast at the meeting — but absentee voting
+          // closed before meeting day. Re-phrased so timing is unambiguous:
+          // these ballots were already on file when the owner checked in.
           const status =
-            a.vote_status_at_checkin === 'voted_online' ? 'Voted online' :
-            a.vote_status_at_checkin === 'voted_mail'   ? 'Voted mail' :
-            a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in' :
+            a.vote_status_at_checkin === 'voted_online' ? 'Online ballot on file' :
+            a.vote_status_at_checkin === 'voted_mail'   ? 'Mail ballot on file' :
+            a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in entered' :
             a.walk_in_ballot_status === 'entered'       ? 'Walk-in entered' :
             a.walk_in_ballot_status === 'needed'        ? 'Walk-in pending' :
-            a.walk_in_ballot_status === 'declined_to_vote' ? 'Declined' :
+            a.walk_in_ballot_status === 'declined_to_vote' ? 'Declined to vote' :
             'Attended';
           const y0 = doc.y;
           // height option on .text() prevents PDFKit from wrapping into the

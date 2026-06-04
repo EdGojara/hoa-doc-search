@@ -701,10 +701,13 @@ function renderLog() {
   </tr></thead><tbody>`;
   for (const a of attendanceLog) {
     const time = a.checked_in_at ? new Date(a.checked_in_at).toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'}) : '';
+    // Ed 2026-06-04: clarified that the absentee statuses reflect ballots
+    // already on file (online + mail close before meeting day), not votes
+    // being cast in the moment.
     const statusLabel =
-      a.vote_status_at_checkin === 'voted_online' ? 'Voted online' :
-      a.vote_status_at_checkin === 'voted_mail'   ? 'Voted mail' :
-      a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in' :
+      a.vote_status_at_checkin === 'voted_online' ? 'Online ballot on file' :
+      a.vote_status_at_checkin === 'voted_mail'   ? 'Mail ballot on file' :
+      a.vote_status_at_checkin === 'voted_walkin' ? 'Walk-in entered' :
       a.vote_status_at_checkin === 'not_voted'    ? 'Not voted' :
       'Unknown';
     const walkin =
