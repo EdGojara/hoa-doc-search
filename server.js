@@ -7358,6 +7358,40 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
       if (!sampleSet.has(key)) { sampleSet.add(key); sample.push(v); }
     });
 
+    // Computed dates exactly as they will be sent to bedrock-vote.
+    // Surface BOTH the raw payload value AND a human-readable Central-
+    // time display so the operator can sanity check before clicking
+    // Send. Caught 2026-06-03 — sending date-only "2026-06-22" to
+    // bedrock-vote got interpreted as midnight UTC and displayed in
+    // bedrock-vote admin as "Closes Jun 21," one calendar day early.
+    // A voter trying to cast at 3:55 PM Central on June 22 (which is
+    // BEFORE the configured 4:00 PM cutoff) would have been refused.
+    // That's a §209 disenfranchisement issue that voids the election.
+    //
+    // The display string is what bedrock-vote will show on its
+    // election card. If it disagrees with the operator's expectation,
+    // the bug is visible BEFORE the push, not after.
+    const today = new Date().toISOString().slice(0, 10);
+    const previewStartDate = _toCentralTimestamp(
+      cycle.nominations_close_at || today,
+      cycle.nominations_close_time || '12:00 AM'
+    );
+    const previewEndDate = _toCentralTimestamp(
+      cycle.voting_cutoff_at || cycle.annual_meeting_date,
+      cycle.voting_cutoff_time || '4:00 PM'
+    );
+    const fmtCentralDisplay = (iso) => {
+      if (!iso) return null;
+      try {
+        const d = new Date(iso);
+        return d.toLocaleString('en-US', {
+          timeZone: 'America/Chicago',
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', hour12: true,
+        }) + ' Central';
+      } catch (_) { return iso; }
+    };
+
     return res.json({
       cycle: {
         id: cycle.id,
@@ -7366,7 +7400,16 @@ app.get('/api/nominations/cycles/:id/push-to-vote-preview', async (req, res) => 
         status: cycle.status,
         annual_meeting_date: cycle.annual_meeting_date,
         voting_cutoff_at: cycle.voting_cutoff_at,
+        voting_cutoff_time: cycle.voting_cutoff_time || '4:00 PM',
         seats_open: cycle.seats_open || 1
+      },
+      // Dates as bedrock-vote will receive AND display them. Cross-check
+      // these against your configured voting cutoff BEFORE clicking Send.
+      election_dates_preview: {
+        start_payload: previewStartDate,
+        start_display: fmtCentralDisplay(previewStartDate),
+        end_payload: previewEndDate,
+        end_display: fmtCentralDisplay(previewEndDate),
       },
       stats: {
         total_nominations: (allNominationsRaw || []).length,
@@ -7666,11 +7709,32 @@ app.post('/api/nominations/cycles/:id/push-to-vote', async (req, res) => {
     }
 
     console.log(`[push-to-vote] Success: bedrock-vote election_id=${voteJson.election_id}, already_existed=${voteJson.already_existed}`);
+    // Surface the dates sent + how they'll display in Central time so
+    // the operator can verify on the success popup. Same shape as the
+    // preview's election_dates_preview — operator should see identical
+    // values across preview → push → success popup → bedrock-vote
+    // admin display. Any deviation is a bug visible immediately.
+    const fmtCentralDisplay = (iso) => {
+      if (!iso) return null;
+      try {
+        return new Date(iso).toLocaleString('en-US', {
+          timeZone: 'America/Chicago',
+          weekday: 'long', month: 'long', day: 'numeric', year: 'numeric',
+          hour: 'numeric', minute: '2-digit', hour12: true,
+        }) + ' Central';
+      } catch (_) { return iso; }
+    };
     return res.json({
       success: true,
       ...voteJson,
       candidate_count: candidates.length,
-      voter_count: voters.length
+      voter_count: voters.length,
+      election_dates_sent: {
+        start_payload: startDate,
+        start_display: fmtCentralDisplay(startDate),
+        end_payload: endDate,
+        end_display: fmtCentralDisplay(endDate),
+      }
     });
 
   } catch (err) {

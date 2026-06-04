@@ -31281,6 +31281,19 @@ ${questionsPage}
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       const intro = j.already_existed ? 'This cycle was already pushed earlier.' : '✓ Election created in bedrock-vote.';
+      // Date sanity check — show exactly what was sent and how
+      // bedrock-vote will display the cutoff in Central time. Operator
+      // verifies this matches their configured cutoff BEFORE the
+      // mailing goes out. Cross-check rule from CLAUDE.md.
+      const dates = j.election_dates_sent || {};
+      const dateBlock = (dates.end_display)
+        ? `<div style="margin-top:8px; padding:8px 10px; background:#fff; border:1px dashed #cbd5e1; border-radius:6px; font-size:12px;">
+             <div style="font-weight:700; color:#1E2761; margin-bottom:3px;">⚠️ Verify these dates before printing the mailing:</div>
+             <div><b>Voting closes:</b> ${escapeHtml(dates.end_display)}</div>
+             ${dates.start_display ? `<div><b>Voting opens:</b> ${escapeHtml(dates.start_display)}</div>` : ''}
+             <div style="margin-top:4px; color:#475569; font-size:11px;">If these don't match what you configured, STOP — don't print the mailing yet. Tell me what's wrong.</div>
+           </div>`
+        : '';
       status.innerHTML = `
         <div style="background:#dcfce7; border:1px solid #bbf7d0; border-radius:6px; padding:10px 12px; line-height:1.6;">
           <div style="font-weight:700; color:#166534;">${escapeHtml(intro)}</div>
@@ -31288,6 +31301,7 @@ ${questionsPage}
             Election ID: <code>${escapeHtml(String(j.election_id || ''))}</code><br>
             Status: <b>${escapeHtml(String(j.election_status || ''))}</b> · Candidates: <b>${j.candidate_count}</b> · Voters: <b>${j.voter_count}</b>
           </div>
+          ${dateBlock}
           ${j.admin_url ? `<div style="margin-top:6px;"><a href="${escapeHtml(j.admin_url)}" target="_blank" style="color:#1e3a8a; font-weight:600;">Open bedrock-vote admin →</a></div>` : ''}
           <div style="margin-top:6px; font-size:11.5px; color:#475569;">Next: open bedrock-vote → download the QR-coded mailing label sheets → print + stuff + mail. Come back here and click <b>Mark notice sent</b> on the Call for Nominations tab AFTER the physical mail goes out.</div>
         </div>`;

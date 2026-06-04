@@ -468,6 +468,139 @@ Risky to do as a single sweeping change (the function references other
 helpers defined later); doing it incrementally per-tab as bugs surface
 is the pragmatic path.
 
+### Preview screens that show counts without cross-checking against truth
+
+**Scar**: 2026-06-01, the bedrock-vote bridge Preview returned 1000
+voters for Waterview when the actual roster was 1171. PostgREST defaults
+to a 1000-row response cap and the bridge query never asked for more.
+The Preview rendered the truncated number as if it were the answer.
+Ed caught the mismatch because he knows Waterview's home count by heart.
+The platform did not. A live push would have shipped a ballot universe
+missing 171 owners — and "we synced what the system told us" is not a
+defense the board would accept.
+
+**Rule**: every Preview / dry-run / export surface that displays a count
+or roster MUST cross-check that count against an independent canonical
+source in the same query, in the same response. The pattern:
+
+1. Query the truth source separately (e.g.,
+   `SELECT count(*) FROM properties WHERE community_id = $1` for voter
+   counts; equivalent canonical source for whatever is being previewed).
+2. Compare to the count being displayed.
+3. If they diverge, flag loudly in the UI — a red banner, not a footnote
+   — and refuse the destructive action on the server with HTTP 409.
+
+The server check is non-negotiable. A UI-only warning is bypassable;
+the 409 makes "ship anyway" structurally impossible. Fix layer added in
+commit `0a1c5cf`.
+
+**Encode-Ed lens**: the system has to know what Ed knows, or the
+platform is just a faster way to make consistent mistakes. Every Preview
+is a moment where domain knowledge must be encoded into a query, not
+left to the operator's memory. If a human's gut would catch the
+discrepancy, the system has to catch it first — otherwise the franchise
+operator without Ed's instinct ships the bug.
+
+Generalize: any surface that shows N of something downstream of a
+filterable / paginated / capped query is a candidate for this rule.
+Look for `.limit()`, default page sizes, `range()` calls, and any place
+the displayed number could silently undercount.
+
+### Date strings across system boundaries — must combine date + time + TZ
+
+**Scar**: 2026-06-03, the trustEd → bedrock-vote bridge was sending
+`end_date: "2026-06-22"` (date only, no time, no timezone) for the
+voting cutoff. bedrock-vote parsed this as midnight UTC, which displays
+as 7:00 PM the PREVIOUS day in Central time. Result: an election
+configured in trustEd to close June 22 at 4:00 PM Central was displayed
+on the bedrock-vote admin card as "Closes Jun 21." Ed caught it by
+eyeball on the bedrock-vote card. The franchise operator who doesn't
+have Ed's instinct would have shipped the mailing with the platform's
+displayed-correctly cutoff, and a voter trying to cast at 3:55 PM
+Central on June 22 (BEFORE the configured 4:00 PM cutoff) would have
+been refused. That's a Texas §209 disenfranchisement issue that voids
+the entire election when challenged.
+
+**Rule**: any date that crosses a system boundary (trustEd → bedrock-
+vote, trustEd → Resend email, trustEd → Vantaca, etc.) MUST be sent as
+a full ISO timestamp with timezone offset, NEVER as a date-only string.
+The receiver cannot guess the timezone correctly. Use the canonical
+helper `_toCentralTimestamp(date, time)` in server.js — combines a
+date + time + Central offset (CDT/CST resolved by calendar date) into
+`'YYYY-MM-DDTHH:MM:SS-05:00'` shape. Format-on-display in
+`America/Chicago` everywhere ("Monday, June 22, 2026 at 4:00 PM
+Central").
+
+**Encode-Ed lens**: surfacing the parsed-in-Central display string on
+the Preview AND the success popup is required so the operator can
+sanity-check before the mailing goes out. The cross-check rule from
+"Preview screens that show counts" generalizes: every value that flows
+across a boundary must display in canonical human-readable form on
+both sides. If a human's gut would catch the mismatch, the UI has to
+catch it first — silent ship is the failure mode.
+
+Concrete code smell: any `cycle.something_at` or `cycle.something_date`
+passed directly into a fetch body without combining with the `_time`
+sibling field. Any `.toISOString().slice(0, 10)` that ends up in an
+outbound payload. Any external API call where the date field's value
+doesn't include both an explicit time component AND an explicit
+timezone offset.
+
+Fixes landed in commits `e68a3bb` (helper + bridge payload) and
+follow-up (preview + success-popup display cross-check).
+
+### Supabase 1000-row silent truncation
+
+**Scar**: 2026-06-01, hit the same bug **7 times across two repos** in
+one afternoon. Supabase's PostgREST layer enforces a 1000-row response
+cap by default. `.range(0, 9999)` and `.limit(5000)` are silently
+clamped server-side — no error, no warning, just a truncated array.
+First caught when trustEd's bridge preview returned 1000 voters for
+Waterview against a roster of 1171 (the Preview cross-check rule above
+fired because Ed knew the home count by heart). Audit of bedrock-vote
+then surfaced six more endpoints with the same bug:
+
+| Endpoint | Truncated query |
+|---|---|
+| `/archive` | voters + ballots + audit_log |
+| `/audit/export` | audit_log + ballots |
+| `/qrcodes` | voters |
+| `/mailing` | voters |
+| `/results` | **ballots — the live vote tally** |
+| `/pending-proxies` | ballots |
+| `/audit` | audit_log |
+
+At Waterview's size every one of those was silently capping. `/results`
+would have under-tallied a live election. Under-tallied election
+results land in court.
+
+**Rule**: any "fetch all rows for X" query must page through with a
+helper. bedrock-vote uses `fetchAllRows(buildQuery, pageSize=1000)` —
+loops 1000-row pages until a partial page comes back, safety cap at
+100k rows. hoa-doc-search uses a paginated `.range()` loop with the
+same shape. Single-row lookups via `.single()` and bounded queries with
+an explicit `.limit(N)` where N is small (≤ a few hundred for UI lists,
+top-of-leaderboard, etc.) are fine — the rule kicks in the moment the
+query is "everything for community X" or "everything for election Y"
+without a real upstream bound.
+
+Concrete code smell: `.select(...).eq('community_id', X)` or
+`.eq('election_id', X)` with no `.single()` and no small `.limit()` —
+that endpoint is silently capped right now. Same goes for `.in('id',
+bigArray)` style joins where the joined table could exceed 1000.
+
+Fixes landed in bedrock-vote commit `bc27f1b` and hoa-doc-search
+commit `dd1cb30`. The pagination helper is the canonical pattern; any
+new endpoint in either repo MUST use it.
+
+**Encode-Ed lens**: same shape as the Preview cross-check rule above —
+the system has to catch the truncation, not the operator's domain
+knowledge. Ed knew Waterview had 1171 voters; the franchise operator
+working a 1500-door portfolio two years from now will not have every
+roster size memorized. Make it structurally impossible to ship a
+truncated result: the helper everywhere, no per-endpoint heroics, no
+"I'll remember to add `.range()` next time."
+
 ---
 
 ## Database conventions
