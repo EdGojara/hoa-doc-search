@@ -982,6 +982,12 @@ router.post('/queue-thin-extraction-reindex', async (req, res) => {
 router.post('/reindex-all', async (req, res) => {
   try {
     const communityFilter = (req.query.community || req.body?.community || '').trim();
+    // ?category=declaration_ccrs,bylaws lets us force-reindex only governing
+    // docs (Ed 2026-06-04, structure-aware chunking rollout). Without this,
+    // a full re-chunk of every doc to pick up the new article/section
+    // metadata would also re-embed ~1500 vendor invoices we don't care
+    // about. Comma-separated; matches library_documents.category exactly.
+    const categoryFilter = (req.query.category || req.body?.category || '').trim();
     const onlyMissing = (req.query.only_missing || req.body?.only_missing) !== '0';
     const offset = Math.max(0, parseInt(req.query.offset || req.body?.offset || '0', 10));
     // Hard cap at 5 docs/batch. Combined with the time budget below this keeps
@@ -1007,6 +1013,10 @@ router.post('/reindex-all', async (req, res) => {
       q = q.in('index_status', ['pending', 'failed']);
     } else {
       q = q.neq('status', 'missing');
+    }
+    if (categoryFilter) {
+      const cats = categoryFilter.split(',').map((c) => c.trim()).filter(Boolean);
+      if (cats.length > 0) q = q.in('category', cats);
     }
     const { data: docs, error } = await q;
     if (error) return res.status(500).json({ error: error.message });

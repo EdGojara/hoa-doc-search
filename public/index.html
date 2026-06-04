@@ -7378,6 +7378,7 @@
           <button class="secondary-btn" data-admin-only onclick="location.href='/agent-training.html'" style="font-size:12px; padding:6px 14px; background:#fffbeb; border:1px solid #fde047; color:#854d0e;" title="Train Claire (voice) + askEd (staff chat) by chatting with them in text mode, reviewing reasoning, and saving corrections to the unified playbook. Corrections take effect on the next real call/chat — no redeploy.">🎙️ Train agents</button>
           <button class="secondary-btn" onclick="docsApplyMigrations()" id="docsApplyMigBtn" style="font-size:12px; padding:6px 14px;" title="Apply migrations/*.sql that haven't landed yet. Bypasses the Supabase SQL editor by connecting via DATABASE_URL.">🗄️ Apply pending migrations</button>
           <button class="secondary-btn" onclick="docsQueueThinExtractionReindex()" id="docsThinReindexBtn" style="font-size:12px; padding:6px 14px;" title="Find docs marked 'indexed' but with suspiciously thin extracted text (likely uploaded pre-OCR pipeline) and re-queue them for OCR reprocessing">🔍 Re-OCR suspect scans</button>
+          <button class="secondary-btn" onclick="docsRechunkGoverningDocs()" id="docsRechunkGovBtn" style="font-size:12px; padding:6px 14px; background:#fef3c7; border:1px solid #f59e0b; color:#92400e;" title="Force re-chunk + re-embed of every Declaration, Bylaws, and Rules/Regs doc so chunks pick up Article/Section breadcrumb metadata. Run once after the structure-aware chunker ships, then never again unless the chunker logic changes.">📑 Re-chunk governing docs</button>
           <button class="action-btn"    onclick="docsReindexAll()"   id="docsReindexBtn" style="font-size:12px; padding:6px 14px;">🔁 Reindex everything askEd can't see</button>
         </div>
       </div>
@@ -25068,6 +25069,117 @@ ${questionsPage}
       status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; line-height:1.5;"><strong>Reindex stopped at ${totals.processed}/${totals.queueTotal}:</strong> ${escapeHtml(e.message)}<br><span style="font-size:11.5px; color:#6B7280;">Click the button again to resume — only un-indexed docs will be retried.</span></div>`;
     } finally {
       btn.disabled = false; btn.textContent = '🔁 Reindex everything askEd can\'t see';
+    }
+  }
+
+  // Re-chunk governing docs (Ed 2026-06-04, structure-aware chunking
+  // rollout). Mirrors docsReindexAll's polling/retry logic but targets
+  // only Declarations / Bylaws / Rules&Regs with only_missing=0 so
+  // already-indexed docs get re-chunked to pick up the new article/section
+  // breadcrumb metadata. Run ONCE after the chunker change deploys, then
+  // never again unless the chunker logic changes. Targeted scope avoids
+  // re-embedding ~1500 vendor invoices (would cost real OpenAI dollars
+  // for zero benefit on those docs — they have no Article/Section structure).
+  async function docsRechunkGoverningDocs() {
+    const btn = document.getElementById('docsRechunkGovBtn');
+    const status = document.getElementById('docs-reindex-status');
+    if (!confirm('Force re-chunk every Declaration / Bylaws / Rules&Regs doc across the portfolio?\n\nThis re-embeds all chunks to pick up Article/Section breadcrumb metadata so askEd can cite "Article VII Section 7.2" verbatim instead of "[X] of [X]" placeholders.\n\nRoughly 100-150 docs; ~5 minutes; modest OpenAI cost (~$3-5). Safe to run multiple times — idempotent.')) return;
+    btn.disabled = true; btn.textContent = '⏳ Re-chunking…';
+
+    const totals = { indexed: 0, skipped: 0, failed: 0, processed: 0, queueTotal: 0, lastError: null, retries: 0 };
+    const allDetails = [];
+    let offset = 0;
+    const limit = 5;
+    let consecutiveErrors = 0;
+    // Categories with Article/Section structure that benefits from
+    // breadcrumb metadata. Must match library_documents.category exactly —
+    // values come from STANDARD_CATEGORIES in api/documents.js.
+    const categories = 'bylaws,declaration_ccrs,rules_and_regulations,resolutions_and_policies,articles_of_incorporation';
+
+    function renderRechunkStatus(stage) {
+      const pct = totals.queueTotal > 0 ? Math.round(100 * totals.processed / totals.queueTotal) : 0;
+      const retryLine = totals.retries > 0
+        ? `<div style="font-size:11px; color:#92400e; margin-top:4px;">⚠️ ${totals.retries} batch ${totals.retries === 1 ? 'retry' : 'retries'} so far${totals.lastError ? ` · last error: ${escapeHtml(totals.lastError)}` : ''}</div>`
+        : '';
+      status.innerHTML = `
+        <div style="padding:10px 12px; background:#fef3c7; border-left:3px solid #f59e0b; border-radius:0 6px 6px 0; line-height:1.6;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div><strong>${stage}</strong> · ${totals.processed} / ${totals.queueTotal} governing docs (${pct}%)</div>
+            <div style="font-size:11px; color:#475569;">${totals.indexed} re-chunked · ${totals.skipped} skipped · ${totals.failed} failed</div>
+          </div>
+          <div style="margin-top:6px; height:6px; background:#fde68a; border-radius:3px; overflow:hidden;">
+            <div style="height:100%; width:${pct}%; background:#92400e; transition:width 0.4s;"></div>
+          </div>
+          ${retryLine}
+        </div>
+      `;
+    }
+
+    renderRechunkStatus('Starting…');
+
+    try {
+      while (true) {
+        let res;
+        try {
+          res = await fetch(`/api/documents/reindex-all?offset=${offset}&limit=${limit}&only_missing=0&category=${encodeURIComponent(categories)}`, { method: 'POST' });
+        } catch (netErr) {
+          consecutiveErrors += 1;
+          totals.retries += 1;
+          totals.lastError = netErr.message || 'Failed to fetch';
+          renderRechunkStatus('Retrying after network error…');
+          if (consecutiveErrors >= 5) throw new Error('Network error after 5 retries: ' + netErr.message);
+          await new Promise(r => setTimeout(r, 2000 * consecutiveErrors));
+          continue;
+        }
+        let j;
+        try { j = await res.json(); }
+        catch (parseErr) {
+          consecutiveErrors += 1;
+          totals.retries += 1;
+          totals.lastError = `Server returned ${res.status} (no JSON)`;
+          renderRechunkStatus('Retrying after bad server response…');
+          if (consecutiveErrors >= 5) throw new Error('Server returned ' + res.status + ' repeatedly');
+          await new Promise(r => setTimeout(r, 2000 * consecutiveErrors));
+          continue;
+        }
+        if (!res.ok) throw new Error(j.error || `HTTP ${res.status}`);
+        consecutiveErrors = 0;
+
+        totals.indexed   += j.indexed   || 0;
+        totals.skipped   += j.skipped   || 0;
+        totals.failed    += j.failed    || 0;
+        totals.processed  = j.processed_total;
+        totals.queueTotal = j.queue_total;
+        (j.details || []).forEach(d => allDetails.push(d));
+
+        renderRechunkStatus(j.done ? 'Finalizing…' : 'Re-chunking…');
+        await docsLoadCoverage();
+
+        if (j.done) break;
+        if (j.next_offset > offset) {
+          offset = j.next_offset;
+        } else {
+          throw new Error('Server returned no progress (next_offset did not advance). Reload and try again.');
+        }
+        await new Promise(r => setTimeout(r, 400));
+      }
+
+      const failedHtml = allDetails.filter(d => d.status === 'failed' || d.status === 'skipped').slice(0, 25).map(d =>
+        `<li><strong>${escapeHtml(d.name || d.id)}</strong> (${escapeHtml(d.community || '—')}): ${escapeHtml(d.status)}${d.reason ? ' — ' + escapeHtml(d.reason) : ''}${d.error ? ' — ' + escapeHtml(d.error) : ''}</li>`
+      ).join('');
+      const pillBg = totals.failed > 0 ? '#fef3c7' : '#dcfce7';
+      const pillBd = totals.failed > 0 ? '#f59e0b' : '#15803d';
+      status.innerHTML = `
+        <div style="padding:10px 12px; background:${pillBg}; border-left:3px solid ${pillBd}; border-radius:0 6px 6px 0; line-height:1.6;">
+          <strong>Done.</strong> ${totals.indexed} governing docs re-chunked · ${totals.skipped} skipped · ${totals.failed} failed
+          <div style="font-size:11.5px; color:#475569; margin-top:4px;">Check the Render logs for <code>[chunkText]</code> lines showing how many Articles/Sections each doc resolved. If a doc shows 0 articles, its formatting evaded the patterns — chunks still ship but without breadcrumb.</div>
+          ${failedHtml ? `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:12px;">${(totals.skipped + totals.failed)} skipped / failed — first 25</summary><ul style="font-size:11.5px; margin:6px 0 0; padding-left:18px;">${failedHtml}</ul></details>` : ''}
+        </div>
+      `;
+    } catch (e) {
+      status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; line-height:1.5;"><strong>Re-chunk stopped at ${totals.processed}/${totals.queueTotal}:</strong> ${escapeHtml(e.message)}<br><span style="font-size:11.5px; color:#6B7280;">Click the button again to resume.</span></div>`;
+    } finally {
+      btn.disabled = false; btn.textContent = '📑 Re-chunk governing docs';
     }
   }
 
