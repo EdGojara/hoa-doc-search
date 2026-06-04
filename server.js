@@ -6,7 +6,14 @@ const OpenAI = require('openai');
 const BRAND = require('./lib/brand');
 
 const multer = require('multer');
-const upload = multer({ storage: multer.memoryStorage() });
+// Audit 2026-06-04: prior config had no `limits` set, so a single 200MB phone
+// video drag-drop could OOM the process before shrinkImageForAnthropic ran.
+// Cap at 20MB/file (more than enough for raw photo) and 10 files/request.
+// Multer returns 413 / "File too large" automatically when limits hit.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 20 * 1024 * 1024, files: 10 },
+});
 const pdfParse = require('pdf-parse');
 
 // Anthropic enforces a 5MB cap on each base64 image. Modern phone photos
@@ -86,10 +93,23 @@ async function resolveUserRole(req) {
       .select('role, is_active')
       .eq('id', user.id)
       .maybeSingle();
-    if (!profile) return 'staff';
+    // Audit 2026-06-04: previously this fail-OPENED to 'staff' when no
+    // profile row existed. Homeowner portal magic-link sessions are Supabase
+    // auth users — so a homeowner who landed at /ask-ed got staff-tier
+    // operator output (citations, internal register, moat-adjacent text).
+    // Inverse of the IP-protection threat model. Fail closed now: no
+    // profile = treat as unknown. Staff tier is opt-in via explicit row.
+    if (!profile) {
+      console.warn('[resolveUserRole] authenticated user has no user_profiles row — treating as unknown. user_id=', user.id);
+      return 'unknown';
+    }
     if (profile.is_active === false) return 'inactive';
     return profile.role || 'staff';
-  } catch (_) {
+  } catch (e) {
+    // Audit 2026-06-04: previously this swallowed the error silently. Auth
+    // outage, network blip, or SUPABASE_KEY rotation would flip every
+    // request to customer tier with no diagnostic trail.
+    console.warn('[resolveUserRole] threw:', e?.message);
     return 'unknown';
   }
 }
@@ -2675,6 +2695,20 @@ function toolFriendlyLabel(name) {
 }
 
 app.post('/ask-ed-chat-stream', upload.array('attachment', 10), async (req, res) => {
+  // Audit 2026-06-04 stopgap: prior to this gate the chat-stream endpoint
+  // accepted anonymous requests AND applied no leak filter, so model
+  // output (including moat phrases, model names, verbatim citations)
+  // streamed directly to any visitor. Until the buffer-then-screen
+  // streaming filter ships (separate session), restrict the surface to
+  // authenticated users. Returns 401 before any expensive work.
+  try {
+    const role = await resolveUserRole(req);
+    if (role === 'unknown' || role === 'inactive') {
+      return res.status(401).json({ error: 'auth_required' });
+    }
+  } catch (_) {
+    return res.status(401).json({ error: 'auth_required' });
+  }
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-transform');
   res.setHeader('Connection', 'keep-alive');
@@ -3195,9 +3229,19 @@ app.post('/api/transform-for-customer', express.json({ limit: '64kb' }), async (
     }
     const screen = screenForLeaks(text, { audience: 'customer', autoRewrite: true });
     if (screen.blocks.length > 0) {
-      console.warn('[transform-for-customer] block hit; returning raw text:',
-        screen.blocks.map((b) => `${b.reason} ("${b.matches.slice(0, 2).join('", "')}")`).join('; '));
-      return res.json({ text, blocked: true });
+      // Audit 2026-06-04: previously this returned 200 + raw text + a
+      // `blocked: true` flag the client ignored, so block-tier moat phrases
+      // sailed straight into the .eml. Defeated the entire point of the
+      // endpoint on exactly the cases it existed to catch. Now: 422 with
+      // structured reasons and NO text body. Client treats 422 as a hard
+      // refusal (alert + no download).
+      const reasons = screen.blocks.map((b) => ({
+        reason: b.reason,
+        matches: (b.matches || []).slice(0, 3),
+      }));
+      console.warn('[transform-for-customer] BLOCKED:',
+        reasons.map((r) => `${r.reason} ("${r.matches.join('", "')}")`).join('; '));
+      return res.status(422).json({ blocked: true, reasons });
     }
     return res.json({ text: screen.text, rewrites: screen.rewrites.length });
   } catch (err) {

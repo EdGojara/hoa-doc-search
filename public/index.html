@@ -21768,6 +21768,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       });
       const data = await res.json();
       output.className = 'output-box';
+      // Audit 2026-06-04: cache the RAW guidance separately from #edOutput's
+      // text content. Reason: after we set textContent below, we appendChild
+      // a sources panel — and .textContent on the parent concatenates ALL
+      // descendants (including the source filename list). Any downstream
+      // extractor that reads from #edOutput.textContent would see the
+      // appended source filenames and could false-trigger the
+      // multi-scenario picker or break HOW TO RESPOND extraction. Cache
+      // here, read from cache there.
+      window._lastEdGuidance = data.guidance;
       // Render guidance text first, then trust-at-point-of-use source list.
       // textContent for the guidance keeps any HTML in the model's output
       // from rendering as markup (defense against prompt injection),
@@ -21863,8 +21872,25 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       );
       return;
     }
-    const body = await _transformForCustomer(rawBody);
-    _buildAndDownloadEml(body, letter);
+    try {
+      const body = await _transformForCustomer(rawBody);
+      _buildAndDownloadEml(body, letter);
+    } catch (e) {
+      if (e && e.code === 'BLOCKED') {
+        const matchList = (e.reasons || [])
+          .flatMap((r) => (r.matches || []).map((m) => '"' + m + '" (' + r.reason + ')'))
+          .join('\n  • ');
+        alert(
+          'Can\'t export scenario ' + letter + ' — contains internal-only language:\n\n  • ' +
+          matchList +
+          '\n\nRephrase or edit manually.'
+        );
+      } else if (e && e.code === 'UNAUTHORIZED') {
+        alert('Your session expired. Sign in again and re-run the export.');
+      } else {
+        console.warn('[exportScenarioToEmail] unexpected error:', e && e.message);
+      }
+    }
   }
 
   // Legacy reviewDraft() removed — folded into askEd Review mode
@@ -23960,9 +23986,13 @@ ${questionsPage}
     return scenarios;
   }
 
-  // Get the email body for a specific scenario, or fall back to extracting the full HOW TO RESPOND
+  // Get the email body for a specific scenario, or fall back to extracting
+  // the full HOW TO RESPOND. Reads from window._lastEdGuidance (cached on
+  // response) NOT #edOutput.textContent — the latter includes the appended
+  // source-filename panel which could false-trigger scenario detection or
+  // break HOW TO RESPOND extraction. Audit 2026-06-04.
   function getScenarioEmailBody(letter) {
-    const guidance = document.getElementById('edOutput').textContent;
+    const guidance = window._lastEdGuidance || '';
     const scenarios = detectScenarios(guidance);
     const match = scenarios.find(s => s.letter === letter);
     if (match) return match.body;
@@ -24022,8 +24052,21 @@ ${questionsPage}
   // conversational. Falls back to the original text if the endpoint errors
   // so a network blip doesn't strand an operator who needs to send an email
   // (worst case is they ship the staff register — same as before this fix).
+  // Audit 2026-06-04: previously this silently shipped raw staff text on
+  // ANY non-ok response — including 422 (block hit) and 401 (expired JWT),
+  // which are the exact cases the customer-tier rewrite exists to catch.
+  // Now we distinguish three outcomes:
+  //   - 200: use server-rewritten text (rewrites applied)
+  //   - 422: hard refusal — block-severity moat phrase detected. Throw a
+  //     structured error so exportToEmail can surface a specific alert
+  //     and refuse the .eml build.
+  //   - 401: hard refusal — session expired. Same. Modal nudges re-auth.
+  //   - other: legitimate network failure. Original raw-text fallback
+  //     preserved here so a transient blip doesn't strand an operator
+  //     mid-send, but the operator sees a console warning.
   async function _transformForCustomer(text) {
     try {
+      if (!window.supa) throw new Error('auth_not_ready');
       const session = (await window.supa.auth.getSession()).data?.session;
       const headers = { 'Content-Type': 'application/json' };
       if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
@@ -24032,17 +24075,34 @@ ${questionsPage}
         headers,
         body: JSON.stringify({ text }),
       });
+      if (r.status === 422) {
+        let reasons = [];
+        try { const j = await r.json(); reasons = j.reasons || []; } catch (_) {}
+        const err = new Error('transform_blocked');
+        err.code = 'BLOCKED';
+        err.reasons = reasons;
+        throw err;
+      }
+      if (r.status === 401) {
+        const err = new Error('transform_unauthorized');
+        err.code = 'UNAUTHORIZED';
+        throw err;
+      }
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const j = await r.json();
       return j.text || text;
     } catch (e) {
-      console.warn('[exportToEmail] customer-tier transform failed, shipping raw text:', e.message);
+      if (e && (e.code === 'BLOCKED' || e.code === 'UNAUTHORIZED')) throw e;
+      console.warn('[exportToEmail] customer-tier transform soft-failed, shipping raw text:', e.message);
       return text;
     }
   }
 
   async function exportToEmail() {
-    const guidance = document.getElementById('edOutput').textContent;
+    // Read from the cached raw guidance, NOT #edOutput.textContent — the
+    // latter concatenates the appended source-filename block. Audit
+    // 2026-06-04 fix.
+    const guidance = window._lastEdGuidance || '';
     if (!guidance) return;
 
     // If the guidance contains multiple scenarios, prompt the user to use the picker instead
@@ -24090,6 +24150,25 @@ ${questionsPage}
     try {
       const emailBody = await _transformForCustomer(rawEmailBody);
       _buildAndDownloadEml(emailBody, null);
+    } catch (e) {
+      // Hard refusals from the customer-tier transform endpoint (Ed
+      // 2026-06-04 audit). The function only throws on BLOCKED / UNAUTHORIZED
+      // — soft failures fall through to raw-text shipping with a console
+      // warning. Surface a specific, actionable alert.
+      if (e && e.code === 'BLOCKED') {
+        const matchList = (e.reasons || [])
+          .flatMap((r) => (r.matches || []).map((m) => '"' + m + '" (' + r.reason + ')'))
+          .join('\n  • ');
+        alert(
+          'Can\'t export — this answer contains internal-only language that the customer-tier filter caught:\n\n  • ' +
+          matchList +
+          '\n\nRephrase the answer in askEd to avoid these terms, or edit manually before sending.'
+        );
+      } else if (e && e.code === 'UNAUTHORIZED') {
+        alert('Your session expired. Sign in again and re-run the export.');
+      } else {
+        console.warn('[exportToEmail] unexpected error:', e && e.message);
+      }
     } finally {
       btn.disabled = false;
       // _buildAndDownloadEml already sets a "✅ Downloaded!" label on success
