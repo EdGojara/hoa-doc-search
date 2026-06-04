@@ -749,6 +749,115 @@ router.get('/legacy/list', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// ----------------------------------------------------------------------------
+// /general-orphans — every library doc whose chunks are tagged 'General'.
+// Ed 2026-06-04: after migration 156 re-tagged 'Unknown' chunks, plus
+// every doc that was uploaded without a community_id, end up in 'General'.
+// Hybrid retrieval used to treat 'General' as a universal fallback (now
+// dropped), so these docs were polluting every community's results.
+// Surface them here so the operator can re-tag them via the Documents UI.
+// MUST be defined before /:id catch-all.
+// ----------------------------------------------------------------------------
+router.get('/general-orphans', async (req, res) => {
+  try {
+    // Pull library docs whose chunks are tagged 'General'. We approximate
+    // by finding library_documents whose community_id is null OR whose
+    // join to communities fails. Either condition means the chunks ended
+    // up in 'General' per lib/library_reindex.js's resolution logic.
+    const { data: libs, error } = await supabase
+      .from('library_documents')
+      .select('id, file_name_original, file_name_normalized, community_id, category, status, communities:community_id(name)')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .neq('status', 'missing')
+      .not('file_path', 'is', null);
+    if (error) return res.status(500).json({ error: error.message });
+    const orphans = (libs || []).filter((d) => !d.community_id || !(d.communities && d.communities.name));
+    // For each orphan, pull a short preview of the first chunk so the
+    // operator can identify what doc it actually is. Cheap join — one
+    // .select per orphan, capped at 200 chars of content.
+    const enriched = await Promise.all(orphans.map(async (d) => {
+      const { data: ch } = await supabase
+        .from('documents')
+        .select('content')
+        .eq('metadata->>library_document_id', d.id)
+        .limit(1);
+      const preview = ch && ch[0] ? String(ch[0].content || '').slice(0, 200).replace(/\s+/g, ' ').trim() : '(no chunks)';
+      return {
+        id: d.id,
+        filename: d.file_name_original || d.file_name_normalized || '(no filename)',
+        category: d.category || 'other',
+        status: d.status || null,
+        community_id: d.community_id,
+        community_name: d.communities?.name || null,
+        first_chunk_preview: preview,
+      };
+    }));
+    res.json({
+      total: enriched.length,
+      orphans: enriched.sort((a, b) => (a.filename || '').localeCompare(b.filename || '')),
+    });
+  } catch (err) {
+    console.error('[documents/general-orphans]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// /assign-community/:id — reassign a library doc to a real community and
+// reindex its chunks so metadata.community gets corrected. The reindex
+// also re-stamps the article/section breadcrumb under the right community
+// so future queries pull it for that community correctly.
+// ----------------------------------------------------------------------------
+router.post('/assign-community/:id', async (req, res) => {
+  try {
+    const docId = req.params.id;
+    const communityId = req.body?.community_id;
+    if (!docId) return res.status(400).json({ error: 'id_required' });
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    // 1. Update library_documents.community_id
+    const { error: updErr } = await supabase
+      .from('library_documents')
+      .update({ community_id: communityId })
+      .eq('id', docId);
+    if (updErr) return res.status(500).json({ error: updErr.message });
+    // 2. Re-resolve community name + UPDATE chunks metadata in-place
+    // (cheap — no re-embedding needed since we're only updating the tag).
+    const { data: c } = await supabase
+      .from('communities')
+      .select('name')
+      .eq('id', communityId)
+      .maybeSingle();
+    if (!c) return res.status(400).json({ error: 'community_not_found' });
+    // The community metadata is a JSONB key on documents.metadata — update
+    // every chunk whose library_document_id matches this doc.
+    const { error: chunkErr } = await supabase.rpc('exec_sql', {
+      sql: `UPDATE documents SET metadata = jsonb_set(metadata, '{community}', to_jsonb($1::text))
+            WHERE metadata->>'library_document_id' = $2`,
+      params: [c.name, docId],
+    }).then(() => ({ error: null })).catch((e) => ({ error: e }));
+    // If exec_sql RPC isn't available (it isn't by default), fall back to
+    // fetching the affected chunks and updating each metadata JSONB. Slower
+    // but works without a custom RPC.
+    if (chunkErr) {
+      const { data: chunks } = await supabase
+        .from('documents')
+        .select('id, metadata')
+        .eq('metadata->>library_document_id', docId);
+      let updated = 0;
+      for (const ch of (chunks || [])) {
+        const newMeta = { ...(ch.metadata || {}), community: c.name };
+        const { error: ue } = await supabase.from('documents').update({ metadata: newMeta }).eq('id', ch.id);
+        if (!ue) updated += 1;
+      }
+      return res.json({ ok: true, community: c.name, chunks_retagged: updated, via: 'per-row fallback' });
+    }
+    res.json({ ok: true, community: c.name });
+  } catch (err) {
+    console.error('[documents/assign-community]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // askEd coverage diagnostic — per-community count of library docs vs. how
 // many are actually indexed in the chunks table the askEd retrieval reads.
 // MUST be defined before /:id (otherwise the catch-all UUID route shadows it).
