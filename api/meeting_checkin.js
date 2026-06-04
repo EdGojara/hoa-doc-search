@@ -669,8 +669,14 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
     };
 
     stage = 'pdf-init';
-    // Stream PDF
-    const doc = new PDFDocument({ size: 'LETTER', margin: 54 });
+    // Stream PDF. bufferPages: true is REQUIRED for the per-page footer
+    // loop at the end of the body — without it, PDFKit flushes each page
+    // as it's written and switchToPage(0) throws "out of bounds, current
+    // buffer covers pages N to N" (the exact error that broke Canyon
+    // Gate's finalize 2026-06-04 on a 3-page document). Buffered pages
+    // sit in memory until doc.end() so the footer loop can stamp page
+    // numbers across all of them.
+    const doc = new PDFDocument({ size: 'LETTER', margin: 54, bufferPages: true });
     const chunks = [];
     doc.on('data', (c) => chunks.push(c));
     doc.on('end', async () => {
@@ -921,13 +927,23 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
     doc.moveTo(310, sigY).lineTo(540, sigY).strokeColor('#000').stroke();
     doc.fontSize(9).fillColor('#7a7a7a').text('Date', 310, sigY + 4);
 
-    // Footer (every page)
-    const pageCount = doc.bufferedPageRange().count;
-    for (let i = 0; i < pageCount; i++) {
-      doc.switchToPage(i);
-      doc.font('Helvetica').fontSize(7).fillColor('#bbb')
-         .text(`Generated ${new Date().toLocaleString('en-US')} by ${BRAND.service.name} · trustEd platform · page ${i+1} of ${pageCount}`,
-           54, 760, { align: 'center', width: 504 });
+    stage = 'pdf-footer';
+    // Footer (every page). Wrapped in try/catch so a bad page-buffer state
+    // here doesn't tank the PDF — the body content is far more important
+    // than the page numbers. If this fails we ship the PDF without footers
+    // and log the issue.
+    try {
+      const range = doc.bufferedPageRange();
+      const pageCount = range.count;
+      const startPage = range.start;
+      for (let i = 0; i < pageCount; i++) {
+        doc.switchToPage(startPage + i);
+        doc.font('Helvetica').fontSize(7).fillColor('#bbb')
+           .text(`Generated ${new Date().toLocaleString('en-US')} by ${s(BRAND?.service?.name, 'Bedrock Association Management')} · trustEd platform · page ${i+1} of ${pageCount}`,
+             54, 760, { align: 'center', width: 504 });
+      }
+    } catch (footerErr) {
+      console.warn('[meeting-checkin] footer render failed (continuing):', footerErr?.message);
     }
 
     stage = 'pdf-end';
