@@ -1066,6 +1066,13 @@ app.use('/api/documents', documentsRouter);
 const legalUpdatesRouter = require('./api/legal_updates');
 app.use('/api/legal-updates', legalUpdatesRouter);
 
+// Reports — Vantaca-to-Bedrock report conversion. Drag-drop a Vantaca
+// PDF, AI auto-detects type + extracts structured data, Bedrock renders
+// the customer-facing artifact. Ed 2026-06-04 build for DRV summaries
+// first, extensible to AR aging / work orders / etc.
+const reportsRouter = require('./api/reports');
+app.use('/api/reports', reportsRouter);
+
 // Board Packets — Bedrock board packet generator
 // Endpoints under /api/board-packets/*. See api/board_packets.js and
 // migrations/014_board_packets.sql for the schema.
