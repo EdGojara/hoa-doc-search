@@ -31,31 +31,28 @@ const PDFDocument = require('pdfkit');
 const { BRAND } = require('../lib/brand');
 
 // Draw a 3-tier cornerstone (matching brand SVG) at (x,y) with given height.
-// New Bedrock "B" master mark — matches lib/brand.js cornerstoneInlineSvg.
-// Two stacked lobes of the B in gold, with three vertical column cutouts
-// in each lobe (top: 3 columns, bottom: 3 columns) painted in navy. SVG
-// path is normalized to a 100x130 viewBox; we translate + scale to draw
-// at the requested (x, y, h). Replaces the prior 3-tier-trapezoid mark
-// that referenced an old brand identity (Ed 2026-06-04).
+// Bedrock master mark — embeds the actual designer-produced PNG from
+// public/brand-assets/bedrock-mark-email-2x.png. Ed 2026-06-04: the
+// prior path-based render was the "hand-drawn approximation" version
+// (brand.js cornerstoneInlineSvg) which looked cartoon-y on the
+// quorum-evidence PDF. PDFKit doesn't natively embed SVG, but it
+// embeds PNG natively, and the email-2x raster is the canonical
+// master mark at 2x resolution — sharper than any vector approximation
+// I can draw by hand. If the file is missing, fall through silently
+// so the rest of the PDF still ships.
+const path = require('path');
+const fs = require('fs');
+const BEDROCK_MARK_PATH = path.join(__dirname, '..', 'public', 'brand-assets', 'bedrock-mark-email-2x.png');
 function drawBedrockMark(doc, x, y, h) {
-  // SVG viewBox is 100 wide x 130 tall; preserve aspect ratio.
-  const scale = h / 130;
-  doc.save();
-  doc.translate(x, y);
-  doc.scale(scale);
-  // Outer B lobes — gold fill.
-  doc.fillColor('#D4AF37');
-  doc.path('M 10 6 H 60 C 75 6 85 18 85 35 C 85 52 75 64 60 64 H 24 V 6 Z M 10 64 H 65 C 80 64 90 76 90 95 C 90 114 80 126 65 126 H 10 Z').fill();
-  // Column cutouts — navy fill on top of the gold (3 columns in top
-  // lobe, 3 in bottom lobe — matches the inline-SVG version exactly).
-  doc.fillColor('#0B1D34');
-  doc.rect(34, 16, 6, 36).fill();
-  doc.rect(46, 12, 6, 40).fill();
-  doc.rect(58, 16, 6, 36).fill();
-  doc.rect(34, 76, 6, 40).fill();
-  doc.rect(46, 72, 6, 44).fill();
-  doc.rect(58, 76, 6, 40).fill();
-  doc.restore();
+  try {
+    if (!fs.existsSync(BEDROCK_MARK_PATH)) {
+      console.warn('[meeting-checkin] brand mark missing at:', BEDROCK_MARK_PATH);
+      return;
+    }
+    doc.image(BEDROCK_MARK_PATH, x, y, { height: h });
+  } catch (e) {
+    console.warn('[meeting-checkin] mark draw failed:', e?.message);
+  }
 }
 
 const router = express.Router();
@@ -806,7 +803,7 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
       ['Meeting Time', s(settings?.meeting_time, '(not set)')],
       ['Location', s(settings?.meeting_location, '(not set)')],
       ['Election', s(election.election_name, '(unnamed)')],
-      ['Voting Window', `${s(election.start_date)?.slice(0,10) || '(none)'} → ${s(election.end_date)?.slice(0,10) || '(none)'}`],
+      ['Voting Window', `${s(election.start_date)?.slice(0,10) || '(none)'} to ${s(election.end_date)?.slice(0,10) || '(none)'}`],
       ['Seats Available', String(election.seats_available || 1)],
     ];
     for (const [k, v] of detLines) {
@@ -847,11 +844,15 @@ router.post('/elections/:eid/generate-pdf', async (req, res) => {
        .text('Members who both voted absentee AND physically attended are counted once. Physical attendance counts toward quorum under the governing-document "presence" language whether or not the member files a walk-in ballot.',
          { width: 504 });
     doc.moveDown(0.5);
+    // Plain text (no unicode checkmarks). PDFKit's default Helvetica is
+    // WinAnsi-only — Unicode U+2713 (✓) and U+2717 (✗) render as garbage
+    // (saw "'&" in place of ✗ on Canyon Gate's PDF, 2026-06-04). Bold +
+    // color is enough to convey status without the glyph.
     doc.font('Helvetica-Bold').fontSize(13)
        .fillColor(quorum.quorum_met ? '#1a7a35' : '#962a2a')
        .text(quorum.quorum_met
-         ? `✓ QUORUM MET — meeting may transact business`
-         : `✗ Quorum NOT MET — short by ${quorum.short_by} units`,
+         ? 'QUORUM MET — meeting may transact business'
+         : `QUORUM NOT MET — short by ${quorum.short_by} units`,
          { align: 'center' });
     doc.moveDown(1);
 
