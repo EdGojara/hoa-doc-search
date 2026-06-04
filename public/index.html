@@ -21844,7 +21844,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   async function exportScenarioToEmail(letter) {
     const rawBody = getScenarioEmailBody(letter);
-    if (!rawBody) { alert('Could not find scenario ' + letter); return; }
+    if (!rawBody) {
+      // getScenarioEmailBody falls back to extractHowToRespond, which now
+      // returns null if no HOW TO RESPOND section was found — surface a
+      // clear message rather than a generic "Could not find scenario."
+      alert(
+        'Can\'t export scenario ' + letter + ' — the answer doesn\'t have a clear homeowner-facing section. ' +
+        'Re-run in Advisor or Draft mode and pick the scenario again.'
+      );
+      return;
+    }
     const placeholders = _detectPlaceholders(rawBody);
     if (placeholders.length > 0) {
       alert(
@@ -23912,14 +23921,27 @@ ${questionsPage}
   }
 
   function extractHowToRespond(guidance) {
-    // Pull only the "HOW TO RESPOND" section — skip Recommended Action, Reasoning, Watch Outs.
-    // Handles formats like "### 2. HOW TO RESPOND", "2. HOW TO RESPOND", "HOW TO RESPOND:"
-    const match = guidance.match(/(?:#{1,4}\s*)?\d?\.?\s*HOW TO RESPOND[:\s]*\n([\s\S]*?)(?=\n\s*(?:#{1,4}\s*)?\d?\.?\s*(?:REASONING|WATCH ?OUTS?|RECOMMENDED|$))/i);
-    if (match && match[1]) {
+    // Pull only the "HOW TO RESPOND" section — skip Recommended Action,
+    // Reasoning, Watch Outs (all internal). Heading variants the model emits:
+    //   "### 2. HOW TO RESPOND"
+    //   "2. HOW TO RESPOND"
+    //   "HOW TO RESPOND:"
+    //   "### 2. HOW TO RESPOND TO DAVID"     <- trailing addressee (Ed 2026-06-04)
+    //   "HOW TO RESPOND (DRAFT)"
+    // The trailing-text variant was the bug: old regex required a colon
+    // OR newline immediately after "HOW TO RESPOND", so " TO DAVID" broke
+    // the match and the fallback dumped the WHOLE 4-section answer into the
+    // email. New pattern allows any non-newline characters between
+    // "HOW TO RESPOND" and the end of the heading line.
+    const match = guidance.match(/(?:#{1,4}\s*)?\d?\.?\s*HOW TO RESPOND[^\n]*\n([\s\S]*?)(?=\n\s*(?:#{1,4}\s*)?\d?\.?\s*(?:REASONING|WATCH ?OUTS?|RECOMMENDED|$))/i);
+    if (match && match[1] && match[1].trim().length > 0) {
       return markdownToPlainEmail(match[1]);
     }
-    // Fallback — strip markdown from the whole thing
-    return markdownToPlainEmail(guidance);
+    // No HOW TO RESPOND section detected. DON'T silently fall back to the
+    // whole guidance — that's how 4-section internal memos end up in
+    // homeowner inboxes. Return null and let the caller refuse the export
+    // with a clear alert. Visible failure beats silent leak.
+    return null;
   }
 
   // Detect if the guidance contains multiple scenario options (Scenario A/B/C, Option A/B/C, etc.)
@@ -24031,6 +24053,20 @@ ${questionsPage}
     }
 
     const rawEmailBody = extractHowToRespond(guidance);
+
+    // First gate: did we find a HOW TO RESPOND section at all? If not, the
+    // current answer is structured differently (Quick mode, Review mode,
+    // model-generated layout that skipped the heading, etc.) and we can't
+    // safely identify what's homeowner-facing. Refuse rather than dump the
+    // whole internal answer to a homeowner inbox.
+    if (rawEmailBody == null) {
+      alert(
+        'Can\'t export — couldn\'t find a "HOW TO RESPOND" section in this answer.\n\n' +
+        'Export to Email works on Advisor and Draft modes where the model produces a section explicitly addressed to the homeowner/board. ' +
+        'For other modes, copy the relevant text manually and edit before sending.'
+      );
+      return;
+    }
 
     // Pre-flight: refuse to ship an email body that still contains unfilled
     // placeholders ([X], [Name], [Section X], etc.). These mean the model
