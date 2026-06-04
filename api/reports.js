@@ -26,8 +26,9 @@ const multer = require('multer');
 const crypto = require('crypto');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
-const { detectReportType, extractDrvSummary } = require('../lib/reports/extract_vantaca_report');
+const { detectReportType, extractDrvSummary, extractViolationDetail } = require('../lib/reports/extract_vantaca_report');
 const { renderBedrockDrvPdf } = require('../lib/reports/render_bedrock_drv');
+const { renderBedrockViolationDetailPdf } = require('../lib/reports/render_bedrock_violation_detail');
 
 const router = express.Router();
 const upload = multer({
@@ -245,6 +246,63 @@ router.post('/convert', upload.single('file'), async (req, res) => {
         .single();
 
       return res.json({ report: updated, ai_extracted: drvExtract.parsed });
+    }
+
+    // Vantaca violation detail (single-violation drilldown).
+    if (detectedType === 'vantaca_violation_detail') {
+      let vd = { parsed: null, raw: '' };
+      try { vd = await extractViolationDetail(req.file.buffer); }
+      catch (e) { console.warn('[reports] violation_detail extraction failed:', e?.message); }
+
+      if (!vd.parsed) {
+        const detail = vd.failure_reason || 'Violation detail extraction returned no parseable data';
+        const rawExcerpt = (vd.raw || '').slice(0, 600);
+        await supabase.from('converted_reports')
+          .update({ status: 'failed', error_message: detail, raw_extraction: vd.raw })
+          .eq('id', reportId);
+        return res.status(422).json({
+          error: 'extraction_failed', detail, raw_excerpt: rawExcerpt,
+          stop_reason: vd.stop_reason || null, detected: detection.parsed,
+          report: { ...row, status: 'failed', error_message: detail },
+        });
+      }
+
+      const finalCommunityName = vd.parsed.community_name || detectedCommunityName || '(community)';
+      const resolvedCommunityId = communityId || await resolveCommunityIdByName(finalCommunityName);
+      let renderedPdf;
+      try {
+        renderedPdf = await renderBedrockViolationDetailPdf({ community_name: finalCommunityName, ...vd.parsed });
+      } catch (rEr) {
+        console.error('[reports] violation_detail render failed:', rEr.stack || rEr.message);
+        await supabase.from('converted_reports')
+          .update({ status: 'failed', error_message: 'Render failed: ' + rEr.message })
+          .eq('id', reportId);
+        return res.status(500).json({ error: safeErrorMessage(rEr) });
+      }
+      const propTag = (vd.parsed.property_address || 'Property').replace(/[^A-Za-z0-9]+/g, '_').slice(0, 40);
+      const outName = `${finalCommunityName.replace(/[^A-Za-z0-9]+/g, '_')}_Violation_${propTag}.pdf`;
+      const outPath = `${BEDROCK_MGMT_CO_ID}/reports/output/${reportId}.pdf`;
+      const { error: outErr } = await supabase.storage
+        .from(STORAGE_BUCKET).upload(outPath, renderedPdf, { contentType: 'application/pdf', upsert: false });
+      if (outErr) {
+        await supabase.from('converted_reports')
+          .update({ status: 'failed', error_message: 'Output upload: ' + outErr.message })
+          .eq('id', reportId);
+        return res.status(500).json({ error: safeErrorMessage(outErr) });
+      }
+      const { data: updated } = await supabase
+        .from('converted_reports')
+        .update({
+          community_id: resolvedCommunityId || communityId,
+          output_file_path: outPath,
+          output_file_name: outName,
+          ai_extracted: vd.parsed,
+          raw_extraction: vd.raw,
+          status: 'rendered',
+          rendered_at: new Date().toISOString(),
+        })
+        .eq('id', reportId).select().single();
+      return res.json({ report: updated, ai_extracted: vd.parsed });
     }
 
     // Other types: extraction + render not built yet. Source is stored, AI
