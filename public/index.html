@@ -7315,6 +7315,21 @@
       <span style="color:#315A87; font-weight:500;">Layer 3 in the making.</span>
     </p>
 
+    <!-- Vendor sub-nav (Master | Insurance Comparison) -->
+    <div id="vendors-subnav" style="display:flex; gap:4px; border-bottom:1px solid #d0d7de; margin-bottom:20px;">
+      <button class="vendor-subnav-btn" data-vsub="master" onclick="vendorsSubnavSwitch('master')"
+        style="padding:10px 16px; border:none; background:transparent; cursor:pointer; font-size:14px; font-weight:600; color:#315A87; border-bottom:2px solid #315A87; margin-bottom:-1px;">
+        🗂️ Vendor Master & Invoices
+      </button>
+      <button class="vendor-subnav-btn" data-vsub="insurance" onclick="vendorsSubnavSwitch('insurance')"
+        style="padding:10px 16px; border:none; background:transparent; cursor:pointer; font-size:14px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">
+        🛡️ Insurance Comparison
+      </button>
+    </div>
+
+    <!-- ===== VENDOR MASTER SECTION (existing) ===== -->
+    <div id="vendors-section-master">
+
     <!-- Drop a Vendor Invoice -->
     <div class="panel" id="vendors-upload-panel" style="margin-bottom: 20px;">
       <h3 style="margin-top:0;">📥 Drop a Vendor Invoice</h3>
@@ -7422,6 +7437,110 @@
       <button class="secondary-btn" onclick="vendorsBackToVendor()">← Back to vendor</button>
       <div id="vendors-invoice-body" style="margin-top:12px;"></div>
     </div>
+
+    </div><!-- /vendors-section-master -->
+
+    <!-- =========================================================================
+         INSURANCE COMPARISON SUB-SECTION
+         ----------------------------------------------------------------------
+         Side-by-side quote comparison for HOA insurance renewals. Drop 2-4
+         carrier quote PDFs, Bedrock extracts limits/deductibles/exclusions
+         and writes a board-packet recommendation.
+         Backed by /api/insurance/* (api/insurance.js).
+         ========================================================================= -->
+    <div id="vendors-section-insurance" style="display:none;">
+
+      <!-- LIST VIEW: existing comparisons + create-new -->
+      <div id="ins-list-view">
+        <div class="panel" style="margin-bottom:20px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
+            <div>
+              <h3 style="margin:0 0 4px 0;">🛡️ Insurance Comparisons</h3>
+              <p style="color:#666; font-size:12.5px; margin:0; max-width:680px;">
+                Compare carrier quotes at renewal. Drop 2–4 quote PDFs and Bedrock builds a side-by-side table plus a board-packet recommendation. The licensed agent of record still binds coverage — this tool informs the board's fiduciary decision.
+              </p>
+            </div>
+            <button class="action-btn" onclick="insOpenNewComparisonModal()">+ New Comparison</button>
+          </div>
+        </div>
+
+        <div class="panel">
+          <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; margin-bottom:12px; align-items:end;">
+            <div>
+              <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+              <select id="ins-filter-community" onchange="insLoadList()" style="padding:8px; width:100%; font-size:14px;">
+                <option value="">All communities</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Status</label>
+              <select id="ins-filter-status" onchange="insLoadList()" style="padding:8px; width:100%; font-size:14px;">
+                <option value="">All statuses</option>
+                <option value="draft">Draft</option>
+                <option value="synthesized">Synthesized</option>
+                <option value="presented_to_board">Presented to Board</option>
+                <option value="decided">Decided</option>
+                <option value="archived">Archived</option>
+              </select>
+            </div>
+            <button class="secondary-btn" onclick="insLoadList()">Apply</button>
+          </div>
+          <div id="ins-list-container" style="font-size:13px; color:#888;">Loading…</div>
+        </div>
+      </div>
+
+      <!-- DETAIL VIEW: one comparison + its quotes + side-by-side table + synthesis -->
+      <div id="ins-detail-view" style="display:none;">
+        <button class="secondary-btn" onclick="insBackToList()">← Back to comparisons</button>
+        <div id="ins-detail-body" style="margin-top:12px;"></div>
+      </div>
+
+      <!-- NEW COMPARISON MODAL -->
+      <div id="ins-new-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:flex-start; justify-content:center; padding:60px 20px; overflow-y:auto;">
+        <div style="background:white; border-radius:10px; padding:24px; max-width:520px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
+          <h3 style="margin:0 0 16px 0;">New Insurance Comparison</h3>
+          <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+            <select id="ins-new-community" style="padding:8px; width:100%; font-size:14px;">
+              <option value="">— Select community —</option>
+            </select>
+          </div>
+          <div style="margin-bottom:14px;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Policy Type</label>
+            <select id="ins-new-policy-type" style="padding:8px; width:100%; font-size:14px;">
+              <option value="package">Package (Bundled — most common HOA case)</option>
+              <option value="property_master">Property / Master Policy</option>
+              <option value="general_liability">General Liability</option>
+              <option value="d_and_o">Directors & Officers</option>
+              <option value="fidelity_crime">Fidelity / Crime</option>
+              <option value="umbrella">Umbrella</option>
+              <option value="workers_comp">Workers Comp</option>
+              <option value="cyber">Cyber</option>
+              <option value="flood">Flood</option>
+            </select>
+          </div>
+          <div style="display:grid; grid-template-columns: 1fr 1fr; gap:12px; margin-bottom:14px;">
+            <div>
+              <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Policy Year</label>
+              <input type="number" id="ins-new-year" placeholder="2026" min="2020" max="2099" style="padding:8px; width:100%; font-size:14px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Effective Date (target)</label>
+              <input type="date" id="ins-new-effective" style="padding:8px; width:100%; font-size:14px;">
+            </div>
+          </div>
+          <div style="margin-bottom:18px;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Title (optional)</label>
+            <input type="text" id="ins-new-title" placeholder="e.g. 2026 Master Renewal" style="padding:8px; width:100%; font-size:14px;">
+          </div>
+          <div style="display:flex; gap:8px; justify-content:flex-end;">
+            <button class="secondary-btn" onclick="insCloseNewModal()">Cancel</button>
+            <button class="action-btn" onclick="insCreateComparison()">Create Comparison</button>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /vendors-section-insurance -->
   </div>
 </div>
 
@@ -28561,6 +28680,444 @@ ${questionsPage}
     });
     try { updateCustomerLinks(); } catch (_) {}
     loadCommunitySlugs();
+  })();
+
+  // =========================================================================
+  // INSURANCE COMPARISON — sub-tab under Vendors. Drop quote PDFs, get
+  // side-by-side comparison + Bedrock-synthesized board recommendation.
+  // Backed by /api/insurance/*.
+  // =========================================================================
+  (function () {
+    let insCurrentComparisonId = null;
+    let insCommunitiesCache = [];
+
+    // ---- Sub-nav switching ----
+    window.vendorsSubnavSwitch = function (sub) {
+      document.querySelectorAll('.vendor-subnav-btn').forEach((btn) => {
+        const active = btn.getAttribute('data-vsub') === sub;
+        btn.style.color = active ? '#315A87' : '#666';
+        btn.style.fontWeight = active ? '600' : '500';
+        btn.style.borderBottom = active ? '2px solid #315A87' : '2px solid transparent';
+      });
+      document.getElementById('vendors-section-master').style.display = (sub === 'master') ? 'block' : 'none';
+      document.getElementById('vendors-section-insurance').style.display = (sub === 'insurance') ? 'block' : 'none';
+      if (sub === 'insurance') {
+        insLoadCommunities();
+        insLoadList();
+      }
+    };
+
+    async function insLoadCommunities() {
+      if (insCommunitiesCache.length) return insCommunitiesCache;
+      try {
+        const r = await fetch('/api/communities');
+        if (!r.ok) return [];
+        const j = await r.json();
+        insCommunitiesCache = j.communities || j || [];
+        // Populate dropdowns
+        const filterSel = document.getElementById('ins-filter-community');
+        const newSel = document.getElementById('ins-new-community');
+        const opts = insCommunitiesCache
+          .map((c) => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+        if (filterSel) filterSel.innerHTML = '<option value="">All communities</option>' + opts;
+        if (newSel) newSel.innerHTML = '<option value="">— Select community —</option>' + opts;
+        return insCommunitiesCache;
+      } catch (_) { return []; }
+    }
+
+    function fmtCents(c) {
+      if (c == null) return '<span style="color:#aaa;">—</span>';
+      return '$' + (Number(c) / 100).toLocaleString('en-US', { maximumFractionDigits: 0 });
+    }
+
+    function statusBadge(s) {
+      const colors = {
+        draft: '#888', synthesized: '#315A87', presented_to_board: '#7A5C00',
+        decided: '#1f7a3d', archived: '#999',
+      };
+      const labels = {
+        draft: 'Draft', synthesized: 'Synthesized', presented_to_board: 'Presented',
+        decided: 'Decided', archived: 'Archived',
+      };
+      return `<span style="display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; background:${colors[s] || '#888'}1a; color:${colors[s] || '#888'};">${labels[s] || s}</span>`;
+    }
+
+    function policyTypeLabel(t) {
+      return ({
+        property_master: 'Property / Master',
+        general_liability: 'General Liability',
+        d_and_o: 'D&O',
+        fidelity_crime: 'Fidelity / Crime',
+        umbrella: 'Umbrella',
+        workers_comp: 'Workers Comp',
+        cyber: 'Cyber',
+        flood: 'Flood',
+        package: 'Package (Bundled)',
+      })[t] || t;
+    }
+
+    // ---- LIST ----
+    window.insLoadList = async function () {
+      const container = document.getElementById('ins-list-container');
+      if (!container) return;
+      container.innerHTML = 'Loading…';
+      try {
+        const params = new URLSearchParams();
+        const c = document.getElementById('ins-filter-community').value;
+        const s = document.getElementById('ins-filter-status').value;
+        if (c) params.set('community_id', c);
+        if (s) params.set('status', s);
+        const r = await fetch('/api/insurance/comparisons?' + params.toString());
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        const rows = j.comparisons || [];
+        if (rows.length === 0) {
+          container.innerHTML = `
+            <div style="padding:40px 20px; text-align:center; color:#888;">
+              <div style="font-size:32px; margin-bottom:8px;">🛡️</div>
+              <div style="font-weight:500; margin-bottom:6px;">No insurance comparisons yet.</div>
+              <div style="font-size:13px;">Click <strong>+ New Comparison</strong> to start one for an upcoming renewal.</div>
+            </div>`;
+          return;
+        }
+        container.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f5; border-bottom:1px solid #d0d7de;">
+                <th style="padding:10px; text-align:left;">Title</th>
+                <th style="padding:10px; text-align:left;">Community</th>
+                <th style="padding:10px; text-align:left;">Type</th>
+                <th style="padding:10px; text-align:center;">Year</th>
+                <th style="padding:10px; text-align:center;">Quotes</th>
+                <th style="padding:10px; text-align:center;">Status</th>
+                <th style="padding:10px; text-align:right;">Updated</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((c) => `
+                <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="insOpenComparison('${c.id}')">
+                  <td style="padding:10px;"><strong>${escapeHtml(c.title || 'Untitled')}</strong></td>
+                  <td style="padding:10px;">${escapeHtml(c.communities?.name || '—')}</td>
+                  <td style="padding:10px;">${escapeHtml(policyTypeLabel(c.policy_type))}</td>
+                  <td style="padding:10px; text-align:center;">${c.policy_year || '—'}</td>
+                  <td style="padding:10px; text-align:center;">${c.quote_count || 0}</td>
+                  <td style="padding:10px; text-align:center;">${statusBadge(c.status)}</td>
+                  <td style="padding:10px; text-align:right; color:#888;">${c.updated_at ? new Date(c.updated_at).toLocaleDateString() : '—'}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>`;
+      } catch (e) {
+        container.innerHTML = `<div style="color:#a00; padding:20px;">Failed to load: ${escapeHtml(e.message)}</div>`;
+      }
+    };
+
+    // ---- NEW MODAL ----
+    window.insOpenNewComparisonModal = async function () {
+      await insLoadCommunities();
+      document.getElementById('ins-new-modal').style.display = 'flex';
+      // Default year = next year
+      document.getElementById('ins-new-year').value = new Date().getFullYear() + 1;
+    };
+    window.insCloseNewModal = function () {
+      document.getElementById('ins-new-modal').style.display = 'none';
+    };
+    window.insCreateComparison = async function () {
+      const community_id = document.getElementById('ins-new-community').value;
+      const policy_type = document.getElementById('ins-new-policy-type').value;
+      const policy_year = document.getElementById('ins-new-year').value;
+      const effective_date = document.getElementById('ins-new-effective').value;
+      const title = document.getElementById('ins-new-title').value;
+      if (!community_id) { alert('Pick a community.'); return; }
+      try {
+        const r = await fetch('/api/insurance/comparisons', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            community_id, policy_type,
+            policy_year: policy_year ? Number(policy_year) : null,
+            effective_date: effective_date || null,
+            title: title || null,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'create failed');
+        insCloseNewModal();
+        insOpenComparison(j.comparison.id);
+      } catch (e) {
+        alert('Failed to create: ' + e.message);
+      }
+    };
+
+    // ---- DETAIL ----
+    window.insOpenComparison = async function (id) {
+      insCurrentComparisonId = id;
+      document.getElementById('ins-list-view').style.display = 'none';
+      const detail = document.getElementById('ins-detail-view');
+      detail.style.display = 'block';
+      const body = document.getElementById('ins-detail-body');
+      body.innerHTML = '<div style="padding:30px; color:#888;">Loading…</div>';
+      try {
+        const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(id));
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        renderComparisonDetail(j.comparison, j.quotes || []);
+      } catch (e) {
+        body.innerHTML = `<div style="color:#a00; padding:20px;">Failed to load: ${escapeHtml(e.message)}</div>`;
+      }
+    };
+
+    window.insBackToList = function () {
+      document.getElementById('ins-detail-view').style.display = 'none';
+      document.getElementById('ins-list-view').style.display = 'block';
+      insCurrentComparisonId = null;
+      insLoadList();
+    };
+
+    function renderComparisonDetail(comp, quotes) {
+      const body = document.getElementById('ins-detail-body');
+      const communityName = comp.communities?.name || '(community)';
+      body.innerHTML = `
+        <div class="panel" style="margin-bottom:16px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
+            <div>
+              <h3 style="margin:0 0 4px 0;">${escapeHtml(comp.title || 'Untitled Comparison')}</h3>
+              <div style="color:#666; font-size:13px;">
+                ${escapeHtml(communityName)} · ${escapeHtml(policyTypeLabel(comp.policy_type))}
+                ${comp.policy_year ? ' · Year ' + comp.policy_year : ''}
+                ${comp.effective_date ? ' · Effective ' + comp.effective_date : ''}
+                · ${statusBadge(comp.status)}
+              </div>
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="secondary-btn" onclick="insDeleteComparison('${comp.id}')" style="color:#a00;">Delete</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Drop a quote -->
+        <div class="panel" style="margin-bottom:16px;">
+          <h4 style="margin-top:0;">📥 Drop a Carrier Quote PDF</h4>
+          <p style="color:#666; font-size:12px; margin:0 0 12px 0;">
+            Bedrock reads the quote directly (no manual data entry). Extracts limits, deductibles, A.M. Best rating, exclusions. You can correct any field after extraction.
+          </p>
+          <div id="ins-drop-area"
+               style="border:2px dashed #d0d7de; border-radius:8px; padding:24px; text-align:center; background:#f9f9f9; cursor:pointer;"
+               onclick="document.getElementById('ins-file').click()"
+               ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+               ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+               ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length) insUploadQuote(event.dataTransfer.files[0]);">
+            <div style="font-size:24px; margin-bottom:6px;">📄</div>
+            <div style="font-weight:500; color:#315A87;">Click or drop a quote PDF</div>
+            <div style="font-size:11.5px; color:#888; margin-top:4px;">One quote per upload. Add 2-4 to enable synthesis.</div>
+          </div>
+          <input type="file" id="ins-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) insUploadQuote(this.files[0])">
+          <div id="ins-upload-status" style="margin-top:10px; font-size:13px;"></div>
+        </div>
+
+        <!-- Side-by-side comparison table -->
+        ${quotes.length > 0 ? renderSideBySide(quotes) : '<div class="panel" style="margin-bottom:16px; color:#888; text-align:center; padding:30px;">No quotes uploaded yet.</div>'}
+
+        <!-- Synthesis card -->
+        ${quotes.length >= 2 ? renderSynthesisCard(comp, quotes) : ''}
+
+        <!-- Per-quote cards (for editing) -->
+        ${quotes.map((q) => renderQuoteCard(q)).join('')}
+      `;
+    }
+
+    function renderSideBySide(quotes) {
+      const rowDef = [
+        { label: 'Annual Premium', fn: (q) => fmtCents(q.annual_premium_cents), bold: true },
+        { label: 'A.M. Best Rating', fn: (q) => q.am_best_rating || '<span style="color:#aaa;">—</span>' },
+        { label: 'Effective', fn: (q) => q.effective_date || '<span style="color:#aaa;">—</span>' },
+        { label: 'Expiration', fn: (q) => q.expiration_date || '<span style="color:#aaa;">—</span>' },
+        { label: 'Deductible', fn: (q) => fmtCents(q.deductible_cents) },
+        { label: 'Wind/Hail Deductible', fn: (q) =>
+          q.wind_hail_deductible_pct != null ? (q.wind_hail_deductible_pct + '%') :
+          (q.wind_hail_deductible_cents != null ? fmtCents(q.wind_hail_deductible_cents) : '<span style="color:#aaa;">—</span>') },
+        { label: 'Property Limit', fn: (q) => fmtCents(q.property_limit_cents) },
+        { label: 'Per-Occurrence Liability', fn: (q) => fmtCents(q.per_occurrence_limit_cents) },
+        { label: 'Aggregate Liability', fn: (q) => fmtCents(q.aggregate_limit_cents) },
+        { label: 'Liability (other)', fn: (q) => fmtCents(q.liability_limit_cents) },
+        { label: 'D&O Limit', fn: (q) => fmtCents(q.d_and_o_limit_cents) },
+        { label: 'Fidelity / Crime', fn: (q) => fmtCents(q.fidelity_limit_cents) },
+        { label: 'Umbrella', fn: (q) => fmtCents(q.umbrella_limit_cents) },
+        { label: 'Flood', fn: (q) => fmtCents(q.flood_limit_cents) },
+        { label: 'Coinsurance %', fn: (q) => q.coinsurance_pct != null ? (q.coinsurance_pct + '%') : '<span style="color:#aaa;">—</span>' },
+        { label: 'Replacement Cost', fn: (q) => q.replacement_cost == null ? '<span style="color:#aaa;">—</span>' : (q.replacement_cost ? '✓ Yes' : 'No (ACV)') },
+        { label: 'Endorsements', fn: (q) => q.notable_endorsements?.length ? '<span style="font-size:12px;">' + q.notable_endorsements.map(escapeHtml).join('<br>') + '</span>' : '<span style="color:#aaa;">—</span>' },
+        { label: 'Notable Exclusions', fn: (q) => q.notable_exclusions?.length ? '<span style="font-size:12px; color:#a55;">' + q.notable_exclusions.map(escapeHtml).join('<br>') + '</span>' : '<span style="color:#aaa;">—</span>' },
+      ];
+      return `
+        <div class="panel" style="margin-bottom:16px; overflow-x:auto;">
+          <h4 style="margin-top:0;">📊 Side-by-Side Comparison</h4>
+          <table style="width:100%; min-width:600px; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f5f5f5; border-bottom:2px solid #d0d7de;">
+                <th style="padding:10px; text-align:left; width:200px;">Coverage Element</th>
+                ${quotes.map((q, i) => `
+                  <th style="padding:10px; text-align:left;">
+                    <div style="font-weight:600;">${escapeHtml(q.carrier_name || 'Quote ' + (i + 1))}</div>
+                    ${q.extraction_confidence === 'low' || q.extraction_confidence === 'manual' ? `<div style="font-size:10.5px; color:${q.extraction_confidence === 'manual' ? '#1f7a3d' : '#a55'}; font-weight:500;">${q.extraction_confidence === 'manual' ? '✓ manually verified' : '⚠ verify fields'}</div>` : ''}
+                  </th>
+                `).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${rowDef.map((row, ri) => `
+                <tr style="border-bottom:1px solid #eee; ${row.bold ? 'background:#fafafa;' : ''}">
+                  <td style="padding:8px 10px; color:#666; ${row.bold ? 'font-weight:600; color:#333;' : ''}">${row.label}</td>
+                  ${quotes.map((q) => `<td style="padding:8px 10px; ${row.bold ? 'font-weight:600;' : ''}">${row.fn(q)}</td>`).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>`;
+    }
+
+    function renderSynthesisCard(comp, quotes) {
+      const has = !!comp.synthesis_text;
+      return `
+        <div class="panel" style="margin-bottom:16px; border-left:4px solid #D4AF37;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
+            <h4 style="margin:0;">🪨 Bedrock Recommendation${has ? '' : ' <span style="font-size:12px; font-weight:400; color:#888;">— not generated yet</span>'}</h4>
+            <button class="action-btn" onclick="insSynthesize()">${has ? 'Regenerate' : 'Generate Synthesis'}</button>
+          </div>
+          ${has ? `
+            <div style="background:#fefcf3; padding:14px 16px; border-radius:6px; font-size:14px; line-height:1.55; white-space:pre-wrap; color:#222;">${escapeHtml(comp.synthesis_text)}</div>
+            <div style="margin-top:8px; font-size:11px; color:#888;">Generated ${new Date(comp.synthesis_generated_at).toLocaleString()} · ${escapeHtml(comp.synthesis_model || '')}</div>
+          ` : `
+            <div style="color:#888; font-size:13px;">Drop at least 2 quotes, then click <strong>Generate Synthesis</strong> for a board-packet recommendation.</div>
+          `}
+          <div style="margin-top:10px; font-size:11.5px; color:#888; padding-top:10px; border-top:1px solid #eee;">
+            Informational analysis for the board's fiduciary decision. The licensed agent of record makes the actual coverage decision and binds.
+          </div>
+        </div>`;
+    }
+
+    function renderQuoteCard(q) {
+      const warnings = (q.extraction_warnings || []).filter(Boolean);
+      return `
+        <div class="panel" id="ins-quote-card-${q.id}" style="margin-bottom:12px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
+            <div>
+              <h4 style="margin:0 0 4px 0;">${escapeHtml(q.carrier_name || '(unknown carrier)')}</h4>
+              <div style="color:#666; font-size:12px;">
+                ${q.agent_name ? escapeHtml(q.agent_name) : ''}
+                ${q.agent_email ? ' · ' + escapeHtml(q.agent_email) : ''}
+                ${q.agent_phone ? ' · ' + escapeHtml(q.agent_phone) : ''}
+              </div>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              ${q.library_document_id ? `<a href="/api/documents/${q.library_document_id}/download" target="_blank" class="secondary-btn" style="text-decoration:none;">📄 PDF</a>` : ''}
+              <button class="secondary-btn" onclick="insEditQuote('${q.id}')">Edit fields</button>
+              <button class="secondary-btn" onclick="insDeleteQuote('${q.id}')" style="color:#a00;">Delete</button>
+            </div>
+          </div>
+          ${warnings.length > 0 ? `
+            <div style="background:#fff7e6; border:1px solid #f4c97a; padding:8px 12px; border-radius:6px; margin-top:8px; font-size:12.5px;">
+              <strong>⚠ Verification needed:</strong>
+              <ul style="margin:4px 0 0 18px; padding:0;">
+                ${warnings.map((w) => `<li>${escapeHtml(w)}</li>`).join('')}
+              </ul>
+            </div>` : ''}
+          ${q.notes ? `<div style="margin-top:8px; padding:8px 12px; background:#f7f7f7; border-radius:6px; font-size:12.5px;"><strong>Staff notes:</strong> ${escapeHtml(q.notes)}</div>` : ''}
+        </div>`;
+    }
+
+    // ---- Upload + status ----
+    window.insUploadQuote = async function (file) {
+      if (!insCurrentComparisonId) return;
+      const status = document.getElementById('ins-upload-status');
+      status.innerHTML = `<span style="color:#315A87;">⏳ Uploading <strong>${escapeHtml(file.name)}</strong> and extracting policy data… (15-45s)</span>`;
+      try {
+        const fd = new FormData();
+        fd.append('pdf', file);
+        const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId) + '/quotes', {
+          method: 'POST', body: fd,
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'upload failed');
+        const conf = j.extraction_confidence;
+        const confLabel = conf === 'high' ? '✓ Extracted (high confidence)' :
+          conf === 'medium' ? '✓ Extracted (medium — review fields)' :
+          '⚠ Extracted (low confidence — verify everything before synthesis)';
+        const confColor = conf === 'high' ? '#1f7a3d' : conf === 'medium' ? '#7A5C00' : '#a55';
+        status.innerHTML = `<span style="color:${confColor};">${confLabel}</span>`;
+        // Reload detail to pick up the new quote
+        insOpenComparison(insCurrentComparisonId);
+      } catch (e) {
+        status.innerHTML = `<span style="color:#a00;">Upload failed: ${escapeHtml(e.message)}</span>`;
+      }
+    };
+
+    // ---- Synthesize ----
+    window.insSynthesize = async function () {
+      if (!insCurrentComparisonId) return;
+      if (!confirm('Generate the Bedrock recommendation now? Takes ~10-20 seconds.')) return;
+      try {
+        const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId) + '/synthesize', {
+          method: 'POST',
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'synthesize failed');
+        insOpenComparison(insCurrentComparisonId);
+      } catch (e) {
+        alert('Synthesis failed: ' + e.message);
+      }
+    };
+
+    // ---- Delete ----
+    window.insDeleteComparison = async function (id) {
+      if (!confirm('Delete this entire comparison and all its quotes? This cannot be undone.')) return;
+      const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(id), { method: 'DELETE' });
+      if (!r.ok) { alert('Delete failed.'); return; }
+      insBackToList();
+    };
+
+    window.insDeleteQuote = async function (qid) {
+      if (!confirm('Delete this quote? The source PDF stays in the library.')) return;
+      const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId) + '/quotes/' + encodeURIComponent(qid), { method: 'DELETE' });
+      if (!r.ok) { alert('Delete failed.'); return; }
+      insOpenComparison(insCurrentComparisonId);
+    };
+
+    // ---- Edit quote (inline prompt-based for v1; full form is Phase 2) ----
+    window.insEditQuote = async function (qid) {
+      // Pull current quote
+      const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId));
+      const j = await r.json();
+      const q = (j.quotes || []).find((x) => x.id === qid);
+      if (!q) return;
+      const fields = [
+        { key: 'carrier_name', label: 'Carrier name' },
+        { key: 'annual_premium_cents', label: 'Annual premium (in dollars, e.g. 18500)', money: true },
+        { key: 'am_best_rating', label: 'A.M. Best rating (A+, A, A-)' },
+        { key: 'deductible_cents', label: 'Deductible (in dollars)', money: true },
+        { key: 'per_occurrence_limit_cents', label: 'Per-occurrence liability limit', money: true },
+        { key: 'aggregate_limit_cents', label: 'Aggregate liability limit', money: true },
+        { key: 'property_limit_cents', label: 'Property limit', money: true },
+        { key: 'd_and_o_limit_cents', label: 'D&O limit', money: true },
+        { key: 'wind_hail_deductible_pct', label: 'Wind/hail deductible % (e.g. 2 for 2%)' },
+        { key: 'notes', label: 'Staff notes (free text)' },
+      ];
+      const patch = {};
+      for (const f of fields) {
+        let current = q[f.key];
+        if (f.money && current != null) current = (Number(current) / 100).toString();
+        const ans = window.prompt(f.label + ' (leave blank to keep current)\nCurrent: ' + (current == null ? '—' : current));
+        if (ans === null) return;   // cancel cancels whole flow
+        if (ans === '') continue;   // empty = keep current
+        patch[f.key] = f.money ? Math.round(parseFloat(ans.replace(/[$,]/g, '')) * 100) : ans;
+      }
+      if (Object.keys(patch).length === 0) return;
+      const resp = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId) + '/quotes/' + encodeURIComponent(qid), {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(patch),
+      });
+      if (!resp.ok) { alert('Save failed.'); return; }
+      insOpenComparison(insCurrentComparisonId);
+    };
   })();
 
   // =========================================================================

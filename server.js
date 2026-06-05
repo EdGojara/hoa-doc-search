@@ -814,6 +814,12 @@ app.use('/api/financial-review', financialReviewRouter);
 const { router: vendorsRouter } = require('./api/vendors');
 app.use('/api/vendors', vendorsRouter);
 
+// Insurance Comparison — board-facing renewal-quote tool under the Vendors tab.
+// Endpoints under /api/insurance/*. See api/insurance.js and
+// migrations/163_insurance_comparison.sql.
+const { router: insuranceRouter } = require('./api/insurance');
+app.use('/api/insurance', insuranceRouter);
+
 // Operational Training Layer (Help / Knowledge Base)
 // Endpoints under /api/help/*. See api/help.js and
 // migrations/011_knowledge_base.sql for the schema.
