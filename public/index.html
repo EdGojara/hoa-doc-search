@@ -1210,6 +1210,7 @@
              external — and it runs the body through customer-tier transform
              on the server before the .eml drops. One button, one safe path. -->
         <button class="secondary-btn" id="exportEdEmailBtn" onclick="exportToEmail()" style="display:none">📧 Export to Email</button>
+        <button class="action-btn" id="askEdNewQuestionBtn" onclick="askEdNewQuestion()" style="display:none; background:#16a34a; border-color:#15803d;">＋ New Question</button>
       </div>
     </div>
   </div>
@@ -22128,6 +22129,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     output.className = 'output-box';
     output.innerHTML = '<div class="typing" style="justify-content:center"><span></span><span></span><span></span></div>';
     document.getElementById('exportEdEmailBtn').style.display = 'none';
+    const _newBtnHide = document.getElementById('askEdNewQuestionBtn');
+    if (_newBtnHide) _newBtnHide.style.display = 'none';
     // Clear any stale scenario picker before a new run
     const oldPicker = document.getElementById('scenarioPicker');
     if (oldPicker) oldPicker.remove();
@@ -22199,6 +22202,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       // time, not now — see exportToEmail().
       const showEmailButton = edCurrentMode === 'advisor' || edCurrentMode === 'draft';
       document.getElementById('exportEdEmailBtn').style.display = showEmailButton ? 'block' : 'none';
+      // ＋ New Question — always visible once an answer renders, regardless
+      // of mode. One-click reset so staff can ask the next question without
+      // manually clearing textarea + attachments + scrolling back up.
+      const newBtn = document.getElementById('askEdNewQuestionBtn');
+      if (newBtn) newBtn.style.display = 'inline-block';
       if (cfg.showScenarioPicker) renderScenarioPicker(data.guidance);
     } catch (err) {
       output.textContent = 'Something went wrong. Please try again.';
@@ -22206,6 +22214,36 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     btn.disabled = false;
     btn.textContent = cfg.buttonText;
   }
+
+  // Reset askEd back to a clean asking state. Clears the situation textarea,
+  // attachments (including the underlying edSelectedFiles array — not just
+  // the DOM), restores the placeholder in the output box, hides Export and
+  // New Question, and focuses the textarea. Scrolls the input back into
+  // view on mobile/tablet where the answer can push the form below the fold.
+  // Mode + community context + casual-tone toggle are PRESERVED — those are
+  // operator preferences, not per-question state.
+  window.askEdNewQuestion = function () {
+    const ta = document.getElementById('edSituation');
+    if (ta) ta.value = '';
+    try { edSelectedFiles.length = 0; } catch (_) {}
+    try { renderEdAttachmentPreviews(); } catch (_) {}
+    const output = document.getElementById('edOutput');
+    if (output) {
+      output.innerHTML = '';
+      output.textContent = 'Describe a situation and click "Get Guidance" to see how to handle it.';
+      output.classList.add('placeholder');
+    }
+    const emailBtn = document.getElementById('exportEdEmailBtn');
+    if (emailBtn) emailBtn.style.display = 'none';
+    const newBtn = document.getElementById('askEdNewQuestionBtn');
+    if (newBtn) newBtn.style.display = 'none';
+    // Scroll left pane to top so the input is visible, then focus the textarea
+    const leftPane = document.querySelector('.ask-ed-left');
+    if (leftPane) leftPane.scrollTop = 0;
+    if (ta) {
+      try { ta.focus({ preventScroll: false }); } catch (_) { ta.focus(); }
+    }
+  };
 
   function renderScenarioPicker(guidance) {
     const existing = document.getElementById('scenarioPicker');
