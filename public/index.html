@@ -10750,6 +10750,24 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
     const ageHours = a.submitted_at ? (Date.now() - new Date(a.submitted_at).getTime()) / 1000 / 3600 : null;
     const heldForReview = audit && audit.final_status === 'held_for_review';
 
+    // "Start new ACC for this property" — appears once a decision is final
+    // (approved / approved_with_conditions / denied / withdrawn / closed).
+    // Opens the existing public apply form pre-filled via query params, so
+    // the new application runs through the same validation / auto-assess /
+    // draft / notification pipeline. Same code path = same bug surface.
+    const isFinal = a.final_status && a.final_status !== 'pending_committee_review';
+    const newAccUrl = (() => {
+      const slug = a.community?.slug;
+      if (!slug) return null;
+      const params = new URLSearchParams();
+      if (a.submitter_name) params.set('name', a.submitter_name);
+      if (a.submitter_email) params.set('email', a.submitter_email);
+      if (a.submitter_phone) params.set('phone', a.submitter_phone);
+      if (a.property_address) params.set('address', a.property_address);
+      params.set('source', 'prior_' + a.reference_number);
+      return '/apply/' + encodeURIComponent(slug) + '?' + params.toString();
+    })();
+
     view.innerHTML = `
       <div style="margin-bottom:14px;">
         <button class="secondary-btn" onclick="accBackToList()" style="font-size:13px;">← Back to queue</button>
@@ -10768,6 +10786,17 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
               : ''
             }
           </div>
+          ${isFinal && newAccUrl ? `
+            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
+              <a href="${accEsc(newAccUrl)}" target="_blank" rel="noopener"
+                 style="background:#16a34a; color:#fff; text-decoration:none; padding:10px 18px; border-radius:8px; font-size:13px; font-weight:700; border:1px solid #15803d; box-shadow:0 1px 2px rgba(0,0,0,0.05); white-space:nowrap;">
+                ＋ Start a new ACC for this property
+              </a>
+              <div style="font-size:11px; color:#5a7390; text-align:right; max-width:240px;">
+                Opens the application form with name, email, and property address pre-filled.
+              </div>
+            </div>
+          ` : ''}
         </div>
       </div>
 

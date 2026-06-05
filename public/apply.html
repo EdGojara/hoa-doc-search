@@ -461,6 +461,39 @@
         $('fee-banner').style.display = '';
         $('fee-banner').innerHTML = `💵 <strong>Application fee: $${Number(svc.owner_payable_fee).toFixed(2)}</strong>. Payment instructions will follow once your manager reviews this submission.`;
       }
+
+      // Honor query-param prefill from "+ Start a new ACC" button on the
+      // staff queue. Only contact + property fields — never project details,
+      // which must be unique to each new request.
+      applyQueryPrefill();
+    }
+
+    function applyQueryPrefill() {
+      try {
+        const params = new URLSearchParams(window.location.search);
+        const map = {
+          name: 'submitter_name',
+          email: 'submitter_email',
+          phone: 'submitter_phone',
+          address: 'property_address',
+        };
+        let any = false;
+        for (const [qk, fieldId] of Object.entries(map)) {
+          const v = params.get(qk);
+          if (!v) continue;
+          const el = document.getElementById(fieldId);
+          if (el && !el.value) { el.value = v; any = true; }
+        }
+        if (any) {
+          const banner = document.createElement('div');
+          banner.style.cssText = 'background:#fefce8; border:1px solid #fde047; color:#713f12; padding:10px 14px; border-radius:6px; font-size:13px; margin-bottom:14px;';
+          banner.innerHTML = '✏️ <strong>Pre-filled from a previous application.</strong> Double-check your contact info and property address before submitting.';
+          const formScreen = $('form-screen');
+          if (formScreen && formScreen.firstChild) {
+            formScreen.insertBefore(banner, formScreen.firstChild);
+          }
+        }
+      } catch (_) { /* prefill best-effort — never block the form */ }
     }
 
     // Per-project-type guidance, distilled from the LPF General Instructions list.
