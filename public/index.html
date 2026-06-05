@@ -7455,12 +7455,12 @@
         <div class="panel" style="margin-bottom:20px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
             <div>
-              <h3 style="margin:0 0 4px 0;">🛡️ Insurance Comparisons</h3>
-              <p style="color:#666; font-size:12.5px; margin:0; max-width:680px;">
-                Compare carrier quotes at renewal. Drop 2–4 quote PDFs and Bedrock builds a side-by-side table plus a board-packet recommendation. The licensed agent of record still binds coverage — this tool informs the board's fiduciary decision.
+              <h3 style="margin:0 0 4px 0;">🛡️ Insurance Renewal Analysis</h3>
+              <p style="color:#666; font-size:12.5px; margin:0; max-width:720px;">
+                Year-over-year analysis tool for HOA insurance renewals. Drop the carrier's quote, Bedrock extracts the policy structure, compares to last year, and benchmarks the premium % change against Bedrock's portfolio. <strong>Analyst, not broker</strong> — the licensed agent of record binds coverage; this surfaces what the board should ask about before they approve.
               </p>
             </div>
-            <button class="action-btn" onclick="insOpenNewComparisonModal()">+ New Comparison</button>
+            <button class="action-btn" onclick="insOpenNewComparisonModal()">+ New Renewal</button>
           </div>
         </div>
 
@@ -7498,7 +7498,7 @@
       <!-- NEW COMPARISON MODAL -->
       <div id="ins-new-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:flex-start; justify-content:center; padding:60px 20px; overflow-y:auto;">
         <div style="background:white; border-radius:10px; padding:24px; max-width:520px; width:100%; box-shadow:0 10px 40px rgba(0,0,0,0.2);">
-          <h3 style="margin:0 0 16px 0;">New Insurance Comparison</h3>
+          <h3 style="margin:0 0 16px 0;">New Renewal Analysis</h3>
           <div style="margin-bottom:14px;">
             <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
             <select id="ins-new-community" style="padding:8px; width:100%; font-size:14px;">
@@ -7535,7 +7535,7 @@
           </div>
           <div style="display:flex; gap:8px; justify-content:flex-end;">
             <button class="secondary-btn" onclick="insCloseNewModal()">Cancel</button>
-            <button class="action-btn" onclick="insCreateComparison()">Create Comparison</button>
+            <button class="action-btn" onclick="insCreateComparison()">Create Renewal</button>
           </div>
         </div>
       </div>
@@ -28858,10 +28858,16 @@ ${questionsPage}
       const body = document.getElementById('ins-detail-body');
       body.innerHTML = '<div style="padding:30px; color:#888;">Loading…</div>';
       try {
-        const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(id));
-        if (!r.ok) throw new Error('HTTP ' + r.status);
-        const j = await r.json();
-        renderComparisonDetail(j.comparison, j.quotes || []);
+        // Fetch detail + benchmark in parallel — benchmark may be empty on
+        // brand-new portfolios; that's fine, the YoY card hides itself.
+        const [detailR, benchR] = await Promise.all([
+          fetch('/api/insurance/comparisons/' + encodeURIComponent(id)),
+          fetch('/api/insurance/comparisons/' + encodeURIComponent(id) + '/benchmark'),
+        ]);
+        if (!detailR.ok) throw new Error('HTTP ' + detailR.status);
+        const j = await detailR.json();
+        const b = benchR.ok ? (await benchR.json()).benchmark : { sample_size: 0 };
+        renderComparisonDetail(j.comparison, j.quotes || [], j.prior || null, b);
       } catch (e) {
         body.innerHTML = `<div style="color:#a00; padding:20px;">Failed to load: ${escapeHtml(e.message)}</div>`;
       }
@@ -28874,14 +28880,14 @@ ${questionsPage}
       insLoadList();
     };
 
-    function renderComparisonDetail(comp, quotes) {
+    function renderComparisonDetail(comp, quotes, prior, benchmark) {
       const body = document.getElementById('ins-detail-body');
       const communityName = comp.communities?.name || '(community)';
       body.innerHTML = `
         <div class="panel" style="margin-bottom:16px;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
             <div>
-              <h3 style="margin:0 0 4px 0;">${escapeHtml(comp.title || 'Untitled Comparison')}</h3>
+              <h3 style="margin:0 0 4px 0;">${escapeHtml(comp.title || 'Untitled')}</h3>
               <div style="color:#666; font-size:13px;">
                 ${escapeHtml(communityName)} · ${escapeHtml(policyTypeLabel(comp.policy_type))}
                 ${comp.policy_year ? ' · Year ' + comp.policy_year : ''}
@@ -28895,11 +28901,17 @@ ${questionsPage}
           </div>
         </div>
 
+        <!-- YoY summary card — leads the page -->
+        ${renderYoYCard(comp, quotes, prior)}
+
+        <!-- Portfolio benchmark card -->
+        ${renderBenchmarkCard(comp, quotes, prior, benchmark)}
+
         <!-- Drop a quote -->
         <div class="panel" style="margin-bottom:16px;">
-          <h4 style="margin-top:0;">📥 Drop a Carrier Quote PDF</h4>
+          <h4 style="margin-top:0;">📥 Drop the Carrier's Quote PDF</h4>
           <p style="color:#666; font-size:12px; margin:0 0 12px 0;">
-            Bedrock reads the quote directly (no manual data entry). Extracts limits, deductibles, A.M. Best rating, exclusions. You can correct any field after extraction.
+            Usually one quote per renewal (the carrier's offer). Drop additional quotes if the board is shopping. Bedrock reads the PDF directly — no manual data entry.
           </p>
           <div id="ins-drop-area"
                style="border:2px dashed #d0d7de; border-radius:8px; padding:24px; text-align:center; background:#f9f9f9; cursor:pointer;"
@@ -28909,21 +28921,187 @@ ${questionsPage}
                ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length) insUploadQuote(event.dataTransfer.files[0]);">
             <div style="font-size:24px; margin-bottom:6px;">📄</div>
             <div style="font-weight:500; color:#315A87;">Click or drop a quote PDF</div>
-            <div style="font-size:11.5px; color:#888; margin-top:4px;">One quote per upload. Add 2-4 to enable synthesis.</div>
+            <div style="font-size:11.5px; color:#888; margin-top:4px;">One PDF per drop. Drop the prior year's quote too if it isn't already in trustEd.</div>
           </div>
           <input type="file" id="ins-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) insUploadQuote(this.files[0])">
           <div id="ins-upload-status" style="margin-top:10px; font-size:13px;"></div>
         </div>
 
-        <!-- Side-by-side comparison table -->
-        ${quotes.length > 0 ? renderSideBySide(quotes) : '<div class="panel" style="margin-bottom:16px; color:#888; text-align:center; padding:30px;">No quotes uploaded yet.</div>'}
+        <!-- Side-by-side (only useful when 2+ quotes for same year — board is shopping) -->
+        ${quotes.length >= 2 ? renderSideBySide(quotes) : ''}
 
-        <!-- Synthesis card -->
-        ${quotes.length >= 2 ? renderSynthesisCard(comp, quotes) : ''}
+        <!-- Analysis card (formerly "Recommendation") -->
+        ${quotes.length >= 1 ? renderSynthesisCard(comp, quotes) : ''}
 
         <!-- Per-quote cards (for editing) -->
+        ${quotes.length > 0 ? '<h4 style="margin:16px 0 8px;">Quote details</h4>' : ''}
         ${quotes.map((q) => renderQuoteCard(q)).join('')}
       `;
+    }
+
+    // ---- Year-over-year card ----
+    function renderYoYCard(comp, quotes, prior) {
+      // Pick lowest-premium quote from each side (typical renewing-carrier offer).
+      const cur = quotes.find((q) => q.annual_premium_cents != null) || null;
+      const priorQ = prior?.quotes?.find((q) => q.annual_premium_cents != null) || null;
+
+      if (!cur) {
+        return `
+          <div class="panel" style="margin-bottom:16px;">
+            <h4 style="margin-top:0;">📈 Year-over-Year</h4>
+            <div style="color:#888; font-size:13px;">Drop this year's quote to start the YoY analysis.</div>
+          </div>`;
+      }
+
+      if (!priorQ) {
+        const autoNote = prior?.auto_detected ? '' : ' <em style="color:#888;">(Bedrock looked for a record with policy_year ' + ((comp.policy_year || 0) - 1) + '; nothing matched.)</em>';
+        return `
+          <div class="panel" style="margin-bottom:16px;">
+            <h4 style="margin-top:0;">📈 Year-over-Year</h4>
+            <div style="color:#666; font-size:13px;">
+              No prior-year quote on file for this community + policy type.${autoNote}
+              <div style="margin-top:8px; padding:10px 12px; background:#fefcf3; border-radius:6px;">
+                <strong>Next step:</strong> if you have last year's quote PDF, drop it as a new "policy year ${(comp.policy_year || new Date().getFullYear() + 1) - 1}" renewal record, then come back here. The YoY analysis lights up automatically once both years exist.
+              </div>
+            </div>
+          </div>`;
+      }
+
+      const deltaCents = cur.annual_premium_cents - priorQ.annual_premium_cents;
+      const deltaPct = (deltaCents / priorQ.annual_premium_cents) * 100;
+      const deltaColor = deltaPct > 15 ? '#a55' : deltaPct < 0 ? '#1f7a3d' : '#7A5C00';
+      const arrow = deltaPct > 0 ? '↑' : deltaPct < 0 ? '↓' : '→';
+
+      // Limit comparisons — show diffs only where one side has data
+      const limitDiff = (cur, prior, label, key) => {
+        if (cur[key] == null && prior[key] == null) return '';
+        if (cur[key] === prior[key]) return `<tr><td style="padding:6px 10px; color:#666;">${label}</td><td style="padding:6px 10px;" colspan="2"><span style="color:#1f7a3d;">unchanged</span> · ${fmtCents(cur[key])}</td></tr>`;
+        return `<tr style="border-bottom:1px solid #f0f0f0;">
+          <td style="padding:6px 10px; color:#666;">${label}</td>
+          <td style="padding:6px 10px; color:#999;">${fmtCents(prior[key])}</td>
+          <td style="padding:6px 10px;"><strong>${fmtCents(cur[key])}</strong></td>
+        </tr>`;
+      };
+
+      const arrayDiff = (cur, prior, label, key) => {
+        const c = new Set(cur[key] || []);
+        const p = new Set(prior[key] || []);
+        const added = [...c].filter((x) => !p.has(x));
+        const removed = [...p].filter((x) => !c.has(x));
+        if (added.length === 0 && removed.length === 0) return '';
+        return `<tr><td style="padding:6px 10px; color:#666; vertical-align:top;">${label}</td>
+          <td style="padding:6px 10px;" colspan="2">
+            ${added.length ? '<div style="color:#1f7a3d; font-size:12.5px;"><strong>+ Added:</strong> ' + added.map(escapeHtml).join('; ') + '</div>' : ''}
+            ${removed.length ? '<div style="color:#a55; font-size:12.5px;"><strong>− Dropped:</strong> ' + removed.map(escapeHtml).join('; ') + '</div>' : ''}
+          </td></tr>`;
+      };
+
+      return `
+        <div class="panel" style="margin-bottom:16px; border-left:4px solid ${deltaColor};">
+          <h4 style="margin-top:0;">📈 Year-over-Year (${prior.comparison.policy_year || 'prior'} → ${comp.policy_year || 'current'})</h4>
+          <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:14px;">
+            <div>
+              <div style="font-size:11.5px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">Premium change</div>
+              <div style="font-size:24px; font-weight:700; color:${deltaColor};">${arrow} ${deltaPct.toFixed(1)}%</div>
+              <div style="font-size:13px; color:#666;">${deltaCents >= 0 ? '+' : ''}${fmtCents(deltaCents).replace('<span style="color:#aaa;">—</span>', '$0')}</div>
+            </div>
+            <div>
+              <div style="font-size:11.5px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">Prior year</div>
+              <div style="font-size:18px; color:#666;">${fmtCents(priorQ.annual_premium_cents)}</div>
+              <div style="font-size:12px; color:#888;">${escapeHtml(priorQ.carrier_name || '—')}</div>
+            </div>
+            <div>
+              <div style="font-size:11.5px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">This year</div>
+              <div style="font-size:18px; color:#222;"><strong>${fmtCents(cur.annual_premium_cents)}</strong></div>
+              <div style="font-size:12px; color:#888;">${escapeHtml(cur.carrier_name || '—')}${cur.carrier_name && priorQ.carrier_name && cur.carrier_name !== priorQ.carrier_name ? ' <span style="color:#a55;">(carrier changed)</span>' : ''}</div>
+            </div>
+          </div>
+          <table style="width:100%; font-size:13px; border-collapse:collapse;">
+            <thead><tr style="border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 10px; text-align:left; width:30%;">Coverage element</th>
+              <th style="padding:6px 10px; text-align:left; color:#999;">Prior</th>
+              <th style="padding:6px 10px; text-align:left;">This year</th>
+            </tr></thead>
+            <tbody>
+              ${limitDiff(cur, priorQ, 'A.M. Best rating', 'am_best_rating') || limitDiff(cur, priorQ, 'Deductible', 'deductible_cents')}
+              ${limitDiff(cur, priorQ, 'Deductible', 'deductible_cents')}
+              ${limitDiff(cur, priorQ, 'Property limit', 'property_limit_cents')}
+              ${limitDiff(cur, priorQ, 'Per-occurrence liability', 'per_occurrence_limit_cents')}
+              ${limitDiff(cur, priorQ, 'Aggregate liability', 'aggregate_limit_cents')}
+              ${limitDiff(cur, priorQ, 'D&O', 'd_and_o_limit_cents')}
+              ${limitDiff(cur, priorQ, 'Fidelity / Crime', 'fidelity_limit_cents')}
+              ${limitDiff(cur, priorQ, 'Umbrella', 'umbrella_limit_cents')}
+              ${arrayDiff(cur, priorQ, 'Endorsements', 'notable_endorsements')}
+              ${arrayDiff(cur, priorQ, 'Exclusions', 'notable_exclusions')}
+            </tbody>
+          </table>
+          ${prior.auto_detected ? '<div style="margin-top:8px; font-size:11px; color:#888;">Prior year auto-linked by policy_year. <a href="#" onclick="insLinkPriorYear(); return false;" style="color:#315A87;">Pick a different prior year →</a></div>' : ''}
+        </div>`;
+    }
+
+    // ---- Portfolio benchmark card ----
+    function renderBenchmarkCard(comp, quotes, prior, benchmark) {
+      const cur = quotes.find((q) => q.annual_premium_cents != null) || null;
+      const priorQ = prior?.quotes?.find((q) => q.annual_premium_cents != null) || null;
+
+      if (!benchmark || benchmark.sample_size < 3) {
+        return `
+          <div class="panel" style="margin-bottom:16px;">
+            <h4 style="margin-top:0;">📊 Portfolio Benchmark</h4>
+            <div style="color:#666; font-size:13px;">
+              Not enough comparable communities in Bedrock's portfolio yet (need 3+ with both this-year and prior-year ${escapeHtml(policyTypeLabel(comp.policy_type))} data; currently have ${benchmark?.sample_size || 0}).
+              <div style="margin-top:6px; font-size:12px; color:#888;">As more renewals get added across the portfolio, this card surfaces a YoY % change median + range — so the board can see whether their carrier's increase is in line with the market or an outlier.</div>
+            </div>
+          </div>`;
+      }
+
+      // If we have both this year + prior year, compute this community's % change for comparison
+      let thisPct = null;
+      if (cur && priorQ) {
+        thisPct = ((cur.annual_premium_cents - priorQ.annual_premium_cents) / priorQ.annual_premium_cents) * 100;
+      }
+
+      let positionLabel = '';
+      let positionColor = '#666';
+      if (thisPct != null) {
+        const delta = thisPct - benchmark.median_change_pct;
+        if (Math.abs(delta) < 3) { positionLabel = 'In line with portfolio'; positionColor = '#1f7a3d'; }
+        else if (delta > 0) {
+          positionLabel = thisPct > benchmark.max_change_pct ? 'Outlier — above portfolio max' : 'Above portfolio median';
+          positionColor = thisPct > benchmark.max_change_pct ? '#a55' : '#7A5C00';
+        } else {
+          positionLabel = thisPct < benchmark.min_change_pct ? 'Below portfolio min (good)' : 'Below portfolio median';
+          positionColor = '#1f7a3d';
+        }
+      }
+
+      return `
+        <div class="panel" style="margin-bottom:16px; border-left:4px solid ${positionColor};">
+          <h4 style="margin-top:0;">📊 Portfolio Benchmark <span style="font-size:11.5px; font-weight:400; color:#888;">(${escapeHtml(policyTypeLabel(comp.policy_type))} · ${comp.policy_year} renewal cycle)</span></h4>
+          <div style="display:flex; gap:24px; flex-wrap:wrap; margin-bottom:10px;">
+            <div>
+              <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">Portfolio median % change</div>
+              <div style="font-size:22px; font-weight:700;">${benchmark.median_change_pct.toFixed(1)}%</div>
+            </div>
+            <div>
+              <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">Range</div>
+              <div style="font-size:15px;">${benchmark.min_change_pct.toFixed(1)}% → ${benchmark.max_change_pct.toFixed(1)}%</div>
+            </div>
+            <div>
+              <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">Sample size</div>
+              <div style="font-size:15px;">${benchmark.sample_size} ${benchmark.sample_size === 1 ? 'community' : 'communities'}</div>
+            </div>
+            ${thisPct != null ? `
+              <div>
+                <div style="font-size:11px; color:#888; text-transform:uppercase; letter-spacing:0.05em;">This community</div>
+                <div style="font-size:22px; font-weight:700; color:${positionColor};">${thisPct.toFixed(1)}%</div>
+                <div style="font-size:12px; color:${positionColor};">${positionLabel}</div>
+              </div>` : ''}
+          </div>
+          <div style="font-size:11px; color:#888; padding-top:10px; border-top:1px solid #eee;">
+            Aggregate data only — individual community premiums are never exposed. Excludes this community from the median.
+          </div>
+        </div>`;
     }
 
     function renderSideBySide(quotes) {
@@ -28981,20 +29159,45 @@ ${questionsPage}
       return `
         <div class="panel" style="margin-bottom:16px; border-left:4px solid #D4AF37;">
           <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:8px;">
-            <h4 style="margin:0;">🪨 Bedrock Recommendation${has ? '' : ' <span style="font-size:12px; font-weight:400; color:#888;">— not generated yet</span>'}</h4>
-            <button class="action-btn" onclick="insSynthesize()">${has ? 'Regenerate' : 'Generate Synthesis'}</button>
+            <h4 style="margin:0;">🪨 Bedrock Analysis${has ? '' : ' <span style="font-size:12px; font-weight:400; color:#888;">— not generated yet</span>'}</h4>
+            <button class="action-btn" onclick="insSynthesize()">${has ? 'Regenerate' : 'Generate Analysis'}</button>
           </div>
           ${has ? `
             <div style="background:#fefcf3; padding:14px 16px; border-radius:6px; font-size:14px; line-height:1.55; white-space:pre-wrap; color:#222;">${escapeHtml(comp.synthesis_text)}</div>
             <div style="margin-top:8px; font-size:11px; color:#888;">Generated ${new Date(comp.synthesis_generated_at).toLocaleString()} · ${escapeHtml(comp.synthesis_model || '')}</div>
           ` : `
-            <div style="color:#888; font-size:13px;">Drop at least 2 quotes, then click <strong>Generate Synthesis</strong> for a board-packet recommendation.</div>
+            <div style="color:#888; font-size:13px;">Drop this year's quote (and last year's, if not already in trustEd), then click <strong>Generate Analysis</strong> for a YoY summary + portfolio context + questions for the agent.</div>
           `}
           <div style="margin-top:10px; font-size:11.5px; color:#888; padding-top:10px; border-top:1px solid #eee;">
-            Informational analysis for the board's fiduciary decision. The licensed agent of record makes the actual coverage decision and binds.
+            <strong>Analyst, not broker.</strong> The agent of record is the source of truth on coverage adequacy and binds the policy. This card surfaces what to ask before the board approves.
           </div>
         </div>`;
     }
+
+    // ---- Prior-year picker (stub: prompt-based for v1) ----
+    window.insLinkPriorYear = async function () {
+      try {
+        const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId) + '/prior-year-options');
+        const j = await r.json();
+        const opts = j.options || [];
+        if (opts.length === 0) {
+          alert('No other comparisons on file for this community + policy type. Create one for the prior year first.');
+          return;
+        }
+        const list = opts.map((o, i) => `${i + 1}. ${o.title || '(untitled)'} — year ${o.policy_year || '?'} — ${new Date(o.updated_at).toLocaleDateString()}`).join('\n');
+        const pick = window.prompt('Pick prior year (enter the number):\n\n' + list);
+        const idx = parseInt(pick, 10) - 1;
+        if (Number.isNaN(idx) || !opts[idx]) return;
+        const patch = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId), {
+          method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prior_year_comparison_id: opts[idx].id }),
+        });
+        if (!patch.ok) { alert('Link failed.'); return; }
+        insOpenComparison(insCurrentComparisonId);
+      } catch (e) {
+        alert('Failed: ' + e.message);
+      }
+    };
 
     function renderQuoteCard(q) {
       const warnings = (q.extraction_warnings || []).filter(Boolean);
@@ -29045,7 +29248,8 @@ ${questionsPage}
           '⚠ Extracted (low confidence — verify everything before synthesis)';
         const confColor = conf === 'high' ? '#1f7a3d' : conf === 'medium' ? '#7A5C00' : '#a55';
         status.innerHTML = `<span style="color:${confColor};">${confLabel}</span>`;
-        // Reload detail to pick up the new quote
+        // Reload detail to pick up the new quote — YoY card lights up
+        // automatically if a prior year exists on file.
         insOpenComparison(insCurrentComparisonId);
       } catch (e) {
         status.innerHTML = `<span style="color:#a00;">Upload failed: ${escapeHtml(e.message)}</span>`;
@@ -29055,7 +29259,7 @@ ${questionsPage}
     // ---- Synthesize ----
     window.insSynthesize = async function () {
       if (!insCurrentComparisonId) return;
-      if (!confirm('Generate the Bedrock recommendation now? Takes ~10-20 seconds.')) return;
+      if (!confirm('Generate the Bedrock analysis now? (~10-20 seconds)')) return;
       try {
         const r = await fetch('/api/insurance/comparisons/' + encodeURIComponent(insCurrentComparisonId) + '/synthesize', {
           method: 'POST',

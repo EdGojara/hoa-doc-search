@@ -258,35 +258,61 @@ function quoteSummaryLine(q) {
   return parts.join(' · ');
 }
 
-async function generateSynthesis({ comparison, quotes, communityName }) {
+async function generateSynthesis({ comparison, quotes, priorComp, priorQuotes, benchmark, communityName }) {
   const summaries = quotes
     .map((q, i) => `Quote ${i + 1} — ${quoteSummaryLine(q)}`)
     .join('\n\n');
 
+  const priorBlock = priorComp && priorQuotes && priorQuotes.length > 0
+    ? `PRIOR YEAR (${priorComp.policy_year || 'unknown year'}) — ${priorQuotes.map((q) => quoteSummaryLine(q)).join(' | ')}`
+    : 'PRIOR YEAR — no record on file. Year-over-year analysis not possible.';
+
+  const benchmarkBlock = benchmark && benchmark.sample_size >= 3
+    ? `PORTFOLIO BENCHMARK (Bedrock-managed communities, same policy type, current renewal cycle):
+- Sample size: ${benchmark.sample_size} communities
+- Median premium % change YoY: ${benchmark.median_change_pct != null ? benchmark.median_change_pct.toFixed(1) + '%' : 'insufficient prior-year data'}
+- Range (min → max): ${benchmark.min_change_pct != null ? benchmark.min_change_pct.toFixed(1) + '% → ' + benchmark.max_change_pct.toFixed(1) + '%' : 'n/a'}`
+    : `PORTFOLIO BENCHMARK — not enough comparable communities in the portfolio yet (need 3+ with prior-year data). Skip the benchmark section if so.`;
+
   const typeLabel = POLICY_TYPE_LABELS[comparison.policy_type] || comparison.policy_type;
-  const prompt = `You are Bedrock's insurance-quote analyst preparing a board-packet summary for ${communityName}.
+  const prompt = `You are Bedrock's insurance-renewal ANALYST writing a board-packet summary for ${communityName}.
+
+CRITICAL FRAMING: You are an ANALYST, not a broker. You do NOT recommend which carrier to buy. The licensed agent of record makes that decision. Your job is to:
+- Compare current-year renewal to prior year
+- Contextualize against Bedrock's portfolio benchmark
+- Surface specific questions for the board to ask their agent
+- Flag anything unusual the board should not let slide
 
 Policy type: ${typeLabel}
 Policy year: ${comparison.policy_year || 'TBD'}
 Effective date target: ${comparison.effective_date || 'TBD'}
 
-Quotes received:
+CURRENT YEAR QUOTE(S):
 
 ${summaries}
 
-Write a board-packet recommendation in 4-6 short paragraphs. Cover:
+${priorBlock}
 
-1. Apples-to-apples comparison — what's actually different between the quotes, in plain language. Premium delta only matters if limits + deductibles + exclusions are comparable; flag where they aren't.
-2. Carrier financial strength — note A.M. Best ratings; flag anything below A-.
-3. Texas-specific concerns — wind/hail deductible structure (% vs flat $), named-storm sublimits, mold/fungus caps. These are where Texas HOAs get hurt at claim time.
-4. Notable exclusions or sublimits the board should know about before they decide.
-5. Bedrock's recommendation — frame as "we'd lead with Carrier X because..." with reasoning. If the quotes aren't comparable enough to recommend, say so and tell the board what to ask the agent for.
+${benchmarkBlock}
+
+Write 4-6 short paragraphs structured as:
+
+1. **Year-over-year summary.** Premium change in dollars AND %. Any limit changes (up, down, same). Any deductible structure changes. Any exclusions added or dropped. If no prior year on file, say so plainly and skip the rest of this section.
+
+2. **Portfolio context.** Where this community's premium % change sits relative to Bedrock's portfolio median for the same policy type. "In line", "below market", "above market — outlier". If benchmark sample is too small, skip this paragraph.
+
+3. **Texas-specific items to verify.** Wind/hail deductible structure (% vs flat $) — did it change? Named-storm sublimits. Mold/fungus caps. Replacement cost vs ACV. These are where TX HOAs get hurt at claim time.
+
+4. **Questions for the agent of record.** 3-5 specific questions the board should ask before binding. Frame as "ask the agent…" not "we recommend…". Example: "Ask the agent why the wind/hail deductible moved from 1% to 2% — is that a market move across all carriers or specific to this quote?"
+
+5. **What's normal vs what's flagged.** Wrap with: "Routine renewal items the board can approve at the meeting" vs "Items the board should not let slide until the agent answers". Helps a board run the meeting without getting lost in the weeds.
 
 HARD RULES:
-- This is informational analysis for the board's fiduciary decision. The licensed agent of record makes the actual coverage decision and binds. Never assert that any quote provides "adequate" coverage as a legal conclusion.
-- Treasurer-grade tone — concrete numbers, no jargon, no marketing copy. Specific dollar amounts and named carriers, not "competitive pricing" or "strong coverage."
-- No invented facts. If a field wasn't extracted, say "not stated in the quote — confirm with the agent." Do not freestyle limits or endorsements.
-- End with one sentence: "Final coverage decisions remain with the agent of record and the board."`;
+- You are an ANALYST, not a broker. Never write "we recommend Carrier X" or "you should buy this quote". Frame everything as "the board should ask…", "compared to prior year…", "vs the portfolio median…".
+- Treasurer-grade tone. Concrete numbers and named carriers — no "competitive pricing" / "strong coverage" / marketing copy.
+- No invented facts. If a field wasn't extracted from the quote, say "not stated — confirm with agent." Do not freestyle limits or endorsements.
+- If prior year is missing, do not invent comparisons. Note the gap and move on.
+- End with exactly one sentence: "The agent of record is the source of truth on coverage adequacy and binds the policy; this analysis is informational only."`;
 
   const response = await anthropic.messages.create({
     model: SYNTHESIS_MODEL,
@@ -296,6 +322,106 @@ HARD RULES:
 
   const text = response?.content?.[0]?.text || '';
   return text.trim();
+}
+
+// ---------------------------------------------------------------------------
+// Portfolio benchmark — computes median/range of YoY premium % change
+// across Bedrock-managed communities for a given (policy_type, current_year).
+//
+// "Comparable" means: same policy_type, same current year, AND has a prior-
+// year comparison record on file (either explicit FK or auto-detected).
+// Includes only quotes with annual_premium_cents populated.
+//
+// Used by:
+//   - GET /portfolio-benchmarks (UI card)
+//   - generateSynthesis() (synthesis prompt context)
+//
+// This is workpaper data (Bedrock's cross-community knowledge) — NEVER
+// expose individual community premiums in the response. Only aggregates.
+// Even the community that asked sees its own delta in the YoY card; the
+// benchmark surfaces ONLY median/range/sample size of OTHER communities.
+// ---------------------------------------------------------------------------
+async function computePortfolioBenchmark({ policyType, policyYear, excludeCommunityId }) {
+  if (!policyType || !policyYear) return { sample_size: 0 };
+
+  // Fetch all current-year comparisons for this policy type with at least
+  // one priced quote. Use pagination helper pattern (CLAUDE.md scar:
+  // Supabase 1000-row truncation). Today's portfolio is 7 communities so
+  // a single page is fine, but the helper-style insulates us at scale.
+  const all = [];
+  let from = 0;
+  while (true) {
+    const { data, error } = await supabase
+      .from('insurance_comparisons')
+      .select('id, community_id, policy_year, prior_year_comparison_id')
+      .eq('policy_type', policyType)
+      .eq('policy_year', policyYear)
+      .range(from, from + 999);
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+    all.push(...data);
+    if (data.length < 1000) break;
+    from += 1000;
+  }
+
+  if (all.length === 0) return { sample_size: 0 };
+
+  // For each, find the prior-year comparison (FK or auto-detect).
+  const changes = [];
+  for (const cur of all) {
+    if (excludeCommunityId && cur.community_id === excludeCommunityId) continue;
+
+    let priorId = cur.prior_year_comparison_id;
+    if (!priorId) {
+      const { data: auto } = await supabase
+        .from('insurance_comparisons')
+        .select('id')
+        .eq('community_id', cur.community_id)
+        .eq('policy_type', policyType)
+        .eq('policy_year', policyYear - 1)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      priorId = auto?.id || null;
+    }
+    if (!priorId) continue;
+
+    // Pull lowest-premium quote from each side (the renewal carrier's
+    // primary quote — typically the bound or about-to-bind one).
+    const [{ data: curQ }, { data: priorQ }] = await Promise.all([
+      supabase.from('insurance_quotes').select('annual_premium_cents')
+        .eq('comparison_id', cur.id)
+        .not('annual_premium_cents', 'is', null)
+        .order('annual_premium_cents', { ascending: true })
+        .limit(1).maybeSingle(),
+      supabase.from('insurance_quotes').select('annual_premium_cents')
+        .eq('comparison_id', priorId)
+        .not('annual_premium_cents', 'is', null)
+        .order('annual_premium_cents', { ascending: true })
+        .limit(1).maybeSingle(),
+    ]);
+    if (!curQ?.annual_premium_cents || !priorQ?.annual_premium_cents) continue;
+    const pct = ((curQ.annual_premium_cents - priorQ.annual_premium_cents) / priorQ.annual_premium_cents) * 100;
+    if (Number.isFinite(pct)) changes.push(pct);
+  }
+
+  if (changes.length === 0) return { sample_size: 0 };
+
+  changes.sort((a, b) => a - b);
+  const median = changes.length % 2 === 0
+    ? (changes[changes.length / 2 - 1] + changes[changes.length / 2]) / 2
+    : changes[Math.floor(changes.length / 2)];
+  const min = changes[0];
+  const max = changes[changes.length - 1];
+  const mean = changes.reduce((a, b) => a + b, 0) / changes.length;
+
+  return {
+    sample_size: changes.length,
+    median_change_pct: median,
+    mean_change_pct: mean,
+    min_change_pct: min,
+    max_change_pct: max,
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -382,9 +508,84 @@ router.get('/comparisons/:id', async (req, res) => {
       .limit(20);
     if (qErr) throw qErr;
 
-    res.json({ comparison: comp, quotes: quotes || [] });
+    // Resolve prior-year comparison + its quote (for YoY analyst view).
+    // Use explicit FK if linked; otherwise auto-detect by
+    // (community_id, policy_type, policy_year = current - 1). Auto-detect
+    // is a fallback — operator can override via PATCH prior_year_comparison_id.
+    let priorComp = null;
+    let priorQuotes = [];
+    let priorAutoDetected = false;
+    if (comp.prior_year_comparison_id) {
+      const { data: pc } = await supabase
+        .from('insurance_comparisons')
+        .select('*')
+        .eq('id', comp.prior_year_comparison_id)
+        .maybeSingle();
+      priorComp = pc || null;
+    } else if (comp.policy_year && comp.community_id) {
+      const { data: pc } = await supabase
+        .from('insurance_comparisons')
+        .select('*')
+        .eq('community_id', comp.community_id)
+        .eq('policy_type', comp.policy_type)
+        .eq('policy_year', comp.policy_year - 1)
+        .order('updated_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      priorComp = pc || null;
+      priorAutoDetected = !!priorComp;
+    }
+    if (priorComp) {
+      const { data: pq } = await supabase
+        .from('insurance_quotes')
+        .select('*')
+        .eq('comparison_id', priorComp.id)
+        .order('annual_premium_cents', { ascending: true, nullsFirst: false })
+        .limit(20);
+      priorQuotes = pq || [];
+    }
+
+    res.json({
+      comparison: comp,
+      quotes: quotes || [],
+      prior: priorComp
+        ? { comparison: priorComp, quotes: priorQuotes, auto_detected: priorAutoDetected }
+        : null,
+    });
   } catch (err) {
     console.error('[insurance] get comparison failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Prior-year picker — list candidate comparisons the operator can link as
+// "this year's prior year." Filters to same community + same policy_type +
+// policy_year < current. Returned newest-first.
+// ---------------------------------------------------------------------------
+router.get('/comparisons/:id/prior-year-options', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: comp } = await supabase
+      .from('insurance_comparisons')
+      .select('community_id, policy_type, policy_year')
+      .eq('id', id)
+      .maybeSingle();
+    if (!comp) return res.status(404).json({ error: 'not_found' });
+    let q = supabase
+      .from('insurance_comparisons')
+      .select('id, title, policy_year, effective_date, status, updated_at')
+      .eq('community_id', comp.community_id)
+      .eq('policy_type', comp.policy_type)
+      .neq('id', id)
+      .order('policy_year', { ascending: false, nullsFirst: false })
+      .limit(10);
+    if (comp.policy_year) q = q.lt('policy_year', comp.policy_year);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ options: data || [] });
+  } catch (err) {
+    console.error('[insurance] prior-year options failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
@@ -395,6 +596,7 @@ router.patch('/comparisons/:id', express.json({ limit: '64kb' }), async (req, re
     const allowed = [
       'title', 'policy_year', 'effective_date', 'status',
       'selected_quote_id', 'board_decision_date', 'board_decision_notes',
+      'prior_year_comparison_id',
     ];
     const patch = {};
     for (const k of allowed) if (k in (req.body || {})) patch[k] = req.body[k];
@@ -632,13 +834,60 @@ router.post('/comparisons/:id/synthesize', async (req, res) => {
       .order('annual_premium_cents', { ascending: true, nullsFirst: false })
       .limit(10);
     if (qErr) throw qErr;
-    if (!quotes || quotes.length < 2) {
-      return res.status(400).json({ error: 'need_at_least_two_quotes' });
+    if (!quotes || quotes.length < 1) {
+      // PIVOTED: analyst tool, not broker — a single quote is the COMMON
+      // case (renewal carrier presents 1 quote). YoY + portfolio benchmark
+      // is the value. Require ≥1 quote, not ≥2.
+      return res.status(400).json({ error: 'need_at_least_one_quote' });
+    }
+
+    // Resolve prior-year comparison (explicit FK or auto-detect)
+    let priorComp = null;
+    let priorQuotes = [];
+    if (comp.prior_year_comparison_id) {
+      const { data: pc } = await supabase
+        .from('insurance_comparisons')
+        .select('*').eq('id', comp.prior_year_comparison_id).maybeSingle();
+      priorComp = pc || null;
+    } else if (comp.policy_year && comp.community_id) {
+      const { data: pc } = await supabase
+        .from('insurance_comparisons')
+        .select('*')
+        .eq('community_id', comp.community_id)
+        .eq('policy_type', comp.policy_type)
+        .eq('policy_year', comp.policy_year - 1)
+        .order('updated_at', { ascending: false })
+        .limit(1).maybeSingle();
+      priorComp = pc || null;
+    }
+    if (priorComp) {
+      const { data: pq } = await supabase
+        .from('insurance_quotes').select('*')
+        .eq('comparison_id', priorComp.id)
+        .order('annual_premium_cents', { ascending: true, nullsFirst: false })
+        .limit(10);
+      priorQuotes = pq || [];
+    }
+
+    // Portfolio benchmark — excludes this community to keep the comparison
+    // honest ("you vs everyone else", not "you vs everyone including you")
+    let benchmark = { sample_size: 0 };
+    try {
+      benchmark = await computePortfolioBenchmark({
+        policyType: comp.policy_type,
+        policyYear: comp.policy_year,
+        excludeCommunityId: comp.community_id,
+      });
+    } catch (e) {
+      console.warn('[insurance] benchmark compute failed:', e.message);
     }
 
     const synthesis = await generateSynthesis({
       comparison: comp,
       quotes,
+      priorComp,
+      priorQuotes,
+      benchmark,
       communityName: comp.communities?.name || 'this community',
     });
 
@@ -656,9 +905,34 @@ router.post('/comparisons/:id/synthesize', async (req, res) => {
       .single();
     if (uErr) throw uErr;
 
-    res.json({ comparison: updated, synthesis });
+    res.json({ comparison: updated, synthesis, benchmark });
   } catch (err) {
     console.error('[insurance] synthesize failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Portfolio benchmark for a comparison — used by the YoY card.
+// Returns aggregate only (median, mean, range, sample size). NEVER exposes
+// individual community premiums.
+// ---------------------------------------------------------------------------
+router.get('/comparisons/:id/benchmark', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: comp } = await supabase
+      .from('insurance_comparisons')
+      .select('community_id, policy_type, policy_year')
+      .eq('id', id).maybeSingle();
+    if (!comp) return res.status(404).json({ error: 'not_found' });
+    const benchmark = await computePortfolioBenchmark({
+      policyType: comp.policy_type,
+      policyYear: comp.policy_year,
+      excludeCommunityId: comp.community_id,
+    });
+    res.json({ benchmark });
+  } catch (err) {
+    console.error('[insurance] benchmark failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
