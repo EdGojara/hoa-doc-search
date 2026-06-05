@@ -264,6 +264,20 @@
     color: var(--navy); margin: 0 0 5px;
     letter-spacing: -0.005em;
   }
+  .tile-badge {
+    display: inline-block;
+    background: #dc2626;
+    color: white;
+    font-family: var(--font-sans, 'Inter', system-ui, sans-serif);
+    font-size: 11.5px;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 7px;
+    border-radius: 10px;
+    margin-left: 4px;
+    vertical-align: 2px;
+    letter-spacing: 0;
+  }
   .tile p {
     font-size: 13px; color: var(--ink-soft); margin: 0 0 14px;
     line-height: 1.5;
@@ -748,6 +762,15 @@ const MODULES = [
     cta: 'View details',
     buildLink: (ctx) => `/portal/property`,
   },
+  {
+    key: 'messages',
+    title: 'Messages',
+    description: 'Direct conversation with Bedrock — questions, requests, updates on open items.',
+    icon: '💬',
+    section: 'home',
+    cta: 'Open messages',
+    buildLink: (ctx) => `/portal-messages.html`,
+  },
 
   // ── Row 2: Make a request ─────────────────────────────────────────
   {
@@ -982,6 +1005,7 @@ function defaultDemoModuleConfig(slug) {
   // Demo: tiles are live where Bedrock has functional backends, coming-soon otherwise.
   return {
     property_summary: { status: 'live' },
+    messages:         { status: 'live' },  // demo mode: links into Messages page (empty state)
     balance:          { status: 'live' },  // demo mode: renders mock $0 current account
     arc:              { status: 'live' },
     compliance:       { status: 'live' },  // demo mode: shows mock open + resolved notices
@@ -1236,6 +1260,7 @@ function renderTiles(ctx) {
 
     const tile = document.createElement(isLive ? 'a' : 'div');
     tile.className = `tile ${modCfg.status}`;
+    tile.dataset.tileKey = mod.key;
     if (isLive) {
       tile.href = link;
       tile.classList.add('has-action');
@@ -1244,7 +1269,7 @@ function renderTiles(ctx) {
     tile.innerHTML = `
       ${!isLive ? `<span class="ribbon">${isMaint ? 'Maintenance' : 'Coming soon'}</span>` : ''}
       <div class="icon">${mod.icon}</div>
-      <h3>${escapeHtml(mod.title)}</h3>
+      <h3>${escapeHtml(mod.title)} <span class="tile-badge" data-badge-key="${mod.key}" style="display:none;"></span></h3>
       <p>${escapeHtml(mod.description)}</p>
       ${isLive ? `
         <div class="meta">
@@ -1256,6 +1281,26 @@ function renderTiles(ctx) {
 
     currentGrid.appendChild(tile);
   }
+
+  // Post-render decorations — kick off async badge counts where applicable.
+  // Skip in demo mode (no real backend data, would 404 / 401).
+  if (!ctx.demo) decorateTileBadges();
+}
+
+async function decorateTileBadges() {
+  // Messages tile — unread count.
+  try {
+    const r = await fetch('/api/portal/messages', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const j = await r.json();
+    const total = (j.threads || []).reduce((sum, t) => sum + (t.unread_count || 0), 0);
+    if (total > 0) {
+      document.querySelectorAll('[data-badge-key="messages"]').forEach((el) => {
+        el.textContent = total > 99 ? '99+' : String(total);
+        el.style.display = 'inline-block';
+      });
+    }
+  } catch (_) { /* swallow — best-effort decoration */ }
 
   // Remove the initial empty grid container created by the template
   grid.remove();

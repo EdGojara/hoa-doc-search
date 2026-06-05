@@ -1553,6 +1553,251 @@ router.post('/logout', async (req, res) => {
   res.json({ ok: true });
 });
 
+// ============================================================================
+// MESSAGES — Phase 1 homeowner-side endpoints
+// ----------------------------------------------------------------------------
+// Wired to homeowner_threads + messages tables (migration 161). Auth via
+// portal cookie. Homeowner sees threads anchored to ANY property they have
+// access to (via portal_user_properties).
+// ============================================================================
+
+// Resolve the contact_id + accessible property_ids for the signed-in
+// portal user. Returns null if not authenticated.
+async function resolveHomeownerScope(req) {
+  const { portalUserId } = resolvePortalUser(req);
+  if (!portalUserId) return null;
+
+  // portal_users -> contact_id (canonical homeowner identity)
+  const { data: user } = await supabase
+    .from('portal_users')
+    .select('id, contact_id, email, full_name')
+    .eq('id', portalUserId)
+    .maybeSingle();
+  if (!user) return null;
+
+  // portal_user_properties -> property_ids this user can see
+  const { data: scopes } = await supabase
+    .from('portal_user_properties')
+    .select('property_id')
+    .eq('portal_user_id', portalUserId);
+  const propertyIds = (scopes || []).map((s) => s.property_id).filter(Boolean);
+
+  return { portal_user_id: portalUserId, contact_id: user.contact_id, full_name: user.full_name, email: user.email, property_ids: propertyIds };
+}
+
+// ----------------------------------------------------------------------------
+// GET /api/portal/messages
+// List the homeowner's open threads across all accessible properties.
+// Query params:
+//   property_id  (optional) — filter to one property
+//   include_closed=true     — include closed threads
+// ----------------------------------------------------------------------------
+router.get('/messages', async (req, res) => {
+  try {
+    const scope = await resolveHomeownerScope(req);
+    if (!scope) return res.status(401).json({ error: 'not_signed_in' });
+    if (scope.property_ids.length === 0) return res.json({ threads: [] });
+
+    let q = supabase
+      .from('homeowner_threads')
+      .select(`
+        id, community_id, property_id, subject, topic_tag, next_action_status,
+        last_message_at, last_responder_type, created_at, closure_proposed_at,
+        properties:property_id(street_address, lot_number),
+        communities:community_id(name)
+      `)
+      .in('property_id', scope.property_ids)
+      .order('last_message_at', { ascending: false, nullsFirst: false })
+      .limit(200);
+
+    const propertyFilter = req.query.property_id ? String(req.query.property_id) : null;
+    if (propertyFilter) {
+      if (!scope.property_ids.includes(propertyFilter)) return res.status(403).json({ error: 'forbidden' });
+      q = q.eq('property_id', propertyFilter);
+    }
+    if (String(req.query.include_closed || 'false') !== 'true') q = q.neq('next_action_status', 'closed');
+
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: 'list_failed' });
+
+    // Compute unread count per thread for the homeowner side. A message is
+    // "unread by homeowner" if direction='outbound' and read_at is null.
+    const threadIds = (data || []).map((t) => t.id);
+    const unreadByThread = {};
+    if (threadIds.length > 0) {
+      const { data: unread } = await supabase
+        .from('messages')
+        .select('thread_id')
+        .in('thread_id', threadIds)
+        .eq('direction', 'outbound')
+        .is('read_at', null);
+      for (const row of (unread || [])) {
+        unreadByThread[row.thread_id] = (unreadByThread[row.thread_id] || 0) + 1;
+      }
+    }
+
+    const decorated = (data || []).map((t) => ({ ...t, unread_count: unreadByThread[t.id] || 0 }));
+    res.json({ threads: decorated, properties: scope.property_ids });
+  } catch (err) {
+    console.error('[portal/messages] list failed:', err.message);
+    res.status(500).json({ error: 'list_failed' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// GET /api/portal/messages/:threadId — thread detail + messages
+// Marks all outbound (homeowner-bound) messages as read_at = now.
+// ----------------------------------------------------------------------------
+router.get('/messages/:threadId', async (req, res) => {
+  try {
+    const scope = await resolveHomeownerScope(req);
+    if (!scope) return res.status(401).json({ error: 'not_signed_in' });
+
+    const { data: thread, error: thErr } = await supabase
+      .from('homeowner_threads')
+      .select(`
+        id, community_id, property_id, subject, next_action_status,
+        last_message_at, closure_proposed_at, closed_at,
+        properties:property_id(street_address, lot_number),
+        communities:community_id(name)
+      `)
+      .eq('id', req.params.threadId)
+      .maybeSingle();
+    if (thErr) return res.status(500).json({ error: 'fetch_failed' });
+    if (!thread) return res.status(404).json({ error: 'not_found' });
+    if (!scope.property_ids.includes(thread.property_id)) return res.status(403).json({ error: 'forbidden' });
+
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('id, direction, sender_type, sender_display_name, body_text, channel, created_at, read_at')
+      .eq('thread_id', thread.id)
+      .order('created_at', { ascending: true });
+
+    // Mark all outbound messages as read by the homeowner
+    try {
+      await supabase
+        .from('messages')
+        .update({ read_at: new Date().toISOString(), read_count: 1, last_read_at: new Date().toISOString() })
+        .eq('thread_id', thread.id)
+        .eq('direction', 'outbound')
+        .is('read_at', null);
+    } catch (_) {}
+
+    res.json({ thread, messages: messages || [] });
+  } catch (err) {
+    console.error('[portal/messages] detail failed:', err.message);
+    res.status(500).json({ error: 'fetch_failed' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/portal/messages — create a new thread (homeowner-initiated)
+// Body: { property_id, subject, body_text }
+// ----------------------------------------------------------------------------
+router.post('/messages', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const scope = await resolveHomeownerScope(req);
+    if (!scope) return res.status(401).json({ error: 'not_signed_in' });
+
+    const propertyId = String(req.body?.property_id || '').trim();
+    const subject = String(req.body?.subject || '').trim().slice(0, 200);
+    const body = String(req.body?.body_text || '').trim();
+    if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
+    if (!subject) return res.status(400).json({ error: 'subject_required' });
+    if (!body) return res.status(400).json({ error: 'body_text_required' });
+    if (!scope.property_ids.includes(propertyId)) return res.status(403).json({ error: 'forbidden' });
+
+    // Look up community + computed first-response due
+    const { data: prop } = await supabase
+      .from('properties')
+      .select('community_id')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+
+    // SLA target: 8 business hours via the shared sla_engine helper.
+    const { computeFirstResponseDueAt } = require('../lib/messaging/sla_engine');
+    const dueAt = computeFirstResponseDueAt(new Date()).toISOString();
+
+    const { data: thread, error: thErr } = await supabase
+      .from('homeowner_threads')
+      .insert({
+        community_id: prop.community_id,
+        property_id: propertyId,
+        primary_contact_id: scope.contact_id,
+        subject,
+        next_action_status: 'awaiting_staff_first_response',
+        first_response_due_at: dueAt,
+      })
+      .select()
+      .single();
+    if (thErr) return res.status(500).json({ error: 'create_failed' });
+
+    // First message — the body the homeowner just typed.
+    await supabase.from('messages').insert({
+      thread_id: thread.id,
+      direction: 'inbound',
+      sender_type: 'homeowner',
+      sender_id: scope.contact_id,
+      sender_display_name: scope.full_name || scope.email,
+      channel: 'portal',
+      body_text: body,
+    });
+
+    res.status(201).json({ thread });
+  } catch (err) {
+    console.error('[portal/messages] create failed:', err.message);
+    res.status(500).json({ error: 'create_failed' });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /api/portal/messages/:threadId/reply — homeowner reply
+// ----------------------------------------------------------------------------
+router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const scope = await resolveHomeownerScope(req);
+    if (!scope) return res.status(401).json({ error: 'not_signed_in' });
+
+    const body = String(req.body?.body_text || '').trim();
+    if (!body) return res.status(400).json({ error: 'body_text_required' });
+
+    // Verify ownership of the thread
+    const { data: thread } = await supabase
+      .from('homeowner_threads')
+      .select('id, property_id')
+      .eq('id', req.params.threadId)
+      .maybeSingle();
+    if (!thread) return res.status(404).json({ error: 'not_found' });
+    if (!scope.property_ids.includes(thread.property_id)) return res.status(403).json({ error: 'forbidden' });
+
+    const { data: msg, error } = await supabase
+      .from('messages')
+      .insert({
+        thread_id: thread.id,
+        direction: 'inbound',
+        sender_type: 'homeowner',
+        sender_id: scope.contact_id,
+        sender_display_name: scope.full_name || scope.email,
+        channel: 'portal',
+        body_text: body,
+      })
+      .select()
+      .single();
+    if (error) return res.status(500).json({ error: 'reply_failed' });
+
+    // Status auto-flips via the thread-activity-sync trigger:
+    // homeowner reply during closure_pending -> cancels close offer
+    // homeowner reply to closed thread -> reopens
+    // otherwise -> awaiting_staff_followup
+
+    res.status(201).json({ message: msg });
+  } catch (err) {
+    console.error('[portal/messages] reply failed:', err.message);
+    res.status(500).json({ error: 'reply_failed' });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
