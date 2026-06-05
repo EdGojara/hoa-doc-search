@@ -1,0 +1,497 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Bedrock Inspector</title>
+<link rel="manifest" href="/manifest.json">
+<meta name="theme-color" content="#0B1D34">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="">
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  body { margin: 0; background: #0B1D34; color: #F5F4ED; font-family: 'Inter', system-ui, sans-serif; min-height: 100vh; }
+
+  .header {
+    background: linear-gradient(180deg, #0B1D34 0%, #1E2761 100%);
+    color: white;
+    padding: 14px 18px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+  }
+  .header .brand { font-weight: 700; font-size: 17px; }
+  .header .device-pill {
+    font-size: 11px;
+    background: rgba(255,255,255,0.12);
+    padding: 3px 9px;
+    border-radius: 10px;
+    font-weight: 600;
+  }
+  .header .device-pill input {
+    background: transparent; border: none; color: white;
+    font: inherit; width: 90px; outline: none;
+    padding: 0; text-align: center;
+  }
+
+  .container { max-width: 760px; margin: 0 auto; padding: 16px; }
+
+  /* Pre-drive picker */
+  .picker {
+    background: white; color: #0B1D34; border-radius: 12px; padding: 22px;
+    margin-bottom: 16px;
+  }
+  .picker h2 { margin: 0 0 6px; font-size: 19px; }
+  .picker .sub { color: #5a7390; font-size: 13px; margin-bottom: 18px; }
+  .picker .field { margin-bottom: 14px; }
+  .picker label { display: block; font-size: 12px; font-weight: 600; color: #5a7390; margin-bottom: 5px; }
+  .picker select, .picker input {
+    width: 100%; padding: 12px 14px; font-size: 16px; font-family: inherit;
+    border: 1px solid #d0d7de; border-radius: 8px;
+    color: #0B1D34;
+  }
+  .picker .start-btn {
+    width: 100%; padding: 16px; font-size: 17px; font-weight: 700;
+    background: #16a34a; color: white; border: none; border-radius: 10px;
+    cursor: pointer; margin-top: 6px;
+  }
+  .picker .start-btn:active { transform: scale(0.99); }
+  .picker .start-btn:disabled { background: #94a3b8; cursor: not-allowed; }
+
+  /* Active drive */
+  .live-card {
+    background: white; color: #0B1D34; border-radius: 12px;
+    padding: 18px 20px; margin-bottom: 12px;
+  }
+  .live-card .row { display: flex; justify-content: space-between; align-items: center; gap: 14px; margin-bottom: 10px; }
+  .live-card h2 { margin: 0; font-size: 18px; }
+  .live-card .status {
+    display: inline-flex; align-items: center; gap: 7px;
+    font-size: 12px; font-weight: 600; color: #16a34a;
+  }
+  .live-card .dot {
+    width: 10px; height: 10px; border-radius: 50%;
+    background: #16a34a;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .live-card .status.stale { color: #d97706; }
+  .live-card .status.stale .dot { background: #d97706; animation: none; }
+
+  .stats {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px;
+    margin-bottom: 12px;
+  }
+  .stat {
+    background: #f5f8fc; border-radius: 8px; padding: 10px 12px;
+    text-align: center;
+  }
+  .stat .label { font-size: 10.5px; color: #5a7390; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 700; }
+  .stat .value { font-size: 22px; font-weight: 700; color: #0B1D34; margin-top: 2px; line-height: 1.1; }
+
+  #map {
+    height: 380px; width: 100%; border-radius: 10px;
+    background: #1a2a3e;
+  }
+
+  .end-btn {
+    width: 100%; padding: 16px; font-size: 16px; font-weight: 700;
+    background: #dc2626; color: white; border: none; border-radius: 10px;
+    cursor: pointer; margin-top: 14px;
+  }
+  .end-btn:active { transform: scale(0.99); }
+
+  .ping-log {
+    background: rgba(255,255,255,0.05); border-radius: 8px;
+    padding: 10px 14px; font-size: 11.5px; color: #c5d3e8;
+    font-family: ui-monospace, SFMono-Regular, monospace;
+    margin-top: 10px; max-height: 110px; overflow-y: auto;
+  }
+  .ping-log div { padding: 1px 0; }
+  .ping-log .err { color: #ff8a8a; }
+
+  .warn-banner {
+    background: #d97706; color: white; padding: 10px 14px;
+    border-radius: 8px; font-size: 13px; margin-bottom: 12px;
+  }
+</style>
+</head>
+<body>
+
+<div class="header">
+  <div class="brand">🪨 Bedrock Inspector</div>
+  <div class="device-pill">
+    Device: <input id="deviceLabel" type="text" placeholder="Tablet A" maxlength="20">
+  </div>
+</div>
+
+<div class="container">
+  <div id="preDrive" class="picker">
+    <h2>Start a drive</h2>
+    <div class="sub">Pick the community you're walking. The system tracks your route until you tap End.</div>
+
+    <div class="field">
+      <label>Community</label>
+      <select id="communityPicker">
+        <option value="">— Select a community —</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Mode</label>
+      <select id="modePicker">
+        <option value="drive_by">🚗 Drive-by (walking the streets)</option>
+        <option value="foot">🚶 On foot (working a section)</option>
+        <option value="spot_check">📍 Spot check (single property)</option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label>Route label (optional)</label>
+      <input id="routeLabel" type="text" placeholder="e.g. North loop / Wednesday route" maxlength="100">
+    </div>
+
+    <button id="startBtn" class="start-btn">▶ Start drive</button>
+    <div id="startError" style="color:#dc2626; font-size:13px; margin-top:10px; display:none;"></div>
+  </div>
+
+  <div id="liveView" style="display:none;">
+    <div class="live-card">
+      <div class="row">
+        <h2 id="liveCommunity">—</h2>
+        <div class="status" id="liveStatus"><span class="dot"></span><span id="liveStatusText">Live</span></div>
+      </div>
+      <div style="color:#5a7390; font-size:12.5px; margin-bottom:14px;">
+        <span id="liveMode"></span> · Started <span id="liveStarted">—</span>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="label">Pings</div><div class="value" id="statPings">0</div></div>
+        <div class="stat"><div class="label">Minutes</div><div class="value" id="statMinutes">0</div></div>
+        <div class="stat"><div class="label">Accuracy</div><div class="value" id="statAccuracy">—</div></div>
+      </div>
+
+      <div id="map"></div>
+
+      <button id="endBtn" class="end-btn">■ End drive</button>
+    </div>
+
+    <div class="ping-log" id="pingLog"></div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+<script>
+'use strict';
+
+const POLL_MS = 30000;          // ping every 30s while active
+const MAX_PINGS_ON_MAP = 200;   // cap polyline length for perf
+
+let activeInspection = null;    // { id, community_id, started_at, mode, route_label }
+let watchId = null;             // navigator.geolocation watchPosition handle
+let pollTimer = null;
+let map = null;
+let trail = null;               // L.polyline
+let currentMarker = null;       // L.marker
+let trailLatLngs = [];
+
+// -----------------------------
+// Helpers
+// -----------------------------
+function $(id) { return document.getElementById(id); }
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+function logPing(msg, isErr = false) {
+  const log = $('pingLog');
+  if (!log) return;
+  const ts = new Date().toLocaleTimeString();
+  const line = document.createElement('div');
+  if (isErr) line.className = 'err';
+  line.textContent = `[${ts}] ${msg}`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+  while (log.children.length > 50) log.removeChild(log.firstChild);
+}
+function persistDeviceLabel() {
+  const v = $('deviceLabel').value.trim();
+  if (v) localStorage.setItem('inspectorDeviceLabel', v);
+}
+function restoreDeviceLabel() {
+  const v = localStorage.getItem('inspectorDeviceLabel');
+  if (v) $('deviceLabel').value = v;
+}
+
+// -----------------------------
+// Boot: load communities
+// -----------------------------
+async function loadCommunities() {
+  try {
+    const r = await fetch('/api/billing/communities');
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    const list = (j.communities || []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    const sel = $('communityPicker');
+    for (const c of list) {
+      const opt = document.createElement('option');
+      opt.value = c.id;
+      opt.textContent = c.name;
+      sel.appendChild(opt);
+    }
+    // Remember last picked community for next time
+    const last = localStorage.getItem('inspectorLastCommunity');
+    if (last) sel.value = last;
+  } catch (e) {
+    $('startError').style.display = 'block';
+    $('startError').textContent = "Couldn't load communities: " + e.message;
+  }
+}
+
+// -----------------------------
+// Start drive
+// -----------------------------
+$('startBtn').addEventListener('click', async () => {
+  const community_id = $('communityPicker').value;
+  const mode = $('modePicker').value;
+  const route_label = $('routeLabel').value.trim() || null;
+  const deviceLabel = $('deviceLabel').value.trim() || null;
+
+  if (!community_id) {
+    $('startError').style.display = 'block';
+    $('startError').textContent = 'Pick a community first.';
+    return;
+  }
+  $('startError').style.display = 'none';
+
+  // Check geolocation permission BEFORE starting (don't create an inspection
+  // record that immediately fails to ping — leaves orphaned drives in the
+  // active list).
+  if (!navigator.geolocation) {
+    $('startError').style.display = 'block';
+    $('startError').textContent = 'This device has no GPS. Use a tablet or phone with location services.';
+    return;
+  }
+
+  $('startBtn').disabled = true;
+  $('startBtn').textContent = '⏳ Getting GPS lock…';
+
+  // Trigger a one-shot getCurrentPosition to force the OS permission prompt
+  // and confirm we'll get pings. If the user denies, abort.
+  navigator.geolocation.getCurrentPosition(
+    async () => {
+      try {
+        persistDeviceLabel();
+        localStorage.setItem('inspectorLastCommunity', community_id);
+
+        const r = await fetch('/api/inspections', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ community_id, mode, route_label }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'create failed');
+        activeInspection = {
+          id: j.inspection.id,
+          community_id,
+          mode,
+          route_label,
+          started_at: j.inspection.started_at,
+          device_label: deviceLabel,
+          community_name: $('communityPicker').selectedOptions[0]?.textContent || '',
+        };
+        enterLiveView();
+      } catch (e) {
+        $('startError').style.display = 'block';
+        $('startError').textContent = 'Start failed: ' + e.message;
+        $('startBtn').disabled = false;
+        $('startBtn').textContent = '▶ Start drive';
+      }
+    },
+    (err) => {
+      $('startBtn').disabled = false;
+      $('startBtn').textContent = '▶ Start drive';
+      $('startError').style.display = 'block';
+      $('startError').textContent =
+        err.code === 1
+          ? 'Location permission denied. Enable location for this site in browser settings.'
+          : 'GPS lock failed: ' + err.message;
+    },
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+  );
+});
+
+// -----------------------------
+// Live view setup
+// -----------------------------
+function enterLiveView() {
+  $('preDrive').style.display = 'none';
+  $('liveView').style.display = 'block';
+  $('liveCommunity').textContent = activeInspection.community_name || 'Drive in progress';
+  $('liveMode').textContent =
+    activeInspection.mode === 'drive_by' ? 'Drive-by' :
+    activeInspection.mode === 'foot' ? 'On foot' :
+    activeInspection.mode === 'spot_check' ? 'Spot check' : activeInspection.mode;
+  $('liveStarted').textContent = new Date(activeInspection.started_at).toLocaleTimeString();
+  logPing('Drive started — waiting for first ping…');
+  initMap();
+  startWatchPosition();
+  startStatPolling();
+}
+
+function initMap() {
+  map = L.map('map', { attributionControl: false, zoomControl: true }).setView([29.6243, -95.6258], 14);
+  // Default to street; the Reserve / Community maps use a 3-button toggle —
+  // worth adding later. Phase 1 = street is plenty.
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+  }).addTo(map);
+  trail = L.polyline([], { color: '#16a34a', weight: 4, opacity: 0.85 }).addTo(map);
+}
+
+function startWatchPosition() {
+  watchId = navigator.geolocation.watchPosition(
+    handlePosition,
+    (err) => {
+      logPing('GPS error: ' + err.message, true);
+    },
+    { enableHighAccuracy: true, timeout: 30000, maximumAge: 5000 }
+  );
+  // Also POST periodically using the most recent watch-position reading.
+  pollTimer = setInterval(() => {
+    if (lastPosition) postPing(lastPosition);
+  }, POLL_MS);
+}
+
+let lastPosition = null;
+function handlePosition(pos) {
+  lastPosition = pos;
+  // Immediately update the map + accuracy display, but only POST at the
+  // poll interval to keep server load + battery sane.
+  updateMap(pos);
+  const accM = pos.coords.accuracy != null ? Math.round(pos.coords.accuracy) + 'm' : '—';
+  $('statAccuracy').textContent = accM;
+}
+
+function updateMap(pos) {
+  const lat = pos.coords.latitude;
+  const lng = pos.coords.longitude;
+  const latlng = [lat, lng];
+  trailLatLngs.push(latlng);
+  if (trailLatLngs.length > MAX_PINGS_ON_MAP) {
+    trailLatLngs = trailLatLngs.slice(-MAX_PINGS_ON_MAP);
+  }
+  trail.setLatLngs(trailLatLngs);
+  if (currentMarker) {
+    currentMarker.setLatLng(latlng);
+  } else {
+    currentMarker = L.marker(latlng).addTo(map);
+    map.setView(latlng, 16);
+  }
+}
+
+async function postPing(pos) {
+  if (!activeInspection) return;
+  try {
+    const body = {
+      lat: pos.coords.latitude,
+      lng: pos.coords.longitude,
+      heading_deg: pos.coords.heading,
+      speed_mps: pos.coords.speed,
+      accuracy_m: pos.coords.accuracy,
+      captured_at: new Date(pos.timestamp || Date.now()).toISOString(),
+      device_label: activeInspection.device_label,
+    };
+    const r = await fetch('/api/inspections/' + encodeURIComponent(activeInspection.id) + '/ping', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!r.ok) {
+      const j = await r.json().catch(() => ({}));
+      logPing('Ping failed: ' + (j.error || ('HTTP ' + r.status)), true);
+      return;
+    }
+    logPing(`Ping ${body.lat.toFixed(5)}, ${body.lng.toFixed(5)} ✓`);
+  } catch (e) {
+    logPing('Ping network error: ' + e.message, true);
+  }
+}
+
+// Stats poller — runs alongside the ping poller; reads back from the
+// server so the displayed counts reflect what was actually stored.
+function startStatPolling() {
+  const tick = async () => {
+    if (!activeInspection) return;
+    try {
+      const r = await fetch('/api/inspections/' + encodeURIComponent(activeInspection.id) + '/live');
+      if (!r.ok) return;
+      const j = await r.json();
+      $('statPings').textContent = j.ping_count || 0;
+      const min = Math.max(0, Math.round((Date.now() - new Date(activeInspection.started_at).getTime()) / 60000));
+      $('statMinutes').textContent = min;
+      // Status pill — stale if no ping in 5 min
+      const statusEl = $('liveStatus');
+      const txtEl = $('liveStatusText');
+      if (j.is_stale) {
+        statusEl.classList.add('stale');
+        txtEl.textContent = 'Stale (' + j.minutes_idle + 'm)';
+      } else {
+        statusEl.classList.remove('stale');
+        txtEl.textContent = 'Live';
+      }
+    } catch (_) {}
+  };
+  tick();
+  setInterval(tick, 15000);
+}
+
+// -----------------------------
+// End drive
+// -----------------------------
+$('endBtn').addEventListener('click', async () => {
+  if (!activeInspection) return;
+  if (!confirm('End this drive? You can review the route + add observations after.')) return;
+  // Stop pinging FIRST so no late ping arrives after the status flip.
+  if (watchId != null) navigator.geolocation.clearWatch(watchId);
+  if (pollTimer) clearInterval(pollTimer);
+  watchId = null;
+  pollTimer = null;
+
+  try {
+    const r = await fetch('/api/inspections/' + encodeURIComponent(activeInspection.id), {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'captured', ended_at: new Date().toISOString() }),
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    alert('Drive ended. ' + ($('statPings').textContent || '0') + ' pings logged. Open trustEd → Reports → Inspections to review.');
+    // Reset to pre-drive
+    activeInspection = null;
+    if (map) { map.remove(); map = null; }
+    trailLatLngs = [];
+    trail = null;
+    currentMarker = null;
+    $('liveView').style.display = 'none';
+    $('preDrive').style.display = 'block';
+    $('startBtn').disabled = false;
+    $('startBtn').textContent = '▶ Start drive';
+  } catch (e) {
+    alert('End failed: ' + e.message + '. Re-tap End to retry.');
+  }
+});
+
+// -----------------------------
+// Boot
+// -----------------------------
+restoreDeviceLabel();
+loadCommunities();
+
+// Persist device label as user types
+$('deviceLabel').addEventListener('blur', persistDeviceLabel);
+</script>
+
+</body>
+</html>

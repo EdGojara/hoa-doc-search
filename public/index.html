@@ -1048,6 +1048,40 @@
       </div>
       <button type="button" onclick="homeOpenCustomize()" class="secondary-btn" style="padding:8px 14px; font-size:13px;">⚙️ Customize tiles</button>
     </div>
+
+    <!-- ACTIVE DRIVES BANNER — auto-appears only when staff are out on
+         an inspection drive. Polls /api/inspections/active every 30s.
+         Hidden completely (display:none) when no drives are live. Each
+         row shows the inspector, community, ping count, minutes on route,
+         and a stale flag if no ping in 5+ min. Click a row to open the
+         live-map page. -->
+    <div id="activeDrivesBanner" style="display:none; background:linear-gradient(135deg, #0B1D34 0%, #1E2761 100%); color:white; border-radius:12px; padding:16px 20px; margin-bottom:18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <div style="width:10px; height:10px; border-radius:50%; background:#22c55e; animation: activeDrivePulse 1.5s ease-in-out infinite;"></div>
+          <strong style="font-size:14.5px;">Active Drives</strong>
+          <span id="activeDrivesCount" style="background:rgba(255,255,255,0.18); padding:2px 9px; border-radius:10px; font-size:11.5px; font-weight:700;">0</span>
+        </div>
+        <a href="/inspector.html" target="_blank" style="font-size:11.5px; color:#fbbf24; text-decoration:none; font-weight:600;">Open inspector tablet →</a>
+      </div>
+      <div id="activeDrivesList" style="display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+    <style>
+      @keyframes activeDrivePulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+      .active-drive-row {
+        background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.12);
+        border-radius: 8px; padding: 10px 14px;
+        display: flex; align-items: center; justify-content: space-between;
+        gap: 14px; cursor: pointer; transition: background 0.12s;
+      }
+      .active-drive-row:hover { background: rgba(255,255,255,0.13); }
+      .active-drive-row .who { font-weight: 600; font-size: 13.5px; }
+      .active-drive-row .sub { font-size: 11.5px; color: #cbd5e1; margin-top: 2px; }
+      .active-drive-row .stats { font-size: 11.5px; color: #fbbf24; font-weight: 600; }
+      .active-drive-row.stale { border-color: #d97706; }
+      .active-drive-row.stale .stats { color: #fb923c; }
+    </style>
+
     <div id="homeTilesGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px;">
       <div style="color:#94a3b8; font-size:13px; padding:30px; text-align:center; grid-column:1/-1;">Loading your tiles…</div>
     </div>
@@ -21261,9 +21295,58 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     return HOME_TILE_DEFAULTS;
   }
 
+  // ----- ACTIVE DRIVES POLLER -----
+  // Polls /api/inspections/active every 30s while the home tab is visible.
+  // Hides itself entirely when no drives are live. Click a row to open the
+  // tablet view (Phase 2 will be a live-map page; Phase 1 just opens the
+  // route-trace summary on the inspector PWA).
+  let activeDrivesTimer = null;
+  async function refreshActiveDrives() {
+    const banner = document.getElementById('activeDrivesBanner');
+    if (!banner) return;
+    try {
+      const r = await fetch('/api/inspections/active');
+      if (!r.ok) { banner.style.display = 'none'; return; }
+      const j = await r.json();
+      const drives = j.active || [];
+      if (drives.length === 0) { banner.style.display = 'none'; return; }
+      banner.style.display = 'block';
+      document.getElementById('activeDrivesCount').textContent = String(drives.length);
+      const list = document.getElementById('activeDrivesList');
+      list.innerHTML = drives.map((d) => {
+        const community = d.community?.name || '(community)';
+        const dev = d.device_label || 'Tablet';
+        const min = d.started_at
+          ? Math.max(0, Math.round((Date.now() - new Date(d.started_at).getTime()) / 60000))
+          : 0;
+        const idle = d.minutes_idle != null ? ` · last ping ${d.minutes_idle}m ago` : '';
+        const staleCls = d.is_stale ? ' stale' : '';
+        return `
+          <div class="active-drive-row${staleCls}" onclick="window.open('/inspector.html?resume=${encodeURIComponent(d.id)}','_blank')">
+            <div>
+              <div class="who">${(function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');})(dev)} · ${(function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');})(community)}</div>
+              <div class="sub">${d.mode === 'drive_by' ? '🚗 Drive-by' : d.mode === 'foot' ? '🚶 On foot' : '📍 ' + d.mode}${d.route_label ? ' · ' + (function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');})(d.route_label) : ''}</div>
+            </div>
+            <div class="stats">${d.ping_count || 0} pings · ${min}m on route${idle}</div>
+          </div>
+        `;
+      }).join('');
+    } catch (_) {
+      banner.style.display = 'none';
+    }
+  }
+
+  function startActiveDrivesPoller() {
+    if (activeDrivesTimer) return;
+    refreshActiveDrives();
+    activeDrivesTimer = setInterval(refreshActiveDrives, 30000);
+  }
+  // Boot the poller as soon as the home tab is rendered.
+
   function homeRender() {
     const grid = document.getElementById('homeTilesGrid');
     if (!grid) return;
+    startActiveDrivesPoller();
     const tileKeys = homeGetTiles();
     // Personalize the welcome line with the operator's first name when we have it
     const me = window.currentUser || {};

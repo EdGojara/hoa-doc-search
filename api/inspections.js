@@ -2655,4 +2655,252 @@ router.patch('/inspections/observations/:id', express.json(), async (req, res) =
   }
 });
 
+// ============================================================================
+// LIVE TRACKING — multi-tablet inspector drive visibility (migration 165)
+// ----------------------------------------------------------------------------
+// The existing inspection flow above is built around: start a session, batch-
+// upload pings/photos at the end, then analyze. The endpoints below add a LIVE
+// layer on top: single-ping inserts every 30s while the drive is in progress,
+// an active-drives query that powers the Home-tab dashboard tile + the board
+// portal "Drive in Progress" surface, and a snapshot endpoint for live-map
+// polling.
+//
+// Multi-tablet is intentional. The architecture is per-inspection (one drive
+// = one inspector). Two tablets out at once = two `inspections` rows, both
+// in_progress, both posting pings. The active-drives query returns both. UI
+// renders Mary + Sam side-by-side. Same-community two-tablet runs get
+// color-coded tracks by inspector on the community map (Phase 2 UI work).
+//
+// Phase 1 (this ship): manual Start/End from the tablet PWA at /inspector.html.
+// Phase 2: auto-start when the staff member's tablet exits the office
+// geofence (bedrock_offices table seeded in migration 165), auto-end when it
+// returns.
+// ============================================================================
+
+// ---------------------------------------------------------------------------
+// POST /api/inspections/:id/ping
+// Single-ping live insert. The tablet PWA polls navigator.geolocation every
+// 30s and POSTs the result here. Two writes happen atomically (best-effort):
+//   1. Append row to inspection_route_traces (canonical ping history)
+//   2. Update inspections.last_ping_at + device_label (cache for fast
+//      active-drives query — without it, every active query would have to
+//      JOIN to find the latest ping per inspection)
+//
+// Body: { lat, lng, heading_deg?, speed_mps?, accuracy_m?, captured_at?,
+//         device_label? }
+// captured_at defaults to server now() — tablet should send its own clock
+// to preserve ordering when network is flaky and pings arrive out of order.
+// ---------------------------------------------------------------------------
+router.post('/inspections/:id/ping', express.json({ limit: '8kb' }), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { lat, lng, heading_deg, speed_mps, accuracy_m, captured_at, device_label } = req.body || {};
+    if (typeof lat !== 'number' || typeof lng !== 'number') {
+      return res.status(400).json({ error: 'lat_lng_required' });
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'lat_lng_out_of_range' });
+    }
+
+    const capturedIso = captured_at || new Date().toISOString();
+
+    // Verify the inspection exists + is in_progress. Refuse pings for
+    // closed/voided drives (privacy boundary — once the operator taps
+    // End Drive, the tablet stops broadcasting, period).
+    const { data: insp } = await supabase
+      .from('inspections')
+      .select('id, status, community_id')
+      .eq('id', id)
+      .maybeSingle();
+    if (!insp) return res.status(404).json({ error: 'inspection_not_found' });
+    if (insp.status !== 'in_progress') {
+      return res.status(409).json({ error: 'inspection_not_in_progress', status: insp.status });
+    }
+
+    // Append the ping.
+    const { error: traceErr } = await supabase
+      .from('inspection_route_traces')
+      .insert({
+        inspection_id: id,
+        captured_at: capturedIso,
+        latitude: lat,
+        longitude: lng,
+        accuracy_m: typeof accuracy_m === 'number' ? accuracy_m : null,
+        heading_deg: typeof heading_deg === 'number' ? heading_deg : null,
+        speed_mps: typeof speed_mps === 'number' ? speed_mps : null,
+      });
+    if (traceErr) {
+      console.warn('[inspections.ping] route_trace insert failed:', traceErr.message);
+      // Don't fail the whole ping if just the trace row failed — we still
+      // want the last_ping_at cache update so the dashboard shows liveness.
+    }
+
+    // Update the cache on the parent inspection. device_label only writes
+    // if provided AND the inspection doesn't already have one — first
+    // tablet to ping wins (tablets should each have a stable label).
+    const updatePatch = { last_ping_at: capturedIso };
+    if (device_label && typeof device_label === 'string') {
+      // Only write device_label if it's currently empty (first ping wins).
+      // Subsequent pings with a different label are ignored to prevent
+      // mid-drive identity confusion.
+      const { data: cur } = await supabase
+        .from('inspections')
+        .select('device_label')
+        .eq('id', id)
+        .maybeSingle();
+      if (cur && !cur.device_label) updatePatch.device_label = device_label.slice(0, 60);
+    }
+    const { error: upErr } = await supabase
+      .from('inspections')
+      .update(updatePatch)
+      .eq('id', id);
+    if (upErr) console.warn('[inspections.ping] inspections update failed:', upErr.message);
+
+    res.json({ ok: true, captured_at: capturedIso });
+  } catch (err) {
+    console.error('[inspections.ping]', err);
+    res.status(500).json({ error: err.message || 'ping failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/active
+// Lists all currently-in-progress drives across the portfolio. Powers the
+// Home-tab "Active Drives" tile and the per-community board portal tile.
+//
+// Decorates each row with:
+//   - community name + slug
+//   - operator display name (staff who started it)
+//   - latest_ping {lat, lng, captured_at, heading_deg} for the live map dot
+//   - minutes_idle (now - last_ping_at) — flag stale tablets (>5 min) in UI
+// ---------------------------------------------------------------------------
+router.get('/inspections/active', async (req, res) => {
+  try {
+    const { community_id } = req.query;
+    let q = supabase
+      .from('inspections')
+      .select(`
+        id, community_id, mode, route_label, device_label, operator_id,
+        started_at, last_ping_at, status,
+        communities ( id, name, slug )
+      `)
+      .eq('status', 'in_progress')
+      .order('last_ping_at', { ascending: false, nullsFirst: false })
+      .limit(50);
+    if (community_id) q = q.eq('community_id', community_id);
+    const { data: drives, error } = await q;
+    if (error) throw error;
+
+    if (!drives || drives.length === 0) return res.json({ active: [] });
+
+    // Pull latest ping for each in one round-trip.
+    // Pattern: one select per drive (small N — bounded to 50; fine).
+    const decorated = await Promise.all(drives.map(async (d) => {
+      const { data: latestPing } = await supabase
+        .from('inspection_route_traces')
+        .select('captured_at, latitude, longitude, heading_deg, speed_mps')
+        .eq('inspection_id', d.id)
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const { count: pingCount } = await supabase
+        .from('inspection_route_traces')
+        .select('id', { count: 'exact', head: true })
+        .eq('inspection_id', d.id);
+      const idleMin = d.last_ping_at
+        ? Math.round((Date.now() - new Date(d.last_ping_at).getTime()) / 60000)
+        : null;
+      return {
+        id: d.id,
+        community: d.communities ? { id: d.communities.id, name: d.communities.name, slug: d.communities.slug } : null,
+        mode: d.mode,
+        route_label: d.route_label,
+        device_label: d.device_label,
+        operator_id: d.operator_id,
+        started_at: d.started_at,
+        last_ping_at: d.last_ping_at,
+        minutes_idle: idleMin,
+        is_stale: idleMin != null && idleMin >= 5,
+        ping_count: pingCount || 0,
+        latest_ping: latestPing || null,
+      };
+    }));
+
+    res.json({ active: decorated });
+  } catch (err) {
+    console.error('[inspections.active]', err);
+    res.status(500).json({ error: err.message || 'failed to load active drives' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/:id/live
+// Live snapshot for a single drive — used by the live-map polling loop on
+// both the staff dashboard and the board portal tile. Returns the latest
+// ping + ping count + minutes idle. Excludes the full trail (use the
+// existing GET /inspections/:id/route-trace for that).
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/live', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: insp } = await supabase
+      .from('inspections')
+      .select('id, community_id, status, last_ping_at, started_at, device_label, route_label, mode, communities(name, slug)')
+      .eq('id', id)
+      .maybeSingle();
+    if (!insp) return res.status(404).json({ error: 'not_found' });
+
+    const { data: latestPing } = await supabase
+      .from('inspection_route_traces')
+      .select('captured_at, latitude, longitude, heading_deg, speed_mps, accuracy_m')
+      .eq('inspection_id', id)
+      .order('captured_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const { count: pingCount } = await supabase
+      .from('inspection_route_traces')
+      .select('id', { count: 'exact', head: true })
+      .eq('inspection_id', id);
+
+    const idleMin = insp.last_ping_at
+      ? Math.round((Date.now() - new Date(insp.last_ping_at).getTime()) / 60000)
+      : null;
+
+    res.json({
+      inspection: insp,
+      latest_ping: latestPing || null,
+      ping_count: pingCount || 0,
+      minutes_idle: idleMin,
+      is_stale: idleMin != null && idleMin >= 5,
+    });
+  } catch (err) {
+    console.error('[inspections.live]', err);
+    res.status(500).json({ error: err.message || 'failed to load live snapshot' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/offices
+// Returns active Bedrock office geofences for the tablet PWA — needed by
+// Phase 2 auto-start detection (tablet polls position; exits geofence →
+// trigger Start banner). Phase 1 tablets ignore this; included now so the
+// endpoint exists when the auto-start code lands.
+// ---------------------------------------------------------------------------
+router.get('/inspections/offices', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('bedrock_offices')
+      .select('id, name, latitude, longitude, geofence_radius_m, address_line1, city, state')
+      .eq('is_active', true)
+      .order('name')
+      .limit(50);
+    if (error) throw error;
+    res.json({ offices: data || [] });
+  } catch (err) {
+    console.error('[inspections.offices]', err);
+    res.status(500).json({ error: err.message || 'failed to load offices' });
+  }
+});
+
 module.exports = { router };
