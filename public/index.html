@@ -1132,10 +1132,15 @@
         </div>
         <button class="secondary-btn" onclick="bkOnboardCurrent()" id="bk-onboard-btn" style="font-size:12.5px; display:none;">⚙️ Onboard to GL (seed CoA + periods)</button>
       </div>
-      <div id="bk-subnav" style="display:none; margin-top:14px; border-bottom:1px solid #d0d7de;">
-        <button class="bk-tab-btn" data-bktab="trial-balance" onclick="bkSubswitch('trial-balance')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600; color:#315A87; border-bottom:2px solid #315A87; margin-bottom:-1px;">⚖️ Trial Balance</button>
+      <div id="bk-subnav" style="display:none; margin-top:14px; border-bottom:1px solid #d0d7de; flex-wrap:wrap;">
+        <button class="bk-tab-btn" data-bktab="balance-sheet" onclick="bkSubswitch('balance-sheet')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600; color:#315A87; border-bottom:2px solid #315A87; margin-bottom:-1px;">📊 Balance Sheet</button>
+        <button class="bk-tab-btn" data-bktab="income-statement" onclick="bkSubswitch('income-statement')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📈 Income Statement</button>
+        <button class="bk-tab-btn" data-bktab="equity-statement" onclick="bkSubswitch('equity-statement')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">🏦 Equity</button>
+        <button class="bk-tab-btn" data-bktab="bva" onclick="bkSubswitch('bva')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📐 Budget vs Actual</button>
+        <button class="bk-tab-btn" data-bktab="budget" onclick="bkSubswitch('budget')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">💰 Budget</button>
+        <button class="bk-tab-btn" data-bktab="trial-balance" onclick="bkSubswitch('trial-balance')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">⚖️ Trial Balance</button>
         <button class="bk-tab-btn" data-bktab="je" onclick="bkSubswitch('je')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📝 Journal Entries</button>
-        <button class="bk-tab-btn" data-bktab="coa" onclick="bkSubswitch('coa')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📒 Chart of Accounts</button>
+        <button class="bk-tab-btn" data-bktab="coa" onclick="bkSubswitch('coa')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📒 CoA</button>
         <button class="bk-tab-btn" data-bktab="periods" onclick="bkSubswitch('periods')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📅 Periods</button>
       </div>
     </div>
@@ -1144,6 +1149,98 @@
       <div style="font-size:36px; margin-bottom:10px;">📚</div>
       <div style="font-weight:600; color:#0B1D34; margin-bottom:4px;">Pick a community to view its books</div>
       <div style="font-size:13px;">August Meadows and Quail Ridge are the Phase 1 pilots.</div>
+    </div>
+
+    <!-- BALANCE SHEET -->
+    <div id="bk-section-balance-sheet" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:end; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">As of</label>
+            <input type="date" id="bk-bs-asof" onchange="bkLoadBalanceSheet()" style="padding:6px 10px; font-size:13px;">
+          </div>
+          <button class="secondary-btn" onclick="bkLoadBalanceSheet()" style="font-size:12.5px;">⟳ Refresh</button>
+          <button class="secondary-btn" onclick="bkPrintFS('balance-sheet')" style="font-size:12.5px;">🖨️ Print</button>
+        </div>
+        <div id="bk-bs-container" style="font-size:13px;">Pick a date.</div>
+      </div>
+    </div>
+
+    <!-- INCOME STATEMENT -->
+    <div id="bk-section-income-statement" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:end; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Period start</label>
+            <input type="date" id="bk-is-start" onchange="bkLoadIncomeStatement()" style="padding:6px 10px; font-size:13px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Period end</label>
+            <input type="date" id="bk-is-end" onchange="bkLoadIncomeStatement()" style="padding:6px 10px; font-size:13px;">
+          </div>
+          <button class="secondary-btn" onclick="bkLoadIncomeStatement()" style="font-size:12.5px;">⟳ Refresh</button>
+          <button class="secondary-btn" onclick="bkPrintFS('income-statement')" style="font-size:12.5px;">🖨️ Print</button>
+        </div>
+        <div id="bk-is-container" style="font-size:13px;">Pick a period.</div>
+      </div>
+    </div>
+
+    <!-- EQUITY STATEMENT -->
+    <div id="bk-section-equity-statement" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:end; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Period start</label>
+            <input type="date" id="bk-eq-start" onchange="bkLoadEquityStatement()" style="padding:6px 10px; font-size:13px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Period end</label>
+            <input type="date" id="bk-eq-end" onchange="bkLoadEquityStatement()" style="padding:6px 10px; font-size:13px;">
+          </div>
+          <button class="secondary-btn" onclick="bkLoadEquityStatement()" style="font-size:12.5px;">⟳ Refresh</button>
+          <button class="secondary-btn" onclick="bkPrintFS('equity-statement')" style="font-size:12.5px;">🖨️ Print</button>
+        </div>
+        <div id="bk-eq-container" style="font-size:13px;">Pick a period.</div>
+      </div>
+    </div>
+
+    <!-- BUDGET vs ACTUAL -->
+    <div id="bk-section-bva" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:end; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Through end of</label>
+            <input type="date" id="bk-bva-end" onchange="bkLoadBVA()" style="padding:6px 10px; font-size:13px;">
+          </div>
+          <button class="secondary-btn" onclick="bkLoadBVA()" style="font-size:12.5px;">⟳ Refresh</button>
+          <button class="secondary-btn" onclick="bkPrintFS('bva')" style="font-size:12.5px;">🖨️ Print</button>
+        </div>
+        <div id="bk-bva-container" style="font-size:13px;">Pick a period end.</div>
+      </div>
+    </div>
+
+    <!-- BUDGET (entry / import) -->
+    <div id="bk-section-budget" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px; margin-bottom:12px;">
+          <div>
+            <h3 style="margin:0;">💰 Annual Budget</h3>
+            <p style="font-size:12px; color:#666; margin:4px 0 0; max-width:680px;">
+              Drag-drop your Vantaca projected budget PDF (or any HOA budget PDF). System extracts line items, attempts to match each to an account in the chart of accounts by Vantaca account number, and shows a preview before saving. Unmatched accounts surface for manual mapping.
+            </p>
+          </div>
+        </div>
+        <div id="bk-bdg-drop" style="border:2px dashed #d0d7de; border-radius:8px; padding:24px; text-align:center; background:#f9f9f9; cursor:pointer;"
+          onclick="document.getElementById('bk-bdg-file').click()"
+          ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+          ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+          ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length) bkUploadBudget(event.dataTransfer.files[0]);">
+          <div style="font-size:28px; margin-bottom:6px;">💰</div>
+          <div style="font-weight:500; color:#315A87;">Click or drop budget PDF</div>
+        </div>
+        <input type="file" id="bk-bdg-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) bkUploadBudget(this.files[0])">
+        <div id="bk-bdg-preview" style="margin-top:14px;"></div>
+      </div>
     </div>
 
     <!-- TRIAL BALANCE -->
@@ -30658,14 +30755,407 @@ ${questionsPage}
         btn.style.fontWeight = active ? '600' : '500';
         btn.style.borderBottom = active ? '2px solid #315A87' : '2px solid transparent';
       });
-      ['trial-balance', 'je', 'coa', 'periods'].forEach((t) => {
+      ['balance-sheet', 'income-statement', 'equity-statement', 'bva', 'budget', 'trial-balance', 'je', 'coa', 'periods'].forEach((t) => {
         const el = document.getElementById('bk-section-' + t);
         if (el) el.style.display = t === tab ? 'block' : 'none';
       });
+      const today = new Date().toISOString().slice(0, 10);
+      const monthStart = today.slice(0, 7) + '-01';
+      const yearStart = today.slice(0, 4) + '-01-01';
+      if (tab === 'balance-sheet') {
+        const el = document.getElementById('bk-bs-asof');
+        if (el && !el.value) el.value = today;
+        bkLoadBalanceSheet();
+      }
+      if (tab === 'income-statement') {
+        const s = document.getElementById('bk-is-start');
+        const e = document.getElementById('bk-is-end');
+        if (s && !s.value) s.value = monthStart;
+        if (e && !e.value) e.value = today;
+        bkLoadIncomeStatement();
+      }
+      if (tab === 'equity-statement') {
+        const s = document.getElementById('bk-eq-start');
+        const e = document.getElementById('bk-eq-end');
+        if (s && !s.value) s.value = yearStart;
+        if (e && !e.value) e.value = today;
+        bkLoadEquityStatement();
+      }
+      if (tab === 'bva') {
+        const e = document.getElementById('bk-bva-end');
+        if (e && !e.value) e.value = today;
+        bkLoadBVA();
+      }
+      if (tab === 'budget') bkLoadBudgetView();
       if (tab === 'trial-balance') bkLoadTrialBalance();
       if (tab === 'je') bkLoadJEs();
       if (tab === 'coa') bkLoadCOA();
       if (tab === 'periods') bkLoadPeriods();
+    };
+
+    // -------- BALANCE SHEET --------
+    async function bkLoadBalanceSheet() {
+      const c = document.getElementById('bk-bs-container');
+      if (!c || !bkCommunityId) return;
+      const asOf = document.getElementById('bk-bs-asof').value;
+      if (!asOf) { c.innerHTML = 'Pick a date.'; return; }
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch(`/api/books/balance-sheet?community_id=${encodeURIComponent(bkCommunityId)}&as_of_date=${asOf}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        c.innerHTML = bkRenderBS(j);
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+    function bkRenderBS(j) {
+      const sectionTable = (title, rows, total) => `
+        <h4 style="margin:14px 0 4px; color:#0B1D34;">${bkEsc(title)}</h4>
+        <table style="width:100%; font-size:12.5px; border-collapse:collapse;">
+          <tbody>
+            ${rows.length === 0 ? '<tr><td style="padding:6px; color:#888;">— none —</td></tr>' :
+              rows.map((row) => `
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                  <td style="padding:5px 8px; font-family:ui-monospace,monospace; color:#5a7390; width:80px;">${bkEsc(row.account_number || '')}</td>
+                  <td style="padding:5px 8px;">${bkEsc(row.account_name || '')}${row.is_computed ? ' <em style="color:#888; font-size:11px;">(computed)</em>' : ''}</td>
+                  <td style="padding:5px 8px; color:#5a7390;">${bkEsc(row.fund_code || '')}</td>
+                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(row.balance_cents)}</td>
+                </tr>`).join('')}
+            <tr style="font-weight:700; border-top:2px solid #0B1D34;">
+              <td colspan="3" style="padding:6px 8px;">Total ${bkEsc(title)}</td>
+              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(total)}</td>
+            </tr>
+          </tbody>
+        </table>
+      `;
+      const t = j.totals;
+      return `
+        <div style="margin-bottom:8px; font-size:13px; color:#5a7390;">Balance Sheet as of ${bkEsc(bkFmtDate(j.as_of_date))}</div>
+        ${sectionTable('Assets', j.sections.assets, t.assets_cents)}
+        ${sectionTable('Liabilities', j.sections.liabilities, t.liabilities_cents)}
+        ${sectionTable('Equity / Fund Balance', j.sections.equity, t.equity_cents)}
+        <div style="margin-top:18px; padding:10px; background:${t.balanced ? '#dcfce7' : '#fee2e2'}; border-radius:6px; font-weight:600; color:${t.balanced ? '#166534' : '#991b1b'};">
+          ${t.balanced ? '✓ Balance Sheet balances' : '⚠ Out of balance by ' + bkFmtCents(t.difference_cents)}
+          · Assets ${bkFmtCents(t.assets_cents)} = Liabilities ${bkFmtCents(t.liabilities_cents)} + Equity ${bkFmtCents(t.equity_cents)}
+        </div>
+      `;
+    }
+
+    // -------- INCOME STATEMENT --------
+    async function bkLoadIncomeStatement() {
+      const c = document.getElementById('bk-is-container');
+      if (!c || !bkCommunityId) return;
+      const start = document.getElementById('bk-is-start').value;
+      const end = document.getElementById('bk-is-end').value;
+      if (!start || !end) { c.innerHTML = 'Pick a period.'; return; }
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch(`/api/books/income-statement?community_id=${encodeURIComponent(bkCommunityId)}&period_start=${start}&period_end=${end}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        c.innerHTML = bkRenderIS(j);
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+    function bkRenderIS(j) {
+      const sectionTable = (title, rows, periodTotal, ytdTotal) => `
+        <h4 style="margin:14px 0 4px; color:#0B1D34;">${bkEsc(title)}</h4>
+        <table style="width:100%; font-size:12.5px; border-collapse:collapse;">
+          <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+            <th style="padding:6px 8px; text-align:left; width:80px;">Acct #</th>
+            <th style="padding:6px 8px; text-align:left;">Account</th>
+            <th style="padding:6px 8px; text-align:left;">Fund</th>
+            <th style="padding:6px 8px; text-align:right;">Period</th>
+            <th style="padding:6px 8px; text-align:right;">YTD</th>
+          </tr></thead>
+          <tbody>
+            ${rows.length === 0 ? '<tr><td colspan="5" style="padding:6px; color:#888;">— none —</td></tr>' :
+              rows.map((row) => `
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                  <td style="padding:5px 8px; font-family:ui-monospace,monospace; color:#5a7390;">${bkEsc(row.account_number || '')}</td>
+                  <td style="padding:5px 8px;">${bkEsc(row.account_name || '')}</td>
+                  <td style="padding:5px 8px; color:#5a7390;">${bkEsc(row.fund_code || '')}</td>
+                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(row.period_amount_cents)}</td>
+                  <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(row.ytd_amount_cents)}</td>
+                </tr>`).join('')}
+            <tr style="font-weight:700; border-top:2px solid #0B1D34;">
+              <td colspan="3" style="padding:6px 8px;">Total ${bkEsc(title)}</td>
+              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(periodTotal)}</td>
+              <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(ytdTotal)}</td>
+            </tr>
+          </tbody>
+        </table>
+      `;
+      const niColor = j.totals.period.net_income_cents >= 0 ? '#16a34a' : '#dc2626';
+      return `
+        <div style="margin-bottom:8px; font-size:13px; color:#5a7390;">${bkEsc(bkFmtDate(j.period_start))} — ${bkEsc(bkFmtDate(j.period_end))}</div>
+        ${sectionTable('Revenue', j.sections.revenue, j.totals.period.revenue_cents, j.totals.ytd.revenue_cents)}
+        ${sectionTable('Expenses', j.sections.expenses, j.totals.period.expenses_cents, j.totals.ytd.expenses_cents)}
+        <div style="margin-top:18px; padding:12px; background:#f5f8fc; border:2px solid ${niColor}; border-radius:8px;">
+          <div style="display:flex; justify-content:space-between; font-weight:700;">
+            <span>NET INCOME</span>
+            <span style="color:${niColor};">Period: ${bkFmtCents(j.totals.period.net_income_cents)}  ·  YTD: ${bkFmtCents(j.totals.ytd.net_income_cents)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // -------- EQUITY STATEMENT --------
+    async function bkLoadEquityStatement() {
+      const c = document.getElementById('bk-eq-container');
+      if (!c || !bkCommunityId) return;
+      const start = document.getElementById('bk-eq-start').value;
+      const end = document.getElementById('bk-eq-end').value;
+      if (!start || !end) { c.innerHTML = 'Pick a period.'; return; }
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch(`/api/books/equity-statement?community_id=${encodeURIComponent(bkCommunityId)}&period_start=${start}&period_end=${end}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        c.innerHTML = bkRenderEquity(j);
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+    function bkRenderEquity(j) {
+      const funds = new Set([...Object.keys(j.beginning.by_fund), ...Object.keys(j.ending.by_fund)]);
+      const rows = [...funds].map((code) => {
+        const b = j.beginning.by_fund[code] || { total: 0 };
+        const e = j.ending.by_fund[code] || { total: 0 };
+        return `
+          <tr style="border-bottom:1px solid #eee;">
+            <td style="padding:6px 8px; font-weight:600;">${bkEsc(code === 'consolidated' ? 'Unsegregated' : code)}</td>
+            <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(b.total)}</td>
+            <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(e.total - b.total)}</td>
+            <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${bkFmtCents(e.total)}</td>
+          </tr>
+        `;
+      }).join('');
+      return `
+        <div style="margin-bottom:8px; font-size:13px; color:#5a7390;">${bkEsc(bkFmtDate(j.period_start))} — ${bkEsc(bkFmtDate(j.period_end))}</div>
+        <table style="width:100%; font-size:13px; border-collapse:collapse;">
+          <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+            <th style="padding:6px 8px; text-align:left;">Fund</th>
+            <th style="padding:6px 8px; text-align:right;">Beginning</th>
+            <th style="padding:6px 8px; text-align:right;">Net Change</th>
+            <th style="padding:6px 8px; text-align:right;">Ending</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="margin-top:14px; padding:10px; background:#f5f8fc; border-radius:6px; font-size:12.5px;">
+          Period Net Income: <strong>${bkFmtCents(j.period_net_income_cents)}</strong>
+        </div>
+      `;
+    }
+
+    // -------- BUDGET vs ACTUAL --------
+    async function bkLoadBVA() {
+      const c = document.getElementById('bk-bva-container');
+      if (!c || !bkCommunityId) return;
+      const end = document.getElementById('bk-bva-end').value;
+      if (!end) { c.innerHTML = 'Pick a period end.'; return; }
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch(`/api/books/budget-vs-actual?community_id=${encodeURIComponent(bkCommunityId)}&period_end=${end}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        c.innerHTML = bkRenderBVA(j);
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+    function bkRenderBVA(j) {
+      if (!j.has_budget) {
+        return `<div style="padding:30px; text-align:center; color:#888;">No budget loaded for fiscal year ${j.fiscal_year}. Switch to the <strong>💰 Budget</strong> sub-tab to upload one.</div>`;
+      }
+      const varCol = (v) => {
+        if (Math.abs(v) <= 1) return '#666';
+        return v >= 0 ? '#16a34a' : '#dc2626';
+      };
+      const rows = j.rows.map((r) => `
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:5px 8px; font-family:ui-monospace,monospace; color:#5a7390;">${bkEsc(r.account_number)}</td>
+          <td style="padding:5px 8px;">${bkEsc(r.account_name)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.mtd_budget_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.mtd_actual_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; color:${varCol(r.mtd_variance_cents)};">${bkFmtCents(r.mtd_variance_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.ytd_budget_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.ytd_actual_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; color:${varCol(r.ytd_variance_cents)};">${bkFmtCents(r.ytd_variance_cents)}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(r.annual_budget_cents)}</td>
+        </tr>
+      `).join('');
+      return `
+        <table style="width:100%; font-size:12px; border-collapse:collapse;">
+          <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+            <th style="padding:6px 6px; text-align:left;">#</th>
+            <th style="padding:6px 6px; text-align:left;">Account</th>
+            <th style="padding:6px 6px; text-align:right;">MTD Budget</th>
+            <th style="padding:6px 6px; text-align:right;">MTD Actual</th>
+            <th style="padding:6px 6px; text-align:right;">MTD Var</th>
+            <th style="padding:6px 6px; text-align:right;">YTD Budget</th>
+            <th style="padding:6px 6px; text-align:right;">YTD Actual</th>
+            <th style="padding:6px 6px; text-align:right;">YTD Var</th>
+            <th style="padding:6px 6px; text-align:right;">Annual</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+      `;
+    }
+
+    // -------- BUDGET (entry / import) --------
+    async function bkLoadBudgetView() {
+      // List existing budgets for this community
+      const r = await fetch('/api/books/budgets?community_id=' + encodeURIComponent(bkCommunityId));
+      const j = await r.json();
+      const existing = (j.budgets || []);
+      const lines = existing.map((b) =>
+        `<div style="padding:6px 10px; background:#f5f8fc; border-radius:6px; display:flex; justify-content:space-between; margin-bottom:6px; font-size:12.5px;">
+          <span>FY ${b.fiscal_year} — ${bkEsc(b.status)}${b.source_filename ? ' · ' + bkEsc(b.source_filename) : ''}</span>
+          <span style="color:#5a7390;">${b.approved_at ? 'Approved ' + bkFmtDate(b.approved_at.slice(0, 10)) : 'Draft'}</span>
+        </div>`
+      ).join('');
+      const preview = document.getElementById('bk-bdg-preview');
+      preview.innerHTML = existing.length > 0
+        ? `<div style="margin-top:14px;"><div style="font-weight:600; color:#0B1D34; margin-bottom:6px;">Existing budgets</div>${lines}</div>`
+        : '';
+    }
+
+    let bkPendingBudgetExtraction = null;
+    window.bkUploadBudget = async function (file) {
+      if (!bkCommunityId) return;
+      const preview = document.getElementById('bk-bdg-preview');
+      preview.innerHTML = `<div style="padding:16px; background:#f5f8fc; border-radius:6px; color:#315A87;">⏳ Extracting <strong>${bkEsc(file.name)}</strong> (~30s)…</div>`;
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        const r = await fetch('/api/books/budgets/preview-pdf', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'extract failed');
+        bkPendingBudgetExtraction = j;
+        bkRenderBudgetPreview(j);
+      } catch (e) {
+        preview.innerHTML = `<div style="color:#dc2626; padding:14px;">Extraction failed: ${bkEsc(e.message)}</div>`;
+      }
+    };
+
+    function bkRenderBudgetPreview(payload) {
+      const preview = document.getElementById('bk-bdg-preview');
+      const ex = payload.extraction;
+      // Try to auto-match each extracted line to an account by Vantaca account number
+      const acctByVantaca = {};
+      const acctByNumber = {};
+      (bkAccounts || []).forEach((a) => {
+        if (a.vantaca_account_number) acctByVantaca[a.vantaca_account_number] = a;
+        if (a.account_number) acctByNumber[a.account_number] = a;
+      });
+      let matched = 0, unmatched = 0;
+      const matchedLines = (ex.line_items || []).map((li) => {
+        const a = acctByVantaca[li.account_number] || acctByNumber[li.account_number] || null;
+        if (a) matched += 1; else unmatched += 1;
+        return { ...li, matched_account: a };
+      });
+      const tableRows = matchedLines.map((li, idx) => `
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:5px 8px; font-family:ui-monospace,monospace; font-size:11.5px;">${bkEsc(li.account_number)}</td>
+          <td style="padding:5px 8px; font-size:11.5px;">${bkEsc(li.account_name)}</td>
+          <td style="padding:5px 8px; font-size:11.5px;">${bkEsc(li.account_type)}</td>
+          <td style="padding:5px 8px; font-size:11.5px;">${bkEsc(li.fund_hint || '')}</td>
+          <td style="padding:5px 8px; text-align:right; font-family:ui-monospace,monospace; font-size:11.5px;">${bkFmtCents(li.annual_amount_cents)}</td>
+          <td style="padding:5px 8px; font-size:11.5px; ${li.matched_account ? 'color:#16a34a;' : 'color:#dc2626;'}">${li.matched_account ? '✓ ' + bkEsc(li.matched_account.account_number) : '⚠ no match'}</td>
+        </tr>
+      `).join('');
+      preview.innerHTML = `
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:14px; margin-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <div>
+              <div style="font-weight:600; color:#0B1D34;">Preview — Fiscal Year ${ex.fiscal_year || '?'} · ${matched + unmatched} line items</div>
+              <div style="font-size:12px; color:#5a7390;">${matched} matched to CoA, ${unmatched} unmatched</div>
+            </div>
+            <div>
+              <button class="action-btn" onclick="bkCommitBudget('draft')" ${unmatched > 0 ? '' : ''}>💾 Save as Draft</button>
+              <button class="action-btn" onclick="bkCommitBudget('approved')" style="background:#16a34a;">✓ Save & Approve</button>
+            </div>
+          </div>
+          ${ex.warnings && ex.warnings.length > 0 ? `<div style="padding:8px 12px; background:#fef3c7; border-radius:6px; font-size:12px; color:#92400e; margin-bottom:10px;">⚠ ${ex.warnings.map(bkEsc).join('<br>⚠ ')}</div>` : ''}
+          <table style="width:100%; font-size:11.5px; border-collapse:collapse;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 8px; text-align:left;">Source #</th>
+              <th style="padding:6px 8px; text-align:left;">Account</th>
+              <th style="padding:6px 8px; text-align:left;">Type</th>
+              <th style="padding:6px 8px; text-align:left;">Fund</th>
+              <th style="padding:6px 8px; text-align:right;">Annual</th>
+              <th style="padding:6px 8px; text-align:left;">Match</th>
+            </tr></thead>
+            <tbody>${tableRows}</tbody>
+          </table>
+          ${unmatched > 0 ? `<div style="margin-top:10px; font-size:12px; color:#5a7390;">⚠ Unmatched accounts will be skipped on save. To map them, add the Vantaca account number to your CoA accounts (Books → CoA shows the vantaca_account_number column).</div>` : ''}
+        </div>
+      `;
+    }
+
+    window.bkCommitBudget = async function (status) {
+      if (!bkPendingBudgetExtraction) return;
+      const ex = bkPendingBudgetExtraction.extraction;
+      const acctByVantaca = {};
+      const acctByNumber = {};
+      (bkAccounts || []).forEach((a) => {
+        if (a.vantaca_account_number) acctByVantaca[a.vantaca_account_number] = a;
+        if (a.account_number) acctByNumber[a.account_number] = a;
+      });
+      const matched = (ex.line_items || []).map((li) => {
+        const a = acctByVantaca[li.account_number] || acctByNumber[li.account_number];
+        return a ? {
+          account_id: a.id,
+          fund_id: a.fund_id || null,
+          annual_amount_cents: li.annual_amount_cents,
+          monthly_amounts_cents: li.monthly_amounts_cents,
+        } : null;
+      }).filter(Boolean);
+      if (matched.length === 0) { alert('No matched lines to save.'); return; }
+      try {
+        const r = await fetch('/api/books/budgets', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            community_id: bkCommunityId,
+            fiscal_year: ex.fiscal_year,
+            status,
+            source_filename: bkPendingBudgetExtraction.filename,
+            line_items: matched,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'save failed');
+        alert(`Saved budget — ${j.line_items_count} lines, status: ${j.budget.status}.`);
+        bkLoadBudgetView();
+      } catch (e) { alert('Save failed: ' + e.message); }
+    };
+
+    // -------- PRINT FS --------
+    window.bkPrintFS = function (which) {
+      const containerId = {
+        'balance-sheet': 'bk-bs-container',
+        'income-statement': 'bk-is-container',
+        'equity-statement': 'bk-eq-container',
+        'bva': 'bk-bva-container',
+      }[which];
+      const titles = {
+        'balance-sheet': 'Balance Sheet',
+        'income-statement': 'Income Statement',
+        'equity-statement': 'Statement of Equity',
+        'bva': 'Budget vs Actual',
+      };
+      const content = document.getElementById(containerId).innerHTML;
+      const community = bkCommunitiesCache.find((c) => c.id === bkCommunityId);
+      const w = window.open('', '_blank');
+      w.document.write(`<!DOCTYPE html><html><head><title>${titles[which]} — ${community?.name || ''}</title>
+<style>body{font-family:system-ui,sans-serif;padding:24px;font-size:11px;color:#111;}h1{font-size:18px;margin:0 0 4px;}h4{font-size:13px;margin:14px 0 4px;}table{width:100%;border-collapse:collapse;}th,td{padding:4px 6px;border-bottom:1px solid #e5e7eb;}@media print{body{padding:12px;}}</style></head>
+<body><h1>${community?.name || ''} — ${titles[which]}</h1><div>${content}</div>
+<div style="margin-top:24px;font-size:10px;color:#666;border-top:1px solid #ccc;padding-top:6px;">Generated by trustEd · ${new Date().toLocaleString()}</div>
+<script>setTimeout(()=>window.print(),300);</script></body></html>`);
+      w.document.close();
     };
 
     async function bkLoadTrialBalance() {
