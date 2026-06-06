@@ -148,17 +148,22 @@ async function matchCommunity(bill_to_name) {
   return subs?.[0] || null;
 }
 
-// Find or create vendor by name + community
-async function findOrCreateVendor({ community_id, vendor_name, vendor_email, vendor_phone, suggested_category, vendor_addr }) {
+// Find or create vendor by name (vendors are MGMT-CO level, shared across
+// all communities — Superior LawnCare is ONE vendor row even if it services
+// both Quail Ridge AND August Meadows. Year-end 1099 prep groups by vendor
+// across the portfolio, which is why vendors aren't community-scoped.)
+async function findOrCreateVendor({ vendor_name, vendor_email, vendor_phone, suggested_category, vendor_addr }) {
   if (!vendor_name) return null;
-  // Try existing vendor by community + name (case-insensitive)
+  // Try existing vendor by mgmt-co + name (case-insensitive)
   const { data: existing } = await supabase.from('vendors')
-    .select('*').eq('community_id', community_id).ilike('name', vendor_name).maybeSingle();
+    .select('*')
+    .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+    .ilike('name', vendor_name)
+    .maybeSingle();
   if (existing) return { vendor: existing, created: false };
-  // Create new
+  // Create new — mgmt-co level, no community_id
   const { data: created, error } = await supabase.from('vendors').insert({
     management_company_id: BEDROCK_MGMT_CO_ID,
-    community_id,
     name: vendor_name,
     category: suggested_category || null,
     is_active: true,
@@ -232,9 +237,8 @@ router.post('/invoices/upload', upload.single('pdf'), async (req, res) => {
       sha256: sha,
     }).select('id').single();
 
-    // 5. Find/create vendor
+    // 5. Find/create vendor — mgmt-co-level, NOT community-scoped
     const vendorResult = await findOrCreateVendor({
-      community_id: community.id,
       vendor_name: extracted.vendor_name,
       vendor_email: extracted.vendor_email,
       vendor_phone: extracted.vendor_phone,
