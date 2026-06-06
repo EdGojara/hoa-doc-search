@@ -353,8 +353,13 @@
         $('auth-screen').style.display = 'none';
         $('app').style.display = '';
         await loadFeed();
-        // Poll every 4 seconds for live updates
-        pollTimer = setInterval(loadFeed, 4000);
+        // Poll every 4 seconds for live updates. Pause when the tab isn't
+        // visible — staff at the check-in desk are looking at the live
+        // feed; background tabs shouldn't keep hitting the server.
+        pollTimer = setInterval(() => {
+          if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+          loadFeed();
+        }, 4000);
       } catch (err) {
         sessionStorage.removeItem(codeKey);
         if (!silent) showAuthErr(err.message);

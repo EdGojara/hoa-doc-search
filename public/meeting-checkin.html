@@ -890,7 +890,13 @@ async function endMeeting() {
 }
 
 // ---------- Auto-refresh status every 30s ----------
-setInterval(() => { refreshStatus(); }, 30000);
+// Pause when the tab isn't visible — no point hitting the server for a
+// page nobody's looking at. Resume on next interval after the user
+// switches back. Defense-in-depth against background-tab waste at scale.
+setInterval(() => {
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
+  refreshStatus();
+}, 30000);
 
 // Boot
 loadActiveElection();
