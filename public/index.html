@@ -13447,6 +13447,25 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- VANTACA HISTORY COVERAGE — at-a-glance status of which communities
+         have historical violations imported. Letters' prior_notices block
+         pulls from the violations table joined on property + category +
+         12-month window — so if a community has no Vantaca import, Courtesy
+         2 / certified §209 letters won't reference prior history correctly.
+         Critical bridge feature for live Vantaca communities. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">📥 Vantaca history coverage <span style="color:#64748b; font-weight:500;">— feeds prior_notices on escalation letters</span></h3>
+        <div style="display:flex; gap:6px;">
+          <button class="secondary-btn" onclick="vantacaHistoryLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+          <button onclick="inspVViOpen()" style="background:#0B1D34; color:#fff; border:none; padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">📥 Import Vantaca history</button>
+        </div>
+      </div>
+      <div id="vantacaHistoryList" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
+        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>
+      </div>
+    </div>
+
     <!-- CATEGORIES & PRIORITIES — list of enforcement categories with their
          AI-detection descriptions + per-community priority weight. Lets the
          operator see what the AI is looking for, tune descriptions when
@@ -17666,6 +17685,49 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       status.textContent = 'Failed: ' + e.message;
     }
   }
+  // -------------------------------------------------------------------------
+  // Vantaca history coverage
+  // -------------------------------------------------------------------------
+  async function vantacaHistoryLoad() {
+    const list = document.getElementById('vantacaHistoryList');
+    if (!list) return;
+    list.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:10px;">Loading…</div>';
+    try {
+      const r = await fetch('/api/enforcement/vantaca-history-status');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const comms = j.communities || [];
+      if (!comms.length) {
+        list.innerHTML = '<div style="color:#94a3b8; font-size:12px; padding:10px;">No communities yet.</div>';
+        return;
+      }
+      const total = comms.length;
+      const covered = comms.filter(c => c.has_history).length;
+      const pct = total ? Math.round((covered / total) * 100) : 0;
+      list.innerHTML = `<div style="padding:6px 4px 10px; margin-bottom:8px; border-bottom:1px solid #f1f5f9; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+          <div style="font-size:13px; color:#0B1D34;"><strong>${covered}/${total}</strong> communities have Vantaca history imported</div>
+          <div style="background:${pct >= 80 ? '#dcfce7' : pct >= 40 ? '#fef3c7' : '#fee2e2'}; color:${pct >= 80 ? '#166534' : pct >= 40 ? '#92400e' : '#7f1d1d'}; padding:3px 10px; border-radius:99px; font-size:11px; font-weight:700;">${pct}% covered</div>
+        </div>` + comms.map(c => {
+        const dateStr = c.last_imported_opened_at
+          ? new Date(c.last_imported_opened_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })
+          : '—';
+        const badge = c.has_history
+          ? `<span style="background:#dcfce7; color:#166534; padding:1px 8px; border-radius:99px; font-size:10px; font-weight:700;">✓ ${c.imported_count} priors</span>`
+          : `<span style="background:#fee2e2; color:#7f1d1d; padding:1px 8px; border-radius:99px; font-size:10px; font-weight:700;">⚠ no history</span>`;
+        return `<div style="display:flex; justify-content:space-between; align-items:center; padding:6px 4px; border-bottom:1px solid #f8fafc; font-size:12px;">
+          <div>
+            <strong>${escapeHtml(c.community_name)}</strong>
+            <span style="color:#64748b; margin-left:8px;">most recent: ${dateStr}</span>
+          </div>
+          ${badge}
+        </div>`;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:10px;">Failed: ${e.message}</div>`;
+    }
+  }
+  setTimeout(() => { vantacaHistoryLoad(); }, 900);
+
   async function catEditorSaveOne(catId) {
     const sel = document.getElementById('letterFormatCommunity');
     const communityId = sel && sel.value;

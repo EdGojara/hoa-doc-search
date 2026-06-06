@@ -5809,6 +5809,61 @@ router.delete('/letter-copy', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/vantaca-history-status
+// Returns per-community count of vantaca_import-sourced violations so the
+// operator can see at a glance which communities have historical priors
+// loaded (needed for accurate Courtesy 2 / certified §209 escalation).
+// ---------------------------------------------------------------------------
+router.get('/vantaca-history-status', async (req, res) => {
+  try {
+    const { data: comms, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name')
+      .order('name', { ascending: true });
+    if (cErr) throw cErr;
+    const ids = (comms || []).map(c => c.id);
+    if (ids.length === 0) return res.json({ communities: [] });
+
+    // Count vantaca_import violations per community
+    const { data: rows, error: vErr } = await supabase
+      .from('violations')
+      .select('community_id, opened_at, resolved_at')
+      .eq('source', 'vantaca_import')
+      .in('community_id', ids);
+    if (vErr) throw vErr;
+
+    const stats = new Map();
+    for (const v of (rows || [])) {
+      if (!stats.has(v.community_id)) {
+        stats.set(v.community_id, { total: 0, last_opened_at: null, unresolved: 0 });
+      }
+      const s = stats.get(v.community_id);
+      s.total += 1;
+      if (!v.resolved_at) s.unresolved += 1;
+      if (v.opened_at && (!s.last_opened_at || v.opened_at > s.last_opened_at)) {
+        s.last_opened_at = v.opened_at;
+      }
+    }
+
+    const out = (comms || []).map(c => {
+      const s = stats.get(c.id) || { total: 0, last_opened_at: null, unresolved: 0 };
+      return {
+        community_id: c.id,
+        community_name: c.name,
+        imported_count: s.total,
+        unresolved_count: s.unresolved,
+        last_imported_opened_at: s.last_opened_at,
+        has_history: s.total > 0,
+      };
+    });
+    res.json({ communities: out });
+  } catch (err) {
+    console.error('[enforcement.vantaca-history-status]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/sample-letter
 // ---------------------------------------------------------------------------
 // Renders a SAMPLE violation letter PDF using realistic mock data so an
