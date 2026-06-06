@@ -896,6 +896,13 @@ app.use('/api/ar', arRouter);
 const { router: banksRouter } = require('./api/banks');
 app.use('/api/banks', banksRouter);
 
+// Accounts Payable — vendor invoice intake, auto-coding, approval workflow,
+// payment recording. Migration 175 + lib/accounting/ap_engine.js. The PDF
+// upload endpoint runs the full extract -> match community -> find/create
+// vendor -> auto-code GL -> post JE -> queue for approval flow.
+const { router: apRouter } = require('./api/ap');
+app.use('/api/ap', apRouter);
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).
