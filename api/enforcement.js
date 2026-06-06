@@ -5809,6 +5809,103 @@ router.delete('/letter-copy', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/backfill-authority-citations
+// One-click exercise: walks every community, semantic-searches its CC&Rs for
+// the enforcement-authority article, stamps the result on
+// communities.enforcement_authority_citation. Skips communities that already
+// have a value unless ?overwrite=1 is passed.
+//
+// Returns a per-community report so the operator can see what got populated,
+// what fell back to generic, and what needs manual entry.
+//
+// Latency: ~5-15 seconds per community (one embedding + one substrate query +
+// one Claude extraction). Serial processing keeps it simple. Express default
+// timeout is 2 min — at 7 communities × 15s = ~2 min, we may need to bump.
+// ---------------------------------------------------------------------------
+router.post('/backfill-authority-citations', express.json(), async (req, res) => {
+  // Extend timeout to 10 minutes for batch processing
+  if (req.setTimeout) req.setTimeout(600000);
+  if (res.setTimeout) res.setTimeout(600000);
+
+  try {
+    const overwrite = String(req.query.overwrite || req.body?.overwrite || '') === '1';
+    const onlyCommunityId = req.body?.community_id || null;
+
+    let q = supabase.from('communities')
+      .select('id, name, enforcement_authority_citation')
+      .order('name', { ascending: true });
+    if (onlyCommunityId) q = q.eq('id', onlyCommunityId);
+    const { data: comms, error } = await q;
+    if (error) throw error;
+
+    const { lookupEnforcementAuthority } = require('../lib/enforcement/governing_doc_lookup');
+    const results = [];
+
+    for (const c of (comms || [])) {
+      // Skip already-set unless explicitly overwriting
+      if (c.enforcement_authority_citation && !overwrite) {
+        results.push({
+          community_id: c.id,
+          community_name: c.name,
+          status: 'already_set',
+          citation: c.enforcement_authority_citation,
+        });
+        continue;
+      }
+      try {
+        const lookup = await lookupEnforcementAuthority({ communityId: c.id });
+        if (lookup && lookup.reference) {
+          // Update community with the found citation
+          const { error: updErr } = await supabase
+            .from('communities')
+            .update({ enforcement_authority_citation: lookup.reference })
+            .eq('id', c.id);
+          if (updErr) throw updErr;
+          results.push({
+            community_id: c.id,
+            community_name: c.name,
+            status: 'updated',
+            citation: lookup.reference,
+            confidence: lookup.confidence,
+            document_title: lookup.document_title,
+            quote: lookup.quote,
+            previous_value: c.enforcement_authority_citation || null,
+          });
+        } else {
+          results.push({
+            community_id: c.id,
+            community_name: c.name,
+            status: 'not_found',
+            note: 'No enforcement article found in substrate. Falls back to generic Authority Statement.',
+          });
+        }
+      } catch (e) {
+        results.push({
+          community_id: c.id,
+          community_name: c.name,
+          status: 'error',
+          error: e.message,
+        });
+      }
+    }
+
+    const counts = results.reduce((acc, r) => {
+      acc[r.status] = (acc[r.status] || 0) + 1;
+      return acc;
+    }, {});
+
+    res.json({
+      processed: results.length,
+      counts,
+      results,
+    });
+  } catch (err) {
+    console.error('[enforcement.backfill-authority-citations]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/vantaca-history-status
 // Returns per-community count of vantaca_import-sourced violations so the
 // operator can see at a glance which communities have historical priors

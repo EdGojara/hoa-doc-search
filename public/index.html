@@ -13559,6 +13559,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <strong>What's hard-locked</strong> (legal defensibility — Texas §209): statutory cure language, hearing-request block, SCRA disclosure, postmark anchor language, §209.006(b)(1) fee disclosure, §209.0064 fine-schedule reference. Editing these requires an engineering + counsel review — talk to me, don't override.
         </div>
 
+        <!-- AUTHORITY CITATION BACKFILL — one-click exercise that searches
+             each community's CC&Rs for the enforcement-authority article and
+             stamps it on the community profile. Drives the three-claim
+             Authority Statement on every letter. -->
+        <div style="margin-top:10px; padding:8px 10px; background:#eff6ff; border:1px solid #bfdbfe; border-radius:6px; font-size:11px; color:#1e40af;">
+          <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+            <strong>🔍 Enforcement citations</strong>
+            <span style="color:#475569;">— populates Authority Statement on every letter. One-time per community.</span>
+            <button onclick="authCitationBackfill()" id="authCitationBackfillBtn" style="background:#1e40af; color:#fff; border:none; padding:5px 14px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">▶ Run backfill</button>
+          </div>
+          <div id="authCitationBackfillStatus" style="margin-top:6px; font-size:10.5px;"></div>
+          <div id="authCitationBackfillResults" style="margin-top:6px;"></div>
+        </div>
+
         <!-- Open the dedicated Letter edits workspace — moved out of the
              Operations tab so it doesn't crowd the DRV view. Modal stays
              scoped to the community picked above. -->
@@ -18027,6 +18041,56 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       list.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:10px;">Failed: ${e.message}</div>`;
     }
   }
+  // -------------------------------------------------------------------------
+  // Authority citation backfill — searches every community's CC&Rs for the
+  // enforcement-authority article and stamps it on the community profile.
+  // Drives the three-claim Authority Statement on every letter going forward.
+  // -------------------------------------------------------------------------
+  async function authCitationBackfill() {
+    const btn = document.getElementById('authCitationBackfillBtn');
+    const status = document.getElementById('authCitationBackfillStatus');
+    const resultsWrap = document.getElementById('authCitationBackfillResults');
+    if (!btn) return;
+    if (!confirm('Run the backfill across all communities? This searches each community\'s CC&Rs (~10-15s per community). Communities that already have a citation set will be SKIPPED unless you check the overwrite box first.')) return;
+    btn.disabled = true; btn.textContent = '⏳ Processing… (5-10 minutes for 7 communities)';
+    if (status) status.textContent = 'Searching substrate for each community… stay on this page.';
+    if (resultsWrap) resultsWrap.innerHTML = '';
+    try {
+      const r = await fetch('/api/enforcement/backfill-authority-citations', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({}),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (status) status.textContent = `Done — ${j.processed} communities. updated: ${j.counts.updated || 0} · already_set: ${j.counts.already_set || 0} · not_found: ${j.counts.not_found || 0} · errors: ${j.counts.error || 0}`;
+      if (resultsWrap) {
+        resultsWrap.innerHTML = '<table style="width:100%; font-size:10.5px; border-collapse:collapse; margin-top:6px;">' +
+          '<thead><tr style="background:#fff; color:#475569; text-align:left;"><th style="padding:4px 6px; border-bottom:1px solid #cbd5e1;">Community</th><th style="padding:4px 6px; border-bottom:1px solid #cbd5e1;">Status</th><th style="padding:4px 6px; border-bottom:1px solid #cbd5e1;">Citation</th><th style="padding:4px 6px; border-bottom:1px solid #cbd5e1;">Confidence</th><th style="padding:4px 6px; border-bottom:1px solid #cbd5e1;">Quote / Note</th></tr></thead>' +
+          '<tbody>' +
+          (j.results || []).map(r => {
+            const statusColor = r.status === 'updated' ? '#16a34a' : r.status === 'already_set' ? '#0B1D34' : r.status === 'not_found' ? '#b45309' : '#b91c1c';
+            const cite = r.citation || (r.note ? '—' : '—');
+            const conf = r.confidence ? `<span style="color:${r.confidence === 'high' ? '#16a34a' : r.confidence === 'medium' ? '#b45309' : '#b91c1c'}; font-weight:600;">${r.confidence}</span>` : '—';
+            const note = r.quote ? `<span style="font-style:italic;">${(r.quote || '').slice(0, 140).replace(/</g, '&lt;')}…</span>` : (r.note || r.error || '—');
+            return `<tr style="background:#fff; border-bottom:1px solid #f1f5f9;">
+              <td style="padding:4px 6px; font-weight:600;">${(r.community_name || '').replace(/</g, '&lt;')}</td>
+              <td style="padding:4px 6px; color:${statusColor}; font-weight:600;">${r.status}</td>
+              <td style="padding:4px 6px;"><code>${(cite || '').replace(/</g, '&lt;')}</code></td>
+              <td style="padding:4px 6px;">${conf}</td>
+              <td style="padding:4px 6px; color:#475569;">${note}</td>
+            </tr>`;
+          }).join('') +
+          '</tbody></table>' +
+          '<div style="margin-top:8px; font-size:10.5px; color:#475569;">Re-run anytime. Communities with status=<strong>not_found</strong> can be populated manually on the Community Profile.</div>';
+      }
+    } catch (e) {
+      if (status) { status.textContent = 'Failed: ' + e.message; status.style.color = '#b91c1c'; }
+    } finally {
+      btn.disabled = false; btn.textContent = '▶ Run backfill';
+    }
+  }
+
   function vantacaHistoryToggle() {
     const panel = document.getElementById('vantacaHistoryPanel');
     const btn   = document.getElementById('vantacaHistoryToggleBtn');
