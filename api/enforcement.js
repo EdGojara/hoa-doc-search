@@ -1251,6 +1251,7 @@ router.post('/generate-letter', express.json(), async (req, res) => {
         const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
         const auto = await lookupGoverningDoc({
           communityId:         violation.community_id,
+          categorySlug:        violation.enforcement_categories && violation.enforcement_categories.slug,
           categoryLabel:       violation.enforcement_categories && violation.enforcement_categories.label,
           categoryDescription: violation.enforcement_categories && violation.enforcement_categories.description,
           aiDescription:       observation && observation.ai_description,
@@ -1751,7 +1752,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
 
         const [vRes, oRes, pRes, cRes] = await Promise.all([
           supabase.from('violations')
-            .select('id, primary_category_id, current_stage, cure_period_ends_at, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(label, description)')
+            .select('id, primary_category_id, current_stage, cure_period_ends_at, opened_at, board_priority_at_open, opened_from_observation_id, enforcement_categories(slug, label, description)')
             .in('id', violationIds.length ? violationIds : ['00000000-0000-0000-0000-000000000000']),
           supabase.from('property_observations')
             .select('id, ai_description, severity, created_at, inspection_photo_id, inspection_photos(captured_at, storage_path, paired_wide_photo_id)')
@@ -1830,6 +1831,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
               const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
               const auto = await lookupGoverningDoc({
                 communityId:         communityIdForGroup,
+                categorySlug:        v.enforcement_categories && v.enforcement_categories.slug,
                 categoryLabel:       v.enforcement_categories && v.enforcement_categories.label,
                 categoryDescription: v.enforcement_categories && v.enforcement_categories.description,
                 aiDescription:       o && o.ai_description,
@@ -3684,7 +3686,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         .select('street_address, unit, city, state, zip, lot_number, owner_name, owner_mailing_address')
         .eq('property_id', violation.property_id).maybeSingle(),
       supabase.from('enforcement_categories')
-        .select('label, description')
+        .select('slug, label, description')
         .eq('id', violation.primary_category_id).maybeSingle(),
       supabase.from('communities')
         .select('name, legal_name, letter_sender_name, letter_sender_title, enforcement_authority_citation, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209')
@@ -3742,6 +3744,7 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
         const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
         const auto = await lookupGoverningDoc({
           communityId:         communityId,
+          categorySlug:        catRow && catRow.slug,
           categoryLabel:       catRow && catRow.label,
           categoryDescription: catRow && catRow.description,
           aiDescription:       obsRow && obsRow.ai_description,

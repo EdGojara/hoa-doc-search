@@ -452,7 +452,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                       .maybeSingle();
                     const { data: catRow } = await supabase
                       .from('enforcement_categories')
-                      .select('label, description')
+                      .select('slug, label, description')
                       .eq('id', categoryId)
                       .maybeSingle();
                     const { data: commRow } = await supabase
@@ -489,6 +489,7 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
                         const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
                         const auto = await lookupGoverningDoc({
                           communityId:         insp.community_id,
+                          categorySlug:        catRow && catRow.slug,
                           categoryLabel:       catRow && catRow.label,
                           categoryDescription: catRow && catRow.description,
                           aiDescription:       result.description,
@@ -2442,7 +2443,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
         .maybeSingle();
       const { data: catRow } = await supabase
         .from('enforcement_categories')
-        .select('label, description')
+        .select('slug, label, description')
         .eq('id', obs.category_id)
         .maybeSingle();
       const { data: commRow } = await supabase
@@ -2475,6 +2476,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
           const { lookupGoverningDoc } = require('../lib/enforcement/governing_doc_lookup');
           const auto = await lookupGoverningDoc({
             communityId:         obs.community_id,
+            categorySlug:        catRow && catRow.slug,
             categoryLabel:       catRow && catRow.label,
             categoryDescription: catRow && catRow.description,
             aiDescription:       obs.ai_description,
