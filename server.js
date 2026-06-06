@@ -890,6 +890,12 @@ app.use('/api/books', booksRouter);
 const { router: arRouter } = require('./api/ar');
 app.use('/api/ar', arRouter);
 
+// Banks master — management-company-level bank registry. bank_accounts
+// FK to this table. Migration 173. Bedrock's three banks (First Citizens,
+// NewFirst, Columbia transitioning) seeded by the migration.
+const { router: banksRouter } = require('./api/banks');
+app.use('/api/banks', banksRouter);
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).
