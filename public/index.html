@@ -13553,27 +13553,81 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </span>
         </div>
         <div style="margin-top:10px; padding:8px 10px; background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; font-size:10.5px; color:#92400e; line-height:1.5;">
-          <strong>What you can edit:</strong> sender name, sender title, cure days per stage, admin fees per stage, payment URL, pay-to address. Live from the community profile, so a change there shows up here on the next Preview click. <strong>Plus</strong> you can rewrite the title + opening + closing paragraphs of each stage in the editor below.<br>
+          <strong>What you can edit:</strong> sender name, sender title, cure days per stage, admin fees per stage, payment URL, pay-to address. Live from the community profile, so a change there shows up here on the next Preview click. <strong>Plus</strong> you can rewrite the title + opening + closing paragraphs in the Letter edits workspace.<br>
           <strong>What's hard-locked</strong> (legal defensibility — Texas §209): statutory cure language, hearing-request block, SCRA disclosure, postmark anchor language, §209.006(b)(1) fee disclosure, §209.0064 fine-schedule reference. Editing these requires an engineering + counsel review — talk to me, don't override.
         </div>
 
-        <!-- COPY EDITOR — per-community per-stage editable blocks -->
-        <div style="margin-top:14px; border-top:2px solid #e2e8f0; padding-top:14px;">
-          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-            <div style="font-weight:700; color:#0B1D34; font-size:13px;">✏️ Edit copy <span style="color:#64748b; font-weight:400; font-size:11px;">— per community, per stage</span></div>
-            <div style="display:flex; gap:6px; align-items:center;">
-              <label style="font-size:11px; color:#64748b;">Stage:</label>
-              <select id="letterCopyStage" onchange="letterCopyLoad()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
-                <option value="courtesy_1">Courtesy 1</option>
-                <option value="courtesy_2">Courtesy 2</option>
-                <option value="certified_209">Certified §209</option>
-                <option value="fine_assessed">Fine assessed</option>
-              </select>
-            </div>
-          </div>
-          <div id="letterCopyStatus" style="font-size:11px; color:#64748b; margin-bottom:8px; min-height:14px;">Pick a community above + a stage to edit.</div>
+        <!-- Open the dedicated Letter edits workspace — moved out of the
+             Operations tab so it doesn't crowd the DRV view. Modal stays
+             scoped to the community picked above. -->
+        <div style="margin-top:14px; padding-top:12px; border-top:2px solid #e2e8f0; display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+          <button onclick="letterEditsOpen()" style="background:#0B1D34; color:#fff; border:none; padding:9px 18px; border-radius:6px; font-size:12.5px; font-weight:600; cursor:pointer;">✏️ Open Letter edits workspace →</button>
+          <span style="font-size:11px; color:#64748b;">Edit title · opening · closing · signature · footer for each stage, side-by-side with what's rendering today.</span>
+        </div>
 
-          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px;">
+      </div>
+    </div>
+
+    <!-- LETTER EDITS WORKSPACE — full-screen overlay -->
+    <style>
+      #letterEditsOverlay { position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1100; display:none; align-items:flex-start; justify-content:center; overflow-y:auto; padding:24px 16px; }
+      #letterEditsOverlay.is-open { display:flex; }
+      .le-shell { background:#f8fafc; border-radius:12px; box-shadow:0 20px 60px rgba(0,0,0,0.25); width:min(1100px, 100%); max-width:1100px; overflow:hidden; display:flex; flex-direction:column; max-height:calc(100vh - 48px); }
+      .le-header { background:#0B1D34; color:#fff; padding:14px 20px; display:flex; align-items:center; gap:14px; flex-wrap:wrap; }
+      .le-header h2 { margin:0; font-size:16px; font-weight:700; letter-spacing:0.02em; }
+      .le-header .le-comm { font-size:12px; color:#cbd5e1; }
+      .le-tabs { display:flex; gap:0; background:#fff; border-bottom:1px solid #e2e8f0; padding:0 20px; flex-wrap:wrap; }
+      .le-tab { background:transparent; border:none; padding:12px 16px; font-size:12.5px; font-weight:700; color:#64748b; cursor:pointer; border-bottom:3px solid transparent; }
+      .le-tab.is-active { color:#0B1D34; border-bottom-color:#D4AF37; }
+      .le-tab .le-tab-dot { display:inline-block; width:7px; height:7px; border-radius:50%; background:#cbd5e1; margin-left:6px; vertical-align:middle; }
+      .le-tab.has-override .le-tab-dot { background:#f59e0b; }
+      .le-body { flex:1; overflow-y:auto; padding:18px 20px; background:#fff; }
+      .lc-compare { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px; }
+      @media (max-width: 720px) { .lc-compare { grid-template-columns: 1fr; } }
+      .lc-pane { display:flex; flex-direction:column; }
+      .lc-pane-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; }
+      .lc-pane-label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; }
+      .lc-current { background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; padding:8px 10px; font-size:11.5px; color:#0B1D34; line-height:1.5; white-space:pre-wrap; min-height:60px; flex:1; }
+      .lc-current.is-override { background:#fff7ed; border-color:#fed7aa; }
+      .lc-input { width:100%; box-sizing:border-box; font-size:11.5px; padding:8px 10px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5; flex:1; }
+      .lc-block-row { padding:10px 0; border-bottom:1px solid #f1f5f9; }
+      .lc-block-title { font-size:12.5px; font-weight:700; color:#0B1D34; margin-bottom:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      .lc-status-chip { font-size:10px; padding:1px 7px; border-radius:99px; font-weight:600; }
+      .lc-accept-btn { background:#16a34a; color:#fff; border:none; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; }
+      .lc-accept-btn:disabled { background:#cbd5e1; cursor:not-allowed; }
+      .lc-revert-btn { background:#fff; color:#b45309; border:1px solid #fcd34d; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; }
+      .lc-row-actions { display:flex; gap:6px; margin-top:6px; align-items:center; }
+      .lc-row-status { font-size:10.5px; color:#64748b; margin-left:6px; }
+    </style>
+    <div id="letterEditsOverlay" role="dialog" aria-modal="true" aria-label="Letter edits workspace">
+      <div class="le-shell" onclick="event.stopPropagation();">
+        <div class="le-header">
+          <h2>✉️ Letter edits</h2>
+          <div class="le-comm">Editing for: <strong id="letterEditsCommName" style="color:#fff;">—</strong></div>
+          <div style="margin-left:auto; display:flex; gap:8px; align-items:center;">
+            <select id="letterEditsCommunityPicker" onchange="letterEditsCommunityChanged()" style="font-size:12px; padding:5px 8px; border-radius:6px; border:1px solid #475569; background:#fff; color:#0B1D34;"></select>
+            <button onclick="letterCopyPreviewCurrent()" style="background:#fff; color:#0B1D34; border:none; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">📄 Preview</button>
+            <button onclick="letterEditsClose()" style="background:transparent; color:#fff; border:1px solid #475569; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✕ Close</button>
+          </div>
+        </div>
+        <div class="le-tabs">
+          <button class="le-tab is-active" data-stage="courtesy_1"     onclick="letterEditsSwitchStage('courtesy_1')">Courtesy 1 <span class="le-tab-dot"></span></button>
+          <button class="le-tab"            data-stage="courtesy_2"     onclick="letterEditsSwitchStage('courtesy_2')">Courtesy 2 <span class="le-tab-dot"></span></button>
+          <button class="le-tab"            data-stage="certified_209"  onclick="letterEditsSwitchStage('certified_209')">Certified §209 <span class="le-tab-dot"></span></button>
+          <button class="le-tab"            data-stage="fine_assessed"  onclick="letterEditsSwitchStage('fine_assessed')">Fine assessed <span class="le-tab-dot"></span></button>
+        </div>
+        <div class="le-body">
+          <!-- Stage selector — hidden, kept as the source of truth for letterCopyLoad() -->
+          <select id="letterCopyStage" style="display:none;">
+            <option value="courtesy_1">Courtesy 1</option>
+            <option value="courtesy_2">Courtesy 2</option>
+            <option value="certified_209">Certified §209</option>
+            <option value="fine_assessed">Fine assessed</option>
+          </select>
+
+          <div id="letterCopyStatus" style="font-size:11px; color:#64748b; margin-bottom:8px; min-height:14px;">Loading…</div>
+
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:14px;">
             <div style="font-size:10.5px; color:#475569; line-height:1.5;">
               <strong>Placeholders</strong> — paste these into any block and they'll fill in at render time:<br>
               <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{community_name}}</code>
@@ -13589,25 +13643,6 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{sender_title}}</code>
             </div>
           </div>
-
-          <style>
-            .lc-compare { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px; }
-            @media (max-width: 720px) { .lc-compare { grid-template-columns: 1fr; } }
-            .lc-pane { display:flex; flex-direction:column; }
-            .lc-pane-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; }
-            .lc-pane-label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; }
-            .lc-current { background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; padding:8px 10px; font-size:11.5px; color:#0B1D34; line-height:1.5; white-space:pre-wrap; min-height:60px; flex:1; }
-            .lc-current.is-override { background:#fff7ed; border-color:#fed7aa; }
-            .lc-input { width:100%; box-sizing:border-box; font-size:11.5px; padding:8px 10px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5; flex:1; }
-            .lc-block-row { padding:10px 0; border-bottom:1px solid #f1f5f9; }
-            .lc-block-title { font-size:12.5px; font-weight:700; color:#0B1D34; margin-bottom:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-            .lc-status-chip { font-size:10px; padding:1px 7px; border-radius:99px; font-weight:600; }
-            .lc-accept-btn { background:#16a34a; color:#fff; border:none; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; }
-            .lc-accept-btn:disabled { background:#cbd5e1; cursor:not-allowed; }
-            .lc-revert-btn { background:#fff; color:#b45309; border:1px solid #fcd34d; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; }
-            .lc-row-actions { display:flex; gap:6px; margin-top:6px; align-items:center; }
-            .lc-row-status { font-size:10.5px; color:#64748b; margin-left:6px; }
-          </style>
 
           <!-- Title -->
           <div class="lc-block-row">
@@ -13710,9 +13745,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             </div>
           </div>
 
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:10px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:14px; border-top:2px solid #e2e8f0;">
             <button onclick="letterCopyRevertAll()" style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">↺ Revert all blocks to Bedrock default</button>
-            <button onclick="letterCopyPreviewCurrent()" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">📄 Preview this stage</button>
             <span style="font-size:10.5px; color:#64748b; margin-left:auto;">Tip: accept blocks individually so you can compare one change at a time.</span>
           </div>
         </div>
@@ -17549,6 +17583,96 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   let _letterCopyCurrentDefaults = { title: '', opening_paragraph: '', closing_paragraph: '', signature_block: '', footer_note: '' };
   let _letterCopyCurrentOverrides = {};
 
+  // -------------------------------------------------------------------------
+  // Letter edits workspace — full-screen overlay containing the per-community
+  // per-stage copy editor. Opens on top of whatever the operator was on,
+  // closes back to the same scroll position. Stage tabs swap which stage is
+  // being edited; community picker syncs to/from the main Letter format card.
+  // -------------------------------------------------------------------------
+  function letterEditsOpen() {
+    const overlay = document.getElementById('letterEditsOverlay');
+    if (!overlay) return;
+    // Sync the workspace's community picker with the Letter format card's
+    // pick (so opening the workspace starts on the community the operator
+    // was already inspecting).
+    const mainSel = document.getElementById('letterFormatCommunity');
+    const wsSel = document.getElementById('letterEditsCommunityPicker');
+    if (mainSel && wsSel) {
+      // Mirror the options
+      wsSel.innerHTML = mainSel.innerHTML;
+      wsSel.value = mainSel.value;
+      const opt = wsSel.options[wsSel.selectedIndex];
+      const nameEl = document.getElementById('letterEditsCommName');
+      if (nameEl) nameEl.textContent = (opt && opt.textContent) || '—';
+    }
+    // Default stage = courtesy_1 unless the user has previously picked one
+    const savedStage = sessionStorage.getItem('letterEditsStage') || 'courtesy_1';
+    letterEditsSwitchStage(savedStage);
+    overlay.classList.add('is-open');
+    document.body.style.overflow = 'hidden';
+    // Backdrop click closes
+    overlay.onclick = (e) => { if (e.target === overlay) letterEditsClose(); };
+    // Esc closes
+    document.addEventListener('keydown', _letterEditsEscHandler);
+    // Refresh tab badges (showing dots when any block is overridden)
+    letterEditsRefreshTabBadges();
+  }
+  function letterEditsClose() {
+    const overlay = document.getElementById('letterEditsOverlay');
+    if (!overlay) return;
+    overlay.classList.remove('is-open');
+    document.body.style.overflow = '';
+    document.removeEventListener('keydown', _letterEditsEscHandler);
+  }
+  function _letterEditsEscHandler(e) { if (e.key === 'Escape') letterEditsClose(); }
+
+  function letterEditsCommunityChanged() {
+    // Mirror the change back to the main Letter format card so they stay in
+    // sync (and so vantacaHistoryLoad / catEditorLoad pick up the new
+    // community when you close out of the workspace).
+    const wsSel = document.getElementById('letterEditsCommunityPicker');
+    const mainSel = document.getElementById('letterFormatCommunity');
+    if (!wsSel) return;
+    if (mainSel) {
+      mainSel.value = wsSel.value;
+      try { sessionStorage.setItem('letterFormatCommunity', wsSel.value); } catch (_) {}
+    }
+    const opt = wsSel.options[wsSel.selectedIndex];
+    const nameEl = document.getElementById('letterEditsCommName');
+    if (nameEl) nameEl.textContent = (opt && opt.textContent) || '—';
+    letterCopyLoad();
+  }
+
+  function letterEditsSwitchStage(stage) {
+    const stageSel = document.getElementById('letterCopyStage');
+    if (stageSel) stageSel.value = stage;
+    try { sessionStorage.setItem('letterEditsStage', stage); } catch (_) {}
+    // Update tab visual state
+    document.querySelectorAll('.le-tab').forEach(btn => {
+      btn.classList.toggle('is-active', btn.dataset.stage === stage);
+    });
+    letterCopyLoad();
+  }
+
+  // Quick check: are any blocks overridden for any stage at this community?
+  // Lights up the per-stage tab dot so the operator can see at a glance
+  // which stages have been customized.
+  async function letterEditsRefreshTabBadges() {
+    const wsSel = document.getElementById('letterEditsCommunityPicker');
+    const communityId = wsSel && wsSel.value;
+    if (!communityId) return;
+    const stages = ['courtesy_1','courtesy_2','certified_209','fine_assessed'];
+    for (const stage of stages) {
+      try {
+        const r = await fetch(`/api/enforcement/letter-copy?community_id=${encodeURIComponent(communityId)}&stage=${encodeURIComponent(stage)}`);
+        const j = await r.json();
+        const hasOverride = j && j.overrides && Object.keys(j.overrides).length > 0;
+        const btn = document.querySelector(`.le-tab[data-stage="${stage}"]`);
+        if (btn) btn.classList.toggle('has-override', !!hasOverride);
+      } catch (_) {}
+    }
+  }
+
   async function letterCopyLoad() {
     const sel = document.getElementById('letterFormatCommunity');
     const stageSel = document.getElementById('letterCopyStage');
@@ -17663,6 +17787,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const s = document.getElementById(letterCopyRowStatusId(k));
         if (s) s.textContent = '';
       });
+
+      // Refresh the per-stage tab dots so the workspace shows which stages
+      // have any override at this community
+      try { letterEditsRefreshTabBadges(); } catch (_) {}
       if (status) status.textContent = `Editing ${stage.replace(/_/g, ' ')} for community.`;
     } catch (e) {
       if (status) status.textContent = 'Failed to load: ' + e.message;
