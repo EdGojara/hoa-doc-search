@@ -13479,8 +13479,82 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </span>
         </div>
         <div style="margin-top:10px; padding:8px 10px; background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; font-size:10.5px; color:#92400e; line-height:1.5;">
-          <strong>What you can edit:</strong> sender name, sender title, cure days per stage, admin fees per stage, payment URL, pay-to address. Live from the community profile, so a change there shows up here on the next Preview click.<br>
+          <strong>What you can edit:</strong> sender name, sender title, cure days per stage, admin fees per stage, payment URL, pay-to address. Live from the community profile, so a change there shows up here on the next Preview click. <strong>Plus</strong> you can rewrite the title + opening + closing paragraphs of each stage in the editor below.<br>
           <strong>What's hard-locked</strong> (legal defensibility — Texas §209): statutory cure language, hearing-request block, SCRA disclosure, postmark anchor language, §209.006(b)(1) fee disclosure, §209.0064 fine-schedule reference. Editing these requires an engineering + counsel review — talk to me, don't override.
+        </div>
+
+        <!-- COPY EDITOR — per-community per-stage editable blocks -->
+        <div style="margin-top:14px; border-top:2px solid #e2e8f0; padding-top:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+            <div style="font-weight:700; color:#0B1D34; font-size:13px;">✏️ Edit copy <span style="color:#64748b; font-weight:400; font-size:11px;">— per community, per stage</span></div>
+            <div style="display:flex; gap:6px; align-items:center;">
+              <label style="font-size:11px; color:#64748b;">Stage:</label>
+              <select id="letterCopyStage" onchange="letterCopyLoad()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
+                <option value="courtesy_1">Courtesy 1</option>
+                <option value="courtesy_2">Courtesy 2</option>
+                <option value="certified_209">Certified §209</option>
+                <option value="fine_assessed">Fine assessed</option>
+              </select>
+            </div>
+          </div>
+          <div id="letterCopyStatus" style="font-size:11px; color:#64748b; margin-bottom:8px; min-height:14px;">Pick a community above + a stage to edit.</div>
+
+          <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px; margin-bottom:8px;">
+            <div style="font-size:10.5px; color:#475569; line-height:1.5;">
+              <strong>Placeholders</strong> — paste these into any block and they'll fill in at render time:<br>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{community_name}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{community_legal_name}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{cure_days}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{cure_by_date}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{property_address}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{category_label}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{phone}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{email}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{owner_salutation}}</code>
+            </div>
+          </div>
+
+          <!-- Title -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Title</label>
+              <span id="letterCopyTitleStatus" style="font-size:10px; color:#64748b;"></span>
+            </div>
+            <input id="letterCopyTitle" type="text" maxlength="200" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit;" placeholder="Loading…">
+            <div style="font-size:10px; color:#94a3b8; margin-top:2px;">Default: <span id="letterCopyTitleDefault" style="font-style:italic;">—</span></div>
+          </div>
+
+          <!-- Opening paragraph -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Opening paragraph</label>
+              <span id="letterCopyOpeningStatus" style="font-size:10px; color:#64748b;"></span>
+            </div>
+            <textarea id="letterCopyOpening" maxlength="4000" rows="5" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Loading…"></textarea>
+            <details style="margin-top:3px;">
+              <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
+              <div id="letterCopyOpeningDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5;">—</div>
+            </details>
+          </div>
+
+          <!-- Closing paragraph -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Closing paragraph</label>
+              <span id="letterCopyClosingStatus" style="font-size:10px; color:#64748b;"></span>
+            </div>
+            <textarea id="letterCopyClosing" maxlength="4000" rows="5" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Loading…"></textarea>
+            <details style="margin-top:3px;">
+              <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
+              <div id="letterCopyClosingDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5;">—</div>
+            </details>
+          </div>
+
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:8px; border-top:1px solid #f1f5f9;">
+            <button onclick="letterCopySave()" id="letterCopySaveBtn" style="background:#16a34a; color:#fff; border:none; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">💾 Save overrides</button>
+            <button onclick="letterCopyRevertAll()" style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">↺ Revert all to default</button>
+            <button onclick="letterCopyPreviewCurrent()" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">📄 Preview this stage</button>
+          </div>
         </div>
       </div>
     </div>
@@ -17256,6 +17330,143 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function letterFormatCommunityChanged() {
     const sel = document.getElementById('letterFormatCommunity');
     if (sel && sel.value) sessionStorage.setItem('letterFormatCommunity', sel.value);
+    // Also re-load the copy editor for the new community
+    letterCopyLoad();
+  }
+
+  // -------------------------------------------------------------------------
+  // Letter Copy editor — fetches current overrides + defaults, lets the
+  // operator edit/save/revert title + opening + closing per stage per
+  // community. Placeholder substitution happens at render time on the server.
+  // -------------------------------------------------------------------------
+  let _letterCopyCurrentDefaults = { title: '', opening_paragraph: '', closing_paragraph: '' };
+  let _letterCopyCurrentOverrides = {};
+
+  async function letterCopyLoad() {
+    const sel = document.getElementById('letterFormatCommunity');
+    const stageSel = document.getElementById('letterCopyStage');
+    if (!sel || !stageSel) return;
+    const communityId = sel.value || '';
+    const stage = stageSel.value;
+    const status = document.getElementById('letterCopyStatus');
+    if (!communityId) {
+      if (status) status.textContent = 'Pick a community above to load its overrides.';
+      return;
+    }
+    if (status) status.textContent = 'Loading…';
+    try {
+      const r = await fetch(`/api/enforcement/letter-copy?community_id=${encodeURIComponent(communityId)}&stage=${encodeURIComponent(stage)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _letterCopyCurrentDefaults = j.defaults || {};
+      _letterCopyCurrentOverrides = j.overrides || {};
+      const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || ''; };
+      setVal('letterCopyTitle',   j.overrides.title          || j.defaults.title);
+      setVal('letterCopyOpening', j.overrides.opening_paragraph || j.defaults.opening_paragraph);
+      setVal('letterCopyClosing', j.overrides.closing_paragraph || j.defaults.closing_paragraph);
+      setText('letterCopyTitleDefault',   j.defaults.title);
+      setText('letterCopyOpeningDefault', j.defaults.opening_paragraph);
+      setText('letterCopyClosingDefault', j.defaults.closing_paragraph);
+      const mark = (id, isOverride) => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.textContent = isOverride ? '✏️ overridden for this community' : '✓ using default';
+          el.style.color = isOverride ? '#b45309' : '#16a34a';
+        }
+      };
+      mark('letterCopyTitleStatus',   !!j.overrides.title);
+      mark('letterCopyOpeningStatus', !!j.overrides.opening_paragraph);
+      mark('letterCopyClosingStatus', !!j.overrides.closing_paragraph);
+      if (status) status.textContent = `Editing ${stage.replace(/_/g, ' ')} for community.`;
+    } catch (e) {
+      if (status) status.textContent = 'Failed to load: ' + e.message;
+    }
+  }
+
+  async function _letterCopyPut(block_key, body) {
+    const sel = document.getElementById('letterFormatCommunity');
+    const stageSel = document.getElementById('letterCopyStage');
+    const communityId = sel && sel.value;
+    const stage = stageSel && stageSel.value;
+    if (!communityId || !stage) throw new Error('pick a community and stage');
+    const r = await fetch('/api/enforcement/letter-copy', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ community_id: communityId, stage, block_key, body, user_name: 'Operator' }),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+  }
+
+  async function _letterCopyDelete(block_key) {
+    const sel = document.getElementById('letterFormatCommunity');
+    const stageSel = document.getElementById('letterCopyStage');
+    const communityId = sel && sel.value;
+    const stage = stageSel && stageSel.value;
+    if (!communityId || !stage) return;
+    await fetch('/api/enforcement/letter-copy', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ community_id: communityId, stage, block_key }),
+    });
+  }
+
+  async function letterCopySave() {
+    const btn = document.getElementById('letterCopySaveBtn');
+    const status = document.getElementById('letterCopyStatus');
+    const titleVal   = (document.getElementById('letterCopyTitle')   || {}).value || '';
+    const openingVal = (document.getElementById('letterCopyOpening') || {}).value || '';
+    const closingVal = (document.getElementById('letterCopyClosing') || {}).value || '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+    try {
+      // For each block: if the value matches the default exactly, DELETE the
+      // override (revert). Otherwise PUT it. Keeps the table small + makes
+      // "default" the visible state when nothing's been customized.
+      const tasks = [];
+      if (titleVal.trim() === (_letterCopyCurrentDefaults.title || '').trim()) {
+        tasks.push(_letterCopyDelete('title'));
+      } else if (titleVal.trim()) {
+        tasks.push(_letterCopyPut('title', titleVal));
+      }
+      if (openingVal.trim() === (_letterCopyCurrentDefaults.opening_paragraph || '').trim()) {
+        tasks.push(_letterCopyDelete('opening_paragraph'));
+      } else if (openingVal.trim()) {
+        tasks.push(_letterCopyPut('opening_paragraph', openingVal));
+      }
+      if (closingVal.trim() === (_letterCopyCurrentDefaults.closing_paragraph || '').trim()) {
+        tasks.push(_letterCopyDelete('closing_paragraph'));
+      } else if (closingVal.trim()) {
+        tasks.push(_letterCopyPut('closing_paragraph', closingVal));
+      }
+      await Promise.all(tasks);
+      if (status) { status.textContent = '✓ Saved. Reloading…'; status.style.color = '#16a34a'; }
+      await letterCopyLoad();
+    } catch (e) {
+      if (status) { status.textContent = 'Save failed: ' + e.message; status.style.color = '#b91c1c'; }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '💾 Save overrides'; }
+    }
+  }
+
+  async function letterCopyRevertAll() {
+    if (!confirm('Revert title + opening + closing back to Bedrock defaults for this stage at this community?')) return;
+    try {
+      await Promise.all([
+        _letterCopyDelete('title'),
+        _letterCopyDelete('opening_paragraph'),
+        _letterCopyDelete('closing_paragraph'),
+      ]);
+      await letterCopyLoad();
+    } catch (e) {
+      alert('Revert failed: ' + e.message);
+    }
+  }
+
+  function letterCopyPreviewCurrent() {
+    const stageSel = document.getElementById('letterCopyStage');
+    if (!stageSel) return;
+    letterFormatPreview(stageSel.value);
   }
   function letterFormatPreview(stage) {
     const sel = document.getElementById('letterFormatCommunity');

@@ -1877,7 +1877,11 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
           });
         }
 
-        // Generate the bundle PDF
+        // Generate the bundle PDF — pull per-community editable copy
+        // overrides (title, opening, closing) so the rendered letter
+        // reflects whatever the operator saved for this stage.
+        const { loadOverrides: _loadCopyOverrides } = require('../lib/enforcement/letter_copy');
+        const _bundleCopyOverrides = await _loadCopyOverrides(supabase, communityIdForGroup, stage);
         const pdfBuffer = await renderViolationLetterBundlePdf({
           property: {
             street_address: pRow.street_address, unit: pRow.unit,
@@ -1889,6 +1893,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
           letter_date: new Date(), // placeholder — Mail Queue lock-and-batch re-stamps with postmark
           wide_photo_buffer: widePhotoBuffer,
           violations: violationsCtx,
+          copy_overrides: _bundleCopyOverrides,
           options: {
             sender_name:  community.letter_sender_name,
             sender_title: community.letter_sender_title,
@@ -5520,6 +5525,92 @@ router.post('/postcard-reminders/process', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/letter-copy?community_id=X&stage=Y
+// ---------------------------------------------------------------------------
+// Returns the editable copy blocks for a (community, stage) pair, plus the
+// canonical defaults so the editor can show "you're overriding [default]
+// with [your version]" side-by-side. If no community_id supplied, returns
+// just the defaults so the UI can render an empty editor.
+//
+// Response shape:
+//   {
+//     community_id, stage,
+//     defaults: { title, opening_paragraph, closing_paragraph },
+//     overrides: { title?, opening_paragraph?, closing_paragraph? }
+//   }
+// ---------------------------------------------------------------------------
+router.get('/letter-copy', async (req, res) => {
+  try {
+    const stage = String(req.query.stage || '');
+    const community_id = req.query.community_id ? String(req.query.community_id) : null;
+    const { VALID_STAGES, DEFAULTS, loadOverrides } = require('../lib/enforcement/letter_copy');
+    if (!VALID_STAGES.includes(stage)) {
+      return res.status(400).json({ error: `invalid stage; must be one of ${VALID_STAGES.join(', ')}` });
+    }
+    const defaults = { ...DEFAULTS[stage] };
+    const overrides = community_id ? await loadOverrides(supabase, community_id, stage) : {};
+    res.json({ community_id, stage, defaults, overrides });
+  } catch (err) {
+    console.error('[enforcement.letter-copy.get] failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/enforcement/letter-copy — upsert a single block override
+// Body: { community_id, stage, block_key, body }
+// ---------------------------------------------------------------------------
+router.put('/letter-copy', express.json(), async (req, res) => {
+  try {
+    const { community_id, stage, block_key, body, user_name } = req.body || {};
+    const { isValidStage, isValidBlock } = require('../lib/enforcement/letter_copy');
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!isValidStage(stage)) return res.status(400).json({ error: 'invalid stage' });
+    if (!isValidBlock(block_key)) return res.status(400).json({ error: 'invalid block_key' });
+    if (typeof body !== 'string' || !body.trim()) return res.status(400).json({ error: 'body_required' });
+    if (body.length > 4000) return res.status(400).json({ error: 'body_too_long (4000 char max)' });
+
+    const { data, error } = await supabase.from('letter_copy_overrides')
+      .upsert({
+        community_id, stage, block_key, body: body.trim(),
+        updated_at: new Date().toISOString(),
+        updated_by_name: user_name || null,
+      }, { onConflict: 'community_id,stage,block_key' })
+      .select('*').single();
+    if (error) throw error;
+    res.json({ ok: true, override: data });
+  } catch (err) {
+    console.error('[enforcement.letter-copy.put] failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err), detail: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// DELETE /api/enforcement/letter-copy — revert a block to default
+// Body: { community_id, stage, block_key }
+// ---------------------------------------------------------------------------
+router.delete('/letter-copy', express.json(), async (req, res) => {
+  try {
+    const { community_id, stage, block_key } = req.body || {};
+    const { isValidStage, isValidBlock } = require('../lib/enforcement/letter_copy');
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!isValidStage(stage)) return res.status(400).json({ error: 'invalid stage' });
+    if (!isValidBlock(block_key)) return res.status(400).json({ error: 'invalid block_key' });
+
+    const { error } = await supabase.from('letter_copy_overrides')
+      .delete()
+      .eq('community_id', community_id)
+      .eq('stage', stage)
+      .eq('block_key', block_key);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[enforcement.letter-copy.delete] failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err), detail: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/sample-letter
 // ---------------------------------------------------------------------------
 // Renders a SAMPLE violation letter PDF using realistic mock data so an
@@ -5613,6 +5704,12 @@ router.get('/sample-letter', async (req, res) => {
     const violationsArr = isMulti ? [baseViolation, secondMock] : [baseViolation];
 
     const { renderViolationLetterBundlePdf } = require('../lib/enforcement/violation_letter');
+    const { loadOverrides } = require('../lib/enforcement/letter_copy');
+
+    // Pull per-community copy overrides so the sample reflects exactly what
+    // a real letter would render. Falls back silently to defaults if the
+    // table doesn't exist yet (migration 178 not applied).
+    const copyOverrides = await loadOverrides(supabase, community.id, stage);
 
     const pdfBuffer = await renderViolationLetterBundlePdf({
       property: sampleProperty,
@@ -5622,6 +5719,7 @@ router.get('/sample-letter', async (req, res) => {
       letter_date: new Date(),
       wide_photo_buffer: null,
       violations: violationsArr,
+      copy_overrides: copyOverrides,
       options: {
         sender_name:  community.letter_sender_name,
         sender_title: community.letter_sender_title,
