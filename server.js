@@ -863,6 +863,14 @@ app.use('/api/board-portal', boardPortalRouter);
 const { router: ownerArRouter } = require('./api/owner_ar');
 app.use('/api/owner-ar', ownerArRouter);
 
+// Vantaca Imports — canonical landing module for ALL Vantaca-sourced exports
+// (AR Aging, GL, AP, Bank Recon, Owner Statements, etc.). Single drop UI,
+// classifier routes to per-domain extractors. Until Bedrock replaces Vantaca,
+// this is the structural bridge that lets trustEd hold the data needed for
+// every customer + board surface. Migration 168 + lib/vantaca/* power it.
+const { router: vantacaImportsRouter } = require('./api/vantaca_imports');
+app.use('/api/vantaca-imports', vantacaImportsRouter);
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).

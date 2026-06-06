@@ -398,6 +398,13 @@
   <!-- Reports — Vantaca-to-Bedrock report conversion. Drag-drop a Vantaca
        PDF, AI extracts, Bedrock renders the customer-facing artifact. -->
   <div class="tab" onclick="switchTab('reports')">📑 Reports</div>
+  <!-- Vantaca Imports — canonical drop zone for ALL Vantaca exports.
+       One module, classifier routes to per-domain extractors (AR, GL, AP,
+       Bank Recon, Owner Statements, etc.). Named honestly: Vantaca is
+       the back-office function until we replace them, and the tab
+       reminds everyone (incl. franchise operators) where the dependency
+       lives. Day-of-cutover, rename + alias. -->
+  <div class="tab" onclick="switchTab('vantaca-imports')" title="Canonical drop zone for every Vantaca export — AR Aging, GL, AP, Bank Recon, Owner Statements. System classifies + routes.">📥 Vantaca Imports</div>
   <!-- Bedrock Connect — community-email broadcast platform. PLACEHOLDER
        state — opens the design preview page. Build queued behind
        Messaging System Phase 1. -->
@@ -891,6 +898,88 @@
       <h3 style="margin:0; font-size:16px; color:#0B1D34;">Past Conversions</h3>
     </div>
     <div id="reportsList" style="font-size:13px; color:#6B7280;">Loading…</div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     VANTACA IMPORTS — canonical drop module for all Vantaca exports
+     ----------------------------------------------------------------------
+     One module, classifier auto-routes (AR Aging, GL, AP, Bank Recon,
+     Owner Statements, etc.). Backed by /api/vantaca-imports/* and
+     migrations/168_vantaca_imports_substrate.sql.
+     The name stays "Vantaca" until Bedrock cuts over to a more durable
+     back-office solution — visible dependency, not papered over.
+     ========================================================================= -->
+<div class="tab-content" id="tab-vantaca-imports" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1280px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px;">
+      <div>
+        <h2 style="margin:0 0 4px 0; color:#0B1D34;">📥 Vantaca Imports</h2>
+        <p style="color:#5a7390; font-size:13px; margin:0; max-width:780px;">
+          Drop any Vantaca export — AR Aging, GL Export, AP Ledger, Bank Recon, Owner Statements. The system classifies + routes automatically. Every customer-facing surface that reads this data shows the <strong>as-of date + time</strong> so no one mistakes a snapshot for live state. Until Bedrock replaces Vantaca with a more durable back-office solution, this is the bridge that lets trustEd hold the data we need.
+        </p>
+      </div>
+    </div>
+
+    <!-- Drop zone -->
+    <div class="panel" style="margin-bottom:16px;">
+      <h3 style="margin-top:0;">Drop a Vantaca Export</h3>
+      <p style="color:#666; font-size:12px; margin:0 0 12px 0;">
+        PDF, Excel, or CSV. Drop multiple files at once — each gets classified separately. The system identifies community + report type + as-of date from the file itself. Low-confidence files land in a <strong>Needs Review</strong> queue where you pick the right routing in one click.
+      </p>
+      <div id="vi-drop-area"
+           style="border:2px dashed #d0d7de; border-radius:8px; padding:32px; text-align:center; background:#f9f9f9; cursor:pointer;"
+           onclick="document.getElementById('vi-file').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+           ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+           ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length) viUploadFiles(event.dataTransfer.files);">
+        <div style="font-size:32px; margin-bottom:8px;">📄</div>
+        <div style="font-weight:500; color:#315A87;">Click or drop one or more Vantaca exports</div>
+        <div style="font-size:12px; color:#888; margin-top:4px;">PDF · Excel · CSV — drop a whole month at once</div>
+      </div>
+      <input type="file" id="vi-file" accept=".pdf,.xlsx,.xls,.csv" multiple style="display:none" onchange="viUploadFiles(this.files)">
+      <div id="vi-upload-status" style="margin-top:14px; display:flex; flex-direction:column; gap:8px;"></div>
+    </div>
+
+    <!-- Freshness dashboard -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px;">
+        <h3 style="margin:0;">Mirror Freshness</h3>
+        <button class="secondary-btn" onclick="viLoadFreshness()" style="font-size:12.5px;">⟳ Refresh</button>
+      </div>
+      <p style="color:#666; font-size:12px; margin:0 0 12px 0;">
+        Per-community × per-report-type snapshot of when each data type was last imported. Older than 7 days = amber. Older than 14 = red. Click a row to see the import history for that community + type.
+      </p>
+      <div id="vi-freshness-container" style="font-size:13px; color:#888;">Loading…</div>
+    </div>
+
+    <!-- Recent imports history -->
+    <div class="panel" style="margin-bottom:16px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:10px;">
+        <h3 style="margin:0;">Recent Imports</h3>
+        <div style="display:flex; gap:8px;">
+          <select id="vi-filter-type" onchange="viLoadList()" style="padding:6px 10px; font-size:12.5px; border:1px solid #d0d7de; border-radius:6px;">
+            <option value="">All report types</option>
+            <option value="ar_aging">AR Aging</option>
+            <option value="gl_export">GL Export</option>
+            <option value="ap_ledger">AP Ledger</option>
+            <option value="bank_reconciliation">Bank Reconciliation</option>
+            <option value="owner_statement">Owner Statement</option>
+            <option value="vendor_history">Vendor History</option>
+            <option value="budget_actual">Budget vs Actual</option>
+          </select>
+          <select id="vi-filter-status" onchange="viLoadList()" style="padding:6px 10px; font-size:12.5px; border:1px solid #d0d7de; border-radius:6px;">
+            <option value="">All statuses</option>
+            <option value="completed">✓ Completed</option>
+            <option value="needs_review">⚠ Needs Review</option>
+            <option value="classified">Classified (no extractor)</option>
+            <option value="failed">✗ Failed</option>
+            <option value="voided">Voided</option>
+          </select>
+        </div>
+      </div>
+      <div id="vi-list-container" style="font-size:13px;">Loading…</div>
+    </div>
   </div>
 </div>
 
@@ -29487,6 +29576,238 @@ ${questionsPage}
   })();
 
   // =========================================================================
+  // =========================================================================
+  // VANTACA IMPORTS — canonical drop module for all Vantaca exports.
+  // Backed by /api/vantaca-imports/*. Migration 168 substrate.
+  // =========================================================================
+  (function () {
+    function viEsc(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function viFmtDateTime(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      return d.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'America/Chicago' }) + ' CT';
+    }
+    function viFmtDate(d) {
+      if (!d) return '—';
+      return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+    }
+    function viTypeLabel(t) {
+      return ({
+        ar_aging: 'AR Aging',
+        gl_export: 'GL Export',
+        ap_ledger: 'AP Ledger',
+        bank_reconciliation: 'Bank Reconciliation',
+        owner_statement: 'Owner Statement',
+        vendor_history: 'Vendor History',
+        budget_actual: 'Budget vs Actual',
+        unknown: 'Unknown',
+      })[t] || (t || '—');
+    }
+    function viStatusBadge(s) {
+      const map = {
+        completed: { txt: '✓ Completed', bg: '#dcfce7', fg: '#166534' },
+        classified: { txt: 'Classified', bg: '#dbeafe', fg: '#1e3a8a' },
+        processing: { txt: '⏳ Processing', bg: '#fef3c7', fg: '#92400e' },
+        needs_review: { txt: '⚠ Needs Review', bg: '#fef3c7', fg: '#92400e' },
+        failed: { txt: '✗ Failed', bg: '#fee2e2', fg: '#991b1b' },
+        voided: { txt: 'Voided', bg: '#f3f4f6', fg: '#6b7280' },
+        pending: { txt: 'Pending', bg: '#f3f4f6', fg: '#6b7280' },
+      };
+      const m = map[s] || { txt: s, bg: '#f3f4f6', fg: '#374151' };
+      return `<span style="display:inline-block; font-size:11px; font-weight:600; padding:3px 9px; border-radius:10px; background:${m.bg}; color:${m.fg};">${viEsc(m.txt)}</span>`;
+    }
+    function viConfidenceBadge(c) {
+      if (!c) return '';
+      const m = c === 'high' ? { txt: '🟢 High', fg: '#16a34a' }
+              : c === 'medium' ? { txt: '🟡 Medium', fg: '#d97706' }
+              : { txt: '🔴 Low', fg: '#dc2626' };
+      return `<span style="font-size:11px; font-weight:600; color:${m.fg};">${viEsc(m.txt)}</span>`;
+    }
+
+    // ----- Upload flow -----
+    window.viUploadFiles = async function (files) {
+      const status = document.getElementById('vi-upload-status');
+      if (!status) return;
+      const arr = Array.from(files);
+      // One <div> per file, populated as the upload progresses.
+      const rows = arr.map((f) => {
+        const div = document.createElement('div');
+        div.style.cssText = 'padding:10px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; font-size:13px;';
+        div.innerHTML = `<strong>${viEsc(f.name)}</strong><span style="color:#888;"> — uploading…</span>`;
+        status.appendChild(div);
+        return { file: f, div };
+      });
+      // Upload serially to avoid overloading the server with parallel
+      // Claude binary-PDF reads. Faster total wall time than parallel
+      // would be — model latency dominates, network is fine.
+      for (const r of rows) {
+        try {
+          const fd = new FormData();
+          fd.append('file', r.file);
+          r.div.innerHTML = `<strong>${viEsc(r.file.name)}</strong><span style="color:#315A87;"> — classifying + extracting…</span>`;
+          const resp = await fetch('/api/vantaca-imports/upload', { method: 'POST', body: fd });
+          const j = await resp.json();
+          if (!resp.ok) throw new Error(j.error || `HTTP ${resp.status}`);
+          const imp = j.import || {};
+          const conf = imp.classifier_confidence;
+          const community = imp.communities?.name || '(unrouted)';
+          const type = viTypeLabel(imp.report_type);
+          const asOf = imp.as_of_date ? viFmtDate(imp.as_of_date) : '(no as-of)';
+          const warnings = (imp.extraction_warnings || []).slice(0, 3);
+          r.div.innerHTML = `
+            <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:12px;">
+              <div style="flex:1;">
+                <div><strong>${viEsc(r.file.name)}</strong>${j.duplicate ? ' <span style="color:#d97706;">(duplicate — already imported)</span>' : ''}</div>
+                <div style="color:#666; font-size:12px; margin-top:3px;">
+                  ${viEsc(type)} · ${viEsc(community)} · as of ${viEsc(asOf)} · ${viConfidenceBadge(conf)} ${viStatusBadge(imp.status)}
+                </div>
+                ${imp.downstream_snapshot_count > 0 ? `<div style="color:#16a34a; font-size:12px; margin-top:3px;">✓ ${imp.downstream_snapshot_count} rows written to ${viEsc(imp.downstream_snapshot_table || 'snapshot table')}</div>` : ''}
+                ${warnings.length ? `<div style="color:#92400e; font-size:11.5px; margin-top:4px; background:#fffbeb; padding:6px 10px; border-radius:6px;">⚠ ${warnings.map(viEsc).join('<br>⚠ ')}</div>` : ''}
+              </div>
+            </div>
+          `;
+        } catch (e) {
+          r.div.innerHTML = `<strong>${viEsc(r.file.name)}</strong><span style="color:#dc2626;"> — failed: ${viEsc(e.message)}</span>`;
+        }
+      }
+      // After uploads finish, refresh the freshness + list panels.
+      viLoadFreshness();
+      viLoadList();
+    };
+
+    // ----- Freshness dashboard -----
+    window.viLoadFreshness = async function () {
+      const container = document.getElementById('vi-freshness-container');
+      if (!container) return;
+      try {
+        const r = await fetch('/api/vantaca-imports/freshness');
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        const rows = j.freshness || [];
+        if (rows.length === 0) {
+          container.innerHTML = '<div style="padding:24px; color:#888; text-align:center;">No imports yet. Drop a Vantaca export above to get started.</div>';
+          return;
+        }
+        // Group by community
+        const byCommunity = {};
+        for (const f of rows) {
+          if (!byCommunity[f.community_id]) byCommunity[f.community_id] = { name: f.community_name, rows: [] };
+          byCommunity[f.community_id].rows.push(f);
+        }
+        container.innerHTML = Object.values(byCommunity).map((grp) => `
+          <div style="margin-bottom:14px;">
+            <div style="font-weight:600; color:#0B1D34; margin-bottom:6px; font-size:13.5px;">${viEsc(grp.name)}</div>
+            <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+              <thead>
+                <tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+                  <th style="padding:7px 10px; text-align:left;">Report Type</th>
+                  <th style="padding:7px 10px; text-align:left;">As of</th>
+                  <th style="padding:7px 10px; text-align:left;">Imported</th>
+                  <th style="padding:7px 10px; text-align:center;">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${grp.rows.map((f) => {
+                  const days = f.days_since_import;
+                  const staleness = days > 14 ? { bg: '#fee2e2', fg: '#991b1b', txt: `🔴 ${days}d old` }
+                                  : days > 7  ? { bg: '#fef3c7', fg: '#92400e', txt: `🟡 ${days}d old` }
+                                  :              { bg: '#dcfce7', fg: '#166534', txt: `🟢 ${days}d ago` };
+                  return `
+                    <tr style="border-bottom:1px solid #eee;">
+                      <td style="padding:7px 10px;">${viEsc(viTypeLabel(f.report_type))}</td>
+                      <td style="padding:7px 10px;">${viEsc(viFmtDate(f.latest_as_of_date))}</td>
+                      <td style="padding:7px 10px; color:#5a7390;">${viEsc(viFmtDateTime(f.latest_imported_at))}</td>
+                      <td style="padding:7px 10px; text-align:center;">
+                        <span style="display:inline-block; font-size:11px; font-weight:600; padding:3px 9px; border-radius:10px; background:${staleness.bg}; color:${staleness.fg};">${viEsc(staleness.txt)}</span>
+                      </td>
+                    </tr>
+                  `;
+                }).join('')}
+              </tbody>
+            </table>
+          </div>
+        `).join('');
+      } catch (e) {
+        container.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed to load: ${viEsc(e.message)}</div>`;
+      }
+    };
+
+    // ----- Recent imports list -----
+    window.viLoadList = async function () {
+      const container = document.getElementById('vi-list-container');
+      if (!container) return;
+      try {
+        const params = new URLSearchParams();
+        const t = document.getElementById('vi-filter-type').value;
+        const s = document.getElementById('vi-filter-status').value;
+        if (t) params.set('report_type', t);
+        if (s) params.set('status', s);
+        const r = await fetch('/api/vantaca-imports?' + params.toString());
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        const rows = j.imports || [];
+        if (rows.length === 0) {
+          container.innerHTML = '<div style="padding:24px; color:#888; text-align:center;">No imports match this filter.</div>';
+          return;
+        }
+        container.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+                <th style="padding:8px 10px; text-align:left;">File</th>
+                <th style="padding:8px 10px; text-align:left;">Community</th>
+                <th style="padding:8px 10px; text-align:left;">Type</th>
+                <th style="padding:8px 10px; text-align:left;">As of</th>
+                <th style="padding:8px 10px; text-align:left;">Imported</th>
+                <th style="padding:8px 10px; text-align:center;">Status</th>
+                <th style="padding:8px 10px; text-align:right;">Rows</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((row) => `
+                <tr style="border-bottom:1px solid #eee;">
+                  <td style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:11.5px; color:#5a7390;">${viEsc(row.source_filename || '—')}</td>
+                  <td style="padding:8px 10px;">${viEsc(row.communities?.name || '—')}</td>
+                  <td style="padding:8px 10px;">${viEsc(viTypeLabel(row.report_type))}</td>
+                  <td style="padding:8px 10px;">${viEsc(viFmtDate(row.as_of_date))}</td>
+                  <td style="padding:8px 10px; color:#5a7390;">${viEsc(viFmtDateTime(row.imported_at))}</td>
+                  <td style="padding:8px 10px; text-align:center;">${viStatusBadge(row.status)}</td>
+                  <td style="padding:8px 10px; text-align:right;">${row.downstream_snapshot_count || 0}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        container.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed to load: ${viEsc(e.message)}</div>`;
+      }
+    };
+
+    // Auto-load on tab activation via the IIFE wrap pattern (CLAUDE.md scar).
+    function _wireVantacaImportsTabHook() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'vantaca-imports') {
+          try { viLoadFreshness(); } catch (_) {}
+          try { viLoadList(); } catch (_) {}
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_wireVantacaImportsTabHook()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireVantacaImportsTabHook);
+      } else {
+        setTimeout(_wireVantacaImportsTabHook, 0);
+      }
+    }
+  })();
+
   // Quick Lookup — terse internal-staff assistant. POSTs to /ask-ed with
   // mode='quick'; backend swaps to a 1-2 sentence system prompt and uses the
   // lookup_community_vendor tool for deterministic contact answers.
