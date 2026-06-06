@@ -415,6 +415,9 @@
        Pilots: August Meadows (greenfield, live 2026-06-01) + Quail Ridge.
        By end of Vantaca contract (~18 months), all communities run here. -->
   <div class="tab" onclick="switchTab('books')" title="Bedrock's general ledger — double-entry, periods, trial balance, financial statements. Migration off Vantaca starts here.">📚 Books</div>
+  <!-- AP — Accounts Payable. Drop invoice PDFs, system extracts + auto-codes
+       to GL + auto-posts JE, lands in approval queue. Approve and pay. -->
+  <div class="tab" onclick="switchTab('ap')" title="Accounts Payable — drop invoice PDFs, system auto-codes + posts JE, approve and pay">💵 AP</div>
   <!-- Bedrock Connect — community-email broadcast platform. PLACEHOLDER
        state — opens the design preview page. Build queued behind
        Messaging System Phase 1. -->
@@ -1323,6 +1326,95 @@
             <button class="action-btn" id="bk-je-post-btn" onclick="bkPostJE()" disabled>Post Entry</button>
           </div>
         </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     AP — Accounts Payable
+     ----------------------------------------------------------------------
+     Drop invoice PDF → AI extract → auto-code GL → auto-post JE
+     → land in approval queue → click Approve → ready for payment run.
+     Backed by /api/ap/* + migration 175 + lib/accounting/ap_engine.js.
+     ========================================================================= -->
+<div class="tab-content" id="tab-ap" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1280px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px;">
+      <div>
+        <h2 style="margin:0 0 4px 0; color:#0B1D34;">💵 Accounts Payable</h2>
+        <p style="color:#5a7390; font-size:13px; margin:0; max-width:780px;">
+          Drop vendor invoice PDFs and trustEd extracts the data, matches the community + vendor, auto-codes the GL account based on vendor history, and posts the journal entry automatically. Invoices land in the <strong>Awaiting Approval</strong> queue — one click to approve and they're ready for payment.
+        </p>
+      </div>
+    </div>
+
+    <!-- Community + status filter row -->
+    <div class="panel" style="margin-bottom:14px;">
+      <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+        <div style="flex:1; min-width:220px;">
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+          <select id="ap-community" onchange="apCommunityChanged()" style="padding:7px 10px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; width:100%;">
+            <option value="">— Select community —</option>
+          </select>
+        </div>
+        <button class="secondary-btn" onclick="apLoadList()" style="font-size:12.5px;">⟳ Refresh</button>
+      </div>
+      <div id="ap-subnav" style="display:none; margin-top:14px; border-bottom:1px solid #d0d7de; flex-wrap:wrap;">
+        <button class="ap-tab-btn" data-aptab="awaiting" onclick="apSubswitch('awaiting')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600; color:#315A87; border-bottom:2px solid #315A87; margin-bottom:-1px;">📥 Awaiting Approval <span id="ap-count-awaiting" style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; margin-left:4px;">0</span></button>
+        <button class="ap-tab-btn" data-aptab="approved" onclick="apSubswitch('approved')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">✓ Approved <span id="ap-count-approved" style="background:#dbeafe; color:#1e3a8a; padding:2px 8px; border-radius:10px; font-size:11px; font-weight:700; margin-left:4px;">0</span></button>
+        <button class="ap-tab-btn" data-aptab="all" onclick="apSubswitch('all')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📋 All Invoices</button>
+        <button class="ap-tab-btn" data-aptab="aging" onclick="apSubswitch('aging')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📊 Aging</button>
+      </div>
+    </div>
+
+    <!-- Empty state when no community picked -->
+    <div id="ap-empty-state" class="panel" style="text-align:center; padding:40px; color:#888;">
+      <div style="font-size:36px; margin-bottom:10px;">💵</div>
+      <div style="font-weight:600; color:#0B1D34; margin-bottom:4px;">Pick a community to manage its invoices</div>
+      <div style="font-size:13px;">August Meadows and Quail Ridge are the Phase 1 pilots.</div>
+    </div>
+
+    <!-- Drop zone (visible on Awaiting/Approved/All sub-tabs) -->
+    <div id="ap-drop-section" class="panel" style="display:none; margin-bottom:14px;">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:14px; margin-bottom:10px;">
+        <div>
+          <h3 style="margin:0;">📥 Drop Invoice PDF</h3>
+          <p style="font-size:12px; color:#666; margin:4px 0 0;">Drag one or more invoice PDFs here. System extracts vendor + amount + line items, auto-codes the GL account, and posts the journal entry automatically.</p>
+        </div>
+      </div>
+      <div id="ap-drop-area"
+           style="border:2px dashed #d0d7de; border-radius:8px; padding:24px; text-align:center; background:#f9f9f9; cursor:pointer;"
+           onclick="document.getElementById('ap-file').click()"
+           ondragover="event.preventDefault(); this.style.borderColor='#315A87'; this.style.background='#eef3f9';"
+           ondragleave="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9';"
+           ondrop="event.preventDefault(); this.style.borderColor='#d0d7de'; this.style.background='#f9f9f9'; if(event.dataTransfer.files.length) apUploadInvoices(event.dataTransfer.files);">
+        <div style="font-size:28px; margin-bottom:6px;">📄</div>
+        <div style="font-weight:500; color:#315A87;">Click or drop invoice PDFs</div>
+        <div style="font-size:11.5px; color:#888; margin-top:4px;">PDF only · one or more at a time</div>
+      </div>
+      <input type="file" id="ap-file" accept=".pdf" multiple style="display:none" onchange="apUploadInvoices(this.files)">
+      <div id="ap-upload-status" style="display:flex; flex-direction:column; gap:6px; margin-top:10px;"></div>
+    </div>
+
+    <!-- Invoice list -->
+    <div id="ap-list-section" style="display:none;">
+      <div class="panel">
+        <div id="ap-list-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Aging panel -->
+    <div id="ap-aging-section" style="display:none;">
+      <div class="panel">
+        <div id="ap-aging-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- Invoice detail modal -->
+    <div id="ap-detail-modal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:9999; align-items:flex-start; justify-content:center; padding:30px 16px; overflow-y:auto;">
+      <div style="background:white; border-radius:10px; max-width:980px; width:100%; padding:0; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+        <div id="ap-detail-body"></div>
       </div>
     </div>
   </div>
@@ -31482,6 +31574,440 @@ ${questionsPage}
       } else {
         setTimeout(_wireBooksTabHook, 0);
       }
+    }
+  })();
+
+  // =========================================================================
+  // AP — Accounts Payable. Drop invoice PDFs → auto-extract → auto-code GL
+  // → auto-post JE → approval queue → ready for payment. /api/ap/* +
+  // migration 175 + lib/accounting/ap_engine.js
+  // =========================================================================
+  (function () {
+    let apCommunityId = null;
+    let apCommunitiesCache = [];
+    let apCurrentTab = 'awaiting';
+
+    function apEsc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;'); }
+    function apFmtCents(c) {
+      if (c == null) return '<span style="color:#aaa;">—</span>';
+      const v = Number(c) / 100;
+      const sign = v < 0 ? '-' : '';
+      return sign + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function apFmtDate(d) {
+      if (!d) return '—';
+      return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    function apDaysUntil(d) {
+      if (!d) return null;
+      const ms = new Date(d + 'T12:00:00Z').getTime() - Date.now();
+      return Math.round(ms / 86400000);
+    }
+    function apStatusBadge(s) {
+      const map = {
+        awaiting_approval: { txt: '⏳ Awaiting Approval', bg: '#fef3c7', fg: '#92400e' },
+        approved: { txt: '✓ Approved', bg: '#dbeafe', fg: '#1e3a8a' },
+        partially_paid: { txt: '◐ Partially Paid', bg: '#fef9c3', fg: '#713f12' },
+        paid: { txt: '✓ Paid', bg: '#dcfce7', fg: '#166534' },
+        voided: { txt: '✗ Voided', bg: '#f3f4f6', fg: '#6b7280' },
+        disputed: { txt: '⚠ Disputed', bg: '#fee2e2', fg: '#991b1b' },
+        on_hold: { txt: '⏸ On Hold', bg: '#f3f4f6', fg: '#6b7280' },
+      };
+      const m = map[s] || { txt: s, bg: '#f3f4f6', fg: '#374151' };
+      return `<span style="display:inline-block; font-size:11px; font-weight:600; padding:3px 9px; border-radius:10px; background:${m.bg}; color:${m.fg};">${apEsc(m.txt)}</span>`;
+    }
+    function apConfidenceBadge(c) {
+      if (!c) return '';
+      const m = c === 'high' ? { txt: '🟢 high', fg: '#16a34a' }
+              : c === 'medium' ? { txt: '🟡 medium', fg: '#d97706' }
+              : c === 'manual' ? { txt: '✋ manual', fg: '#6366f1' }
+              : { txt: '🔴 low', fg: '#dc2626' };
+      return `<span style="font-size:11px; font-weight:600; color:${m.fg};">${apEsc(m.txt)}</span>`;
+    }
+
+    async function apLoadCommunities() {
+      if (apCommunitiesCache.length) return;
+      try {
+        const r = await fetch('/api/communities');
+        const j = await r.json();
+        apCommunitiesCache = (j.communities || j || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const sel = document.getElementById('ap-community');
+        if (sel) sel.innerHTML = '<option value="">— Select community —</option>' +
+          apCommunitiesCache.map((c) => `<option value="${apEsc(c.id)}">${apEsc(c.name)}</option>`).join('');
+      } catch (_) {}
+    }
+
+    window.apCommunityChanged = function () {
+      apCommunityId = document.getElementById('ap-community').value;
+      const onCommunity = !!apCommunityId;
+      document.getElementById('ap-empty-state').style.display = onCommunity ? 'none' : 'block';
+      document.getElementById('ap-subnav').style.display = onCommunity ? 'flex' : 'none';
+      if (onCommunity) {
+        apSubswitch(apCurrentTab);
+      } else {
+        ['drop-section', 'list-section', 'aging-section'].forEach((s) => {
+          const el = document.getElementById('ap-' + s);
+          if (el) el.style.display = 'none';
+        });
+      }
+      apLoadCounts();
+    };
+
+    window.apSubswitch = function (tab) {
+      apCurrentTab = tab;
+      document.querySelectorAll('.ap-tab-btn').forEach((btn) => {
+        const active = btn.getAttribute('data-aptab') === tab;
+        btn.style.color = active ? '#315A87' : '#666';
+        btn.style.fontWeight = active ? '600' : '500';
+        btn.style.borderBottom = active ? '2px solid #315A87' : '2px solid transparent';
+      });
+      const showDrop = tab === 'awaiting' || tab === 'approved' || tab === 'all';
+      const showList = tab === 'awaiting' || tab === 'approved' || tab === 'all';
+      const showAging = tab === 'aging';
+      document.getElementById('ap-drop-section').style.display = showDrop ? 'block' : 'none';
+      document.getElementById('ap-list-section').style.display = showList ? 'block' : 'none';
+      document.getElementById('ap-aging-section').style.display = showAging ? 'block' : 'none';
+      if (showList) apLoadList();
+      if (showAging) apLoadAging();
+    };
+
+    async function apLoadCounts() {
+      if (!apCommunityId) return;
+      try {
+        const [r1, r2] = await Promise.all([
+          fetch('/api/ap/invoices?community_id=' + encodeURIComponent(apCommunityId) + '&status=awaiting_approval&limit=500'),
+          fetch('/api/ap/invoices?community_id=' + encodeURIComponent(apCommunityId) + '&status=approved&limit=500'),
+        ]);
+        const j1 = await r1.json(); const j2 = await r2.json();
+        document.getElementById('ap-count-awaiting').textContent = (j1.invoices || []).length;
+        document.getElementById('ap-count-approved').textContent = (j2.invoices || []).length;
+      } catch (_) {}
+    }
+
+    window.apLoadList = async function () {
+      const c = document.getElementById('ap-list-container');
+      if (!c || !apCommunityId) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const statusFilter = apCurrentTab === 'awaiting' ? 'awaiting_approval'
+                           : apCurrentTab === 'approved' ? 'approved'
+                           : '';
+        const params = new URLSearchParams({ community_id: apCommunityId, limit: '300' });
+        if (statusFilter) params.set('status', statusFilter);
+        const r = await fetch('/api/ap/invoices?' + params.toString());
+        const j = await r.json();
+        const rows = j.invoices || [];
+        if (rows.length === 0) {
+          const msg = apCurrentTab === 'awaiting'
+            ? 'No invoices awaiting approval. Drop a PDF above to start.'
+            : apCurrentTab === 'approved'
+              ? 'No approved invoices waiting for payment.'
+              : 'No invoices yet for this community.';
+          c.innerHTML = `<div style="padding:24px; color:#888; text-align:center;">${apEsc(msg)}</div>`;
+          return;
+        }
+        c.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:8px 10px; text-align:left;">Vendor</th>
+              <th style="padding:8px 10px; text-align:left;">Invoice #</th>
+              <th style="padding:8px 10px; text-align:left;">Date</th>
+              <th style="padding:8px 10px; text-align:left;">Due</th>
+              <th style="padding:8px 10px; text-align:right;">Amount</th>
+              <th style="padding:8px 10px; text-align:center;">Coding</th>
+              <th style="padding:8px 10px; text-align:center;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((inv) => {
+                const daysUntil = apDaysUntil(inv.due_date);
+                const dueColor = daysUntil != null && daysUntil < 0 ? '#dc2626'
+                               : daysUntil != null && daysUntil <= 7 ? '#d97706'
+                               : '#6b7280';
+                return `
+                  <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="apOpenInvoice('${inv.id}')">
+                    <td style="padding:8px 10px;"><strong>${apEsc(inv.vendors?.name || '—')}</strong>${inv.vendors?.category ? ' <span style="font-size:10.5px; color:#888;">· ' + apEsc(inv.vendors.category) + '</span>' : ''}</td>
+                    <td style="padding:8px 10px; font-family:ui-monospace,monospace; font-size:12px;">${apEsc(inv.vendor_invoice_number || '—')}</td>
+                    <td style="padding:8px 10px;">${apEsc(apFmtDate(inv.invoice_date))}</td>
+                    <td style="padding:8px 10px; color:${dueColor};">${apEsc(apFmtDate(inv.due_date))}${daysUntil != null && daysUntil < 0 ? ` <strong>(${Math.abs(daysUntil)}d late)</strong>` : daysUntil != null && daysUntil <= 7 ? ` <strong>(${daysUntil}d)</strong>` : ''}</td>
+                    <td style="padding:8px 10px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${apFmtCents(inv.total_cents)}</td>
+                    <td style="padding:8px 10px; text-align:center;">${apConfidenceBadge(inv.auto_coding_confidence)}</td>
+                    <td style="padding:8px 10px; text-align:center;">${apStatusBadge(inv.status)}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${apEsc(e.message)}</div>`;
+      }
+    };
+
+    async function apLoadAging() {
+      const c = document.getElementById('ap-aging-container');
+      if (!c || !apCommunityId) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch('/api/ap/aging?community_id=' + encodeURIComponent(apCommunityId));
+        const j = await r.json();
+        const rows = j.rows || [];
+        const t = j.totals || {};
+        if (rows.length === 0) {
+          c.innerHTML = '<div style="padding:24px; color:#888; text-align:center;">No open AP. All invoices paid or none yet entered.</div>';
+          return;
+        }
+        c.innerHTML = `
+          <div style="display:grid; grid-template-columns:repeat(6, 1fr); gap:10px; margin-bottom:16px;">
+            <div style="background:#0B1D34; color:white; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; opacity:0.7; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">Total Open</div>
+              <div style="font-size:18px; font-weight:700;">${apFmtCents(t.total)}</div>
+            </div>
+            <div style="background:#dcfce7; color:#166534; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; opacity:0.8; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">Current</div>
+              <div style="font-size:17px; font-weight:600;">${apFmtCents(t.current)}</div>
+            </div>
+            <div style="background:#fef3c7; color:#92400e; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; opacity:0.8; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">1–30 d</div>
+              <div style="font-size:17px; font-weight:600;">${apFmtCents(t.b1_30)}</div>
+            </div>
+            <div style="background:#fed7aa; color:#9a3412; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; opacity:0.8; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">31–60 d</div>
+              <div style="font-size:17px; font-weight:600;">${apFmtCents(t.b31_60)}</div>
+            </div>
+            <div style="background:#fecaca; color:#991b1b; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; opacity:0.8; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">61–90 d</div>
+              <div style="font-size:17px; font-weight:600;">${apFmtCents(t.b61_90)}</div>
+            </div>
+            <div style="background:#fee2e2; color:#7f1d1d; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; opacity:0.8; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">Over 90 d</div>
+              <div style="font-size:17px; font-weight:600;">${apFmtCents(t.over_90)}</div>
+            </div>
+          </div>
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 10px; text-align:left;">Vendor</th>
+              <th style="padding:6px 10px; text-align:center;">Open</th>
+              <th style="padding:6px 10px; text-align:right;">Total</th>
+              <th style="padding:6px 10px; text-align:right;">Current</th>
+              <th style="padding:6px 10px; text-align:right;">1–30</th>
+              <th style="padding:6px 10px; text-align:right;">31–60</th>
+              <th style="padding:6px 10px; text-align:right;">61–90</th>
+              <th style="padding:6px 10px; text-align:right;">90+</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((r) => `
+                <tr style="border-bottom:1px solid #eee;">
+                  <td style="padding:6px 10px;"><strong>${apEsc(r.vendors?.name || '—')}</strong></td>
+                  <td style="padding:6px 10px; text-align:center;">${r.open_invoice_count || 0}</td>
+                  <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${apFmtCents(r.total_balance_cents)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(r.current_cents)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(r.bucket_1_30_cents)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(r.bucket_31_60_cents)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(r.bucket_61_90_cents)}</td>
+                  <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace; color:#dc2626;">${apFmtCents(r.over_90_cents)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${apEsc(e.message)}</div>`;
+      }
+    }
+
+    // ----- INVOICE UPLOAD -----
+    window.apUploadInvoices = async function (files) {
+      if (!apCommunityId) { alert('Pick a community first.'); return; }
+      const status = document.getElementById('ap-upload-status');
+      const arr = Array.from(files);
+      const rows = arr.map((f) => {
+        const div = document.createElement('div');
+        div.style.cssText = 'padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:12.5px;';
+        div.innerHTML = `<strong>${apEsc(f.name)}</strong><span style="color:#888;"> — uploading…</span>`;
+        status.appendChild(div);
+        return { file: f, div };
+      });
+      for (const r of rows) {
+        try {
+          const fd = new FormData();
+          fd.append('pdf', r.file);
+          fd.append('community_id', apCommunityId);
+          r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#315A87;"> — extracting + auto-coding (~30s)…</span>`;
+          const resp = await fetch('/api/ap/invoices/upload', { method: 'POST', body: fd });
+          const j = await resp.json();
+          if (!resp.ok) {
+            if (resp.status === 409 && j.status === 'duplicate_invoice') {
+              r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#d97706;"> — duplicate: ${apEsc(j.message || '')}</span>`;
+              continue;
+            }
+            throw new Error(j.error || 'upload failed');
+          }
+          if (j.status === 'needs_community') {
+            r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#dc2626;"> — could not match community; retry with community pre-selected</span>`;
+            continue;
+          }
+          const inv = j.invoice;
+          const conf = j.coding_confidence;
+          const vendor = j.vendor?.name || '?';
+          const vendorTag = j.vendor_created ? ' (new)' : '';
+          const total = apFmtCents(inv.total_cents);
+          const confTag = apConfidenceBadge(conf);
+          r.div.innerHTML = `
+            <div style="display:flex; justify-content:space-between; gap:10px;">
+              <div>
+                <strong>${apEsc(r.file.name)}</strong>
+                <div style="color:#666; font-size:11.5px; margin-top:2px;">
+                  ${apEsc(vendor)}${vendorTag} · ${apEsc(inv.vendor_invoice_number || '')} · ${total} · ${confTag}${j.auto_coded ? '' : ' <span style="color:#dc2626;">— GL coding incomplete</span>'}
+                </div>
+              </div>
+              <button class="secondary-btn" onclick="apOpenInvoice('${inv.id}')" style="font-size:11px; padding:4px 10px; align-self:flex-start;">View</button>
+            </div>
+          `;
+        } catch (e) {
+          r.div.innerHTML = `<strong>${apEsc(r.file.name)}</strong><span style="color:#dc2626;"> — failed: ${apEsc(e.message)}</span>`;
+        }
+      }
+      apLoadList();
+      apLoadCounts();
+    };
+
+    // ----- INVOICE DETAIL MODAL -----
+    window.apOpenInvoice = async function (id) {
+      const body = document.getElementById('ap-detail-body');
+      body.innerHTML = '<div style="padding:30px; color:#888;">Loading…</div>';
+      document.getElementById('ap-detail-modal').style.display = 'flex';
+      try {
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        apRenderDetail(j);
+      } catch (e) {
+        body.innerHTML = `<div style="padding:24px; color:#dc2626;">Failed: ${apEsc(e.message)}</div>`;
+      }
+    };
+    window.apCloseDetail = function () { document.getElementById('ap-detail-modal').style.display = 'none'; };
+
+    function apRenderDetail(payload) {
+      const inv = payload.invoice;
+      const lines = payload.lines || [];
+      const approvals = payload.approvals || [];
+      const body = document.getElementById('ap-detail-body');
+      const vendorName = inv.vendors?.name || '(unknown vendor)';
+      const pdfUrl = inv.library_documents?.storage_path ? '/api/library/file/' + encodeURIComponent(inv.library_documents.storage_path) : null;
+      const canApprove = inv.status === 'awaiting_approval' && !!inv.posting_journal_entry_id;
+      const linesHtml = lines.map((ln) => `
+        <tr style="border-bottom:1px solid #f3f4f6;">
+          <td style="padding:6px 10px;">${apEsc(ln.description)}</td>
+          <td style="padding:6px 10px; text-align:center;">${ln.quantity || 1}</td>
+          <td style="padding:6px 10px; font-family:ui-monospace,monospace; font-size:11.5px;">${apEsc(ln.chart_of_accounts?.account_number || '—')}</td>
+          <td style="padding:6px 10px;">${apEsc(ln.chart_of_accounts?.account_name || (ln.gl_account_id ? '(coded)' : '<span style="color:#dc2626;">⚠ no GL</span>'))}</td>
+          <td style="padding:6px 10px; text-align:right; font-family:ui-monospace,monospace;">${apFmtCents(ln.amount_cents)}</td>
+        </tr>
+      `).join('');
+      const approvalsHtml = approvals.map((a) => `
+        <div style="padding:6px 10px; border-bottom:1px solid #eee; font-size:12px; display:flex; justify-content:space-between;">
+          <span><strong>${apEsc(a.action.replace(/_/g, ' '))}</strong>${a.notes ? ' — ' + apEsc(a.notes) : ''}</span>
+          <span style="color:#5a7390;">${new Date(a.created_at).toLocaleString()}</span>
+        </div>
+      `).join('');
+      body.innerHTML = `
+        <div style="position:sticky; top:0; background:#0B1D34; color:white; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; border-radius:10px 10px 0 0; z-index:2;">
+          <div>
+            <div style="font-weight:700; font-size:16px;">${apEsc(vendorName)}</div>
+            <div style="font-size:12px; opacity:0.85;">${apEsc(inv.vendor_invoice_number || '(no #)')} · ${apEsc(apFmtDate(inv.invoice_date))} · ${apEsc(inv.terms || '')} · ${apStatusBadge(inv.status)}</div>
+          </div>
+          <button onclick="apCloseDetail()" style="background:rgba(255,255,255,0.15); color:white; border:none; padding:8px 14px; border-radius:6px; font-weight:600; cursor:pointer;">× Close</button>
+        </div>
+        <div style="padding:18px 20px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr 1fr; gap:10px; margin-bottom:14px;">
+            <div style="background:#f5f8fc; padding:8px 12px; border-radius:6px;">
+              <div style="font-size:10.5px; color:#5a7390; text-transform:uppercase; font-weight:700;">Subtotal</div>
+              <div style="font-size:15px; font-family:ui-monospace,monospace;">${apFmtCents(inv.subtotal_cents)}</div>
+            </div>
+            <div style="background:#f5f8fc; padding:8px 12px; border-radius:6px;">
+              <div style="font-size:10.5px; color:#5a7390; text-transform:uppercase; font-weight:700;">Tax</div>
+              <div style="font-size:15px; font-family:ui-monospace,monospace;">${apFmtCents(inv.tax_cents)}</div>
+            </div>
+            <div style="background:#0B1D34; color:white; padding:8px 12px; border-radius:6px;">
+              <div style="font-size:10.5px; opacity:0.7; text-transform:uppercase; font-weight:700;">Total</div>
+              <div style="font-size:17px; font-family:ui-monospace,monospace; font-weight:700;">${apFmtCents(inv.total_cents)}</div>
+            </div>
+            <div style="background:#f5f8fc; padding:8px 12px; border-radius:6px;">
+              <div style="font-size:10.5px; color:#5a7390; text-transform:uppercase; font-weight:700;">Due</div>
+              <div style="font-size:15px;">${apEsc(apFmtDate(inv.due_date))}</div>
+            </div>
+          </div>
+
+          <h4 style="margin:14px 0 6px; color:#0B1D34;">Line Items + GL Coding</h4>
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:14px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 10px; text-align:left;">Description</th>
+              <th style="padding:6px 10px; text-align:center;">Qty</th>
+              <th style="padding:6px 10px; text-align:left;">GL #</th>
+              <th style="padding:6px 10px; text-align:left;">Account</th>
+              <th style="padding:6px 10px; text-align:right;">Amount</th>
+            </tr></thead>
+            <tbody>${linesHtml}</tbody>
+          </table>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px;">
+            <div>
+              <h4 style="margin:0 0 6px; color:#0B1D34;">Auto-Coding</h4>
+              <div style="background:#f5f8fc; padding:10px 14px; border-radius:6px; font-size:12.5px;">
+                <div>Confidence: ${apConfidenceBadge(inv.auto_coding_confidence)}</div>
+                <div style="margin-top:4px;">Signal: <code style="background:#fff; padding:1px 6px; border-radius:3px;">${apEsc(inv.auto_coding_signal || '—')}</code></div>
+                <div style="margin-top:4px;">JE: ${inv.posting_journal_entry_id ? '<span style="color:#16a34a;">✓ Posted</span>' : '<span style="color:#dc2626;">⚠ Not posted — GL coding incomplete</span>'}</div>
+              </div>
+            </div>
+            <div>
+              <h4 style="margin:0 0 6px; color:#0B1D34;">Approval History</h4>
+              <div style="background:#f5f8fc; border-radius:6px; max-height:140px; overflow-y:auto;">
+                ${approvalsHtml || '<div style="padding:8px 12px; color:#888; font-size:12px;">No actions yet.</div>'}
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:18px; padding-top:14px; border-top:1px solid #e2e8f0;">
+            <div>
+              ${pdfUrl ? `<a href="${pdfUrl}" target="_blank" style="color:#315A87; font-size:13px; text-decoration:none; font-weight:600;">📄 View original PDF</a>` : '<span style="color:#888; font-size:12px;">No source PDF on file</span>'}
+            </div>
+            <div style="display:flex; gap:8px;">
+              <button class="secondary-btn" onclick="apCloseDetail()">Close</button>
+              ${canApprove ? `<button class="action-btn" onclick="apApproveInvoice('${inv.id}')" style="background:#16a34a; border-color:#15803d;">✓ Approve Invoice</button>` : ''}
+            </div>
+          </div>
+        </div>
+      `;
+    }
+
+    window.apApproveInvoice = async function (id) {
+      if (!confirm('Approve this invoice for payment?')) return;
+      try {
+        const r = await fetch('/api/ap/invoices/' + encodeURIComponent(id) + '/approve', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'approve failed');
+        apOpenInvoice(id);  // re-render with updated state
+        apLoadList();
+        apLoadCounts();
+      } catch (e) { alert('Approve failed: ' + e.message); }
+    };
+
+    // Auto-load on tab activation (CLAUDE.md scar pattern)
+    function _wireApTabHook() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'ap') { try { apLoadCommunities(); } catch (_) {} }
+        return r;
+      };
+      return true;
+    }
+    if (!_wireApTabHook()) {
+      if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', _wireApTabHook);
+      else setTimeout(_wireApTabHook, 0);
     }
   })();
 
