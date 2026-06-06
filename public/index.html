@@ -13434,6 +13434,57 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- LETTER FORMAT — sample renders of each of the 4 stage variants so
+         the operator can see what a letter looks like before any real
+         violation is drafted, and so changes to community letter settings
+         (sender name, cure days, fees, pay-to) can be sanity-checked
+         instantly. Statutory wording (§209 cure language, hearing-request
+         block, SCRA notice) is hard-locked per legal-defensibility
+         discipline — those are not editable here. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">✉️ Letter format <span style="color:#64748b; font-weight:500;">— preview each stage with live community config</span></h3>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <label style="font-size:11px; color:#64748b;">Community:</label>
+          <select id="letterFormatCommunity" onchange="letterFormatCommunityChanged()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
+            <option value="">Loading…</option>
+          </select>
+        </div>
+      </div>
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px;">
+        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(220px, 1fr)); gap:10px; margin-bottom:14px;">
+          <button onclick="letterFormatPreview('courtesy_1')" style="background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; text-align:left; cursor:pointer; font-family:inherit;">
+            <div style="font-weight:700; color:#0B1D34; font-size:12px;">📄 Courtesy 1</div>
+            <div style="font-size:10.5px; color:#64748b; margin-top:2px;">First-class mail · friendly tone · default 20-day cure</div>
+          </button>
+          <button onclick="letterFormatPreview('courtesy_2')" style="background:#fff; border:1px solid #cbd5e1; border-radius:8px; padding:10px 12px; text-align:left; cursor:pointer; font-family:inherit;">
+            <div style="font-weight:700; color:#0B1D34; font-size:12px;">📄 Courtesy 2</div>
+            <div style="font-size:10.5px; color:#64748b; margin-top:2px;">First-class · second notice · escalation warning</div>
+          </button>
+          <button onclick="letterFormatPreview('certified_209')" style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:10px 12px; text-align:left; cursor:pointer; font-family:inherit;">
+            <div style="font-weight:700; color:#7f1d1d; font-size:12px;">📜 Certified §209</div>
+            <div style="font-size:10.5px; color:#64748b; margin-top:2px;">Certified mail · hearing-request block · 30-day cure</div>
+          </button>
+          <button onclick="letterFormatPreview('fine_assessed')" style="background:#fff; border:1px solid #fecaca; border-radius:8px; padding:10px 12px; text-align:left; cursor:pointer; font-family:inherit;">
+            <div style="font-weight:700; color:#7f1d1d; font-size:12px;">⚖️ Fine assessed</div>
+            <div style="font-size:10.5px; color:#64748b; margin-top:2px;">Certified · fine memorialized · §209.0064</div>
+          </button>
+        </div>
+        <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:10px; border-top:1px solid #f1f5f9;">
+          <label style="font-size:11px; color:#475569; display:flex; align-items:center; gap:5px; cursor:pointer;">
+            <input type="checkbox" id="letterFormatMulti" style="margin:0;"> Multi-violation bundle (renders 2 sample items in one envelope)
+          </label>
+          <span style="margin-left:auto; font-size:11px;">
+            <a href="#" onclick="letterFormatJumpToSettings(); return false;" style="color:#0B1D34; font-weight:600;">✏️ Edit cure days · fees · sender name · pay-to →</a>
+          </span>
+        </div>
+        <div style="margin-top:10px; padding:8px 10px; background:#fffbeb; border:1px solid #fef3c7; border-radius:6px; font-size:10.5px; color:#92400e; line-height:1.5;">
+          <strong>What you can edit:</strong> sender name, sender title, cure days per stage, admin fees per stage, payment URL, pay-to address. Live from the community profile, so a change there shows up here on the next Preview click.<br>
+          <strong>What's hard-locked</strong> (legal defensibility — Texas §209): statutory cure language, hearing-request block, SCRA disclosure, postmark anchor language, §209.006(b)(1) fee disclosure, §209.0064 fine-schedule reference. Editing these requires an engineering + counsel review — talk to me, don't override.
+        </div>
+      </div>
+    </div>
+
     <!-- DRAFTS QUEUE — letters drafted by AI after inspections, awaiting review.
          Visible always (no active session needed). Click anywhere outside an
          inspection to see this. Operator reviews each drafted letter PDF, picks
@@ -17176,6 +17227,88 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
   }
+
+  // -------------------------------------------------------------------------
+  // Letter Format preview panel — renders sample PDFs for each stage so the
+  // operator can see the format and verify community settings are right
+  // before any real violation triggers a letter. Pulls communities once on
+  // first open, remembers the choice in sessionStorage.
+  // -------------------------------------------------------------------------
+  let _letterFormatCommunitiesLoaded = false;
+  async function letterFormatLoadCommunities() {
+    if (_letterFormatCommunitiesLoaded) return;
+    const sel = document.getElementById('letterFormatCommunity');
+    if (!sel) return;
+    try {
+      const r = await fetch('/api/communities');
+      const j = await r.json();
+      const list = Array.isArray(j) ? j : (j.communities || []);
+      const saved = sessionStorage.getItem('letterFormatCommunity') || '';
+      sel.innerHTML = list
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .map(c => `<option value="${c.id}"${c.id === saved ? ' selected' : ''}>${(c.name || '(unnamed)').replace(/</g, '&lt;')}</option>`)
+        .join('');
+      _letterFormatCommunitiesLoaded = true;
+    } catch (e) {
+      sel.innerHTML = '<option value="">Failed to load — ' + (e.message || 'error') + '</option>';
+    }
+  }
+  function letterFormatCommunityChanged() {
+    const sel = document.getElementById('letterFormatCommunity');
+    if (sel && sel.value) sessionStorage.setItem('letterFormatCommunity', sel.value);
+  }
+  function letterFormatPreview(stage) {
+    const sel = document.getElementById('letterFormatCommunity');
+    const communityId = (sel && sel.value) || '';
+    const multi = document.getElementById('letterFormatMulti');
+    const params = new URLSearchParams({ stage });
+    if (communityId) params.set('community_id', communityId);
+    if (multi && multi.checked) params.set('multi', '1');
+    // Open in new tab — browser previews inline thanks to Content-Disposition
+    window.open(`/api/enforcement/sample-letter?${params.toString()}`, '_blank', 'noopener');
+  }
+  function letterFormatJumpToSettings() {
+    const sel = document.getElementById('letterFormatCommunity');
+    const communityId = (sel && sel.value) || '';
+    // Switch to Community Profile tab and scroll to letter settings card
+    if (typeof switchTab === 'function') switchTab('community');
+    setTimeout(() => {
+      // If the community picker on the profile page is wired, sync it
+      const profileSel = document.querySelector('#community-list select, #communityProfileSelect');
+      if (profileSel && communityId) {
+        profileSel.value = communityId;
+        if (typeof profileSel.onchange === 'function') profileSel.onchange();
+      }
+      // Scroll to the letter settings section (sender-name input is a stable anchor)
+      const anchor = document.getElementById('lc-sender-name');
+      if (anchor) anchor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 250);
+  }
+  // Auto-load community list when the user opens the Operations tab. Hook
+  // into switchTab — guarded with the retry pattern from CLAUDE.md so the
+  // dependency-defined-later trap doesn't silently no-op the wrap.
+  function _wireLetterFormatTabHook() {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return false;
+    const prev = window.switchTab;
+    window.switchTab = function (tab) {
+      const r = prev.apply(this, arguments);
+      if (tab === 'inspections' || tab === 'operations') {
+        try { letterFormatLoadCommunities(); } catch (_) {}
+      }
+      return r;
+    };
+    return true;
+  }
+  if (!_wireLetterFormatTabHook()) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _wireLetterFormatTabHook);
+    } else {
+      setTimeout(_wireLetterFormatTabHook, 0);
+    }
+  }
+  // Also load on first visibility — covers direct page load on inspections tab
+  setTimeout(() => { letterFormatLoadCommunities(); }, 500);
 
   async function inspDraftsLoad() {
     const wrap = document.getElementById('inspDraftsList');

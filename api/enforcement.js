@@ -5519,4 +5519,126 @@ router.post('/postcard-reminders/process', express.json(), async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/sample-letter
+// ---------------------------------------------------------------------------
+// Renders a SAMPLE violation letter PDF using realistic mock data so an
+// operator (Ed) can see what each of the 4 stage variants actually looks like
+// without having to dig through real violations. Pulls live community letter
+// config (sender name, cure days, fees, pay-to) so changes to the Community
+// Profile letter settings show up immediately in the sample.
+//
+// Query params:
+//   stage         — 'courtesy_1' | 'courtesy_2' | 'certified_209' | 'fine_assessed'
+//   community_id  — optional; if omitted, uses the first community in the portfolio
+//   multi         — '1' to render a bundle with 2 mock violations; default single
+//
+// Returns: application/pdf streamed inline (so browsers preview, not download)
+// ---------------------------------------------------------------------------
+router.get('/sample-letter', async (req, res) => {
+  try {
+    const stage = String(req.query.stage || 'courtesy_1');
+    const validStages = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed'];
+    if (!validStages.includes(stage)) {
+      return res.status(400).json({ error: `invalid stage; must be one of ${validStages.join(', ')}` });
+    }
+    const isMulti = String(req.query.multi || '') === '1';
+
+    // Pull community letter config — use requested community_id, else first one
+    let community;
+    if (req.query.community_id) {
+      const { data } = await supabase.from('communities')
+        .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
+        .eq('id', req.query.community_id).maybeSingle();
+      community = data;
+    }
+    if (!community) {
+      const { data } = await supabase.from('communities')
+        .select('id, name, legal_name, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation')
+        .order('name', { ascending: true }).limit(1).maybeSingle();
+      community = data;
+    }
+    if (!community) {
+      return res.status(400).json({ error: 'no communities found — add one first' });
+    }
+
+    // Mock property + owner (clearly fake address so this is never confused
+    // with a real notice)
+    const sampleProperty = {
+      street_address: '1234 Sample Lane',
+      unit: null,
+      city: 'Katy',
+      state: 'TX',
+      zip: '77450',
+      lot_number: 'L-12, B-3',
+    };
+    const sampleOwner = {
+      full_name: 'Sample Homeowner',
+      mailing_address: '1234 Sample Lane, Katy, TX 77450',
+    };
+
+    // Mock violation(s) — realistic categories from Bedrock's existing taxonomy
+    const baseViolation = {
+      category_label: 'Lawn / Landscaping Maintenance',
+      ai_description: 'Front lawn shows extensive overgrowth with grass exceeding the community standard. Several brown patches indicate irrigation or weed-control gaps.',
+      observation_captured_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
+      governing_doc: {
+        reference: 'Article 7, Section 7.3',
+        section_title: 'Maintenance of Lots',
+        quote: 'Each Owner shall keep the Lot, including all landscaping and improvements thereon, in a clean and well-maintained condition...',
+        page: 14,
+      },
+      prior_notices: stage === 'courtesy_2' || stage === 'certified_209' || stage === 'fine_assessed'
+        ? [{ date: new Date(Date.now() - 35 * 24 * 60 * 60 * 1000).toISOString(), stage: 'courtesy_1', delivery_method: 'first_class' }]
+        : [],
+      close_up_photo_buffer: null, // no photo in sample — render proceeds without
+      fine_amount: stage === 'fine_assessed' ? 75 : null,
+    };
+
+    const secondMock = {
+      category_label: 'Trash / Bulk Items',
+      ai_description: 'Bulk trash items (mattress, broken furniture) staged at curb outside the designated pickup window.',
+      observation_captured_at: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
+      governing_doc: {
+        reference: 'Article 8, Section 8.2',
+        section_title: 'Trash and Refuse',
+        quote: 'No trash, garbage, or other waste material shall be kept or stored upon any Lot except in sanitary containers...',
+        page: 17,
+      },
+      prior_notices: [],
+      close_up_photo_buffer: null,
+      fine_amount: null,
+    };
+
+    const violationsArr = isMulti ? [baseViolation, secondMock] : [baseViolation];
+
+    const { renderViolationLetterBundlePdf } = require('../lib/enforcement/violation_letter');
+
+    const pdfBuffer = await renderViolationLetterBundlePdf({
+      property: sampleProperty,
+      owner: sampleOwner,
+      community,
+      stage,
+      letter_date: new Date(),
+      wide_photo_buffer: null,
+      violations: violationsArr,
+      options: {
+        sender_name:  community.letter_sender_name,
+        sender_title: community.letter_sender_title,
+        certified_tracking_number: stage === 'certified_209' || stage === 'fine_assessed'
+          ? '9405 5118 9956 1234 5678 90'
+          : null,
+      },
+    });
+
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="sample-${stage}.pdf"`);
+    res.setHeader('Cache-Control', 'no-store'); // always show latest config
+    res.send(pdfBuffer);
+  } catch (err) {
+    console.error('[enforcement.sample-letter] failed:', err);
+    res.status(500).json({ error: safeErrorMessage(err), detail: err.message });
+  }
+});
+
 module.exports = { router, processCureLapses, processPostcardReminders };
