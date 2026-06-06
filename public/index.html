@@ -13434,6 +13434,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- CURE PIPELINE — active violations sorted by days until cure lapses
+         so the operator can see what's coming due, not just what's already
+         expired. Complements the cure-lapse processor (which only acts on
+         already-expired). Refresh button + bucket counts at the top, list
+         below sorted by cure_period_ends_at ascending. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">🌱 Cure pipeline <span style="color:#64748b; font-weight:500;">— what's coming due in the next 30 days</span></h3>
+        <div style="display:flex; gap:6px; align-items:center;">
+          <label style="font-size:11px; color:#64748b;">Horizon:</label>
+          <select id="curePipelineHorizon" onchange="curePipelineLoad()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
+            <option value="14">14 days</option>
+            <option value="30" selected>30 days</option>
+            <option value="60">60 days</option>
+            <option value="90">90 days</option>
+          </select>
+          <button class="secondary-btn" onclick="curePipelineLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+        </div>
+      </div>
+      <div id="curePipelineBuckets" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-bottom:10px;">
+        <!-- Bucket counters render here -->
+      </div>
+      <div id="curePipelineList" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
+        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>
+      </div>
+    </div>
+
     <!-- LETTER FORMAT — sample renders of each of the 4 stage variants so
          the operator can see what a letter looks like before any real
          violation is drafted, and so changes to community letter settings
@@ -17505,6 +17532,111 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!stageSel) return;
     letterFormatPreview(stageSel.value);
   }
+
+  // -------------------------------------------------------------------------
+  // Cure Pipeline — shows active violations bucketed by days until cure
+  // lapses. Lets the operator see what's coming due before the cure-lapse
+  // processor needs to act.
+  // -------------------------------------------------------------------------
+  async function curePipelineLoad() {
+    const list = document.getElementById('curePipelineList');
+    const bucketsWrap = document.getElementById('curePipelineBuckets');
+    if (!list || !bucketsWrap) return;
+    list.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
+    const horizonSel = document.getElementById('curePipelineHorizon');
+    const horizon = (horizonSel && horizonSel.value) || '30';
+    // Use the same community filter as the letter format card if set
+    const commSel = document.getElementById('letterFormatCommunity');
+    const params = new URLSearchParams({ horizon_days: horizon });
+    if (commSel && commSel.value) params.set('community_id', commSel.value);
+    try {
+      const r = await fetch(`/api/enforcement/cure-pipeline?${params.toString()}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+      // Bucket counter cards
+      const bucketDefs = [
+        { key: 'overdue',       label: 'Overdue',         color: '#fee2e2', text: '#7f1d1d', icon: '🔴' },
+        { key: 'due_this_week', label: 'Due this week',   color: '#fed7aa', text: '#7c2d12', icon: '🟠' },
+        { key: 'coming_soon',   label: '8–14 days',       color: '#fef3c7', text: '#78350f', icon: '🟡' },
+        { key: 'on_track',      label: '15+ days',        color: '#dcfce7', text: '#14532d', icon: '🟢' },
+      ];
+      bucketsWrap.innerHTML = bucketDefs.map(b => {
+        const n = (j.counts && j.counts[b.key]) || 0;
+        return `<div style="background:${b.color}; color:${b.text}; padding:10px 12px; border-radius:8px;">
+          <div style="font-size:10.5px; font-weight:600; opacity:0.85;">${b.icon} ${b.label}</div>
+          <div style="font-size:22px; font-weight:800; line-height:1;">${n}</div>
+        </div>`;
+      }).join('');
+
+      if (!j.violations || !j.violations.length) {
+        list.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">No active violations within the horizon. Clean slate.</div>';
+        return;
+      }
+
+      const stageBadge = (s) => {
+        const map = {
+          courtesy_1:    { bg: '#dbeafe', fg: '#1e40af', label: 'Courtesy 1' },
+          courtesy_2:    { bg: '#fef3c7', fg: '#78350f', label: 'Courtesy 2' },
+          certified_209: { bg: '#fecaca', fg: '#7f1d1d', label: 'Certified §209' },
+        };
+        const m = map[s] || { bg: '#e2e8f0', fg: '#334155', label: s };
+        return `<span style="background:${m.bg}; color:${m.fg}; padding:1px 7px; border-radius:99px; font-size:9.5px; font-weight:700;">${m.label}</span>`;
+      };
+      const daysBadge = (d, bucket) => {
+        const color = bucket === 'overdue' ? '#7f1d1d'
+                    : bucket === 'due_this_week' ? '#7c2d12'
+                    : bucket === 'coming_soon' ? '#78350f'
+                    : '#14532d';
+        const txt = d < 0 ? `${Math.abs(d)}d overdue` : d === 0 ? 'due today' : `${d}d left`;
+        return `<span style="color:${color}; font-weight:700; font-size:11px;">${txt}</span>`;
+      };
+
+      list.innerHTML = j.violations.map(v => {
+        const addr = v.property ? `${(v.property.street_address || '').trim()}${v.property.unit ? ' #' + v.property.unit : ''}` : '(no property)';
+        const owner = v.property && v.property.owner_name ? v.property.owner_name : '—';
+        const commName = v.community ? v.community.name : '';
+        const cat = v.category_label || '(uncategorized)';
+        const cureDate = v.cure_period_ends_at ? new Date(v.cure_period_ends_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+        return `<div style="display:flex; gap:10px; align-items:flex-start; padding:8px 4px; border-bottom:1px solid #f1f5f9;">
+          <div style="flex:1; min-width:0;">
+            <div style="font-weight:600; font-size:12.5px; color:#0B1D34;">${escapeHtml(addr)}</div>
+            <div style="font-size:10.5px; color:#64748b; margin-top:1px;">${escapeHtml(owner)} · ${escapeHtml(commName)} · ${escapeHtml(cat)}</div>
+          </div>
+          <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px; flex-shrink:0;">
+            ${stageBadge(v.current_stage)}
+            <div style="font-size:10px; color:#64748b;">cure by ${cureDate}</div>
+            ${daysBadge(v.days_remaining, v.bucket)}
+          </div>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = `<div style="color:#b91c1c; font-size:12px; text-align:center; padding:14px 0;">Failed: ${e.message}</div>`;
+    }
+  }
+
+  // Auto-load on Operations tab open
+  function _wireCurePipelineHook() {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') return false;
+    const prev = window.switchTab;
+    window.switchTab = function (tab) {
+      const r = prev.apply(this, arguments);
+      if (tab === 'inspections' || tab === 'operations') {
+        try { curePipelineLoad(); } catch (_) {}
+      }
+      return r;
+    };
+    return true;
+  }
+  if (!_wireCurePipelineHook()) {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', _wireCurePipelineHook);
+    } else {
+      setTimeout(_wireCurePipelineHook, 0);
+    }
+  }
+  setTimeout(() => { curePipelineLoad(); }, 800);
   function letterFormatPreview(stage) {
     const sel = document.getElementById('letterFormatCommunity');
     const communityId = (sel && sel.value) || '';

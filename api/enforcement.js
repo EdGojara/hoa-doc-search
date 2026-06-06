@@ -3680,6 +3680,90 @@ async function _draftLetterForBumpedViolation(violation, decision, communityId) 
 }
 
 // ---------------------------------------------------------------------------
+// GET /api/enforcement/cure-pipeline?community_id=&horizon_days=30
+// Returns ACTIVE violations grouped by days-remaining bucket so the
+// operator can see what's coming due before it lapses. Complements the
+// /cure-lapse/pending endpoint (which only shows already-expired).
+//
+// Buckets:
+//   overdue       — cure_period_ends_at < now
+//   due_this_week — 0-7 days remaining
+//   coming_soon   — 8-14 days remaining
+//   on_track      — 15+ days remaining (within horizon)
+//
+// Response: { counts: {bucket: n}, violations: [{...,days_remaining,bucket}] }
+// ---------------------------------------------------------------------------
+router.get('/cure-pipeline', async (req, res) => {
+  try {
+    const communityId = req.query.community_id || null;
+    const horizonDays = Math.min(180, Math.max(1, Number(req.query.horizon_days) || 30));
+    const limit = Math.min(2000, Number(req.query.limit) || 500);
+    const horizonIso = new Date(Date.now() + horizonDays * 24 * 60 * 60 * 1000).toISOString();
+
+    let q = supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id, current_stage, cure_period_ends_at, opened_at, board_priority_at_open, enforcement_categories(label)')
+      .in('current_stage', ['courtesy_1', 'courtesy_2', 'certified_209'])
+      .not('cure_period_ends_at', 'is', null)
+      .lte('cure_period_ends_at', horizonIso)
+      .is('resolved_at', null)
+      .in('quality_status', ['verified', 'unreviewed'])
+      .order('cure_period_ends_at', { ascending: true })
+      .limit(limit);
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: violations, error } = await q;
+    if (error) throw error;
+    const rows = violations || [];
+
+    // Enrich with property + community
+    const propIds = [...new Set(rows.map(v => v.property_id).filter(Boolean))];
+    const commIds = [...new Set(rows.map(v => v.community_id).filter(Boolean))];
+    const propMap = new Map();
+    const commMap = new Map();
+    if (propIds.length) {
+      const { data: props } = await supabase
+        .from('v_current_property_owners')
+        .select('property_id, street_address, unit, owner_name')
+        .in('property_id', propIds);
+      (props || []).forEach(p => propMap.set(p.property_id, p));
+    }
+    if (commIds.length) {
+      const { data: comms } = await supabase
+        .from('communities')
+        .select('id, name')
+        .in('id', commIds);
+      (comms || []).forEach(c => commMap.set(c.id, c));
+    }
+
+    const now = Date.now();
+    const counts = { overdue: 0, due_this_week: 0, coming_soon: 0, on_track: 0 };
+    const enriched = rows.map(v => {
+      const ms = new Date(v.cure_period_ends_at).getTime() - now;
+      const days_remaining = Math.ceil(ms / (24 * 60 * 60 * 1000));
+      let bucket;
+      if (days_remaining < 0) bucket = 'overdue';
+      else if (days_remaining <= 7) bucket = 'due_this_week';
+      else if (days_remaining <= 14) bucket = 'coming_soon';
+      else bucket = 'on_track';
+      counts[bucket] = (counts[bucket] || 0) + 1;
+      return {
+        ...v,
+        days_remaining,
+        bucket,
+        property: propMap.get(v.property_id) || null,
+        community: commMap.get(v.community_id) || null,
+        category_label: v.enforcement_categories ? v.enforcement_categories.label : null,
+      };
+    });
+
+    res.json({ counts, total: enriched.length, horizon_days: horizonDays, violations: enriched });
+  } catch (err) {
+    console.error('[cure-pipeline]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/cure-lapse/pending?community_id=&limit=50
 // Returns the list of violations eligible for escalation. Used by the UI
 // to show "X violations have expired cure periods" indicator.
