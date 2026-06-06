@@ -885,6 +885,11 @@ app.use('/api/bank-rec', bankRecRouter);
 const { router: booksRouter } = require('./api/books');
 app.use('/api/books', booksRouter);
 
+// Homeowner AR — sub-ledger (charges, payments, §209.0063 application engine).
+// Phase 2A. Migration 172 + lib/accounting/ar_engine.js power it.
+const { router: arRouter } = require('./api/ar');
+app.use('/api/ar', arRouter);
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).
