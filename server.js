@@ -878,6 +878,13 @@ app.use('/api/vantaca-imports', vantacaImportsRouter);
 const { router: bankRecRouter } = require('./api/bank_rec');
 app.use('/api/bank-rec', bankRecRouter);
 
+// Books — General Ledger. Phase 1 substrate: chart of accounts, periods,
+// journal entries with double-entry constraint at DB level, trial balance.
+// Pilots: August Meadows (greenfield, live 2026-06-01) + Quail Ridge
+// (migration target). Migration 170 + lib/accounting/* power it.
+const { router: booksRouter } = require('./api/books');
+app.use('/api/books', booksRouter);
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).

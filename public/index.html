@@ -410,6 +410,11 @@
        speeds Vantaca data entry from ~30min to ~5min. Eventually replaces
        Vantaca's rec module when trustEd holds the canonical GL. -->
   <div class="tab" onclick="switchTab('bank-rec')" title="Three-way bank reconciliation — bank statement + check register + GL with auto-matching and printable cheat sheet for Vantaca entry">🧾 Bank Rec</div>
+  <!-- Books — Bedrock's own general ledger. Double-entry posting engine,
+       chart of accounts per community, period management, trial balance.
+       Pilots: August Meadows (greenfield, live 2026-06-01) + Quail Ridge.
+       By end of Vantaca contract (~18 months), all communities run here. -->
+  <div class="tab" onclick="switchTab('books')" title="Bedrock's general ledger — double-entry, periods, trial balance, financial statements. Migration off Vantaca starts here.">📚 Books</div>
   <!-- Bedrock Connect — community-email broadcast platform. PLACEHOLDER
        state — opens the design preview page. Build queued behind
        Messaging System Phase 1. -->
@@ -1091,6 +1096,135 @@
         <div style="display:flex; gap:8px; justify-content:flex-end;">
           <button class="secondary-btn" onclick="brCloseNewModal()">Cancel</button>
           <button class="action-btn" onclick="brCreateReconciliation()">Create</button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     BOOKS — Bedrock's General Ledger
+     ----------------------------------------------------------------------
+     Double-entry posting engine, chart of accounts per community, period
+     management, trial balance. Pilots: August Meadows (greenfield, live
+     2026-06-01) + Quail Ridge (migration). Backed by /api/books and
+     migration 170. Vantaca CoA structure used as roadmap.
+     ========================================================================= -->
+<div class="tab-content" id="tab-books" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1280px;">
+    <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px;">
+      <div>
+        <h2 style="margin:0 0 4px 0; color:#0B1D34;">📚 Books — General Ledger</h2>
+        <p style="color:#5a7390; font-size:13px; margin:0; max-width:780px;">
+          Bedrock's own GL. Double-entry posting, period management, trial balance. <strong>Pilots: August Meadows (greenfield, June 1) + Quail Ridge (migration).</strong> Vantaca CoA structure used as roadmap so future migration is mechanical. By end of Vantaca contract (~18 months), all communities run here.
+        </p>
+      </div>
+    </div>
+
+    <!-- Community picker + sub-view nav -->
+    <div class="panel" style="margin-bottom:14px;">
+      <div style="display:flex; gap:10px; align-items:end; flex-wrap:wrap;">
+        <div style="flex:1; min-width:220px;">
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+          <select id="bk-community" onchange="bkCommunityChanged()" style="padding:7px 10px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; width:100%;">
+            <option value="">— Select community —</option>
+          </select>
+        </div>
+        <button class="secondary-btn" onclick="bkOnboardCurrent()" id="bk-onboard-btn" style="font-size:12.5px; display:none;">⚙️ Onboard to GL (seed CoA + periods)</button>
+      </div>
+      <div id="bk-subnav" style="display:none; margin-top:14px; border-bottom:1px solid #d0d7de;">
+        <button class="bk-tab-btn" data-bktab="trial-balance" onclick="bkSubswitch('trial-balance')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:600; color:#315A87; border-bottom:2px solid #315A87; margin-bottom:-1px;">⚖️ Trial Balance</button>
+        <button class="bk-tab-btn" data-bktab="je" onclick="bkSubswitch('je')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📝 Journal Entries</button>
+        <button class="bk-tab-btn" data-bktab="coa" onclick="bkSubswitch('coa')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📒 Chart of Accounts</button>
+        <button class="bk-tab-btn" data-bktab="periods" onclick="bkSubswitch('periods')" style="padding:8px 14px; border:none; background:none; cursor:pointer; font-size:13px; font-weight:500; color:#666; border-bottom:2px solid transparent; margin-bottom:-1px;">📅 Periods</button>
+      </div>
+    </div>
+
+    <div id="bk-empty-state" class="panel" style="text-align:center; padding:40px; color:#888;">
+      <div style="font-size:36px; margin-bottom:10px;">📚</div>
+      <div style="font-weight:600; color:#0B1D34; margin-bottom:4px;">Pick a community to view its books</div>
+      <div style="font-size:13px;">August Meadows and Quail Ridge are the Phase 1 pilots.</div>
+    </div>
+
+    <!-- TRIAL BALANCE -->
+    <div id="bk-section-trial-balance" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h3 style="margin:0;">⚖️ Trial Balance</h3>
+          <div id="bk-tb-balanced" style="font-size:12px; font-weight:600;"></div>
+        </div>
+        <div id="bk-tb-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- JOURNAL ENTRIES -->
+    <div id="bk-section-je" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+          <h3 style="margin:0;">📝 Journal Entries</h3>
+          <button class="action-btn" onclick="bkOpenJEModal()">+ New Journal Entry</button>
+        </div>
+        <div id="bk-je-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- CHART OF ACCOUNTS -->
+    <div id="bk-section-coa" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <h3 style="margin-top:0;">📒 Chart of Accounts</h3>
+        <p style="font-size:12px; color:#888;">Standard HOA structure. Vantaca account numbers map 1:1 for seamless migration. Summary accounts (headers) are not postable; only detail accounts accept journal entries.</p>
+        <div id="bk-coa-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- PERIODS -->
+    <div id="bk-section-periods" style="display:none;">
+      <div class="panel" style="margin-bottom:14px;">
+        <h3 style="margin-top:0;">📅 Accounting Periods</h3>
+        <p style="font-size:12px; color:#888;">Monthly periods. Closed periods reject new postings. Reopen requires a written reason for audit trail.</p>
+        <div id="bk-periods-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- NEW JE MODAL -->
+    <div id="bk-je-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:9999; align-items:flex-start; justify-content:center; padding:40px 16px; overflow-y:auto;">
+      <div style="background:white; border-radius:10px; padding:22px; max-width:920px; width:100%;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="margin:0;">📝 New Journal Entry</h3>
+          <button class="secondary-btn" onclick="bkCloseJEModal()" style="font-size:12px;">×</button>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 2fr; gap:12px; margin-bottom:12px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Posting Date</label>
+            <input type="date" id="bk-je-date" style="padding:7px; width:100%; font-size:13px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Description</label>
+            <input type="text" id="bk-je-desc" placeholder="What does this entry record?" style="padding:7px; width:100%; font-size:13px;">
+          </div>
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-bottom:8px;">
+          <thead>
+            <tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 8px; text-align:left; width:30%;">Account</th>
+              <th style="padding:6px 8px; text-align:right; width:18%;">Debit</th>
+              <th style="padding:6px 8px; text-align:right; width:18%;">Credit</th>
+              <th style="padding:6px 8px; text-align:left;">Memo</th>
+              <th style="padding:6px 8px; width:30px;"></th>
+            </tr>
+          </thead>
+          <tbody id="bk-je-lines"></tbody>
+        </table>
+        <button class="secondary-btn" onclick="bkAddJELine()" style="font-size:12px;">+ Add line</button>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:14px; border-top:1px solid #d0d7de;">
+          <div style="font-size:13px;">
+            Totals: <strong id="bk-je-debits">$0.00</strong> debits / <strong id="bk-je-credits">$0.00</strong> credits
+            <span id="bk-je-balance-msg" style="margin-left:14px;"></span>
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="secondary-btn" onclick="bkCloseJEModal()">Cancel</button>
+            <button class="action-btn" id="bk-je-post-btn" onclick="bkPostJE()" disabled>Post Entry</button>
+          </div>
         </div>
       </div>
     </div>
@@ -30420,6 +30554,415 @@ ${questionsPage}
         document.addEventListener('DOMContentLoaded', _wireBankRecTabHook);
       } else {
         setTimeout(_wireBankRecTabHook, 0);
+      }
+    }
+  })();
+
+  // =========================================================================
+  // BOOKS — Bedrock GL. Phase 1: chart of accounts, periods, JE entry,
+  // trial balance. Backed by /api/books + migration 170.
+  // =========================================================================
+  (function () {
+    let bkCommunityId = null;
+    let bkAccounts = [];     // cached for the current community
+    let bkCommunitiesCache = [];
+    let bkCurrentTab = 'trial-balance';
+    let bkJELineCount = 0;
+
+    function bkEsc(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function bkFmtCents(c) {
+      const n = Number(c) || 0;
+      const v = n / 100;
+      const sign = v < 0 ? '-' : '';
+      return sign + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function bkFmtDate(d) {
+      if (!d) return '—';
+      return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+
+    async function bkLoadCommunities() {
+      if (bkCommunitiesCache.length) return bkCommunitiesCache;
+      try {
+        const r = await fetch('/api/communities');
+        const j = await r.json();
+        bkCommunitiesCache = (j.communities || j || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const opts = bkCommunitiesCache.map((c) => `<option value="${bkEsc(c.id)}">${bkEsc(c.name)}</option>`).join('');
+        const sel = document.getElementById('bk-community');
+        if (sel) sel.innerHTML = '<option value="">— Select community —</option>' + opts;
+      } catch (_) {}
+      return bkCommunitiesCache;
+    }
+
+    window.bkCommunityChanged = async function () {
+      bkCommunityId = document.getElementById('bk-community').value;
+      if (!bkCommunityId) {
+        document.getElementById('bk-empty-state').style.display = 'block';
+        document.getElementById('bk-subnav').style.display = 'none';
+        ['trial-balance', 'je', 'coa', 'periods'].forEach((t) => {
+          const el = document.getElementById('bk-section-' + t);
+          if (el) el.style.display = 'none';
+        });
+        document.getElementById('bk-onboard-btn').style.display = 'none';
+        return;
+      }
+      // Check whether the community has been onboarded (has any accounts)
+      try {
+        const r = await fetch('/api/books/coa?community_id=' + encodeURIComponent(bkCommunityId));
+        const j = await r.json();
+        bkAccounts = j.accounts || [];
+        const onboarded = bkAccounts.length > 0;
+        document.getElementById('bk-onboard-btn').style.display = onboarded ? 'none' : 'inline-block';
+        document.getElementById('bk-empty-state').style.display = onboarded ? 'none' : 'block';
+        document.getElementById('bk-subnav').style.display = onboarded ? 'flex' : 'none';
+        if (onboarded) {
+          bkSubswitch(bkCurrentTab);
+        } else {
+          document.getElementById('bk-empty-state').innerHTML = `
+            <div style="font-size:36px; margin-bottom:10px;">⚙️</div>
+            <div style="font-weight:600; color:#0B1D34; margin-bottom:4px;">This community has not been onboarded to the GL yet.</div>
+            <div style="font-size:13px; margin-bottom:14px;">Click <strong>Onboard to GL</strong> above to seed the chart of accounts + initial accounting periods.</div>
+          `;
+        }
+      } catch (_) {}
+    };
+
+    window.bkOnboardCurrent = async function () {
+      if (!bkCommunityId) return;
+      const community = bkCommunitiesCache.find((c) => c.id === bkCommunityId);
+      const goLive = window.prompt(`Onboard "${community?.name || 'community'}" to the GL.\n\nSeeds:\n  • Standard HOA Chart of Accounts (~80 accounts)\n  • Operating + Reserve funds\n  • 12 monthly accounting periods starting from go-live date\n\nEnter the community go-live date (YYYY-MM-DD):`,
+        new Date().toISOString().slice(0, 10).replace(/-\d{2}$/, '-01'));
+      if (!goLive || !/^\d{4}-\d{2}-\d{2}$/.test(goLive)) {
+        alert('Need a valid YYYY-MM-DD date.');
+        return;
+      }
+      try {
+        const r = await fetch('/api/books/onboard', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ community_id: bkCommunityId, start_date: goLive }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'onboard failed');
+        alert(`Onboarded — ${j.coa.accounts_count} accounts, ${j.coa.funds_count} funds, ${j.periods?.inserted || 0} periods opened.`);
+        bkCommunityChanged();
+      } catch (e) { alert('Onboard failed: ' + e.message); }
+    };
+
+    window.bkSubswitch = function (tab) {
+      bkCurrentTab = tab;
+      document.querySelectorAll('.bk-tab-btn').forEach((btn) => {
+        const active = btn.getAttribute('data-bktab') === tab;
+        btn.style.color = active ? '#315A87' : '#666';
+        btn.style.fontWeight = active ? '600' : '500';
+        btn.style.borderBottom = active ? '2px solid #315A87' : '2px solid transparent';
+      });
+      ['trial-balance', 'je', 'coa', 'periods'].forEach((t) => {
+        const el = document.getElementById('bk-section-' + t);
+        if (el) el.style.display = t === tab ? 'block' : 'none';
+      });
+      if (tab === 'trial-balance') bkLoadTrialBalance();
+      if (tab === 'je') bkLoadJEs();
+      if (tab === 'coa') bkLoadCOA();
+      if (tab === 'periods') bkLoadPeriods();
+    };
+
+    async function bkLoadTrialBalance() {
+      const c = document.getElementById('bk-tb-container');
+      if (!c || !bkCommunityId) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch('/api/books/trial-balance?community_id=' + encodeURIComponent(bkCommunityId));
+        const j = await r.json();
+        document.getElementById('bk-tb-balanced').innerHTML = j.balanced
+          ? '<span style="color:#16a34a;">✓ Debits = Credits</span>'
+          : `<span style="color:#dc2626;">⚠ Out of balance by ${bkFmtCents(j.totals.total_debits - j.totals.total_credits)}</span>`;
+        const rows = (j.accounts || []).filter((a) => !((a.total_debits_cents || 0) === 0 && (a.total_credits_cents || 0) === 0));
+        if (rows.length === 0) {
+          c.innerHTML = '<div style="padding:30px; text-align:center; color:#888;">No posted activity yet. Trial balance shows nothing until journal entries are posted.</div>';
+          return;
+        }
+        c.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 8px; text-align:left;">Account #</th>
+              <th style="padding:6px 8px; text-align:left;">Name</th>
+              <th style="padding:6px 8px; text-align:left;">Fund</th>
+              <th style="padding:6px 8px; text-align:right;">Debits</th>
+              <th style="padding:6px 8px; text-align:right;">Credits</th>
+              <th style="padding:6px 8px; text-align:right;">Balance</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((a) => `
+                <tr style="border-bottom:1px solid #eee;">
+                  <td style="padding:6px 8px; font-family:ui-monospace,monospace;">${bkEsc(a.account_number)}</td>
+                  <td style="padding:6px 8px;">${bkEsc(a.account_name)}</td>
+                  <td style="padding:6px 8px; color:#5a7390;">${bkEsc(a.fund_code || '—')}</td>
+                  <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(a.total_debits_cents)}</td>
+                  <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(a.total_credits_cents)}</td>
+                  <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace; font-weight:600;">${bkFmtCents(a.natural_balance_cents)}</td>
+                </tr>
+              `).join('')}
+              <tr style="background:#fafafa; border-top:2px solid #0B1D34; font-weight:700;">
+                <td colspan="3" style="padding:8px;">TOTALS</td>
+                <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(j.totals.total_debits)}</td>
+                <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(j.totals.total_credits)}</td>
+                <td style="padding:8px; text-align:right; font-family:ui-monospace,monospace; color:${j.balanced ? '#16a34a' : '#dc2626'};">${bkFmtCents(j.totals.total_debits - j.totals.total_credits)}</td>
+              </tr>
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+
+    async function bkLoadJEs() {
+      const c = document.getElementById('bk-je-container');
+      if (!c || !bkCommunityId) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch('/api/books/journal-entries?community_id=' + encodeURIComponent(bkCommunityId) + '&limit=100');
+        const j = await r.json();
+        const rows = j.journal_entries || [];
+        if (rows.length === 0) {
+          c.innerHTML = '<div style="padding:30px; text-align:center; color:#888;">No journal entries yet. Click <strong>+ New Journal Entry</strong> to post the first one.</div>';
+          return;
+        }
+        c.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 8px; text-align:left;">Date</th>
+              <th style="padding:6px 8px; text-align:left;">Reference</th>
+              <th style="padding:6px 8px; text-align:left;">Description</th>
+              <th style="padding:6px 8px; text-align:left;">Source</th>
+              <th style="padding:6px 8px; text-align:right;">Amount</th>
+              <th style="padding:6px 8px; text-align:center;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((e) => {
+                const statusColor = e.status === 'voided' ? '#888' : '#0B1D34';
+                return `
+                  <tr style="border-bottom:1px solid #eee; color:${statusColor};">
+                    <td style="padding:6px 8px;">${bkEsc(bkFmtDate(e.posting_date))}</td>
+                    <td style="padding:6px 8px; font-family:ui-monospace,monospace;">${bkEsc(e.reference)}</td>
+                    <td style="padding:6px 8px;">${bkEsc(e.description)}</td>
+                    <td style="padding:6px 8px; color:#5a7390;">${bkEsc(e.source_module)}</td>
+                    <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${bkFmtCents(e.total_debits_cents)}</td>
+                    <td style="padding:6px 8px; text-align:center;">${e.status === 'posted' ? '✓' : e.status === 'voided' ? '✗ Voided' : e.status}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+
+    async function bkLoadCOA() {
+      const c = document.getElementById('bk-coa-container');
+      if (!c || !bkCommunityId) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch('/api/books/coa?community_id=' + encodeURIComponent(bkCommunityId));
+        const j = await r.json();
+        const rows = j.accounts || [];
+        c.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 8px; text-align:left;">Account #</th>
+              <th style="padding:6px 8px; text-align:left;">Name</th>
+              <th style="padding:6px 8px; text-align:left;">Type</th>
+              <th style="padding:6px 8px; text-align:left;">Fund</th>
+              <th style="padding:6px 8px; text-align:left;">Normal</th>
+              <th style="padding:6px 8px; text-align:center;">Vantaca #</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((a) => `
+                <tr style="border-bottom:1px solid #eee; ${a.is_summary ? 'background:#fafafa; font-weight:600;' : ''}">
+                  <td style="padding:6px 8px; font-family:ui-monospace,monospace;">${bkEsc(a.account_number)}</td>
+                  <td style="padding:6px 8px;">${bkEsc(a.account_name)}${a.is_summary ? ' <em style="color:#888; font-weight:400; font-size:11px;">(header)</em>' : ''}</td>
+                  <td style="padding:6px 8px; color:#5a7390; text-transform:capitalize;">${bkEsc(a.account_type)}</td>
+                  <td style="padding:6px 8px; color:#5a7390;">${bkEsc(a.account_funds?.fund_code || '—')}</td>
+                  <td style="padding:6px 8px; color:#5a7390;">${a.normal_balance === 'debit' ? 'Dr' : 'Cr'}</td>
+                  <td style="padding:6px 8px; text-align:center; font-family:ui-monospace,monospace; color:#5a7390;">${bkEsc(a.vantaca_account_number || '—')}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+
+    async function bkLoadPeriods() {
+      const c = document.getElementById('bk-periods-container');
+      if (!c || !bkCommunityId) return;
+      c.innerHTML = 'Loading…';
+      try {
+        const r = await fetch('/api/books/periods?community_id=' + encodeURIComponent(bkCommunityId));
+        const j = await r.json();
+        const rows = j.periods || [];
+        if (rows.length === 0) {
+          c.innerHTML = '<div style="padding:30px; text-align:center; color:#888;">No periods set up.</div>';
+          return;
+        }
+        c.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead><tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+              <th style="padding:6px 8px; text-align:left;">Fiscal Year</th>
+              <th style="padding:6px 8px; text-align:center;">Period #</th>
+              <th style="padding:6px 8px; text-align:left;">Start</th>
+              <th style="padding:6px 8px; text-align:left;">End</th>
+              <th style="padding:6px 8px; text-align:center;">Status</th>
+            </tr></thead>
+            <tbody>
+              ${rows.map((p) => {
+                const statusBg = p.status === 'open' || p.status === 'reopened' ? '#dcfce7' : p.status === 'closed' ? '#fef3c7' : '#f3f4f6';
+                const statusFg = p.status === 'open' || p.status === 'reopened' ? '#166534' : p.status === 'closed' ? '#92400e' : '#6b7280';
+                return `
+                  <tr style="border-bottom:1px solid #eee;">
+                    <td style="padding:6px 8px;">${p.fiscal_year}</td>
+                    <td style="padding:6px 8px; text-align:center;">${p.period_number}</td>
+                    <td style="padding:6px 8px;">${bkEsc(bkFmtDate(p.period_start))}</td>
+                    <td style="padding:6px 8px;">${bkEsc(bkFmtDate(p.period_end))}</td>
+                    <td style="padding:6px 8px; text-align:center;">
+                      <span style="display:inline-block; font-size:11px; font-weight:600; padding:2px 8px; border-radius:10px; background:${statusBg}; color:${statusFg};">${bkEsc(p.status)}</span>
+                    </td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        c.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed: ${bkEsc(e.message)}</div>`;
+      }
+    }
+
+    // ---- JE entry modal ----
+    window.bkOpenJEModal = function () {
+      if (!bkCommunityId) return;
+      document.getElementById('bk-je-modal').style.display = 'flex';
+      document.getElementById('bk-je-date').value = new Date().toISOString().slice(0, 10);
+      document.getElementById('bk-je-desc').value = '';
+      document.getElementById('bk-je-lines').innerHTML = '';
+      bkJELineCount = 0;
+      bkAddJELine(); bkAddJELine(); // start with two lines
+      bkUpdateJETotals();
+    };
+    window.bkCloseJEModal = function () { document.getElementById('bk-je-modal').style.display = 'none'; };
+
+    window.bkAddJELine = function () {
+      bkJELineCount += 1;
+      const idx = bkJELineCount;
+      const tbody = document.getElementById('bk-je-lines');
+      const tr = document.createElement('tr');
+      tr.style.borderBottom = '1px solid #eee';
+      tr.id = 'bk-je-line-' + idx;
+      // Build account picker — only postable (non-summary) detail accounts
+      const opts = (bkAccounts || []).filter((a) => !a.is_summary).map((a) =>
+        `<option value="${bkEsc(a.id)}">${bkEsc(a.account_number)} — ${bkEsc(a.account_name)}</option>`
+      ).join('');
+      tr.innerHTML = `
+        <td style="padding:4px;">
+          <select class="bk-je-acct" style="width:100%; padding:5px; font-size:12px;">
+            <option value="">— Pick account —</option>${opts}
+          </select>
+        </td>
+        <td style="padding:4px;"><input type="text" class="bk-je-debit" placeholder="0.00" oninput="bkUpdateJETotals()" style="width:100%; padding:5px; font-size:12px; text-align:right; font-family:ui-monospace,monospace;"></td>
+        <td style="padding:4px;"><input type="text" class="bk-je-credit" placeholder="0.00" oninput="bkUpdateJETotals()" style="width:100%; padding:5px; font-size:12px; text-align:right; font-family:ui-monospace,monospace;"></td>
+        <td style="padding:4px;"><input type="text" class="bk-je-memo" placeholder="Memo (optional)" style="width:100%; padding:5px; font-size:12px;"></td>
+        <td style="padding:4px; text-align:center;">
+          <button onclick="document.getElementById('bk-je-line-${idx}').remove(); bkUpdateJETotals();" style="background:none; border:none; color:#dc2626; cursor:pointer; font-size:14px;">×</button>
+        </td>
+      `;
+      tbody.appendChild(tr);
+    };
+
+    function parseMoney(v) {
+      if (!v) return 0;
+      const n = Number(String(v).replace(/[$,\s]/g, ''));
+      if (!Number.isFinite(n)) return 0;
+      return Math.round(n * 100);
+    }
+
+    window.bkUpdateJETotals = function () {
+      let totDr = 0, totCr = 0;
+      document.querySelectorAll('#bk-je-lines tr').forEach((tr) => {
+        const d = parseMoney(tr.querySelector('.bk-je-debit')?.value);
+        const c = parseMoney(tr.querySelector('.bk-je-credit')?.value);
+        totDr += d; totCr += c;
+      });
+      document.getElementById('bk-je-debits').textContent = bkFmtCents(totDr);
+      document.getElementById('bk-je-credits').textContent = bkFmtCents(totCr);
+      const msg = document.getElementById('bk-je-balance-msg');
+      const postBtn = document.getElementById('bk-je-post-btn');
+      if (totDr === totCr && totDr > 0) {
+        msg.innerHTML = '<span style="color:#16a34a; font-weight:600;">✓ Balanced</span>';
+        postBtn.disabled = false;
+      } else if (totDr === 0 && totCr === 0) {
+        msg.textContent = '';
+        postBtn.disabled = true;
+      } else {
+        msg.innerHTML = `<span style="color:#dc2626; font-weight:600;">⚠ Off by ${bkFmtCents(totDr - totCr)}</span>`;
+        postBtn.disabled = true;
+      }
+    };
+
+    window.bkPostJE = async function () {
+      const posting_date = document.getElementById('bk-je-date').value;
+      const description = document.getElementById('bk-je-desc').value.trim();
+      if (!posting_date || !description) { alert('Date + description required.'); return; }
+      const lines = [];
+      document.querySelectorAll('#bk-je-lines tr').forEach((tr) => {
+        const account_id = tr.querySelector('.bk-je-acct')?.value;
+        const d = parseMoney(tr.querySelector('.bk-je-debit')?.value);
+        const c = parseMoney(tr.querySelector('.bk-je-credit')?.value);
+        const memo = tr.querySelector('.bk-je-memo')?.value || null;
+        if (account_id && (d > 0 || c > 0)) {
+          lines.push({ account_id, debit_cents: d, credit_cents: c, memo });
+        }
+      });
+      if (lines.length < 2) { alert('Need at least 2 lines.'); return; }
+      try {
+        const r = await fetch('/api/books/journal-entries', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            community_id: bkCommunityId, posting_date, description, source_module: 'manual', lines,
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'post failed');
+        bkCloseJEModal();
+        bkLoadJEs();
+        bkLoadTrialBalance();
+        alert(`Posted ${j.entry.reference}.`);
+      } catch (e) { alert('Post failed: ' + e.message); }
+    };
+
+    // Auto-load on tab activation
+    function _wireBooksTabHook() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'books') {
+          try { bkLoadCommunities(); } catch (_) {}
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_wireBooksTabHook()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireBooksTabHook);
+      } else {
+        setTimeout(_wireBooksTabHook, 0);
       }
     }
   })();
