@@ -90,8 +90,7 @@ function getExtractorForReportType(report_type) {
     transaction_history: { module: '../lib/vantaca/extractors/transaction_history', label: 'Transaction History (Owner Ledger)' },
     bank_reconciliation: { module: '../lib/vantaca/extractors/bank_reconciliation', label: 'Bank Reconciliation (Vantaca output)' },
     trial_balance: { module: '../lib/vantaca/extractors/trial_balance', label: 'GL Trial Balance (migration foundation)' },
-    // Phase 2+ slots — populated as extractors are written.
-    ap_ledger: null,
+    ap_ledger: { module: '../lib/vantaca/extractors/ap_ledger', label: 'AP Ledger / AP Aging' },
     owner_statement: null,
     vendor_history: null,
     budget_actual: null,
@@ -357,7 +356,7 @@ router.get('/report-types', async (req, res) => {
       { type: 'trial_balance', label: 'GL Trial Balance', extractor: true, expected_cadence: 'monthly' },
       { type: 'check_register', label: 'Check Register', extractor: true, expected_cadence: 'monthly' },
       { type: 'transaction_history', label: 'Transaction History (Owner Ledger)', extractor: true, expected_cadence: 'ad_hoc' },
-      { type: 'ap_ledger', label: 'AP Ledger / Vendor Invoices', extractor: false, expected_cadence: 'weekly' },
+      { type: 'ap_ledger', label: 'AP Ledger / Vendor Invoices', extractor: true, expected_cadence: 'weekly' },
       { type: 'bank_reconciliation', label: 'Bank Rec (Vantaca-generated)', extractor: true, expected_cadence: 'monthly' },
       { type: 'owner_statement', label: 'Owner Statement', extractor: false, expected_cadence: 'monthly' },
       { type: 'vendor_history', label: 'Vendor History / 1099', extractor: false, expected_cadence: 'annual' },
