@@ -2662,13 +2662,58 @@ router.post('/mail-queue/lock-and-batch', express.json(), async (req, res) => {
     }
 
     // Mark all included letters as printed + stamp the locking user
+    const printedAt = new Date().toISOString();
     await supabase
       .from('interactions')
       .update({
-        printed_at: new Date().toISOString(),
+        printed_at: printedAt,
         locked_by_user_id: actor.id,
       })
       .in('id', included);
+
+    // Log a letter_mail_pieces row per letter with provider='manual' so
+    // every mailed letter (whether via Lob or printed-and-stuffed manually)
+    // has a unified audit trail. Same UI treats both paths identically.
+    try {
+      const { data: includedInters } = await supabase
+        .from('interactions')
+        .select('id, community_id, property_id, violation_id, type, bundle_id')
+        .in('id', included);
+      const stageMap = {
+        letter_courtesy_1: 'courtesy_1',
+        letter_courtesy_2: 'courtesy_2',
+        letter_209:        'certified_209',
+        letter_fine:       'fine_assessed',
+        letter_hearing:    'hearing_notice',
+        letter_force_mow:  'force_mow',
+      };
+      const pieces = (includedInters || []).map(inter => ({
+        interaction_id: inter.id,
+        community_id:   inter.community_id,
+        property_id:    inter.property_id,
+        violation_id:   inter.violation_id,
+        bundle_id:      inter.bundle_id,
+        stage_at_send:  stageMap[inter.type] || 'certified_209',
+        provider:       'manual',
+        delivery_method: deliveryMethod === 'certified_mail' ? 'certified_mail' : 'first_class',
+        return_receipt_requested: deliveryMethod === 'certified_mail',
+        status:         'submitted',
+        submitted_at:   printedAt,
+        mailed_at:      postmarkDate.toISOString(),
+        events: [{
+          ts: printedAt,
+          type: 'manual_print_batch',
+          note: `Locked + printed in batch by user ${actor.id}, postmark ${postmarkIso}`,
+        }],
+      }));
+      if (pieces.length > 0) {
+        const { error: mpErr } = await supabase.from('letter_mail_pieces')
+          .upsert(pieces, { onConflict: 'interaction_id' });
+        if (mpErr) console.warn('[mail-queue.lock-and-batch] letter_mail_pieces upsert failed:', mpErr.message);
+      }
+    } catch (e) {
+      console.warn('[mail-queue.lock-and-batch] mail piece logging failed (non-fatal):', e.message);
+    }
 
     const mergedBytes = await out.save();
     const filenameStamp = postmarkIso.replace(/-/g, '');
