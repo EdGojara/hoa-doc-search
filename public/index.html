@@ -13366,14 +13366,28 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              (Scar 2026-05-28 — Canyon Gate prep, Ed's iPhone). -->
         <input type="file" id="inspPhotoInput" accept="image/*" capture="environment" style="position:absolute; left:-9999px; top:0; width:1px; height:1px; opacity:0;" onchange="inspOnPhotoSelected(this)">
 
+        <!-- Capture mode toggle — sticky default to Single (one tap), Pair
+             is one tap away for §209-quality wide+close documentation.
+             Pair mode locks the NEXT capture to be a wide shot, then the
+             one after to be a close-up linked to that wide (wrong-house
+             insurance on the letter). -->
+        <div id="inspCaptureModeToggle" style="display:flex; gap:6px; margin-bottom:8px; background:#f1f5f9; padding:3px; border-radius:8px;">
+          <button type="button" id="inspModeSingle" onclick="inspSetCaptureMode('single')" style="flex:1; padding:7px 10px; border-radius:6px; border:none; background:#fff; color:#0B1D34; font-size:11.5px; font-weight:700; cursor:pointer; box-shadow:0 1px 2px rgba(0,0,0,0.06);">
+            📸 Single shot
+          </button>
+          <button type="button" id="inspModePair" onclick="inspSetCaptureMode('pair')" title="Wide shot first (identifies the house), then close-up linked to it. The pair travels onto the letter as wrong-house insurance — recommended for §209 certified letters." style="flex:1; padding:7px 10px; border-radius:6px; border:none; background:transparent; color:#64748b; font-size:11.5px; font-weight:700; cursor:pointer;">
+            🏠+🔍 Pair (wide → close-up)
+          </button>
+        </div>
+
         <!-- Staged-wide chip (shown only after a wide is staged) -->
-        <div id="inspWidePairChip" style="display:none; background:#fff; border:1px solid #d8e2ed; border-radius:10px; padding:8px 10px; margin-bottom: 8px; display:flex; align-items:center; gap:10px;">
+        <div id="inspWidePairChip" style="display:none; background:#fff7ed; border:1px solid #fed7aa; border-radius:10px; padding:8px 10px; margin-bottom: 8px; align-items:center; gap:10px;">
           <div id="inspWideThumb" style="width:42px; height:42px; border-radius:6px; background:#0B1D34; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px;">🏠</div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.06em; font-weight:600;">Pairing with</div>
+            <div style="font-size:10.5px; color:#9a3412; text-transform:uppercase; letter-spacing:0.06em; font-weight:700;">Next shot: close-up linked to ↓</div>
             <div id="inspWidePairLabel" style="font-size:12.5px; color:#0B1D34; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Wide shot · uploading…</div>
           </div>
-          <button type="button" onclick="inspEndPropertyPair()" style="background:#f8fafc; border:1px solid #cbd5e1; color:#475569; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">Done with property</button>
+          <button type="button" onclick="inspEndPropertyPair()" title="Cancel — next shot will be a single instead" style="background:#fff; border:1px solid #fca5a5; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ Cancel pair</button>
         </div>
 
         <!-- iOS-bulletproof pattern: <label for=> bridges directly to the
@@ -13401,7 +13415,6 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="height: 80px;"></div>
         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:10px;">
           <div id="inspGpsStatus" style="font-size: 11px; color: #64748b; flex:1;">Tap once to enable GPS + compass for accurate tagging</div>
-          <a href="#" onclick="event.preventDefault(); inspTriggerCapture('pair')" title="Wide shot first (identifies the house), then close-up — pair travels onto the letter as wrong-house insurance. Useful for §209 certified letters." style="font-size: 10.5px; color: #64748b; text-decoration: none; border-bottom: 1px dotted #cbd5e1;">Pair shot (advanced)</a>
         </div>
       </div>
 
@@ -16505,19 +16518,61 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   function inspResolveCaptureRole() {
-    // Pair flow: wide first, then close-up linked to it
-    if (inspNextCaptureOverride === 'pair_wide') {
-      inspNextCaptureOverride = 'pair_closeup';
+    // Pair flow: wide first, then close-up linked to it.
+    // Two ways to enter pair mode:
+    //   1) one-shot override via inspTriggerCapture('pair') — legacy path
+    //   2) STICKY toggle via inspSetCaptureMode('pair') — promoted in UI
+    // Sticky mode means after the close-up lands, the cycle resets and the
+    // NEXT shot is wide again — letting the operator walk a route without
+    // re-tapping the mode toggle at each property.
+    const inPairMode = inspNextCaptureOverride === 'pair_wide' || inspState.captureMode === 'pair';
+    if (inPairMode && !inspState.stagedWidePhotoId) {
+      // Start of pair: this shot is the wide. Clear the one-shot override
+      // so legacy path still works, but don't reset captureMode (sticky).
+      if (inspNextCaptureOverride === 'pair_wide') inspNextCaptureOverride = 'pair_closeup';
       return { role: 'wide', paired: null };
     }
     if (inspState.stagedWidePhotoId) {
-      // Closing the pair
+      // Closing the pair — close-up linked to the wide. Clear staged so the
+      // next pair-mode shot starts fresh (sticky toggle re-arms).
       inspNextCaptureOverride = null;
       return { role: 'close_up', paired: inspState.stagedWidePhotoId };
     }
     // Default: single shot — AI + auto-draft fire on this one photo
     return { role: 'single', paired: null };
   }
+
+  // Mode toggle — sticky default to 'single', persisted in sessionStorage so
+  // an operator who prefers pair shots doesn't have to re-toggle per session.
+  function inspSetCaptureMode(mode) {
+    if (mode !== 'single' && mode !== 'pair') mode = 'single';
+    inspState.captureMode = mode;
+    try { sessionStorage.setItem('inspCaptureMode', mode); } catch (_) {}
+    // Visual: highlight active mode button, dim the other
+    const sBtn = document.getElementById('inspModeSingle');
+    const pBtn = document.getElementById('inspModePair');
+    if (sBtn && pBtn) {
+      const active = { bg: '#fff', color: '#0B1D34', shadow: '0 1px 2px rgba(0,0,0,0.06)' };
+      const inactive = { bg: 'transparent', color: '#64748b', shadow: 'none' };
+      const sAct = mode === 'single' ? active : inactive;
+      const pAct = mode === 'pair'   ? active : inactive;
+      sBtn.style.background  = sAct.bg;  sBtn.style.color = sAct.color;  sBtn.style.boxShadow = sAct.shadow;
+      pBtn.style.background  = pAct.bg;  pBtn.style.color = pAct.color;  pBtn.style.boxShadow = pAct.shadow;
+    }
+    // If switching OUT of pair mode while a wide is staged, clear it so the
+    // operator's next tap takes a clean single shot.
+    if (mode === 'single' && inspState.stagedWidePhotoId) {
+      inspEndPropertyPair();
+    }
+    inspUpdateCaptureUi();
+  }
+  // Restore sticky mode on first render
+  try {
+    const saved = sessionStorage.getItem('inspCaptureMode');
+    if (saved === 'pair' || saved === 'single') {
+      setTimeout(() => inspSetCaptureMode(saved), 50);
+    }
+  } catch (_) {}
 
   function inspEndPropertyPair() {
     inspState.stagedWidePhotoId = null;
