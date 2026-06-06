@@ -13634,6 +13634,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">📄 Drafts queue <span style="color:#64748b; font-weight:500;">— awaiting review</span></h3>
         <div style="display:flex; gap:6px;">
           <button class="secondary-btn" onclick="inspDraftsLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+          <button id="inspDraftsRejectAllBtn" onclick="inspDraftsRejectSelected()" style="font-size:12px; padding:5px 14px; background:#fff; color:#b91c1c; border:1px solid #fecaca; border-radius:6px; font-weight:600; cursor:pointer;" disabled>✕ Reject selected (0)</button>
           <button class="action-btn" id="inspDraftsApproveAllBtn" onclick="inspDraftsApproveSelected()" style="font-size:12px; padding:5px 14px; background:#16a34a; border-color:#16a34a;" disabled>✓ Approve selected (0)</button>
         </div>
       </div>
@@ -17808,6 +17809,31 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <span style="color:#64748b; margin-left:8px;">· ${totalViolations} violation${totalViolations === 1 ? '' : 's'} in ${totalBundles} envelope${totalBundles === 1 ? '' : 's'}</span>
     </div>`;
 
+    // Quick-select toolbar — power-user bulk actions when reviewing dozens
+    // of drafts at once. Stage chips filter-select; community dropdown
+    // selects all drafts in that community in one tap.
+    const commCounts = inspDraftsData.reduce((acc, d) => {
+      const cn = (d.violation && d.violation.community_name) || d.community_name || '';
+      if (cn) acc[cn] = (acc[cn] || 0) + 1;
+      return acc;
+    }, {});
+    const commOpts = Object.keys(commCounts).sort().map(cn => `<option value="${escapeHtml(cn)}">${escapeHtml(cn)} (${commCounts[cn]})</option>`).join('');
+    const selectionToolbar = `<div style="padding:7px 12px; background:#fff; border-bottom:1px solid #e2e8f0; display:flex; gap:6px; flex-wrap:wrap; align-items:center; font-size:11px;">
+      <strong style="color:#64748b; margin-right:2px;">Quick-select:</strong>
+      <button onclick="inspDraftsSelectAll()" style="background:#fff; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">All</button>
+      <button onclick="inspDraftsSelectNone()" style="background:#fff; border:1px solid #cbd5e1; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">None</button>
+      <span style="color:#cbd5e1;">|</span>
+      <button onclick="inspDraftsSelectByStage('courtesy_1')" style="background:#dcfce7; border:1px solid #bbf7d0; color:#166534; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">All courtesy 1</button>
+      <button onclick="inspDraftsSelectByStage('courtesy_2')" style="background:#fef3c7; border:1px solid #fde68a; color:#92400e; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">All courtesy 2</button>
+      <button onclick="inspDraftsSelectByStage('certified_209')" style="background:#fecaca; border:1px solid #fca5a5; color:#7f1d1d; padding:3px 9px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">All certified</button>
+      ${commOpts ? `<span style="color:#cbd5e1;">|</span>
+        <select onchange="if(this.value) inspDraftsSelectByCommunity(this.value); this.value='';" style="font-size:10.5px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
+          <option value="">All in community…</option>
+          ${commOpts}
+        </select>` : ''}
+      <span style="margin-left:auto; color:#64748b;">${inspDraftsSelected.size} selected</span>
+    </div>`;
+
     // Render bundle cards first (multi-violation), then loose drafts
     const bundleCards = [...bundleMap.entries()].map(([bundleId, members]) => {
       if (members.length === 1) {
@@ -17847,8 +17873,39 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     const looseRows = looseDrafts.map((d) => inspDraftsRenderRow(d, { isBundle: false })).join('');
 
-    wrap.innerHTML = summaryBar + bundleCards + looseRows;
+    wrap.innerHTML = summaryBar + selectionToolbar + bundleCards + looseRows;
     inspDraftsUpdateApproveBtn();
+  }
+
+  // Quick-select helpers — feed the inspDraftsSelected set with subsets of
+  // the loaded drafts. Re-render only (no data fetch) to keep the click
+  // snappy at scale.
+  function inspDraftsSelectAll() {
+    for (const d of inspDraftsData) {
+      if (d.interaction_id) inspDraftsSelected.add(d.interaction_id);
+    }
+    inspDraftsRender();
+  }
+  function inspDraftsSelectNone() {
+    inspDraftsSelected.clear();
+    inspDraftsRender();
+  }
+  function inspDraftsSelectByStage(stage) {
+    for (const d of inspDraftsData) {
+      if (d.interaction_id && d.violation && d.violation.current_stage === stage) {
+        inspDraftsSelected.add(d.interaction_id);
+      }
+    }
+    inspDraftsRender();
+  }
+  function inspDraftsSelectByCommunity(communityName) {
+    for (const d of inspDraftsData) {
+      const cn = (d.violation && d.violation.community_name) || d.community_name || '';
+      if (d.interaction_id && cn === communityName) {
+        inspDraftsSelected.add(d.interaction_id);
+      }
+    }
+    inspDraftsRender();
   }
 
   // Render a single draft row. When inside a bundle, the row reads as a
@@ -17932,12 +17989,82 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspDraftsRender();
   }
 
+  // Preset rejection reasons — feeding rejection analytics so we can spot
+  // category-specific AI weaknesses. Operator can still type freeform.
+  const INSP_REJECT_REASONS = [
+    'Wrong property (assignment error)',
+    'No violation visible in photo',
+    'Duplicate of earlier draft',
+    'Already cured / homeowner notified',
+    'AI misidentified category',
+    'Photo quality too poor to act on',
+    'Force-mow / different process',
+    'Other (type below)',
+  ];
+  function inspDraftsPromptReason(prefix) {
+    // Simple two-step: pick from list (1-8), then optional free-text. Beats
+    // a plain prompt while still being one popup tree, not a modal dialog.
+    const numbered = INSP_REJECT_REASONS.map((r, i) => `${i + 1}. ${r}`).join('\n');
+    const pick = prompt(`${prefix}\n\nPick a reason (1-${INSP_REJECT_REASONS.length}):\n\n${numbered}`);
+    if (pick === null) return null; // cancelled
+    const idx = parseInt(pick, 10) - 1;
+    if (idx < 0 || idx >= INSP_REJECT_REASONS.length || !INSP_REJECT_REASONS[idx]) {
+      // Treat any unrecognized input as free text
+      return pick.trim();
+    }
+    const preset = INSP_REJECT_REASONS[idx];
+    if (preset === 'Other (type below)') {
+      const free = prompt('Type the rejection reason:');
+      return (free || '').trim();
+    }
+    const extra = prompt(`Picked: "${preset}"\n\nAdd any extra context (optional, leave blank to skip):`);
+    return extra && extra.trim() ? `${preset} — ${extra.trim()}` : preset;
+  }
+
+  async function inspDraftsRejectSelected() {
+    const ids = [...inspDraftsSelected];
+    if (ids.length === 0) return;
+    const reason = inspDraftsPromptReason(`Reject ${ids.length} draft${ids.length === 1 ? '' : 's'}?`);
+    if (reason === null) return;
+    const btn = document.getElementById('inspDraftsRejectAllBtn');
+    const original = btn ? btn.textContent : '';
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Rejecting…'; }
+    try {
+      const session = (await window.supa.auth.getSession()).data?.session;
+      const headers = { 'Content-Type': 'application/json' };
+      if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      // No bulk-reject endpoint yet — fire individual rejects in parallel.
+      // For now this is fine at < 100 drafts; if bulk gets bigger we can
+      // batch server-side.
+      const results = await Promise.all(ids.map(id =>
+        fetch('/api/enforcement/drafts/reject', {
+          method: 'POST', headers,
+          body: JSON.stringify({ interaction_id: id, reason }),
+        }).then(r => r.ok)
+      ));
+      const okCount = results.filter(Boolean).length;
+      inspDraftsSelected.clear();
+      await inspDraftsLoad();
+      alert(`✕ ${okCount} draft${okCount === 1 ? '' : 's'} rejected${okCount < ids.length ? ` (${ids.length - okCount} failed)` : ''}.`);
+    } catch (e) {
+      alert('Bulk reject failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = original; }
+    }
+  }
+
   function inspDraftsUpdateApproveBtn() {
-    const btn = document.getElementById('inspDraftsApproveAllBtn');
-    if (!btn) return;
+    const approve = document.getElementById('inspDraftsApproveAllBtn');
+    const reject = document.getElementById('inspDraftsRejectAllBtn');
     const n = inspDraftsSelected.size;
-    btn.textContent = `✓ Approve selected (${n})`;
-    btn.disabled = n === 0;
+    if (approve) {
+      approve.textContent = `✓ Approve selected (${n})`;
+      approve.disabled = n === 0;
+    }
+    if (reject) {
+      reject.textContent = `✕ Reject selected (${n})`;
+      reject.disabled = n === 0;
+    }
   }
 
   async function inspDraftsApproveSelected() {
@@ -17967,7 +18094,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   async function inspDraftsReject(interactionId) {
-    const reason = prompt('Reason for rejecting? (e.g., "wrong property", "no violation visible", "duplicate of earlier draft")') || '';
+    const reason = inspDraftsPromptReason('Reject this draft?');
     if (reason === null) return;  // user cancelled prompt entirely
     try {
       const session = (await window.supa.auth.getSession()).data?.session;
