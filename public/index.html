@@ -13447,22 +13447,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
-    <!-- VANTACA HISTORY COVERAGE — at-a-glance status of which communities
-         have historical violations imported. Letters' prior_notices block
-         pulls from the violations table joined on property + category +
-         12-month window — so if a community has no Vantaca import, Courtesy
-         2 / certified §209 letters won't reference prior history correctly.
-         Critical bridge feature for live Vantaca communities. -->
+    <!-- VANTACA HISTORY COVERAGE — collapsed by default. Transitional
+         bridge while live communities are still on Vantaca; we only use
+         this a few times per community until the migration completes. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">📥 Vantaca history coverage <span style="color:#64748b; font-weight:500;">— feeds prior_notices on escalation letters</span></h3>
+        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">📥 Vantaca history coverage <span style="color:#64748b; font-weight:500;">— transitional · used a few times per community then retired</span></h3>
         <div style="display:flex; gap:6px;">
+          <button id="vantacaHistoryToggleBtn" class="secondary-btn" onclick="vantacaHistoryToggle()" style="font-size:11px; padding:4px 10px;">Show</button>
+        </div>
+      </div>
+      <div id="vantacaHistoryPanel" style="display:none;">
+        <div style="display:flex; gap:6px; margin-bottom:8px;">
           <button class="secondary-btn" onclick="vantacaHistoryLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
           <button onclick="inspVViOpen()" style="background:#0B1D34; color:#fff; border:none; padding:5px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">📥 Import Vantaca history</button>
         </div>
-      </div>
-      <div id="vantacaHistoryList" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
-        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>
+        <div id="vantacaHistoryList" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
+          <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Click Refresh to load coverage status.</div>
+        </div>
       </div>
     </div>
 
@@ -18025,7 +18027,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       list.innerHTML = `<div style="color:#b91c1c; font-size:12px; padding:10px;">Failed: ${e.message}</div>`;
     }
   }
-  setTimeout(() => { vantacaHistoryLoad(); }, 900);
+  function vantacaHistoryToggle() {
+    const panel = document.getElementById('vantacaHistoryPanel');
+    const btn   = document.getElementById('vantacaHistoryToggleBtn');
+    if (!panel) return;
+    const shown = panel.style.display !== 'none';
+    panel.style.display = shown ? 'none' : 'block';
+    if (btn) btn.textContent = shown ? 'Show' : 'Hide';
+    if (!shown) vantacaHistoryLoad();
+  }
 
   async function catEditorSaveOne(catId) {
     const sel = document.getElementById('letterFormatCommunity');
