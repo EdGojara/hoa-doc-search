@@ -85,8 +85,9 @@ function readExcelRows(buffer, mime, filename) {
 function getExtractorForReportType(report_type) {
   const EXTRACTORS = {
     ar_aging: { module: '../lib/vantaca/extractors/ar_aging', label: 'AR Aging' },
+    check_register: { module: '../lib/vantaca/extractors/check_register', label: 'Check Register' },
+    gl_export: { module: '../lib/vantaca/extractors/gl_export', label: 'GL Export' },
     // Phase 2+ slots — populated as extractors are written.
-    gl_export: null,
     ap_ledger: null,
     bank_reconciliation: null,
     owner_statement: null,
@@ -350,9 +351,10 @@ router.get('/report-types', async (req, res) => {
   res.json({
     report_types: [
       { type: 'ar_aging', label: 'AR Aging', extractor: true, expected_cadence: 'weekly' },
-      { type: 'gl_export', label: 'GL Export / Trial Balance', extractor: false, expected_cadence: 'monthly' },
+      { type: 'gl_export', label: 'GL Export (cash account)', extractor: true, expected_cadence: 'monthly' },
+      { type: 'check_register', label: 'Check Register', extractor: true, expected_cadence: 'monthly' },
       { type: 'ap_ledger', label: 'AP Ledger / Vendor Invoices', extractor: false, expected_cadence: 'weekly' },
-      { type: 'bank_reconciliation', label: 'Bank Reconciliation', extractor: false, expected_cadence: 'monthly' },
+      { type: 'bank_reconciliation', label: 'Bank Rec (Vantaca-generated)', extractor: false, expected_cadence: 'monthly' },
       { type: 'owner_statement', label: 'Owner Statement', extractor: false, expected_cadence: 'monthly' },
       { type: 'vendor_history', label: 'Vendor History / 1099', extractor: false, expected_cadence: 'annual' },
       { type: 'budget_actual', label: 'Budget vs Actual', extractor: false, expected_cadence: 'monthly' },

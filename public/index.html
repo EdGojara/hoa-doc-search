@@ -405,6 +405,11 @@
        reminds everyone (incl. franchise operators) where the dependency
        lives. Day-of-cutover, rename + alias. -->
   <div class="tab" onclick="switchTab('vantaca-imports')" title="Canonical drop zone for every Vantaca export — AR Aging, GL, AP, Bank Recon, Owner Statements. System classifies + routes.">📥 Vantaca Imports</div>
+  <!-- Bank Reconciliation — three-way rec workflow. Bank statement + Vantaca
+       check register + Vantaca GL → auto-match, exceptions, cheat sheet that
+       speeds Vantaca data entry from ~30min to ~5min. Eventually replaces
+       Vantaca's rec module when trustEd holds the canonical GL. -->
+  <div class="tab" onclick="switchTab('bank-rec')" title="Three-way bank reconciliation — bank statement + check register + GL with auto-matching and printable cheat sheet for Vantaca entry">🧾 Bank Rec</div>
   <!-- Bedrock Connect — community-email broadcast platform. PLACEHOLDER
        state — opens the design preview page. Build queued behind
        Messaging System Phase 1. -->
@@ -979,6 +984,115 @@
         </div>
       </div>
       <div id="vi-list-container" style="font-size:13px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<!-- =========================================================================
+     BANK RECONCILIATION — three-way rec workflow
+     ----------------------------------------------------------------------
+     Bank statement (upload) + check register (Vantaca Import) + GL
+     (Vantaca Import) → auto-match → reconciled balance → cheat sheet.
+     Built on /api/bank-rec + lib/banking/* + migration 169.
+     Phase 1 outputs the cheat sheet for fast Vantaca data entry.
+     Phase 2+ will write the rec back to Vantaca when their API opens, or
+     when trustEd has absorbed enough of the GL to skip Vantaca entirely.
+     ========================================================================= -->
+<div class="tab-content" id="tab-bank-rec" style="overflow-y:auto; padding:24px;">
+  <div style="max-width:1280px;">
+    <!-- LIST VIEW -->
+    <div id="br-list-view">
+      <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px; margin-bottom:18px;">
+        <div>
+          <h2 style="margin:0 0 4px 0; color:#0B1D34;">🧾 Bank Reconciliation</h2>
+          <p style="color:#5a7390; font-size:13px; margin:0; max-width:780px;">
+            Three-way rec: bank statement + check register + GL. The matcher pairs check#s, surfaces outstanding checks + deposits in transit + bank-only items, and computes the reconciled balance. Output is a <strong>cheat sheet</strong> — paste the numbers into Vantaca's rec module instead of doing the analytical work twice.
+          </p>
+        </div>
+        <button class="action-btn" onclick="brOpenNewModal()">+ New Reconciliation</button>
+      </div>
+
+      <div class="panel" style="margin-bottom:14px;">
+        <div style="display:flex; gap:10px; align-items:end; margin-bottom:10px;">
+          <div style="flex:1;">
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+            <select id="br-filter-community" onchange="brLoadList()" style="padding:7px 10px; font-size:13px; border:1px solid #d0d7de; border-radius:6px; width:100%;">
+              <option value="">All communities</option>
+            </select>
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Status</label>
+            <select id="br-filter-status" onchange="brLoadList()" style="padding:7px 10px; font-size:13px; border:1px solid #d0d7de; border-radius:6px;">
+              <option value="">All</option>
+              <option value="in_progress">⏳ In Progress</option>
+              <option value="reconciled">✓ Reconciled</option>
+              <option value="unbalanced">⚠ Unbalanced</option>
+              <option value="exported_to_vantaca">📤 Exported</option>
+              <option value="voided">Voided</option>
+            </select>
+          </div>
+          <button class="secondary-btn" onclick="brLoadList()" style="font-size:12.5px;">⟳ Refresh</button>
+        </div>
+        <div id="br-list-container" style="font-size:13px;">Loading…</div>
+      </div>
+    </div>
+
+    <!-- DETAIL VIEW -->
+    <div id="br-detail-view" style="display:none;">
+      <button class="secondary-btn" onclick="brBackToList()" style="margin-bottom:12px;">← Back to list</button>
+      <div id="br-detail-body"></div>
+    </div>
+
+    <!-- NEW RECONCILIATION MODAL -->
+    <div id="br-new-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:9999; align-items:flex-start; justify-content:center; padding:60px 20px; overflow-y:auto;">
+      <div style="background:white; border-radius:10px; padding:24px; max-width:540px; width:100%;">
+        <h3 style="margin:0 0 16px 0;">New Bank Reconciliation</h3>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Community</label>
+          <select id="br-new-community" onchange="brNewCommunityChanged()" style="padding:8px; width:100%; font-size:14px;">
+            <option value="">— Select community —</option>
+          </select>
+        </div>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Bank Account</label>
+          <select id="br-new-account" style="padding:8px; width:100%; font-size:14px;">
+            <option value="">— Pick a community first —</option>
+          </select>
+          <div style="font-size:11px; color:#888; margin-top:4px;">No account showing? <a href="#" onclick="brShowNewAccountForm(event)" style="color:#315A87;">Add one now</a></div>
+        </div>
+        <div id="br-new-account-form" style="display:none; background:#f5f8fc; padding:12px; border-radius:6px; margin-bottom:14px;">
+          <div style="font-weight:600; font-size:12.5px; margin-bottom:8px;">New Bank Account</div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-bottom:8px;">
+            <input type="text" id="br-new-acct-nickname" placeholder="Nickname (e.g., Operating BoA)" style="padding:7px; font-size:13px;">
+            <input type="text" id="br-new-acct-bank" placeholder="Bank name" style="padding:7px; font-size:13px;">
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:8px; margin-bottom:8px;">
+            <input type="text" id="br-new-acct-last4" placeholder="Last 4" maxlength="4" style="padding:7px; font-size:13px;">
+            <select id="br-new-acct-type" style="padding:7px; font-size:13px;">
+              <option value="operating">Operating</option>
+              <option value="reserve">Reserve</option>
+              <option value="special_assessment">Special Assessment</option>
+              <option value="capital_improvement">Capital Improvement</option>
+            </select>
+            <input type="text" id="br-new-acct-gl" placeholder="GL # (e.g., 1010)" style="padding:7px; font-size:13px;">
+          </div>
+          <button class="secondary-btn" onclick="brCreateAccount()" style="font-size:12px;">Save Account</button>
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:12px; margin-bottom:18px;">
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Period Start</label>
+            <input type="date" id="br-new-start" style="padding:8px; width:100%; font-size:14px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:12px; color:#666; margin-bottom:4px;">Period End</label>
+            <input type="date" id="br-new-end" style="padding:8px; width:100%; font-size:14px;">
+          </div>
+        </div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button class="secondary-btn" onclick="brCloseNewModal()">Cancel</button>
+          <button class="action-btn" onclick="brCreateReconciliation()">Create</button>
+        </div>
+      </div>
     </div>
   </div>
 </div>
@@ -29804,6 +29918,508 @@ ${questionsPage}
         document.addEventListener('DOMContentLoaded', _wireVantacaImportsTabHook);
       } else {
         setTimeout(_wireVantacaImportsTabHook, 0);
+      }
+    }
+  })();
+
+  // =========================================================================
+  // BANK RECONCILIATION — three-way rec workflow.
+  // Backed by /api/bank-rec/*. Migration 169.
+  // =========================================================================
+  (function () {
+    let brCurrentRecId = null;
+    let brCommunitiesCache = [];
+    let brAccountsCache = {};        // community_id → [accounts]
+
+    function brEsc(s) {
+      return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+    function brFmtCents(c) {
+      if (c == null) return '<span style="color:#aaa;">—</span>';
+      const v = Number(c) / 100;
+      const sign = v < 0 ? '-' : '';
+      return sign + '$' + Math.abs(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    }
+    function brFmtDate(d) {
+      if (!d) return '—';
+      return new Date(d + 'T12:00:00Z').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    function brStatusBadge(s) {
+      const map = {
+        in_progress: { txt: '⏳ In Progress', bg: '#fef3c7', fg: '#92400e' },
+        reconciled: { txt: '✓ Reconciled', bg: '#dcfce7', fg: '#166534' },
+        unbalanced: { txt: '⚠ Unbalanced', bg: '#fee2e2', fg: '#991b1b' },
+        exported_to_vantaca: { txt: '📤 Exported', bg: '#dbeafe', fg: '#1e3a8a' },
+        voided: { txt: 'Voided', bg: '#f3f4f6', fg: '#6b7280' },
+      };
+      const m = map[s] || { txt: s, bg: '#f3f4f6', fg: '#374151' };
+      return `<span style="display:inline-block; font-size:11px; font-weight:600; padding:3px 9px; border-radius:10px; background:${m.bg}; color:${m.fg};">${brEsc(m.txt)}</span>`;
+    }
+
+    async function brLoadCommunities() {
+      if (brCommunitiesCache.length) return brCommunitiesCache;
+      try {
+        const r = await fetch('/api/communities');
+        const j = await r.json();
+        brCommunitiesCache = (j.communities || j || []).slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+        const opts = brCommunitiesCache.map((c) => `<option value="${brEsc(c.id)}">${brEsc(c.name)}</option>`).join('');
+        const filterSel = document.getElementById('br-filter-community');
+        const newSel = document.getElementById('br-new-community');
+        if (filterSel) filterSel.innerHTML = '<option value="">All communities</option>' + opts;
+        if (newSel) newSel.innerHTML = '<option value="">— Select community —</option>' + opts;
+      } catch (_) {}
+      return brCommunitiesCache;
+    }
+
+    async function brLoadAccountsFor(communityId) {
+      if (!communityId) return [];
+      if (brAccountsCache[communityId]) return brAccountsCache[communityId];
+      try {
+        const r = await fetch('/api/bank-rec/accounts?community_id=' + encodeURIComponent(communityId));
+        const j = await r.json();
+        brAccountsCache[communityId] = j.accounts || [];
+        return brAccountsCache[communityId];
+      } catch (_) { return []; }
+    }
+
+    window.brNewCommunityChanged = async function () {
+      const cid = document.getElementById('br-new-community').value;
+      const accSel = document.getElementById('br-new-account');
+      if (!cid) { accSel.innerHTML = '<option value="">— Pick a community first —</option>'; return; }
+      const accounts = await brLoadAccountsFor(cid);
+      if (accounts.length === 0) {
+        accSel.innerHTML = '<option value="">— No accounts yet — add one below —</option>';
+      } else {
+        accSel.innerHTML = '<option value="">— Select account —</option>' + accounts.map((a) =>
+          `<option value="${brEsc(a.id)}">${brEsc(a.account_nickname)}${a.account_last4 ? ' · ····' + brEsc(a.account_last4) : ''}</option>`
+        ).join('');
+      }
+    };
+
+    window.brShowNewAccountForm = function (e) {
+      if (e) e.preventDefault();
+      document.getElementById('br-new-account-form').style.display = 'block';
+    };
+
+    window.brCreateAccount = async function () {
+      const cid = document.getElementById('br-new-community').value;
+      if (!cid) { alert('Pick a community first.'); return; }
+      const body = {
+        community_id: cid,
+        account_nickname: document.getElementById('br-new-acct-nickname').value.trim(),
+        bank_name: document.getElementById('br-new-acct-bank').value.trim(),
+        account_last4: document.getElementById('br-new-acct-last4').value.trim(),
+        account_type: document.getElementById('br-new-acct-type').value,
+        gl_account_number: document.getElementById('br-new-acct-gl').value.trim(),
+      };
+      if (!body.account_nickname) { alert('Account nickname is required.'); return; }
+      try {
+        const r = await fetch('/api/bank-rec/accounts', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'create failed');
+        delete brAccountsCache[cid];
+        await brNewCommunityChanged();
+        document.getElementById('br-new-account').value = j.account.id;
+        document.getElementById('br-new-account-form').style.display = 'none';
+      } catch (e) { alert('Save failed: ' + e.message); }
+    };
+
+    window.brOpenNewModal = async function () {
+      await brLoadCommunities();
+      document.getElementById('br-new-modal').style.display = 'flex';
+      // Default period: last month
+      const now = new Date();
+      const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0);
+      document.getElementById('br-new-start').value = lastMonth.toISOString().slice(0, 10);
+      document.getElementById('br-new-end').value = lastMonthEnd.toISOString().slice(0, 10);
+    };
+    window.brCloseNewModal = function () {
+      document.getElementById('br-new-modal').style.display = 'none';
+    };
+    window.brCreateReconciliation = async function () {
+      const community_id = document.getElementById('br-new-community').value;
+      const bank_account_id = document.getElementById('br-new-account').value;
+      const period_start = document.getElementById('br-new-start').value;
+      const period_end = document.getElementById('br-new-end').value;
+      if (!community_id || !period_end) { alert('Community + Period End required.'); return; }
+      try {
+        const r = await fetch('/api/bank-rec/reconciliations', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ community_id, bank_account_id: bank_account_id || null, period_start, period_end }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'create failed');
+        brCloseNewModal();
+        brOpenDetail(j.reconciliation.id);
+      } catch (e) { alert('Failed: ' + e.message); }
+    };
+
+    window.brLoadList = async function () {
+      const container = document.getElementById('br-list-container');
+      if (!container) return;
+      container.innerHTML = 'Loading…';
+      try {
+        const params = new URLSearchParams();
+        const c = document.getElementById('br-filter-community').value;
+        const s = document.getElementById('br-filter-status').value;
+        if (c) params.set('community_id', c);
+        if (s) params.set('status', s);
+        const r = await fetch('/api/bank-rec/reconciliations?' + params.toString());
+        const j = await r.json();
+        const rows = j.reconciliations || [];
+        if (rows.length === 0) {
+          container.innerHTML = '<div style="padding:30px; text-align:center; color:#888;">No reconciliations yet. Click <strong>+ New Reconciliation</strong> to start.</div>';
+          return;
+        }
+        container.innerHTML = `
+          <table style="width:100%; border-collapse:collapse; font-size:13px;">
+            <thead>
+              <tr style="background:#f5f8fc; border-bottom:1px solid #d0d7de;">
+                <th style="padding:8px 10px; text-align:left;">Period</th>
+                <th style="padding:8px 10px; text-align:left;">Community</th>
+                <th style="padding:8px 10px; text-align:left;">Account</th>
+                <th style="padding:8px 10px; text-align:right;">Bank Ending</th>
+                <th style="padding:8px 10px; text-align:right;">Reconciled</th>
+                <th style="padding:8px 10px; text-align:right;">Difference</th>
+                <th style="padding:8px 10px; text-align:center;">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((r) => {
+                const diffClass = r.difference_cents == null ? '' : Math.abs(r.difference_cents) <= 1 ? 'color:#166534;' : 'color:#991b1b; font-weight:600;';
+                return `
+                  <tr style="border-bottom:1px solid #eee; cursor:pointer;" onclick="brOpenDetail('${r.id}')">
+                    <td style="padding:8px 10px;">${brEsc(brFmtDate(r.period_end))}</td>
+                    <td style="padding:8px 10px;">${brEsc(r.communities?.name || '—')}</td>
+                    <td style="padding:8px 10px;">${brEsc(r.bank_accounts?.account_nickname || '—')}</td>
+                    <td style="padding:8px 10px; text-align:right;">${brFmtCents(r.bank_ending_balance_cents)}</td>
+                    <td style="padding:8px 10px; text-align:right;">${brFmtCents(r.reconciled_balance_cents)}</td>
+                    <td style="padding:8px 10px; text-align:right; ${diffClass}">${brFmtCents(r.difference_cents)}</td>
+                    <td style="padding:8px 10px; text-align:center;">${brStatusBadge(r.status)}</td>
+                  </tr>
+                `;
+              }).join('')}
+            </tbody>
+          </table>
+        `;
+      } catch (e) {
+        container.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed to load: ${brEsc(e.message)}</div>`;
+      }
+    };
+
+    window.brBackToList = function () {
+      document.getElementById('br-detail-view').style.display = 'none';
+      document.getElementById('br-list-view').style.display = 'block';
+      brCurrentRecId = null;
+      brLoadList();
+    };
+
+    window.brOpenDetail = async function (id) {
+      brCurrentRecId = id;
+      document.getElementById('br-list-view').style.display = 'none';
+      document.getElementById('br-detail-view').style.display = 'block';
+      const body = document.getElementById('br-detail-body');
+      body.innerHTML = '<div style="padding:30px; color:#888;">Loading…</div>';
+      try {
+        const r = await fetch('/api/bank-rec/reconciliations/' + encodeURIComponent(id));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        brRenderDetail(j);
+      } catch (e) {
+        body.innerHTML = `<div style="color:#dc2626; padding:20px;">Failed to load: ${brEsc(e.message)}</div>`;
+      }
+    };
+
+    function brRenderDetail(payload) {
+      const rec = payload.reconciliation;
+      const items = payload.items || [];
+      const sources = payload.sources || {};
+      const body = document.getElementById('br-detail-body');
+
+      const itemsByCategory = {};
+      for (const it of items) {
+        if (!itemsByCategory[it.category]) itemsByCategory[it.category] = [];
+        itemsByCategory[it.category].push(it);
+      }
+      const catLabel = {
+        matched: '✓ Matched',
+        outstanding_check: '🔴 Outstanding Checks',
+        deposit_in_transit: '🟡 Deposits in Transit',
+        bank_only: '🟠 Bank Only (post to GL)',
+        gl_only: '🟣 GL Only (timing or error)',
+        manual_adjustment: '✋ Manual Adjustment',
+      };
+
+      const renderItemsTable = (cat) => {
+        const its = itemsByCategory[cat] || [];
+        if (its.length === 0) return '<div style="color:#888; font-size:12px; padding:8px 0;">None</div>';
+        return `
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px; margin-top:6px;">
+            <thead><tr style="background:#fafafa; border-bottom:1px solid #e2e8f0;">
+              <th style="padding:6px 8px; text-align:left;">Date</th>
+              <th style="padding:6px 8px; text-align:left;">Check #</th>
+              <th style="padding:6px 8px; text-align:left;">Description</th>
+              <th style="padding:6px 8px; text-align:right;">Amount</th>
+            </tr></thead>
+            <tbody>
+              ${its.map((it) => `
+                <tr style="border-bottom:1px solid #f3f4f6;">
+                  <td style="padding:6px 8px;">${brEsc(brFmtDate(it.date_ref))}</td>
+                  <td style="padding:6px 8px; font-family:ui-monospace,monospace;">${brEsc(it.check_number || '—')}</td>
+                  <td style="padding:6px 8px;">${brEsc(it.description || '')}</td>
+                  <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace;">${brFmtCents(it.amount_cents)}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        `;
+      };
+
+      const period = `${rec.period_start ? brFmtDate(rec.period_start) + ' → ' : ''}${brFmtDate(rec.period_end)}`;
+      const balancedColor = rec.difference_cents == null ? '#94a3b8' : Math.abs(rec.difference_cents) <= 1 ? '#16a34a' : '#dc2626';
+
+      body.innerHTML = `
+        <!-- Header card -->
+        <div class="panel" style="margin-bottom:14px;">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:16px;">
+            <div>
+              <h2 style="margin:0 0 4px 0; color:#0B1D34;">${brEsc(rec.communities?.name || '')} · ${brEsc(rec.bank_accounts?.account_nickname || '(no account)')}</h2>
+              <div style="color:#5a7390; font-size:13px;">${brEsc(period)} · ${brStatusBadge(rec.status)}</div>
+            </div>
+            <div style="display:flex; gap:6px;">
+              ${rec.status !== 'voided' ? `<button class="secondary-btn" onclick="brRunMatch()" style="font-size:12.5px;">▶ Run Matching</button>` : ''}
+              <button class="secondary-btn" onclick="brPrintCheatSheet()" style="font-size:12.5px;">🧾 Print Cheat Sheet</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- Three input cards -->
+        <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:12px; margin-bottom:16px;">
+          ${brRenderInputCard('Bank Statement', sources.bank_statement, 'bank-statement', !!sources.bank_statement, 'bank_statement_imports.id')}
+          ${brRenderInputCard('Check Register', sources.check_register, 'check-register', !!sources.check_register, 'vantaca_imports.id (check_register)')}
+          ${brRenderInputCard('GL Cash Account', sources.gl_export, 'gl', !!sources.gl_export, 'vantaca_imports.id (gl_export)')}
+        </div>
+
+        <!-- Summary numbers -->
+        <div class="panel" style="margin-bottom:14px;">
+          <h3 style="margin-top:0;">Reconciliation Summary</h3>
+          <div style="display:grid; grid-template-columns:repeat(4, 1fr); gap:14px; margin-top:8px;">
+            ${brStatTile('Bank Ending', rec.bank_ending_balance_cents)}
+            ${brStatTile('GL Ending', rec.gl_ending_balance_cents)}
+            ${brStatTile('Outstanding Checks', rec.outstanding_checks_total_cents)}
+            ${brStatTile('Deposits in Transit', rec.deposits_in_transit_total_cents)}
+            ${brStatTile('Bank-Only Adjustments', rec.bank_only_adjustments_cents)}
+            ${brStatTile('GL-Only Items', rec.gl_only_adjustments_cents)}
+            ${brStatTile('Reconciled Balance', rec.reconciled_balance_cents)}
+            <div style="background:${balancedColor}1a; border:1px solid ${balancedColor}; border-radius:8px; padding:10px 14px;">
+              <div style="font-size:10.5px; color:#5a7390; text-transform:uppercase; letter-spacing:0.04em; font-weight:700;">Difference</div>
+              <div style="font-size:18px; font-weight:700; color:${balancedColor};">${brFmtCents(rec.difference_cents)}</div>
+              <div style="font-size:11px; color:${balancedColor}; margin-top:2px;">${Math.abs(rec.difference_cents || 0) <= 1 ? '✓ Balanced' : '⚠ Investigate'}</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Items by category -->
+        ${['outstanding_check', 'deposit_in_transit', 'bank_only', 'gl_only', 'matched'].map((cat) => `
+          <div class="panel" style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center;">
+              <h3 style="margin:0; font-size:14.5px;">${catLabel[cat] || cat} <span style="font-weight:400; color:#888; font-size:12.5px;">(${(itemsByCategory[cat] || []).length})</span></h3>
+            </div>
+            ${renderItemsTable(cat)}
+          </div>
+        `).join('')}
+      `;
+    }
+
+    function brStatTile(label, cents) {
+      return `
+        <div style="background:#f5f8fc; border-radius:8px; padding:10px 14px;">
+          <div style="font-size:10.5px; color:#5a7390; text-transform:uppercase; letter-spacing:0.04em; font-weight:700;">${brEsc(label)}</div>
+          <div style="font-size:17px; font-weight:600; color:#0B1D34; margin-top:2px; font-family:ui-monospace,monospace;">${brFmtCents(cents)}</div>
+        </div>
+      `;
+    }
+
+    function brRenderInputCard(label, source, kind, attached, hintField) {
+      if (attached) {
+        const asOf = source?.statement_period_end || source?.as_of_date || source?.extraction_raw?.period_end;
+        return `
+          <div class="panel" style="border:1px solid #16a34a44;">
+            <div style="font-weight:600; color:#0B1D34; margin-bottom:4px;">${brEsc(label)} <span style="color:#16a34a; font-size:12px;">✓ attached</span></div>
+            <div style="font-size:12px; color:#5a7390;">${brEsc(source?.source_filename || '(file)')}</div>
+            ${asOf ? `<div style="font-size:11.5px; color:#888; margin-top:4px;">As of ${brEsc(brFmtDate(asOf))}</div>` : ''}
+          </div>
+        `;
+      }
+      return `
+        <div class="panel" style="border:1px dashed #d0d7de;">
+          <div style="font-weight:600; color:#0B1D34; margin-bottom:4px;">${brEsc(label)} <span style="color:#888; font-size:12px;">— not attached</span></div>
+          ${kind === 'bank-statement'
+            ? `<input type="file" id="br-bs-file" accept=".pdf" style="display:none" onchange="brAttachBankStatement(this.files[0])">
+               <button class="secondary-btn" onclick="document.getElementById('br-bs-file').click()" style="font-size:12.5px; margin-top:6px;">📄 Upload bank statement PDF</button>`
+            : `<div style="font-size:11.5px; color:#666; margin-top:4px;">Drop the ${kind === 'check-register' ? 'check register' : 'GL'} in the <a href="#" onclick="switchTab('vantaca-imports'); return false;" style="color:#315A87;">Vantaca Imports</a> tab first, then click below to link it.</div>
+               <button class="secondary-btn" onclick="brLinkVantacaImport('${kind}')" style="font-size:12.5px; margin-top:6px;">🔗 Link Vantaca import</button>`}
+        </div>
+      `;
+    }
+
+    window.brAttachBankStatement = async function (file) {
+      if (!brCurrentRecId || !file) return;
+      const fd = new FormData();
+      fd.append('file', file);
+      try {
+        alert('Uploading + extracting bank statement — this takes ~30 seconds. Click OK to continue and wait for the page to refresh.');
+        const r = await fetch('/api/bank-rec/reconciliations/' + encodeURIComponent(brCurrentRecId) + '/bank-statement', {
+          method: 'POST', body: fd,
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'upload failed');
+        brOpenDetail(brCurrentRecId);
+      } catch (e) { alert('Failed: ' + e.message); }
+    };
+
+    window.brLinkVantacaImport = async function (kind) {
+      // Show a picker of available vantaca_imports matching the expected type
+      const expectedType = kind === 'check-register' ? 'check_register' : 'gl_export';
+      try {
+        const r = await fetch('/api/vantaca-imports?report_type=' + expectedType + '&status=completed&limit=30');
+        const j = await r.json();
+        const list = j.imports || [];
+        if (list.length === 0) {
+          alert(`No completed ${expectedType.replace('_', ' ')} imports yet. Drop one in the Vantaca Imports tab first.`);
+          return;
+        }
+        const lines = list.map((i, idx) => `${idx + 1}. ${i.source_filename || '(unnamed)'} — ${i.communities?.name || ''} — as of ${i.as_of_date || '—'}`).join('\n');
+        const pick = window.prompt(`Pick a ${expectedType.replace('_', ' ')} import to link:\n\n${lines}\n\nEnter the number:`);
+        const idx = parseInt(pick, 10) - 1;
+        if (isNaN(idx) || !list[idx]) return;
+        const endpoint = kind === 'check-register' ? '/check-register' : '/gl';
+        const resp = await fetch('/api/bank-rec/reconciliations/' + encodeURIComponent(brCurrentRecId) + endpoint, {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ vantaca_import_id: list[idx].id }),
+        });
+        const r2 = await resp.json();
+        if (!resp.ok) throw new Error(r2.error || 'link failed');
+        brOpenDetail(brCurrentRecId);
+      } catch (e) { alert('Failed: ' + e.message); }
+    };
+
+    window.brRunMatch = async function () {
+      if (!brCurrentRecId) return;
+      try {
+        const r = await fetch('/api/bank-rec/reconciliations/' + encodeURIComponent(brCurrentRecId) + '/run-match', { method: 'POST' });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'match failed');
+        brOpenDetail(brCurrentRecId);
+      } catch (e) { alert('Match failed: ' + e.message); }
+    };
+
+    window.brPrintCheatSheet = async function () {
+      if (!brCurrentRecId) return;
+      try {
+        const r = await fetch('/api/bank-rec/reconciliations/' + encodeURIComponent(brCurrentRecId) + '/cheat-sheet');
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'load failed');
+        // Open a print-formatted window
+        const w = window.open('', '_blank');
+        const rec = j.reconciliation;
+        const items = j.items || [];
+        const byCat = (cat) => items.filter((i) => i.category === cat);
+        const fmt = (c) => c == null ? '—' : '$' + (Math.abs(c) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 }) + (c < 0 ? ' (cr)' : '');
+        const html = `<!DOCTYPE html>
+<html><head><title>Bank Rec Cheat Sheet — ${rec.communities?.name || ''}</title>
+<style>
+  body { font-family: system-ui, sans-serif; padding: 24px; color: #111; font-size: 12px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 18px 0 6px; border-bottom: 1px solid #999; padding-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; margin-bottom: 14px; }
+  th, td { padding: 4px 8px; text-align: left; border-bottom: 1px solid #e5e7eb; }
+  th { background: #f3f4f6; font-size: 11px; }
+  td.r, th.r { text-align: right; font-family: ui-monospace, monospace; }
+  .summary { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 24px; margin-top: 8px; }
+  .summary div { padding: 4px 0; border-bottom: 1px dotted #ccc; display: flex; justify-content: space-between; }
+  .summary strong { font-family: ui-monospace, monospace; }
+  @media print { body { padding: 12px; } }
+</style></head>
+<body>
+  <h1>Bank Reconciliation Cheat Sheet</h1>
+  <div>${rec.communities?.name || ''} · ${rec.bank_accounts?.account_nickname || ''} · Period ending ${rec.period_end}</div>
+
+  <h2>Summary (paste into Vantaca rec)</h2>
+  <div class="summary">
+    <div><span>Bank ending balance</span><strong>${fmt(rec.bank_ending_balance_cents)}</strong></div>
+    <div><span>+ Deposits in transit</span><strong>${fmt(rec.deposits_in_transit_total_cents)}</strong></div>
+    <div><span>− Outstanding checks</span><strong>${fmt(Math.abs(rec.outstanding_checks_total_cents || 0))}</strong></div>
+    <div><span>= Reconciled balance</span><strong>${fmt(rec.reconciled_balance_cents)}</strong></div>
+    <div><span>GL ending balance</span><strong>${fmt(rec.gl_ending_balance_cents)}</strong></div>
+    <div><span>+ Bank-only adjustments</span><strong>${fmt(rec.bank_only_adjustments_cents)}</strong></div>
+    <div><span>Adjusted GL balance</span><strong>${fmt((rec.gl_ending_balance_cents || 0) + (rec.bank_only_adjustments_cents || 0))}</strong></div>
+    <div><span>Difference (rec − adj GL)</span><strong style="color:${Math.abs(rec.difference_cents || 0) <= 1 ? '#16a34a' : '#dc2626'};">${fmt(rec.difference_cents)}</strong></div>
+  </div>
+
+  <h2>Outstanding Checks (${byCat('outstanding_check').length})</h2>
+  <table><thead><tr><th>Check #</th><th>Date</th><th>Payee / Description</th><th class="r">Amount</th></tr></thead>
+  <tbody>${byCat('outstanding_check').map((it) =>
+    `<tr><td>${it.check_number || ''}</td><td>${it.date_ref || ''}</td><td>${(it.description || '').replace(/</g, '&lt;')}</td><td class="r">${fmt(Math.abs(it.amount_cents))}</td></tr>`
+  ).join('')}</tbody>
+  </table>
+
+  <h2>Deposits in Transit (${byCat('deposit_in_transit').length})</h2>
+  <table><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th></tr></thead>
+  <tbody>${byCat('deposit_in_transit').map((it) =>
+    `<tr><td>${it.date_ref || ''}</td><td>${(it.description || '').replace(/</g, '&lt;')}</td><td class="r">${fmt(it.amount_cents)}</td></tr>`
+  ).join('')}</tbody>
+  </table>
+
+  <h2>Bank-Only Items to Post to GL (${byCat('bank_only').length})</h2>
+  <table><thead><tr><th>Date</th><th>Description</th><th class="r">Amount</th></tr></thead>
+  <tbody>${byCat('bank_only').map((it) =>
+    `<tr><td>${it.date_ref || ''}</td><td>${(it.description || '').replace(/</g, '&lt;')}</td><td class="r">${fmt(it.amount_cents)}</td></tr>`
+  ).join('')}</tbody>
+  </table>
+
+  ${byCat('gl_only').length > 0 ? `
+  <h2>⚠ GL-Only Items — Investigate (${byCat('gl_only').length})</h2>
+  <table><thead><tr><th>Date</th><th>Ref</th><th>Description</th><th class="r">Amount</th></tr></thead>
+  <tbody>${byCat('gl_only').map((it) =>
+    `<tr><td>${it.date_ref || ''}</td><td>${it.gl_ref || ''}</td><td>${(it.description || '').replace(/</g, '&lt;')}</td><td class="r">${fmt(it.amount_cents)}</td></tr>`
+  ).join('')}</tbody>
+  </table>
+  ` : ''}
+
+  <div style="margin-top:24px; font-size:10.5px; color:#666; border-top:1px solid #ccc; padding-top:8px;">
+    Generated by trustEd · ${new Date().toLocaleString()} · Use this as a worksheet to populate Vantaca's bank rec module faster. trustEd remains the matching source of truth; the canonical Vantaca rec entry is operator-confirmed.
+  </div>
+
+  <script>setTimeout(() => window.print(), 400);</script>
+</body></html>`;
+        w.document.write(html);
+        w.document.close();
+      } catch (e) { alert('Cheat sheet failed: ' + e.message); }
+    };
+
+    // Auto-load on tab activation
+    function _wireBankRecTabHook() {
+      const orig = window.switchTab;
+      if (typeof orig !== 'function') return false;
+      window.switchTab = function (tab) {
+        const r = orig.apply(this, arguments);
+        if (tab === 'bank-rec') {
+          try { brLoadCommunities(); } catch (_) {}
+          try { brLoadList(); } catch (_) {}
+        }
+        return r;
+      };
+      return true;
+    }
+    if (!_wireBankRecTabHook()) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireBankRecTabHook);
+      } else {
+        setTimeout(_wireBankRecTabHook, 0);
       }
     }
   })();

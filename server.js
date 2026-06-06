@@ -871,6 +871,13 @@ app.use('/api/owner-ar', ownerArRouter);
 const { router: vantacaImportsRouter } = require('./api/vantaca_imports');
 app.use('/api/vantaca-imports', vantacaImportsRouter);
 
+// Bank Reconciliation — three-way rec (bank statement + check register + GL)
+// with matching engine and cheat-sheet export for fast Vantaca data entry.
+// Migration 169 + lib/banking/* power it. Eventually displaces Vantaca's
+// rec module entirely when trustEd holds the canonical GL.
+const { router: bankRecRouter } = require('./api/bank_rec');
+app.use('/api/bank-rec', bankRecRouter);
+
 // Calls Dashboard — list + manage follow-ups on Claire-handled inbound calls.
 // Powers the "Calls" tab. See api/calls.js + migration 106 (added follow-up
 // state columns to homeowner_calls).
