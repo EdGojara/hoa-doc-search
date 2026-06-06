@@ -13590,70 +13590,130 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             </div>
           </div>
 
+          <style>
+            .lc-compare { display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:14px; }
+            @media (max-width: 720px) { .lc-compare { grid-template-columns: 1fr; } }
+            .lc-pane { display:flex; flex-direction:column; }
+            .lc-pane-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:3px; }
+            .lc-pane-label { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#64748b; }
+            .lc-current { background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; padding:8px 10px; font-size:11.5px; color:#0B1D34; line-height:1.5; white-space:pre-wrap; min-height:60px; flex:1; }
+            .lc-current.is-override { background:#fff7ed; border-color:#fed7aa; }
+            .lc-input { width:100%; box-sizing:border-box; font-size:11.5px; padding:8px 10px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5; flex:1; }
+            .lc-block-row { padding:10px 0; border-bottom:1px solid #f1f5f9; }
+            .lc-block-title { font-size:12.5px; font-weight:700; color:#0B1D34; margin-bottom:6px; display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+            .lc-status-chip { font-size:10px; padding:1px 7px; border-radius:99px; font-weight:600; }
+            .lc-accept-btn { background:#16a34a; color:#fff; border:none; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; }
+            .lc-accept-btn:disabled { background:#cbd5e1; cursor:not-allowed; }
+            .lc-revert-btn { background:#fff; color:#b45309; border:1px solid #fcd34d; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; }
+            .lc-row-actions { display:flex; gap:6px; margin-top:6px; align-items:center; }
+            .lc-row-status { font-size:10.5px; color:#64748b; margin-left:6px; }
+          </style>
+
           <!-- Title -->
-          <div style="margin-bottom:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Title</label>
-              <span id="letterCopyTitleStatus" style="font-size:10px; color:#64748b;"></span>
+          <div class="lc-block-row">
+            <div class="lc-block-title">Title <span id="letterCopyTitleStatus" class="lc-status-chip"></span></div>
+            <div class="lc-compare">
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">📄 Current (in use today)</span></div>
+                <div id="letterCopyTitleCurrent" class="lc-current">Loading…</div>
+              </div>
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">✏️ Proposed</span></div>
+                <input id="letterCopyTitle" type="text" maxlength="200" class="lc-input" oninput="letterCopyOnEdit('title')" placeholder="Edit title here…">
+              </div>
             </div>
-            <input id="letterCopyTitle" type="text" maxlength="200" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit;" placeholder="Loading…">
-            <div style="font-size:10px; color:#94a3b8; margin-top:2px;">Default: <span id="letterCopyTitleDefault" style="font-style:italic;">—</span></div>
+            <div class="lc-row-actions">
+              <button class="lc-accept-btn" onclick="letterCopyAcceptBlock('title')">✓ Accept changes</button>
+              <button class="lc-revert-btn" onclick="letterCopyResetBlock('title')" title="Reset proposed back to current">↺ Reset</button>
+              <span id="letterCopyTitleRowStatus" class="lc-row-status"></span>
+            </div>
           </div>
 
           <!-- Opening paragraph -->
-          <div style="margin-bottom:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Opening paragraph</label>
-              <span id="letterCopyOpeningStatus" style="font-size:10px; color:#64748b;"></span>
+          <div class="lc-block-row">
+            <div class="lc-block-title">Opening paragraph <span id="letterCopyOpeningStatus" class="lc-status-chip"></span></div>
+            <div class="lc-compare">
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">📄 Current (in use today)</span></div>
+                <div id="letterCopyOpeningCurrent" class="lc-current">Loading…</div>
+              </div>
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">✏️ Proposed</span></div>
+                <textarea id="letterCopyOpening" maxlength="4000" rows="6" class="lc-input" oninput="letterCopyOnEdit('opening_paragraph')" placeholder="Edit opening paragraph here…"></textarea>
+              </div>
             </div>
-            <textarea id="letterCopyOpening" maxlength="4000" rows="5" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Loading…"></textarea>
-            <details style="margin-top:3px;">
-              <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
-              <div id="letterCopyOpeningDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5;">—</div>
-            </details>
+            <div class="lc-row-actions">
+              <button class="lc-accept-btn" onclick="letterCopyAcceptBlock('opening_paragraph')">✓ Accept changes</button>
+              <button class="lc-revert-btn" onclick="letterCopyResetBlock('opening_paragraph')" title="Reset proposed back to current">↺ Reset</button>
+              <span id="letterCopyOpeningRowStatus" class="lc-row-status"></span>
+            </div>
           </div>
 
           <!-- Closing paragraph -->
-          <div style="margin-bottom:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Closing paragraph</label>
-              <span id="letterCopyClosingStatus" style="font-size:10px; color:#64748b;"></span>
+          <div class="lc-block-row">
+            <div class="lc-block-title">Closing paragraph <span id="letterCopyClosingStatus" class="lc-status-chip"></span></div>
+            <div class="lc-compare">
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">📄 Current (in use today)</span></div>
+                <div id="letterCopyClosingCurrent" class="lc-current">Loading…</div>
+              </div>
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">✏️ Proposed</span></div>
+                <textarea id="letterCopyClosing" maxlength="4000" rows="6" class="lc-input" oninput="letterCopyOnEdit('closing_paragraph')" placeholder="Edit closing paragraph here…"></textarea>
+              </div>
             </div>
-            <textarea id="letterCopyClosing" maxlength="4000" rows="5" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Loading…"></textarea>
-            <details style="margin-top:3px;">
-              <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
-              <div id="letterCopyClosingDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5;">—</div>
-            </details>
+            <div class="lc-row-actions">
+              <button class="lc-accept-btn" onclick="letterCopyAcceptBlock('closing_paragraph')">✓ Accept changes</button>
+              <button class="lc-revert-btn" onclick="letterCopyResetBlock('closing_paragraph')" title="Reset proposed back to current">↺ Reset</button>
+              <span id="letterCopyClosingRowStatus" class="lc-row-status"></span>
+            </div>
           </div>
 
           <!-- Signature block -->
-          <div style="margin-bottom:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Signature block <span style="color:#64748b; font-weight:400; font-size:10.5px;">— multi-line; blank line = sign-off gap</span></label>
-              <span id="letterCopySignatureStatus" style="font-size:10px; color:#64748b;"></span>
+          <div class="lc-block-row">
+            <div class="lc-block-title">Signature block <span style="color:#64748b; font-weight:400; font-size:10.5px;">— multi-line; blank line = sign-off gap</span> <span id="letterCopySignatureStatus" class="lc-status-chip"></span></div>
+            <div class="lc-compare">
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">📄 Current (in use today)</span></div>
+                <div id="letterCopySignatureCurrent" class="lc-current">Loading…</div>
+              </div>
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">✏️ Proposed</span></div>
+                <textarea id="letterCopySignature" maxlength="4000" rows="6" class="lc-input" oninput="letterCopyOnEdit('signature_block')" placeholder="Edit signature here…"></textarea>
+              </div>
             </div>
-            <textarea id="letterCopySignature" maxlength="4000" rows="5" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Loading…"></textarea>
-            <details style="margin-top:3px;">
-              <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
-              <div id="letterCopySignatureDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5; white-space:pre-wrap;">—</div>
-            </details>
-            <div style="font-size:10px; color:#92400e; margin-top:3px;">Note: when you override this, the bold-name + muted-title styling of the default is replaced with flat text. Leave default if you want the structured look.</div>
+            <div class="lc-row-actions">
+              <button class="lc-accept-btn" onclick="letterCopyAcceptBlock('signature_block')">✓ Accept changes</button>
+              <button class="lc-revert-btn" onclick="letterCopyResetBlock('signature_block')" title="Reset proposed back to current">↺ Reset</button>
+              <span id="letterCopySignatureRowStatus" class="lc-row-status"></span>
+            </div>
+            <div style="font-size:10px; color:#92400e; margin-top:6px;">Note: overriding loses the bold-name + muted-title styling of the default — text renders flat.</div>
           </div>
 
           <!-- Footer note -->
-          <div style="margin-bottom:12px;">
-            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
-              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Footer note <span style="color:#64748b; font-weight:400; font-size:10.5px;">— optional per-community note below signature</span></label>
-              <span id="letterCopyFooterStatus" style="font-size:10px; color:#64748b;"></span>
+          <div class="lc-block-row">
+            <div class="lc-block-title">Footer note <span style="color:#64748b; font-weight:400; font-size:10.5px;">— optional per-community note below signature</span> <span id="letterCopyFooterStatus" class="lc-status-chip"></span></div>
+            <div class="lc-compare">
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">📄 Current (in use today)</span></div>
+                <div id="letterCopyFooterCurrent" class="lc-current" style="font-style:italic; color:#64748b;">(empty — no footer note)</div>
+              </div>
+              <div class="lc-pane">
+                <div class="lc-pane-header"><span class="lc-pane-label">✏️ Proposed</span></div>
+                <textarea id="letterCopyFooter" maxlength="4000" rows="4" class="lc-input" oninput="letterCopyOnEdit('footer_note')" placeholder="Leave blank to omit. e.g., 'Pay assessments online at home.bedrocktx.com — easier than mailing a check.'"></textarea>
+              </div>
             </div>
-            <textarea id="letterCopyFooter" maxlength="4000" rows="3" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Leave blank to omit. e.g., 'Pay assessments online at home.bedrocktx.com — easier than mailing a check.'"></textarea>
-            <div style="font-size:10px; color:#94a3b8; margin-top:3px;">Renders muted-small below the signature. The Bedrock-disclosure page footer (legal name + contact line) is separate and not editable here.</div>
+            <div class="lc-row-actions">
+              <button class="lc-accept-btn" onclick="letterCopyAcceptBlock('footer_note')">✓ Accept changes</button>
+              <button class="lc-revert-btn" onclick="letterCopyResetBlock('footer_note')" title="Reset proposed back to current">↺ Reset</button>
+              <span id="letterCopyFooterRowStatus" class="lc-row-status"></span>
+            </div>
           </div>
 
-          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:8px; border-top:1px solid #f1f5f9;">
-            <button onclick="letterCopySave()" id="letterCopySaveBtn" style="background:#16a34a; color:#fff; border:none; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">💾 Save overrides</button>
-            <button onclick="letterCopyRevertAll()" style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">↺ Revert all to default</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:10px;">
+            <button onclick="letterCopyRevertAll()" style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">↺ Revert all blocks to Bedrock default</button>
             <button onclick="letterCopyPreviewCurrent()" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:6px 14px; border-radius:5px; font-size:12px; font-weight:600; cursor:pointer;">📄 Preview this stage</button>
+            <span style="font-size:10.5px; color:#64748b; margin-left:auto;">Tip: accept blocks individually so you can compare one change at a time.</span>
           </div>
         </div>
       </div>
@@ -17505,20 +17565,65 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       _letterCopyCurrentOverrides = j.overrides || {};
       const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
       const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || ''; };
-      setVal('letterCopyTitle',     j.overrides.title             || j.defaults.title);
-      setVal('letterCopyOpening',   j.overrides.opening_paragraph || j.defaults.opening_paragraph);
-      setVal('letterCopyClosing',   j.overrides.closing_paragraph || j.defaults.closing_paragraph);
-      setVal('letterCopySignature', j.overrides.signature_block   || j.defaults.signature_block);
-      setVal('letterCopyFooter',    j.overrides.footer_note       || j.defaults.footer_note || '');
-      setText('letterCopyTitleDefault',     j.defaults.title);
-      setText('letterCopyOpeningDefault',   j.defaults.opening_paragraph);
-      setText('letterCopyClosingDefault',   j.defaults.closing_paragraph);
-      setText('letterCopySignatureDefault', j.defaults.signature_block);
+      // Effective "current" = override if present, else default. That's what's
+      // actually rendering on real letters today. We populate the left Current
+      // pane with that, and the right Proposed pane with the same value so
+      // the operator can compare and edit.
+      const eff = {
+        title:             j.overrides.title             || j.defaults.title,
+        opening_paragraph: j.overrides.opening_paragraph || j.defaults.opening_paragraph,
+        closing_paragraph: j.overrides.closing_paragraph || j.defaults.closing_paragraph,
+        signature_block:   j.overrides.signature_block   || j.defaults.signature_block,
+        footer_note:       j.overrides.footer_note       || j.defaults.footer_note || '',
+      };
+      setVal('letterCopyTitle',     eff.title);
+      setVal('letterCopyOpening',   eff.opening_paragraph);
+      setVal('letterCopyClosing',   eff.closing_paragraph);
+      setVal('letterCopySignature', eff.signature_block);
+      setVal('letterCopyFooter',    eff.footer_note);
+
+      // Current panes show the in-use text. For footer_note empty case,
+      // show the placeholder italic.
+      const setCurrent = (id, text, allowEmpty = false) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (!text && allowEmpty) {
+          el.textContent = '(empty — no footer note)';
+          el.style.fontStyle = 'italic';
+          el.style.color = '#64748b';
+        } else {
+          el.textContent = text || '—';
+          el.style.fontStyle = '';
+          el.style.color = '';
+        }
+      };
+      setCurrent('letterCopyTitleCurrent',     eff.title);
+      setCurrent('letterCopyOpeningCurrent',   eff.opening_paragraph);
+      setCurrent('letterCopyClosingCurrent',   eff.closing_paragraph);
+      setCurrent('letterCopySignatureCurrent', eff.signature_block);
+      setCurrent('letterCopyFooterCurrent',    eff.footer_note, true);
+
+      // Add "is-override" amber tint to the Current pane when a community
+      // override is in play (vs. plain default).
+      const markPane = (id, isOverride) => {
+        const el = document.getElementById(id);
+        if (el) el.classList.toggle('is-override', !!isOverride);
+      };
+      markPane('letterCopyTitleCurrent',     !!j.overrides.title);
+      markPane('letterCopyOpeningCurrent',   !!j.overrides.opening_paragraph);
+      markPane('letterCopyClosingCurrent',   !!j.overrides.closing_paragraph);
+      markPane('letterCopySignatureCurrent', !!j.overrides.signature_block);
+      markPane('letterCopyFooterCurrent',    !!j.overrides.footer_note);
+
       const mark = (id, isOverride) => {
         const el = document.getElementById(id);
-        if (el) {
-          el.textContent = isOverride ? '✏️ overridden for this community' : '✓ using default';
-          el.style.color = isOverride ? '#b45309' : '#16a34a';
+        if (!el) return;
+        if (isOverride) {
+          el.textContent = '✏️ overridden for this community';
+          el.style.background = '#fef3c7'; el.style.color = '#92400e';
+        } else {
+          el.textContent = '✓ using default';
+          el.style.background = '#dcfce7'; el.style.color = '#166534';
         }
       };
       mark('letterCopyTitleStatus',     !!j.overrides.title);
@@ -17526,6 +17631,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       mark('letterCopyClosingStatus',   !!j.overrides.closing_paragraph);
       mark('letterCopySignatureStatus', !!j.overrides.signature_block);
       mark('letterCopyFooterStatus',    !!j.overrides.footer_note);
+
+      // Reset per-row edited indicators
+      ['title','opening_paragraph','closing_paragraph','signature_block','footer_note'].forEach(k => {
+        const s = document.getElementById(letterCopyRowStatusId(k));
+        if (s) s.textContent = '';
+      });
       if (status) status.textContent = `Editing ${stage.replace(/_/g, ' ')} for community.`;
     } catch (e) {
       if (status) status.textContent = 'Failed to load: ' + e.message;
@@ -17560,44 +17671,78 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     });
   }
 
-  async function letterCopySave() {
-    const btn = document.getElementById('letterCopySaveBtn');
-    const status = document.getElementById('letterCopyStatus');
-    const titleVal   = (document.getElementById('letterCopyTitle')   || {}).value || '';
-    const openingVal = (document.getElementById('letterCopyOpening') || {}).value || '';
-    const closingVal = (document.getElementById('letterCopyClosing') || {}).value || '';
-    if (btn) { btn.disabled = true; btn.textContent = 'Saving…'; }
+  // Map block_key → DOM ids — used by per-block accept/reset
+  const LC_BLOCK_INPUT_ID = {
+    title:             'letterCopyTitle',
+    opening_paragraph: 'letterCopyOpening',
+    closing_paragraph: 'letterCopyClosing',
+    signature_block:   'letterCopySignature',
+    footer_note:       'letterCopyFooter',
+  };
+  function letterCopyRowStatusId(key) {
+    return ({
+      title:             'letterCopyTitleRowStatus',
+      opening_paragraph: 'letterCopyOpeningRowStatus',
+      closing_paragraph: 'letterCopyClosingRowStatus',
+      signature_block:   'letterCopySignatureRowStatus',
+      footer_note:       'letterCopyFooterRowStatus',
+    })[key];
+  }
+
+  function _letterCopyEffectiveCurrent(key) {
+    // The text currently in use today = override-or-default
+    const overr = _letterCopyCurrentOverrides[key];
+    const def = _letterCopyCurrentDefaults[key] || '';
+    return (typeof overr === 'string' && overr.trim()) ? overr : def;
+  }
+
+  // Fires on every keystroke in a proposed pane — shows "edited" indicator
+  // when proposed differs from current.
+  function letterCopyOnEdit(key) {
+    const inputEl = document.getElementById(LC_BLOCK_INPUT_ID[key]);
+    const statusEl = document.getElementById(letterCopyRowStatusId(key));
+    if (!inputEl || !statusEl) return;
+    const proposed = inputEl.value.trim();
+    const current = _letterCopyEffectiveCurrent(key).trim();
+    if (proposed !== current) {
+      statusEl.textContent = '● edited — click Accept to apply';
+      statusEl.style.color = '#b45309';
+    } else {
+      statusEl.textContent = '';
+    }
+  }
+
+  // Reset proposed pane back to whatever's in Current today.
+  function letterCopyResetBlock(key) {
+    const inputEl = document.getElementById(LC_BLOCK_INPUT_ID[key]);
+    if (!inputEl) return;
+    inputEl.value = _letterCopyEffectiveCurrent(key);
+    letterCopyOnEdit(key);
+  }
+
+  // Commit ONE block's proposed text. Drops override if it matches canonical
+  // default exactly, otherwise upserts the override.
+  async function letterCopyAcceptBlock(key) {
+    const inputEl = document.getElementById(LC_BLOCK_INPUT_ID[key]);
+    const statusEl = document.getElementById(letterCopyRowStatusId(key));
+    if (!inputEl) return;
+    const proposed = inputEl.value;
+    const defaultVal = (_letterCopyCurrentDefaults[key] || '').trim();
+    const trimmed = proposed.trim();
+    if (statusEl) { statusEl.textContent = '⏳ saving…'; statusEl.style.color = '#64748b'; }
     try {
-      // For each block: if the value matches the default exactly, DELETE the
-      // override (revert). Otherwise PUT it. Keeps the table small + makes
-      // "default" the visible state when nothing's been customized.
-      const signatureVal = (document.getElementById('letterCopySignature') || {}).value || '';
-      const footerVal    = (document.getElementById('letterCopyFooter')    || {}).value || '';
-      const tasks = [];
-      const upsertOrRevert = (key, val) => {
-        const defaultVal = (_letterCopyCurrentDefaults[key] || '').trim();
-        const trimmed = val.trim();
-        if (trimmed === defaultVal) {
-          tasks.push(_letterCopyDelete(key));
-        } else if (trimmed) {
-          tasks.push(_letterCopyPut(key, val));
-        } else if (defaultVal === '') {
-          // Both blank — nothing to do (footer_note default is empty)
-          tasks.push(_letterCopyDelete(key));
-        }
-      };
-      upsertOrRevert('title', titleVal);
-      upsertOrRevert('opening_paragraph', openingVal);
-      upsertOrRevert('closing_paragraph', closingVal);
-      upsertOrRevert('signature_block', signatureVal);
-      upsertOrRevert('footer_note', footerVal);
-      await Promise.all(tasks);
-      if (status) { status.textContent = '✓ Saved. Reloading…'; status.style.color = '#16a34a'; }
+      if (trimmed === defaultVal) {
+        await _letterCopyDelete(key);
+      } else if (trimmed) {
+        await _letterCopyPut(key, proposed);
+      } else {
+        // Empty proposed — revert to default (drops the override if any)
+        await _letterCopyDelete(key);
+      }
+      if (statusEl) { statusEl.textContent = '✓ saved'; statusEl.style.color = '#16a34a'; }
       await letterCopyLoad();
     } catch (e) {
-      if (status) { status.textContent = 'Save failed: ' + e.message; status.style.color = '#b91c1c'; }
-    } finally {
-      if (btn) { btn.disabled = false; btn.textContent = '💾 Save overrides'; }
+      if (statusEl) { statusEl.textContent = 'Failed: ' + e.message; statusEl.style.color = '#b91c1c'; }
     }
   }
 
