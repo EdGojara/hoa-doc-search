@@ -17980,23 +17980,65 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         aggressive: '#7f1d1d',
         disabled:   '#94a3b8',
       })[p] || '#334155';
-      list.innerHTML = cats.map(c => `<div data-cat-id="${c.id}" style="padding:8px 6px; border-bottom:1px solid #f1f5f9; display:flex; gap:10px; align-items:flex-start;">
-        <div style="flex:1; min-width:0;">
-          <div style="font-weight:600; color:#0B1D34; font-size:12.5px;">${escapeHtml(c.label)}</div>
-          <textarea data-cat-desc="${c.id}" rows="2" style="width:100%; box-sizing:border-box; font-size:11px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:4px; margin-top:3px; font-family:inherit; line-height:1.4; resize:vertical;" placeholder="What the AI looks for…">${escapeHtml(c.description || '')}</textarea>
-          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">slug: <code>${escapeHtml(c.slug)}</code> · default: ${escapeHtml(c.default_priority_weight)}${c.is_overridden ? ` · overridden${c.board_vote_date ? ' (board ' + c.board_vote_date + ')' : ''}` : ''}</div>
-        </div>
-        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;">
-          <select data-cat-prio="${c.id}" style="font-size:11px; padding:4px 7px; border:1px solid #cbd5e1; border-radius:4px; background:${prioBg(c.effective_priority)}; color:${prioFg(c.effective_priority)}; font-weight:600;">
-            <option value="standard"${c.effective_priority === 'standard' ? ' selected' : ''}>Standard</option>
-            <option value="elevated"${c.effective_priority === 'elevated' ? ' selected' : ''}>Elevated</option>
-            <option value="aggressive"${c.effective_priority === 'aggressive' ? ' selected' : ''}>Aggressive</option>
-            <option value="disabled"${c.effective_priority === 'disabled' ? ' selected' : ''}>Disabled</option>
-          </select>
-          <button onclick="catEditorSaveOne('${c.id}')" style="background:#0B1D34; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:10.5px; font-weight:600; cursor:pointer;">Save</button>
-        </div>
-      </div>`).join('');
-      status.textContent = `${cats.length} categories. Edit a description to tune what AI looks for, change priority dropdown for this community, then Save row.`;
+      list.innerHTML = cats.map(c => {
+        const hasOverride = c.has_citation_override;
+        const overrideChip = hasOverride
+          ? `<span title="${escapeHtml(c.governing_doc_reference || '')}" style="background:#dcfce7; color:#166534; padding:1px 7px; border-radius:99px; font-size:9.5px; font-weight:700; cursor:help;">✓ Citation locked</span>`
+          : `<span title="No specific citation set — letter falls back to a generic-but-defensible statement that anchors in the Declaration" style="background:#f1f5f9; color:#475569; padding:1px 7px; border-radius:99px; font-size:9.5px; font-weight:700; cursor:help;">auto-lookup</span>`;
+        return `<div data-cat-id="${c.id}" style="padding:8px 6px; border-bottom:1px solid #f1f5f9;">
+          <div style="display:flex; gap:10px; align-items:flex-start;">
+            <div style="flex:1; min-width:0;">
+              <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+                <span style="font-weight:600; color:#0B1D34; font-size:12.5px;">${escapeHtml(c.label)}</span>
+                ${overrideChip}
+              </div>
+              <textarea data-cat-desc="${c.id}" rows="2" style="width:100%; box-sizing:border-box; font-size:11px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:4px; margin-top:3px; font-family:inherit; line-height:1.4; resize:vertical;" placeholder="What the AI looks for…">${escapeHtml(c.description || '')}</textarea>
+              <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">slug: <code>${escapeHtml(c.slug)}</code> · default: ${escapeHtml(c.default_priority_weight)}${c.is_overridden ? ` · priority overridden${c.board_vote_date ? ' (board ' + c.board_vote_date + ')' : ''}` : ''}</div>
+            </div>
+            <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;">
+              <select data-cat-prio="${c.id}" style="font-size:11px; padding:4px 7px; border:1px solid #cbd5e1; border-radius:4px; background:${prioBg(c.effective_priority)}; color:${prioFg(c.effective_priority)}; font-weight:600;">
+                <option value="standard"${c.effective_priority === 'standard' ? ' selected' : ''}>Standard</option>
+                <option value="elevated"${c.effective_priority === 'elevated' ? ' selected' : ''}>Elevated</option>
+                <option value="aggressive"${c.effective_priority === 'aggressive' ? ' selected' : ''}>Aggressive</option>
+                <option value="disabled"${c.effective_priority === 'disabled' ? ' selected' : ''}>Disabled</option>
+              </select>
+              <button onclick="catEditorSaveOne('${c.id}')" style="background:#0B1D34; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:10.5px; font-weight:600; cursor:pointer;">Save</button>
+            </div>
+          </div>
+          <!-- Citation override (collapsible). Lets the operator lock the
+               specific Article/Section + obligation text for this category
+               at this community. When set, the letter renderer uses these
+               EXACT values and never falls back to auto-lookup. -->
+          <details data-cat-cite="${c.id}" style="margin-top:6px;"${hasOverride ? ' open' : ''}>
+            <summary style="font-size:10.5px; color:${hasOverride ? '#166534' : '#64748b'}; cursor:pointer; font-weight:600;">
+              ${hasOverride ? '✓ Citation override set — click to view/edit' : '✏️ Lock citation for this community (recommended after first letter — encode-Ed pattern)'}
+            </summary>
+            <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; margin-top:6px; display:grid; grid-template-columns:1fr 1fr; gap:6px;">
+              <label style="display:flex; flex-direction:column; gap:2px; font-size:10px; color:#475569; font-weight:600;">
+                Reference <span style="font-weight:400; color:#94a3b8;">e.g. Article 7, Section 7.3</span>
+                <input type="text" data-cat-ref="${c.id}" placeholder="Article X, Section X.Y" value="${escapeHtml(c.governing_doc_reference || '')}" style="font-size:11px; padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit;">
+              </label>
+              <label style="display:flex; flex-direction:column; gap:2px; font-size:10px; color:#475569; font-weight:600;">
+                Section title <span style="font-weight:400; color:#94a3b8;">e.g. Maintenance of Lots</span>
+                <input type="text" data-cat-sectitle="${c.id}" placeholder="optional" value="${escapeHtml(c.governing_doc_section_title || '')}" style="font-size:11px; padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit;">
+              </label>
+              <label style="display:flex; flex-direction:column; gap:2px; font-size:10px; color:#475569; font-weight:600; grid-column:1 / -1;">
+                Verbatim quote from the section <span style="font-weight:400; color:#94a3b8;">paste the obligation sentence from the CC&Rs — this is what gets cited on the letter</span>
+                <textarea data-cat-quote="${c.id}" rows="2" placeholder='e.g. "Each Owner shall keep his or her Lot, including all landscaping thereon, in a clean and well-maintained condition."' style="font-size:11px; padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.4;">${escapeHtml(c.governing_doc_quote || '')}</textarea>
+              </label>
+              <label style="display:flex; flex-direction:column; gap:2px; font-size:10px; color:#475569; font-weight:600;">
+                Page number <span style="font-weight:400; color:#94a3b8;">optional</span>
+                <input type="number" min="1" max="9999" data-cat-page="${c.id}" placeholder="optional" value="${c.governing_doc_page || ''}" style="font-size:11px; padding:5px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; width:100px;">
+              </label>
+              <div style="display:flex; gap:6px; justify-content:flex-end; align-items:end;">
+                ${hasOverride ? `<button onclick="catEditorClearCitation('${c.id}')" style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:4px 10px; border-radius:4px; font-size:10.5px; font-weight:600; cursor:pointer;">Clear override</button>` : ''}
+                <button onclick="catEditorSaveOne('${c.id}')" style="background:#16a34a; color:#fff; border:none; padding:4px 12px; border-radius:4px; font-size:10.5px; font-weight:600; cursor:pointer;">💾 Save citation</button>
+              </div>
+            </div>
+          </details>
+        </div>`;
+      }).join('');
+      status.textContent = `${cats.length} categories. For each: edit description to tune AI lookup, change priority dropdown, OR expand the citation override to lock the specific Article/Section for this community (recommended for accuracy).`;
     } catch (e) {
       status.textContent = 'Failed: ' + e.message;
     }
@@ -18117,15 +18159,61 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ description: descEl.value }),
       });
+      // Citation override fields — only populated when the operator has
+      // expanded the override panel and entered a reference.
+      const refEl     = document.querySelector(`input[data-cat-ref="${catId}"]`);
+      const secEl     = document.querySelector(`input[data-cat-sectitle="${catId}"]`);
+      const quoteEl   = document.querySelector(`textarea[data-cat-quote="${catId}"]`);
+      const pageEl    = document.querySelector(`input[data-cat-page="${catId}"]`);
+      const payload = {
+        community_id: communityId,
+        category_id: catId,
+        priority_weight: prioEl.value,
+        governing_doc_reference:     refEl   && refEl.value.trim()   || null,
+        governing_doc_section_title: secEl   && secEl.value.trim()   || null,
+        governing_doc_quote:         quoteEl && quoteEl.value.trim() || null,
+        governing_doc_page:          pageEl  && pageEl.value         || null,
+      };
       await fetch('/api/enforcement/category-priorities', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ community_id: communityId, category_id: catId, priority_weight: prioEl.value }),
+        body: JSON.stringify(payload),
       });
       await catEditorLoad();
       if (status) status.textContent = '✓ Saved.';
     } catch (e) {
       if (status) status.textContent = 'Save failed: ' + e.message;
+    }
+  }
+
+  // Clear the citation override — saves the row with priority but NULL
+  // citation fields. The renderer falls back to auto-lookup / generic
+  // statement when no override is set.
+  async function catEditorClearCitation(catId) {
+    if (!confirm('Clear the citation override for this category at this community? The next letter will fall back to the auto-lookup (and the generic Authority Statement if that finds nothing).')) return;
+    const sel = document.getElementById('letterFormatCommunity');
+    const communityId = sel && sel.value;
+    if (!communityId) return;
+    const prioEl = document.querySelector(`select[data-cat-prio="${catId}"]`);
+    const priority_weight = (prioEl && prioEl.value) || 'standard';
+    const status = document.getElementById('catEditorStatus');
+    if (status) status.textContent = 'Clearing…';
+    try {
+      await fetch('/api/enforcement/category-priorities', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          community_id: communityId, category_id: catId, priority_weight,
+          governing_doc_reference: null,
+          governing_doc_section_title: null,
+          governing_doc_quote: null,
+          governing_doc_page: null,
+        }),
+      });
+      await catEditorLoad();
+      if (status) status.textContent = '✓ Citation override cleared.';
+    } catch (e) {
+      if (status) status.textContent = 'Clear failed: ' + e.message;
     }
   }
 

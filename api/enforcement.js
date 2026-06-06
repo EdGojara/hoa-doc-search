@@ -2956,7 +2956,7 @@ router.get('/category-priorities', async (req, res) => {
         .select('id, slug, label, description, default_priority_weight, display_order')
         .order('display_order', { ascending: true }),
       supabase.from('community_enforcement_priorities')
-        .select('category_id, priority_weight, set_by_board_vote_date, board_meeting_minutes_ref, notes')
+        .select('category_id, priority_weight, set_by_board_vote_date, board_meeting_minutes_ref, notes, governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
         .eq('community_id', communityId)
         .is('end_date', null),
     ]);
@@ -2972,6 +2972,15 @@ router.get('/category-priorities', async (req, res) => {
         board_vote_date: p && p.set_by_board_vote_date,
         board_minutes_ref: p && p.board_meeting_minutes_ref,
         priority_notes: p && p.notes,
+        // Per-(community, category) citation override — when populated,
+        // the letter renderer uses these EXACT values and never calls
+        // the auto-lookup. This is the encode-Ed pattern: lock the
+        // correct citation once, system never gets it wrong again.
+        governing_doc_reference:     p && p.governing_doc_reference     || null,
+        governing_doc_section_title: p && p.governing_doc_section_title || null,
+        governing_doc_quote:         p && p.governing_doc_quote         || null,
+        governing_doc_page:          p && p.governing_doc_page          || null,
+        has_citation_override: !!(p && p.governing_doc_reference),
       };
     });
     res.json({ community_id: communityId, categories: rows });
@@ -2990,26 +2999,45 @@ router.get('/category-priorities', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.put('/category-priorities', express.json(), async (req, res) => {
   try {
-    const { community_id, category_id, priority_weight, board_vote_date, board_minutes_ref, notes } = req.body || {};
+    const {
+      community_id, category_id, priority_weight, board_vote_date,
+      board_minutes_ref, notes,
+      governing_doc_reference, governing_doc_section_title,
+      governing_doc_quote, governing_doc_page,
+    } = req.body || {};
     if (!community_id) return res.status(400).json({ error: 'community_id_required' });
     if (!category_id) return res.status(400).json({ error: 'category_id_required' });
     if (!['standard','elevated','aggressive','disabled'].includes(priority_weight)) {
       return res.status(400).json({ error: 'invalid priority_weight' });
     }
-    // End-date the current active row (if any)
+    // End-date the current active row (if any). Preserves audit trail
+    // — both priority recalibrations AND citation corrections show up
+    // as historical rows with end_date set.
     const today = new Date().toISOString().slice(0, 10);
     await supabase.from('community_enforcement_priorities')
       .update({ end_date: today })
       .eq('community_id', community_id)
       .eq('category_id', category_id)
       .is('end_date', null);
-    // Insert the new active row
+    // Insert the new active row with both priority + citation fields.
+    // Citation fields are nullable — operator may set priority alone,
+    // citation alone, or both. Empty strings normalized to NULL so the
+    // 'has citation' check is unambiguous.
+    const _norm = (v) => (typeof v === 'string' && v.trim()) ? v.trim() : null;
+    const _normNum = (v) => {
+      const n = parseInt(v, 10);
+      return Number.isFinite(n) && n > 0 ? n : null;
+    };
     const { data, error } = await supabase.from('community_enforcement_priorities')
       .insert({
         community_id, category_id, priority_weight,
-        set_by_board_vote_date: board_vote_date || null,
-        board_meeting_minutes_ref: board_minutes_ref || null,
-        notes: notes || null,
+        set_by_board_vote_date:      board_vote_date || null,
+        board_meeting_minutes_ref:   board_minutes_ref || null,
+        notes:                       notes || null,
+        governing_doc_reference:     _norm(governing_doc_reference),
+        governing_doc_section_title: _norm(governing_doc_section_title),
+        governing_doc_quote:         _norm(governing_doc_quote),
+        governing_doc_page:          _normNum(governing_doc_page),
       })
       .select('*').single();
     if (error) throw error;
