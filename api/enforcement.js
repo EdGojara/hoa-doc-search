@@ -6183,14 +6183,26 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
         };
         recipient.name = prop.owner_name || 'Property Owner';
 
-        // Sender = Bedrock as managing agent
+        // Sender = Bedrock as managing agent. This becomes the printed
+        // RETURN ADDRESS on the Lob envelope — undeliverable pieces come
+        // back here (matches the pre-printed envelopes Bedrock uses for
+        // manual mailings today). The letter content already establishes
+        // that Bedrock is acting on behalf of [HOA Name] so homeowners
+        // know the underlying principal.
+        //
+        // BRAND.service stores the address pre-split for letter footers:
+        //   address              -> "12808 W Airport Blvd, Ste 253"
+        //   addressCityStateZip  -> "Sugar Land, TX 77478"
+        // We parse the city/state/zip portion for Lob's structured fields.
         const { BRAND } = require('../lib/enforcement/brand_proxy');
+        const _csz = String(BRAND.service.addressCityStateZip || '');
+        const _cszMatch = _csz.match(/^(.+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)\s*$/);
         const sender = {
-          name: BRAND.service.legal,
-          address_line1: BRAND.service.address,
-          city: BRAND.service.city || 'Houston',
-          state: BRAND.service.state || 'TX',
-          zip: BRAND.service.zip || '77030',
+          name: BRAND.service.legal,                              // "Bedrock Association Management, LLC"
+          address_line1: BRAND.service.address,                   // "12808 W Airport Blvd, Ste 253"
+          city: _cszMatch ? _cszMatch[1].trim() : 'Sugar Land',
+          state: _cszMatch ? _cszMatch[2] : 'TX',
+          zip: _cszMatch ? _cszMatch[3] : '77478',
         };
 
         // Derive mail type from the interaction's delivery_method. Certified
