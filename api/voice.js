@@ -188,20 +188,26 @@ router.post('/incoming', async (req, res) => {
     }
 
     // Pre-create the homeowner_calls row so the bridge can update it as
-    // the call progresses (best-effort — call still proceeds if this fails).
-    if (effectiveCommunityId) {
-      try {
-        await supabase.from('homeowner_calls').upsert({
-          community_id: effectiveCommunityId,
-          voice_route_id: route?.id || null,
-          call_sid: callSid,
-          caller_phone: fromPhone,
-          caller_homeowner_id: callerContact?.id || null,
-          status: 'ringing',
-        }, { onConflict: 'call_sid' });
-      } catch (e) {
-        console.warn('[voice/incoming] call log create failed:', e.message);
+    // the call progresses. ALWAYS write — even when community couldn't
+    // be resolved (effectiveCommunityId is null). Migration 182 made
+    // community_id nullable so unrouted calls still show up in the
+    // operator's Calls dashboard. Otherwise the call would be invisible:
+    // Claire answered it but no one would know it happened until a
+    // homeowner complained.
+    try {
+      await supabase.from('homeowner_calls').upsert({
+        community_id: effectiveCommunityId,   // may be null = unrouted
+        voice_route_id: route?.id || null,
+        call_sid: callSid,
+        caller_phone: fromPhone,
+        caller_homeowner_id: callerContact?.id || null,
+        status: 'ringing',
+      }, { onConflict: 'call_sid' });
+      if (!effectiveCommunityId) {
+        console.warn(`[voice/incoming] call ${callSid} logged WITHOUT community — to ${toPhone} from ${fromPhone}. Check voice_phone_routes mapping for ${toPhone}.`);
       }
+    } catch (e) {
+      console.warn('[voice/incoming] call log create failed:', e.message);
     }
 
     // Construct the WebSocket URL. If VOICE_WEBSOCKET_URL is set in env
