@@ -23061,19 +23061,30 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   // ----- ACTIVE DRIVES POLLER -----
-  // Polls /api/inspections/active every 30s while the home tab is visible.
-  // Hides itself entirely when no drives are live. Click a row to open the
-  // tablet view (Phase 2 will be a live-map page; Phase 1 just opens the
-  // route-trace summary on the inspector PWA).
+  // Polls /api/inspections/active on a slow cadence. Inspections happen 0-3
+  // times per day across the portfolio; the original 30-second poll was
+  // 'responsiveness theater' — 2,880 calls per browser tab per day for an
+  // event that fires a handful of times. Anchored on actual usage:
+  //   default 10 min when no drives are visible
+  //   5 min when there ARE active drives (to update positions on the tile)
+  //   paused when the page is hidden (tab in background)
+  // Override via window._ACTIVE_DRIVES_POLL_MS in the console for dev.
+  const ACTIVE_DRIVES_POLL_IDLE_MS   = 10 * 60 * 1000; // 10 min when no drives
+  const ACTIVE_DRIVES_POLL_ACTIVE_MS =  5 * 60 * 1000; //  5 min when drives exist
   let activeDrivesTimer = null;
+  let _activeDrivesHasDrives = false;
   async function refreshActiveDrives() {
     const banner = document.getElementById('activeDrivesBanner');
     if (!banner) return;
+    // Skip the call entirely when the page isn't visible — no point burning
+    // requests for a tile the user isn't looking at.
+    if (typeof document !== 'undefined' && document.visibilityState === 'hidden') return;
     try {
       const r = await fetch('/api/inspections/active');
-      if (!r.ok) { banner.style.display = 'none'; return; }
+      if (!r.ok) { banner.style.display = 'none'; _activeDrivesHasDrives = false; return; }
       const j = await r.json();
       const drives = j.active || [];
+      _activeDrivesHasDrives = drives.length > 0;
       if (drives.length === 0) { banner.style.display = 'none'; return; }
       banner.style.display = 'block';
       document.getElementById('activeDrivesCount').textContent = String(drives.length);
@@ -23104,7 +23115,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function startActiveDrivesPoller() {
     if (activeDrivesTimer) return;
     refreshActiveDrives();
-    activeDrivesTimer = setInterval(refreshActiveDrives, 30000);
+    // Adaptive cadence — re-evaluate on every tick. Faster when drives are
+    // active (so the operator's position updates on the tile); slower when
+    // idle (the common case).
+    const tick = async () => {
+      await refreshActiveDrives();
+      // Reschedule based on current state. clearTimeout + setTimeout instead
+      // of setInterval so we can flex the cadence per tick.
+      const ms = window._ACTIVE_DRIVES_POLL_MS
+              || (_activeDrivesHasDrives ? ACTIVE_DRIVES_POLL_ACTIVE_MS : ACTIVE_DRIVES_POLL_IDLE_MS);
+      activeDrivesTimer = setTimeout(tick, ms);
+    };
+    const initialMs = window._ACTIVE_DRIVES_POLL_MS || ACTIVE_DRIVES_POLL_IDLE_MS;
+    activeDrivesTimer = setTimeout(tick, initialMs);
   }
   // Boot the poller as soon as the home tab is rendered.
 

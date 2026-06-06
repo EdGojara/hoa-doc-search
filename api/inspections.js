@@ -1899,7 +1899,17 @@ router.get('/inspections/recent', async (req, res) => {
 // GET /api/inspections/:id — detail with photos
 // Photos include a signed URL for viewing in the reviewer queue.
 // ---------------------------------------------------------------------------
-router.get('/inspections/:id', async (req, res) => {
+router.get('/inspections/:id', async (req, res, next) => {
+  // Reserved-word guard — Express matches routes in registration order, so
+  // this dynamic /:id route was catching requests for the static routes
+  // defined later (/inspections/active, /inspections/recent, /inspections/
+  // offices, etc.) and 404ing on UUID lookup for "active" etc. Skip to
+  // the next matching handler when the id is a known static path segment.
+  const RESERVED = new Set([
+    'active', 'recent', 'offices', 'observations', 'photos',
+    'properties', 'geocode-debug', 'geocode-status', 'geocode-community',
+  ]);
+  if (RESERVED.has(req.params.id)) return next();
   try {
     const { id } = req.params;
     const { data: insp, error: inspErr } = await supabase
