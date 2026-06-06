@@ -13511,6 +13511,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{phone}}</code>
               <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{email}}</code>
               <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{owner_salutation}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{sender_name}}</code>
+              <code style="background:#fff; padding:1px 4px; border-radius:3px; border:1px solid #e2e8f0;">{{sender_title}}</code>
             </div>
           </div>
 
@@ -13548,6 +13550,30 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
               <div id="letterCopyClosingDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5;">—</div>
             </details>
+          </div>
+
+          <!-- Signature block -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Signature block <span style="color:#64748b; font-weight:400; font-size:10.5px;">— multi-line; blank line = sign-off gap</span></label>
+              <span id="letterCopySignatureStatus" style="font-size:10px; color:#64748b;"></span>
+            </div>
+            <textarea id="letterCopySignature" maxlength="4000" rows="5" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Loading…"></textarea>
+            <details style="margin-top:3px;">
+              <summary style="font-size:10px; color:#94a3b8; cursor:pointer;">Show default text</summary>
+              <div id="letterCopySignatureDefault" style="font-size:10.5px; color:#475569; padding:6px 8px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:4px; margin-top:4px; font-style:italic; line-height:1.5; white-space:pre-wrap;">—</div>
+            </details>
+            <div style="font-size:10px; color:#92400e; margin-top:3px;">Note: when you override this, the bold-name + muted-title styling of the default is replaced with flat text. Leave default if you want the structured look.</div>
+          </div>
+
+          <!-- Footer note -->
+          <div style="margin-bottom:12px;">
+            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;">
+              <label style="font-size:11.5px; font-weight:600; color:#0B1D34;">Footer note <span style="color:#64748b; font-weight:400; font-size:10.5px;">— optional per-community note below signature</span></label>
+              <span id="letterCopyFooterStatus" style="font-size:10px; color:#64748b;"></span>
+            </div>
+            <textarea id="letterCopyFooter" maxlength="4000" rows="3" style="width:100%; box-sizing:border-box; font-size:12px; padding:6px 8px; border:1px solid #cbd5e1; border-radius:4px; font-family:inherit; resize:vertical; line-height:1.5;" placeholder="Leave blank to omit. e.g., 'Pay assessments online at home.bedrocktx.com — easier than mailing a check.'"></textarea>
+            <div style="font-size:10px; color:#94a3b8; margin-top:3px;">Renders muted-small below the signature. The Bedrock-disclosure page footer (legal name + contact line) is separate and not editable here.</div>
           </div>
 
           <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center; padding-top:8px; border-top:1px solid #f1f5f9;">
@@ -17339,7 +17365,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // operator edit/save/revert title + opening + closing per stage per
   // community. Placeholder substitution happens at render time on the server.
   // -------------------------------------------------------------------------
-  let _letterCopyCurrentDefaults = { title: '', opening_paragraph: '', closing_paragraph: '' };
+  let _letterCopyCurrentDefaults = { title: '', opening_paragraph: '', closing_paragraph: '', signature_block: '', footer_note: '' };
   let _letterCopyCurrentOverrides = {};
 
   async function letterCopyLoad() {
@@ -17362,12 +17388,15 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       _letterCopyCurrentOverrides = j.overrides || {};
       const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
       const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v || ''; };
-      setVal('letterCopyTitle',   j.overrides.title          || j.defaults.title);
-      setVal('letterCopyOpening', j.overrides.opening_paragraph || j.defaults.opening_paragraph);
-      setVal('letterCopyClosing', j.overrides.closing_paragraph || j.defaults.closing_paragraph);
-      setText('letterCopyTitleDefault',   j.defaults.title);
-      setText('letterCopyOpeningDefault', j.defaults.opening_paragraph);
-      setText('letterCopyClosingDefault', j.defaults.closing_paragraph);
+      setVal('letterCopyTitle',     j.overrides.title             || j.defaults.title);
+      setVal('letterCopyOpening',   j.overrides.opening_paragraph || j.defaults.opening_paragraph);
+      setVal('letterCopyClosing',   j.overrides.closing_paragraph || j.defaults.closing_paragraph);
+      setVal('letterCopySignature', j.overrides.signature_block   || j.defaults.signature_block);
+      setVal('letterCopyFooter',    j.overrides.footer_note       || j.defaults.footer_note || '');
+      setText('letterCopyTitleDefault',     j.defaults.title);
+      setText('letterCopyOpeningDefault',   j.defaults.opening_paragraph);
+      setText('letterCopyClosingDefault',   j.defaults.closing_paragraph);
+      setText('letterCopySignatureDefault', j.defaults.signature_block);
       const mark = (id, isOverride) => {
         const el = document.getElementById(id);
         if (el) {
@@ -17375,9 +17404,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           el.style.color = isOverride ? '#b45309' : '#16a34a';
         }
       };
-      mark('letterCopyTitleStatus',   !!j.overrides.title);
-      mark('letterCopyOpeningStatus', !!j.overrides.opening_paragraph);
-      mark('letterCopyClosingStatus', !!j.overrides.closing_paragraph);
+      mark('letterCopyTitleStatus',     !!j.overrides.title);
+      mark('letterCopyOpeningStatus',   !!j.overrides.opening_paragraph);
+      mark('letterCopyClosingStatus',   !!j.overrides.closing_paragraph);
+      mark('letterCopySignatureStatus', !!j.overrides.signature_block);
+      mark('letterCopyFooterStatus',    !!j.overrides.footer_note);
       if (status) status.textContent = `Editing ${stage.replace(/_/g, ' ')} for community.`;
     } catch (e) {
       if (status) status.textContent = 'Failed to load: ' + e.message;
@@ -17423,22 +17454,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       // For each block: if the value matches the default exactly, DELETE the
       // override (revert). Otherwise PUT it. Keeps the table small + makes
       // "default" the visible state when nothing's been customized.
+      const signatureVal = (document.getElementById('letterCopySignature') || {}).value || '';
+      const footerVal    = (document.getElementById('letterCopyFooter')    || {}).value || '';
       const tasks = [];
-      if (titleVal.trim() === (_letterCopyCurrentDefaults.title || '').trim()) {
-        tasks.push(_letterCopyDelete('title'));
-      } else if (titleVal.trim()) {
-        tasks.push(_letterCopyPut('title', titleVal));
-      }
-      if (openingVal.trim() === (_letterCopyCurrentDefaults.opening_paragraph || '').trim()) {
-        tasks.push(_letterCopyDelete('opening_paragraph'));
-      } else if (openingVal.trim()) {
-        tasks.push(_letterCopyPut('opening_paragraph', openingVal));
-      }
-      if (closingVal.trim() === (_letterCopyCurrentDefaults.closing_paragraph || '').trim()) {
-        tasks.push(_letterCopyDelete('closing_paragraph'));
-      } else if (closingVal.trim()) {
-        tasks.push(_letterCopyPut('closing_paragraph', closingVal));
-      }
+      const upsertOrRevert = (key, val) => {
+        const defaultVal = (_letterCopyCurrentDefaults[key] || '').trim();
+        const trimmed = val.trim();
+        if (trimmed === defaultVal) {
+          tasks.push(_letterCopyDelete(key));
+        } else if (trimmed) {
+          tasks.push(_letterCopyPut(key, val));
+        } else if (defaultVal === '') {
+          // Both blank — nothing to do (footer_note default is empty)
+          tasks.push(_letterCopyDelete(key));
+        }
+      };
+      upsertOrRevert('title', titleVal);
+      upsertOrRevert('opening_paragraph', openingVal);
+      upsertOrRevert('closing_paragraph', closingVal);
+      upsertOrRevert('signature_block', signatureVal);
+      upsertOrRevert('footer_note', footerVal);
       await Promise.all(tasks);
       if (status) { status.textContent = '✓ Saved. Reloading…'; status.style.color = '#16a34a'; }
       await letterCopyLoad();
@@ -17450,12 +17485,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
 
   async function letterCopyRevertAll() {
-    if (!confirm('Revert title + opening + closing back to Bedrock defaults for this stage at this community?')) return;
+    if (!confirm('Revert all 5 blocks (title, opening, closing, signature, footer) back to Bedrock defaults for this stage at this community?')) return;
     try {
       await Promise.all([
         _letterCopyDelete('title'),
         _letterCopyDelete('opening_paragraph'),
         _letterCopyDelete('closing_paragraph'),
+        _letterCopyDelete('signature_block'),
+        _letterCopyDelete('footer_note'),
       ]);
       await letterCopyLoad();
     } catch (e) {
