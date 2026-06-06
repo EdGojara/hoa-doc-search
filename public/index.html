@@ -13502,6 +13502,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <button class="secondary-btn" onclick="curePipelineLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
         </div>
       </div>
+      <div id="curePipelineMailSummary"></div>
       <div id="curePipelineBuckets" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-bottom:10px;">
         <!-- Bucket counters render here -->
       </div>
@@ -18164,6 +18165,34 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>`;
       }).join('');
 
+      // Mail-status summary — shows at a glance how many violations have
+      // their letters actually mailed (= cure clock running for real) vs.
+      // still in drafts or mail queue (= cure date shown is placeholder).
+      const mc = j.mail_counts || {};
+      const totalShown = j.total || 0;
+      const mailedN = mc.mailed || 0;
+      const inQueueN = mc.in_mail_queue || 0;
+      const inDraftsN = mc.in_drafts || 0;
+      const noLetterN = mc.no_letter || 0;
+      const needsActionN = inDraftsN + inQueueN + noLetterN;
+      const mailSummary = document.getElementById('curePipelineMailSummary');
+      if (mailSummary) {
+        const pct = totalShown > 0 ? Math.round((mailedN / totalShown) * 100) : 0;
+        const summaryColor = pct >= 80 ? '#dcfce7' : pct >= 50 ? '#fef3c7' : '#fee2e2';
+        const summaryText  = pct >= 80 ? '#166534' : pct >= 50 ? '#92400e' : '#7f1d1d';
+        const chips = [];
+        if (mailedN)    chips.push(`<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">✓ ${mailedN} mailed</span>`);
+        if (inQueueN)   chips.push(`<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">⏳ ${inQueueN} in mail queue</span>`);
+        if (inDraftsN)  chips.push(`<span style="background:#dbeafe; color:#1e40af; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">📝 ${inDraftsN} in drafts</span>`);
+        if (noLetterN)  chips.push(`<span style="background:#f1f5f9; color:#475569; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">— ${noLetterN} no letter yet</span>`);
+        if (chips.length === 0) chips.push('<span style="color:#94a3b8; font-size:11px;">No violations in pipeline.</span>');
+        mailSummary.innerHTML = `<div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center; padding:8px 12px; background:${summaryColor}; color:${summaryText}; border-radius:8px; margin-bottom:8px;">
+          <strong style="font-size:11px;">Mail status:</strong>
+          ${chips.join('')}
+          ${needsActionN > 0 ? `<span style="margin-left:auto; font-size:10.5px; opacity:0.8;">⚠ ${needsActionN} need action before their cure clock starts</span>` : ''}
+        </div>`;
+      }
+
       if (!j.violations || !j.violations.length) {
         list.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">No active violations within the horizon. Clean slate.</div>';
         return;
@@ -18187,21 +18216,48 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         return `<span style="color:${color}; font-weight:700; font-size:11px;">${txt}</span>`;
       };
 
+      // Letter-status chip — shows whether the cure clock has actually
+      // started (letter mailed) or is still a placeholder (drafted /
+      // queued). The cure_period_ends_at field gets populated at
+      // violation creation but the legal cure clock only starts at
+      // postmark.
+      const letterStatusChip = (status) => {
+        const map = {
+          mailed:        { bg: '#dcfce7', fg: '#166534', label: '✓ Mailed',        hint: 'Cure clock running from postmark' },
+          in_mail_queue: { bg: '#fef3c7', fg: '#92400e', label: '⏳ In mail queue', hint: 'Approved, waiting to print/send' },
+          in_drafts:     { bg: '#dbeafe', fg: '#1e40af', label: '📝 In drafts',    hint: 'Draft letter awaiting review/approval' },
+          rejected:      { bg: '#fee2e2', fg: '#7f1d1d', label: '✕ Letter rejected', hint: 'Draft was rejected — no letter going out' },
+          no_letter:     { bg: '#f1f5f9', fg: '#475569', label: '— No letter',     hint: 'No draft letter exists yet for this violation' },
+          unknown:       { bg: '#f1f5f9', fg: '#475569', label: '?',               hint: 'Letter status unknown' },
+        };
+        const m = map[status] || map.unknown;
+        return `<span title="${m.hint}" style="background:${m.bg}; color:${m.fg}; padding:1px 7px; border-radius:99px; font-size:9.5px; font-weight:700; cursor:help;">${m.label}</span>`;
+      };
+
       list.innerHTML = j.violations.map(v => {
         const addr = v.property ? `${(v.property.street_address || '').trim()}${v.property.unit ? ' #' + v.property.unit : ''}` : '(no property)';
         const owner = v.property && v.property.owner_name ? v.property.owner_name : '—';
         const commName = v.community ? v.community.name : '';
         const cat = v.category_label || '(uncategorized)';
         const cureDate = v.cure_period_ends_at ? new Date(v.cure_period_ends_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+        // Dim the cure-by chip + days-left when the letter hasn't actually
+        // been mailed — the clock isn't really running, the date shown is a
+        // placeholder based on violation-open date + cure days.
+        const isClockRunning = v.letter_status === 'mailed';
+        const dateOpacity = isClockRunning ? '1' : '0.55';
+        const cureLabel = isClockRunning ? `cure by ${cureDate}` : `target ${cureDate} (not mailed)`;
         return `<div style="display:flex; gap:10px; align-items:flex-start; padding:8px 4px; border-bottom:1px solid #f1f5f9;">
           <div style="flex:1; min-width:0;">
             <div style="font-weight:600; font-size:12.5px; color:#0B1D34;">${escapeHtml(addr)}</div>
             <div style="font-size:10.5px; color:#64748b; margin-top:1px;">${escapeHtml(owner)} · ${escapeHtml(commName)} · ${escapeHtml(cat)}</div>
           </div>
           <div style="display:flex; flex-direction:column; align-items:flex-end; gap:3px; flex-shrink:0;">
-            ${stageBadge(v.current_stage)}
-            <div style="font-size:10px; color:#64748b;">cure by ${cureDate}</div>
-            ${daysBadge(v.days_remaining, v.bucket)}
+            <div style="display:flex; gap:4px; align-items:center;">
+              ${letterStatusChip(v.letter_status)}
+              ${stageBadge(v.current_stage)}
+            </div>
+            <div style="font-size:10px; color:#64748b; opacity:${dateOpacity};">${cureLabel}</div>
+            <div style="opacity:${dateOpacity};">${daysBadge(v.days_remaining, v.bucket)}</div>
           </div>
         </div>`;
       }).join('');

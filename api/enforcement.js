@@ -3894,8 +3894,42 @@ router.get('/cure-pipeline', async (req, res) => {
       (comms || []).forEach(c => commMap.set(c.id, c));
     }
 
+    // Fetch the relevant letter interaction for each violation so we know
+    // whether the cure clock is actually RUNNING (letter mailed) or just
+    // a placeholder (violation opened, letter still in Drafts/Mail Queue).
+    // The cure_period_ends_at field gets populated at violation creation
+    // (from opened_at + cure_days) but the legal cure clock only starts at
+    // POSTMARK. Surface the distinction in the UI so the operator doesn't
+    // think a violation is on track when the letter hasn't even gone out.
+    const violationIds = rows.map(v => v.id).filter(Boolean);
+    const letterStatusByVio = new Map();
+    if (violationIds.length > 0) {
+      const { data: inters } = await supabase
+        .from('interactions')
+        .select('violation_id, type, status, printed_at, sent_at, postmark_date, created_at')
+        .in('violation_id', violationIds)
+        .in('type', ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209', 'letter_fine'])
+        .order('created_at', { ascending: false });
+      // Keep the MOST RECENT letter per violation (first in the desc-ordered list)
+      for (const i of (inters || [])) {
+        if (!letterStatusByVio.has(i.violation_id)) {
+          letterStatusByVio.set(i.violation_id, i);
+        }
+      }
+    }
+
+    const _classifyLetterStatus = (inter) => {
+      if (!inter) return 'no_letter';            // violation has no letter draft at all yet
+      if (inter.status === 'rejected') return 'rejected';
+      if (inter.printed_at) return 'mailed';      // batch was locked + printed → mailed (or Lob accepted)
+      if (inter.status === 'approved') return 'in_mail_queue';  // approved, waiting for batch
+      if (inter.status === 'draft' || inter.status === 'pending') return 'in_drafts';
+      return 'unknown';
+    };
+
     const now = Date.now();
     const counts = { overdue: 0, due_this_week: 0, coming_soon: 0, on_track: 0 };
+    const mailCounts = { mailed: 0, in_mail_queue: 0, in_drafts: 0, no_letter: 0, other: 0 };
     const enriched = rows.map(v => {
       const ms = new Date(v.cure_period_ends_at).getTime() - now;
       const days_remaining = Math.ceil(ms / (24 * 60 * 60 * 1000));
@@ -3905,6 +3939,10 @@ router.get('/cure-pipeline', async (req, res) => {
       else if (days_remaining <= 14) bucket = 'coming_soon';
       else bucket = 'on_track';
       counts[bucket] = (counts[bucket] || 0) + 1;
+      const letterInter = letterStatusByVio.get(v.id);
+      const letter_status = _classifyLetterStatus(letterInter);
+      if (mailCounts[letter_status] != null) mailCounts[letter_status] += 1;
+      else mailCounts.other += 1;
       return {
         ...v,
         days_remaining,
@@ -3912,10 +3950,13 @@ router.get('/cure-pipeline', async (req, res) => {
         property: propMap.get(v.property_id) || null,
         community: commMap.get(v.community_id) || null,
         category_label: v.enforcement_categories ? v.enforcement_categories.label : null,
+        letter_status,
+        letter_printed_at: letterInter ? letterInter.printed_at : null,
+        letter_postmark_date: letterInter ? letterInter.postmark_date : null,
       };
     });
 
-    res.json({ counts, total: enriched.length, horizon_days: horizonDays, violations: enriched });
+    res.json({ counts, mail_counts: mailCounts, total: enriched.length, horizon_days: horizonDays, violations: enriched });
   } catch (err) {
     console.error('[cure-pipeline]', err);
     res.status(500).json({ error: safeErrorMessage(err) });
