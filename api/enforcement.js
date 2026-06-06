@@ -6128,7 +6128,7 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
     // Pull interactions + violation + property + community + letter PDF storage path
     const { data: interactions, error: iErr } = await supabase
       .from('interactions')
-      .select('id, violation_id, community_id, property_id, type, attachments, status, bundle_id')
+      .select('id, violation_id, community_id, property_id, type, attachments, status, bundle_id, delivery_method')
       .in('id', interaction_ids);
     if (iErr) throw iErr;
     if (!interactions || interactions.length === 0) {
@@ -6193,6 +6193,12 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
           zip: BRAND.service.zip || '77030',
         };
 
+        // Derive mail type from the interaction's delivery_method. Certified
+        // gets the §209-grade label + return receipt; first-class is the
+        // courtesy-letter path (no tracking, faster turnaround).
+        const isCertifiedSend = (inter.delivery_method === 'certified_mail');
+        const lobMailType = isCertifiedSend ? 'usps_certified' : 'usps_first_class';
+
         // Submit to Lob
         const lobResult = await createCertifiedLetter({
           pdfBuffer,
@@ -6200,7 +6206,7 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
           sender,
           options: {
             description: `Bedrock ${inter.type} for ${community.name} · ${prop.street_address}`,
-            mail_type: 'usps_certified',
+            mail_type: lobMailType,
           },
         });
 
@@ -6220,8 +6226,8 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
             recipient_city:     recipient.city,
             recipient_state:    recipient.state,
             recipient_zip:      recipient.zip,
-            delivery_method:    'certified_return_receipt',
-            return_receipt_requested: true,
+            delivery_method:    isCertifiedSend ? 'certified_return_receipt' : 'first_class',
+            return_receipt_requested: isCertifiedSend,
             provider:           'lob',
             provider_letter_id: lobResult.id,
             provider_test_mode: lobResult.is_test_mode,
@@ -6233,7 +6239,7 @@ router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, re
             events: [{
               ts: new Date().toISOString(),
               type: 'submitted_to_lob',
-              note: `Lob letter id ${lobResult.id}, tracking ${lobResult.tracking_number || '(pending)'}`,
+              note: `Lob letter id ${lobResult.id}, mail_type ${lobMailType}, tracking ${lobResult.tracking_number || '(first-class, no tracking)'}`,
             }],
           }, { onConflict: 'interaction_id' })
           .select('*').single();

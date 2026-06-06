@@ -18739,13 +18739,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             </div>
             <div style="font-size:32px; font-weight:700; color:${fc ? '#0B1D34' : '#cbd5e1'}; line-height:1;">${fc}</div>
           </div>
+          <button onclick="inspMailQueueSendViaLob('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
+                  style="width:100%; padding:9px; background:${fc ? '#15803d' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
+            ${fc ? '✉️ Send via Lob (auto-print + mail)' : 'Nothing pending'}
+          </button>
           <button onclick="inspMailQueueLockAndDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
-                  style="width:100%; padding:9px; background:${fc ? '#0B1D34' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
-            ${fc ? '🔒 Lock dates + print' : 'Nothing pending'}
+                  style="width:100%; padding:7px; background:transparent; color:${fc ? '#0B1D34' : '#cbd5e1'}; border:1px solid ${fc ? '#cbd5e1' : '#e2e8f0'}; border-radius:6px; font-size:11.5px; font-weight:600; cursor:${fc ? 'pointer' : 'not-allowed'}; margin-bottom:5px;">
+            ${fc ? '🔒 Lock + print PDFs (manual mail)' : ''}
           </button>
           <button onclick="inspMailQueueDownload('first_class_mail')" ${fc === 0 ? 'disabled' : ''}
-                  style="width:100%; padding:6px; background:transparent; color:${fc ? '#64748b' : '#cbd5e1'}; border:1px solid ${fc ? '#cbd5e1' : '#e2e8f0'}; border-radius:6px; font-size:11px; cursor:${fc ? 'pointer' : 'not-allowed'};">
-            ${fc ? 'Print without re-locking dates' : ''}
+                  style="width:100%; padding:5px; background:transparent; color:${fc ? '#94a3b8' : '#cbd5e1'}; border:1px solid ${fc ? '#e2e8f0' : '#e2e8f0'}; border-radius:6px; font-size:10.5px; cursor:${fc ? 'pointer' : 'not-allowed'};">
+            ${fc ? 'Skip lock · download PDFs' : ''}
           </button>
         </div>
         <!-- Certified batch -->
@@ -18757,7 +18761,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             </div>
             <div style="font-size:32px; font-weight:700; color:${cm ? '#b91c1c' : '#cbd5e1'}; line-height:1;">${cm}</div>
           </div>
-          <button onclick="inspMailQueueSendViaLob()" ${cm === 0 ? 'disabled' : ''}
+          <button onclick="inspMailQueueSendViaLob('certified_mail')" ${cm === 0 ? 'disabled' : ''}
                   style="width:100%; padding:9px; background:${cm ? '#15803d' : '#e2e8f0'}; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:600; cursor:${cm ? 'pointer' : 'not-allowed'}; margin-bottom:6px;">
             ${cm ? '✉️ Send via Lob (auto-print + mail)' : 'Nothing pending'}
           </button>
@@ -18785,30 +18789,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     `;
   }
 
-  // Send certified letters via Lob — Lob prints + mails + tracks. Bedrock
-  // never touches the physical letter. Returns tracking numbers we stamp
-  // back on each interaction.
-  async function inspMailQueueSendViaLob() {
-    if (!confirm('Send all pending certified letters via Lob? Lob will print, apply certified mail labels + return receipt, hand off to USPS, and send tracking back to trustEd. You will not need to print or mail anything manually.\n\nIn test mode (LOB_API_KEY=test_*), nothing is actually mailed but tracking numbers + delivery webhooks fire so you can see the flow.')) return;
+  // Send letters via Lob — Lob prints + mails + tracks. Bedrock never
+  // touches the physical letter. Works for BOTH certified (with tracking +
+  // return receipt) and first-class (no tracking, courtesy stage). The
+  // backend auto-derives mail type from each interaction's delivery_method.
+  async function inspMailQueueSendViaLob(filterMethod) {
+    const isCertified = filterMethod === 'certified_mail';
+    const stageLabel = isCertified ? 'certified' : 'first-class courtesy';
+    const lobDetail = isCertified
+      ? 'Lob will print, apply certified mail labels + return receipt, hand off to USPS, and send tracking + delivery confirmation back to trustEd. Cost ~$9-10 per certified piece.'
+      : 'Lob will print + envelope + drop at USPS. Cost ~$1.30 per piece. No tracking (first-class doesn\'t support it) but typically arrives in 2-5 business days — similar to manual mailing. Saves ~5 min of staff time per letter.';
+    if (!confirm(`Send all pending ${stageLabel} letters via Lob?\n\n${lobDetail}\n\nIn test mode (LOB_API_KEY=test_*), nothing is actually mailed but you can see the flow.`)) return;
 
-    // Pull the list of pending certified interaction IDs from the existing
-    // Mail Queue endpoint. Filter to certified_mail only since that's what
-    // Lob handles in this UI button (first-class is still manual print).
     let interactionIds = [];
     try {
       const r = await window._authFetch('/api/enforcement/mail-queue/letters');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       interactionIds = (j.letters || [])
-        .filter(l => l.delivery_method === 'certified_mail')
+        .filter(l => l.delivery_method === filterMethod)
         .map(l => l.id)
         .filter(Boolean);
     } catch (e) {
-      alert('Could not load pending certified letters: ' + e.message);
+      alert(`Could not load pending ${stageLabel} letters: ` + e.message);
       return;
     }
     if (interactionIds.length === 0) {
-      alert('No pending certified letters found.');
+      alert(`No pending ${stageLabel} letters found.`);
       return;
     }
 
