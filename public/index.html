@@ -17526,6 +17526,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         .map(c => `<option value="${c.id}"${c.id === saved ? ' selected' : ''}>${(c.name || '(unnamed)').replace(/</g, '&lt;')}</option>`)
         .join('');
       _letterFormatCommunitiesLoaded = true;
+      // Now that a community is selected (saved or first), kick the copy
+      // editor to load its overrides — otherwise the panes stay "Loading…"
+      // forever until the operator manually toggles the picker.
+      try { letterCopyLoad(); } catch (_) {}
     } catch (e) {
       sel.innerHTML = '<option value="">Failed to load — ' + (e.message || 'error') + '</option>';
     }
@@ -17552,15 +17556,37 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const communityId = sel.value || '';
     const stage = stageSel.value;
     const status = document.getElementById('letterCopyStatus');
+    // Helper: clear all panes to a state-appropriate message instead of
+    // leaving the initial 'Loading…' placeholders stuck forever.
+    const _clearPanes = (msg) => {
+      ['letterCopyTitleCurrent','letterCopyOpeningCurrent','letterCopyClosingCurrent','letterCopySignatureCurrent','letterCopyFooterCurrent'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) { el.textContent = msg; el.style.fontStyle = 'italic'; el.style.color = '#94a3b8'; el.classList.remove('is-override'); }
+      });
+      ['letterCopyTitle','letterCopyOpening','letterCopyClosing','letterCopySignature','letterCopyFooter'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+    };
     if (!communityId) {
       if (status) status.textContent = 'Pick a community above to load its overrides.';
+      _clearPanes('Pick a community above to load…');
       return;
     }
     if (status) status.textContent = 'Loading…';
+    _clearPanes('Loading…');
     try {
       const r = await fetch(`/api/enforcement/letter-copy?community_id=${encodeURIComponent(communityId)}&stage=${encodeURIComponent(stage)}`);
       const j = await r.json();
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!r.ok) {
+        // Most likely cause when the backend says letter_copy_overrides
+        // doesn't exist: migration 178 + 179 not applied yet. Surface a
+        // helpful message instead of a generic HTTP error.
+        if (/letter_copy_overrides/i.test(j.error || '') || /does not exist/i.test(j.error || '')) {
+          throw new Error('Migration 178 + 179 not applied yet. Apply them in Supabase, then refresh.');
+        }
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
       _letterCopyCurrentDefaults = j.defaults || {};
       _letterCopyCurrentOverrides = j.overrides || {};
       const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v || ''; };
