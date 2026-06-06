@@ -399,6 +399,24 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       }
     }
 
+    // 3b. Auto-detect violation case ref in subject + body → auto-attach
+    //     to the violation so the operator doesn't have to manually link.
+    //     Case refs are stamped on every printed letter (Reference: ... ·
+    //     Case V-XXXX-XX) — when a homeowner replies quoting the ref, we
+    //     find the violation deterministically.
+    let autoAttachedViolationId = null;
+    let autoAttachedCaseRef = null;
+    try {
+      const { findReferencedViolation } = require('../lib/enforcement/case_ref');
+      const hit = await findReferencedViolation(supabase, subject, raw_content);
+      if (hit) {
+        autoAttachedViolationId = hit.violation.id;
+        autoAttachedCaseRef = hit.ref;
+      }
+    } catch (e) {
+      console.warn('[email_intake.case_ref scan]', e.message);
+    }
+
     // 4. Insert pending row
     const { data: intake, error: insErr } = await supabase
       .from('email_intake')
@@ -413,7 +431,8 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
         content_hash: contentHash,
         normalized_excerpt: normalizedExcerpt,
         embedding,
-        supersedes_id: supersedesId
+        supersedes_id: supersedesId,
+        attached_violation_id: autoAttachedViolationId,
       })
       .select()
       .single();
@@ -516,7 +535,10 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
 
     res.status(201).json({
       intake: updated,
-      supersedes: supersedesId ? { id: supersedesId } : null
+      supersedes: supersedesId ? { id: supersedesId } : null,
+      auto_attached_violation: autoAttachedViolationId
+        ? { violation_id: autoAttachedViolationId, case_ref: autoAttachedCaseRef }
+        : null,
     });
   } catch (err) {
     console.error('[email-intake] create failed:', err.message);

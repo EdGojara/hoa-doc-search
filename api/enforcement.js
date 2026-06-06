@@ -1868,6 +1868,7 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
           }
 
           violationsCtx.push({
+            violation_id: v.id,
             category_label: v.enforcement_categories && v.enforcement_categories.label,
             ai_description: o && o.ai_description,
             observation_captured_at: (photo && photo.captured_at) || (o && o.created_at),
@@ -5754,6 +5755,7 @@ router.get('/sample-letter', async (req, res) => {
 
     // Mock violation(s) — realistic categories from Bedrock's existing taxonomy
     const baseViolation = {
+      violation_id: '00000000-0000-0000-0000-a7f400000b20', // mock id → case ref V-A7F4-20
       category_label: 'Lawn / Landscaping Maintenance',
       ai_description: 'Front lawn shows extensive overgrowth with grass exceeding the community standard. Several brown patches indicate irrigation or weed-control gaps.',
       observation_captured_at: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(),
@@ -5771,6 +5773,7 @@ router.get('/sample-letter', async (req, res) => {
     };
 
     const secondMock = {
+      violation_id: '00000000-0000-0000-0000-3c9000000d10', // mock id → case ref V-3C90-10
       category_label: 'Trash / Bulk Items',
       ai_description: 'Bulk trash items (mattress, broken furniture) staged at curb outside the designated pickup window.',
       observation_captured_at: new Date(Date.now() - 4 * 24 * 60 * 60 * 1000).toISOString(),
