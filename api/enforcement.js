@@ -2861,6 +2861,119 @@ router.get('/categories', async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// PATCH /api/enforcement/categories/:id
+// Body: { description?, label?, default_priority_weight?, display_order? }
+// Lets the operator tune what the AI looks for per category. The label
+// change ripples to every existing observation (joins by id). Description
+// is what the AI prompt cites when classifying — wording it tightly is
+// the highest-leverage way to improve detection accuracy.
+// ---------------------------------------------------------------------------
+router.patch('/categories/:id', express.json(), async (req, res) => {
+  try {
+    const allowedFields = ['description', 'label', 'default_priority_weight', 'display_order'];
+    const patch = {};
+    for (const k of allowedFields) {
+      if (req.body && Object.prototype.hasOwnProperty.call(req.body, k)) {
+        patch[k] = req.body[k];
+      }
+    }
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'no editable fields supplied' });
+    if (patch.default_priority_weight && !['standard','elevated','aggressive','disabled'].includes(patch.default_priority_weight)) {
+      return res.status(400).json({ error: 'invalid default_priority_weight' });
+    }
+    const { data, error } = await supabase
+      .from('enforcement_categories')
+      .update(patch)
+      .eq('id', req.params.id)
+      .select('*').single();
+    if (error) throw error;
+    res.json({ ok: true, category: data });
+  } catch (err) {
+    console.error('[enforcement.categories.patch]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/category-priorities?community_id=X
+// Returns the currently-active priority weight for every category at this
+// community. Falls back to category.default_priority_weight when no
+// community-specific override exists.
+// ---------------------------------------------------------------------------
+router.get('/category-priorities', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id_required' });
+    const [catRes, prioRes] = await Promise.all([
+      supabase.from('enforcement_categories')
+        .select('id, slug, label, description, default_priority_weight, display_order')
+        .order('display_order', { ascending: true }),
+      supabase.from('community_enforcement_priorities')
+        .select('category_id, priority_weight, set_by_board_vote_date, board_meeting_minutes_ref, notes')
+        .eq('community_id', communityId)
+        .is('end_date', null),
+    ]);
+    if (catRes.error) throw catRes.error;
+    if (prioRes.error) throw prioRes.error;
+    const prioMap = new Map((prioRes.data || []).map(p => [p.category_id, p]));
+    const rows = (catRes.data || []).map(c => {
+      const p = prioMap.get(c.id);
+      return {
+        ...c,
+        effective_priority: (p && p.priority_weight) || c.default_priority_weight,
+        is_overridden: !!p,
+        board_vote_date: p && p.set_by_board_vote_date,
+        board_minutes_ref: p && p.board_meeting_minutes_ref,
+        priority_notes: p && p.notes,
+      };
+    });
+    res.json({ community_id: communityId, categories: rows });
+  } catch (err) {
+    console.error('[enforcement.category-priorities.get]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// PUT /api/enforcement/category-priorities
+// Body: { community_id, category_id, priority_weight, board_vote_date?,
+//         board_minutes_ref?, notes? }
+// End-dates any current row + inserts a new active row. Preserves the
+// "why was this enforced" answer even after board recalibration.
+// ---------------------------------------------------------------------------
+router.put('/category-priorities', express.json(), async (req, res) => {
+  try {
+    const { community_id, category_id, priority_weight, board_vote_date, board_minutes_ref, notes } = req.body || {};
+    if (!community_id) return res.status(400).json({ error: 'community_id_required' });
+    if (!category_id) return res.status(400).json({ error: 'category_id_required' });
+    if (!['standard','elevated','aggressive','disabled'].includes(priority_weight)) {
+      return res.status(400).json({ error: 'invalid priority_weight' });
+    }
+    // End-date the current active row (if any)
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase.from('community_enforcement_priorities')
+      .update({ end_date: today })
+      .eq('community_id', community_id)
+      .eq('category_id', category_id)
+      .is('end_date', null);
+    // Insert the new active row
+    const { data, error } = await supabase.from('community_enforcement_priorities')
+      .insert({
+        community_id, category_id, priority_weight,
+        set_by_board_vote_date: board_vote_date || null,
+        board_meeting_minutes_ref: board_minutes_ref || null,
+        notes: notes || null,
+      })
+      .select('*').single();
+    if (error) throw error;
+    res.json({ ok: true, priority: data });
+  } catch (err) {
+    console.error('[enforcement.category-priorities.put]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // VIOLATION QUALITY ACTIONS
 // ---------------------------------------------------------------------------
 // PATCH /api/enforcement/violations/:id/quality

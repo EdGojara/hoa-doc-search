@@ -13447,6 +13447,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
+    <!-- CATEGORIES & PRIORITIES — list of enforcement categories with their
+         AI-detection descriptions + per-community priority weight. Lets the
+         operator see what the AI is looking for, tune descriptions when
+         detection is off, and toggle priority weight per community. -->
+    <div style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">🏷️ Categories &amp; priorities <span style="color:#64748b; font-weight:500;">— what the AI is looking for, per community</span></h3>
+        <button class="secondary-btn" onclick="catEditorToggle()" id="catEditorToggleBtn" style="font-size:11px; padding:4px 10px;">Show editor</button>
+      </div>
+      <div id="catEditorPanel" style="display:none; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
+        <div id="catEditorStatus" style="font-size:11px; color:#64748b; margin-bottom:6px; min-height:14px;">Loading…</div>
+        <div id="catEditorList"></div>
+      </div>
+    </div>
+
     <!-- CURE PIPELINE — active violations sorted by days until cure lapses
          so the operator can see what's coming due, not just what's already
          expired. Complements the cure-lapse processor (which only acts on
@@ -17587,6 +17602,95 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const stageSel = document.getElementById('letterCopyStage');
     if (!stageSel) return;
     letterFormatPreview(stageSel.value);
+  }
+
+  // -------------------------------------------------------------------------
+  // Categories & priorities editor
+  // -------------------------------------------------------------------------
+  function catEditorToggle() {
+    const panel = document.getElementById('catEditorPanel');
+    const btn   = document.getElementById('catEditorToggleBtn');
+    if (!panel) return;
+    const shown = panel.style.display !== 'none';
+    panel.style.display = shown ? 'none' : 'block';
+    if (btn) btn.textContent = shown ? 'Show editor' : 'Hide editor';
+    if (!shown) catEditorLoad();
+  }
+  async function catEditorLoad() {
+    const list = document.getElementById('catEditorList');
+    const status = document.getElementById('catEditorStatus');
+    if (!list) return;
+    const sel = document.getElementById('letterFormatCommunity');
+    const communityId = sel && sel.value;
+    if (!communityId) {
+      status.textContent = 'Pick a community in the Letter format card above to see per-community priorities.';
+      list.innerHTML = '';
+      return;
+    }
+    status.textContent = 'Loading…';
+    try {
+      const r = await fetch(`/api/enforcement/category-priorities?community_id=${encodeURIComponent(communityId)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const cats = j.categories || [];
+      const prioBg = (p) => ({
+        standard:   '#e2e8f0',
+        elevated:   '#fef3c7',
+        aggressive: '#fecaca',
+        disabled:   '#f1f5f9',
+      })[p] || '#e2e8f0';
+      const prioFg = (p) => ({
+        standard:   '#334155',
+        elevated:   '#92400e',
+        aggressive: '#7f1d1d',
+        disabled:   '#94a3b8',
+      })[p] || '#334155';
+      list.innerHTML = cats.map(c => `<div data-cat-id="${c.id}" style="padding:8px 6px; border-bottom:1px solid #f1f5f9; display:flex; gap:10px; align-items:flex-start;">
+        <div style="flex:1; min-width:0;">
+          <div style="font-weight:600; color:#0B1D34; font-size:12.5px;">${escapeHtml(c.label)}</div>
+          <textarea data-cat-desc="${c.id}" rows="2" style="width:100%; box-sizing:border-box; font-size:11px; padding:4px 6px; border:1px solid #e2e8f0; border-radius:4px; margin-top:3px; font-family:inherit; line-height:1.4; resize:vertical;" placeholder="What the AI looks for…">${escapeHtml(c.description || '')}</textarea>
+          <div style="font-size:9.5px; color:#94a3b8; margin-top:2px;">slug: <code>${escapeHtml(c.slug)}</code> · default: ${escapeHtml(c.default_priority_weight)}${c.is_overridden ? ` · overridden${c.board_vote_date ? ' (board ' + c.board_vote_date + ')' : ''}` : ''}</div>
+        </div>
+        <div style="display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex-shrink:0;">
+          <select data-cat-prio="${c.id}" style="font-size:11px; padding:4px 7px; border:1px solid #cbd5e1; border-radius:4px; background:${prioBg(c.effective_priority)}; color:${prioFg(c.effective_priority)}; font-weight:600;">
+            <option value="standard"${c.effective_priority === 'standard' ? ' selected' : ''}>Standard</option>
+            <option value="elevated"${c.effective_priority === 'elevated' ? ' selected' : ''}>Elevated</option>
+            <option value="aggressive"${c.effective_priority === 'aggressive' ? ' selected' : ''}>Aggressive</option>
+            <option value="disabled"${c.effective_priority === 'disabled' ? ' selected' : ''}>Disabled</option>
+          </select>
+          <button onclick="catEditorSaveOne('${c.id}')" style="background:#0B1D34; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:10.5px; font-weight:600; cursor:pointer;">Save</button>
+        </div>
+      </div>`).join('');
+      status.textContent = `${cats.length} categories. Edit a description to tune what AI looks for, change priority dropdown for this community, then Save row.`;
+    } catch (e) {
+      status.textContent = 'Failed: ' + e.message;
+    }
+  }
+  async function catEditorSaveOne(catId) {
+    const sel = document.getElementById('letterFormatCommunity');
+    const communityId = sel && sel.value;
+    if (!communityId) { alert('Pick a community first'); return; }
+    const descEl = document.querySelector(`textarea[data-cat-desc="${catId}"]`);
+    const prioEl = document.querySelector(`select[data-cat-prio="${catId}"]`);
+    if (!descEl || !prioEl) return;
+    const status = document.getElementById('catEditorStatus');
+    if (status) status.textContent = 'Saving…';
+    try {
+      await fetch(`/api/enforcement/categories/${catId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ description: descEl.value }),
+      });
+      await fetch('/api/enforcement/category-priorities', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ community_id: communityId, category_id: catId, priority_weight: prioEl.value }),
+      });
+      await catEditorLoad();
+      if (status) status.textContent = '✓ Saved.';
+    } catch (e) {
+      if (status) status.textContent = 'Save failed: ' + e.message;
+    }
   }
 
   // -------------------------------------------------------------------------
