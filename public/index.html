@@ -23146,6 +23146,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       document.getElementById('activeDrivesCount').textContent = String(drives.length);
       const list = document.getElementById('activeDrivesList');
       list.innerHTML = drives.map((d) => {
+        const esc = (s) => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');
         const community = d.community?.name || '(community)';
         const dev = d.device_label || 'Tablet';
         const min = d.started_at
@@ -23154,17 +23155,42 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const idle = d.minutes_idle != null ? ` · last ping ${d.minutes_idle}m ago` : '';
         const staleCls = d.is_stale ? ' stale' : '';
         return `
-          <div class="active-drive-row${staleCls}" onclick="window.open('/inspector.html?resume=${encodeURIComponent(d.id)}','_blank')">
-            <div>
-              <div class="who">${(function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');})(dev)} · ${(function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');})(community)}</div>
-              <div class="sub">${d.mode === 'drive_by' ? '🚗 Drive-by' : d.mode === 'foot' ? '🚶 On foot' : '📍 ' + d.mode}${d.route_label ? ' · ' + (function(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;');})(d.route_label) : ''}</div>
+          <div class="active-drive-row${staleCls}" style="display:flex; gap:10px; align-items:center;">
+            <div style="flex:1; min-width:0; cursor:pointer;" onclick="window.open('/inspector.html?resume=${encodeURIComponent(d.id)}','_blank')">
+              <div class="who">${esc(dev)} · ${esc(community)}</div>
+              <div class="sub">${d.mode === 'drive_by' ? '🚗 Drive-by' : d.mode === 'foot' ? '🚶 On foot' : '📍 ' + d.mode}${d.route_label ? ' · ' + esc(d.route_label) : ''}</div>
             </div>
-            <div class="stats">${d.ping_count || 0} pings · ${min}m on route${idle}</div>
+            <div class="stats" style="text-align:right;">${d.ping_count || 0} pings · ${min}m on route${idle}</div>
+            <button onclick="event.stopPropagation(); endActiveDriveFromHome('${d.id}', '${esc(community).replace(/'/g, "\\'")}')"
+                    title="End this drive from here without opening the tablet view"
+                    style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:5px 12px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ End</button>
           </div>
         `;
       }).join('');
     } catch (_) {
       banner.style.display = 'none';
+    }
+  }
+
+  // End an active drive from the home tile without opening the inspector
+  // tablet view. Sets status=captured + ended_at=now. Useful when a previous
+  // session abandoned the drive (operator closed tablet without ending) and
+  // the row is now stuck in_progress in the banner.
+  async function endActiveDriveFromHome(inspectionId, communityLabel) {
+    if (!confirm(`End the drive for ${communityLabel}? This marks it as complete and removes it from the Active Drives banner. Use this when a previous tablet session abandoned the drive — the photo captures + route trace are preserved.`)) return;
+    try {
+      const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: 'captured', ended_at: new Date().toISOString() }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Immediately refresh the banner — should hide if this was the last
+      // active drive.
+      refreshActiveDrives();
+    } catch (e) {
+      alert('Could not end drive: ' + e.message);
     }
   }
 
