@@ -6091,4 +6091,364 @@ router.get('/sample-letter', async (req, res) => {
   }
 });
 
+// ===========================================================================
+// CERTIFIED MAIL — Lob.com integration
+// ---------------------------------------------------------------------------
+// Bedrock never touches the physical certified letter. The flow:
+//   1. Operator approves a certified letter via Drafts queue (existing)
+//   2. Mail Queue surfaces it with a "Send via Lob" button
+//   3. POST /mail/send-via-lob takes the interaction id(s) → calls Lob API
+//      → Lob prints, mails, generates tracking number
+//   4. trustEd stamps tracking_number + provider_letter_id on the
+//      letter_mail_pieces row + the parent interaction
+//   5. Lob webhooks fire as USPS scans (in_transit → delivered)
+//   6. POST /mail/lob-webhook updates status + captures signature image
+//
+// Fallback path (provider='manual'):
+//   POST /mail/log-manual-tracking — operator pastes a tracking number from
+//   a Pitney/USPS-direct send. Same downstream UI works.
+// ===========================================================================
+
+router.post('/mail/send-via-lob', express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const { interaction_ids } = req.body || {};
+    if (!Array.isArray(interaction_ids) || interaction_ids.length === 0) {
+      return res.status(400).json({ error: 'interaction_ids array required' });
+    }
+    if (!process.env.LOB_API_KEY) {
+      return res.status(400).json({
+        error: 'LOB_API_KEY not configured on this environment',
+        hint: 'Add LOB_API_KEY to Render env vars. Use a test_xxx key for sandbox or live_xxx for production.',
+      });
+    }
+
+    const { createCertifiedLetter } = require('../lib/mail/lob_provider');
+    const isTestKey = String(process.env.LOB_API_KEY).startsWith('test_');
+
+    // Pull interactions + violation + property + community + letter PDF storage path
+    const { data: interactions, error: iErr } = await supabase
+      .from('interactions')
+      .select('id, violation_id, community_id, property_id, type, attachments, status, bundle_id')
+      .in('id', interaction_ids);
+    if (iErr) throw iErr;
+    if (!interactions || interactions.length === 0) {
+      return res.status(404).json({ error: 'no interactions found' });
+    }
+
+    const results = [];
+    for (const inter of interactions) {
+      try {
+        // Pull supporting data — property + community + sender
+        const [propRes, commRes] = await Promise.all([
+          supabase.from('v_current_property_owners')
+            .select('property_id, street_address, unit, city, state, zip, owner_name, owner_mailing_address')
+            .eq('property_id', inter.property_id).maybeSingle(),
+          supabase.from('communities')
+            .select('id, name, legal_name')
+            .eq('id', inter.community_id).maybeSingle(),
+        ]);
+        const prop = propRes.data;
+        const community = commRes.data;
+        if (!prop || !community) {
+          results.push({ interaction_id: inter.id, status: 'error', error: 'property or community missing' });
+          continue;
+        }
+
+        // Resolve PDF path from interaction.attachments (already populated when the letter was drafted)
+        const att = Array.isArray(inter.attachments) ? inter.attachments : [];
+        const letterAtt = att.find(a => a && (a.kind === 'letter_pdf' || a.kind === 'violation_letter' || a.type === 'application/pdf'));
+        const storagePath = letterAtt && (letterAtt.storage_path || letterAtt.path);
+        if (!storagePath) {
+          results.push({ interaction_id: inter.id, status: 'error', error: 'letter PDF storage path missing from interaction.attachments' });
+          continue;
+        }
+        // Download PDF from Supabase storage
+        const { data: pdfBlob, error: dlErr } = await supabase.storage
+          .from('violation-letters')
+          .download(storagePath);
+        if (dlErr || !pdfBlob) {
+          results.push({ interaction_id: inter.id, status: 'error', error: `PDF download failed: ${dlErr && dlErr.message}` });
+          continue;
+        }
+        const pdfBuffer = Buffer.from(await pdfBlob.arrayBuffer());
+
+        // Parse recipient mailing address. Owner_mailing_address may be a single
+        // string like "123 Main St, Katy, TX 77450" — parse loosely. Fall back
+        // to the property address if no mailing address is on file.
+        const recipient = _parseMailingAddress(prop.owner_mailing_address) || {
+          address_line1: prop.street_address,
+          city: prop.city,
+          state: prop.state || 'TX',
+          zip: prop.zip,
+        };
+        recipient.name = prop.owner_name || 'Property Owner';
+
+        // Sender = Bedrock as managing agent
+        const { BRAND } = require('../lib/enforcement/brand_proxy');
+        const sender = {
+          name: BRAND.service.legal,
+          address_line1: BRAND.service.address,
+          city: BRAND.service.city || 'Houston',
+          state: BRAND.service.state || 'TX',
+          zip: BRAND.service.zip || '77030',
+        };
+
+        // Submit to Lob
+        const lobResult = await createCertifiedLetter({
+          pdfBuffer,
+          recipient,
+          sender,
+          options: {
+            description: `Bedrock ${inter.type} for ${community.name} · ${prop.street_address}`,
+            mail_type: 'usps_certified',
+          },
+        });
+
+        // Upsert letter_mail_pieces row
+        const { data: piece, error: upErr } = await supabase.from('letter_mail_pieces')
+          .upsert({
+            interaction_id:     inter.id,
+            community_id:       inter.community_id,
+            property_id:        inter.property_id,
+            violation_id:       inter.violation_id,
+            bundle_id:          inter.bundle_id,
+            stage_at_send:      _mapInteractionTypeToStage(inter.type),
+            letter_pdf_storage_path: storagePath,
+            recipient_name:     recipient.name,
+            recipient_address_line1: recipient.address_line1,
+            recipient_address_line2: recipient.address_line2 || null,
+            recipient_city:     recipient.city,
+            recipient_state:    recipient.state,
+            recipient_zip:      recipient.zip,
+            delivery_method:    'certified_return_receipt',
+            return_receipt_requested: true,
+            provider:           'lob',
+            provider_letter_id: lobResult.id,
+            provider_test_mode: lobResult.is_test_mode,
+            tracking_number:    lobResult.tracking_number,
+            status:             'submitted',
+            submitted_at:       new Date().toISOString(),
+            total_cost_cents:   lobResult.price_cents,
+            provider_response_payload: lobResult.raw,
+            events: [{
+              ts: new Date().toISOString(),
+              type: 'submitted_to_lob',
+              note: `Lob letter id ${lobResult.id}, tracking ${lobResult.tracking_number || '(pending)'}`,
+            }],
+          }, { onConflict: 'interaction_id' })
+          .select('*').single();
+        if (upErr) throw upErr;
+
+        // Mirror tracking number onto the interaction for legacy queries
+        await supabase.from('interactions')
+          .update({
+            certified_tracking_number: lobResult.tracking_number,
+            status: 'sent',
+            sent_at: new Date().toISOString(),
+          })
+          .eq('id', inter.id);
+
+        results.push({
+          interaction_id: inter.id,
+          status: 'submitted',
+          provider: 'lob',
+          provider_letter_id: lobResult.id,
+          tracking_number: lobResult.tracking_number,
+          expected_delivery_date: lobResult.expected_delivery_date,
+          is_test_mode: lobResult.is_test_mode,
+          piece_id: piece && piece.id,
+        });
+      } catch (e) {
+        console.error('[mail.send-via-lob] interaction', inter.id, 'failed:', e.message);
+        results.push({ interaction_id: inter.id, status: 'error', error: e.message });
+      }
+    }
+
+    const counts = results.reduce((acc, r) => { acc[r.status] = (acc[r.status] || 0) + 1; return acc; }, {});
+    res.json({
+      submitted_count: counts.submitted || 0,
+      error_count: counts.error || 0,
+      is_test_mode: isTestKey,
+      results,
+    });
+  } catch (err) {
+    console.error('[mail.send-via-lob]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/mail/lob-webhook
+// Lob fires this on every status change. We verify signature, look up the
+// mail piece by provider_letter_id, append to events log, update status.
+// ---------------------------------------------------------------------------
+router.post('/mail/lob-webhook', express.raw({ type: '*/*', limit: '256kb' }), async (req, res) => {
+  try {
+    const rawBody = req.body && req.body.toString ? req.body.toString('utf8') : '';
+    const signature = req.headers['lob-signature'] || req.headers['Lob-Signature'];
+    const timestamp = req.headers['lob-signature-timestamp'] || req.headers['Lob-Signature-Timestamp'];
+
+    const { verifyWebhookSignature, mapLobEventToStatus } = require('../lib/mail/lob_provider');
+    if (!verifyWebhookSignature(rawBody, signature, timestamp)) {
+      return res.status(401).json({ error: 'invalid_signature' });
+    }
+
+    let evt;
+    try { evt = JSON.parse(rawBody); } catch (_) { return res.status(400).json({ error: 'invalid_json' }); }
+
+    const eventType = evt.event_type && (evt.event_type.id || evt.event_type);
+    const lobLetterId = evt.body && evt.body.id;
+    if (!lobLetterId) return res.status(200).json({ ok: true, note: 'no letter id, ignored' });
+
+    // Find the piece
+    const { data: piece, error } = await supabase.from('letter_mail_pieces')
+      .select('*').eq('provider', 'lob').eq('provider_letter_id', lobLetterId).maybeSingle();
+    if (error) throw error;
+    if (!piece) {
+      console.warn(`[mail.lob-webhook] no piece found for Lob letter ${lobLetterId} — ignored`);
+      return res.status(200).json({ ok: true, note: 'no matching piece' });
+    }
+
+    // Compute new status
+    const newStatus = mapLobEventToStatus(eventType);
+    const now = new Date().toISOString();
+    const timestamps = {};
+    if (newStatus === 'submitted')        timestamps.submitted_at        = piece.submitted_at || now;
+    if (newStatus === 'in_transit')       timestamps.in_transit_at       = piece.in_transit_at || now;
+    if (newStatus === 'out_for_delivery') timestamps.out_for_delivery_at = piece.out_for_delivery_at || now;
+    if (newStatus === 'delivered')        timestamps.delivered_at        = piece.delivered_at || now;
+    if (newStatus === 'returned_to_sender') timestamps.returned_at = piece.returned_at || now;
+    if (newStatus === 'failed_to_send')   timestamps.refused_at = piece.refused_at || now;
+
+    // Signature capture — Lob passes signature_image_url on delivery events
+    const sigUrl = evt.body && (evt.body.signature_image_url || (evt.body.return_receipt_data && evt.body.return_receipt_data.signature_image_url));
+    const sigName = evt.body && (evt.body.signed_by || (evt.body.return_receipt_data && evt.body.return_receipt_data.signed_by));
+
+    // Append to events log
+    const newEvent = {
+      ts: now,
+      type: eventType,
+      lob_event_id: evt.id || null,
+      summary: (evt.body && evt.body.tracking_events && evt.body.tracking_events[0]) || null,
+    };
+    const existingEvents = Array.isArray(piece.events) ? piece.events : [];
+    const events = [...existingEvents, newEvent].slice(-50);  // cap at 50 events to bound JSONB growth
+
+    const patch = {
+      ...timestamps,
+      events,
+      provider_response_payload: evt.body || null,
+    };
+    if (newStatus) patch.status = newStatus;
+    if (sigUrl)    patch.signature_image_url = sigUrl;
+    if (sigName)   patch.signed_by_name = sigName;
+
+    const { error: upErr } = await supabase.from('letter_mail_pieces')
+      .update(patch).eq('id', piece.id);
+    if (upErr) throw upErr;
+
+    res.status(200).json({ ok: true, status: newStatus, piece_id: piece.id });
+  } catch (err) {
+    console.error('[mail.lob-webhook]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/enforcement/mail/log-manual-tracking
+// Fallback for non-Lob sends (Pitney, USPS direct, hand-stamped). Operator
+// pastes tracking number — same downstream UI works.
+// ---------------------------------------------------------------------------
+router.post('/mail/log-manual-tracking', express.json(), async (req, res) => {
+  try {
+    const { interaction_id, tracking_number, provider, delivery_method, mailed_at, postage_cents } = req.body || {};
+    if (!interaction_id) return res.status(400).json({ error: 'interaction_id_required' });
+    if (!tracking_number) return res.status(400).json({ error: 'tracking_number_required' });
+
+    const { data: inter } = await supabase.from('interactions')
+      .select('id, community_id, property_id, violation_id, type, bundle_id')
+      .eq('id', interaction_id).maybeSingle();
+    if (!inter) return res.status(404).json({ error: 'interaction_not_found' });
+
+    const { data: piece, error } = await supabase.from('letter_mail_pieces')
+      .upsert({
+        interaction_id:     inter.id,
+        community_id:       inter.community_id,
+        property_id:        inter.property_id,
+        violation_id:       inter.violation_id,
+        bundle_id:          inter.bundle_id,
+        stage_at_send:      _mapInteractionTypeToStage(inter.type),
+        provider:           provider || 'manual',
+        tracking_number,
+        delivery_method:    delivery_method || 'certified_mail',
+        return_receipt_requested: (delivery_method || 'certified_mail').includes('certified'),
+        status:             'submitted',
+        submitted_at:       mailed_at || new Date().toISOString(),
+        mailed_at:          mailed_at || new Date().toISOString(),
+        postage_cents:      postage_cents || null,
+        events: [{ ts: new Date().toISOString(), type: 'manual_tracking_logged', tracking_number }],
+      }, { onConflict: 'interaction_id' })
+      .select('*').single();
+    if (error) throw error;
+
+    await supabase.from('interactions')
+      .update({ certified_tracking_number: tracking_number, sent_at: mailed_at || new Date().toISOString() })
+      .eq('id', inter.id);
+
+    res.json({ ok: true, piece });
+  } catch (err) {
+    console.error('[mail.log-manual-tracking]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/enforcement/mail/pieces?community_id=&status=&limit=
+// List mail pieces with status filter — drives the Mail Queue UI.
+// ---------------------------------------------------------------------------
+router.get('/mail/pieces', async (req, res) => {
+  try {
+    const limit = Math.min(500, Number(req.query.limit) || 100);
+    let q = supabase.from('letter_mail_pieces')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+    if (req.query.community_id) q = q.eq('community_id', req.query.community_id);
+    if (req.query.status) q = q.eq('status', req.query.status);
+    const { data, error } = await q;
+    if (error) throw error;
+    res.json({ pieces: data || [] });
+  } catch (err) {
+    console.error('[mail.pieces]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// Helpers ---------------------------------------------------------------------
+function _mapInteractionTypeToStage(t) {
+  return ({
+    letter_courtesy_1: 'courtesy_1',
+    letter_courtesy_2: 'courtesy_2',
+    letter_209:        'certified_209',
+    letter_fine:       'fine_assessed',
+    letter_hearing:    'hearing_notice',
+    letter_force_mow:  'force_mow',
+  })[t] || 'certified_209';
+}
+
+function _parseMailingAddress(addressString) {
+  if (!addressString || typeof addressString !== 'string') return null;
+  // Try "line1, city, state zip"
+  const m = addressString.match(/^(.+?),\s*(.+?),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?)/);
+  if (m) {
+    return {
+      address_line1: m[1].trim(),
+      city: m[2].trim(),
+      state: m[3],
+      zip: m[4],
+    };
+  }
+  return null;
+}
+
 module.exports = { router, processCureLapses, processPostcardReminders };
