@@ -395,105 +395,38 @@
   <!-- Inbox — Bedrock ↔ homeowner messaging. Master thread list, SLA
        color dots, three-pane reader, close-with-agreement flow. -->
   <div class="tab" onclick="switchTab('inbox')">📬 Inbox</div>
-  <!-- Reports — Vantaca-to-Bedrock report conversion. Drag-drop a Vantaca
-       PDF, AI extracts, Bedrock renders the customer-facing artifact. -->
-  <div class="tab" onclick="switchTab('reports')">📑 Reports</div>
-  <!-- Vantaca Imports — canonical drop zone for ALL Vantaca exports.
-       One module, classifier routes to per-domain extractors (AR, GL, AP,
-       Bank Recon, Owner Statements, etc.). Named honestly: Vantaca is
-       the back-office function until we replace them, and the tab
-       reminds everyone (incl. franchise operators) where the dependency
-       lives. Day-of-cutover, rename + alias. -->
-  <div class="tab" onclick="switchTab('vantaca-imports')" title="Canonical drop zone for every Vantaca export — AR Aging, GL, AP, Bank Recon, Owner Statements. System classifies + routes.">📥 Vantaca Imports</div>
-  <!-- Bank Reconciliation — three-way rec workflow. Bank statement + Vantaca
-       check register + Vantaca GL → auto-match, exceptions, cheat sheet that
-       speeds Vantaca data entry from ~30min to ~5min. Eventually replaces
-       Vantaca's rec module when trustEd holds the canonical GL. -->
-  <div class="tab" onclick="switchTab('bank-rec')" title="Three-way bank reconciliation — bank statement + check register + GL with auto-matching and printable cheat sheet for Vantaca entry">🧾 Bank Rec</div>
-  <!-- Books — Bedrock's own general ledger. Double-entry posting engine,
-       chart of accounts per community, period management, trial balance.
-       Pilots: August Meadows (greenfield, live 2026-06-01) + Quail Ridge.
-       By end of Vantaca contract (~18 months), all communities run here. -->
-  <div class="tab" onclick="switchTab('books')" title="Bedrock's general ledger — double-entry, periods, trial balance, financial statements. Migration off Vantaca starts here.">📚 Books</div>
-  <!-- AP — Accounts Payable. Drop invoice PDFs, system extracts + auto-codes
-       to GL + auto-posts JE, lands in approval queue. Approve and pay. -->
-  <div class="tab" onclick="switchTab('ap')" title="Accounts Payable — drop invoice PDFs, system auto-codes + posts JE, approve and pay">💵 AP</div>
-  <!-- Bedrock Connect — community-email broadcast platform. PLACEHOLDER
-       state — opens the design preview page. Build queued behind
-       Messaging System Phase 1. -->
+  <!-- =====================================================================
+       NAV REORGANIZATION 2026-06-06 — Ed flagged nav crowding (~25 direct
+       tabs). Moved tabs into three new groups: Operations / Finance / Admin.
+       tab-content divs + JS workflows UNCHANGED — only the nav chips here.
+       Children declared in TAB_GROUPS below; clicking a group opens the
+       sub-toolbar (same pattern as Vendor / Meetings / Community Profile).
+       ===================================================================== -->
+
+  <!-- 💰 Finance group (Books, AP, AR, Bank Rec, Vantaca Imports,
+       Financial Review, Reports). See TAB_GROUPS.finance. -->
+  <div class="tab" data-group="finance" onclick="openTabGroup('finance')">💰 Finance</div>
+
+  <!-- 🛠️ Operations group (ACC, Builder ARC, Inspect, Community Map,
+       Calls, Events, Rentals, Ownership Review, Forms). See
+       TAB_GROUPS.operations. -->
+  <div class="tab" data-group="operations" onclick="openTabGroup('operations')">🛠️ Operations</div>
+
+  <!-- Bedrock Connect stays as a direct top-level — placeholder route to
+       the preview page; build queued behind Messaging Phase 1. -->
   <div class="tab" onclick="location.href='/bedrock-connect.html'" title="Bedrock Connect — community email broadcast platform. Design preview (build queued).">📧 Connect</div>
-  <!-- Ask-a-Question, Draft Email, and Review My Draft are now modes inside the
-       askEd tab — one tab, multiple task presets. -->
-  <!-- Consolidated ACC tab — Review / Requests / History as sub-views, switched
-       via the mode picker inside the active view. -->
-  <div class="tab" onclick="setAccMode('review')" data-acc-tab="1">🏗️ ACC</div>
-  <!-- Builder ARC — new-construction submissions from developer-community
-       builders (DRB at August Meadows, etc). Separate module from resident ACC
-       because builder volume is structurally repetitive and rewards templated
-       review. Sits in its own standalone page (/builder-arc-review.html). -->
-  <div class="tab" onclick="location.href='/builder-arc-review.html'">🧱 Builder ARC</div>
-  <!-- Inspect — mobile-first capture flow for community walkthroughs.
-       Positioned between ACC and Vendor: ACC and Inspect both feed the
-       enforcement workflow (covenant approvals + walkthrough findings),
-       so they sit adjacent. -->
-  <div class="tab" onclick="switchTab('inspect')">🚗 Inspect</div>
-  <!-- Community Map — geographic portfolio view with filterable layers
-       (occupancy, AR, DRV, ACC). Same data spine as the board portal
-       property tile but rendered spatially. Phase 1A backend already
-       shipped (migration 121 + api/community_map.js); the UI here is
-       the Phase 2 frontend. Eventually mounts on the board portal too. -->
-  <div class="tab" onclick="switchTab('communitymap')">🗺️ Community Map</div>
+  <!-- Domain-specific groups (existing, well-formed) -->
   <div class="tab" data-group="vendor" onclick="openTabGroup('vendor')">🏢 Vendor</div>
   <div class="tab" data-group="meetings" onclick="openTabGroup('meetings')">🗳️ Meetings</div>
-  <!-- Community-wide reference data — Profile, Homes & Owners, Board Roster.
-       Board workflow outputs (packets, recaps, agenda) live inside the
-       Meetings group above alongside annual-meeting workflow. -->
   <div class="tab" data-group="community" onclick="openTabGroup('community')">🏘️ Community Profile</div>
   <div class="tab" data-group="office" onclick="openTabGroup('office')">💼 Bedrock Office</div>
-  <div class="tab" onclick="switchTab('finrev')">📊 Financial Review</div>
-  <div class="tab" onclick="switchTab('forms')">📑 Forms &amp; Applications</div>
-  <!-- Removed standalone 'profile' tab — now a child of the 🏘️ Community
-       Profile group (Profile · Homes & Owners · Board Roster). -->
-  <div class="tab" onclick="switchTab('events')">🎉 Events</div>
-  <!-- Removed: 'archistory' (ACC History) and 'accqueue' (Requests) standalone
-       tabs. Both are now modes inside the consolidated 🏗️ ACC tab above.
-       Order: Review → Requests → History (act, see queue, reference). -->
-  <!-- Inspect tab moved up next to ACC (above) — both feed enforcement. -->
-  <!-- Owner Receivables — Vantaca AR ingest + portfolio at-legal view. -->
-  <div class="tab" onclick="switchTab('ownerar')">💵 Owner AR</div>
-  <!-- Calls Dashboard — incoming voice calls handled by Claire + follow-up queue.
-       Surfaces transcripts, Stage-1 briefs, response deadlines, action buttons. -->
-  <div class="tab" onclick="switchTab('calls')">📞 Calls</div>
-  <!-- Amenity Rentals — clubhouse + future pool/court bookings, payment status,
-       post-event inspection + deposit refund workflow. -->
-  <div class="tab" onclick="location.href='/amenity-rentals-review.html'">🎉 Rentals</div>
-  <!-- Ownership Review — review queue for ownership transitions detected by
-       the Vantaca import. Staff approves before the transition applies. -->
-  <div class="tab" onclick="location.href='/ownership-proposals-review.html'">🔁 Ownership Review</div>
-  <!-- Amenities — manage clubhouse, pool, park, etc. per community with map pins,
-       hours, contact info, and rental config. Populates the /portal/map. -->
-  <div class="tab" onclick="location.href='/amenities-admin.html'">🏊 Amenities</div>
-  <!-- Community Contacts — per-community directory of emergency / utilities /
-       trash / TV-internet contacts + trash schedule. Surfaces on the
-       homeowner portal under "Local Contacts" tile. Single source of truth
-       replacing per-community static website maintenance. -->
-  <div class="tab" onclick="location.href='/community-contacts-admin.html'">📞 Contacts</div>
-  <!-- Reserves — single entry point. Lands on the components admin; the
-       sub-nav inside each reserve page jumps between Components / Map /
-       Invoices without going back to platform nav. -->
-  <div class="tab" onclick="location.href='/reserve-components-admin.html'">🏦 Reserves</div>
-  <!-- Portal Users — manage board + homeowner portal access. The 'Open ↗'
-       buttons inside this tab launch the actual portals; no separate tab needed. -->
-  <div class="tab" onclick="switchTab('portalusers')">🔐 Portal Users</div>
-  <!-- Bedrock team management — admin-only. Lets Ed see who has access and
-       at what role without writing SQL. Hidden for non-admin users via the
-       data-admin-only hook in the auth bootstrap. -->
-  <div class="tab" data-admin-only onclick="switchTab('team')">👥 Team</div>
-  <!-- Bedrock University — how-to modules + role competency badges for operators.
-       Help / Documents / Intake are reference surfaces that sit after University
-       per Ed's nav order — operator does work in the front-of-nav tabs, looks
-       things up in the tail. -->
-  <div class="tab" onclick="switchTab('training')">🎓 University</div>
+
+  <!-- ⚙️ Admin group (Reserves config, Amenities config, Contacts, Portal
+       Users, Team admin, Bedrock University). See TAB_GROUPS.admin. -->
+  <div class="tab" data-group="admin" onclick="openTabGroup('admin')">⚙️ Admin</div>
+  <!-- Reference surfaces (tail of nav per Ed's order — operator does work in
+       front-of-nav tabs, looks things up in the tail). University moved into
+       ⚙️ Admin group. -->
   <div class="tab" onclick="switchTab('help')">📚 Help</div>
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
@@ -32686,6 +32619,54 @@ ${questionsPage}
         { id: 'presentations',  label: '🎬 Presentations' },
       ],
     },
+    // 💰 Finance group — added 2026-06-06 per Ed's nav reorg. Three sections:
+    // GL & Books, AP/AR, and Vantaca-side migration substrate. tab-content
+    // IDs unchanged so every existing switchTab + tab-content element keeps
+    // working.
+    finance: {
+      label: '💰 Finance',
+      children: [
+        { id: 'books',           label: '📚 Books',            section: 'GL & Books' },
+        { id: 'bank-rec',        label: '🧾 Bank Rec',         section: 'GL & Books' },
+        { id: 'ap',              label: '💵 AP',               section: 'AP / AR' },
+        { id: 'ownerar',         label: '💵 Owner AR',         section: 'AP / AR' },
+        { id: 'vantaca-imports', label: '📥 Vantaca Imports',  section: 'Vantaca' },
+        { id: 'finrev',          label: '📊 Financial Review', section: 'Vantaca' },
+        { id: 'reports',         label: '📑 Reports',          section: 'Vantaca' },
+      ],
+    },
+    // 🛠️ Operations group — community day-to-day workflow surfaces.
+    operations: {
+      label: '🛠️ Operations',
+      children: [
+        { id: 'acc',             label: '🏗️ ACC',                  section: 'Enforcement' },
+        { id: 'inspect',         label: '🚗 Inspect',               section: 'Enforcement' },
+        { id: 'communitymap',    label: '🗺️ Community Map',         section: 'Reference' },
+        { id: 'calls',           label: '📞 Calls',                 section: 'Comms' },
+        { id: 'events',          label: '🎉 Events',                section: 'Comms' },
+        { id: 'forms',           label: '📑 Forms & Applications',  section: 'Workflow' },
+        // External-page tabs use href so we map the action via a `href` field.
+        // The framework will detect href and open externally; switchTab is the
+        // fallback for in-app tabs.
+        { id: '__builder_arc',   label: '🧱 Builder ARC',           section: 'Enforcement', href: '/builder-arc-review.html' },
+        { id: '__rentals',       label: '🎉 Rentals',               section: 'Comms',       href: '/amenity-rentals-review.html' },
+        { id: '__ownership',     label: '🔁 Ownership Review',      section: 'Workflow',    href: '/ownership-proposals-review.html' },
+      ],
+    },
+    // ⚙️ Admin group — config + management-company-level surfaces.
+    admin: {
+      label: '⚙️ Admin',
+      children: [
+        { id: 'portalusers',     label: '🔐 Portal Users',     section: 'Access' },
+        { id: 'team',            label: '👥 Team',             section: 'Access' },
+        { id: 'training',        label: '🎓 University',       section: 'Training' },
+        // External admin pages — Reserves / Amenities / Contacts are standalone
+        // pages mounted from the existing direct hrefs.
+        { id: '__reserves',      label: '🏦 Reserves',         section: 'Config', href: '/reserve-components-admin.html' },
+        { id: '__amenities',     label: '🏊 Amenities',        section: 'Config', href: '/amenities-admin.html' },
+        { id: '__contacts',      label: '📞 Contacts',         section: 'Config', href: '/community-contacts-admin.html' },
+      ],
+    },
     // Unified meetings group — annual-members and board-meeting workflows
     // both live here. Children carry a `section` tag so renderTabSubbar
     // can show a small section header between the two clusters in the
@@ -32725,15 +32706,25 @@ ${questionsPage}
     if (!g) return;
     bar.style.display = 'flex';
 
-    // Single-pill renderer (extracted so the sectioned + flat paths share it)
-    const pill = (c) => `
-      <div class="tab-sub" data-tab="${c.id}" onclick="switchTab('${c.id}')"
-           style="font-size:12px; padding:6px 12px; border-radius:6px; cursor:pointer;
-                  background:${c.id === activeTabId ? '#1E2761' : '#fff'};
-                  color:${c.id === activeTabId ? '#fff' : '#1E2761'};
-                  border:1px solid ${c.id === activeTabId ? '#1E2761' : '#cbd5e1'};
-                  font-weight:${c.id === activeTabId ? '600' : '500'};">${c.label}</div>
-    `;
+    // Single-pill renderer (extracted so the sectioned + flat paths share it).
+    // Supports two child kinds:
+    //   - Standard child: { id, label, section? } → click runs switchTab(id)
+    //   - External href:  { id, label, section?, href } → click navigates
+    //     to that URL (used for standalone pages like Builder ARC, Rentals,
+    //     Reserves admin, Amenities admin, Contacts admin).
+    const pill = (c) => {
+      const isExternal = !!c.href;
+      const onClick = isExternal ? `location.href='${c.href}'` : `switchTab('${c.id}')`;
+      const externalMark = isExternal ? ' ↗' : '';
+      return `
+        <div class="tab-sub" data-tab="${c.id}" onclick="${onClick}"
+             style="font-size:12px; padding:6px 12px; border-radius:6px; cursor:pointer;
+                    background:${c.id === activeTabId ? '#1E2761' : '#fff'};
+                    color:${c.id === activeTabId ? '#fff' : '#1E2761'};
+                    border:1px solid ${c.id === activeTabId ? '#1E2761' : '#cbd5e1'};
+                    font-weight:${c.id === activeTabId ? '600' : '500'};">${c.label}${externalMark}</div>
+      `;
+    };
 
     // If any child carries a `section` tag, render section headers between
     // groups. Otherwise fall back to the flat single-row layout so existing
@@ -32786,7 +32777,17 @@ ${questionsPage}
       renderTabSubbar(groupKey, currentTabId);
       highlightParentGroup(groupKey);
     } else {
-      switchTab(g.children[0].id); // patched switchTab handles the rest
+      // Find the first non-external child to land on. If the group is
+      // ENTIRELY external pages, just render the subbar so user can pick
+      // (don't auto-navigate to an external page — surprising UX).
+      const firstInApp = g.children.find((c) => !c.href);
+      if (firstInApp) {
+        switchTab(firstInApp.id); // patched switchTab handles the rest
+      } else {
+        // All external — render subbar with no active and let user pick.
+        renderTabSubbar(groupKey, null);
+        highlightParentGroup(groupKey);
+      }
     }
   }
 
