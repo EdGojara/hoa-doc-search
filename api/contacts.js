@@ -805,6 +805,105 @@ router.patch('/property-residencies/:id', express.json(), async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /api/property-residencies/add-renter
+// One-shot "add a renter to this property" — creates the renter contact
+// (or reuses an existing one matched by phone) AND the residency row in
+// the same request. Ends any current residency first.
+//
+// Body:
+//   { property_id, full_name, primary_phone?, primary_email?,
+//     lease_end_date?, lease_start_date?, monthly_rent?, notes? }
+//
+// Returns { contact, residency, reused_contact: bool }
+//
+// Phone-match dedupe: if a contact already exists with the same last-10
+// of primary_phone, we reuse it instead of creating a duplicate.
+// Single-source-of-truth discipline.
+// ----------------------------------------------------------------------------
+router.post('/property-residencies/add-renter', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.property_id) return res.status(400).json({ error: 'property_id_required' });
+    if (!b.full_name || !String(b.full_name).trim()) {
+      return res.status(400).json({ error: 'full_name_required' });
+    }
+    const fullName = String(b.full_name).trim();
+    const primaryEmail = (b.primary_email || '').trim() || null;
+    const primaryPhone = (b.primary_phone || '').trim() || null;
+
+    // Dedupe — if a contact already exists with the same last-10 of phone,
+    // reuse that contact. Single source of truth for the renter as a person.
+    let contact = null;
+    let reusedContact = false;
+    if (primaryPhone) {
+      const last10 = primaryPhone.replace(/\D/g, '').slice(-10);
+      if (last10.length === 10) {
+        const { data: candidates } = await supabase
+          .from('contacts')
+          .select('id, full_name, primary_phone, primary_email')
+          .or(`primary_phone.ilike.%${last10}%,secondary_phone.ilike.%${last10}%,notification_phone.ilike.%${last10}%`)
+          .limit(5);
+        contact = (candidates || []).find((c) => {
+          for (const f of ['primary_phone', 'secondary_phone', 'notification_phone']) {
+            const d = String(c[f] || '').replace(/\D/g, '').slice(-10);
+            if (d === last10) return true;
+          }
+          return false;
+        }) || null;
+        if (contact) reusedContact = true;
+      }
+    }
+
+    // Create the contact if no match
+    if (!contact) {
+      const { data: created, error: createErr } = await supabase
+        .from('contacts')
+        .insert({
+          full_name: fullName,
+          primary_phone: primaryPhone,
+          primary_email: primaryEmail,
+          notes: 'Added via Add Renter workflow',
+        })
+        .select()
+        .single();
+      if (createErr) return res.status(500).json({ error: createErr.message });
+      contact = created;
+    }
+
+    // End any current residency on this property
+    const today = new Date().toISOString().slice(0, 10);
+    await supabase
+      .from('property_residencies')
+      .update({ end_date: today, updated_at: new Date().toISOString() })
+      .eq('property_id', b.property_id)
+      .is('end_date', null);
+
+    // Insert the new renter residency
+    const { data: residency, error: resErr } = await supabase
+      .from('property_residencies')
+      .insert({
+        property_id: b.property_id,
+        contact_id: contact.id,
+        residency_type: 'renter',
+        start_date: b.start_date || today,
+        lease_start_date: b.lease_start_date || null,
+        lease_end_date: b.lease_end_date || null,
+        monthly_rent: b.monthly_rent || null,
+        notes: b.notes || null,
+        source: 'manual',
+      })
+      .select()
+      .single();
+    if (resErr) return res.status(500).json({ error: resErr.message });
+
+    res.json({ contact, residency, reused_contact: reusedContact });
+  } catch (err) {
+    console.error('[contacts] add-renter failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/property-residencies', express.json(), async (req, res) => {
   try {
     const b = req.body || {};

@@ -5970,7 +5970,7 @@
       if (currentRes) {
         currentResHtml = _hpRenderCurrentResidency(currentRes, lease, j.property.id);
       } else {
-        currentResHtml = '<div style="background:#f1f5f9; color:#6B7280; padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:14px;">No current residency on file. <button onclick="homesAddResidency(\'' + j.property.id + '\')" style="background:#1E2761; color:#fff; border:0; border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; margin-left:6px;">+ Add residency</button></div>';
+        currentResHtml = '<div style="background:#f1f5f9; color:#6B7280; padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:14px;">No current residency on file. <button onclick="homesOpenAddRenterModal(\'' + j.property.id + '\')" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; margin-left:6px; font-weight:600;">🏘️ Add renter</button> <button onclick="homesAddResidency(\'' + j.property.id + '\')" style="background:#1E2761; color:#fff; border:0; border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; margin-left:4px;">+ Other residency</button></div>';
       }
 
       body.innerHTML = `
@@ -6060,7 +6060,10 @@
             <div style="font-size:11px; color:#6B7280; margin-top:2px;">Residency started ${escapeHtml(residency.start_date || '—')}</div>
             ${leaseSection}
           </div>
-          <button onclick="homesEditResidency('${residency.id}', ${JSON.stringify(residency).replace(/"/g, '&quot;').replace(/'/g, '&#39;')})" style="background:#fff; color:#1E2761; border:1px solid #1E2761; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer;">✏ Edit residency</button>
+          <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
+            <button onclick="homesEditResidency('${residency.id}', ${JSON.stringify(residency).replace(/"/g, '&quot;').replace(/'/g, '&#39;')})" style="background:#fff; color:#1E2761; border:1px solid #1E2761; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer;">✏ Edit residency</button>
+            ${t !== 'renter' ? `<button onclick="homesOpenAddRenterModal('${propertyId}')" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">🏘️ Convert to rental</button>` : ''}
+          </div>
         </div>
       </div>`;
   }
@@ -6140,11 +6143,19 @@
     }
   }
 
+  // Quick non-renter residency change (owner_occupied / family / vacant / unknown).
+  // Used internally — the "Add renter" flow goes through homesOpenAddRenterModal
+  // because renters need contact + lease info that doesn't fit in a prompt.
   async function homesAddResidency(propertyId) {
-    const type = prompt('Residency type? (owner_occupied / renter / family_member / vacant / unknown)', 'renter');
+    const type = prompt('Residency type? (owner_occupied / renter / family_member / vacant / unknown)\n\nNote: for renter, use the "Add renter" button instead — it captures the renter\'s contact info + lease.', 'owner_occupied');
     if (!type) return;
     const validTypes = ['owner_occupied', 'renter', 'family_member', 'vacant', 'unknown'];
     if (!validTypes.includes(type)) { alert('Invalid type.'); return; }
+    // If they pick renter, route them through the proper modal
+    if (type === 'renter') {
+      homesOpenAddRenterModal(propertyId);
+      return;
+    }
     try {
       const r = await fetch('/api/property-residencies', {
         method: 'POST',
@@ -6156,6 +6167,125 @@
       homesOpenProperty(propertyId);
     } catch (e) {
       alert('Add residency failed: ' + e.message);
+    }
+  }
+
+  // ----- Add Renter modal ---------------------------------------------------
+  // One-tap workflow Ed asked for 2026-06-08. Captures the renter's name,
+  // phone, email, and optional lease end date in a single form. Backend
+  // dedupes by phone (last 10 digits) so re-adding an existing renter
+  // doesn't create a duplicate contact.
+  let _homesAddRenterPropertyId = null;
+  function homesOpenAddRenterModal(propertyId) {
+    _homesAddRenterPropertyId = propertyId;
+    // Build modal if not yet in DOM
+    let m = document.getElementById('homesAddRenterModal');
+    if (!m) {
+      m = document.createElement('div');
+      m.id = 'homesAddRenterModal';
+      m.style.cssText = 'display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(11,29,52,0.45); z-index:10000; align-items:center; justify-content:center; padding:20px;';
+      m.innerHTML = `
+        <div style="background:#fff; max-width:520px; width:100%; border-radius:12px; padding:24px 28px; box-shadow:0 12px 36px rgba(11,29,52,0.18); font-family:Inter,-apple-system,sans-serif;">
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:18px;">
+            <h3 style="margin:0; color:#1E2761; font-size:18px;">Add renter to property</h3>
+            <button onclick="homesCloseAddRenterModal()" style="background:none; border:0; font-size:22px; cursor:pointer; color:#94A3B8;">×</button>
+          </div>
+          <div style="color:#475569; font-size:13px; line-height:1.5; margin-bottom:14px;">
+            Ends the current residency on this property and creates a new renter residency with the contact below. If the renter's phone matches an existing contact, that contact will be reused (no duplicates).
+          </div>
+          <div style="display:flex; flex-direction:column; gap:10px;">
+            <div>
+              <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Renter name *</label>
+              <input id="arName" type="text" placeholder="Jane Smith" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Phone</label>
+                <input id="arPhone" type="tel" placeholder="(832) 555-0123" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+              </div>
+              <div>
+                <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Email</label>
+                <input id="arEmail" type="email" placeholder="jane@example.com" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+              </div>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Lease start</label>
+                <input id="arLeaseStart" type="date" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+              </div>
+              <div>
+                <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Lease end</label>
+                <input id="arLeaseEnd" type="date" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+              </div>
+            </div>
+            <div>
+              <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Notes</label>
+              <textarea id="arNotes" rows="2" placeholder="Optional — any context about the lease or move-in" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px; resize:vertical; font-family:inherit;"></textarea>
+            </div>
+            <div id="arStatus" style="font-size:13px; color:#475569; min-height:18px;"></div>
+            <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:6px;">
+              <button onclick="homesCloseAddRenterModal()" style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:9px 18px; border-radius:6px; font-size:14px; cursor:pointer; font-weight:500;">Cancel</button>
+              <button onclick="homesSubmitAddRenter()" id="arSubmit" style="background:#1E2761; color:#fff; border:0; padding:9px 18px; border-radius:6px; font-size:14px; cursor:pointer; font-weight:600;">Add renter</button>
+            </div>
+          </div>
+        </div>`;
+      document.body.appendChild(m);
+    }
+    // Reset fields
+    ['arName','arPhone','arEmail','arLeaseStart','arLeaseEnd','arNotes'].forEach((id) => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    document.getElementById('arStatus').innerHTML = '';
+    m.style.display = 'flex';
+    setTimeout(() => document.getElementById('arName')?.focus(), 50);
+  }
+
+  function homesCloseAddRenterModal() {
+    const m = document.getElementById('homesAddRenterModal');
+    if (m) m.style.display = 'none';
+    _homesAddRenterPropertyId = null;
+  }
+
+  async function homesSubmitAddRenter() {
+    const propertyId = _homesAddRenterPropertyId;
+    if (!propertyId) return;
+    const name = document.getElementById('arName').value.trim();
+    if (!name) {
+      document.getElementById('arStatus').innerHTML = '<span style="color:#b91c1c;">Renter name is required.</span>';
+      return;
+    }
+    const payload = {
+      property_id: propertyId,
+      full_name: name,
+      primary_phone: document.getElementById('arPhone').value.trim() || null,
+      primary_email: document.getElementById('arEmail').value.trim() || null,
+      lease_start_date: document.getElementById('arLeaseStart').value || null,
+      lease_end_date: document.getElementById('arLeaseEnd').value || null,
+      notes: document.getElementById('arNotes').value.trim() || null,
+    };
+    const btn = document.getElementById('arSubmit');
+    btn.disabled = true;
+    btn.textContent = 'Adding…';
+    document.getElementById('arStatus').innerHTML = '';
+    try {
+      const r = await fetch('/api/property-residencies/add-renter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const reusedNote = j.reused_contact ? ' (linked existing contact by phone match)' : '';
+      document.getElementById('arStatus').innerHTML = `<span style="color:#15803d;">✓ Renter added${reusedNote}. Refreshing property…</span>`;
+      setTimeout(() => {
+        homesCloseAddRenterModal();
+        homesOpenProperty(propertyId);
+      }, 700);
+    } catch (e) {
+      document.getElementById('arStatus').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+      btn.disabled = false;
+      btn.textContent = 'Add renter';
     }
   }
 
