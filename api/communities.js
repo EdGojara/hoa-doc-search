@@ -194,7 +194,7 @@ router.get('/:communityId/full', async (req, res) => {
     async function loadCommunity() {
       try {
         const r = await supabase.from('communities')
-          .select('id, name, slug, legal_name, total_lots, vantaca_code, profile, active, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation, bundle_certified_letters_separately, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, force_mow_admin_fee_cents, builder_arc_standards, logo_storage_path, logo_mime_type, logo_width, logo_height, logo_uploaded_at')
+          .select('id, name, slug, legal_name, total_lots, vantaca_code, profile, active, fines_enabled, letter_sender_name, letter_sender_title, letter_fee_courtesy_1_cents, letter_fee_courtesy_2_cents, letter_fee_certified_209_cents, letter_fee_fine_assessed_cents, letter_cure_days_courtesy_1, letter_cure_days_courtesy_2, letter_cure_days_certified_209, letter_payment_url, letter_pay_to_name, letter_pay_to_address, enforcement_authority_citation, bundle_certified_letters_separately, declaration_doc_number, declaration_county, declaration_short_name, force_mow_section_full, force_mow_admin_fee_cents, builder_arc_standards, logo_storage_path, logo_mime_type, logo_width, logo_height, logo_uploaded_at, brand_primary_color, brand_accent_color, brand_text_on_primary, logo_height_px, signoff_signature')
           .eq('id', communityId).single();
         if (r.error) throw r.error;
         return r;
@@ -395,6 +395,68 @@ router.patch('/:communityId/letter-config', express.json(), async (req, res) => 
     res.json({ ok: true, community: updated });
   } catch (err) {
     console.error('[community-profile] PATCH /letter-config failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// PATCH /:communityId/brand-kit — community brand colors + signoff + logo height
+// Body: { brand_primary_color?, brand_accent_color?, brand_text_on_primary?,
+//         logo_height_px?, signoff_signature? }
+//
+// Ed 2026-06-08 — Bedrock-as-invisible-plumbing principle. Each community
+// owns its visual identity on customer-facing artifacts (emails first,
+// portal + PDFs next). This endpoint is the staff-facing setter.
+// Logo upload goes through POST /:communityId/logo (existing endpoint).
+// ----------------------------------------------------------------------------
+router.patch('/:communityId/brand-kit', express.json(), async (req, res) => {
+  try {
+    const { communityId } = req.params;
+    const b = req.body || {};
+    const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    const allowed = {
+      brand_primary_color:   (v) => {
+        const s = String(v || '').trim();
+        if (s === '' || s === null) return null;
+        return HEX_RE.test(s) ? s.toLowerCase() : null;
+      },
+      brand_accent_color:    (v) => {
+        const s = String(v || '').trim();
+        if (s === '' || s === null) return null;
+        return HEX_RE.test(s) ? s.toLowerCase() : null;
+      },
+      brand_text_on_primary: (v) => {
+        const s = String(v || '').trim().toLowerCase();
+        return (s === 'light' || s === 'dark') ? s : null;
+      },
+      logo_height_px:        (v) => {
+        const n = Math.round(Number(v));
+        if (!isFinite(n) || n < 12 || n > 200) return null;
+        return n;
+      },
+      signoff_signature:     (v) => {
+        const s = String(v || '').trim();
+        return s ? s.slice(0, 200) : null;
+      },
+    };
+    const updates = {};
+    for (const [key, coerce] of Object.entries(allowed)) {
+      if (key in b) updates[key] = coerce(b[key]);
+    }
+    if (!Object.keys(updates).length) {
+      return res.status(400).json({ error: 'no_brand_fields_provided' });
+    }
+    updates.updated_at = new Date().toISOString();
+    const { data, error } = await supabase
+      .from('communities')
+      .update(updates)
+      .eq('id', communityId)
+      .select('id, brand_primary_color, brand_accent_color, brand_text_on_primary, logo_height_px, signoff_signature')
+      .maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ community: data });
+  } catch (err) {
+    console.error('[communities] brand-kit PATCH failed:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

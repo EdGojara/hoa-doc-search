@@ -9180,6 +9180,76 @@
             <div id="logoDimensions" style="margin-top:4px; font-size:11px; color:#94a3b8;"></div>
           </div>
         </div>
+
+        <!-- Brand colors + signoff — drives the letterhead on community-facing emails -->
+        <div style="margin-top:22px; padding-top:18px; border-top:1px solid #e3e8ef;">
+          <div style="display:flex; align-items:baseline; justify-content:space-between; margin-bottom:4px; gap:14px;">
+            <div style="font-size:13px; font-weight:700; color:#0B1D34;">Brand colors &amp; signoff</div>
+            <div style="font-size:11px; color:#94a3b8;">Drives the letterhead on community emails. Bedrock-as-invisible-plumbing.</div>
+          </div>
+          <p style="font-size:12px; color:#64748b; margin-bottom:14px; line-height:1.5;">
+            Each community owns its visual identity on customer-facing emails. The community's brand is the hero; Bedrock appears as a small attribution at the bottom.
+          </p>
+
+          <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:14px 18px; margin-bottom:18px;">
+            <label class="prof-fld">
+              <span>Primary color</span>
+              <div style="display:flex; gap:6px; align-items:stretch;">
+                <input type="color" id="brand-primary-color-picker" value="#2A4054" oninput="brandSyncPickerToText('primary'); brandLivePreview();" style="width:44px; height:34px; padding:0; border:1px solid #cbd5e1; border-radius:6px; cursor:pointer; flex-shrink:0;">
+                <input type="text" id="brand-primary-color" placeholder="#2A4054" oninput="brandSyncTextToPicker('primary'); brandLivePreview();" style="flex:1; font-family:JetBrains Mono,monospace; font-size:13px;">
+              </div>
+            </label>
+            <label class="prof-fld">
+              <span>Accent color</span>
+              <div style="display:flex; gap:6px; align-items:stretch;">
+                <input type="color" id="brand-accent-color-picker" value="#B5946B" oninput="brandSyncPickerToText('accent'); brandLivePreview();" style="width:44px; height:34px; padding:0; border:1px solid #cbd5e1; border-radius:6px; cursor:pointer; flex-shrink:0;">
+                <input type="text" id="brand-accent-color" placeholder="#B5946B" oninput="brandSyncTextToPicker('accent'); brandLivePreview();" style="flex:1; font-family:JetBrains Mono,monospace; font-size:13px;">
+              </div>
+            </label>
+            <label class="prof-fld">
+              <span>Text on primary</span>
+              <select id="brand-text-on-primary" onchange="brandLivePreview()">
+                <option value="light">Light text (use for dark backgrounds)</option>
+                <option value="dark">Dark text (use for light backgrounds)</option>
+              </select>
+            </label>
+            <label class="prof-fld" style="grid-column: 1 / -1;">
+              <span>Signoff signature (closing line on emails)</span>
+              <input id="brand-signoff" placeholder='e.g., "The Riverstone Board" or "Riverstone Property Management Committee"' oninput="brandLivePreview()">
+            </label>
+          </div>
+
+          <!-- Live preview -->
+          <div style="background:#f5f4ed; border-radius:10px; padding:18px; margin-bottom:14px;">
+            <div style="font-size:11px; color:#94a3b8; letter-spacing:0.08em; text-transform:uppercase; margin-bottom:10px;">Live preview · email letterhead</div>
+            <div style="max-width:520px; margin:0 auto;">
+              <div id="brandPreviewBand" style="background:#2A4054; color:#fff; padding:22px 26px; border-radius:8px 8px 0 0; transition:background 0.15s, color 0.15s;">
+                <img id="brandPreviewLogo" style="display:none; max-height:36px; margin-bottom:10px; max-width:200px;">
+                <div id="brandPreviewEyebrow" style="font-size:10.5px; letter-spacing:0.18em; color:#B5946B; text-transform:uppercase; margin-bottom:6px; font-weight:600;">Community Notice</div>
+                <div id="brandPreviewName" style="font-family:Georgia,serif; font-size:22px; font-weight:500; line-height:1.2;">Your Community Name</div>
+              </div>
+              <div style="background:#fff; padding:24px 26px; border:1px solid #e5e3da; border-top:0; border-radius:0 0 8px 8px; font-size:13.5px; line-height:1.6; color:#222;">
+                <p style="margin:0 0 12px;">Hi Jennifer,</p>
+                <p style="margin:0 0 12px;">This is what the letterhead looks like with the colors above. The email body sits on cream; the band on top reflects the community's identity.</p>
+                <div style="margin-top:18px; padding-top:14px; border-top:1px solid #e5e3da; font-size:13px; color:#555;">
+                  <div>Thanks,</div>
+                  <div id="brandPreviewSignoff" style="margin-top:3px; font-weight:500; color:#1a1a1a;">The Your-Community Board</div>
+                </div>
+              </div>
+              <div style="text-align:center; padding:14px 16px 4px; font-size:11px; color:#6b7280;">
+                <div style="display:inline-flex; align-items:center; gap:6px; padding:5px 10px; border-radius:999px; background:rgba(11,29,52,0.04); border:1px solid rgba(11,29,52,0.08);">
+                  <span style="display:inline-block; width:6px; height:8px; background:#D4AF37; border-radius:1px;"></span>
+                  <span>Community management by <strong style="color:#0B1D34;">Bedrock</strong></span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex; align-items:center; gap:10px;">
+            <button class="primary-btn" onclick="brandSaveKit()" style="padding:8px 18px;">💾 Save brand kit</button>
+            <span id="brand-save-status" style="font-size:12px;"></span>
+          </div>
+        </div>
       </div>
 
       <!-- ===== Letter & enforcement settings — per-community letter config ===== -->
@@ -22446,6 +22516,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       profRenderComputed();
       // Render community logo preview if uploaded
       logoRenderPreview(j.logo_preview_url || null, j.community ? { w: j.community.logo_width, h: j.community.logo_height } : null);
+      // Brand kit fields + live preview (Ed 2026-06-08 brand-the-output expansion)
+      if (typeof brandLoadFromCommunity === 'function') brandLoadFromCommunity(j.community);
     } catch (err) {
       console.warn('[profile] load failed:', err);
       const wrap = document.getElementById('profile-page') || document.body;
@@ -24234,6 +24306,123 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       img.src = '';
       rmBtn.style.display = 'none';
       if (dimEl) dimEl.textContent = '';
+    }
+  }
+
+  // ===== Brand kit — colors + signoff for community email letterheads ======
+  // Ed 2026-06-08 — Bedrock-as-invisible-plumbing principle. Each community
+  // owns its visual identity on customer-facing emails.
+
+  const BRAND_DEFAULT_PRIMARY = '#2A4054';
+  const BRAND_DEFAULT_ACCENT  = '#B5946B';
+
+  function brandSyncPickerToText(which) {
+    const picker = document.getElementById(`brand-${which}-color-picker`);
+    const text   = document.getElementById(`brand-${which}-color`);
+    if (picker && text) text.value = picker.value;
+  }
+  function brandSyncTextToPicker(which) {
+    const picker = document.getElementById(`brand-${which}-color-picker`);
+    const text   = document.getElementById(`brand-${which}-color`);
+    if (!picker || !text) return;
+    const v = text.value.trim();
+    if (/^#[0-9a-fA-F]{6}$/.test(v)) picker.value = v;
+  }
+
+  // Live preview — updates the swatch in real time as the operator
+  // experiments. Mirrors the exact letterhead rendering from email_campaigns.js
+  // so what you see here matches what recipients will receive.
+  function brandLivePreview() {
+    const primary = document.getElementById('brand-primary-color').value.trim() || BRAND_DEFAULT_PRIMARY;
+    const accent  = document.getElementById('brand-accent-color').value.trim()  || BRAND_DEFAULT_ACCENT;
+    const isLight = (document.getElementById('brand-text-on-primary').value || 'light') === 'light';
+    const signoff = document.getElementById('brand-signoff').value.trim();
+    const band     = document.getElementById('brandPreviewBand');
+    const eyebrow  = document.getElementById('brandPreviewEyebrow');
+    const name     = document.getElementById('brandPreviewName');
+    const signoffEl= document.getElementById('brandPreviewSignoff');
+    if (band) {
+      band.style.background = primary;
+      band.style.color      = isLight ? '#ffffff' : '#0a0a0a';
+    }
+    if (eyebrow) eyebrow.style.color = accent;
+    if (name)    name.style.color    = isLight ? '#ffffff' : '#0a0a0a';
+    const commName = (profCurrent && profCurrent.name) || 'Your Community Name';
+    if (name)    name.textContent = commName;
+    if (signoffEl) {
+      signoffEl.textContent = signoff || `The ${commName} Board`;
+    }
+  }
+
+  // Populate brand kit fields from the loaded community + render preview
+  function brandLoadFromCommunity(c) {
+    if (!c) return;
+    const primary = c.brand_primary_color || BRAND_DEFAULT_PRIMARY;
+    const accent  = c.brand_accent_color  || BRAND_DEFAULT_ACCENT;
+    const onPrimary = c.brand_text_on_primary || 'light';
+    const signoff = c.signoff_signature || '';
+    const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
+    setVal('brand-primary-color',         primary);
+    setVal('brand-primary-color-picker',  primary);
+    setVal('brand-accent-color',          accent);
+    setVal('brand-accent-color-picker',   accent);
+    setVal('brand-text-on-primary',       onPrimary);
+    setVal('brand-signoff',               signoff);
+    // Logo preview in the live letterhead
+    const logoImg = document.getElementById('brandPreviewLogo');
+    if (logoImg) {
+      const previewImg = document.getElementById('logoPreviewImg');
+      if (previewImg && previewImg.src && previewImg.style.display !== 'none') {
+        logoImg.src = previewImg.src;
+        logoImg.style.display = 'block';
+      } else {
+        logoImg.style.display = 'none';
+        logoImg.src = '';
+      }
+    }
+    brandLivePreview();
+  }
+
+  async function brandSaveKit() {
+    if (!profCurrent) return;
+    const status = document.getElementById('brand-save-status');
+    status.textContent = 'Saving…';
+    status.style.color = '#64748b';
+    const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+    const primary = document.getElementById('brand-primary-color').value.trim();
+    const accent  = document.getElementById('brand-accent-color').value.trim();
+    if (primary && !HEX_RE.test(primary)) {
+      status.textContent = '✗ Primary color must be a 6-digit hex (e.g., #2A4054)';
+      status.style.color = '#b91c1c';
+      return;
+    }
+    if (accent && !HEX_RE.test(accent)) {
+      status.textContent = '✗ Accent color must be a 6-digit hex (e.g., #B5946B)';
+      status.style.color = '#b91c1c';
+      return;
+    }
+    const payload = {
+      brand_primary_color:   primary || null,
+      brand_accent_color:    accent  || null,
+      brand_text_on_primary: document.getElementById('brand-text-on-primary').value || null,
+      signoff_signature:     document.getElementById('brand-signoff').value.trim() || null,
+    };
+    try {
+      const r = await fetch(`/api/community-profile/${profCurrent.id}/brand-kit`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      // Reflect saved values back into profCurrent so subsequent edits start clean
+      Object.assign(profCurrent, payload);
+      status.textContent = '✓ Saved — community emails will use this brand kit from now on.';
+      status.style.color = '#15803d';
+      setTimeout(() => { status.textContent = ''; }, 3500);
+    } catch (e) {
+      status.textContent = '✗ ' + e.message;
+      status.style.color = '#b91c1c';
     }
   }
 

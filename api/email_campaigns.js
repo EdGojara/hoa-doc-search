@@ -259,8 +259,10 @@ function _isLightText(textOnPrimary) {
 async function resolveLogoUrl(storagePath) {
   if (!storagePath) return null;
   try {
+    // Logos live in the same 'documents' bucket as everything else
+    // (matches api/communities.js logo upload path).
     const { data } = await supabase.storage
-      .from('community-logos')
+      .from('documents')
       .createSignedUrl(storagePath, 60 * 60 * 24 * 7); // 7-day signed URL
     return data?.signedUrl || null;
   } catch (e) {
