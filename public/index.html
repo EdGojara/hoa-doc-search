@@ -433,6 +433,7 @@
   <div class="tab" onclick="switchTab('help')">📚 Help</div>
   <div class="tab" onclick="switchTab('docs')">🗂️ Documents</div>
   <div class="tab" onclick="switchTab('intake')">📧 Intake</div>
+  <div class="tab" onclick="switchTab('blast')">📨 Email Blast</div>
 </div>
 <div class="tab-subbar" id="tabSubbar"
      style="display:none; gap:6px; padding:8px 12px; background:#f1f5fb; border-bottom:1px solid #d9dfea; flex-wrap:wrap;"></div>
@@ -9429,6 +9430,315 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
 <!-- ============================================================
      📧 Email Intake tab — paste threads, trustEd extracts library facts
      ============================================================ -->
+<!-- ====================================================================
+     Email Blast tab — single-community or all-communities email campaigns.
+     Per-community letterhead rendering even for portfolio-wide blasts.
+     Backed by /api/email-campaigns + migration 185.
+     ==================================================================== -->
+<div class="tab-content" id="tab-blast" style="overflow-y: auto; padding: 24px;">
+  <div style="max-width: 1080px; margin: 0 auto;">
+    <div style="margin-bottom: 18px;">
+      <h2 style="font-size:22px; font-weight:700; color:#0B1D34; margin-bottom:4px;">📨 Email Blast</h2>
+      <p style="font-size:13px; color:#666; line-height:1.55;">
+        Send a community notice (single community) or a portfolio-wide notice (all communities) to homeowners and current residents.
+        Each recipient receives the email with <strong>their community's letterhead</strong> and sign-off — even on portfolio-wide blasts.
+        Variables: <code>{{community_name}}</code>, <code>{{community_legal_name}}</code>, <code>{{recipient_first_name}}</code>, <code>{{bedrock_phone}}</code>, <code>{{today_date}}</code>.
+      </p>
+    </div>
+
+    <!-- Compose form -->
+    <div style="background:#fff; border:1px solid #d0d7de; border-radius:10px; padding:20px 22px; margin-bottom:18px;">
+      <h3 style="margin:0 0 12px; font-size:15px; color:#1E2761;">Compose</h3>
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px; margin-bottom:12px;">
+        <div>
+          <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Scope</label>
+          <select id="blastScope" onchange="blastOnScopeChange()" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+            <option value="single_community">Single community</option>
+            <option value="all_communities">All communities (portfolio-wide)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Audience</label>
+          <select id="blastAudience" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+            <option value="owners_and_residents">Owners + current residents (recommended)</option>
+            <option value="owners_only">Owners only (legal-effect / financial notices)</option>
+            <option value="residents_only">Residents only (rare — pool / amenity)</option>
+          </select>
+        </div>
+      </div>
+      <div id="blastCommunityRow" style="margin-bottom:12px;">
+        <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Community</label>
+        <select id="blastCommunity" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+          <option value="">— Select community —</option>
+        </select>
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Subject</label>
+        <input id="blastSubject" type="text" placeholder="e.g., Bedrock office closed Monday for Memorial Day" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+      </div>
+      <div style="margin-bottom:12px;">
+        <label style="font-size:11px; color:#64748B; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Body (HTML — paragraphs auto-rendered)</label>
+        <textarea id="blastBody" rows="10" placeholder="Hi {{recipient_first_name}},&#10;&#10;The Bedrock office will be closed Monday, May 27 in observance of Memorial Day. We'll resume normal hours Tuesday at 9am.&#10;&#10;If something at {{community_name}} can't wait, leave a voicemail at {{bedrock_phone}} and we'll triage on Tuesday morning.&#10;&#10;Thanks for your patience." style="width:100%; padding:11px 13px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px; resize:vertical; font-family:inherit; line-height:1.55;"></textarea>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap;">
+        <button onclick="blastSaveDraft()" id="blastSaveBtn" class="primary-btn" style="padding:9px 18px;">💾 Save as draft</button>
+        <button onclick="blastPreview()" id="blastPreviewBtn" class="secondary-btn" style="padding:9px 18px;">👁 Preview</button>
+        <div id="blastStatus" style="font-size:13px; color:#475569; margin-left:auto;"></div>
+      </div>
+    </div>
+
+    <!-- Preview panel — populated after preview -->
+    <div id="blastPreviewPanel" style="display:none; background:#fff; border:1px solid #d0d7de; border-radius:10px; padding:20px 22px; margin-bottom:18px;">
+      <h3 style="margin:0 0 10px; font-size:15px; color:#1E2761;">Preview</h3>
+      <div id="blastPreviewStats" style="font-size:13px; color:#0B1D34; margin-bottom:14px;"></div>
+      <div id="blastPreviewBreakdown" style="margin-bottom:18px;"></div>
+      <h4 style="margin:0 0 10px; font-size:13px; color:#475569; text-transform:uppercase; letter-spacing:0.05em; font-weight:700;">Sample rendered email(s)</h4>
+      <div id="blastPreviewSamples"></div>
+      <div style="display:flex; gap:10px; align-items:center; margin-top:18px; padding-top:14px; border-top:1px solid #e5e3da;">
+        <input id="blastTestEmail" type="email" placeholder="Send a test copy to this address" style="flex:1; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px;">
+        <button onclick="blastSendTest()" id="blastTestBtn" class="secondary-btn" style="padding:9px 18px;">📤 Send test</button>
+        <button onclick="blastSendAll()" id="blastSendBtn" style="padding:9px 18px; background:#b91c1c; color:#fff; border:0; border-radius:6px; font-size:14px; font-weight:600; cursor:pointer;">🚀 Send to all recipients</button>
+      </div>
+      <div id="blastSendStatus" style="font-size:13px; margin-top:10px; min-height:18px;"></div>
+    </div>
+
+    <!-- Recent campaigns -->
+    <div style="background:#fff; border:1px solid #d0d7de; border-radius:10px; padding:20px 22px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+        <h3 style="margin:0; font-size:15px; color:#1E2761;">Recent campaigns</h3>
+        <button onclick="blastLoadList()" class="secondary-btn" style="padding:6px 12px; font-size:12px;">↻ Refresh</button>
+      </div>
+      <div id="blastList" style="font-size:13px; color:#475569;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  'use strict';
+  let _blastCurrentCampaignId = null;
+
+  function blastOnScopeChange() {
+    const scope = document.getElementById('blastScope').value;
+    document.getElementById('blastCommunityRow').style.display = scope === 'single_community' ? '' : 'none';
+  }
+
+  async function blastLoadCommunities() {
+    const sel = document.getElementById('blastCommunity');
+    if (sel.options.length > 1) return; // already loaded
+    try {
+      const r = await fetch('/api/communities-list?include_inactive=0');
+      const j = await r.json();
+      const items = j.communities || j.data || j || [];
+      for (const c of items) {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+      }
+    } catch (e) {
+      // Fallback — try the known endpoint
+      try {
+        const r = await fetch('/api/communities');
+        const j = await r.json();
+        const items = j.communities || j || [];
+        for (const c of items) {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name;
+          sel.appendChild(opt);
+        }
+      } catch (_) { /* leave empty */ }
+    }
+  }
+
+  async function blastSaveDraft() {
+    const scope = document.getElementById('blastScope').value;
+    const audience = document.getElementById('blastAudience').value;
+    const target_community_id = scope === 'single_community' ? document.getElementById('blastCommunity').value : null;
+    const subject_template = document.getElementById('blastSubject').value.trim();
+    const body_html_template = document.getElementById('blastBody').value;
+    const status = document.getElementById('blastStatus');
+
+    if (scope === 'single_community' && !target_community_id) {
+      status.innerHTML = '<span style="color:#b91c1c;">Pick a community.</span>';
+      return;
+    }
+    if (!subject_template) {
+      status.innerHTML = '<span style="color:#b91c1c;">Subject is required.</span>';
+      return;
+    }
+    if (!body_html_template.trim()) {
+      status.innerHTML = '<span style="color:#b91c1c;">Body is required.</span>';
+      return;
+    }
+    // Wrap plain-paragraph input into HTML <p> tags if it doesn't look like HTML
+    const looksLikeHtml = /<\/?(p|div|br|h\d|ul|ol|li|a|strong|em)/i.test(body_html_template);
+    const html = looksLikeHtml
+      ? body_html_template
+      : body_html_template.split(/\n{2,}/).map(p => `<p style="margin:0 0 14px;">${p.replace(/\n/g, '<br>')}</p>`).join('');
+
+    status.innerHTML = '<span style="color:#475569;">Saving…</span>';
+    try {
+      const r = await fetch('/api/email-campaigns', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ scope, audience, target_community_id, subject_template, body_html_template: html }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _blastCurrentCampaignId = j.campaign.id;
+      status.innerHTML = '<span style="color:#15803d;">✓ Draft saved.</span>';
+      blastLoadList();
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  async function blastPreview() {
+    // Ensure draft exists
+    if (!_blastCurrentCampaignId) {
+      await blastSaveDraft();
+      if (!_blastCurrentCampaignId) return;
+    }
+    const status = document.getElementById('blastStatus');
+    status.innerHTML = '<span style="color:#475569;">Computing preview…</span>';
+    try {
+      const r = await fetch(`/api/email-campaigns/${_blastCurrentCampaignId}/preview`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      blastRenderPreview(j);
+      status.innerHTML = '';
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    }
+  }
+
+  function blastRenderPreview(p) {
+    document.getElementById('blastPreviewPanel').style.display = '';
+    document.getElementById('blastPreviewStats').innerHTML =
+      `<strong style="font-size:18px; color:#1E2761;">${p.total_recipients}</strong> recipients across <strong>${p.community_count}</strong> communit${p.community_count === 1 ? 'y' : 'ies'}.`;
+    const breakdown = (p.community_breakdown || []).map(c => `
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:6px 10px; background:#f8fafc; border-radius:6px; margin-bottom:4px; font-size:12.5px;">
+        <span><strong>${escapeHtml(c.community_name)}</strong></span>
+        <span style="color:#475569;">${c.recipient_count} recipients</span>
+      </div>`).join('');
+    document.getElementById('blastPreviewBreakdown').innerHTML = breakdown || '<div style="color:#94a3b8; font-size:12.5px;">No recipients matched.</div>';
+    const samples = (p.samples || []).map((s, i) => `
+      <details ${i === 0 ? 'open' : ''} style="margin-bottom:10px; border:1px solid #e5e3da; border-radius:8px; overflow:hidden;">
+        <summary style="background:#f8fafc; padding:8px 14px; cursor:pointer; font-size:13px; font-weight:600; color:#1E2761;">
+          Sample for ${escapeHtml(s.community_name)} · Subject: <span style="font-weight:400;">${escapeHtml(s.rendered_subject)}</span>
+        </summary>
+        <iframe srcdoc="${escapeHtml(s.rendered_html)}" style="width:100%; height:520px; border:0; background:#f5f4ed;"></iframe>
+      </details>`).join('');
+    document.getElementById('blastPreviewSamples').innerHTML = samples;
+  }
+
+  async function blastSendTest() {
+    const to = document.getElementById('blastTestEmail').value.trim();
+    if (!to || !to.includes('@')) {
+      document.getElementById('blastSendStatus').innerHTML = '<span style="color:#b91c1c;">Enter a valid email.</span>';
+      return;
+    }
+    if (!_blastCurrentCampaignId) return;
+    const btn = document.getElementById('blastTestBtn');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    try {
+      const r = await fetch(`/api/email-campaigns/${_blastCurrentCampaignId}/send-test`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ to_email: to }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      document.getElementById('blastSendStatus').innerHTML = `<span style="color:#15803d;">✓ Test sent to ${escapeHtml(to)} (rendered for ${escapeHtml(j.rendered_for_community || '')}).</span>`;
+    } catch (e) {
+      document.getElementById('blastSendStatus').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📤 Send test';
+    }
+  }
+
+  async function blastSendAll() {
+    if (!_blastCurrentCampaignId) return;
+    if (!confirm('Send to ALL recipients now? This cannot be undone.')) return;
+    const btn = document.getElementById('blastSendBtn');
+    btn.disabled = true;
+    btn.textContent = 'Sending…';
+    document.getElementById('blastSendStatus').innerHTML = '<span style="color:#475569;">Fan-out in progress — this can take a few minutes for larger campaigns…</span>';
+    try {
+      const r = await fetch(`/api/email-campaigns/${_blastCurrentCampaignId}/send`, { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      document.getElementById('blastSendStatus').innerHTML =
+        `<span style="color:#15803d;">✓ Sent. ${j.delivered}/${j.total} delivered, ${j.failed} failed. Status: ${j.status}.</span>`;
+      blastLoadList();
+    } catch (e) {
+      document.getElementById('blastSendStatus').innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '🚀 Send to all recipients';
+    }
+  }
+
+  async function blastLoadList() {
+    const div = document.getElementById('blastList');
+    div.innerHTML = 'Loading…';
+    try {
+      const r = await fetch('/api/email-campaigns?limit=30');
+      const j = await r.json();
+      const items = j.campaigns || [];
+      if (!items.length) { div.innerHTML = '<div style="color:#94a3b8;">No campaigns yet.</div>'; return; }
+      div.innerHTML = `<table style="width:100%; font-size:12.5px; border-collapse:collapse;">
+        <thead><tr style="background:#f8fafc; color:#475569; text-transform:uppercase; font-size:10.5px; letter-spacing:0.05em;">
+          <th style="text-align:left; padding:6px 8px;">Subject</th>
+          <th style="text-align:left; padding:6px 8px;">Scope</th>
+          <th style="text-align:left; padding:6px 8px;">Status</th>
+          <th style="text-align:right; padding:6px 8px;">Sent / Total</th>
+          <th style="text-align:right; padding:6px 8px;">When</th>
+        </tr></thead><tbody>
+        ${items.map(c => `<tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:6px 8px;">${escapeHtml(c.subject_template).slice(0, 70)}</td>
+          <td style="padding:6px 8px; color:#475569;">${c.scope === 'all_communities' ? 'All' : 'Single'}</td>
+          <td style="padding:6px 8px;"><span style="padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; background:${
+            c.status === 'sent' ? '#dcfce7' : c.status === 'draft' ? '#f1f5f9' : c.status === 'failed' ? '#fee2e2' : c.status === 'partial_failure' ? '#fef3c7' : '#dbeafe'
+          }; color:${
+            c.status === 'sent' ? '#15803d' : c.status === 'draft' ? '#475569' : c.status === 'failed' ? '#991b1b' : c.status === 'partial_failure' ? '#854d0e' : '#1e40af'
+          };">${escapeHtml(c.status)}</span></td>
+          <td style="padding:6px 8px; text-align:right; color:#0B1D34;">${c.delivered_count || 0} / ${c.total_recipients || 0}</td>
+          <td style="padding:6px 8px; text-align:right; color:#94a3b8;">${c.sent_at ? new Date(c.sent_at).toLocaleString() : '—'}</td>
+        </tr>`).join('')}
+        </tbody></table>`;
+    } catch (e) {
+      div.innerHTML = `<div style="color:#b91c1c;">Load failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // Wire tab open to load
+  (function _wireBlastTab() {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireBlastTab);
+      } else {
+        setTimeout(_wireBlastTab, 0);
+      }
+      return;
+    }
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'blast') {
+        _blastCurrentCampaignId = null;
+        blastLoadCommunities();
+        blastLoadList();
+        document.getElementById('blastPreviewPanel').style.display = 'none';
+      }
+      return r;
+    };
+  })();
+</script>
+
 <div class="tab-content" id="tab-intake" style="overflow-y: auto; padding: 24px;">
   <div style="max-width: 1180px; margin: 0 auto;">
     <div style="display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:16px; margin-bottom: 18px;">

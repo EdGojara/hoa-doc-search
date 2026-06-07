@@ -847,6 +847,11 @@ app.use('/api/events', eventsRouter);
 const { router: emailIntakeRouter } = require('./api/email_intake');
 app.use('/api/email-intelligence', emailIntakeRouter);
 
+// Email campaigns — community blasts (single-community or all-communities,
+// each recipient rendered with their community's letterhead). Migration 185.
+const emailCampaignsRouter = require('./api/email_campaigns');
+app.use('/api/email-campaigns', emailCampaignsRouter);
+
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)
 const { router: arcHistoryRouter } = require('./api/arc_history');
