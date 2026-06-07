@@ -567,13 +567,14 @@ router.get('/me', async (req, res) => {
     // The CURRENT focus property is selected via optional ?property_id query;
     // defaults to the first accessible property if omitted (preserves prior
     // single-property behavior for the common case).
-    // NOTE: is_demo is NOT in this nested SELECT on purpose. PostgREST's
-    // schema cache is slow to learn about new columns after ALTER TABLE
-    // (Ed 2026-06-08 — Drama Creek migration shipped, schema cache stayed
-    // stale, the entire nested join silently returned empty). We look up
-    // is_demo via a separate query below with a hardcoded fallback so the
-    // demo experience works even if PostgREST hasn't refreshed yet.
-    const { data: propScopes } = await supabase
+    // Minimal SELECT — only columns that definitely exist on properties.
+    // block_number / section_number are NOT real columns on properties
+    // (they live on builder_arc); including them historically may have
+    // been silently tolerated by PostgREST but it's not safe to depend
+    // on. Stripped to the essentials so the join cannot fail on a
+    // missing-column reference. Extra data (community config etc.) gets
+    // looked up in separate queries below.
+    const { data: propScopes, error: propScopesErr } = await supabase
       .from('portal_user_properties')
       .select(`
         property_id,
@@ -581,17 +582,14 @@ router.get('/me', async (req, res) => {
           id,
           street_address,
           lot_number,
-          block_number,
-          section_number,
-          community_id,
-          communities:community_id (
-            id, name, slug, hoa_legal_name,
-            portal_active, portal_module_config, portal_welcome_message
-          )
+          community_id
         )
       `)
       .eq('portal_user_id', user.id)
       .is('revoked_at', null);
+    if (propScopesErr) {
+      console.warn('[portal /me] propScopes query failed:', propScopesErr.message);
+    }
 
     const props = (propScopes || []).map((s) => s.properties).filter(Boolean);
     if (!props.length) {
@@ -618,6 +616,29 @@ router.get('/me', async (req, res) => {
       });
     }
 
+    // Batch-fetch all unique communities the user touches, so downstream
+    // code that expects p.communities (board view, property list, etc.)
+    // still works. Single query, IN clause, served from communities table
+    // directly. Avoids nested-SELECT failure modes.
+    const uniqueCommunityIds = Array.from(new Set(
+      props.map(p => p.community_id).filter(Boolean)
+    ));
+    const communitiesById = {};
+    if (uniqueCommunityIds.length) {
+      try {
+        const { data: cRows, error: cErr } = await supabase
+          .from('communities')
+          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message')
+          .in('id', uniqueCommunityIds);
+        if (cErr) console.warn('[portal /me] communities batch fetch failed:', cErr.message);
+        (cRows || []).forEach(c => { communitiesById[c.id] = c; });
+      } catch (e) {
+        console.warn('[portal /me] communities batch fetch threw:', e.message);
+      }
+    }
+    // Attach community to each prop so existing downstream code keeps working
+    props.forEach(p => { p.communities = communitiesById[p.community_id] || null; });
+
     // Honor ?property_id if provided AND that property is in the user's
     // accessible list. Otherwise default to the first. Security: NEVER trust
     // the client-supplied property_id without verifying it's in propScopes —
@@ -626,12 +647,16 @@ router.get('/me', async (req, res) => {
     const requestedPropertyId = String(req.query?.property_id || '').trim();
     const prop = (requestedPropertyId && props.find((p) => String(p.id) === requestedPropertyId))
       || props[0];
-    const community = prop.communities || {};
 
-    // Resolve is_demo via a SEPARATE query (single-column SELECT). If even
-    // this fails because of schema cache, fall back to a hardcoded list of
-    // known demo community UUIDs. Belt-and-suspenders: code keeps working
-    // through PostgREST cache lag.
+    let community = communitiesById[prop.community_id]
+      || { id: prop.community_id, name: 'Your Community', slug: '', portal_active: false };
+    // Operate on a shallow copy so the is_demo / portal_active coercion
+    // below doesn't mutate the shared map used by other props above.
+    community = { ...community };
+
+    // Resolve is_demo via a SEPARATE single-column query. Hardcoded
+    // allowlist as fallback so demo works even if PostgREST hasn't learned
+    // about communities.is_demo yet.
     const KNOWN_DEMO_COMMUNITY_IDS = new Set([
       'dc100000-0000-4000-a000-000000000000', // Drama Creek Estates
     ]);
@@ -650,10 +675,7 @@ router.get('/me', async (req, res) => {
     }
     community.is_demo = isDemoCommunity;
 
-    // Demo communities are always-on by definition. The portal_active flag
-    // exists so real boards can opt in formally — demo communities don't
-    // need that gate. Coerce here so older deployed frontends (without the
-    // is_demo bypass in portal.html) still render the portal correctly.
+    // Demo communities bypass the portal_active gate by design.
     if (isDemoCommunity) {
       community.portal_active = true;
     }
