@@ -1088,7 +1088,12 @@ function renderPortal(ctx) {
     return;
   }
 
-  if (!ctx.community?.portal_active && !ctx.demo) {
+  // Demo communities bypass the portal_active gate by design — the gate
+  // exists so real boards can opt in formally, but demo communities are
+  // always-on by definition. ctx.demo is the URL-param demo mode (older
+  // path); ctx.community.is_demo is the seeded demo-community flag
+  // (Drama Creek per migration 184). Either signal opens the portal.
+  if (!ctx.community?.portal_active && !ctx.demo && !ctx.community?.is_demo) {
     renderInactive({
       title: 'Portal not yet available for your community',
       message: `Your community's portal is being prepared. In the meantime, contact Bedrock at <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or (832) 588-2485.`,
