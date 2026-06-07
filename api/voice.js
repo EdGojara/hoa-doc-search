@@ -171,6 +171,140 @@ router.post('/incoming', async (req, res) => {
       }
     }
 
+    // ========================================================================
+    // PRE-CALL CONTEXT WARMUP (Ed 2026-06-08)
+    // ------------------------------------------------------------------------
+    // When we identified the caller via caller-ID, fire parallel queries to
+    // pull what Ed would already know if HE were picking up the phone:
+    //   - Current AR balance (any recent payment? any arrears?)
+    //   - Any open violations on the property
+    //   - Any open ACC submissions
+    //   - Recent calls in the last 30 days (continuation? repeat issue?)
+    //
+    // Result: Claire's first response can already be specific. Encode-Ed
+    // pattern at its purest — the system shows up informed instead of
+    // asking the caller to re-explain context from prior interactions.
+    //
+    // Timeboxed to 800ms total via Promise.race so a slow query never
+    // delays the opener. Worst case: warmup is empty, opener falls back
+    // to the generic flow.
+    // ========================================================================
+    let callerWarmup = null;
+    if (callerContact && callerProperty) {
+      try {
+        const warmupPromise = (async () => {
+          const propId = callerProperty.id;
+          // 3 parallel queries. ACC/ARC was considered but the schema is in
+          // flux (arc_historical_decisions vs acc_decisions, different
+          // property linkage patterns). Skipping for v1 of warmup — add in
+          // follow-up once the right ARC source-of-truth is settled.
+          const [arRes, violationsRes, recentCallsRes] = await Promise.allSettled([
+            supabase
+              .from('owner_ar_snapshots')
+              .select('balance_total, snapshot_date, enforcement_stage, at_legal, in_collections, payment_plan_active')
+              .eq('property_id', propId)
+              .order('snapshot_date', { ascending: false })
+              .limit(1)
+              .maybeSingle(),
+            supabase
+              .from('violations')
+              .select('id, primary_category_id, current_stage, opened_at')
+              .eq('property_id', propId)
+              .is('closed_at', null)
+              .order('opened_at', { ascending: false })
+              .limit(3),
+            supabase
+              .from('homeowner_calls')
+              .select('call_sid, started_at, brief, status')
+              .eq('caller_homeowner_id', callerContact.id)
+              .neq('call_sid', callSid)
+              .order('started_at', { ascending: false })
+              .limit(3),
+          ]);
+          const ar = arRes.status === 'fulfilled' ? arRes.value?.data : null;
+          const violations = violationsRes.status === 'fulfilled' ? (violationsRes.value?.data || []) : [];
+          const acc = []; // intentionally empty — see TODO above
+          const recentCallsRaw = recentCallsRes.status === 'fulfilled' ? (recentCallsRes.value?.data || []) : [];
+          // Flatten the brief JSONB into a 'summary' field the prompt builder
+          // can read directly. Use brief.concern as the primary summary;
+          // fall back to answer_or_status if no concern.
+          const recentCalls = recentCallsRaw.map(c => ({
+            started_at: c.started_at,
+            status: c.status,
+            summary: c.brief?.concern || c.brief?.answer_or_status || null,
+          }));
+          return { ar, violations, acc, recentCalls };
+        })();
+        // Race against an 800ms timeout so we never delay the opener
+        const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 800));
+        callerWarmup = await Promise.race([warmupPromise, timeout]);
+        if (callerWarmup) {
+          const summaryParts = [];
+          if (callerWarmup.violations?.length) summaryParts.push(`${callerWarmup.violations.length} open violation${callerWarmup.violations.length > 1 ? 's' : ''}`);
+          if (callerWarmup.acc?.length) summaryParts.push(`${callerWarmup.acc.length} open ACC submission${callerWarmup.acc.length > 1 ? 's' : ''}`);
+          if (callerWarmup.recentCalls?.length) summaryParts.push(`${callerWarmup.recentCalls.length} prior call${callerWarmup.recentCalls.length > 1 ? 's' : ''} in last 30 days`);
+          console.log(`[voice/incoming] warmup for ${callerContact.preferred_name || callerContact.full_name}: ${summaryParts.join(', ') || 'no flags'}`);
+        } else {
+          console.log(`[voice/incoming] warmup timed out (>800ms) — falling back to generic opener`);
+        }
+      } catch (e) {
+        console.warn('[voice/incoming] warmup fetch failed (non-fatal):', e.message);
+      }
+    }
+
+    // Build a short hint string for the opener IF there's exactly one
+    // likely call reason. Multiple flags → don't probe (would feel like a
+    // database dump). Zero flags → fall back to generic opener. One clear
+    // flag → soft probe so Claire shows up informed.
+    let warmupOpenerHint = null;
+    if (callerWarmup) {
+      const accCount = callerWarmup.acc?.length || 0;
+      const violationCount = callerWarmup.violations?.length || 0;
+      const recentCallCount = callerWarmup.recentCalls?.length || 0;
+      // Single-flag probes only. Order: ACC > violation > recent call.
+      if (accCount === 1 && violationCount === 0) {
+        const project = callerWarmup.acc[0]?.project_summary;
+        warmupOpenerHint = project
+          ? `I see we have your ARC submission for the ${project.slice(0, 40)} in review — calling about that?`
+          : `I see we have an open ARC submission for you — calling about that?`;
+      } else if (violationCount === 1 && accCount === 0) {
+        warmupOpenerHint = `I see we have an open compliance item on the property — calling about that?`;
+      } else if (recentCallCount > 0 && accCount === 0 && violationCount === 0) {
+        warmupOpenerHint = `Good to hear from you again — what can I help with today?`;
+      }
+    }
+    // Serialize warmup context for the bridge (caps total parameter size
+    // for TwiML — keep it tight). JSON-encoded then base64 to avoid XML-
+    // escape headaches in the TwiML <Parameter value>.
+    let warmupSerialized = '';
+    if (callerWarmup) {
+      try {
+        const compact = {
+          ar: callerWarmup.ar ? {
+            balance_total: callerWarmup.ar.balance_total,
+            snapshot_date: callerWarmup.ar.snapshot_date,
+            enforcement_stage: callerWarmup.ar.enforcement_stage,
+            at_legal: !!callerWarmup.ar.at_legal,
+            in_collections: !!callerWarmup.ar.in_collections,
+            payment_plan_active: !!callerWarmup.ar.payment_plan_active,
+          } : null,
+          v_count: callerWarmup.violations?.length || 0,
+          acc: (callerWarmup.acc || []).slice(0, 2).map(a => ({
+            status: a.status,
+            project_summary: (a.project_summary || '').slice(0, 80),
+            submitted_at: a.submitted_at,
+          })),
+          recent: (callerWarmup.recentCalls || []).slice(0, 3).map(c => ({
+            started_at: c.started_at,
+            summary: (c.summary || '').slice(0, 120),
+          })),
+        };
+        warmupSerialized = Buffer.from(JSON.stringify(compact), 'utf8').toString('base64');
+      } catch (e) {
+        warmupSerialized = '';
+      }
+    }
+
     // Derive the community Claire uses for context. Priority order:
     //   1. voice_phone_routes (Model B — explicit per-community routing)
     //   2. caller's home community via caller-ID lookup
@@ -232,6 +366,8 @@ router.post('/incoming', async (req, res) => {
       <Parameter name="caller_first_name" value="${escapeXml(callerFirstName || '')}"/>
       <Parameter name="caller_property_id" value="${escapeXml(callerProperty?.id || '')}"/>
       <Parameter name="caller_property_address" value="${escapeXml(callerProperty?.street_address || '')}"/>
+      <Parameter name="warmup_opener_hint" value="${escapeXml(warmupOpenerHint || '')}"/>
+      <Parameter name="warmup_b64" value="${escapeXml(warmupSerialized || '')}"/>
     </Stream>
   </Connect>
 </Response>`;
@@ -320,14 +456,30 @@ function handleWebSocketConnection(ws, req) {
 
     if (msg.event === 'start' && !bridge) {
       const params = msg.start?.customParameters || {};
+
+      // Pre-call warmup unpacks back into a structured object the bridge
+      // forwards into Claire's system prompt. Encode-Ed: opener feels
+      // informed because we already pulled AR + violations + ACC + recent
+      // calls during the Twilio webhook (Ed 2026-06-08).
+      let warmup = null;
+      if (params.warmup_b64) {
+        try {
+          warmup = JSON.parse(Buffer.from(String(params.warmup_b64), 'base64').toString('utf8'));
+        } catch (e) {
+          console.warn('[voice/stream] warmup decode failed:', e.message);
+        }
+      }
+
       const callContext = {
         call_sid: params.call_sid || msg.start.callSid,
         from_phone: params.from_phone,
+        caller_phone: params.from_phone,  // alias used by SMS-link tool
         to_phone: params.to_phone,
         // Caller-ID-matched homeowner info (null if anonymous / unknown caller)
         caller: params.caller_contact_id
           ? {
               contact_id: params.caller_contact_id,
+              id: params.caller_contact_id,    // alias used by tools
               full_name: params.caller_name || null,
               first_name: params.caller_first_name || null,
               property_id: params.caller_property_id || null,
@@ -344,6 +496,8 @@ function handleWebSocketConnection(ws, req) {
           profile_block: null,
           doc_context: null,
         },
+        warmup,                                              // structured prefetch
+        warmup_opener_hint: params.warmup_opener_hint || '', // soft probe for buildOpener
       };
       bridge = new CallBridge({ twilioWs: ws, callContext, supabase });
     }
