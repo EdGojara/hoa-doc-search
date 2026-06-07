@@ -200,11 +200,13 @@ router.post('/incoming', async (req, res) => {
       try {
         const warmupPromise = (async () => {
           const propId = callerProperty.id;
-          // 3 parallel queries. ACC/ARC was considered but the schema is in
-          // flux (arc_historical_decisions vs acc_decisions, different
-          // property linkage patterns). Skipping for v1 of warmup — add in
-          // follow-up once the right ARC source-of-truth is settled.
-          const [arRes, violationsRes, recentCallsRes] = await Promise.allSettled([
+          // 4 parallel queries. arc_historical_decisions IS the canonical
+          // ACC table — decision_type='pending' represents in-flight
+          // submissions; 'approved'/'denied'/'conditional' are historical.
+          // Settled question (Ed 2026-06-08): we pull PENDING here so
+          // Claire knows about open requests; historical decisions go to
+          // the precedent retrieval layer instead.
+          const [arRes, violationsRes, accRes, recentCallsRes] = await Promise.allSettled([
             supabase
               .from('owner_ar_snapshots')
               .select('balance_total, snapshot_date, enforcement_stage, at_legal, in_collections, payment_plan_active')
@@ -220,6 +222,13 @@ router.post('/incoming', async (req, res) => {
               .order('opened_at', { ascending: false })
               .limit(3),
             supabase
+              .from('arc_historical_decisions')
+              .select('id, decision_type, project_type, project_description, summary, created_at')
+              .eq('property_id', propId)
+              .eq('decision_type', 'pending')
+              .order('created_at', { ascending: false })
+              .limit(2),
+            supabase
               .from('homeowner_calls')
               .select('call_sid, started_at, brief, status')
               .eq('caller_homeowner_id', callerContact.id)
@@ -229,7 +238,15 @@ router.post('/incoming', async (req, res) => {
           ]);
           const ar = arRes.status === 'fulfilled' ? arRes.value?.data : null;
           const violations = violationsRes.status === 'fulfilled' ? (violationsRes.value?.data || []) : [];
-          const acc = []; // intentionally empty — see TODO above
+          const accRaw = accRes.status === 'fulfilled' ? (accRes.value?.data || []) : [];
+          // Shape ACC rows to match what the prompt builder expects
+          // (status + project_summary + submitted_at)
+          const acc = accRaw.map(a => ({
+            status: a.decision_type || 'pending',
+            project_type: a.project_type || null,
+            project_summary: a.summary || a.project_description || a.project_type || 'ARC submission',
+            submitted_at: a.created_at,
+          }));
           const recentCallsRaw = recentCallsRes.status === 'fulfilled' ? (recentCallsRes.value?.data || []) : [];
           // Flatten the brief JSONB into a 'summary' field the prompt builder
           // can read directly. Use brief.concern as the primary summary;
@@ -269,9 +286,15 @@ router.post('/incoming', async (req, res) => {
       const recentCallCount = callerWarmup.recentCalls?.length || 0;
       // Single-flag probes only. Order: ACC > violation > recent call.
       if (accCount === 1 && violationCount === 0) {
-        const project = callerWarmup.acc[0]?.project_summary;
-        warmupOpenerHint = project
-          ? `I see we have your ARC submission for the ${project.slice(0, 40)} in review — calling about that?`
+        // For the opener, prefer the raw project_type ('paint', 'fence',
+        // 'addition') which reads naturally as a noun phrase after "your
+        // ARC submission for the ___". The longer summary is reserved
+        // for the system prompt where Claire can use it in fuller
+        // context. Falls back to a generic phrasing if no type.
+        const accRow = (callerWarmup.acc[0]) || {};
+        const projectType = accRow.project_type;
+        warmupOpenerHint = projectType
+          ? `I see we have your ARC submission for the ${projectType} project in review — calling about that?`
           : `I see we have an open ARC submission for you — calling about that?`;
       } else if (violationCount === 1 && accCount === 0) {
         warmupOpenerHint = `I see we have an open compliance item on the property — calling about that?`;
@@ -297,6 +320,7 @@ router.post('/incoming', async (req, res) => {
           v_count: callerWarmup.violations?.length || 0,
           acc: (callerWarmup.acc || []).slice(0, 2).map(a => ({
             status: a.status,
+            project_type: a.project_type || null,
             project_summary: (a.project_summary || '').slice(0, 80),
             submitted_at: a.submitted_at,
           })),
