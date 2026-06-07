@@ -852,6 +852,12 @@ app.use('/api/email-intelligence', emailIntakeRouter);
 const emailCampaignsRouter = require('./api/email_campaigns');
 app.use('/api/email-campaigns', emailCampaignsRouter);
 
+// Transactions — homeowner transaction history mirrored from Vantaca via
+// monthly CSV upload. Migration 195. "Financial activity current as of
+// [date]" disclosure on the portal.
+const transactionsRouter = require('./api/transactions');
+app.use('/api/transactions', transactionsRouter);
+
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)
 const { router: arcHistoryRouter } = require('./api/arc_history');

@@ -1793,6 +1793,119 @@ router.get('/balance', async (req, res) => {
 });
 
 // ============================================================================
+// ============================================================================
+// GET /api/portal/transactions
+// Returns the signed-in homeowner's transaction history + running balance
+// for the property they're scoped to. Plus the freshness disclosure —
+// "Financial activity current as of [date]" — pulled from the latest
+// committed upload batch for the community.
+//
+// Renters refused (per migration 186 capability matrix — financial data
+// is owner-class).
+//
+// Query params:
+//   property_id — optional, defaults to the user's first property
+//   limit       — optional, default 100
+// ============================================================================
+router.get('/transactions', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const portalUserId = roleCheck.user.id;
+
+    // Resolve property — use the homeowner_path pattern from /balance
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select('property_id, properties:property_id (id, vantaca_account_id, community_id, street_address, communities:community_id (id, name))')
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null);
+    const props = (scopes || []).map(s => s.properties).filter(Boolean);
+    if (!props.length) return res.json({ property: null, transactions: [], balance: null, freshness: null });
+
+    const requestedPropertyId = String(req.query?.property_id || '').trim();
+    const prop = (requestedPropertyId && props.find(p => String(p.id) === requestedPropertyId)) || props[0];
+    const community = prop.communities || {};
+    const vantacaAccountId = prop.vantaca_account_id;
+
+    if (!vantacaAccountId) {
+      // No Vantaca account linkage — return shape but empty
+      return res.json({
+        property: { id: prop.id, address: prop.street_address, community_name: community.name },
+        transactions: [],
+        balance: null,
+        freshness: null,
+        note: 'This property has no Vantaca account number on file. Transaction history is not available until that linkage is set.',
+      });
+    }
+
+    const limit = Math.min(parseInt(req.query.limit || '100', 10), 500);
+
+    // Pull transactions joined to committed batches only (reverted batches
+    // are excluded structurally)
+    const { data: txns } = await supabase
+      .from('homeowner_transactions')
+      .select('id, transaction_date, description, txn_type, amount_cents, running_balance_cents, vantaca_account_id, source_batch:source_batch_id(status, as_of_date)')
+      .eq('community_id', community.id)
+      .eq('vantaca_account_id', vantacaAccountId)
+      .order('transaction_date', { ascending: false })
+      .limit(limit);
+    const visibleTxns = (txns || []).filter(t => t.source_batch?.status === 'committed');
+
+    // Running balance — sum of all visible transactions, using the view
+    let balance = null;
+    try {
+      const { data: bal } = await supabase
+        .from('v_homeowner_current_balance')
+        .select('balance_cents, most_recent_txn_date, txn_count')
+        .eq('community_id', community.id)
+        .eq('vantaca_account_id', vantacaAccountId)
+        .maybeSingle();
+      if (bal) balance = bal;
+    } catch (_) { /* view may not be ready on fresh deploys */ }
+
+    // Freshness disclosure
+    let freshness = null;
+    try {
+      const { data: f } = await supabase
+        .from('v_community_transaction_freshness')
+        .select('period_label, as_of_date, committed_at')
+        .eq('community_id', community.id)
+        .maybeSingle();
+      if (f) freshness = f;
+    } catch (_) {}
+
+    res.json({
+      property: {
+        id: prop.id,
+        address: prop.street_address,
+        community_id: community.id,
+        community_name: community.name,
+        vantaca_account_id: vantacaAccountId,
+      },
+      transactions: visibleTxns.map(t => ({
+        id: t.id,
+        date: t.transaction_date,
+        description: t.description,
+        type: t.txn_type,
+        amount_cents: t.amount_cents,
+        running_balance_cents: t.running_balance_cents,
+      })),
+      balance: balance ? {
+        balance_cents: balance.balance_cents,
+        most_recent_txn_date: balance.most_recent_txn_date,
+      } : null,
+      freshness: freshness ? {
+        period_label: freshness.period_label,
+        as_of_date: freshness.as_of_date,
+      } : null,
+    });
+  } catch (err) {
+    console.error('[portal/transactions] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // GET /api/portal/meetings
 // Returns upcoming meetings (from events table where event_type contains
 // 'meeting') + past meeting minutes (library_documents with meeting categories).
