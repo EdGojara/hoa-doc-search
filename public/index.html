@@ -8960,6 +8960,8 @@
             </select>
           </label>
           <label class="prof-fld"><span>Fiscal year end</span><input id="prof-fiscal_year_end" placeholder="December 31" /></label>
+          <label class="prof-fld"><span>Community website</span><input id="prof-community_website_url" placeholder="https://waterview-estates.com" /></label>
+          <label class="prof-fld"><span>Homeowner portal URL</span><input id="prof-homeowner_portal_url" placeholder="home.bedrocktx.com (override per community if needed)" /></label>
           <label class="prof-fld" style="grid-column: 1 / -1;"><span>Amenities (comma-separated)</span><input id="prof-amenities" placeholder="pool, clubhouse, tennis courts, playground" /></label>
           <label class="prof-fld"><span>Bank / reserves note</span><input id="prof-banking" placeholder="Operating: Frost. Reserves: ICS @ TexasFirst." /></label>
           <label class="prof-fld"><span>Insurance carrier</span><input id="prof-insurance_carrier" placeholder="Travelers" /></label>
@@ -21972,6 +21974,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     set('prof-assessment_annual', profile.assessment_annual);
     set('prof-assessment_frequency', profile.assessment_frequency);
     set('prof-fiscal_year_end', profile.fiscal_year_end);
+    set('prof-community_website_url', profile.community_website_url);
+    set('prof-homeowner_portal_url', profile.homeowner_portal_url);
     set('prof-amenities', Array.isArray(profile.amenities) ? profile.amenities.join(', ') : (profile.amenities || ''));
     set('prof-banking', profile.banking);
     set('prof-insurance_carrier', profile.insurance_carrier);
@@ -22120,6 +22124,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       assessment_annual: numOrNull('prof-assessment_annual'),
       assessment_frequency: val('prof-assessment_frequency') || null,
       fiscal_year_end: val('prof-fiscal_year_end') || null,
+      community_website_url: val('prof-community_website_url') || null,
+      homeowner_portal_url: val('prof-homeowner_portal_url') || null,
       amenities: val('prof-amenities')
         ? val('prof-amenities').split(',').map(s => s.trim()).filter(Boolean)
         : null,
