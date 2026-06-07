@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Welcome to Bedrock — Day 1</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --black: #0a0e16;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--black);
+    color: var(--cream);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Scene container */
+  .deck { width: 100vw; height: 100dvh; position: relative; }
+  .scene {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 6vh 6vw;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.6s ease;
+    overflow-y: auto;
+  }
+  .scene.active { opacity: 1; pointer-events: auto; }
+
+  /* Backgrounds for different scene types */
+  .scene.dark { background: var(--black); color: var(--cream); }
+  .scene.navy { background: linear-gradient(180deg, #0B1D34 0%, #142844 100%); color: var(--cream); }
+  .scene.cream { background: var(--cream); color: var(--ink); }
+  .scene.gold-accent { background: var(--black); color: var(--cream); }
+
+  /* Typography */
+  .label {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.24em; text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 24px;
+  }
+  .scene.cream .label { color: var(--navy); opacity: 0.5; }
+
+  h1.headline {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(38px, 6vw, 88px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    max-width: 1000px;
+    text-align: center;
+  }
+  h1.headline em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .scene.cream h1.headline em { color: var(--navy); }
+
+  h2.title {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(28px, 4vw, 52px);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    max-width: 880px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .subhead {
+    font-family: var(--font-serif); font-style: italic; font-weight: 400;
+    font-size: clamp(20px, 2.4vw, 30px);
+    max-width: 720px;
+    text-align: center;
+    color: var(--gold);
+    margin-top: 16px;
+  }
+  .scene.cream .subhead { color: var(--navy-soft); }
+
+  p.body {
+    font-family: var(--font-sans); font-size: clamp(16px, 1.4vw, 19px);
+    line-height: 1.7;
+    color: var(--cream);
+    max-width: 700px;
+    margin: 22px auto 0;
+    text-align: center;
+  }
+  .scene.cream p.body { color: var(--ink-soft); }
+  p.body strong { color: var(--gold); font-weight: 500; }
+  .scene.cream p.body strong { color: var(--navy); }
+
+  blockquote.quote {
+    font-family: var(--font-serif); font-style: italic; font-weight: 400;
+    font-size: clamp(28px, 3.4vw, 44px);
+    line-height: 1.35;
+    max-width: 800px;
+    text-align: center;
+    padding: 0 24px;
+    position: relative;
+  }
+  blockquote.quote::before,
+  blockquote.quote::after {
+    content: '"';
+    font-size: 1.4em;
+    color: var(--gold);
+    line-height: 0;
+    vertical-align: -0.25em;
+  }
+  .scene.cream blockquote.quote::before,
+  .scene.cream blockquote.quote::after { color: var(--navy); }
+  .quote-attrib {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); margin-top: 28px;
+  }
+  .scene.cream .quote-attrib { color: var(--navy); }
+
+  /* Cycle diagram */
+  .cycle {
+    display: flex; flex-direction: column;
+    align-items: center; gap: 10px;
+    margin: 32px 0;
+    font-family: var(--font-mono); font-size: 14px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--cream);
+  }
+  .cycle .step {
+    padding: 12px 28px;
+    background: rgba(212,175,55,0.06);
+    border: 1px solid rgba(212,175,55,0.35);
+    border-radius: 6px;
+    min-width: 220px; text-align: center;
+  }
+  .cycle .arrow { color: var(--gold); font-size: 22px; opacity: 0.5; }
+
+  /* trustEd mockup card */
+  .platform-mock {
+    background: var(--cream);
+    border-radius: 14px;
+    padding: 30px 34px;
+    box-shadow: 0 20px 60px rgba(0,0,0,0.6), 0 4px 14px rgba(0,0,0,0.4);
+    color: var(--ink);
+    max-width: 760px; width: 100%;
+    margin: 24px auto 0;
+    text-align: left;
+    font-family: var(--font-sans); font-size: 14px;
+    border: 1px solid rgba(212,175,55,0.3);
+  }
+  .platform-mock .pm-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 12px; margin-bottom: 16px;
+    padding-bottom: 12px; border-bottom: 1px solid var(--rule);
+  }
+  .platform-mock .pm-head h4 {
+    font-family: var(--font-serif); font-weight: 500; font-size: 22px;
+    color: var(--navy); margin: 0;
+  }
+  .platform-mock .pm-head .pm-tag {
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--gold); font-weight: 600;
+  }
+  .platform-mock .pm-section { margin-bottom: 12px; }
+  .platform-mock .pm-section-label {
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--ink-faint); margin-bottom: 4px;
+  }
+  .platform-mock .pm-section p {
+    font-size: 13.5px; line-height: 1.55; color: var(--ink-soft);
+  }
+  .platform-mock .pm-section p strong { color: var(--navy); font-weight: 600; }
+  .platform-mock .pm-section .pm-list {
+    list-style: none; padding: 0; margin: 4px 0 0;
+  }
+  .platform-mock .pm-section .pm-list li {
+    font-size: 13px; color: var(--ink-soft); padding: 4px 0;
+    padding-left: 18px; position: relative;
+  }
+  .platform-mock .pm-section .pm-list li::before {
+    content: '✓'; color: var(--gold); position: absolute; left: 0; top: 4px;
+    font-weight: 700;
+  }
+
+  /* Pillars / values columns */
+  .pillars {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
+    max-width: 900px; width: 100%; margin: 32px auto 0;
+  }
+  @media (max-width: 720px) { .pillars { grid-template-columns: 1fr; } }
+  .pillar {
+    background: rgba(212,175,55,0.05);
+    border: 1px solid rgba(212,175,55,0.25);
+    border-radius: 10px; padding: 22px 18px;
+    text-align: center;
+  }
+  .pillar .p-word {
+    font-family: var(--font-serif); font-weight: 600;
+    font-size: 26px; color: var(--gold);
+    letter-spacing: -0.01em; margin-bottom: 8px;
+  }
+  .pillar .p-detail {
+    font-size: 13.5px; color: var(--cream); opacity: 0.85; line-height: 1.5;
+  }
+
+  /* Week-1 schedule grid */
+  .week-grid {
+    display: grid; grid-template-columns: 90px 1fr;
+    gap: 14px 22px; max-width: 760px; margin: 28px auto 0;
+    text-align: left;
+  }
+  .week-grid .wk-day {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--gold); padding-top: 4px;
+  }
+  .week-grid .wk-content {
+    font-size: 15px; color: var(--cream);
+    border-left: 1px solid rgba(212,175,55,0.3);
+    padding-left: 20px; padding-bottom: 10px;
+  }
+  .week-grid .wk-content strong { color: var(--gold-bright); font-weight: 500; }
+
+  /* Logo mark */
+  .logo-mark {
+    width: 50px; height: 64px;
+    display: block; margin: 0 auto 18px;
+  }
+
+  /* Navigation chrome */
+  .nav-chrome {
+    position: fixed; bottom: 24px; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 36px; z-index: 100;
+    pointer-events: none;
+  }
+  .nav-btn {
+    pointer-events: auto;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--cream);
+    padding: 10px 18px; border-radius: 999px;
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.1s;
+    backdrop-filter: blur(8px);
+  }
+  .nav-btn:hover { background: rgba(212,175,55,0.16); border-color: rgba(212,175,55,0.4); }
+  .nav-btn:active { transform: translateY(1px); }
+  .nav-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  .nav-btn.primary { background: var(--gold); color: var(--navy); border-color: var(--gold); font-weight: 600; }
+  .nav-btn.primary:hover { background: var(--gold-bright); }
+
+  .scene-counter {
+    pointer-events: auto;
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.16em; color: rgba(255,255,255,0.45);
+    text-transform: uppercase;
+  }
+  .scene.cream + .nav-chrome .scene-counter { color: rgba(11,29,52,0.6); }
+
+  /* Progress bar */
+  .progress {
+    position: fixed; top: 0; left: 0;
+    height: 2px; background: var(--gold);
+    transition: width 0.5s ease;
+    z-index: 100;
+  }
+
+  /* Skip hint */
+  .skip-hint {
+    position: fixed; top: 22px; right: 28px;
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.16em; color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 100;
+  }
+
+  /* Keyboard hint */
+  kbd {
+    font-family: var(--font-mono); font-size: 10px;
+    background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7);
+    padding: 2px 6px; border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+
+  /* Personalized name */
+  .hire-name { color: var(--gold); font-style: italic; }
+  .scene.cream .hire-name { color: var(--navy); }
+
+  /* Branding chip on first/last */
+  .brand-chip {
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); opacity: 0.9;
+    margin-top: 32px;
+  }
+  .scene.cream .brand-chip { color: var(--navy); opacity: 0.6; }
+
+  /* Reading lockup for Ed's story scene */
+  .story-card {
+    background: rgba(212,175,55,0.04);
+    border-left: 2px solid var(--gold);
+    padding: 26px 32px; max-width: 720px;
+    margin: 28px auto 0; text-align: left;
+    font-size: 16px; line-height: 1.65; color: var(--cream);
+  }
+  .story-card p { margin-bottom: 14px; }
+  .story-card p:last-child { margin-bottom: 0; }
+  .story-card em { color: var(--gold); font-style: italic; }
+
+  /* Path / journey timeline */
+  .path-row {
+    display: flex; align-items: center; justify-content: center;
+    flex-wrap: wrap; gap: 14px;
+    margin: 28px auto 0; max-width: 900px;
+  }
+  .path-step {
+    font-family: var(--font-mono); font-size: 12px;
+    letter-spacing: 0.14em; text-transform: uppercase;
+    padding: 8px 16px; border-radius: 999px;
+    background: rgba(212,175,55,0.08);
+    border: 1px solid rgba(212,175,55,0.35);
+    color: var(--cream);
+  }
+  .path-step.terminal {
+    background: var(--gold);
+    color: var(--navy); font-weight: 700;
+  }
+  .path-sep { color: var(--gold); opacity: 0.6; }
+
+  /* Mobile tweaks */
+  @media (max-width: 600px) {
+    .scene { padding: 4vh 5vw; }
+    .nav-chrome { padding: 0 16px; bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress" style="width: 0%;"></div>
+<div class="skip-hint">Press <kbd>→</kbd> to advance · <kbd>esc</kbd> to exit</div>
+
+<div class="deck" id="deck">
+
+  <!-- SCENE 1 — Cold open / personalized welcome -->
+  <section class="scene dark" data-scene="1">
+    <div class="label">Welcome</div>
+    <h1 class="headline" style="margin-bottom: 14px;">
+      Welcome, <span class="hire-name" id="hireNameMain">there</span>.
+    </h1>
+    <p class="subhead" style="max-width: 620px;">
+      What follows is not an onboarding deck.
+    </p>
+    <div class="brand-chip">Bedrock Association Management · Day 1</div>
+  </section>
+
+  <!-- SCENE 2 — The hook -->
+  <section class="scene dark" data-scene="2">
+    <div class="label">The Premise</div>
+    <h1 class="headline">
+      Most industries are transformed by technology.<br>
+      <span style="opacity:0.6;">HOA management hasn't been.</span>
+    </h1>
+    <p class="subhead">Yet.</p>
+  </section>
+
+  <!-- SCENE 3 — Ed's story (placeholder for Ed to rewrite in his voice) -->
+  <section class="scene navy" data-scene="3">
+    <div class="label">My Path</div>
+    <div class="path-row">
+      <span class="path-step">CPA</span><span class="path-sep">→</span>
+      <span class="path-step">Audit Partner</span><span class="path-sep">→</span>
+      <span class="path-step">Hedge Fund Ops</span><span class="path-sep">→</span>
+      <span class="path-step">Bedrock</span><span class="path-sep">→</span>
+      <span class="path-step terminal">trustEd</span>
+    </div>
+    <div class="story-card">
+      <p>I spent fifteen years chasing the wrong scoreboard. <em>Audit partner. Hedge fund. Six-figure deals.</em></p>
+      <p>I eventually realized I wanted to build something that mattered — not just to me, but to the people on the other end of every email, every assessment, every violation letter.</p>
+      <p>HOA management looked broken from a distance. Up close, it was worse. <em>Good people trapped in bad systems.</em> Homeowners treated like account numbers. Boards drowning in PDFs. Staff burning out because every problem had to be solved twice — once by someone who'd just left.</p>
+      <p>So I bought Bedrock and started rebuilding the whole thing.</p>
+    </div>
+    <p class="body" style="margin-top: 24px; font-size: 14px; opacity: 0.7;">
+      <em>(Ed will rewrite this slide in his own voice — what's here is a placeholder draft based on the path we know.)</em>
+    </p>
+  </section>
+
+  <!-- SCENE 4 — The problem statement -->
+  <section class="scene dark" data-scene="4">
+    <div class="label">The Diagnosis</div>
+    <h1 class="headline">
+      <span style="color: var(--gold);">Good people</span><br>trapped in <span style="color: var(--gold);">bad systems.</span>
+    </h1>
+    <p class="body" style="margin-top: 40px; opacity: 0.75;">
+      The talent isn't the problem. The talent is everywhere. The problem is that traditional HOA management is structured to lose institutional knowledge every time someone leaves — and that's been the industry default for forty years.
+    </p>
+  </section>
+
+  <!-- SCENE 5 — The cycle (the trap most firms are in) -->
+  <section class="scene dark" data-scene="5">
+    <div class="label">The Trap</div>
+    <h2 class="title">The cycle most management firms can't escape.</h2>
+    <div class="cycle">
+      <div class="step">Hire</div>
+      <div class="arrow">↓</div>
+      <div class="step">Train</div>
+      <div class="arrow">↓</div>
+      <div class="step">Improve</div>
+      <div class="arrow">↓</div>
+      <div class="step">Leave</div>
+      <div class="arrow">↓</div>
+      <div class="step" style="border-color: var(--gold); background: rgba(212,175,55,0.16);">Start Over</div>
+    </div>
+    <p class="body" style="margin-top: 24px;">
+      I got tired of rebuilding the company every time someone left.
+    </p>
+  </section>
+
+  <!-- SCENE 6 — Bezos -->
+  <section class="scene navy" data-scene="6">
+    <div class="label">Influence 01</div>
+    <blockquote class="quote">
+      Start with the customer and work backwards.
+    </blockquote>
+    <div class="quote-attrib">— Jeff Bezos</div>
+    <p class="body" style="margin-top: 36px;">
+      The Bedrock translation: <strong>every decision starts with the homeowner, the board, or you.</strong>
+      Not the contract. Not the policy. Not what's easiest internally. The customer-experience question comes first, every time.
+    </p>
+  </section>
+
+  <!-- SCENE 7 — Jobs -->
+  <section class="scene navy" data-scene="7">
+    <div class="label">Influence 02</div>
+    <blockquote class="quote">
+      Simple can be harder than complex.
+    </blockquote>
+    <div class="quote-attrib">— Steve Jobs</div>
+    <p class="body" style="margin-top: 36px;">
+      Homeowners don't care about AI. They care that the answer they need shows up in their inbox within an hour and reads like a person wrote it.
+      <br><br>
+      <strong>The simpler the experience, the more sophisticated the system behind it has to be.</strong>
+    </p>
+  </section>
+
+  <!-- SCENE 8 — The Bedrock synthesis -->
+  <section class="scene dark" data-scene="8">
+    <div class="label">The Synthesis</div>
+    <h2 class="title">
+      Bezos's customer obsession.<br>
+      Jobs's design discipline.<br>
+      <span style="color: var(--gold);">Applied to community management.</span>
+    </h2>
+    <p class="body" style="margin-top: 30px;">
+      That's the whole thesis. Everything we build serves one or both of those instincts. If a feature doesn't, we don't ship it.
+    </p>
+  </section>
+
+  <!-- SCENE 9 — trustEd platform reveal -->
+  <section class="scene dark" data-scene="9">
+    <div class="label">What We Built</div>
+    <h2 class="title">trustEd. The operating system for community management.</h2>
+    <div class="platform-mock">
+      <div class="pm-head">
+        <h4>Commercial vehicle complaint · 1234 Oak Lane</h4>
+        <span class="pm-tag">Live</span>
+      </div>
+      <div class="pm-section">
+        <div class="pm-section-label">Caller said</div>
+        <p>"Neighbor has a work van in the driveway every night. It's been months. I've reported it three times. Why do I pay HOA dues if nobody enforces the rules?"</p>
+      </div>
+      <div class="pm-section">
+        <div class="pm-section-label">What the system did</div>
+        <ul class="pm-list">
+          <li>Read the governing docs — found the commercial-vehicle covenant + parking exception clause</li>
+          <li>Pulled the prior complaints + their resolution timeline</li>
+          <li>Applied the multi-lens judgment (legal · CC&R · fairness · empathy)</li>
+          <li>Identified what the caller is <em>actually</em> protecting: fairness, not the vehicle</li>
+          <li>Drafted the response. Cited the rule. Acknowledged the pattern. Committed to a specific next step.</li>
+        </ul>
+      </div>
+      <div class="pm-section">
+        <div class="pm-section-label">What you'll do</div>
+        <p><strong>Supervise.</strong> Review. Approve or correct. Every correction trains the system to be smarter for the next one.</p>
+      </div>
+    </div>
+    <p class="body" style="margin-top: 28px; opacity: 0.85;">
+      <em>(Ed will swap in a real trustEd screenshot here for V2 of this presentation.)</em>
+    </p>
+  </section>
+
+  <!-- SCENE 10 — Your role -->
+  <section class="scene navy" data-scene="10">
+    <div class="label">Your Role</div>
+    <h2 class="title">You are not doing clerical work.</h2>
+    <p class="body" style="margin-top: 20px; font-size: clamp(18px, 1.8vw, 22px);">
+      You are <strong>supervising a system</strong> that's doing the clerical work. Your job is the judgment layer — the moment of decision, the human read on a situation, the choice to override or approve.
+    </p>
+    <p class="body" style="margin-top: 24px;">
+      Every email you correct, every letter you approve, every call you take — <strong>you are training the platform.</strong> You're not just doing your job. You're literally building the company.
+    </p>
+  </section>
+
+  <!-- SCENE 11 — Why we hired you -->
+  <section class="scene dark" data-scene="11">
+    <div class="label">Why You're Here</div>
+    <h1 class="headline">
+      We hired <span class="hire-name" id="hireNameWhy">you</span> for three things.
+    </h1>
+    <div class="pillars">
+      <div class="pillar">
+        <div class="p-word">Potential</div>
+        <div class="p-detail">Not a résumé. Not a credential. The capacity to grow into a role that doesn't fully exist yet.</div>
+      </div>
+      <div class="pillar">
+        <div class="p-word">Character</div>
+        <div class="p-detail">How you'll treat a homeowner having the worst week of their year. We can train the rest.</div>
+      </div>
+      <div class="pillar">
+        <div class="p-word">Curiosity</div>
+        <div class="p-detail">The question "why does it work this way?" — asked often, with intent, by people who are willing to find out.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCENE 12 — Customer experience commitment -->
+  <section class="scene cream" data-scene="12">
+    <div class="label">Our Standard</div>
+    <h2 class="title" style="color: var(--navy);">
+      Every homeowner is having a moment.
+    </h2>
+    <p class="body" style="color: var(--ink-soft); margin-top: 20px; font-size: clamp(17px, 1.6vw, 21px);">
+      Every call. Every email. Every letter. Somebody on the other end is dealing with something — a fence, a fee, a fine, a family situation that bled into the property. They're not a ticket number. They're a neighbor reaching out, often at a hard moment.
+    </p>
+    <p class="body" style="color: var(--ink); margin-top: 28px; font-weight: 500;">
+      <strong style="color: var(--navy);">Dignity through operational certainty.</strong> Nothing falls through cracks. Nothing is forgotten. Nothing requires a homeowner to chase us. That's the standard.
+    </p>
+  </section>
+
+  <!-- SCENE 13 — The mission -->
+  <section class="scene dark" data-scene="13">
+    <div class="label">The Mission</div>
+    <h1 class="headline">
+      We are not building<br>
+      <span style="opacity: 0.4;">another HOA company.</span>
+    </h1>
+    <p class="subhead" style="margin-top: 36px; font-size: clamp(22px, 2.6vw, 32px);">
+      We are building the operating system<br>for community management.
+    </p>
+    <div class="brand-chip" style="margin-top: 56px;">Bedrock Association Management</div>
+  </section>
+
+  <!-- SCENE 14 — Your first week -->
+  <section class="scene cream" data-scene="14">
+    <div class="label">Your First Week</div>
+    <h2 class="title" style="color: var(--navy);">What to expect.</h2>
+    <div class="week-grid">
+      <div class="wk-day">Day 1</div>
+      <div class="wk-content" style="color: var(--ink);">
+        This presentation. Equipment setup. Tour of the platform. Lunch with the team. <strong style="color: var(--navy);">No production work yet.</strong>
+      </div>
+      <div class="wk-day">Days 2–3</div>
+      <div class="wk-content" style="color: var(--ink);">
+        Shadow real work. Watch how Ed and the team review the AI drafts. Ask every question that comes to mind. <strong style="color: var(--navy);">Curiosity gets rewarded.</strong>
+      </div>
+      <div class="wk-day">Days 4–5</div>
+      <div class="wk-content" style="color: var(--ink);">
+        Bedrock University Module 1 (askEd Foundations). Try the supervised approval workflow on real but low-stakes items. <strong style="color: var(--navy);">First time you correct the system, you've started building it.</strong>
+      </div>
+      <div class="wk-day">Week 2+</div>
+      <div class="wk-content" style="color: var(--ink);">
+        Take on a small portfolio of recurring work. Weekly 1:1 with Ed for context + questions. The goal: by week six, you're the second-best person in the company at one specific thing.
+      </div>
+    </div>
+  </section>
+
+  <!-- SCENE 15 — Closing manifesto -->
+  <section class="scene dark gold-accent" data-scene="15">
+    <svg class="logo-mark" viewBox="0 0 50 64" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+      <path d="M12 4 L12 60 L40 60 L40 4 Z" stroke="#D4AF37" stroke-width="2" fill="none"/>
+      <path d="M22 4 L22 60" stroke="#D4AF37" stroke-width="1.2" opacity="0.5"/>
+      <path d="M30 4 L30 60" stroke="#D4AF37" stroke-width="1.2" opacity="0.5"/>
+    </svg>
+    <h2 class="title" style="font-size: clamp(26px, 3.4vw, 42px); max-width: 760px;">
+      You didn't join an HOA company,<br>
+      <span class="hire-name" id="hireNameClose">friend</span>.
+    </h2>
+    <p class="subhead" style="margin-top: 24px;">
+      You joined a company trying to reinvent an industry.
+    </p>
+    <p class="body" style="margin-top: 36px; opacity: 0.85; font-size: clamp(15px, 1.4vw, 18px);">
+      Welcome to Bedrock. Glad you're here. Let's get started.
+    </p>
+    <div class="brand-chip" style="margin-top: 48px;">
+      Bedrock Association Management · Community. Simplified.
+    </div>
+  </section>
+
+</div>
+
+<!-- Navigation controls -->
+<div class="nav-chrome">
+  <button class="nav-btn" id="prevBtn" onclick="goPrev()">← Back</button>
+  <div class="scene-counter" id="counter">1 / 15</div>
+  <button class="nav-btn primary" id="nextBtn" onclick="goNext()">Continue →</button>
+</div>
+
+<script>
+'use strict';
+
+// -------------- Personalization --------------
+function getHireName() {
+  try {
+    const u = new URL(window.location.href);
+    const n = (u.searchParams.get('hire') || u.searchParams.get('name') || '').trim();
+    if (!n) return null;
+    // Strip any HTML / scripts defensively
+    return n.replace(/[<>"'&]/g, '').slice(0, 40);
+  } catch (_) { return null; }
+}
+
+const hireName = getHireName();
+if (hireName) {
+  const formatted = hireName.charAt(0).toUpperCase() + hireName.slice(1);
+  document.getElementById('hireNameMain').textContent = formatted;
+  document.getElementById('hireNameWhy').textContent = formatted;
+  document.getElementById('hireNameClose').textContent = formatted;
+  document.title = `Welcome, ${formatted} — Bedrock`;
+}
+
+// -------------- Scene navigation --------------
+const scenes = document.querySelectorAll('.scene');
+const total = scenes.length;
+let current = 0;
+
+function render() {
+  scenes.forEach((s, i) => s.classList.toggle('active', i === current));
+  document.getElementById('counter').textContent = `${current + 1} / ${total}`;
+  document.getElementById('prevBtn').disabled = current === 0;
+  const nextBtn = document.getElementById('nextBtn');
+  if (current === total - 1) {
+    nextBtn.textContent = '✓ Done';
+    nextBtn.onclick = () => { window.location.href = '/'; };
+  } else {
+    nextBtn.textContent = 'Continue →';
+    nextBtn.onclick = goNext;
+  }
+  // Progress bar
+  document.getElementById('progress').style.width = `${((current + 1) / total) * 100}%`;
+  // Body bg for nav button readability — make nav text adapt to current scene's bg
+  const active = scenes[current];
+  if (active && active.classList.contains('cream')) {
+    document.body.style.background = 'var(--cream)';
+  } else {
+    document.body.style.background = 'var(--black)';
+  }
+}
+
+function goNext() {
+  if (current < total - 1) { current++; render(); }
+}
+function goPrev() {
+  if (current > 0) { current--; render(); }
+}
+
+document.addEventListener('keydown', (e) => {
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') {
+    e.preventDefault();
+    if (current === total - 1) { window.location.href = '/'; }
+    else { goNext(); }
+  } else if (e.key === 'ArrowLeft') {
+    e.preventDefault(); goPrev();
+  } else if (e.key === 'Escape') {
+    window.location.href = '/';
+  }
+});
+
+// Touch swipe support (mobile)
+let touchStartX = 0;
+document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+document.addEventListener('touchend', (e) => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(dx) < 50) return;
+  if (dx < 0) goNext();
+  else goPrev();
+});
+
+render();
+</script>
+
+</body>
+</html>
