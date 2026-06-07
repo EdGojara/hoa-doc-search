@@ -544,6 +544,15 @@
      the sticky header. Applied/removed by applyMimicBanner() in JS. */
   body.mimic-on { padding-top: 40px; }
   body.mimic-on header.top { top: 40px; }
+
+  /* Demo community — same pattern. Banner is 32px tall (lighter weight).
+     When mimic is also active, stack demo banner below mimic at 40px. */
+  body.demo-on { padding-top: 32px; }
+  body.demo-on #demoBanner { top: 0; }
+  body.demo-on header.top { top: 32px; }
+  body.demo-on.mimic-on { padding-top: 72px; }
+  body.demo-on.mimic-on #demoBanner { top: 40px; }
+  body.demo-on.mimic-on header.top { top: 72px; }
 </style>
 </head>
 <body>
@@ -558,6 +567,16 @@
     <span id="mimicExpiresIn" style="opacity:0.85; font-size:12px; font-weight:400;"></span>
     <button onclick="exitMimic()" style="background:#fff; color:#b91c1c; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">Exit mimic →</button>
   </div>
+</div>
+
+<!-- Demo community banner — visible ONLY when /me returns
+     community.is_demo=true (Drama Creek Estates per migration 184).
+     Protects against any screenshot or session being misread as a real
+     community. Bedrock gold + navy so it reads as intentional brand,
+     not warning. Stacks below mimic banner if both active. -->
+<div id="demoBanner" style="display:none; position:fixed; left:0; right:0; background:#D4AF37; color:#0B1D34; padding:7px 16px; z-index:999; align-items:center; justify-content:center; gap:10px; box-shadow:0 2px 8px rgba(11,29,52,0.15); font-family:Inter,-apple-system,sans-serif; font-size:12.5px; font-weight:600; letter-spacing:0.02em;">
+  <span style="font-size:14px;">●</span>
+  <span><strong style="letter-spacing:0.08em; text-transform:uppercase;">Demo Community</strong> · <span id="demoBannerName">—</span> · All data shown is fictional</span>
 </div>
 
 <div id="app">
@@ -891,6 +910,20 @@ function setStoredPropertyId(id) {
 }
 function clearStoredPropertyId() {
   try { sessionStorage.removeItem(SS_PROPERTY_KEY); } catch (_) {}
+}
+
+function applyDemoBanner(ctx) {
+  const banner = document.getElementById('demoBanner');
+  if (!banner) return;
+  const isDemo = !!(ctx && ctx.community && ctx.community.is_demo);
+  if (isDemo) {
+    document.getElementById('demoBannerName').textContent = ctx.community.name || 'Demo Community';
+    banner.style.display = 'flex';
+    document.body.classList.add('demo-on');
+  } else {
+    banner.style.display = 'none';
+    document.body.classList.remove('demo-on');
+  }
 }
 
 async function applyMimicBanner(ctx) {
@@ -1469,6 +1502,7 @@ function _dismissTutorial() {
 // =============================================================================
 (async () => {
   const ctx = await loadPortal();
+  applyDemoBanner(ctx);
   applyMimicBanner(ctx);
   renderPortal(ctx);
 })();

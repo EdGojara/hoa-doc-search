@@ -450,7 +450,7 @@ router.get('/me', async (req, res) => {
           section_number,
           community_id,
           communities:community_id (
-            id, name, slug, hoa_legal_name,
+            id, name, slug, hoa_legal_name, is_demo,
             portal_active, portal_module_config, portal_welcome_message
           )
         )
@@ -638,6 +638,9 @@ router.get('/me', async (req, res) => {
         welcome_message: community.portal_welcome_message || '',
         portal_active: community.portal_active === true,
         portal_module_config: community.portal_module_config || {},
+        // Demo community flag — drives watermark ribbon. Migration 184
+        // adds Drama Creek Estates as the canonical demo community.
+        is_demo: community.is_demo === true,
       },
       balance,
       compliance,
