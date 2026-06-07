@@ -69,10 +69,12 @@ async function resolveRecipients({ scope, target_community_id, audience }) {
   }
   if (!communityIds.length) return [];
 
-  // Step 2 — fetch community context for branding
+  // Step 2 — fetch community context for branding. Pull the full brand kit
+  // so each rendered email uses the COMMUNITY's colors / logo / signoff,
+  // not Bedrock's. Bedrock-as-invisible-plumbing principle.
   const { data: communityRows } = await supabase
     .from('communities')
-    .select('id, name, legal_name, hoa_legal_name')
+    .select('id, name, legal_name, hoa_legal_name, brand_primary_color, brand_accent_color, brand_text_on_primary, logo_storage_path, logo_height_px, signoff_signature')
     .in('id', communityIds);
   const communityById = {};
   (communityRows || []).forEach(c => {
@@ -80,6 +82,14 @@ async function resolveRecipients({ scope, target_community_id, audience }) {
       id: c.id,
       name: c.name,
       legal_name: c.legal_name || c.hoa_legal_name || c.name,
+      brand: {
+        primary_color:   c.brand_primary_color,
+        accent_color:    c.brand_accent_color,
+        text_on_primary: c.brand_text_on_primary,
+        logo_height_px:  c.logo_height_px,
+      },
+      logo_storage_path: c.logo_storage_path,
+      signoff_signature: c.signoff_signature,
     };
   });
 
@@ -141,6 +151,9 @@ async function resolveRecipients({ scope, target_community_id, audience }) {
       community_id: comm.id,
       community_name: comm.name,
       community_legal_name: comm.legal_name,
+      brand: comm.brand,
+      logo_storage_path: comm.logo_storage_path,
+      signoff_signature: comm.signoff_signature,
       recipient_role: 'owner',
       _priority_date: null, // owner is fallback
     });
@@ -180,6 +193,9 @@ async function resolveRecipients({ scope, target_community_id, audience }) {
       community_id: comm.id,
       community_name: comm.name,
       community_legal_name: comm.legal_name,
+      brand: comm.brand,
+      logo_storage_path: comm.logo_storage_path,
+      signoff_signature: comm.signoff_signature,
       recipient_role: role,
       _priority_date: startDate,
     });
@@ -212,30 +228,102 @@ function substituteTemplate(template, ctx) {
 // HTML letterhead wrapper — wraps the substituted body in branded letterhead
 // with the community's name + Bedrock sign-off footer.
 // ----------------------------------------------------------------------------
+// Register-aware eyebrow text. The register stays as a tone classifier but
+// it NO LONGER drives colors — the community's brand kit does. Bedrock-as-
+// invisible-plumbing principle (Ed 2026-06-08): the email reads as the
+// community, not as Bedrock.
+const REGISTER_EYEBROW = {
+  engagement:  'Community Update',
+  operational: 'Community Notice',
+  compliance:  'Official Notice',
+};
+
+// Neutral fallbacks for communities that haven't set a brand kit yet.
+// Deliberately NOT Bedrock navy/gold — these are generic "a community"
+// colors so even an unbranded email doesn't accidentally look like a
+// Bedrock email.
+const DEFAULT_BRAND = {
+  primary_color:   '#2A4054',   // muted slate — generic, not Bedrock navy
+  accent_color:    '#B5946B',   // warm tan — generic, not Bedrock gold
+  text_on_primary: 'light',
+  logo_height_px:  40,
+};
+
+function _isLightText(textOnPrimary) {
+  return (textOnPrimary || DEFAULT_BRAND.text_on_primary) === 'light';
+}
+
+// Resolves a community logo storage path to a signed URL the email can embed.
+// Falls back to null on any error so the renderer just shows the community
+// name wordmark instead.
+async function resolveLogoUrl(storagePath) {
+  if (!storagePath) return null;
+  try {
+    const { data } = await supabase.storage
+      .from('community-logos')
+      .createSignedUrl(storagePath, 60 * 60 * 24 * 7); // 7-day signed URL
+    return data?.signedUrl || null;
+  } catch (e) {
+    return null;
+  }
+}
+
 function wrapInLetterhead(bodyHtml, ctx) {
+  const brand = ctx.brand || DEFAULT_BRAND;
+  const primary   = brand.primary_color   || DEFAULT_BRAND.primary_color;
+  const accent    = brand.accent_color    || DEFAULT_BRAND.accent_color;
+  const isLight   = _isLightText(brand.text_on_primary);
+  const bandText  = isLight ? '#ffffff' : '#0a0a0a';
+  const subText   = isLight ? 'rgba(255,255,255,0.7)' : 'rgba(10,10,10,0.6)';
+  const eyebrow   = REGISTER_EYEBROW[ctx.register] || REGISTER_EYEBROW.operational;
+  const isCompliance = ctx.register === 'compliance';
+  const bodyBorder = isCompliance
+    ? `2px solid ${accent}`
+    : `1px solid #e5e3da`;
+  const signoff   = ctx.signoff_signature
+    || `The ${escapeHtml(ctx.community_name || 'Community')} Board`;
+
+  // Logo block — community logo if set, otherwise community name as wordmark
+  const logoBlock = ctx.logo_url
+    ? `<img src="${escapeHtml(ctx.logo_url)}" alt="${escapeHtml(ctx.community_name || '')}" style="max-height:${brand.logo_height_px || 40}px; display:block; margin-bottom:12px; max-width:240px;">`
+    : '';
+
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head>
 <body style="margin:0; padding:0; background:#f5f4ed; font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif; color:#1a1a1a;">
   <div style="max-width:600px; margin:0 auto; padding:24px 16px;">
-    <!-- Community letterhead -->
-    <div style="background:#0B1D34; color:#fff; padding:24px 28px; border-radius:10px 10px 0 0;">
-      <div style="font-size:11px; letter-spacing:0.18em; color:#D4AF37; text-transform:uppercase; margin-bottom:6px;">Community Notice</div>
-      <div style="font-family:Georgia,'Times New Roman',serif; font-size:22px; font-weight:500; line-height:1.2;">${escapeHtml(ctx.community_name || '')}</div>
+
+    <!-- COMMUNITY letterhead — community brand is hero -->
+    <div style="background:${primary}; color:${bandText}; padding:26px 30px; border-radius:10px 10px 0 0;">
+      ${logoBlock}
+      <div style="font-size:11px; letter-spacing:0.18em; color:${accent}; text-transform:uppercase; margin-bottom:8px; font-weight:600;">${eyebrow}</div>
+      <div style="font-family:Georgia,'Times New Roman',serif; font-size:24px; font-weight:500; line-height:1.2; color:${bandText};">${escapeHtml(ctx.community_name || '')}</div>
       ${ctx.community_legal_name && ctx.community_legal_name !== ctx.community_name
-        ? `<div style="font-size:12.5px; color:#cbd5e1; margin-top:4px;">${escapeHtml(ctx.community_legal_name)}</div>`
+        ? `<div style="font-size:12.5px; color:${subText}; margin-top:6px;">${escapeHtml(ctx.community_legal_name)}</div>`
         : ''}
     </div>
+
     <!-- Body -->
-    <div style="background:#fff; padding:32px 28px; border:1px solid #e5e3da; border-top:0; border-radius:0 0 10px 10px; font-size:15px; line-height:1.6; color:#222;">
+    <div style="background:#fff; padding:32px 30px; border:${bodyBorder}; border-top:0; border-radius:0 0 10px 10px; font-size:15px; line-height:1.6; color:#222;">
       ${bodyHtml}
+      <div style="margin-top:24px; padding-top:18px; border-top:1px solid #e5e3da; font-size:14px; color:#555;">
+        <div>Thanks,</div>
+        <div style="margin-top:4px; font-weight:500; color:#1a1a1a;">${signoff}</div>
+      </div>
     </div>
-    <!-- Bedrock sign-off footer -->
-    <div style="text-align:center; padding:18px 16px 8px; font-size:11.5px; color:#6b7280; line-height:1.7;">
-      <div style="margin-bottom:4px;">Sent on behalf of <strong>${escapeHtml(ctx.community_legal_name || ctx.community_name || '')}</strong></div>
-      <div>by <strong>Bedrock Association Management, LLC</strong></div>
-      <div style="margin-top:6px;">${BEDROCK_PHONE} · <a href="mailto:${BEDROCK_EMAIL}" style="color:#0B1D34;">${BEDROCK_EMAIL}</a></div>
-      <div style="margin-top:10px; font-size:10.5px; color:#94a3b8; letter-spacing:0.18em; text-transform:uppercase;">Community. Simplified.</div>
+
+    <!-- BEDROCK attribution — small, at bottom. Invisible plumbing. -->
+    <div style="text-align:center; padding:22px 16px 4px; font-size:11px; color:#6b7280; line-height:1.7;">
+      <div style="display:inline-flex; align-items:center; gap:8px; padding:6px 12px; border-radius:999px; background:rgba(11,29,52,0.04); border:1px solid rgba(11,29,52,0.08);">
+        <span style="display:inline-block; width:6px; height:8px; background:#D4AF37; border-radius:1px;"></span>
+        <span>Community management by <strong style="color:#0B1D34;">Bedrock Association Management</strong></span>
+      </div>
+      <div style="margin-top:10px; font-size:10.5px;">
+        ${BEDROCK_PHONE} · <a href="mailto:${BEDROCK_EMAIL}" style="color:#0B1D34;">${BEDROCK_EMAIL}</a>
+      </div>
+      ${isCompliance ? `<div style="margin-top:10px; font-size:10px; color:#94a3b8; letter-spacing:0.05em;">Official correspondence — please retain for your records.</div>` : ''}
     </div>
+
   </div>
 </body></html>`;
 }
@@ -267,6 +355,10 @@ router.post('/', express.json({ limit: '256kb' }), async (req, res) => {
     if (!['owners_and_residents', 'owners_only', 'residents_only'].includes(audience)) {
       return res.status(400).json({ error: 'invalid_audience' });
     }
+    const register = b.register || 'operational';
+    if (!['engagement', 'operational', 'compliance'].includes(register)) {
+      return res.status(400).json({ error: 'invalid_register' });
+    }
     const { data, error } = await supabase
       .from('email_campaigns')
       .insert({
@@ -277,6 +369,7 @@ router.post('/', express.json({ limit: '256kb' }), async (req, res) => {
         body_html_template: String(b.body_html_template),
         body_text_template: b.body_text_template || null,
         audience,
+        register,
         created_by: b.created_by || null,
         notes: b.notes || null,
         status: 'draft',
@@ -370,24 +463,31 @@ router.post('/:id/preview', async (req, res) => {
     const communityBreakdown = Array.from(byCommunity.values())
       .sort((a, b) => b.recipient_count - a.recipient_count);
 
-    // Render sample emails — top 3 communities
+    // Render sample emails — top 3 communities. async map because we need
+    // to resolve the community logo signed URL per sample.
     const sampleCount = campaign.scope === 'single_community' ? 1 : Math.min(3, communityBreakdown.length);
-    const samples = communityBreakdown.slice(0, sampleCount).map(c => {
-      // Use a representative recipient name (find first recipient in that community)
-      const sampleRecipient = recipients.find(r => r.community_id === c.community_id) || {};
-      const ctx = {
-        community_name: c.community_name,
-        community_legal_name: c.community_legal_name,
-        first_name: sampleRecipient.first_name || 'there',
-        full_name: sampleRecipient.full_name || '',
-      };
-      return {
-        community_id: c.community_id,
-        community_name: c.community_name,
-        rendered_subject: substituteTemplate(campaign.subject_template, ctx),
-        rendered_html: wrapInLetterhead(substituteTemplate(campaign.body_html_template, ctx), ctx),
-      };
-    });
+    const samples = await Promise.all(
+      communityBreakdown.slice(0, sampleCount).map(async (c) => {
+        const sampleRecipient = recipients.find(r => r.community_id === c.community_id) || {};
+        const logoUrl = await resolveLogoUrl(sampleRecipient.logo_storage_path);
+        const ctx = {
+          community_name: c.community_name,
+          community_legal_name: c.community_legal_name,
+          first_name: sampleRecipient.first_name || 'there',
+          full_name: sampleRecipient.full_name || '',
+          register: campaign.register || 'operational',
+          brand: sampleRecipient.brand || null,
+          logo_url: logoUrl,
+          signoff_signature: sampleRecipient.signoff_signature || null,
+        };
+        return {
+          community_id: c.community_id,
+          community_name: c.community_name,
+          rendered_subject: substituteTemplate(campaign.subject_template, ctx),
+          rendered_html: wrapInLetterhead(substituteTemplate(campaign.body_html_template, ctx), ctx),
+        };
+      })
+    );
 
     res.json({
       total_recipients: recipients.length,
@@ -433,11 +533,16 @@ router.post('/:id/send-test', express.json(), async (req, res) => {
     if (!sampleRecipient) {
       return res.status(400).json({ error: 'no_recipients_to_render_against' });
     }
+    const logoUrl = await resolveLogoUrl(sampleRecipient.logo_storage_path);
     const ctx = {
       community_name: sampleRecipient.community_name,
       community_legal_name: sampleRecipient.community_legal_name,
       first_name: sampleRecipient.first_name || 'there',
       full_name: sampleRecipient.full_name || '',
+      register: campaign.register || 'operational',
+      brand: sampleRecipient.brand || null,
+      logo_url: logoUrl,
+      signoff_signature: sampleRecipient.signoff_signature || null,
     };
     const subject = '[TEST] ' + substituteTemplate(campaign.subject_template, ctx);
     const html = wrapInLetterhead(substituteTemplate(campaign.body_html_template, ctx), ctx);
@@ -499,16 +604,33 @@ router.post('/:id/send', async (req, res) => {
       if (error) console.warn('[email-campaigns] recipient batch insert failed:', error.message);
     }
 
+    // Cache signed logo URLs per community so we don't re-sign once per
+    // recipient. Same logo URL is valid for all recipients at a given
+    // community within the same fan-out window.
+    const logoUrlCache = new Map();
+    async function getLogoFor(storagePath) {
+      if (!storagePath) return null;
+      if (logoUrlCache.has(storagePath)) return logoUrlCache.get(storagePath);
+      const url = await resolveLogoUrl(storagePath);
+      logoUrlCache.set(storagePath, url);
+      return url;
+    }
+
     // Send loop — small concurrency (5 at a time) to be friendly to Resend
     let delivered = 0, failed = 0;
     const CONCURRENCY = 5;
     let cursor = 0;
     async function sendOne(r) {
+      const logoUrl = await getLogoFor(r.logo_storage_path);
       const ctx = {
         community_name: r.community_name,
         community_legal_name: r.community_legal_name,
         first_name: r.first_name || 'there',
         full_name: r.full_name || '',
+        register: campaign.register || 'operational',
+        brand: r.brand || null,
+        logo_url: logoUrl,
+        signoff_signature: r.signoff_signature || null,
       };
       const subject = substituteTemplate(campaign.subject_template, ctx);
       const html = wrapInLetterhead(substituteTemplate(campaign.body_html_template, ctx), ctx);
