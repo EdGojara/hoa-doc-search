@@ -1891,6 +1891,132 @@ function _humanList(arr) {
   return `${arr.slice(0, -1).join(', ')}, and ${arr[arr.length - 1]}`;
 }
 
+// ============================================================================
+// VAPI TOOL — sendPortalLink (stubbed pre-portal-launch)
+// ----------------------------------------------------------------------------
+// Encode-Ed pattern: when the homeowner needs a form, an application, a
+// statement, or a referenced piece of data, Claire's default offer is the
+// homeowner portal. The portal magic-link is the primary delivery mechanism
+// because it is:
+//   - identity-verifying (magic link → on-file phone/email)
+//   - self-service for everything (forms, balance, ACC, calendar, ...)
+//   - permanent reference (homeowner can find it again later)
+//   - friction-eliminating (no manual form delivery, no re-explanation)
+//
+// CURRENT STATE: the portal is not live yet. This stub tool returns a
+// graceful fallback that:
+//   1. Acknowledges the portal isn't ready
+//   2. Falls back to email delivery (if email on file) or take-a-message
+//   3. Returns speak_to_caller text that mentions "the portal" so Claire's
+//      conversational flow is already shaped around portal-first
+//   4. Logs the request for later reconciliation when the portal launches
+//
+// WHEN THE PORTAL LAUNCHES: flip the implementation to:
+//   1. Generate a magic-link token tied to the caller_phone + contact_id
+//   2. Build the URL: communities.homeowner_portal_url || 'home.bedrocktx.com'
+//      + token + optional destination_page
+//   3. Send via SMS (preferred) or email
+//   4. Return speak_to_caller text confirming the send + the URL
+//
+// Claire's prompt doesn't change. Her words don't change. Only the action
+// behind the words changes.
+// ============================================================================
+router.post('/vapi-tools/send-portal-link', express.json({ limit: '64kb' }), async (req, res) => {
+  const requestId = `vapi-portal-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+    if (expectedSecret) {
+      const auth = String(req.headers.authorization || '');
+      if (auth !== `Bearer ${expectedSecret}`) {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+    }
+    const body = req.body || {};
+    const msg = body.message || body;
+    const args = _extractToolArgs(msg);
+
+    const callerPhone = args.caller_phone || msg.call?.customer?.number || msg.customer?.number || null;
+    // destination_page: where the link should land — 'balance', 'acc',
+    // 'fob_application', 'violations', 'documents', 'calendar', etc.
+    const destinationPage = String(args.destination_page || 'home').toLowerCase();
+    // delivery_channel: 'sms' (default) or 'email'. Caller-stated preference.
+    const deliveryChannel = String(args.delivery_channel || 'sms').toLowerCase();
+    // delivery_email: when channel=email and the caller gave an address
+    const deliveryEmail = String(args.delivery_email || '').trim();
+
+    // Resolve caller for context + on-file contact info
+    let caller = null;
+    let community = null;
+    if (callerPhone) {
+      try {
+        const lookup = await resolveCallerByPhone(callerPhone);
+        caller = lookup.contact;
+        community = lookup.community;
+      } catch (_) {}
+    }
+
+    // Portal not live yet — stub response with email fallback when possible
+    const portalLive = process.env.HOMEOWNER_PORTAL_LIVE === 'true';
+
+    if (!portalLive) {
+      // Log the would-have-sent for reconciliation when portal launches
+      console.log(`[vapi-portal ${requestId}] STUB: would have sent ${destinationPage} link to ${callerPhone || 'unknown'} via ${deliveryChannel}`);
+
+      // If we have email on file or caller gave one, offer email fallback
+      const fallbackEmail = deliveryEmail || caller?.primary_email || caller?.email || null;
+      if (fallbackEmail && deliveryChannel === 'email') {
+        return res.json({
+          result: {
+            link_sent: false,
+            fallback_action: 'email',
+            speak_to_caller: `Sure — I'll have the team email that over to ${fallbackEmail}. You should see it within the next hour. The portal we're rolling out soon will let you grab this stuff directly, but for now email is the fastest. Anything else?`,
+            note_for_audit: 'Portal not yet live; falling back to email delivery via team queue.',
+          },
+        });
+      }
+
+      // Otherwise take a message
+      return res.json({
+        result: {
+          link_sent: false,
+          fallback_action: 'callback',
+          speak_to_caller: `Got it — we're rolling out a homeowner portal in the next few weeks where you'll be able to grab forms and account info directly. Until then, what's the best number for me to have someone from the team get back to you with what you need?`,
+          note_for_audit: 'Portal not yet live; falling back to manual callback.',
+        },
+      });
+    }
+
+    // PORTAL LIVE PATH (HOMEOWNER_PORTAL_LIVE=true on Render) — implemented
+    // when the portal substrate ships. Marker for future wiring:
+    //
+    //   const token = await createPortalMagicLink({ contact_id: caller?.id, ... });
+    //   const baseUrl = community?.homeowner_portal_url || 'https://home.bedrocktx.com';
+    //   const fullUrl = `${baseUrl}/${destinationPage}?t=${token}`;
+    //   if (deliveryChannel === 'sms') await sendSms({ to: callerPhone, body: ... });
+    //   else await sendEmail({ to: fallbackEmail, ... });
+    //
+    // For now return a clear "not implemented" signal so the operator sees
+    // the wiring is missing on the production side.
+    return res.json({
+      result: {
+        link_sent: false,
+        fallback_action: 'not_implemented',
+        speak_to_caller: 'One sec — let me have someone get back to you with that.',
+        note_for_audit: 'HOMEOWNER_PORTAL_LIVE=true but generator not yet wired. See api/voice.js TODO.',
+      },
+    });
+  } catch (err) {
+    console.error(`[vapi-portal ${requestId}] failed:`, err.message);
+    return res.json({
+      result: {
+        link_sent: false,
+        fallback_action: 'callback',
+        speak_to_caller: "Let me have someone get back to you with that — what's the best number to reach you at?",
+      },
+    });
+  }
+});
+
 // ---- shared helper to extract function-call args from Vapi payload --------
 function _extractToolArgs(msg) {
   const toolCall = (msg.toolCalls && msg.toolCalls[0]) || msg.toolCall || null;
