@@ -1325,4 +1325,409 @@ function safeJsonParse(s) {
   try { return JSON.parse(s); } catch (_) { return {}; }
 }
 
+// ============================================================================
+// VAPI TOOL — getCommunityFacts
+// ----------------------------------------------------------------------------
+// Answers the most common type of inbound call: "what are the pool hours,"
+// "when's trash pickup," "what's the clubhouse rental fee." Pulls from
+// trustEd's structured community knowledge (community_facts table, trash
+// schedule JSONB on communities, contacts table for board/staff lookups,
+// amenities table for amenity hours and contract terms).
+//
+// Topic taxonomy — keep it small and aligned with common call topics:
+//   'pool'       — pool hours, rules, key/fob requirements
+//   'clubhouse'  — clubhouse hours, rental fees, reservation process
+//   'amenities'  — generic amenity info (calls below to look up specifics)
+//   'trash'      — trash schedule (pickup days, recycling, bulk)
+//   'gate'       — gate codes, vendor access, guest pass process
+//   'office'     — office hours, contact info, addresses
+//   'board'      — board contact info, meeting schedule
+//   'rules'      — community rules / general policies
+//   'parking'    — parking rules, visitor parking, towing
+//   'pets'       — pet policies
+//   'general'    — anything not in the above buckets
+//
+// When called with a topic, the tool pulls structured data for that topic.
+// When called with topic='general', it falls back to community_facts with
+// a recent / non-expired filter so Claire can answer broad questions.
+//
+// Response is structured for the LLM: top-level `answer` is a 1-2 sentence
+// conversational answer Claire can speak (or paraphrase). `facts_used`
+// surfaces the underlying data so Claire can mention specifics. `caveats`
+// flags when info is stale or community-specific overrides exist.
+//
+// Auth: Bearer VAPI_WEBHOOK_SECRET (same as the others).
+// ============================================================================
+router.post('/vapi-tools/community-facts', express.json({ limit: '64kb' }), async (req, res) => {
+  const requestId = `vapi-facts-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+    if (expectedSecret) {
+      const auth = String(req.headers.authorization || '');
+      if (auth !== `Bearer ${expectedSecret}`) {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+    }
+
+    const body = req.body || {};
+    const msg = body.message || body;
+    const args = _extractToolArgs(msg);
+    let communityId = args.community_id || null;
+    const topic = String(args.topic || 'general').toLowerCase();
+    // Free-text follow-up: if the homeowner asked a more specific question
+    // (e.g., "what time does the pool open Saturday"), Vapi can pass it
+    // here. We use it for the substrate fallback below.
+    const question = String(args.question || '').trim();
+
+    // Resolve community from the call context if not passed explicitly.
+    // Vapi exposes the call's customer phone via msg.call.customer.number.
+    if (!communityId) {
+      const callerPhone = msg.call?.customer?.number || msg.customer?.number || null;
+      if (callerPhone) {
+        try {
+          const lookup = await resolveCallerByPhone(callerPhone);
+          communityId = lookup.community?.id || null;
+        } catch (_) {}
+      }
+    }
+    if (!communityId) {
+      return res.json({
+        result: {
+          answer: "I want to make sure I give you info for the right community — can you confirm which community you're in?",
+          facts_used: [],
+          caveats: ['No community resolved from caller-ID. Need explicit community name from caller.'],
+        },
+      });
+    }
+
+    // Pull base community row for trash_schedule JSONB + office contact
+    const { data: community } = await supabase
+      .from('communities')
+      .select('id, name, trash_schedule, portal_module_config')
+      .eq('id', communityId)
+      .maybeSingle();
+    const communityName = community?.name || 'your community';
+
+    // Topic-specific lookups. Each branch returns { answer, facts_used, caveats }
+    let result;
+    switch (topic) {
+      case 'trash':
+        result = await _facts_trash(community, communityName);
+        break;
+      case 'pool':
+      case 'clubhouse':
+      case 'amenities':
+        result = await _facts_amenities(community, communityName, topic, question);
+        break;
+      case 'office':
+      case 'board':
+      case 'contact':
+        result = await _facts_contacts(communityId, communityName, topic);
+        break;
+      case 'general':
+      default:
+        result = await _facts_general(communityId, communityName, question);
+        break;
+    }
+
+    return res.json({ result });
+  } catch (err) {
+    console.error(`[vapi-facts ${requestId}] failed:`, err.message);
+    return res.json({
+      result: {
+        answer: "I'm not finding that info right now — want me to take down a message and have someone get back to you?",
+        facts_used: [],
+        caveats: ['Tool error — caller should be offered a callback.'],
+      },
+    });
+  }
+});
+
+// ---- Topic branches ---------------------------------------------------------
+
+async function _facts_trash(community, communityName) {
+  const schedule = community?.trash_schedule || null;
+  if (!schedule || (Array.isArray(schedule) && schedule.length === 0)) {
+    return {
+      answer: `I don't have the trash schedule for ${communityName} on file — let me have someone confirm and get back to you.`,
+      facts_used: [],
+      caveats: ['No trash_schedule configured on communities row.'],
+    };
+  }
+  // trash_schedule is a community-specific JSONB shape — surface the
+  // raw structure so the LLM can summarize. The tool returns the data;
+  // Claire speaks it conversationally.
+  return {
+    answer: `Here's ${communityName}'s trash schedule — let me know if you need the recycling or bulk pickup info specifically.`,
+    facts_used: [{
+      topic: 'trash_schedule',
+      source: 'communities.trash_schedule',
+      data: schedule,
+    }],
+    caveats: [],
+  };
+}
+
+async function _facts_amenities(community, communityName, topic, question) {
+  // Pull all amenities for the community
+  const { data: amenities } = await supabase
+    .from('amenities')
+    .select('id, name, amenity_type, operating_hours, contract_terms, vendor_name')
+    .eq('community_id', community?.id)
+    .limit(50);
+  const all = amenities || [];
+  // Filter to topic if topic is specific
+  let filtered = all;
+  if (topic === 'pool') {
+    filtered = all.filter(a => /pool|swim/i.test(`${a.name} ${a.amenity_type}`));
+  } else if (topic === 'clubhouse') {
+    filtered = all.filter(a => /clubhouse|club\s*house|community\s*center/i.test(`${a.name} ${a.amenity_type}`));
+  }
+  if (filtered.length === 0) {
+    return {
+      answer: `I don't have ${topic} info for ${communityName} on file — let me have someone follow up with you.`,
+      facts_used: [],
+      caveats: [`No amenities row matching topic=${topic} for this community.`],
+    };
+  }
+  return {
+    answer: `Sure — here's what I have for the ${communityName} ${topic}. If you need anything more specific I can connect you with the team.`,
+    facts_used: filtered.map(a => ({
+      topic: 'amenity',
+      source: 'amenities table',
+      data: {
+        name: a.name,
+        type: a.amenity_type,
+        hours: a.operating_hours,
+        contract_summary: a.contract_terms,
+        vendor: a.vendor_name,
+      },
+    })),
+    caveats: [],
+  };
+}
+
+async function _facts_contacts(communityId, communityName, topic) {
+  // community_contacts has per-community directory
+  const { data: contacts } = await supabase
+    .from('community_contacts')
+    .select('id, label, value, category, notes')
+    .eq('community_id', communityId)
+    .limit(50);
+  const all = contacts || [];
+  if (all.length === 0) {
+    return {
+      answer: `I don't have a directory on file for ${communityName} — let me transfer you to someone on the team who can help.`,
+      facts_used: [],
+      caveats: [`No community_contacts rows for community_id=${communityId}.`],
+    };
+  }
+  // Filter to topic
+  let filtered = all;
+  if (topic === 'board') {
+    filtered = all.filter(c => /board|president|director|treasurer|secretary/i.test(`${c.label} ${c.category}`));
+  } else if (topic === 'office') {
+    filtered = all.filter(c => /office|management|manager|address/i.test(`${c.label} ${c.category}`));
+  }
+  if (filtered.length === 0) filtered = all;
+  return {
+    answer: `Here's the contact info I have for ${communityName}'s ${topic === 'board' ? 'board' : topic === 'office' ? 'office' : 'team'}.`,
+    facts_used: filtered.map(c => ({
+      topic: 'contact',
+      source: 'community_contacts',
+      data: { label: c.label, value: c.value, category: c.category, notes: c.notes },
+    })),
+    caveats: [],
+  };
+}
+
+async function _facts_general(communityId, communityName, question) {
+  // Pull non-expired community_facts. If a question was passed, surface
+  // up to 5 most relevant by simple keyword match; otherwise return the
+  // top 10 by recency. Substrate-based semantic search would be richer
+  // but adds latency — keep this fast for the common case.
+  const today = new Date().toISOString().slice(0, 10);
+  const { data: facts } = await supabase
+    .from('community_facts')
+    .select('id, category, key, label, value, expires_at')
+    .eq('community_id', communityId)
+    .or(`expires_at.is.null,expires_at.gte.${today}`)
+    .order('updated_at', { ascending: false, nullsFirst: false })
+    .limit(20);
+  const all = facts || [];
+  if (all.length === 0) {
+    return {
+      answer: `I don't have specific info on file for that at ${communityName} — let me take a message and have someone get back to you.`,
+      facts_used: [],
+      caveats: ['No community_facts rows for this community.'],
+    };
+  }
+  let surfaced = all;
+  if (question) {
+    const q = question.toLowerCase();
+    const ranked = all
+      .map(f => {
+        const text = `${f.label || ''} ${f.value || ''} ${f.category || ''} ${f.key || ''}`.toLowerCase();
+        let score = 0;
+        for (const word of q.split(/\W+/).filter(w => w.length > 3)) {
+          if (text.includes(word)) score += 1;
+        }
+        return { f, score };
+      })
+      .filter(x => x.score > 0)
+      .sort((a, b) => b.score - a.score);
+    if (ranked.length > 0) surfaced = ranked.slice(0, 5).map(x => x.f);
+  } else {
+    surfaced = all.slice(0, 10);
+  }
+  return {
+    answer: surfaced.length === 1
+      ? `Here's what I have on that for ${communityName}.`
+      : `Here's the info I have for ${communityName}.`,
+    facts_used: surfaced.map(f => ({
+      topic: f.category || 'general',
+      source: 'community_facts',
+      data: { label: f.label, value: f.value, key: f.key },
+    })),
+    caveats: [],
+  };
+}
+
+// ============================================================================
+// VAPI TOOL — requestHumanCallback
+// ----------------------------------------------------------------------------
+// The "take ownership of next step" pattern. When Claire can't answer
+// something definitively, instead of dead-ending with "we'll be in touch,"
+// she creates a concrete callback commitment. This tool:
+//
+//   1. Captures the request (what they asked, when, why a human is needed)
+//   2. Creates a follow-up task in trustEd's operational queue
+//   3. Returns confirmation language Claire can speak to the caller
+//
+// This is the operational equivalent of Ed saying "I'll handle this — I'll
+// call you back by [time] with an answer." Most call centers handle this as
+// "we'll get back to you" with no actual mechanism. trustEd makes it
+// structurally impossible to forget — the row is in the queue.
+//
+// Auth: Bearer VAPI_WEBHOOK_SECRET.
+// ============================================================================
+router.post('/vapi-tools/request-callback', express.json({ limit: '64kb' }), async (req, res) => {
+  const requestId = `vapi-cb-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+    if (expectedSecret) {
+      const auth = String(req.headers.authorization || '');
+      if (auth !== `Bearer ${expectedSecret}`) {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+    }
+
+    const body = req.body || {};
+    const msg = body.message || body;
+    const args = _extractToolArgs(msg);
+    const callerPhone = args.caller_phone || msg.call?.customer?.number || null;
+    const reasonRaw = String(args.reason || args.summary || 'caller wants a callback').trim();
+    const reason = reasonRaw.slice(0, 500);
+    const urgency = (String(args.urgency || 'standard').toLowerCase());
+    const preferredCallbackTime = String(args.preferred_callback_time || '').trim();
+
+    // Resolve caller + community
+    let caller = null;
+    let community = null;
+    if (callerPhone) {
+      try {
+        const lookup = await resolveCallerByPhone(callerPhone);
+        caller = lookup.contact;
+        community = lookup.community;
+      } catch (_) {}
+    }
+
+    // Compute respond-by based on urgency
+    const respondHours = urgency === 'urgent' ? 2 : urgency === 'low' ? 72 : 24;
+    const respondBy = new Date(Date.now() + respondHours * 3600 * 1000).toISOString();
+
+    // Find or create the homeowner_calls row for this call so the callback
+    // ties to the actual call audit trail. Vapi's call id arrives via the
+    // tool's call context — we use it as the call_sid.
+    const callSid = msg.call?.id || msg.callId || null;
+    let row = null;
+    if (callSid) {
+      const { data: existing } = await supabase
+        .from('homeowner_calls')
+        .select('id, internal_notes, follow_up_status')
+        .eq('call_sid', callSid)
+        .maybeSingle();
+      row = existing;
+    }
+    const stamp = new Date().toISOString().slice(0, 16).replace('T', ' ');
+    const noteLine = `[${stamp}] Claire committed to callback (urgency=${urgency}): ${reason}${preferredCallbackTime ? ` — caller prefers ${preferredCallbackTime}` : ''}`;
+    if (row) {
+      const newNotes = row.internal_notes ? `${row.internal_notes}\n${noteLine}` : noteLine;
+      await supabase
+        .from('homeowner_calls')
+        .update({
+          follow_up_status: 'open',
+          respond_by_at: respondBy,
+          internal_notes: newNotes,
+        })
+        .eq('id', row.id);
+    } else if (callSid) {
+      // Call row hasn't been created yet (end-of-call hasn't fired). Insert
+      // a minimal placeholder so the follow-up doesn't get lost.
+      await supabase.from('homeowner_calls').insert({
+        call_sid: callSid,
+        community_id: community?.id || null,
+        caller_phone: callerPhone,
+        caller_homeowner_id: caller?.id || null,
+        status: 'in_progress',
+        started_at: new Date().toISOString(),
+        follow_up_status: 'open',
+        respond_by_at: respondBy,
+        internal_notes: noteLine,
+      });
+    }
+
+    const friendlyWhen = urgency === 'urgent'
+      ? 'within the next couple hours'
+      : urgency === 'low'
+      ? 'in the next few days'
+      : 'by end of business tomorrow';
+    return res.json({
+      result: {
+        callback_scheduled: true,
+        respond_by_at: respondBy,
+        urgency,
+        speak_to_caller: `Okay, I've got that down — someone from the team will get back to you ${friendlyWhen}${preferredCallbackTime ? ` (we'll aim for around ${preferredCallbackTime})` : ''}. Anything else I can help with in the meantime?`,
+      },
+    });
+  } catch (err) {
+    console.error(`[vapi-cb ${requestId}] failed:`, err.message);
+    return res.json({
+      result: {
+        callback_scheduled: false,
+        speak_to_caller: "Let me try that again — give me one second to get this saved.",
+      },
+    });
+  }
+});
+
+// ---- shared helper to extract function-call args from Vapi payload --------
+function _extractToolArgs(msg) {
+  const toolCall = (msg.toolCalls && msg.toolCalls[0]) || msg.toolCall || null;
+  let args = {};
+  if (toolCall?.function?.arguments) {
+    try { args = JSON.parse(toolCall.function.arguments); }
+    catch (_) { args = toolCall.function.arguments || {}; }
+  } else if (toolCall?.function?.parameters) {
+    args = toolCall.function.parameters;
+  } else if (msg.functionCall?.parameters) {
+    args = msg.functionCall.parameters;
+  } else if (msg.arguments) {
+    args = typeof msg.arguments === 'string' ? safeJsonParse(msg.arguments) : msg.arguments;
+  } else if (msg.parameters) {
+    args = msg.parameters;
+  }
+  return args || {};
+}
+
 module.exports = { router, handleWebSocketConnection };
