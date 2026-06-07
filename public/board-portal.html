@@ -230,6 +230,15 @@
 </head>
 <body>
 
+  <!-- Demo community banner — shown only when the currently-selected
+       community has is_demo=true (Drama Creek Estates per migration 184).
+       Same gold ribbon as the homeowner portal. -->
+  <div id="demoBanner" style="display:none; position:fixed; top:0; left:0; right:0; background:#D4AF37; color:#0B1D34; padding:7px 16px; z-index:1001; align-items:center; justify-content:center; gap:10px; box-shadow:0 2px 8px rgba(11,29,52,0.15); font-family:Inter,-apple-system,sans-serif; font-size:12.5px; font-weight:600; letter-spacing:0.02em;">
+    <span style="font-size:14px;">●</span>
+    <span><strong style="letter-spacing:0.08em; text-transform:uppercase;">Demo Community</strong> · <span id="demoBannerName">—</span> · All data shown is fictional</span>
+    <a href="/try-the-demo" style="margin-left:14px; color:#0B1D34; text-decoration:underline; font-weight:600; font-size:12px;">Switch persona ↺</a>
+  </div>
+
   <div class="topbar">
     <div class="topbar-inner">
       <div class="brand">
@@ -326,20 +335,41 @@
 
   // ----- Communities --------------------------------------------------------
 
+  // Map of community_id → { name, is_demo } — populated by loadCommunities,
+  // consulted by handleCommunityChange to flip the demo banner on/off.
+  let communityIndex = {};
+
   async function loadCommunities() {
     try {
       const j = await fetchJSON('/api/board-portal/communities');
       const sel = document.getElementById('communitySelect');
+      communityIndex = {};
+      (j.communities || []).forEach(c => { communityIndex[c.id] = { name: c.name, is_demo: c.is_demo === true }; });
       sel.innerHTML = '<option value="">— Select a community —</option>' +
-        (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}</option>`).join('');
+        (j.communities || []).map(c => `<option value="${esc(c.id)}">${esc(c.name)}${c.is_demo ? ' (Demo)' : ''}</option>`).join('');
     } catch (e) {
       document.getElementById('communitySelect').innerHTML = '<option value="">Failed to load</option>';
       document.getElementById('container').innerHTML = `<div class="err">Load failed: ${esc(e.message)}</div>`;
     }
   }
 
+  function applyDemoBanner(communityId) {
+    const banner = document.getElementById('demoBanner');
+    if (!banner) return;
+    const entry = communityIndex[communityId];
+    if (entry && entry.is_demo) {
+      document.getElementById('demoBannerName').textContent = entry.name || 'Demo Community';
+      banner.style.display = 'flex';
+      document.body.style.paddingTop = '32px';
+    } else {
+      banner.style.display = 'none';
+      document.body.style.paddingTop = '';
+    }
+  }
+
   function handleCommunityChange(communityId) {
     currentCommunityId = communityId || null;
+    applyDemoBanner(communityId);
     if (!communityId) {
       document.getElementById('container').innerHTML = '<div class="loading">Pick a community to see properties.</div>';
       return;

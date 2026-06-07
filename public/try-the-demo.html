@@ -1,0 +1,427 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Try the Demo · Drama Creek Estates · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --shadow: 0 1px 3px rgba(26, 48, 80, 0.06), 0 6px 22px rgba(26, 48, 80, 0.06);
+    --font-serif: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body { margin: 0; padding: 0; background: var(--cream-soft); color: var(--ink); font-family: var(--font-sans); font-size: 15px; line-height: 1.55; -webkit-font-smoothing: antialiased; min-height: 100vh; }
+
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 36px 24px 80px; }
+
+  .top {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 36px;
+  }
+  .brand { display: flex; align-items: center; gap: 14px; }
+  .brand img { height: 50px; width: auto; display: block; }
+  .brand .wm { font-family: var(--font-serif); font-size: 17px; font-weight: 500; color: var(--navy); letter-spacing: -0.01em; line-height: 1.05; }
+  .brand .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .brand .sub { font-family: var(--font-mono); font-size: 9.5px; color: var(--ink-faint); letter-spacing: 0.16em; text-transform: uppercase; margin-top: 3px; }
+
+  .demo-chip {
+    background: var(--gold); color: var(--navy);
+    padding: 5px 11px; border-radius: 999px;
+    font-size: 10.5px; font-weight: 700;
+    letter-spacing: 0.08em; text-transform: uppercase;
+  }
+
+  .hero { text-align: center; margin: 0 auto 40px; max-width: 720px; }
+  .hero h1 {
+    font-family: var(--font-serif); font-size: 40px; font-weight: 500;
+    color: var(--navy); margin: 0 0 14px; line-height: 1.1;
+    letter-spacing: -0.01em;
+  }
+  .hero h1 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .hero .lede {
+    color: var(--ink-soft); font-size: 16px; line-height: 1.6;
+    margin: 0 auto 18px; max-width: 600px;
+  }
+  .hero .disclosure {
+    display: inline-flex; align-items: center; gap: 8px;
+    background: rgba(212, 175, 55, 0.12);
+    border: 1px solid rgba(212, 175, 55, 0.35);
+    color: var(--navy);
+    padding: 8px 14px; border-radius: 999px;
+    font-size: 12.5px; font-weight: 500;
+  }
+  .hero .disclosure .dot {
+    width: 8px; height: 8px; border-radius: 50%; background: var(--gold);
+  }
+
+  /* Persona cards layout */
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; margin-bottom: 28px; }
+  @media (max-width: 720px) { .cols { grid-template-columns: 1fr; } }
+
+  .col {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    padding: 28px;
+    box-shadow: var(--shadow);
+  }
+  .col h2 {
+    font-family: var(--font-serif); font-size: 22px; font-weight: 600;
+    color: var(--navy); margin: 0 0 6px;
+  }
+  .col .col-lede { color: var(--ink-soft); font-size: 14px; line-height: 1.5; margin: 0 0 22px; }
+
+  .primary-cta {
+    display: flex; align-items: center; gap: 14px;
+    background: var(--navy); color: white;
+    padding: 16px 18px; border-radius: 10px;
+    text-decoration: none; border: 0; width: 100%;
+    cursor: pointer; font-family: inherit;
+    transition: background 0.15s ease, transform 0.06s ease;
+    margin-bottom: 18px;
+  }
+  .primary-cta:hover { background: var(--navy-soft); }
+  .primary-cta:active { transform: translateY(1px); }
+  .primary-cta:disabled { opacity: 0.55; cursor: wait; }
+  .primary-cta .icon {
+    width: 38px; height: 38px; border-radius: 50%;
+    background: var(--gold); color: var(--navy);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; flex-shrink: 0; font-weight: 700;
+  }
+  .primary-cta .body { flex: 1; text-align: left; }
+  .primary-cta .body .l1 { font-size: 15px; font-weight: 600; letter-spacing: 0.01em; }
+  .primary-cta .body .l2 { font-size: 12.5px; opacity: 0.7; margin-top: 2px; font-weight: 400; }
+  .primary-cta .arrow { opacity: 0.7; font-size: 18px; }
+
+  .more-row {
+    display: flex; align-items: center; justify-content: space-between;
+    cursor: pointer;
+    font-size: 12.5px; color: var(--navy); font-weight: 500;
+    padding: 4px 0;
+    user-select: none;
+  }
+  .more-row .chev { transition: transform 0.18s ease; }
+  .more-row.open .chev { transform: rotate(90deg); }
+
+  .more-list { display: none; margin-top: 12px; }
+  .more-list.open { display: block; }
+
+  .persona-row {
+    display: flex; align-items: center; gap: 12px;
+    background: var(--cream); border: 1px solid var(--rule);
+    border-radius: 8px;
+    padding: 10px 14px;
+    margin-bottom: 8px;
+    cursor: pointer; text-align: left;
+    font-family: inherit; width: 100%;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  .persona-row:hover { border-color: var(--gold); background: white; }
+  .persona-row:disabled { opacity: 0.55; cursor: wait; }
+  .persona-row .pname { font-size: 14px; color: var(--navy); font-weight: 600; }
+  .persona-row .pscenario { font-size: 12px; color: var(--ink-soft); margin-top: 1px; }
+  .persona-row .pgo { margin-left: auto; font-size: 13px; color: var(--ink-faint); }
+
+  /* "How this works" panel */
+  .how {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: 14px;
+    padding: 22px 28px;
+    box-shadow: var(--shadow);
+  }
+  .how h3 {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 600;
+    color: var(--navy); margin: 0 0 10px;
+  }
+  .how ul { margin: 0; padding-left: 18px; color: var(--ink-soft); font-size: 13.5px; line-height: 1.7; }
+  .how ul li { margin-bottom: 4px; }
+
+  footer {
+    margin-top: 40px; text-align: center;
+    font-size: 11.5px; color: var(--ink-faint); line-height: 1.7;
+  }
+  footer .tag {
+    font-family: var(--font-mono);
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--ink-soft); margin-bottom: 4px;
+  }
+  footer a { color: var(--navy); text-decoration: none; }
+  footer a:hover { color: var(--gold); }
+
+  .toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%) translateY(8px);
+    background: var(--navy); color: var(--cream);
+    padding: 12px 20px; border-radius: 8px;
+    font-size: 13px;
+    opacity: 0; transition: opacity 0.2s ease, transform 0.2s ease;
+    z-index: 100; max-width: 92vw;
+  }
+  .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+  .toast.error { background: #962a2a; }
+
+  .spinner-inline {
+    display: inline-block; width: 13px; height: 13px;
+    border: 2px solid currentColor; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <div class="top">
+    <a class="brand" href="https://bedrocktx.com" style="text-decoration:none;color:inherit;">
+      <img src="/brand-assets/bedrock-mark.svg" alt="Bedrock mark">
+      <div>
+        <div class="wm">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+        <div class="sub">Community. Simplified.</div>
+      </div>
+    </a>
+    <div class="demo-chip">● Live Demo</div>
+  </div>
+
+  <div class="hero">
+    <h1>Walk through the Bedrock platform <em>as a real user would.</em></h1>
+    <div class="lede">
+      Choose a role below and you'll sign in to <strong>Drama Creek Estates</strong>,
+      our demo HOA. Click around the portal exactly the way a homeowner or board
+      member would on day one of using Bedrock at their own community.
+    </div>
+    <div class="disclosure">
+      <span class="dot"></span>
+      All data shown is fictional. Drama Creek Estates is not a real community.
+    </div>
+  </div>
+
+  <div class="cols">
+
+    <!-- Homeowner column -->
+    <div class="col">
+      <h2>The homeowner experience</h2>
+      <div class="col-lede">
+        What every owner at a Bedrock community sees when they sign in —
+        their property summary, account balance, open requests, documents.
+      </div>
+
+      <button class="primary-cta" onclick="signIn('bob', 'homeowner_primary')" id="cta-homeowner">
+        <div class="icon">B</div>
+        <div class="body">
+          <div class="l1">Sign in as Bob Steady</div>
+          <div class="l2">The model homeowner — clean record, current dues</div>
+        </div>
+        <div class="arrow">→</div>
+      </button>
+
+      <div class="more-row" onclick="toggleMore('homeowners')" id="more-row-homeowners">
+        <span>Other homeowner scenarios</span>
+        <span class="chev">›</span>
+      </div>
+      <div class="more-list" id="more-list-homeowners">
+        <button class="persona-row" onclick="signIn('jennifer', 'homeowner')">
+          <div>
+            <div class="pname">Jennifer Lateleaves</div>
+            <div class="pscenario">Active enforcement — landscape courtesy notice</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('marcus', 'homeowner')">
+          <div>
+            <div class="pname">Marcus Behindbills</div>
+            <div class="pscenario">Payment plan — working with accounting</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('patricia', 'homeowner')">
+          <div>
+            <div class="pname">Patricia Newpaint</div>
+            <div class="pscenario">ACC submission in review — exterior repaint</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('greg', 'homeowner')">
+          <div>
+            <div class="pname">Greg Yardgone</div>
+            <div class="pscenario">Escalated to attorney — at-legal status</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('sarah', 'homeowner')">
+          <div>
+            <div class="pname">Sarah Welcome</div>
+            <div class="pscenario">Brand-new owner — closed last month</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('margaret', 'homeowner')">
+          <div>
+            <div class="pname">Margaret Foundingmember</div>
+            <div class="pscenario">Long-tenured — original buyer from build-out</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('tom', 'homeowner')">
+          <div>
+            <div class="pname">Tom Investorson</div>
+            <div class="pscenario">Investor / landlord — rental property</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Board column -->
+    <div class="col">
+      <h2>The board member experience</h2>
+      <div class="col-lede">
+        What a sitting board member sees — community-wide AR, open compliance
+        cases, ARC pipeline, financials, the curated board packet.
+      </div>
+
+      <button class="primary-cta" onclick="signIn('sunny', 'board_primary')" id="cta-board">
+        <div class="icon">S</div>
+        <div class="body">
+          <div class="l1">Sign in as Sunny Meadows</div>
+          <div class="l2">Board President — the optimist who runs the room</div>
+        </div>
+        <div class="arrow">→</div>
+      </button>
+
+      <div class="more-row" onclick="toggleMore('board')" id="more-row-board">
+        <span>Other board members</span>
+        <span class="chev">›</span>
+      </div>
+      <div class="more-list" id="more-list-board">
+        <button class="persona-row" onclick="signIn('byron', 'board')">
+          <div>
+            <div class="pname">Byron T. Bylaw</div>
+            <div class="pscenario">VP / Architectural Chair — the rules-quoter</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('cassandra', 'board')">
+          <div>
+            <div class="pname">Cassandra Complaine</div>
+            <div class="pscenario">Secretary — the worrier who tracks every detail</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('tally', 'board')">
+          <div>
+            <div class="pname">Tally Hawthorne</div>
+            <div class="pscenario">Treasurer — the numbers person</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+        <button class="persona-row" onclick="signIn('felix', 'board')">
+          <div>
+            <div class="pname">Felix Goodneighbor</div>
+            <div class="pscenario">Member-at-Large — the harmony-keeper</div>
+          </div>
+          <span class="pgo">→</span>
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <div class="how">
+    <h3>How this demo works</h3>
+    <ul>
+      <li>Each "Sign in as…" button starts a fresh session — no email delivery, no waiting on a magic link.</li>
+      <li>Everything you'll see at Drama Creek Estates is synthetic. The 80 homes, the 5 board members, the 8 homeowner scenarios — all built specifically to walk through every part of the platform.</li>
+      <li>You can switch personas at any time by coming back to this page. The platform recognizes a demo community and shows a gold "Demo" ribbon at the top while you're inside.</li>
+      <li>Want to see the same flows at your actual community? Reach out — we'll set up a real onboarding conversation.</li>
+    </ul>
+  </div>
+
+  <footer>
+    <div class="tag">Community. Simplified.</div>
+    <div>Bedrock Association Management · <a href="https://bedrocktx.com" target="_blank" rel="noopener">bedrocktx.com</a> · (832) 588-2485</div>
+  </footer>
+
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+'use strict';
+
+function toast(msg, kind) {
+  const t = document.getElementById('toast');
+  t.className = 'toast show ' + (kind || '');
+  t.textContent = msg;
+  setTimeout(() => { t.className = 'toast'; }, 4000);
+}
+
+function toggleMore(group) {
+  document.getElementById(`more-row-${group}`).classList.toggle('open');
+  document.getElementById(`more-list-${group}`).classList.toggle('open');
+}
+
+// Track which button is currently busy so we don't double-fire.
+let inFlight = false;
+
+async function signIn(persona, kind) {
+  if (inFlight) return;
+  inFlight = true;
+
+  // Loading state on whichever button was clicked
+  const allButtons = document.querySelectorAll('.primary-cta, .persona-row');
+  allButtons.forEach(b => b.disabled = true);
+  const clicked = event && event.currentTarget;
+  if (clicked) {
+    const original = clicked.innerHTML;
+    clicked.dataset.original = original;
+    // Inject spinner into clicked button
+    const label = clicked.querySelector('.l1, .pname');
+    if (label) label.innerHTML = `<span class="spinner-inline"></span>Signing in…`;
+  }
+
+  try {
+    const r = await fetch('/api/portal/demo-sign-in', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ persona }),
+    });
+    if (!r.ok) {
+      const data = await r.json().catch(() => ({}));
+      const msg = data?.error || `Could not sign you in (HTTP ${r.status})`;
+      toast(msg, 'error');
+      allButtons.forEach(b => b.disabled = false);
+      if (clicked && clicked.dataset.original) clicked.innerHTML = clicked.dataset.original;
+      inFlight = false;
+      return;
+    }
+    const data = await r.json();
+    // Server tells us where to land based on role.
+    window.location.href = data.redirect || '/portal';
+  } catch (err) {
+    toast('Network error. Please try again.', 'error');
+    allButtons.forEach(b => b.disabled = false);
+    if (clicked && clicked.dataset.original) clicked.innerHTML = clicked.dataset.original;
+    inFlight = false;
+  }
+}
+</script>
+
+</body>
+</html>

@@ -1079,6 +1079,14 @@ app.get('/fob/:slug', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'fob_request.html'));
 });
 
+// Public demo landing page — prospects pick a persona and sign in instantly
+// to Drama Creek Estates (see migration 184 + project_demo_community_drama_creek
+// memory). Both /demo and /try-the-demo serve the same file so we have a short
+// URL for sales conversations and a descriptive one for marketing copy.
+app.get(['/demo', '/try-the-demo'], (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'try-the-demo.html'));
+});
+
 // Shared helper: scrub vendor names from error messages before they reach
 // the user. Anthropic SDK errors can include "claude" / model IDs that
 // should never appear in user-facing strings.

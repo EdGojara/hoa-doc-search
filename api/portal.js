@@ -227,6 +227,116 @@ function _consumeRateLimit(key, limit) {
 }
 
 // ============================================================================
+// POST /api/portal/demo-sign-in
+// Body: { persona: 'bob' | 'sunny' | 'byron' | ... }
+//
+// Issues a portal session cookie for a Drama Creek Estates demo persona
+// WITHOUT the magic-link email round trip. Used by /try-the-demo so
+// prospects (and Ed) can click "Try as homeowner" and land in the portal
+// immediately, no email delivery needed.
+//
+// HARD SAFETY: this endpoint refuses to issue a session for any portal
+// user whose scope reaches a non-demo community. The is_demo flag on the
+// community is the only ticket through. A misconfiguration that attached
+// a Waterview property to a "demo" persona would NOT silently expose
+// Waterview — the endpoint returns 403 instead.
+//
+// Rate-limit posture: leaving the endpoint open at the API layer because
+// (a) it cannot escalate to a real community, (b) demo logins are a
+// feature signal we want to measure. If abuse shows up in logs, add a
+// per-IP token bucket here.
+// ============================================================================
+router.post('/demo-sign-in', express.json({ limit: '1kb' }), async (req, res) => {
+  try {
+    const personaRaw = String(req.body?.persona || '').toLowerCase().trim();
+    // Persona keys are lowercase letters only, 1-30 chars (matches our seed
+    // pattern). Anything else is malformed.
+    if (!/^[a-z]{1,30}$/.test(personaRaw)) {
+      return res.status(400).json({ error: 'persona_required' });
+    }
+    const email = `${personaRaw}@dramacreekhoa.demo`;
+
+    const { data: user } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status, full_name')
+      .eq('email', email)
+      .eq('management_company_id', '00000000-0000-0000-0000-000000000001')
+      .maybeSingle();
+
+    if (!user) return res.status(404).json({ error: 'unknown_persona' });
+    if (user.status === 'revoked') return res.status(403).json({ error: 'persona_inactive' });
+
+    // SAFETY: verify the user's reachable communities are ALL is_demo=TRUE.
+    // Two scope tables: portal_user_properties (homeowners) and
+    // portal_user_communities (board access). If ANY non-demo community is
+    // in either set, refuse.
+    const [{ data: propScopes }, { data: commScopes }] = await Promise.all([
+      supabase
+        .from('portal_user_properties')
+        .select('property:property_id (community:community_id (is_demo))')
+        .eq('portal_user_id', user.id)
+        .is('revoked_at', null),
+      supabase
+        .from('portal_user_communities')
+        .select('community:community_id (is_demo)')
+        .eq('portal_user_id', user.id)
+        .is('revoked_at', null),
+    ]);
+
+    const reachableCommunities = [
+      ...(propScopes || []).map(s => s.property?.community),
+      ...(commScopes || []).map(s => s.community),
+    ].filter(Boolean);
+
+    if (!reachableCommunities.length) {
+      return res.status(403).json({ error: 'persona_no_scope' });
+    }
+    const anyNonDemo = reachableCommunities.some(c => c.is_demo !== true);
+    if (anyNonDemo) {
+      console.warn(`[portal demo-sign-in] REFUSED — persona "${personaRaw}" reaches a non-demo community`);
+      return res.status(403).json({ error: 'persona_not_demo_scoped' });
+    }
+
+    // Touch login tracking (same shape as /consume, abbreviated)
+    try {
+      const { data: lp } = await supabase
+        .from('portal_users')
+        .select('login_count, first_login_at')
+        .eq('id', user.id)
+        .single();
+      const updatePayload = {
+        status: user.status === 'invited' ? 'active' : user.status,
+        last_login_at: new Date().toISOString(),
+        login_count: Number(lp?.login_count || 0) + 1,
+      };
+      if (!lp?.first_login_at) updatePayload.first_login_at = new Date().toISOString();
+      await supabase.from('portal_users').update(updatePayload).eq('id', user.id);
+    } catch (_) { /* non-fatal */ }
+
+    await logAudit('demo_sign_in', {
+      portal_user_id: user.id,
+      ip_address: req.ip,
+      user_agent: req.headers['user-agent'] || null,
+    });
+
+    setPortalCookie(res, signCookie(user.id));
+
+    return res.json({
+      ok: true,
+      persona: personaRaw,
+      full_name: user.full_name,
+      role: user.role,
+      // Board members default to the board portal; homeowners to /portal.
+      // Caller may follow this hint or override.
+      redirect: user.role === 'board_member' ? '/board-portal' : '/portal',
+    });
+  } catch (err) {
+    console.error('[portal] demo-sign-in failed:', err.message);
+    return res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/portal/request-link
 // Body: { email }
 // Anti-enumeration: always returns { ok: true } whether or not the email is on file.

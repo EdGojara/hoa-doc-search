@@ -40,7 +40,7 @@ router.get('/communities', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('communities')
-      .select('id, name')
+      .select('id, name, is_demo')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .order('name', { ascending: true });
     if (error) throw error;
