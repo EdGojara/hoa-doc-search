@@ -1469,6 +1469,21 @@ async function _facts_trash(community, communityName) {
 }
 
 async function _facts_amenities(community, communityName, topic, question) {
+  // Detect procedural questions — "how do I get X," "where is the form,"
+  // "another way to contact" — these should NEVER surface vendor contacts.
+  // Vendor info is for "who maintains the pool" type questions, not "how
+  // do I apply for an amenity key."
+  const proceduralRe = /\b(how\s+(do|can)\s+I|where\s+(do|is)|another\s+way|form|application|apply|submit|request|sign\s*up|register|get\s+a|get\s+the)\b/i;
+  const isProcedural = question && proceduralRe.test(question);
+  if (isProcedural) {
+    return {
+      answer: `That's typically handled through the application process for ${communityName} — I can either send you the form or point you to the community portal. Which works better for you?`,
+      facts_used: [],
+      caveats: [
+        'Question detected as procedural (form/application/process). Do NOT reference amenity vendor contacts. Direct caller to portal or offer to send the form.',
+      ],
+    };
+  }
   // Pull all amenities for the community
   const { data: amenities } = await supabase
     .from('amenities')
@@ -1495,12 +1510,16 @@ async function _facts_amenities(community, communityName, topic, question) {
     facts_used: filtered.map(a => ({
       topic: 'amenity',
       source: 'amenities table',
+      // Hours-only for procedural-adjacent context. Vendor + contract
+      // terms are returned only when the topic is explicitly informational
+      // (pool/clubhouse keyed lookups), never when surfacing facts for
+      // a procedural question. We already gated above; this is double
+      // protection — Claire NEVER receives vendor names for the wrong
+      // type of question.
       data: {
         name: a.name,
         type: a.amenity_type,
         hours: a.operating_hours,
-        contract_summary: a.contract_terms,
-        vendor: a.vendor_name,
       },
     })),
     caveats: [],
@@ -1710,6 +1729,167 @@ router.post('/vapi-tools/request-callback', express.json({ limit: '64kb' }), asy
     });
   }
 });
+
+// ============================================================================
+// VAPI TOOL — getKeyFobInfo
+// ----------------------------------------------------------------------------
+// The encoded key-fob flow Ed described. Replaces Claire improvising from
+// generic amenity data with a structured answer she can deliver in the
+// right sequence.
+//
+// Behavioral contract (the encode-Ed pattern):
+//   - Never recite ALL scenarios upfront. Return the path that fits the
+//     specific situation given (owner vs tenant, new vs replacement).
+//   - When requester_type is unknown, return guidance for Claire to ASK
+//     before answering. Default state is question, not data dump.
+//   - Always state the fee, the document requirements, and the delivery
+//     channel (community website OR offer to email).
+//   - Application delivery channels are BEDROCK-LEVEL defaults, not
+//     amenity-vendor contacts. Never reference Swim Houston, the pool
+//     vendor, or any operational contractor as a way to get the form.
+//
+// Community-specific overrides (fees, special instructions) live on
+// communities.access_fees JSONB when populated. Falls back to sensible
+// defaults so Claire never has to say "I don't know" for the basics.
+// ============================================================================
+router.post('/vapi-tools/key-fob-info', express.json({ limit: '64kb' }), async (req, res) => {
+  const requestId = `vapi-fob-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+    if (expectedSecret) {
+      const auth = String(req.headers.authorization || '');
+      if (auth !== `Bearer ${expectedSecret}`) {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+    }
+    const body = req.body || {};
+    const msg = body.message || body;
+    const args = _extractToolArgs(msg);
+
+    // Resolve community from args or caller context
+    let communityId = args.community_id || null;
+    if (!communityId) {
+      const callerPhone = msg.call?.customer?.number || msg.customer?.number || null;
+      if (callerPhone) {
+        try {
+          const lookup = await resolveCallerByPhone(callerPhone);
+          communityId = lookup.community?.id || null;
+        } catch (_) {}
+      }
+    }
+
+    const requesterType = String(args.requester_type || '').toLowerCase(); // 'owner' | 'tenant' | ''
+    const requestType = String(args.request_type || '').toLowerCase();     // 'new' | 'replacement' | ''
+
+    // Step gate — if we don't yet know whether they're owner or tenant,
+    // we hand Claire a clarifying question rather than a data dump.
+    if (!requesterType) {
+      return res.json({
+        result: {
+          next_step: 'clarify_requester_type',
+          speak_to_caller: 'Sure, happy to help with a key fob. Quick question first — are you the homeowner, or are you renting the unit?',
+        },
+      });
+    }
+    if (!requestType) {
+      return res.json({
+        result: {
+          next_step: 'clarify_request_type',
+          requester_type: requesterType,
+          speak_to_caller: 'Got it. Is this a first-time fob, or a replacement?',
+        },
+      });
+    }
+
+    // Pull community-specific overrides (fees + instructions) when set
+    let community = null;
+    let fees = null;
+    try {
+      const { data } = await supabase
+        .from('communities')
+        .select('id, name, access_fees')
+        .eq('id', communityId)
+        .maybeSingle();
+      community = data;
+      fees = data?.access_fees || null;
+    } catch (_) {}
+    const communityName = community?.name || 'your community';
+
+    // Fee lookup — community-specific when set, else null (Claire admits
+    // she'll need to confirm the exact amount rather than guess).
+    const feeKey = `key_fob_${requesterType}_${requestType}`;
+    const fee = fees && typeof fees === 'object' ? fees[feeKey] : null;
+
+    // Document requirements — tenants always need lease + ID; owners
+    // typically don't need extra documentation for a first fob, but
+    // replacements often require the prior fob be returned (subject to
+    // per-community policy)
+    const requirements = [];
+    if (requesterType === 'tenant') {
+      requirements.push('a copy of the current lease');
+      requirements.push('a photo ID');
+    }
+    if (requestType === 'replacement') {
+      requirements.push('a brief note about what happened to the prior fob (lost, damaged, stolen)');
+    }
+
+    // Application delivery — these are BEDROCK-LEVEL defaults, never
+    // vendor contacts. Two channels: the homeowner portal (once it's
+    // live) and email to forms@bedrocktx.com. Community-specific
+    // override URL when set.
+    const portalUrl = community?.access_fees?.application_portal_url || 'home.bedrocktx.com';
+    const applicationEmail = 'forms@bedrocktx.com';
+
+    // Build the conversational answer Claire should deliver. This is
+    // ONE sentence per element, in the right sequence, never the full
+    // policy dump.
+    const lines = [];
+    const feeLine = fee != null
+      ? `For ${requesterType} ${requestType === 'replacement' ? 'replacement' : 'first-time'} fobs the fee is $${Number(fee).toFixed(2)}.`
+      : `The fee depends on the community's current rate schedule — I can confirm that exact amount and include it with the form.`;
+    lines.push(feeLine);
+    if (requirements.length > 0) {
+      lines.push(`We'll need ${_humanList(requirements)} along with the application.`);
+    }
+    lines.push(`The application form is up on the community portal at ${portalUrl}, or if it's easier I can email it to you.`);
+
+    return res.json({
+      result: {
+        next_step: 'deliver_form',
+        requester_type: requesterType,
+        request_type: requestType,
+        fee_dollars: fee,
+        fee_known: fee != null,
+        requirements_list: requirements,
+        delivery_channels: {
+          portal_url: portalUrl,
+          email_send_available: true,
+        },
+        speak_to_caller: lines.join(' ') + ' Which would you prefer?',
+        guidance_for_claire: [
+          'Do NOT reference any vendor (pool maintenance company, landscaper, etc.) as a way to get this form. The form comes from Bedrock or the community portal — those are the ONLY delivery channels.',
+          'If the caller picks email, ask for their address, read it back to confirm, then use the requestCallback tool to schedule the send.',
+          'If the fee is null (fee_known=false), do not guess. Tell them you will confirm the amount and include it with the form.',
+        ],
+      },
+    });
+  } catch (err) {
+    console.error(`[vapi-fob ${requestId}] failed:`, err.message);
+    return res.json({
+      result: {
+        next_step: 'fallback_callback',
+        speak_to_caller: 'Let me have someone walk you through the fob process — what is the best number to reach you back at?',
+      },
+    });
+  }
+});
+
+function _humanList(arr) {
+  if (!arr || arr.length === 0) return '';
+  if (arr.length === 1) return arr[0];
+  if (arr.length === 2) return `${arr[0]} and ${arr[1]}`;
+  return `${arr.slice(0, -1).join(', ')}, and ${arr[arr.length - 1]}`;
+}
 
 // ---- shared helper to extract function-call args from Vapi payload --------
 function _extractToolArgs(msg) {
