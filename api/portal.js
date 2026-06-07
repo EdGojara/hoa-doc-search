@@ -150,6 +150,68 @@ function resolvePortalUser(req) {
   return { portalUserId, mimic: null };
 }
 
+// ============================================================================
+// RENTER PORTAL ENFORCEMENT (Ed 2026-06-08, migration 186)
+// ----------------------------------------------------------------------------
+// Capability matrix lives in the migration comment. Two helpers here:
+//
+//   resolveUserWithRole(req)
+//       Same as resolvePortalUser but ALSO fetches the user's role + status.
+//       Returns null and sends 401 if not signed in OR session invalid.
+//       Use at the top of any endpoint that needs role-aware behavior.
+//
+//   assertOwnerLikeRole(req, res)
+//       Hard gate. Returns the user if their role is in ('homeowner',
+//       'board_member', 'staff', 'admin') — i.e., anyone who can see
+//       owner-class data (AR, violations, ACC, financials, meetings).
+//       Sends 403 and returns null for 'renter', 'builder', 'franchisee'.
+//
+// Pattern at sensitive endpoints:
+//   const user = await assertOwnerLikeRole(req, res);
+//   if (!user) return;
+// ============================================================================
+const OWNER_LIKE_ROLES = new Set(['homeowner', 'board_member', 'staff', 'admin']);
+
+async function resolveUserWithRole(req, res) {
+  const { portalUserId, mimic } = resolvePortalUser(req);
+  if (!portalUserId) {
+    if (res) res.status(401).json({ error: 'not_signed_in' });
+    return null;
+  }
+  try {
+    const { data: user } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status, full_name')
+      .eq('id', portalUserId)
+      .single();
+    if (!user || user.status === 'revoked') {
+      if (res) {
+        clearPortalCookie(res);
+        res.status(401).json({ error: 'session_invalid' });
+      }
+      return null;
+    }
+    return { user, mimic };
+  } catch (e) {
+    if (res) res.status(500).json({ error: 'session_lookup_failed' });
+    return null;
+  }
+}
+
+async function assertOwnerLikeRole(req, res) {
+  const resolved = await resolveUserWithRole(req, res);
+  if (!resolved) return null;
+  if (!OWNER_LIKE_ROLES.has(resolved.user.role)) {
+    res.status(403).json({
+      error: 'role_not_authorized',
+      role: resolved.user.role,
+      message: 'Renters cannot access this resource. If you are the owner and this is an error, contact Bedrock.',
+    });
+    return null;
+  }
+  return resolved;
+}
+
 function makeMagicToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -559,6 +621,110 @@ router.get('/me', async (req, res) => {
       return res.status(401).json({ error: 'session no longer valid' });
     }
 
+    // RENTER PATH (migration 186) — renters reach their property via
+    // portal_user_residencies. Different scope table, scoped response
+    // shape (no AR / no compliance / scoped doc categories). The actual
+    // security guarantee lives in per-endpoint guards on /balance,
+    // /compliance, /meetings — this branch exists so renters get a
+    // useful portal experience, not so they're prevented from seeing
+    // sensitive data (that's the endpoint guards' job).
+    const isRenter = user.role === 'renter';
+    if (isRenter) {
+      const { data: rscopes } = await supabase
+        .from('portal_user_residencies')
+        .select(`residency_id, property_residencies:residency_id (
+          id, property_id, residency_type, end_date, lease_end_date,
+          properties:property_id (id, street_address, community_id)
+        )`)
+        .eq('portal_user_id', user.id)
+        .is('revoked_at', null);
+      // CURRENT residencies only — when lease ends (residency.end_date
+      // set), the renter loses portal access on next /me. Structural.
+      const currentRes = (rscopes || []).filter(s =>
+        s.property_residencies && !s.property_residencies.end_date
+      );
+      if (!currentRes.length) {
+        return res.json({
+          user: {
+            name: user.full_name || user.email,
+            email: user.email,
+            role: user.role,
+            tutorial_dismissed: !!user.tutorial_dismissed_at,
+            first_login_at: user.first_login_at,
+            login_count: user.login_count || 0,
+          },
+          property: null,
+          properties: [],
+          community: { name: 'No Active Lease', slug: '', portal_active: false, is_demo: false },
+          balance: { role_restricted: true },
+          compliance: { role_restricted: true },
+          open_requests: { count: 0, role_restricted: true },
+        });
+      }
+      const renterProps = currentRes.map(s => s.property_residencies.properties).filter(Boolean);
+      const focusProp = renterProps[0];
+      let focusComm = { id: focusProp.community_id, name: 'Your Community', slug: '', portal_active: false };
+      try {
+        const { data: cRow } = await supabase
+          .from('communities')
+          .select('id, name, slug, hoa_legal_name, portal_active, portal_module_config, portal_welcome_message')
+          .eq('id', focusProp.community_id)
+          .maybeSingle();
+        if (cRow) focusComm = { ...focusComm, ...cRow };
+      } catch (_) {}
+
+      // is_demo check (matches owner-path logic)
+      const RENTER_DEMO_IDS = new Set(['dc100000-0000-4000-a000-000000000000']);
+      const renterIsDemo = RENTER_DEMO_IDS.has(String(focusComm.id));
+      focusComm.is_demo = renterIsDemo;
+      if (renterIsDemo) focusComm.portal_active = true;
+
+      // Renter-safe tile config — owner-only tiles hidden so the frontend
+      // doesn't render them. Renter-OK tiles inherit community config.
+      const baseCfg = focusComm.portal_module_config || {};
+      const RENTER_HIDDEN_TILES = ['balance', 'compliance', 'arc', 'financials', 'meetings'];
+      const renterCfg = { ...baseCfg };
+      for (const k of RENTER_HIDDEN_TILES) renterCfg[k] = { status: 'hidden' };
+      focusComm.portal_module_config = renterCfg;
+
+      return res.json({
+        user: {
+          name: user.full_name || user.email,
+          email: user.email,
+          role: user.role,
+          tutorial_dismissed: !!user.tutorial_dismissed_at,
+          first_login_at: user.first_login_at,
+          login_count: user.login_count || 0,
+        },
+        property: {
+          id: focusProp.id,
+          address: focusProp.street_address,
+          community_slug: focusComm.slug,
+          community_name: focusComm.name,
+        },
+        properties: renterProps.map(p => ({
+          id: p.id,
+          address: p.street_address,
+          community_id: p.community_id,
+          community_name: focusComm.name,
+          community_slug: focusComm.slug,
+        })),
+        community: focusComm,
+        balance: { role_restricted: true },
+        compliance: { role_restricted: true },
+        open_requests: { count: 0, role_restricted: true },
+        is_board_member: false,
+        board_communities: [],
+        mimic: mimic ? {
+          active: true,
+          staff_email: mimic.staff_email,
+          started_at: mimic.started_at,
+          expires_at: mimic.expires_at,
+        } : null,
+      });
+    }
+
+    // OWNER PATH — original logic continues below.
     // Resolve property scope (homeowners are scoped to one or more properties).
     // We pull the FULL list of accessible properties so the frontend can:
     //   - Render the property picker on first load when length > 1
@@ -1038,8 +1204,11 @@ router.get('/map/:slug', async (req, res) => {
 // ============================================================================
 router.get('/compliance', async (req, res) => {
   try {
-    const { portalUserId } = resolvePortalUser(req);
-    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    // Renter sessions REFUSED — compliance/violations are owner-class data.
+    // Migration 186 capability matrix.
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const portalUserId = roleCheck.user.id;
 
     // Resolve property scope (first property for v0; multi-property in follow-on)
     const { data: scopes } = await supabase
@@ -1229,6 +1398,18 @@ const HOMEOWNER_DOC_CATEGORIES = [
   'welcome_package',
 ];
 
+// Renter-scoped document categories (migration 186 capability matrix).
+// Renters see rules they need to follow + forms they may need + welcome
+// info. They do NOT see governing documents (CCRs/bylaws are member-only
+// in many states), financials, meeting minutes, or reserve studies.
+const RENTER_DOC_CATEGORIES = [
+  'rules_and_regulations',
+  'design_document',          // architectural guidelines — they need to know what they CAN'T do to the property
+  'forms_and_applications',   // amenity rental, fob, etc.
+  'key_fob_form',
+  'welcome_package',
+];
+
 const HOMEOWNER_DOC_GROUPS = {
   governing: {
     label: 'Governing Documents',
@@ -1285,16 +1466,43 @@ const CATEGORY_LABELS = {
 
 router.get('/documents', async (req, res) => {
   try {
-    const { portalUserId } = resolvePortalUser(req);
-    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    // Role-aware: renters see a SCOPED subset of doc categories. The
+    // assertOwnerLikeRole gate would over-restrict (renters DO get docs,
+    // just fewer of them). So resolve user first, then pick category list.
+    const roleCheck = await resolveUserWithRole(req, res);
+    if (!roleCheck) return;
+    const portalUserId = roleCheck.user.id;
+    const isRenter = roleCheck.user.role === 'renter';
+    const allowedCategories = isRenter ? RENTER_DOC_CATEGORIES : HOMEOWNER_DOC_CATEGORIES;
 
-    const { data: scopes } = await supabase
-      .from('portal_user_properties')
-      .select(`property_id, properties:property_id (community_id, communities:community_id (id, name, slug))`)
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null)
-      .limit(1);
-    const prop = (scopes && scopes[0]?.properties) || null;
+    // Renters reach their property via portal_user_residencies, not
+    // portal_user_properties. Try both — single source: the residency
+    // path takes precedence for renters.
+    let prop = null;
+    if (isRenter) {
+      const { data: rscopes } = await supabase
+        .from('portal_user_residencies')
+        .select(`residency_id, property_residencies:residency_id (
+          property_id, end_date,
+          properties:property_id (community_id, communities:community_id (id, name, slug))
+        )`)
+        .eq('portal_user_id', portalUserId)
+        .is('revoked_at', null)
+        .limit(1);
+      const r = rscopes && rscopes[0]?.property_residencies;
+      // Renter access only valid while the residency is current
+      if (r && !r.end_date && r.properties) {
+        prop = r.properties;
+      }
+    } else {
+      const { data: scopes } = await supabase
+        .from('portal_user_properties')
+        .select(`property_id, properties:property_id (community_id, communities:community_id (id, name, slug))`)
+        .eq('portal_user_id', portalUserId)
+        .is('revoked_at', null)
+        .limit(1);
+      prop = (scopes && scopes[0]?.properties) || null;
+    }
     if (!prop) return res.json({ community: null, groups: {} });
 
     const community = prop.communities || {};
@@ -1306,7 +1514,7 @@ router.get('/documents', async (req, res) => {
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .eq('community_id', community.id)
       .eq('status', 'current')
-      .in('category', HOMEOWNER_DOC_CATEGORIES)
+      .in('category', allowedCategories)
       .order('effective_date', { ascending: false, nullsFirst: false });
     if (error) throw error;
 
@@ -1502,8 +1710,11 @@ router.get('/property', async (req, res) => {
 // ============================================================================
 router.get('/balance', async (req, res) => {
   try {
-    const { portalUserId } = resolvePortalUser(req);
-    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    // Renter sessions REFUSED at this endpoint — AR data is owner-class
+    // financial info. Migration 186 capability matrix.
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const portalUserId = roleCheck.user.id;
 
     const { data: scopes } = await supabase
       .from('portal_user_properties')
@@ -1588,8 +1799,11 @@ router.get('/balance', async (req, res) => {
 // ============================================================================
 router.get('/meetings', async (req, res) => {
   try {
-    const { portalUserId } = resolvePortalUser(req);
-    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    // Renter sessions REFUSED — meetings are owner/member-only (statutory
+    // in TX § 209). Migration 186 capability matrix.
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const portalUserId = roleCheck.user.id;
 
     const { data: scopes } = await supabase
       .from('portal_user_properties')
