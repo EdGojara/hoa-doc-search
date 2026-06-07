@@ -163,6 +163,12 @@ router.post('/incoming', async (req, res) => {
             if (residency?.properties) {
               callerProperty = residency.properties;
               callerCommunity = residency.properties.communities || null;
+              // Attach residency_type so the bridge can pass it through to
+              // Claire's prompt. Without this, she defaults to asking
+              // "are you the homeowner or renting?" — but the system
+              // already knows. Encode-Ed miss caught by Ed 2026-06-08
+              // during his own test call ("I was needing to get a key fob").
+              callerProperty.residency_type = residency.residency_type || null;
             }
           }
         }
@@ -366,6 +372,7 @@ router.post('/incoming', async (req, res) => {
       <Parameter name="caller_first_name" value="${escapeXml(callerFirstName || '')}"/>
       <Parameter name="caller_property_id" value="${escapeXml(callerProperty?.id || '')}"/>
       <Parameter name="caller_property_address" value="${escapeXml(callerProperty?.street_address || '')}"/>
+      <Parameter name="caller_residency_type" value="${escapeXml(callerProperty?.residency_type || '')}"/>
       <Parameter name="warmup_opener_hint" value="${escapeXml(warmupOpenerHint || '')}"/>
       <Parameter name="warmup_b64" value="${escapeXml(warmupSerialized || '')}"/>
     </Stream>
@@ -484,6 +491,10 @@ function handleWebSocketConnection(ws, req) {
               first_name: params.caller_first_name || null,
               property_id: params.caller_property_id || null,
               property_address: params.caller_property_address || null,
+              // owner / renter / vacant / unknown — from property_residencies.
+              // Lets Claire skip the "are you the homeowner?" question when
+              // the system already knows. Encode-Ed correction 2026-06-08.
+              residency_type: params.caller_residency_type || null,
             }
           : null,
         community: {
