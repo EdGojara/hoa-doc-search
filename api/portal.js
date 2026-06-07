@@ -603,6 +603,14 @@ router.get('/me', async (req, res) => {
       || props[0];
     const community = prop.communities || {};
 
+    // Demo communities are always-on by definition. The portal_active flag
+    // exists so real boards can opt in formally — demo communities don't
+    // need that gate. Coerce here so older deployed frontends (without the
+    // is_demo bypass in portal.html) still render the portal correctly.
+    if (community.is_demo === true) {
+      community.portal_active = true;
+    }
+
     // Balance — most recent owner_ar_snapshot for this property
     let balance = { status: 'unknown', amount_cents: null, as_of: null };
     try {
