@@ -6090,9 +6090,35 @@
           <div style="display:flex; flex-direction:column; gap:4px; align-items:flex-end;">
             <button onclick="homesEditResidency('${residency.id}', ${JSON.stringify(residency).replace(/"/g, '&quot;').replace(/'/g, '&#39;')})" style="background:#fff; color:#1E2761; border:1px solid #1E2761; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer;">✏ Edit residency</button>
             ${t !== 'renter' ? `<button onclick="homesOpenAddRenterModal('${propertyId}')" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">🏘️ Convert to rental</button>` : ''}
+            ${t === 'renter' && residency.contacts?.primary_email ? `<button onclick="homesGrantRenterPortalAccess('${residency.id}', '${escapeHtml(residency.contacts.full_name || '')}', '${escapeHtml(residency.contacts.primary_email)}')" style="background:#15803d; color:#fff; border:0; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">🔑 Grant portal access</button>` : ''}
+            ${t === 'renter' && !residency.contacts?.primary_email ? `<span style="font-size:10.5px; color:#94A3B8; text-align:right; max-width:140px;">Add email on contact to enable portal access</span>` : ''}
           </div>
         </div>
       </div>`;
+  }
+
+  // ----- Grant renter portal access -----------------------------------------
+  // One-click flow Ed asked for 2026-06-08 to close the renter portal loop.
+  // Calls /api/property-residencies/:id/grant-portal-access which creates
+  // the portal_user with role='renter', links portal_user_residencies, and
+  // issues a 24-hour magic-link token.
+  async function homesGrantRenterPortalAccess(residencyId, renterName, renterEmail) {
+    if (!confirm(`Grant portal access to ${renterName || renterEmail}?\n\nThis creates a renter portal account. They'll only see amenity/community info — not account balance, violations, ARC, financials, or meetings (those stay owner-only).`)) return;
+    const sendEmail = confirm(`Email the magic-link to ${renterEmail} now?\n\nClick OK to send via email. Cancel to just get the URL — you can share it manually.`);
+    try {
+      const r = await fetch(`/api/property-residencies/${residencyId}/grant-portal-access`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ send_email: sendEmail, granted_by: 'staff' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const sentNote = j.email_sent ? '✓ Magic-link email sent.' : '(email not sent — URL below)';
+      const promptMsg = `Portal access granted to ${renterName || renterEmail}.\n\n${sentNote}\n\n24-hour sign-in URL — copy if you need to share manually:`;
+      prompt(promptMsg, j.magic_link_url);
+    } catch (e) {
+      alert('Grant failed: ' + e.message);
+    }
   }
 
   function homesEditResidency(residencyId, residency) {

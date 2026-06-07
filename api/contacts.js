@@ -1034,6 +1034,171 @@ router.post('/property-residencies/add-renter', express.json(), async (req, res)
   }
 });
 
+// ----------------------------------------------------------------------------
+// POST /api/property-residencies/:id/grant-portal-access
+// Staff-initiated: grants the renter at this residency portal access.
+// Creates portal_user (role='renter') and portal_user_residencies link
+// in one atomic flow. Returns a magic-link URL the staff can share, OR
+// emails it if send_email=true.
+//
+// Body:
+//   { send_email?: boolean, granted_by?: string }
+//
+// Returns:
+//   { portal_user, magic_link_url, expires_at, email_sent: bool }
+//
+// Pre-conditions:
+//   - residency.residency_type = 'renter'
+//   - residency.end_date IS NULL (current residency only)
+//   - residency.contact_id is set + contact has primary_email
+// ----------------------------------------------------------------------------
+const crypto = require('crypto');
+const { sendEmail: sendEmailLib, isConfigured: emailLibConfigured } = require('../lib/notifications/email');
+// BEDROCK_MGMT_CO_ID is already declared higher up in this module
+
+router.post('/property-residencies/:id/grant-portal-access', express.json(), async (req, res) => {
+  try {
+    const residencyId = req.params.id;
+    const b = req.body || {};
+
+    // 1) Load residency + linked contact
+    const { data: residency, error: rErr } = await supabase
+      .from('property_residencies')
+      .select(`
+        id, property_id, contact_id, residency_type, end_date,
+        contacts:contact_id (id, full_name, preferred_name, primary_email)
+      `)
+      .eq('id', residencyId)
+      .maybeSingle();
+    if (rErr || !residency) return res.status(404).json({ error: 'residency_not_found' });
+    if (residency.residency_type !== 'renter') {
+      return res.status(400).json({ error: 'not_a_renter_residency', residency_type: residency.residency_type });
+    }
+    if (residency.end_date) {
+      return res.status(400).json({ error: 'residency_ended' });
+    }
+    if (!residency.contact_id) {
+      return res.status(400).json({ error: 'no_contact_on_residency' });
+    }
+    const contact = residency.contacts;
+    const email = (contact?.primary_email || '').trim().toLowerCase();
+    if (!email || !email.includes('@')) {
+      return res.status(400).json({ error: 'contact_has_no_email' });
+    }
+
+    // 2) Find OR create portal_user with role='renter'
+    let { data: portalUser } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status, full_name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('email', email)
+      .maybeSingle();
+    if (portalUser) {
+      // Existing portal_user — make sure role is renter or board-friendly.
+      // If they're an existing homeowner at another property, REFUSE — that
+      // would conflict with their owner-class access. Staff resolves manually.
+      if (portalUser.role !== 'renter' && portalUser.role !== 'invited') {
+        return res.status(409).json({
+          error: 'email_already_used_by_other_role',
+          existing_role: portalUser.role,
+          message: 'This email is already registered with a different role. Resolve manually.',
+        });
+      }
+      if (portalUser.status === 'revoked') {
+        await supabase
+          .from('portal_users')
+          .update({ status: 'active', revoked_at: null, revoked_by: null })
+          .eq('id', portalUser.id);
+      }
+    } else {
+      const { data: created, error: createErr } = await supabase
+        .from('portal_users')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          email,
+          full_name: contact.full_name || contact.preferred_name || null,
+          role: 'renter',
+          status: 'active',
+          contact_id: contact.id,
+          invited_by: b.granted_by || 'staff',
+        })
+        .select()
+        .single();
+      if (createErr) return res.status(500).json({ error: createErr.message });
+      portalUser = created;
+    }
+
+    // 3) Create portal_user_residencies link (idempotent)
+    await supabase
+      .from('portal_user_residencies')
+      .upsert({
+        portal_user_id: portalUser.id,
+        residency_id: residency.id,
+        granted_by: b.granted_by || 'staff',
+        revoked_at: null,
+        revoked_by: null,
+      }, { onConflict: 'portal_user_id,residency_id' });
+
+    // 4) Generate magic link token (24-hour TTL)
+    const token = crypto.randomBytes(32).toString('hex');
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    await supabase.from('portal_magic_links').insert({
+      portal_user_id: portalUser.id,
+      token,
+      purpose: 'invite',
+      expires_at: expiresAt,
+    });
+
+    // 5) Build URL
+    const proto = (req.headers['x-forwarded-proto'] || req.protocol || 'https').split(',')[0].trim();
+    const host = req.get('host');
+    const url = `${proto}://${host}/portal-login.html?token=${token}`;
+
+    // 6) Optionally email it
+    let emailSent = false;
+    if (b.send_email === true || b.send_email === 'true') {
+      if (emailLibConfigured()) {
+        const firstName = (contact.preferred_name || contact.full_name || '').trim().split(/\s+/)[0] || 'there';
+        try {
+          const result = await sendEmailLib({
+            to: email,
+            subject: 'Your sign-in link for the Bedrock resident portal',
+            html: `
+              <div style="font-family:-apple-system,system-ui,sans-serif; max-width:560px; font-size:15px; color:#222; line-height:1.55;">
+                <p>Hi ${firstName},</p>
+                <p>Welcome — Bedrock just granted you access to your resident portal. Click below to sign in.</p>
+                <p style="margin:22px 0;">
+                  <a href="${url}" style="display:inline-block; background:#0B1D34; color:#fff; padding:12px 22px; border-radius:7px; text-decoration:none; font-weight:500;">Sign in to portal</a>
+                </p>
+                <p style="font-size:12px; color:#666;">Link is valid for 24 hours. If you didn't expect this, you can ignore the email.</p>
+                <p style="font-size:11px; color:#666; margin-top:24px; padding-top:14px; border-top:1px solid #ddd;">Bedrock Association Management · (832) 588-2485 · bedrocktx.com</p>
+              </div>`,
+            text: `Hi ${firstName},\n\nWelcome — Bedrock granted you access to your resident portal. Sign in here (valid 24 hours):\n${url}\n\n— Bedrock Association Management · (832) 588-2485`,
+          });
+          emailSent = !!(result && result.ok);
+        } catch (e) {
+          console.warn('[grant-portal-access] email send failed:', e.message);
+        }
+      }
+    }
+
+    res.json({
+      portal_user: {
+        id: portalUser.id,
+        email: portalUser.email,
+        full_name: portalUser.full_name,
+        role: portalUser.role,
+      },
+      magic_link_url: url,
+      expires_at: expiresAt,
+      email_sent: emailSent,
+    });
+  } catch (err) {
+    console.error('[contacts] grant-portal-access failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/property-residencies', express.json(), async (req, res) => {
   try {
     const b = req.body || {};
