@@ -484,18 +484,34 @@ function renderPortfolioPanel(elections, selectedId) {
     const finalizeLine = e.meeting_status === 'finalized' && e.finalized_at
       ? `<div style="font-size:10.5px; color:#6b7280; margin-top:4px;">${e.finalize_quorum_met ? '✓ Quorum met' : '✗ Quorum not met'} · ${e.finalize_present_units || 0} present · ${e.finalize_attended_count || 0} in person</div>`
       : '';
+    const timeLabel = e.meeting_time
+      ? ' · ' + (function fmtT(t) {
+          // Accepts HH:MM or HH:MM:SS — formats as h:mm AM/PM
+          const m = String(t).match(/^(\d{1,2}):(\d{2})/);
+          if (!m) return t;
+          let h = parseInt(m[1], 10);
+          const mm = m[2];
+          const ap = h >= 12 ? 'PM' : 'AM';
+          h = h % 12 || 12;
+          return `${h}:${mm} ${ap}`;
+        })(e.meeting_time)
+      : '';
     return `
-      <div onclick="selectPortfolioElection('${e.election_id}')"
-           style="flex:1; min-width:240px; background:white; border:${isSelected ? '2px' : '1px'} solid ${isSelected ? '#0B1D34' : '#e5e7eb'};
-                  border-radius:8px; padding:12px 14px; cursor:pointer; transition:transform 0.15s; ${isSelected ? 'box-shadow:0 2px 8px rgba(11,29,52,0.12);' : ''}"
+      <div style="flex:1; min-width:240px; background:white; border:${isSelected ? '2px' : '1px'} solid ${isSelected ? '#0B1D34' : '#e5e7eb'};
+                  border-radius:8px; padding:12px 14px; transition:transform 0.15s; ${isSelected ? 'box-shadow:0 2px 8px rgba(11,29,52,0.12);' : ''}"
            onmouseover="this.style.transform='translateY(-1px)'" onmouseout="this.style.transform='translateY(0)'">
-        <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
-          <span style="font-size:9.5px; font-weight:700; letter-spacing:0.06em; padding:3px 7px; border-radius:10px; background:${badge.bg}; color:${badge.fg}; border:1px solid ${badge.border};">${badge.txt}</span>
-          <span style="font-size:11px; color:#6b7280; font-family:var(--font-mono);">${dateLabel}</span>
+        <div onclick="selectPortfolioElection('${e.election_id}')" style="cursor:pointer;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:6px;">
+            <span style="font-size:9.5px; font-weight:700; letter-spacing:0.06em; padding:3px 7px; border-radius:10px; background:${badge.bg}; color:${badge.fg}; border:1px solid ${badge.border};">${badge.txt}</span>
+            <span style="font-size:11px; color:#6b7280; font-family:var(--font-mono);">${dateLabel}${timeLabel}</span>
+          </div>
+          <div style="font-size:14px; font-weight:600; color:#0B1D34; line-height:1.3;">${escapeHtml(e.community_name || '(community)')}</div>
+          <div style="font-size:11.5px; color:#6b7280; margin-top:2px; line-height:1.4;">${escapeHtml(e.election_name || '(election)')}</div>
+          ${finalizeLine}
         </div>
-        <div style="font-size:14px; font-weight:600; color:#0B1D34; line-height:1.3;">${escapeHtml(e.community_name || '(community)')}</div>
-        <div style="font-size:11.5px; color:#6b7280; margin-top:2px; line-height:1.4;">${escapeHtml(e.election_name || '(election)')}</div>
-        ${finalizeLine}
+        <div style="display:flex; justify-content:flex-end; margin-top:8px;">
+          <button onclick="event.stopPropagation(); openMeetingEdit('${e.election_id}')" style="background:transparent; color:#0B1D34; border:1px solid #cbd5e1; border-radius:5px; padding:3px 10px; font-size:11px; cursor:pointer; font-weight:500;">📝 Edit meeting</button>
+        </div>
       </div>
     `;
   };
@@ -505,6 +521,150 @@ function renderPortfolioPanel(elections, selectedId) {
       ${elections.map(card).join('')}
     </div>
   `;
+}
+
+// ---------- Meeting edit modal ----------
+// One-shot editor for meeting_date / meeting_time / meeting_location on the
+// trustEd sidecar (meeting_election_settings). Lets operators fix or set
+// meeting logistics from the portfolio card without leaving the page.
+// Ed 2026-06-08: Waterview showed "(no date set)" because bedrock-vote had
+// the date but trustEd's sidecar was empty. We added a server-side fallback
+// so date displays; this modal lets the operator SET the time (which
+// bedrock-vote doesn't store) and override date/location if needed.
+let _meetingEditState = { electionId: null, communityId: null };
+
+async function openMeetingEdit(electionId) {
+  const row = portfolioCache.find(e => e.election_id === electionId);
+  if (!row) return;
+  _meetingEditState.electionId = electionId;
+
+  // Try to resolve community_id from existing sidecar row first
+  let communityId = null;
+  let existingSettings = null;
+  try {
+    const r = await fetch('/api/meeting-checkin/elections/' + electionId + '/settings');
+    if (r.ok) {
+      const j = await r.json();
+      existingSettings = j.settings || null;
+      communityId = existingSettings?.community_id || null;
+    }
+  } catch (_) {}
+
+  // Fallback — resolve by community name via /api/communities
+  if (!communityId && row.community_name) {
+    try {
+      const r = await fetch('/api/communities');
+      const j = await r.json();
+      const items = j.communities || j || [];
+      const match = items.find(c => (c.name || '').toLowerCase().trim() === String(row.community_name).toLowerCase().trim());
+      if (match) communityId = match.id;
+    } catch (_) {}
+  }
+  _meetingEditState.communityId = communityId;
+
+  // Build modal if not yet in DOM
+  let m = document.getElementById('meetingEditModal');
+  if (!m) {
+    m = document.createElement('div');
+    m.id = 'meetingEditModal';
+    m.style.cssText = 'display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(11,29,52,0.45); z-index:10000; align-items:center; justify-content:center; padding:20px; font-family:Inter,-apple-system,sans-serif;';
+    m.innerHTML = `
+      <div style="background:#fff; max-width:520px; width:100%; border-radius:12px; padding:24px 28px; box-shadow:0 12px 36px rgba(11,29,52,0.18);">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;">
+          <div>
+            <h3 style="margin:0; color:#0B1D34; font-size:18px;">Edit meeting</h3>
+            <div id="meTitle" style="font-size:12.5px; color:#6b7280; margin-top:2px;"></div>
+          </div>
+          <button onclick="closeMeetingEdit()" style="background:none; border:0; font-size:22px; cursor:pointer; color:#94a3b8;">×</button>
+        </div>
+        <div id="meWarning" style="display:none; background:#fef3c7; color:#854d0e; padding:9px 12px; border-radius:6px; font-size:12.5px; margin-bottom:12px;"></div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:10px;">
+          <div>
+            <label style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Meeting date</label>
+            <input id="meDate" type="date" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+          </div>
+          <div>
+            <label style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Meeting time</label>
+            <input id="meTime" type="time" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+          </div>
+        </div>
+        <div style="margin-bottom:10px;">
+          <label style="font-size:11px; color:#6b7280; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Meeting location</label>
+          <input id="meLocation" type="text" placeholder="e.g., Waterview Clubhouse, 1234 Main Dr" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+        </div>
+        <div id="meStatus" style="font-size:13px; min-height:18px; margin-bottom:6px;"></div>
+        <div style="display:flex; gap:10px; justify-content:flex-end;">
+          <button onclick="closeMeetingEdit()" style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:9px 18px; border-radius:6px; font-size:14px; cursor:pointer; font-weight:500;">Cancel</button>
+          <button id="meSaveBtn" onclick="saveMeetingEdit()" style="background:#0B1D34; color:#fff; border:0; padding:9px 18px; border-radius:6px; font-size:14px; cursor:pointer; font-weight:600;">Save</button>
+        </div>
+      </div>`;
+    document.body.appendChild(m);
+  }
+
+  document.getElementById('meTitle').textContent = `${row.community_name || ''} · ${row.election_name || ''}`;
+  document.getElementById('meDate').value = existingSettings?.meeting_date || row.meeting_date || '';
+  document.getElementById('meTime').value = existingSettings?.meeting_time || row.meeting_time || '';
+  document.getElementById('meLocation').value = existingSettings?.meeting_location || row.meeting_location || '';
+  document.getElementById('meStatus').innerHTML = '';
+  const warning = document.getElementById('meWarning');
+  if (!communityId) {
+    warning.style.display = '';
+    warning.textContent = 'Could not auto-resolve this community in trustEd. Save will fail until the community match is fixed (check the community name in trustEd matches the name in bedrock-vote).';
+  } else {
+    warning.style.display = 'none';
+  }
+  m.style.display = 'flex';
+}
+
+function closeMeetingEdit() {
+  const m = document.getElementById('meetingEditModal');
+  if (m) m.style.display = 'none';
+  _meetingEditState = { electionId: null, communityId: null };
+}
+
+async function saveMeetingEdit() {
+  const electionId = _meetingEditState.electionId;
+  const communityId = _meetingEditState.communityId;
+  if (!electionId || !communityId) {
+    document.getElementById('meStatus').innerHTML = '<span style="color:#b91c1c;">Missing community_id — cannot save.</span>';
+    return;
+  }
+  const row = portfolioCache.find(e => e.election_id === electionId);
+  const btn = document.getElementById('meSaveBtn');
+  btn.disabled = true;
+  btn.textContent = 'Saving…';
+  try {
+    const payload = {
+      community_id: communityId,
+      community_name: row?.community_name || null,
+      election_name: row?.election_name || null,
+      meeting_date: document.getElementById('meDate').value || null,
+      meeting_time: document.getElementById('meTime').value || null,
+      meeting_location: document.getElementById('meLocation').value.trim() || null,
+    };
+    const r = await fetch('/api/meeting-checkin/elections/' + electionId + '/settings', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    document.getElementById('meStatus').innerHTML = '<span style="color:#15803d;">✓ Saved. Refreshing…</span>';
+    // Re-fetch portfolio to pick up the new values
+    setTimeout(async () => {
+      try {
+        const r2 = await fetch('/api/meeting-checkin/elections');
+        const j2 = await r2.json();
+        portfolioCache = j2.elections || [];
+        renderPortfolioPanel(portfolioCache, currentElection?.election_id || null);
+      } catch (_) {}
+      closeMeetingEdit();
+    }, 700);
+  } catch (e) {
+    document.getElementById('meStatus').innerHTML = `<span style="color:#b91c1c;">${(e.message || 'Save failed').replace(/</g,'&lt;')}</span>`;
+    btn.disabled = false;
+    btn.textContent = 'Save';
+  }
 }
 
 async function selectPortfolioElection(electionId) {

@@ -156,7 +156,15 @@ router.get('/elections', async (req, res) => {
     const todayCentral = new Date().toLocaleDateString('en-CA', { timeZone: 'America/Chicago' }); // YYYY-MM-DD
     const enriched = (electionsRes.data || []).map((e) => {
       const s = settingsByEid.get(e.election_id) || null;
-      const meetingDate = s?.meeting_date || null;
+      // FALLBACK to bedrock-vote's meeting_date when trustEd's sidecar is
+      // empty. Ed flagged 2026-06-08 that Waterview showed "NO DATE" in
+      // the portfolio panel even though the meeting (June 23) was set in
+      // votEd when the election was created. trustEd is the canonical
+      // source for meeting LOGISTICS (time, location, finalize status),
+      // but if the operator never opened the sidecar editor, the date
+      // sitting in votEd is the only place it lives. Honor sidecar
+      // override; fall back to votEd's date as the default.
+      const meetingDate = s?.meeting_date || e.meeting_date || null;
       let meetingStatus = 'unknown';
       if (s?.status === 'finalized') meetingStatus = 'finalized';
       else if (meetingDate) {
