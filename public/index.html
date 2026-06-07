@@ -12964,6 +12964,308 @@ If you have questions or want to discuss alternatives, just reply or give us a c
      persist → board portal property tile lights up with current balance.
      Bridge to full accounting integration (project_owner_receivables.md).
      ============================================================================= -->
+<!-- ====================================================================
+     Transactions tab — per-homeowner ledger upload from Vantaca CSV.
+     Migration 195. Ed 2026-06-08 framing: monthly upload, system mirrors,
+     portal shows "Financial activity current as of [date]".
+     ==================================================================== -->
+<div class="tab-content" id="tab-transactions" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+  <div style="max-width: 1080px; margin: 0 auto;">
+    <div style="margin-bottom: 18px;">
+      <h2 style="margin: 0; font-size: 22px; color: #0B1D34;">📑 Homeowner Transactions</h2>
+      <p style="margin: 4px 0 0; font-size: 13px; color: #6B7280; line-height: 1.55;">
+        Upload Vantaca's transaction export for a community. Each homeowner sees their own transactions in the portal with a <strong>"Financial activity current as of [date]"</strong> disclosure so they know data freshness. Vantaca remains source of truth.
+      </p>
+    </div>
+
+    <!-- UPLOAD CARD -->
+    <div style="background:#fff; border:1px solid #d0d7de; border-radius:10px; padding:22px 24px; margin-bottom:18px;">
+      <h3 style="margin:0 0 6px; font-size:15px; color:#1E2761;">Upload monthly export</h3>
+      <p style="margin:0 0 16px; font-size:12.5px; color:#64748b; line-height:1.55;">
+        Expected columns: <code>Date, Account Number, Description, Charge, Payment, Balance</code> (header variants tolerated). Re-uploading the same period replaces the previous one — revert if you need to roll back.
+      </p>
+
+      <div style="display:grid; grid-template-columns:1fr 1fr; gap:14px 18px; margin-bottom:14px;">
+        <label class="prof-fld">
+          <span>Community</span>
+          <select id="txn-community" onchange="txnLoadBatches()">
+            <option value="">— Pick a community —</option>
+          </select>
+        </label>
+        <label class="prof-fld">
+          <span>Period label (optional)</span>
+          <input id="txn-period" placeholder='e.g. "May 2026" — leave blank to default to current month'>
+        </label>
+        <label class="prof-fld">
+          <span>"As of" date (optional)</span>
+          <input id="txn-asof" type="date">
+        </label>
+        <label class="prof-fld">
+          <span>Notes (optional)</span>
+          <input id="txn-notes" placeholder='Internal notes — not shown to homeowners'>
+        </label>
+      </div>
+
+      <!-- Drop zone -->
+      <label for="txn-file" id="txn-dropzone" style="display:flex; flex-direction:column; align-items:center; justify-content:center; padding:24px 18px; border:2px dashed #cbd5e1; border-radius:10px; background:#f8fafc; cursor:pointer; transition:background 0.15s, border-color 0.15s;">
+        <div style="font-size:28px; margin-bottom:6px;">📥</div>
+        <div style="font-size:14px; color:#1E2761; font-weight:600;">Drop CSV here or click to browse</div>
+        <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Vantaca CSV export · up to 25 MB</div>
+        <div id="txn-filename" style="font-size:12px; color:#0B1D34; margin-top:8px; font-weight:500; display:none;"></div>
+      </label>
+      <input id="txn-file" type="file" accept=".csv,text/csv" style="display:none;" onchange="txnOnFileSelected(this)">
+
+      <div style="display:flex; gap:10px; align-items:center; margin-top:14px;">
+        <button id="txn-upload-btn" class="primary-btn" onclick="txnUpload()" style="padding:9px 22px;" disabled>📤 Upload &amp; commit</button>
+        <button class="secondary-btn" onclick="txnReset()" style="padding:9px 16px;">Clear</button>
+        <div id="txn-upload-status" style="font-size:13px; margin-left:auto;"></div>
+      </div>
+    </div>
+
+    <!-- LAST UPLOAD RESULT -->
+    <div id="txn-result-card" style="display:none; background:#fff; border:1px solid #d0d7de; border-radius:10px; padding:20px 24px; margin-bottom:18px;">
+      <h3 style="margin:0 0 12px; font-size:15px; color:#1E2761;">Latest upload result</h3>
+      <div id="txn-result-summary" style="font-size:13.5px; color:#475569; line-height:1.7;"></div>
+      <div id="txn-result-errors" style="margin-top:10px;"></div>
+    </div>
+
+    <!-- RECENT BATCHES -->
+    <div style="background:#fff; border:1px solid #d0d7de; border-radius:10px; padding:20px 24px;">
+      <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+        <h3 style="margin:0; font-size:15px; color:#1E2761;">Recent batches</h3>
+        <button class="secondary-btn" onclick="txnLoadBatches()" style="padding:6px 12px; font-size:12px;">↻ Refresh</button>
+      </div>
+      <div id="txn-batches" style="font-size:13px; color:#475569;">Pick a community above to see recent uploads.</div>
+    </div>
+  </div>
+</div>
+
+<script>
+  'use strict';
+
+  let _txnFile = null;
+  let _txnCommunities = [];
+
+  async function txnLoadCommunities() {
+    if (_txnCommunities.length) return;
+    try {
+      const r = await fetch('/api/communities');
+      const j = await r.json();
+      _txnCommunities = (j.communities || j || []).map(c => ({ id: c.id, name: c.name }));
+      const sel = document.getElementById('txn-community');
+      sel.innerHTML = '<option value="">— Pick a community —</option>' +
+        _txnCommunities.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name)}</option>`).join('');
+    } catch (_) { /* leave dropdown empty */ }
+  }
+
+  function txnOnFileSelected(input) {
+    if (!input.files || !input.files[0]) return;
+    _txnFile = input.files[0];
+    const nameDiv = document.getElementById('txn-filename');
+    nameDiv.textContent = `📎 ${_txnFile.name} (${(_txnFile.size / 1024).toFixed(1)} KB)`;
+    nameDiv.style.display = 'block';
+    document.getElementById('txn-upload-btn').disabled = false;
+    document.getElementById('txn-upload-status').innerHTML = '';
+  }
+
+  function txnReset() {
+    _txnFile = null;
+    document.getElementById('txn-file').value = '';
+    document.getElementById('txn-filename').style.display = 'none';
+    document.getElementById('txn-upload-btn').disabled = true;
+    document.getElementById('txn-upload-status').innerHTML = '';
+    document.getElementById('txn-period').value = '';
+    document.getElementById('txn-asof').value = '';
+    document.getElementById('txn-notes').value = '';
+    document.getElementById('txn-result-card').style.display = 'none';
+  }
+
+  // Drag-drop wiring
+  (function _wireTxnDrop() {
+    const dz = document.getElementById('txn-dropzone');
+    if (!dz) {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireTxnDrop);
+      } else {
+        setTimeout(_wireTxnDrop, 0);
+      }
+      return;
+    }
+    dz.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      dz.style.background = '#eff6ff';
+      dz.style.borderColor = '#1E2761';
+    });
+    dz.addEventListener('dragleave', () => {
+      dz.style.background = '#f8fafc';
+      dz.style.borderColor = '#cbd5e1';
+    });
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      dz.style.background = '#f8fafc';
+      dz.style.borderColor = '#cbd5e1';
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        document.getElementById('txn-file').files = e.dataTransfer.files;
+        txnOnFileSelected(document.getElementById('txn-file'));
+      }
+    });
+  })();
+
+  async function txnUpload() {
+    const communityId = document.getElementById('txn-community').value;
+    const status = document.getElementById('txn-upload-status');
+    if (!communityId) {
+      status.innerHTML = '<span style="color:#b91c1c;">Pick a community first.</span>';
+      return;
+    }
+    if (!_txnFile) {
+      status.innerHTML = '<span style="color:#b91c1c;">Select a CSV file.</span>';
+      return;
+    }
+    const btn = document.getElementById('txn-upload-btn');
+    btn.disabled = true;
+    btn.textContent = 'Uploading…';
+    status.innerHTML = '<span style="color:#475569;">Parsing + committing…</span>';
+    try {
+      const fd = new FormData();
+      fd.append('file', _txnFile);
+      fd.append('community_id', communityId);
+      const period = document.getElementById('txn-period').value.trim();
+      const asof   = document.getElementById('txn-asof').value;
+      const notes  = document.getElementById('txn-notes').value.trim();
+      if (period) fd.append('period_label', period);
+      if (asof)   fd.append('as_of_date', asof);
+      if (notes)  fd.append('notes', notes);
+      const r = await fetch('/api/transactions/upload', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = `<span style="color:#15803d;">✓ Committed — ${j.stats.rows_inserted} rows, ${j.stats.accounts_resolved_to_property} of ${j.batch.account_count} accounts matched a property.</span>`;
+      txnRenderResult(j);
+      txnLoadBatches();
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">✗ ${escapeHtml(e.message)}</span>`;
+    } finally {
+      btn.disabled = false;
+      btn.textContent = '📤 Upload & commit';
+    }
+  }
+
+  function txnRenderResult(j) {
+    const card = document.getElementById('txn-result-card');
+    const summary = document.getElementById('txn-result-summary');
+    const errors = document.getElementById('txn-result-errors');
+    const b = j.batch;
+    const s = j.stats;
+    const dollars = (cents) => (cents == null) ? '—' : ('$' + (Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+    summary.innerHTML = `
+      <div style="display:grid; grid-template-columns:auto 1fr; gap:6px 18px; max-width:640px;">
+        <div style="color:#64748b;">Batch ID</div><div style="font-family:monospace; font-size:12px;">${escapeHtml(b.id)}</div>
+        <div style="color:#64748b;">Period</div><div><strong>${escapeHtml(b.period_label)}</strong> · as of <strong>${escapeHtml(b.as_of_date)}</strong></div>
+        <div style="color:#64748b;">Rows inserted</div><div><strong>${s.rows_inserted}</strong> of ${b.row_count}</div>
+        <div style="color:#64748b;">Accounts</div><div>${b.account_count} unique · <strong>${s.accounts_resolved_to_property}</strong> matched a property · <strong>${s.accounts_resolved_to_contact}</strong> matched a contact</div>
+        <div style="color:#64748b;">Totals</div><div>Charges <strong>${dollars(s.total_charges_cents)}</strong> · Payments <strong>${dollars(s.total_payments_cents)}</strong></div>
+        ${s.row_errors > 0 ? `<div style="color:#92400e;">⚠ Row errors</div><div style="color:#92400e;"><strong>${s.row_errors}</strong> rows skipped</div>` : ''}
+      </div>`;
+    if (j.errors && j.errors.length) {
+      errors.innerHTML = `<div style="margin-top:10px; padding:10px 14px; background:#fef3c7; border:1px solid #fbbf24; border-radius:7px; font-size:12.5px;">
+        <div style="font-weight:600; color:#92400e; margin-bottom:6px;">Skipped rows (showing up to 50):</div>
+        <div style="max-height:160px; overflow-y:auto; font-family:monospace; font-size:11.5px; color:#78350f;">
+          ${j.errors.map(e => `Row ${e.row}: ${escapeHtml(e.error)}${e.raw ? ' (' + escapeHtml(String(e.raw)) + ')' : ''}`).join('<br>')}
+        </div>
+      </div>`;
+    } else {
+      errors.innerHTML = '';
+    }
+    card.style.display = 'block';
+  }
+
+  async function txnLoadBatches() {
+    const communityId = document.getElementById('txn-community').value;
+    const div = document.getElementById('txn-batches');
+    if (!communityId) {
+      div.innerHTML = 'Pick a community above to see recent uploads.';
+      return;
+    }
+    div.innerHTML = 'Loading…';
+    try {
+      const r = await fetch('/api/transactions/batches?community_id=' + encodeURIComponent(communityId));
+      const j = await r.json();
+      const batches = j.batches || [];
+      if (!batches.length) {
+        div.innerHTML = '<div style="color:#94a3b8; font-style:italic;">No uploads for this community yet.</div>';
+        return;
+      }
+      const dollars = (cents) => (cents == null) ? '—' : ('$' + (Number(cents) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      div.innerHTML = `<table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+        <thead><tr style="background:#f8fafc; color:#475569; text-transform:uppercase; font-size:10.5px; letter-spacing:0.05em;">
+          <th style="text-align:left; padding:6px 8px;">Period</th>
+          <th style="text-align:left; padding:6px 8px;">As of</th>
+          <th style="text-align:left; padding:6px 8px;">Status</th>
+          <th style="text-align:right; padding:6px 8px;">Rows</th>
+          <th style="text-align:right; padding:6px 8px;">Accounts</th>
+          <th style="text-align:right; padding:6px 8px;">Charges</th>
+          <th style="text-align:right; padding:6px 8px;">Payments</th>
+          <th style="text-align:right; padding:6px 8px;">Uploaded</th>
+          <th style="text-align:right; padding:6px 8px;"></th>
+        </tr></thead><tbody>
+        ${batches.map(b => `<tr style="border-bottom:1px solid #f1f5f9;">
+          <td style="padding:6px 8px; font-weight:500; color:#0B1D34;">${escapeHtml(b.period_label)}</td>
+          <td style="padding:6px 8px; color:#475569;">${escapeHtml(b.as_of_date)}</td>
+          <td style="padding:6px 8px;"><span style="padding:2px 8px; border-radius:10px; font-size:11px; font-weight:600; background:${b.status==='committed'?'#dcfce7':b.status==='reverted'?'#fee2e2':'#f1f5f9'}; color:${b.status==='committed'?'#15803d':b.status==='reverted'?'#991b1b':'#475569'};">${escapeHtml(b.status)}</span></td>
+          <td style="padding:6px 8px; text-align:right;">${b.row_count}</td>
+          <td style="padding:6px 8px; text-align:right;">${b.account_count}</td>
+          <td style="padding:6px 8px; text-align:right;">${dollars(b.total_charges_cents)}</td>
+          <td style="padding:6px 8px; text-align:right;">${dollars(b.total_payments_cents)}</td>
+          <td style="padding:6px 8px; text-align:right; color:#94a3b8;">${b.committed_at ? new Date(b.committed_at).toLocaleString() : (b.uploaded_at ? new Date(b.uploaded_at).toLocaleString() : '—')}</td>
+          <td style="padding:6px 8px; text-align:right;">
+            ${b.status==='committed' ? `<button onclick="txnRevertBatch('${b.id}')" style="background:transparent; border:1px solid #cbd5e1; color:#b91c1c; padding:3px 10px; border-radius:5px; font-size:11px; cursor:pointer;">↶ Revert</button>` : ''}
+          </td>
+        </tr>`).join('')}
+        </tbody></table>`;
+    } catch (e) {
+      div.innerHTML = `<div style="color:#b91c1c;">Load failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  async function txnRevertBatch(batchId) {
+    if (!confirm('Revert this batch?\n\nThe transactions stay in the database for audit, but the views will exclude them and the portal will stop showing them.')) return;
+    const reason = prompt('Reason for revert (optional, shown in audit trail):', '');
+    try {
+      const r = await fetch(`/api/transactions/batches/${batchId}/revert`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason || null }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      txnLoadBatches();
+    } catch (e) {
+      alert('Revert failed: ' + e.message);
+    }
+  }
+
+  // Wire tab open
+  (function _wireTxnTab() {
+    const orig = window.switchTab;
+    if (typeof orig !== 'function') {
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', _wireTxnTab);
+      } else {
+        setTimeout(_wireTxnTab, 0);
+      }
+      return;
+    }
+    window.switchTab = function (tab) {
+      const r = orig.apply(this, arguments);
+      if (tab === 'transactions') {
+        txnLoadCommunities();
+        txnLoadBatches();
+      }
+      return r;
+    };
+  })();
+</script>
+
 <div class="tab-content" id="tab-ownerar" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
   <div style="max-width: 980px; margin: 0 auto;">
     <div style="margin-bottom: 18px;">
@@ -34823,6 +35125,9 @@ ${questionsPage}
         { id: 'bank-rec',        label: '🧾 Bank Rec',         section: 'GL & Books' },
         { id: 'ap',              label: '💵 AP',               section: 'AP / AR' },
         { id: 'ownerar',         label: '💵 Owner AR',         section: 'AP / AR' },
+        // Per-homeowner transaction history upload (Vantaca CSV → portal display).
+        // Migration 195 + api/transactions. Ed 2026-06-08.
+        { id: 'transactions',    label: '📑 Transactions',     section: 'AP / AR' },
         { id: 'vantaca-imports', label: '📥 Vantaca Imports',  section: 'Vantaca' },
         { id: 'finrev',          label: '📊 Financial Review', section: 'Vantaca' },
         { id: 'reports',         label: '📑 Reports',          section: 'Vantaca' },

@@ -231,6 +231,78 @@
   .history-list .bal.zero { color: var(--green); }
   .history-list .bal.due { color: var(--warn); }
 
+  /* ---- Transactions ---- */
+  .txn-card {
+    background: white;
+    border: 1px solid var(--rule);
+    border-radius: var(--radius);
+    padding: 22px 26px;
+    margin-bottom: 18px;
+    box-shadow: var(--shadow-soft);
+  }
+  .txn-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    gap: 14px; flex-wrap: wrap;
+    margin-bottom: 14px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--rule);
+  }
+  .txn-card h3 {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500;
+    margin: 0; color: var(--navy);
+  }
+  .txn-freshness {
+    font-size: 12px; color: var(--ink-faint);
+    background: rgba(212,175,55,0.08);
+    border: 1px solid rgba(212,175,55,0.3);
+    padding: 5px 12px; border-radius: 999px;
+  }
+  .txn-freshness strong { color: var(--navy); }
+  .txn-table-wrap { overflow-x: auto; }
+  .txn-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13.5px;
+  }
+  .txn-table thead th {
+    text-align: left;
+    font-size: 11px;
+    color: var(--ink-faint);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--rule);
+    font-weight: 600;
+  }
+  .txn-table thead th.num { text-align: right; }
+  .txn-table tbody td {
+    padding: 12px 8px;
+    border-bottom: 1px solid #f4f1ea;
+    color: var(--ink);
+  }
+  .txn-table tbody tr:last-child td { border-bottom: none; }
+  .txn-table tbody tr:hover td { background: rgba(212,175,55,0.04); }
+  .txn-date { color: var(--ink-faint); white-space: nowrap; font-family: var(--font-mono); font-size: 12.5px; }
+  .txn-desc { color: var(--ink); }
+  .txn-amount, .txn-balance {
+    text-align: right;
+    font-family: var(--font-mono); font-size: 13px;
+    white-space: nowrap;
+  }
+  .txn-amount.txn-payment { color: var(--green); }
+  .txn-amount.txn-charge { color: var(--ink); }
+  .txn-note {
+    margin-top: 14px; padding-top: 12px;
+    border-top: 1px solid var(--rule);
+    font-size: 12px; color: var(--ink-faint); line-height: 1.55;
+  }
+  .txn-note strong { color: var(--navy); }
+  @media (max-width: 600px) {
+    .txn-card { padding: 18px 16px; }
+    .txn-table { font-size: 12.5px; }
+    .txn-desc { font-size: 12.5px; }
+  }
+
   /* ---- Info footer ---- */
   .info-card {
     background: white;
@@ -294,6 +366,7 @@
   <div id="planSlot"></div>
   <div id="paySlot"></div>
   <div id="agingSlot"></div>
+  <div id="transactionsSlot"></div>
   <div id="historySlot"></div>
 
   <div class="info-card">
@@ -461,7 +534,70 @@ function renderPage(ctx) {
         </ul>
       </div>`;
   }
+
+  // Transactions (Ed 2026-06-08) — fetched independently of snapshot path.
+  // Won't disrupt the existing balance display if it fails.
+  if (!isDemo) loadAndRenderTransactions(ctx);
 }
+
+async function loadAndRenderTransactions(ctx) {
+  try {
+    const r = await fetch('/api/portal/transactions?limit=50', { credentials: 'same-origin' });
+    if (!r.ok) return;
+    const j = await r.json();
+    if (!j.transactions || !j.transactions.length) return;
+
+    const fmtDateShort = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso + 'T12:00:00');
+      return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+
+    const freshnessLine = j.freshness
+      ? `Financial activity current as of <strong>${fmtDateShort(j.freshness.as_of_date)}</strong>${j.freshness.period_label ? ' · ' + escapeHtml(j.freshness.period_label) : ''}`
+      : 'Transaction history';
+
+    // The existing dollars() helper takes whole dollars. Our API returns
+    // *_cents — divide before formatting.
+    const fromCents = (c) => (c == null ? null : Number(c) / 100);
+
+    const rows = j.transactions.map(t => {
+      const isPayment = t.amount_cents < 0 || t.type === 'payment' || t.type === 'credit';
+      const amountClass = isPayment ? 'txn-payment' : (t.amount_cents > 0 ? 'txn-charge' : '');
+      const sign = t.amount_cents < 0 ? '-' : '';
+      const amountAbs = Math.abs(t.amount_cents || 0);
+      return `<tr>
+        <td class="txn-date">${fmtDateShort(t.date)}</td>
+        <td class="txn-desc">${escapeHtml(t.description)}</td>
+        <td class="txn-amount ${amountClass}">${sign}${dollars(fromCents(amountAbs))}</td>
+        <td class="txn-balance">${t.running_balance_cents != null ? dollars(fromCents(t.running_balance_cents)) : '—'}</td>
+      </tr>`;
+    }).join('');
+
+    $('transactionsSlot').innerHTML = `
+      <div class="txn-card">
+        <div class="txn-head">
+          <h3>Recent transactions</h3>
+          <div class="txn-freshness">${freshnessLine}</div>
+        </div>
+        <div class="txn-table-wrap">
+          <table class="txn-table">
+            <thead><tr>
+              <th>Date</th>
+              <th>Description</th>
+              <th class="num">Amount</th>
+              <th class="num">Balance</th>
+            </tr></thead>
+            <tbody>${rows}</tbody>
+          </table>
+        </div>
+        <div class="txn-note">
+          Transactions and balance shown here mirror your association's accounting ledger. If you've recently paid and the latest payment isn't shown, your association will process the update with the next monthly refresh. The <strong>"as of"</strong> date above tells you when this data was last updated.
+        </div>
+      </div>`;
+  } catch (_) { /* silent — transactions are additive, never block the page */ }
+}
+
 
 function renderHero(ctx) {
   const c = ctx.current;
