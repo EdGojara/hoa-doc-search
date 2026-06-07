@@ -267,33 +267,52 @@ router.post('/demo-sign-in', express.json({ limit: '1kb' }), async (req, res) =>
     if (user.status === 'revoked') return res.status(403).json({ error: 'persona_inactive' });
 
     // SAFETY: verify the user's reachable communities are ALL is_demo=TRUE.
-    // Two scope tables: portal_user_properties (homeowners) and
-    // portal_user_communities (board access). If ANY non-demo community is
-    // in either set, refuse.
+    // Schema-cache-resilient pattern (Ed 2026-06-08): pull community IDs
+    // through both scope tables WITHOUT asking PostgREST for is_demo in the
+    // nested select (that's the column the cache may not know yet — same
+    // issue that broke /me). Then check each ID against a hardcoded demo
+    // allowlist + a fallback direct lookup.
     const [{ data: propScopes }, { data: commScopes }] = await Promise.all([
       supabase
         .from('portal_user_properties')
-        .select('property:property_id (community:community_id (is_demo))')
+        .select('property:property_id (community_id)')
         .eq('portal_user_id', user.id)
         .is('revoked_at', null),
       supabase
         .from('portal_user_communities')
-        .select('community:community_id (is_demo)')
+        .select('community_id')
         .eq('portal_user_id', user.id)
         .is('revoked_at', null),
     ]);
 
-    const reachableCommunities = [
-      ...(propScopes || []).map(s => s.property?.community),
-      ...(commScopes || []).map(s => s.community),
+    const reachableCommunityIds = [
+      ...(propScopes || []).map(s => s.property?.community_id),
+      ...(commScopes || []).map(s => s.community_id),
     ].filter(Boolean);
 
-    if (!reachableCommunities.length) {
+    if (!reachableCommunityIds.length) {
       return res.status(403).json({ error: 'persona_no_scope' });
     }
-    const anyNonDemo = reachableCommunities.some(c => c.is_demo !== true);
-    if (anyNonDemo) {
-      console.warn(`[portal demo-sign-in] REFUSED — persona "${personaRaw}" reaches a non-demo community`);
+
+    const KNOWN_DEMO_COMMUNITY_IDS = new Set([
+      'dc100000-0000-4000-a000-000000000000', // Drama Creek Estates
+    ]);
+    // For each reachable community, check hardcoded allowlist first; if
+    // not present, fall back to a direct is_demo lookup. If ANY community
+    // resolves to non-demo (or unverifiable), refuse.
+    for (const cid of reachableCommunityIds) {
+      if (KNOWN_DEMO_COMMUNITY_IDS.has(String(cid))) continue;
+      try {
+        const { data: row } = await supabase
+          .from('communities')
+          .select('is_demo')
+          .eq('id', cid)
+          .maybeSingle();
+        if (row?.is_demo === true) continue;
+      } catch (e) {
+        /* fall through to refusal */
+      }
+      console.warn(`[portal demo-sign-in] REFUSED — persona "${personaRaw}" reaches community ${cid} that is not on demo allowlist`);
       return res.status(403).json({ error: 'persona_not_demo_scoped' });
     }
 
@@ -548,6 +567,12 @@ router.get('/me', async (req, res) => {
     // The CURRENT focus property is selected via optional ?property_id query;
     // defaults to the first accessible property if omitted (preserves prior
     // single-property behavior for the common case).
+    // NOTE: is_demo is NOT in this nested SELECT on purpose. PostgREST's
+    // schema cache is slow to learn about new columns after ALTER TABLE
+    // (Ed 2026-06-08 — Drama Creek migration shipped, schema cache stayed
+    // stale, the entire nested join silently returned empty). We look up
+    // is_demo via a separate query below with a hardcoded fallback so the
+    // demo experience works even if PostgREST hasn't refreshed yet.
     const { data: propScopes } = await supabase
       .from('portal_user_properties')
       .select(`
@@ -560,7 +585,7 @@ router.get('/me', async (req, res) => {
           section_number,
           community_id,
           communities:community_id (
-            id, name, slug, hoa_legal_name, is_demo,
+            id, name, slug, hoa_legal_name,
             portal_active, portal_module_config, portal_welcome_message
           )
         )
@@ -603,11 +628,33 @@ router.get('/me', async (req, res) => {
       || props[0];
     const community = prop.communities || {};
 
+    // Resolve is_demo via a SEPARATE query (single-column SELECT). If even
+    // this fails because of schema cache, fall back to a hardcoded list of
+    // known demo community UUIDs. Belt-and-suspenders: code keeps working
+    // through PostgREST cache lag.
+    const KNOWN_DEMO_COMMUNITY_IDS = new Set([
+      'dc100000-0000-4000-a000-000000000000', // Drama Creek Estates
+    ]);
+    let isDemoCommunity = KNOWN_DEMO_COMMUNITY_IDS.has(String(community.id));
+    if (!isDemoCommunity) {
+      try {
+        const { data: demoLookup } = await supabase
+          .from('communities')
+          .select('is_demo')
+          .eq('id', community.id)
+          .maybeSingle();
+        if (demoLookup?.is_demo === true) isDemoCommunity = true;
+      } catch (e) {
+        console.warn(`[portal] is_demo lookup failed (likely schema cache): ${e.message}`);
+      }
+    }
+    community.is_demo = isDemoCommunity;
+
     // Demo communities are always-on by definition. The portal_active flag
     // exists so real boards can opt in formally — demo communities don't
     // need that gate. Coerce here so older deployed frontends (without the
     // is_demo bypass in portal.html) still render the portal correctly.
-    if (community.is_demo === true) {
+    if (isDemoCommunity) {
       community.portal_active = true;
     }
 
