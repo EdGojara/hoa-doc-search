@@ -437,12 +437,19 @@ router.post('/vapi-assistant-request', express.json({ limit: '64kb' }), async (r
   // For every other event type, return 200 OK with empty body — Vapi
   // doesn't require a structured response for most events.
   if (eventType !== 'assistant-request') {
-    // Useful logging for end-of-call-report (audit trail), other events
-    // can stay quiet to avoid log noise.
+    // End-of-call-report: persist the call into homeowner_calls so it
+    // shows in trustEd's Calls dashboard, flows into the operational
+    // queue, and feeds the encode-Ed audit pattern. This was previously
+    // a no-op which meant Vapi calls were invisible to trustEd.
     if (eventType === 'end-of-call-report') {
       console.log(`[vapi-ar ${requestId}] end-of-call report received`, JSON.stringify(safeForLogs(msg)).slice(0, 500));
-      // Clear the per-call cache to release memory
       const endingCallId = msg?.call?.id || msg?.callId || null;
+      try {
+        await _persistVapiEndOfCall(msg, requestId);
+      } catch (e) {
+        console.error(`[vapi-ar ${requestId}] persist end-of-call failed:`, e.message);
+      }
+      // Clear the per-call cache to release memory
       if (endingCallId) cacheClear(endingCallId);
     }
     return res.json({});
@@ -951,5 +958,371 @@ router.post('/vapi-llm-webhook-es/chat/completions', express.json({ limit: '256k
       'Disculpe, estoy teniendo problemas en este momento — ¿quiere que tome un mensaje para que alguien del equipo le devuelva la llamada?',
   });
 });
+
+// ============================================================================
+// VAPI ↔ trustEd PERSISTENCE + JUDGMENT TOOLS
+// ----------------------------------------------------------------------------
+// Two pieces that close the loop between Vapi (the voice runtime) and
+// trustEd (the brain):
+//
+//   1. _persistVapiEndOfCall  — fires from /vapi-assistant-request when an
+//      end-of-call-report arrives. Maps the Vapi payload to a row in
+//      homeowner_calls so the call shows in the Calls dashboard, drives
+//      compliance flagging, and feeds follow-up routing.
+//
+//   2. POST /vapi-tools/caller-context  — Vapi function-call endpoint.
+//      Configure this in Vapi's assistant config as a tool. When Claire
+//      receives a call, she invokes this BEFORE her first sentence to
+//      get a synthesized read on the caller — name, property, recent
+//      activity, what they're likely calling about. The opener becomes:
+//
+//        "Hey John, this is Claire from Bedrock for Waterview —
+//         saw you called yesterday about the fob, did you get the
+//         application?"
+//
+//      Instead of the generic:
+//        "Hey, this is Claire from Bedrock for Waterview Estates —
+//         what can I help with?"
+//
+//      That's the encode-Ed difference: Ed never opens with "what can I
+//      help with?" — he opens already knowing what's likely going on.
+//      The synthesis happens HERE, not in the prompt.
+// ============================================================================
+
+/**
+ * Persist a Vapi end-of-call-report payload into homeowner_calls.
+ * Tolerant of payload shape variations (Vapi has shifted field names
+ * over time; we check several common paths). Falls back gracefully on
+ * missing data — better to log a partial row than skip the call entirely.
+ */
+async function _persistVapiEndOfCall(msg, requestId) {
+  if (!msg) return;
+  const call = msg.call || {};
+  const callerNumber = call.customer?.number || msg.customer?.number || null;
+  const calledNumber = call.phoneNumber?.number || msg.phoneNumber?.number || null;
+  const callSid = call.id || call.callId || msg.callId || msg.id || null;
+  if (!callSid) {
+    console.warn(`[vapi-persist ${requestId}] no call id in payload — skipping`);
+    return;
+  }
+
+  // Resolve caller + community using the same helper as assistant-request.
+  let caller = null;
+  let community = null;
+  if (callerNumber) {
+    try {
+      const lookup = await resolveCallerByPhone(callerNumber);
+      caller = lookup.contact;
+      community = lookup.community;
+    } catch (e) {
+      console.warn(`[vapi-persist ${requestId}] caller lookup failed: ${e.message}`);
+    }
+  }
+  // Phone-route fallback if caller lookup didn't yield a community.
+  if (!community && calledNumber) {
+    try {
+      const { data: route } = await supabase
+        .from('voice_phone_routes')
+        .select('community_id, communities:community_id(id, name)')
+        .eq('inbound_phone_number', calledNumber)
+        .eq('enabled', true)
+        .maybeSingle();
+      if (route?.communities) {
+        community = { id: route.communities.id, name: route.communities.name };
+      }
+    } catch (_) {}
+  }
+
+  // Timing
+  const startedAt = msg.startedAt || call.startedAt || call.createdAt || null;
+  const endedAt = msg.endedAt || call.endedAt || new Date().toISOString();
+  const duration = Number(
+    msg.durationSeconds || msg.duration_seconds || call.durationSeconds || 0
+  );
+
+  // Transcript / summary — Vapi sends these as separate fields
+  const transcript = msg.transcript || msg.fullTranscript || '';
+  const summary = msg.summary || msg.callSummary || null;
+  const turnCount = Array.isArray(msg.messages)
+    ? msg.messages.filter(m => m?.role === 'user' || m?.role === 'human').length
+    : (transcript.match(/^(User|Caller):/gim) || []).length;
+
+  // Build the Stage-1 brief shape from whatever Vapi gave us. If a
+  // structured summary is present, prefer that; otherwise build a minimal
+  // one from the summary text. The downstream follow-up logic in
+  // call_log.js gets to enrich this further when we wire it in.
+  const brief = msg.analysis?.structuredData || msg.structuredData || (summary ? {
+    concern: summary,
+    channel: 'voice',
+    category: msg.analysis?.category || null,
+    next_step: msg.analysis?.nextStep || null,
+    owner: 'staff',
+    escalate: false,
+  } : null);
+
+  const handoffOffered = !!(msg.transferred || msg.handoffOffered);
+  const endedReason = msg.endedReason || msg.endReason || null;
+
+  // Build the row — only include fields we actually have values for.
+  const row = {
+    call_sid: callSid,
+    community_id: community?.id || null,
+    caller_phone: callerNumber || null,
+    caller_homeowner_id: caller?.id || null,
+    status: 'completed',
+    started_at: startedAt,
+    ended_at: endedAt,
+    duration_seconds: duration || null,
+    full_transcript: transcript || null,
+    turn_count: turnCount || 0,
+    brief: brief || null,
+    brief_extracted_at: brief ? new Date().toISOString() : null,
+    handoff_offered: handoffOffered,
+    handoff_reason: endedReason && /transfer|handoff/i.test(endedReason) ? endedReason : null,
+    raw_provider_metadata: {
+      provider: 'vapi',
+      vapi_call_id: callSid,
+      ended_reason: endedReason,
+      recording_url: msg.recordingUrl || msg.stereoRecordingUrl || null,
+      cost: msg.cost || null,
+      assistant_id: msg.assistant?.id || msg.assistantId || null,
+    },
+  };
+
+  // Compliance heuristic — if the transcript mentions enforcement-flavored
+  // words, flag for review even when the brief didn't. Same defensive
+  // posture used in lib/voice/call_log.js.
+  if (transcript) {
+    const flagRegex = /\b(violation|§\s*209|fine|waiver|hearing|cure|legal|lien|collections?)\b/i;
+    if (flagRegex.test(transcript)) {
+      row.compliance_flag = true;
+      row.compliance_reason = 'transcript_mentioned_enforcement_terms';
+    }
+  }
+
+  // Upsert on call_sid (UNIQUE per migration 103) so re-fires don't dupe.
+  const { error } = await supabase
+    .from('homeowner_calls')
+    .upsert(row, { onConflict: 'call_sid' });
+  if (error) {
+    console.error(`[vapi-persist ${requestId}] homeowner_calls upsert failed:`, error.message);
+    return;
+  }
+  console.log(`[vapi-persist ${requestId}] call ${callSid} persisted (community=${community?.name || 'unknown'}, caller=${caller?.preferred_name || caller?.full_name || callerNumber || 'unknown'})`);
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/voice/vapi-tools/caller-context
+// ---------------------------------------------------------------------------
+// Vapi function-call endpoint. Configure in Vapi's assistant tools as a
+// function named getCallerContext with a single parameter `caller_phone`.
+// Vapi invokes this at the start of a conversation (or whenever it needs
+// fresh context) and the response is fed back to the LLM as a tool result.
+//
+// The response is the ENCODE-ED layer: not a dump of facts, but a SYNTHESIS
+// of what the caller probably needs, framed the way Ed would frame it on
+// his first sentence. The prompt instructs Claire to use the
+// `recommended_opener_context` field to inform her opening line.
+//
+// Auth: shares VAPI_WEBHOOK_SECRET with the assistant-request endpoint.
+// ---------------------------------------------------------------------------
+router.post('/vapi-tools/caller-context', express.json({ limit: '64kb' }), async (req, res) => {
+  const requestId = `vapi-ctx-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const expectedSecret = process.env.VAPI_WEBHOOK_SECRET || '';
+    if (expectedSecret) {
+      const auth = String(req.headers.authorization || '');
+      if (auth !== `Bearer ${expectedSecret}`) {
+        return res.status(401).json({ error: 'unauthorized' });
+      }
+    }
+
+    // Vapi's function call payload puts the arguments at:
+    //   message.toolCalls[0].function.arguments  (JSON-stringified)
+    // OR for older configs:
+    //   message.functionCall.parameters
+    // Tolerant extraction.
+    const body = req.body || {};
+    const msg = body.message || body;
+    const toolCall = (msg.toolCalls && msg.toolCalls[0]) || msg.toolCall || null;
+    let args = {};
+    if (toolCall?.function?.arguments) {
+      try { args = JSON.parse(toolCall.function.arguments); } catch (_) { args = toolCall.function.arguments || {}; }
+    } else if (toolCall?.function?.parameters) {
+      args = toolCall.function.parameters;
+    } else if (msg.functionCall?.parameters) {
+      args = msg.functionCall.parameters;
+    } else if (msg.arguments) {
+      args = typeof msg.arguments === 'string' ? safeJsonParse(msg.arguments) : msg.arguments;
+    } else if (msg.parameters) {
+      args = msg.parameters;
+    }
+
+    // Also fall back to the call's caller number if no explicit phone arg
+    // was passed (common pattern — Vapi can pass the caller_phone implicitly
+    // via the call context).
+    const callerPhoneArg = args?.caller_phone || args?.phone || null;
+    const callContextPhone = msg.call?.customer?.number || msg.customer?.number || null;
+    const callerPhone = callerPhoneArg || callContextPhone;
+
+    if (!callerPhone) {
+      return res.json({
+        result: {
+          found: false,
+          recommended_opener_context: 'Hey, this is Claire from Bedrock — what can I help with today?',
+          note: 'No caller phone provided; falling back to generic opener.',
+        },
+      });
+    }
+
+    const lookup = await resolveCallerByPhone(callerPhone);
+    const caller = lookup.contact;
+    const property = lookup.property;
+    const community = lookup.community;
+
+    if (!caller) {
+      return res.json({
+        result: {
+          found: false,
+          recommended_opener_context: community
+            ? `Hey, this is Claire from Bedrock for ${community.name} — what can I help with today?`
+            : 'Hey, this is Claire from Bedrock — what can I help with today?',
+          note: 'Caller phone not in contacts. Treat as unknown caller; verify identity before sharing account-specific info.',
+        },
+      });
+    }
+
+    // Pull recent activity for synthesis. Bounded queries to keep response time low.
+    const homeownerName = caller.preferred_name || caller.first_name || caller.full_name || 'there';
+    const firstName = (caller.preferred_name || caller.first_name || (caller.full_name || '').split(' ')[0] || '').trim();
+
+    const recentActivity = await _gatherRecentActivity({
+      contact: caller,
+      property,
+      community,
+    });
+
+    // The opener is the synthesis. This is where encode-Ed actually lives —
+    // not a script, but a one-liner that already knows what the caller
+    // probably wants. Ed never opens with "what can I help with?" — he
+    // opens with "saw you called yesterday about X, did you get the Y?"
+    let opener;
+    if (recentActivity.most_recent_call_summary) {
+      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — saw you called ${recentActivity.most_recent_call_when || 'recently'} about ${recentActivity.most_recent_call_summary}. Did you get what you needed?`;
+    } else if (recentActivity.open_violation_summary) {
+      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — calling about the ${recentActivity.open_violation_summary} notice we sent over, or something else?`;
+    } else if (recentActivity.open_acc_summary) {
+      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — calling about your ${recentActivity.open_acc_summary} submission, or something else I can help with?`;
+    } else {
+      opener = `Hey ${firstName}, this is Claire from Bedrock for ${community?.name || 'your community'} — what can I help with today?`;
+    }
+
+    return res.json({
+      result: {
+        found: true,
+        caller: {
+          first_name: firstName,
+          full_name: caller.full_name,
+          preferred_name: caller.preferred_name,
+          contact_id: caller.id,
+        },
+        property: property ? {
+          street_address: property.street_address,
+          community_id: property.community_id,
+          property_id: property.id,
+        } : null,
+        community: community ? { id: community.id, name: community.name } : null,
+        recent_activity: recentActivity,
+        recommended_opener_context: opener,
+        // Guidance for the model: this is the encode-Ed mindset, surfaced
+        // as a tool result. Vapi's system prompt should be set up to obey
+        // these hints rather than reciting them verbatim.
+        conversation_guidance: [
+          'Open warmly using the recommended_opener_context — do not read it verbatim, use it as inspiration.',
+          'Listen for what is actually behind the question before answering.',
+          'Offer paths forward, never just policy.',
+          'Take ownership of the next step — never end with we will be in touch.',
+          'When account-specific info is requested, verify identity (last 4 of street address or full name) before sharing.',
+        ],
+      },
+    });
+  } catch (err) {
+    console.error(`[vapi-ctx ${requestId}] failed:`, err.message);
+    return res.json({
+      result: {
+        found: false,
+        recommended_opener_context: 'Hey, this is Claire from Bedrock — what can I help with today?',
+        note: 'Context lookup failed; falling back to generic opener.',
+      },
+    });
+  }
+});
+
+/**
+ * Pull recent activity for a caller and synthesize a few one-line
+ * summaries Claire can use to anchor her opener. Bounded queries only.
+ */
+async function _gatherRecentActivity({ contact, property, community }) {
+  const out = {
+    most_recent_call_summary: null,
+    most_recent_call_when: null,
+    open_violation_summary: null,
+    open_acc_summary: null,
+    has_open_ar_balance: false,
+    open_items_count: 0,
+  };
+  if (!contact?.id) return out;
+
+  // Most recent prior call (within last 14 days) — drives the
+  // "saw you called yesterday about X" opener
+  try {
+    const since = new Date(Date.now() - 14 * 86400 * 1000).toISOString();
+    const { data: priorCalls } = await supabase
+      .from('homeowner_calls')
+      .select('id, started_at, brief, full_transcript')
+      .eq('caller_homeowner_id', contact.id)
+      .gte('started_at', since)
+      .order('started_at', { ascending: false })
+      .limit(1);
+    const last = priorCalls?.[0];
+    if (last) {
+      const briefConcern = last.brief?.concern || last.brief?.summary || null;
+      out.most_recent_call_summary = briefConcern
+        ? briefConcern.replace(/\.$/, '').slice(0, 80)
+        : 'a question for the team';
+      const days = Math.floor((Date.now() - new Date(last.started_at).getTime()) / 86400000);
+      out.most_recent_call_when = days === 0 ? 'earlier today'
+        : days === 1 ? 'yesterday'
+        : days < 7 ? `${days} days ago`
+        : 'recently';
+    }
+  } catch (_) {}
+
+  // Open violation at property
+  if (property?.id) {
+    try {
+      const { data: vios } = await supabase
+        .from('violations')
+        .select('id, current_stage, opened_at, enforcement_categories(label)')
+        .eq('property_id', property.id)
+        .is('resolved_at', null)
+        .order('opened_at', { ascending: false })
+        .limit(1);
+      const v = vios?.[0];
+      if (v) {
+        out.open_violation_summary = v.enforcement_categories?.label
+          ? `${v.enforcement_categories.label} ${v.current_stage === 'certified_209' ? 'certified' : 'courtesy'}`
+          : 'open violation';
+        out.open_items_count += 1;
+      }
+    } catch (_) {}
+  }
+
+  return out;
+}
+
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch (_) { return {}; }
+}
 
 module.exports = { router, handleWebSocketConnection };
