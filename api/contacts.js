@@ -714,6 +714,73 @@ router.patch('/communities/:id', express.json(), async (req, res) => {
 // ---------------------------------------------------------------------------
 // PROPERTIES
 // ---------------------------------------------------------------------------
+// ============================================================================
+// is_likely_rental heuristic (Ed 2026-06-08)
+// ----------------------------------------------------------------------------
+// PURPOSE: surface properties that are PROBABLY rentals but don't have an
+// explicit renter residency on file yet. Lets operators triage the
+// "find rentals we haven't captured" backlog without manually scanning.
+//
+// RULE:
+//   • If a current residency exists AND type is anything OTHER than
+//     'unknown', trust the data. The flag is FALSE — we already know.
+//     (renter → it IS a rental, not "likely". owner_occupied / family /
+//     vacant → not a rental.)
+//   • If no current residency OR residency_type='unknown' AND there's
+//     an owner whose MAILING address differs from the PROPERTY's
+//     street address → flag as likely rental.
+//   • Address compare uses street-portion only (everything before the
+//     first comma, lowercased, whitespace collapsed). Avoids false
+//     positives from formatting differences in city/state/zip.
+//
+// Returns { flag: boolean, reason: string, owner_mailing?, property_street? }
+// ----------------------------------------------------------------------------
+function _normalizeStreetOnly(addr) {
+  if (!addr) return '';
+  const beforeComma = String(addr).split(',')[0];
+  return beforeComma
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[.,#]/g, '')
+    .trim();
+}
+function computeIsLikelyRental({ propertyAddress, ownerMailingAddress, currentResidencyType }) {
+  // Trust explicit residency data
+  if (currentResidencyType === 'renter') {
+    return { flag: false, reason: 'Confirmed renter on file' };
+  }
+  if (currentResidencyType === 'owner_occupied') {
+    return { flag: false, reason: 'Confirmed owner-occupied' };
+  }
+  if (currentResidencyType === 'family_member') {
+    return { flag: false, reason: 'Confirmed family member' };
+  }
+  if (currentResidencyType === 'vacant') {
+    return { flag: false, reason: 'Confirmed vacant' };
+  }
+  // currentResidencyType is null, undefined, or 'unknown' → heuristic time
+  if (!ownerMailingAddress) {
+    return { flag: false, reason: 'No owner mailing address on file' };
+  }
+  if (!propertyAddress) {
+    return { flag: false, reason: 'No property address' };
+  }
+  const propStreet = _normalizeStreetOnly(propertyAddress);
+  const ownerStreet = _normalizeStreetOnly(ownerMailingAddress);
+  if (!propStreet || !ownerStreet) {
+    return { flag: false, reason: 'Address data incomplete' };
+  }
+  if (propStreet === ownerStreet) {
+    return { flag: false, reason: 'Owner mailing matches property (likely owner-occupied)' };
+  }
+  return {
+    flag: true,
+    reason: 'Owner mails to a different address — likely rental',
+    owner_mailing: ownerMailingAddress,
+    property_street: propertyAddress,
+  };
+}
+
 router.get('/properties', async (req, res) => {
   try {
     const communityId = req.query.community_id;
@@ -734,6 +801,42 @@ router.get('/properties', async (req, res) => {
       if (data.length < PAGE) break;
       from += PAGE;
       if (from > 100000) break;
+    }
+
+    // Pull current residency types for the same property ids so we can
+    // compute is_likely_rental per-row. Same pagination discipline.
+    const propertyIds = all.map(p => p.property_id).filter(Boolean);
+    const residencyByPropId = new Map();
+    if (propertyIds.length) {
+      // Batch IN-list 500 at a time to keep URL length sane
+      for (let i = 0; i < propertyIds.length; i += 500) {
+        const batch = propertyIds.slice(i, i + 500);
+        const { data: rrows } = await supabase
+          .from('property_residencies')
+          .select('property_id, residency_type, start_date')
+          .in('property_id', batch)
+          .is('end_date', null);
+        for (const r of (rrows || [])) {
+          // If multiple current residencies somehow exist (data quality
+          // issue), keep the latest by start_date
+          const existing = residencyByPropId.get(r.property_id);
+          if (!existing || (r.start_date || '') > (existing.start_date || '')) {
+            residencyByPropId.set(r.property_id, r);
+          }
+        }
+      }
+    }
+    // Enrich each row
+    for (const p of all) {
+      const res = residencyByPropId.get(p.property_id);
+      const rentalIntel = computeIsLikelyRental({
+        propertyAddress: p.street_address,
+        ownerMailingAddress: p.owner_mailing_address,
+        currentResidencyType: res?.residency_type || null,
+      });
+      p.current_residency_type = res?.residency_type || null;
+      p.is_likely_rental = rentalIntel.flag;
+      p.likely_rental_reason = rentalIntel.reason;
     }
     res.json({ properties: all });
   } catch (err) {
@@ -767,11 +870,38 @@ router.get('/properties/:id', async (req, res) => {
         .maybeSingle(),
     ]);
 
+    // Compute is_likely_rental intel for the panel chip.
+    // Find current residency (end_date IS NULL) and current owner mailing.
+    const currentRes = (residencies || []).find(r => !r.end_date) || null;
+    const currentOwner = (ownerships || []).find(o => !o.end_date) || null;
+    const ownerContact = currentOwner?.contacts || null;
+    let ownerMailing = null;
+    if (ownerContact?.id) {
+      // contacts join from /properties/:id doesn't bring mailing_address
+      // by default — fetch it explicitly.
+      try {
+        const { data: cFull } = await supabase
+          .from('contacts')
+          .select('mailing_address')
+          .eq('id', ownerContact.id)
+          .maybeSingle();
+        ownerMailing = cFull?.mailing_address || null;
+      } catch (_) { /* leave null */ }
+    }
+    const rentalIntel = computeIsLikelyRental({
+      propertyAddress: prop.street_address,
+      ownerMailingAddress: ownerMailing,
+      currentResidencyType: currentRes?.residency_type || null,
+    });
+
     res.json({
       property: prop,
       ownerships: ownerships || [],
       residencies: residencies || [],
       active_lease: activeLease || null,
+      is_likely_rental: rentalIntel.flag,
+      likely_rental_reason: rentalIntel.reason,
+      owner_mailing_address: ownerMailing,
     });
   } catch (err) {
     res.status(500).json({ error: err.message });

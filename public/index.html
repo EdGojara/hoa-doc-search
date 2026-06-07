@@ -5250,6 +5250,13 @@
     } else {
       flags.label_has_issues = false;
     }
+    // Likely rental — server-computed (api/contacts.js computeIsLikelyRental).
+    // Captures: owner mailing address differs from property AND no explicit
+    // residency on file yet. Different from `absentee` — absentee = mailing
+    // address mismatch regardless of residency state. likely_rental excludes
+    // cases where we already confirmed the residency (owner-occupied,
+    // family, vacant, or already-flagged renter).
+    flags.likely_rental = !!p.is_likely_rental;
     return flags;
   }
 
@@ -5260,7 +5267,7 @@
     if (!bar || !summary || !chips) return;
     if (allRows.length === 0) { bar.style.display = 'none'; return; }
     const cg = homesGetCommunityGeo(document.getElementById('homesListCommunity')?.value || '');
-    const totals = { incomplete_geo: 0, incomplete_mailing: 0, label_has_issues: 0, no_email: 0, absentee: 0, vacant: 0, complete: 0 };
+    const totals = { incomplete_geo: 0, incomplete_mailing: 0, label_has_issues: 0, no_email: 0, absentee: 0, likely_rental: 0, vacant: 0, complete: 0 };
     for (const p of allRows) {
       const f = homesClassifyRow(p, cg);
       if (f.incomplete_geo) totals.incomplete_geo++;
@@ -5268,6 +5275,7 @@
       if (f.label_has_issues) totals.label_has_issues++;
       if (f.no_email) totals.no_email++;
       if (f.absentee) totals.absentee++;
+      if (f.likely_rental) totals.likely_rental++;
       if (f.vacant) totals.vacant++;
       // "Ready" = label would print cleanly. label_has_issues is the
       // authoritative gate — supersets the individual flags below.
@@ -5287,6 +5295,7 @@
       { key: 'incomplete_mailing', label: `⚠ Mailing addr missing zip (${totals.incomplete_mailing})`, bg: '#fef2f2', color: '#991b1b' },
       { key: 'no_email',           label: `No email (${totals.no_email})`,                   bg: '#fffbeb', color: '#92400e' },
       { key: 'absentee',           label: `Mailing ≠ property (${totals.absentee})`,         bg: '#eff6ff', color: '#1e40af' },
+      { key: 'likely_rental',      label: `🏘️ Likely rental — needs renter (${totals.likely_rental || 0})`, bg: '#fef3c7', color: '#854d0e' },
       { key: 'vacant',             label: `Vacant (${totals.vacant})`,                       bg: '#f3f4f6', color: '#6B7280' }
     ];
     chips.innerHTML = chipDef.map(c => {
@@ -5974,7 +5983,24 @@
         currentResHtml = '<div style="background:#f1f5f9; color:#6B7280; padding:8px 12px; border-radius:8px; font-size:12px; margin-bottom:14px;">No current residency on file. <button onclick="homesOpenAddRenterModal(\'' + j.property.id + '\')" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; margin-left:6px; font-weight:600;">🏘️ Add renter</button> <button onclick="homesAddResidency(\'' + j.property.id + '\')" style="background:#1E2761; color:#fff; border:0; border-radius:5px; padding:4px 10px; font-size:11px; cursor:pointer; margin-left:4px;">+ Other residency</button></div>';
       }
 
+      // Likely-rental chip (Ed 2026-06-08 heuristic — surfaces properties
+      // where the owner's mailing address differs from the property's
+      // street address AND no explicit residency is on file). One-click
+      // → opens the Add Renter modal to close the data gap.
+      let likelyRentalChip = '';
+      if (j.is_likely_rental) {
+        const mailing = j.owner_mailing_address ? escapeHtml(j.owner_mailing_address) : '(not on file)';
+        likelyRentalChip = `<div style="background:#fef3c7; border:1px solid #fbbf24; color:#854d0e; padding:9px 14px; border-radius:8px; font-size:12.5px; margin-bottom:12px; display:flex; align-items:center; gap:10px;">
+          <span style="font-size:16px;">🏘️</span>
+          <div style="flex:1;">
+            <div style="font-weight:700; margin-bottom:2px;">Likely rental — needs renter on file</div>
+            <div style="font-size:11.5px; color:#78350f; line-height:1.4;">${escapeHtml(j.likely_rental_reason || '')}. Owner mails to <strong>${mailing}</strong>.</div>
+          </div>
+          <button onclick="homesOpenAddRenterModal('${j.property.id}')" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:6px; padding:6px 14px; font-size:12px; font-weight:700; cursor:pointer; white-space:nowrap;">+ Add renter</button>
+        </div>`;
+      }
       body.innerHTML = `
+        ${likelyRentalChip}
         ${currentResHtml}
         <h4 style="margin:0 0 6px 0; font-size:13px; color:#1E2761;">Ownership history</h4>
         ${rendRel(j.ownerships, 'Owner', false)}
