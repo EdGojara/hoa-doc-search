@@ -90,9 +90,21 @@ router.get('/community/:id/summary', async (req, res) => {
     // the rest. Boards see what's available, not a 500.
     let arAging = null;
     try {
+      // NOTE: This surface intentionally reads owner_ar_snapshots, NOT the
+      // unified resolveCurrentAR. The board's AR rollup needs at_legal /
+      // in_collections / payment_plan_active enforcement signals, which
+      // only exist on snapshots today. When the enforcement_state table
+      // gets built, this will migrate to the unified pipeline.
+      //
+      // BUG FIX (Ed 2026-06-08 cleanup audit): property_id was missing
+      // from the SELECT, which made the dedupe key fall back to
+      // `snapshot_date + '|' + balance_total`. Properties with the same
+      // balance on the same snapshot date were silently collapsed,
+      // undercounting AR aging numbers shown to boards. Added property_id
+      // to the SELECT and the dedupe key.
       const { data: arRows } = await supabase
         .from('owner_ar_snapshots')
-        .select('balance_total, enforcement_stage, at_legal, in_collections, payment_plan_active, snapshot_date')
+        .select('property_id, balance_total, enforcement_stage, at_legal, in_collections, payment_plan_active, snapshot_date')
         .eq('community_id', communityId)
         .order('snapshot_date', { ascending: false })
         .limit(5000);
@@ -101,8 +113,8 @@ router.get('/community/:id/summary', async (req, res) => {
       const seen = new Set();
       const latest = [];
       for (const r of ar) {
-        const k = r.property_id || r.account_number || r.snapshot_date + '|' + (r.balance_total || 0);
-        if (seen.has(k)) continue;
+        const k = r.property_id;
+        if (!k || seen.has(k)) continue;
         seen.add(k);
         latest.push(r);
       }
