@@ -206,7 +206,7 @@ router.post('/incoming', async (req, res) => {
           // Settled question (Ed 2026-06-08): we pull PENDING here so
           // Claire knows about open requests; historical decisions go to
           // the precedent retrieval layer instead.
-          const [arRes, violationsRes, accRes, recentCallsRes] = await Promise.allSettled([
+          const [arRes, violationsRes, accRes, recentCallsRes, esRes] = await Promise.allSettled([
             supabase
               .from('owner_ar_snapshots')
               .select('balance_total, snapshot_date, enforcement_stage, at_legal, in_collections, payment_plan_active')
@@ -235,8 +235,17 @@ router.post('/incoming', async (req, res) => {
               .neq('call_sid', callSid)
               .order('started_at', { ascending: false })
               .limit(3),
+            // Operator-managed enforcement state (migration 202) — canonical
+            // signals override the legacy snapshot. Critical for HARD RULE
+            // #16 (bankruptcy automatic stay), at_legal FDCPA, etc.
+            supabase
+              .from('v_current_enforcement_state')
+              .select('state, attorney_name, attorney_firm, attorney_email, attorney_phone, bankruptcy_chapter, bankruptcy_case_number, bankruptcy_attorney_name, bankruptcy_attorney_email, payment_plan_terms_text, effective_at')
+              .eq('property_id', propId)
+              .maybeSingle(),
           ]);
           const ar = arRes.status === 'fulfilled' ? arRes.value?.data : null;
+          const enforcement = esRes.status === 'fulfilled' ? esRes.value?.data : null;
           const violations = violationsRes.status === 'fulfilled' ? (violationsRes.value?.data || []) : [];
           const accRaw = accRes.status === 'fulfilled' ? (accRes.value?.data || []) : [];
           // Shape ACC rows to match what the prompt builder expects
@@ -256,7 +265,7 @@ router.post('/incoming', async (req, res) => {
             status: c.status,
             summary: c.brief?.concern || c.brief?.answer_or_status || null,
           }));
-          return { ar, violations, acc, recentCalls };
+          return { ar, violations, acc, recentCalls, enforcement };
         })();
         // Race against an 800ms timeout so we never delay the opener
         const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 800));
@@ -308,14 +317,49 @@ router.post('/incoming', async (req, res) => {
     let warmupSerialized = '';
     if (callerWarmup) {
       try {
+        // Enforcement state from canonical operator-managed table OVERRIDES
+        // the legacy snapshot signals. When es.state='in_bankruptcy',
+        // HARD RULE #16 fires and Claire cannot discuss the account.
+        const es = callerWarmup.enforcement || null;
         const compact = {
           ar: callerWarmup.ar ? {
             balance_total: callerWarmup.ar.balance_total,
             snapshot_date: callerWarmup.ar.snapshot_date,
-            enforcement_stage: callerWarmup.ar.enforcement_stage,
-            at_legal: !!callerWarmup.ar.at_legal,
-            in_collections: !!callerWarmup.ar.in_collections,
-            payment_plan_active: !!callerWarmup.ar.payment_plan_active,
+            // Enforcement signals: canonical state if present, otherwise
+            // fall back to the legacy snapshot fields.
+            enforcement_stage:    es?.state          || callerWarmup.ar.enforcement_stage,
+            at_legal:             es ? (es.state === 'at_legal')       : !!callerWarmup.ar.at_legal,
+            in_collections:       es ? (es.state === 'in_collections') : !!callerWarmup.ar.in_collections,
+            payment_plan_active:  es ? (es.state === 'on_payment_plan') : !!callerWarmup.ar.payment_plan_active,
+            in_bankruptcy:        es ? (es.state === 'in_bankruptcy')  : false,
+            lien_filed:           es ? (es.state === 'lien_filed')     : false,
+            judgment:             es ? (es.state === 'judgment')       : false,
+          } : (es ? {
+            // No legacy snapshot but enforcement state IS present —
+            // still surface the signals so HARD RULE #16 fires.
+            balance_total: null,
+            snapshot_date: null,
+            enforcement_stage: es.state,
+            at_legal:            es.state === 'at_legal',
+            in_collections:      es.state === 'in_collections',
+            payment_plan_active: es.state === 'on_payment_plan',
+            in_bankruptcy:       es.state === 'in_bankruptcy',
+            lien_filed:          es.state === 'lien_filed',
+            judgment:            es.state === 'judgment',
+          } : null),
+          // Structured enforcement details for HARD RULE rendering
+          // (attorney info for at_legal handoff, bankruptcy attorney
+          // for HARD RULE #16). Empty when no state on file.
+          enforcement: es ? {
+            state: es.state,
+            attorney_name: es.attorney_name || es.attorney_firm || null,
+            attorney_email: es.attorney_email || null,
+            attorney_phone: es.attorney_phone || null,
+            bankruptcy_chapter: es.bankruptcy_chapter || null,
+            bankruptcy_case_number: es.bankruptcy_case_number || null,
+            bankruptcy_attorney_name: es.bankruptcy_attorney_name || null,
+            bankruptcy_attorney_email: es.bankruptcy_attorney_email || null,
+            payment_plan_terms_text: es.payment_plan_terms_text || null,
           } : null,
           v_count: callerWarmup.violations?.length || 0,
           acc: (callerWarmup.acc || []).slice(0, 2).map(a => ({
