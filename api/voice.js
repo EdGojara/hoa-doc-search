@@ -240,7 +240,7 @@ router.post('/incoming', async (req, res) => {
             // #16 (bankruptcy automatic stay), at_legal FDCPA, etc.
             supabase
               .from('v_current_enforcement_state')
-              .select('state, attorney_name, attorney_firm, attorney_email, attorney_phone, bankruptcy_chapter, bankruptcy_case_number, bankruptcy_attorney_name, bankruptcy_attorney_email, payment_plan_terms_text, effective_at')
+              .select('state, attorney_name, attorney_firm, attorney_email, attorney_phone, bankruptcy_chapter, bankruptcy_case_number, bankruptcy_filing_date, bankruptcy_attorney_name, bankruptcy_attorney_email, payment_plan_terms_text, effective_at')
               .eq('property_id', propId)
               .maybeSingle(),
           ]);
@@ -265,7 +265,25 @@ router.post('/incoming', async (req, res) => {
             status: c.status,
             summary: c.brief?.concern || c.brief?.answer_or_status || null,
           }));
-          return { ar, violations, acc, recentCalls, enforcement };
+          // If bankruptcy on file with filing date, compute pre/post-petition
+          // split via the unified resolver. Helps Claire route balance
+          // questions intelligently (HARD RULE #16 — pre is stay-protected,
+          // post is normal AR).
+          let petitionSplit = null;
+          if (enforcement?.state === 'in_bankruptcy' && enforcement?.bankruptcy_filing_date) {
+            try {
+              const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
+              const arRes = await resolveCurrentAR(supabase, { propertyId: propId });
+              if (arRes) {
+                petitionSplit = {
+                  pre_petition_balance_cents:  arRes.pre_petition_balance_cents,
+                  post_petition_balance_cents: arRes.post_petition_balance_cents,
+                  petition_date: arRes.petition_date,
+                };
+              }
+            } catch (_) { /* leave petitionSplit null */ }
+          }
+          return { ar, violations, acc, recentCalls, enforcement, petitionSplit };
         })();
         // Race against an 800ms timeout so we never delay the opener
         const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 800));
@@ -334,6 +352,10 @@ router.post('/incoming', async (req, res) => {
             in_bankruptcy:        es ? (es.state === 'in_bankruptcy')  : false,
             lien_filed:           es ? (es.state === 'lien_filed')     : false,
             judgment:             es ? (es.state === 'judgment')       : false,
+            // Pre/post-petition split (only populated when in_bankruptcy with filing date)
+            pre_petition_balance_cents:  callerWarmup.petitionSplit?.pre_petition_balance_cents  ?? null,
+            post_petition_balance_cents: callerWarmup.petitionSplit?.post_petition_balance_cents ?? null,
+            petition_date:               callerWarmup.petitionSplit?.petition_date               ?? null,
           } : (es ? {
             // No legacy snapshot but enforcement state IS present —
             // still surface the signals so HARD RULE #16 fires.
