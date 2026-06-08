@@ -1038,9 +1038,33 @@ router.get('/me', async (req, res) => {
       // the rest of /me processes exactly as if this property were owned.
       // The picked property gets injected into req.query for downstream code.
       req.query.property_id = pickedProp.id;
+
+      // Look up the CURRENT owner so the greeting + top-right show the
+      // homeowner's name (not the manager's). This is what "see what they
+      // see" actually requires — staff name in the header makes the
+      // preview misleading.
+      let homeownerName = null;
+      try {
+        const { data: ownerships } = await supabase
+          .from('property_ownerships')
+          .select('contacts:contact_id (full_name, preferred_name, first_name)')
+          .eq('property_id', pickedProp.id)
+          .is('end_date', null)
+          .limit(1)
+          .maybeSingle();
+        const c = ownerships?.contacts;
+        if (c) {
+          homeownerName = c.preferred_name || c.full_name || c.first_name || null;
+        }
+      } catch (e) {
+        console.warn('[portal /me manager] owner lookup failed (non-fatal):', e.message);
+      }
+
       req._managerView = {
         synthetic_property: pickedProp,
         portfolio_wide: portfolioWide,
+        homeowner_name: homeownerName,
+        staff_email: user.email,
       };
     }
 
@@ -1292,10 +1316,18 @@ router.get('/me', async (req, res) => {
       community_slug: p.communities?.slug || '',
     }));
 
+    // In manager mode, show the actual homeowner's name in the portal
+    // header/greeting — that's what "see what they see" means. Staff email
+    // is preserved on the manager banner for audit/identity context.
+    const displayName = (req._managerView?.homeowner_name)
+      || user.full_name
+      || user.email;
+
     res.json({
       user: {
-        name: user.full_name || user.email,
-        email: user.email,
+        name: displayName,
+        email: req._managerView ? (req._managerView.homeowner_name || 'Homeowner') : user.email,
+        staff_email: req._managerView ? req._managerView.staff_email : null,
         role: user.role,
         // Tutorial state — true means "user has dismissed/completed the
         // first-login tutorial, don't auto-show again." Frontend reads this

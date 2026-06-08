@@ -943,12 +943,16 @@ function applyDemoBanner(ctx) {
 function applyManagerBanner(ctx) {
   const banner = document.getElementById('managerBanner');
   if (!banner) return;
-  const isManagerViewing = (ctx?.user?.role === 'manager')
+  const isManagerViewing = (ctx?.user?.role === 'manager' || ctx?.manager_mode?.active)
     && !ctx?.manager_mode?.picker_required
     && ctx?.property?.address;
   if (isManagerViewing) {
     document.getElementById('mgrBannerAddress').textContent = ctx.property.address;
-    document.getElementById('mgrBannerEmail').textContent = `as ${ctx.user.email || 'manager'}`;
+    // Show the staff email — that's who is actually viewing. The portal
+    // body shows the homeowner's name (so "see what they see" is accurate)
+    // but the banner makes the staff identity unmistakable.
+    const staffEmail = ctx?.user?.staff_email || ctx?.user?.email || 'manager';
+    document.getElementById('mgrBannerEmail').textContent = `staff: ${staffEmail}`;
     banner.style.display = 'flex';
     document.body.style.paddingTop = '40px';
   } else {
