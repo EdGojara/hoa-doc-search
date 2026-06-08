@@ -569,6 +569,16 @@
   </div>
 </div>
 
+<!-- Manager mode banner (migration 201). Shown when role='manager' is
+     viewing a specific property. Read-only view; the banner makes that
+     explicit and gives a one-click back to the picker. -->
+<div id="managerBanner" style="display:none; position:fixed; top:0; left:0; right:0; background:#0B1D34; color:#fff; padding:8px 16px; z-index:1000; align-items:center; justify-content:space-between; gap:12px; box-shadow:0 2px 8px rgba(0,0,0,0.25); font-family:Inter,-apple-system,sans-serif; font-size:13px; font-weight:600;">
+  <div>🏢 <strong>MANAGER VIEW</strong> · <span id="mgrBannerAddress">—</span> · <span id="mgrBannerEmail" style="opacity:0.75; font-weight:400;">—</span></div>
+  <div style="display:flex; gap:10px; align-items:center;">
+    <button onclick="window.location.href='/portal'" style="background:#D4AF37; color:#0B1D34; border:0; border-radius:6px; padding:5px 12px; font-size:12px; font-weight:600; cursor:pointer; font-family:inherit;">← Switch property</button>
+  </div>
+</div>
+
 <!-- Demo community banner — visible ONLY when /me returns
      community.is_demo=true (Drama Creek Estates per migration 184).
      Protects against any screenshot or session being misread as a real
@@ -927,6 +937,25 @@ function applyDemoBanner(ctx) {
   }
 }
 
+// Manager banner — shown when ctx.user.role === 'manager' AND we're viewing
+// a specific property (not the picker). The picker handles its own header
+// so we only show the banner on the homeowner-view portion.
+function applyManagerBanner(ctx) {
+  const banner = document.getElementById('managerBanner');
+  if (!banner) return;
+  const isManagerViewing = (ctx?.user?.role === 'manager')
+    && !ctx?.manager_mode?.picker_required
+    && ctx?.property?.address;
+  if (isManagerViewing) {
+    document.getElementById('mgrBannerAddress').textContent = ctx.property.address;
+    document.getElementById('mgrBannerEmail').textContent = `as ${ctx.user.email || 'manager'}`;
+    banner.style.display = 'flex';
+    document.body.style.paddingTop = '40px';
+  } else {
+    banner.style.display = 'none';
+  }
+}
+
 async function applyMimicBanner(ctx) {
   const banner = document.getElementById('mimicBanner');
   if (!banner) return;
@@ -982,7 +1011,12 @@ async function loadPortal() {
   // defaults to the first property — which is fine for single-property
   // homeowners and also a sensible default for first-load of the picker
   // before the user picks.
-  const storedId = getStoredPropertyId();
+  // URL-level ?property_id wins (manager picker uses this to render a
+  // specific property's view). Falls back to session-stored picker
+  // choice. Falls back to no param (first-property default).
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlPropertyId = urlParams.get('property_id');
+  const storedId = urlPropertyId || getStoredPropertyId();
   const url = storedId
     ? `/api/portal/me?property_id=${encodeURIComponent(storedId)}`
     : '/api/portal/me';
@@ -1072,6 +1106,14 @@ function renderPortal(ctx) {
     return;
   }
   if (!ctx) return;
+
+  // MANAGER MODE picker — Bedrock staff with role=manager get the property
+  // browser instead of a homeowner view. Picking a property re-fetches
+  // /me?property_id=X which falls through to the homeowner render.
+  if (ctx.manager_mode?.picker_required) {
+    renderManagerPicker(ctx);
+    return;
+  }
 
   // Multi-property picker — render BEFORE the portal itself if the user has
   // 2+ properties AND hasn't already picked one in this session. The picker
@@ -1346,6 +1388,98 @@ async function decorateTileBadges() {
 }
 
 // =============================================================================
+// Manager picker — Bedrock staff browse any property in their portfolio.
+// =============================================================================
+function renderManagerPicker(ctx) {
+  const app = $('app');
+  app.innerHTML = `
+    <div style="max-width: 980px; margin: 40px auto; padding: 0 20px; font-family: -apple-system, BlinkMacSystemFont, sans-serif;">
+      <div style="background: linear-gradient(135deg, #0B1D34 0%, #1E3556 100%); color: #fff; border-radius: 14px; padding: 28px 32px; margin-bottom: 24px;">
+        <div style="font-size: 11px; color: #D4AF37; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Manager view</div>
+        <div style="font-family: Georgia, serif; font-size: 26px; font-weight: 500; line-height: 1.2;">Browse the portfolio</div>
+        <div style="font-size: 14px; color: rgba(255,255,255,0.75); margin-top: 8px; line-height: 1.5;">
+          Signed in as <strong style="color: #fff;">${escapeHtml(ctx.user?.email || 'staff')}</strong> · ${ctx.manager_mode?.portfolio_wide ? 'Portfolio-wide access' : `Scoped to ${ctx.manager_mode?.scoped_community_count || '?'} communit${ctx.manager_mode?.scoped_community_count === 1 ? 'y' : 'ies'}`}
+        </div>
+        <div style="font-size: 12.5px; color: rgba(255,255,255,0.65); margin-top: 6px;">
+          Every property you open is logged with your email and timestamp. Read-only view.
+        </div>
+      </div>
+
+      <div style="background: #fff; border: 1px solid #e5e3da; border-radius: 12px; padding: 20px 22px; margin-bottom: 16px;">
+        <div style="display: flex; gap: 10px; align-items: center;">
+          <input id="mgrSearch" type="search" placeholder="Search by address or Vantaca account number…" autofocus
+                 style="flex: 1; padding: 10px 14px; border: 1px solid #cbd5e1; border-radius: 8px; font-size: 14px; font-family: inherit;">
+          <button onclick="managerLoadProperties()" style="background: #0B1D34; color: #fff; border: 0; padding: 10px 22px; border-radius: 8px; font-size: 14px; font-weight: 500; cursor: pointer;">Search</button>
+        </div>
+        <div style="font-size: 12px; color: #6b7280; margin-top: 8px;">Type at least 2 characters and press Enter. Leave blank + click Search to load the first 50 properties.</div>
+      </div>
+
+      <div id="mgrResults" style="background: #fff; border: 1px solid #e5e3da; border-radius: 12px; padding: 10px 0;">
+        <div style="padding: 24px; text-align: center; color: #94a3b8;">Search above to load properties.</div>
+      </div>
+    </div>
+  `;
+
+  const search = document.getElementById('mgrSearch');
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') managerLoadProperties();
+  });
+  // Auto-load on first render so the operator sees the first 50 immediately
+  managerLoadProperties();
+}
+
+async function managerLoadProperties() {
+  const q = document.getElementById('mgrSearch').value.trim();
+  const wrap = document.getElementById('mgrResults');
+  wrap.innerHTML = '<div style="padding: 24px; text-align: center; color: #6b7280;">Loading…</div>';
+  try {
+    const r = await fetch('/api/portal/manager/properties' + (q ? ('?q=' + encodeURIComponent(q)) : ''), {
+      credentials: 'same-origin',
+    });
+    const j = await r.json();
+    if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+    const props = j.properties || [];
+    if (!props.length) {
+      wrap.innerHTML = '<div style="padding: 24px; text-align: center; color: #94a3b8;">No properties match.</div>';
+      return;
+    }
+    wrap.innerHTML = `
+      <table style="width: 100%; border-collapse: collapse; font-size: 13.5px;">
+        <thead>
+          <tr style="background: #f8fafc; color: #475569; text-transform: uppercase; font-size: 10.5px; letter-spacing: 0.05em;">
+            <th style="text-align: left; padding: 10px 16px;">Address</th>
+            <th style="text-align: left; padding: 10px 16px;">Community</th>
+            <th style="text-align: left; padding: 10px 16px;">Owner</th>
+            <th style="text-align: left; padding: 10px 16px;">Account</th>
+            <th style="padding: 10px 16px;"></th>
+          </tr>
+        </thead>
+        <tbody>
+          ${props.map(p => `
+            <tr style="border-bottom: 1px solid #f1f5f9; cursor: pointer;"
+                onclick="managerOpenProperty('${escapeHtml(p.property_id)}')"
+                onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''">
+              <td style="padding: 12px 16px; font-weight: 500; color: #0B1D34;">${escapeHtml(p.street_address || '—')}</td>
+              <td style="padding: 12px 16px; color: #475569;">${escapeHtml(p.community_name || '—')}</td>
+              <td style="padding: 12px 16px; color: #475569;">${escapeHtml(p.owner_name || '—')}</td>
+              <td style="padding: 12px 16px; color: #6b7280; font-family: monospace; font-size: 12px;">${escapeHtml(p.vantaca_account_id || '—')}</td>
+              <td style="padding: 12px 16px; text-align: right;"><span style="color: #0B1D34; font-size: 12px;">Open →</span></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+    `;
+  } catch (e) {
+    wrap.innerHTML = `<div style="padding: 24px; color: #b91c1c;">Load failed: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function managerOpenProperty(propertyId) {
+  // Re-render the portal as that property's homeowner view
+  window.location.href = '/portal?property_id=' + encodeURIComponent(propertyId);
+}
+
+// =============================================================================
 // Property picker (multi-property users)
 // =============================================================================
 function renderPropertyPicker(ctx) {
@@ -1510,6 +1644,7 @@ function _dismissTutorial() {
   const ctx = await loadPortal();
   applyDemoBanner(ctx);
   applyMimicBanner(ctx);
+  applyManagerBanner(ctx);
   renderPortal(ctx);
 })();
 </script>

@@ -606,6 +606,91 @@ router.post('/consume', async (req, res) => {
 // When a staff mimic cookie is present, /me resolves the TARGET portal user
 // and includes a `mimic` block so the frontend can render the warning banner.
 // ============================================================================
+// ============================================================================
+// GET /api/portal/manager/properties
+// Browse properties available to the manager. Powers the property picker
+// on the manager portal landing. Search by address, owner name, or
+// vantaca_account_id. Limited to the manager's community scope.
+// ============================================================================
+router.get('/manager/properties', async (req, res) => {
+  try {
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+
+    const { data: user } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status')
+      .eq('id', portalUserId)
+      .single();
+    if (!user || user.status === 'revoked') return res.status(401).json({ error: 'session_invalid' });
+    if (user.role !== 'manager' && user.role !== 'staff' && user.role !== 'admin') {
+      return res.status(403).json({ error: 'role_not_authorized' });
+    }
+
+    // Manager scope
+    const { data: scopeRows } = await supabase
+      .from('portal_manager_scope')
+      .select('community_id')
+      .eq('portal_user_id', user.id)
+      .is('revoked_at', null);
+    const portfolioWide = (scopeRows || []).some(s => s.community_id === null);
+    const allowedCommunityIds = portfolioWide
+      ? null
+      : (scopeRows || []).map(s => s.community_id).filter(Boolean);
+
+    const q = String(req.query?.q || '').trim();
+    const limit = Math.min(parseInt(req.query?.limit || '50', 10), 200);
+
+    let propQuery = supabase
+      .from('properties')
+      .select(`
+        id, street_address, vantaca_account_id, community_id,
+        communities:community_id (id, name),
+        property_ownerships!inner (
+          contact_id, end_date,
+          contacts:contact_id (id, full_name, primary_email)
+        )
+      `)
+      .is('property_ownerships.end_date', null)
+      .order('street_address')
+      .limit(limit);
+
+    if (!portfolioWide && allowedCommunityIds && allowedCommunityIds.length) {
+      propQuery = propQuery.in('community_id', allowedCommunityIds);
+    }
+    if (q) {
+      // Search across address + vantaca_account_id (owner name search would
+      // require a separate query; address + account is enough for v1)
+      propQuery = propQuery.or(`street_address.ilike.%${q}%,vantaca_account_id.ilike.%${q}%`);
+    }
+
+    const { data: rows, error } = await propQuery;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const items = (rows || []).map(p => {
+      const owner = p.property_ownerships?.[0]?.contacts;
+      return {
+        property_id: p.id,
+        street_address: p.street_address,
+        vantaca_account_id: p.vantaca_account_id,
+        community_id: p.community_id,
+        community_name: p.communities?.name || '',
+        owner_name: owner?.full_name || '',
+        owner_email: owner?.primary_email || '',
+      };
+    });
+
+    res.json({
+      properties: items,
+      total: items.length,
+      portfolio_wide: portfolioWide,
+    });
+  } catch (err) {
+    console.error('[portal manager/properties] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/me', async (req, res) => {
   try {
     const { portalUserId, mimic } = resolvePortalUser(req);
@@ -724,6 +809,99 @@ router.get('/me', async (req, res) => {
       });
     }
 
+    // MANAGER PATH (migration 201) — Bedrock staff role that can pick ANY
+    // property in the portfolio and render its homeowner view. Eliminates
+    // per-homeowner portal_user provisioning for support, QA, training,
+    // prospect demos.
+    //
+    // The client passes ?property_id=X to pick a property. If not provided,
+    // we return a special "show picker" response shape so the UI knows to
+    // render the property browser instead of the standard homeowner view.
+    //
+    // Once a property_id is provided AND verified to be in the manager's
+    // scope, we substitute a synthetic property scope and fall through to
+    // the OWNER PATH below — same rendering, same downstream calls. The
+    // homeowner experience is identical to what the real homeowner would
+    // see when they log in.
+    const isManager = user.role === 'manager';
+    if (isManager) {
+      const requestedPropertyId = String(req.query?.property_id || '').trim();
+
+      // Manager scope — communities they can browse
+      const { data: scopeRows } = await supabase
+        .from('portal_manager_scope')
+        .select('community_id')
+        .eq('portal_user_id', user.id)
+        .is('revoked_at', null);
+      const scopes = scopeRows || [];
+      const portfolioWide = scopes.some(s => s.community_id === null);
+      const allowedCommunityIds = portfolioWide
+        ? null  // null = all communities allowed (Bedrock staff)
+        : new Set(scopes.map(s => s.community_id).filter(Boolean));
+
+      if (!requestedPropertyId) {
+        // No property picked yet → return picker mode
+        return res.json({
+          user: {
+            name: user.full_name || user.email,
+            email: user.email,
+            role: 'manager',
+            tutorial_dismissed: !!user.tutorial_dismissed_at,
+            login_count: user.login_count || 0,
+          },
+          manager_mode: {
+            active: true,
+            portfolio_wide: portfolioWide,
+            scoped_community_count: portfolioWide ? null : allowedCommunityIds?.size,
+            picker_required: true,
+          },
+          // Empty placeholders so the frontend doesn't render a broken homeowner view
+          property: null,
+          properties: [],
+          community: { name: 'Select a property', slug: '', portal_active: false },
+          balance: {},
+          compliance: {},
+          open_requests: { count: 0 },
+        });
+      }
+
+      // Property picked → verify it's in scope, then proceed to homeowner render
+      const { data: pickedProp } = await supabase
+        .from('properties')
+        .select('id, street_address, community_id, vantaca_account_id')
+        .eq('id', requestedPropertyId)
+        .maybeSingle();
+      if (!pickedProp) {
+        return res.status(404).json({ error: 'property_not_found' });
+      }
+      if (!portfolioWide && allowedCommunityIds && !allowedCommunityIds.has(pickedProp.community_id)) {
+        return res.status(403).json({ error: 'property_outside_manager_scope' });
+      }
+
+      // Audit — log every property view in manager mode
+      try {
+        await supabase.from('portal_manager_view_log').insert({
+          portal_user_id: user.id,
+          staff_email: user.email,
+          viewed_property_id: pickedProp.id,
+          viewed_community_id: pickedProp.community_id,
+          ip_address: req.ip || null,
+          user_agent: req.headers['user-agent'] || null,
+        });
+      } catch (e) {
+        console.warn('[portal /me manager] view log failed (non-fatal):', e.message);
+      }
+
+      // Manager has access — fall through with a synthetic property scope so
+      // the rest of /me processes exactly as if this property were owned.
+      // The picked property gets injected into req.query for downstream code.
+      req.query.property_id = pickedProp.id;
+      req._managerView = {
+        synthetic_property: pickedProp,
+        portfolio_wide: portfolioWide,
+      };
+    }
+
     // OWNER PATH — original logic continues below.
     // Resolve property scope (homeowners are scoped to one or more properties).
     // We pull the FULL list of accessible properties so the frontend can:
@@ -757,7 +935,21 @@ router.get('/me', async (req, res) => {
       console.warn('[portal /me] propScopes query failed:', propScopesErr.message);
     }
 
-    const props = (propScopes || []).map((s) => s.properties).filter(Boolean);
+    let props = (propScopes || []).map((s) => s.properties).filter(Boolean);
+
+    // MANAGER MODE — inject the picked property as a synthetic scope.
+    // (The manager has no portal_user_properties rows; they were granted
+    // access via portal_manager_scope which is checked earlier.)
+    if (req._managerView?.synthetic_property) {
+      const sp = req._managerView.synthetic_property;
+      props = [{
+        id: sp.id,
+        street_address: sp.street_address,
+        community_id: sp.community_id,
+        vantaca_account_id: sp.vantaca_account_id,
+      }];
+    }
+
     if (!props.length) {
       // User has portal access but no property scope yet — show a polite
       // empty state. Include role + email so the login-page router can tell
