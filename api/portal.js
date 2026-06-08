@@ -694,15 +694,37 @@ router.post('/staff-enter', async (req, res) => {
       portalUser = created;
     }
 
-    // Grant portfolio-wide scope (idempotent — composite PK)
-    await supabase
+    // Grant portfolio-wide scope. The PG primary key originally included
+    // community_id which forced NOT NULL, silently breaking the NULL
+    // (portfolio-wide) insert (migration 207 fixes the schema). We now do
+    // an explicit check-then-insert so failures surface AND so we don't
+    // re-insert on every staff-enter visit.
+    const { data: existingScope, error: scopeReadErr } = await supabase
       .from('portal_manager_scope')
-      .upsert({
-        portal_user_id: portalUser.id,
-        community_id: null,
-        granted_by: 'staff_sso_bridge',
-        revoked_at: null,
-      }, { onConflict: 'portal_user_id,community_id' });
+      .select('id')
+      .eq('portal_user_id', portalUser.id)
+      .is('community_id', null)
+      .is('revoked_at', null)
+      .maybeSingle();
+    if (scopeReadErr) {
+      console.warn('[portal] staff-enter scope read failed:', scopeReadErr.message);
+    }
+    if (!existingScope) {
+      const { error: scopeInsertErr } = await supabase
+        .from('portal_manager_scope')
+        .insert({
+          portal_user_id: portalUser.id,
+          community_id: null,
+          granted_by: 'staff_sso_bridge',
+        });
+      if (scopeInsertErr) {
+        console.error('[portal] staff-enter scope insert failed:', scopeInsertErr.message);
+        return res.status(500).json({
+          error: 'scope_grant_failed',
+          message: scopeInsertErr.message,
+        });
+      }
+    }
 
     // Set the portal cookie
     setPortalCookie(res, signCookie(portalUser.id));
