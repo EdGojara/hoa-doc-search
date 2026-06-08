@@ -426,12 +426,29 @@ If the source material genuinely doesn't address the question well, your Action 
 // ----------------------------------------------------------------------------
 // GET /api/help/documents — list ingested docs
 // ----------------------------------------------------------------------------
+// Help tab shows OPERATIONAL knowledge only — vendor guides, SOPs, statute
+// books, training materials. Per-property / per-community docs (ARC
+// decisions, Documents-tab library uploads, emails, board packets, KB
+// articles) belong in their own modules and were leaking into this list
+// through the shared knowledge_documents table. Allowlist by source_type.
+const HELP_TAB_SOURCE_TYPES = [
+  'vendor_admin_guide',
+  'vendor_user_guide',
+  'vendor_agreement',
+  'vendor_release_notes',
+  'bedrock_sop',
+  'training_material',
+  'legal_reference',
+  'other',
+];
+
 router.get('/documents', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('knowledge_documents')
       .select('id, title, source_type, vendor, file_name, page_count, chunk_count, status, notes, ingested_at, jurisdiction, effective_year_start, effective_year_end, community_type, publisher')
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .in('source_type', HELP_TAB_SOURCE_TYPES)
       .order('ingested_at', { ascending: false });
     if (error) throw error;
     res.json({ documents: data || [] });
