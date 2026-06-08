@@ -459,29 +459,54 @@ router.get('/staleness', async (req, res) => {
       .order('name');
     if (cErr) throw cErr;
 
-    // Pull the MAX(snapshot_date) per community in one round trip. We
-    // can't use group-by directly via the Supabase JS client, so fetch
-    // all relevant snapshot rows (one quick scalar per community)
-    // through a single grouped pass. Approved-only.
-    const { data: snaps, error: sErr } = await supabase
-      .from('owner_ar_snapshots')
-      .select('community_id, snapshot_date')
-      .not('approved_at', 'is', null)
-      .order('snapshot_date', { ascending: false })
-      .limit(50000);
-    if (sErr) throw sErr;
+    // Single-source-of-truth principle (Ed 2026-06-08):
+    // transaction_upload_batches is the canonical Vantaca-ingest signal.
+    // owner_ar_snapshots is a legacy mirror — kept as fallback for any
+    // community whose latest data still lives in the old table, but
+    // transaction batches win when both exist.
+    //
+    // Take MAX(as_of_date) per community across both sources, prefer
+    // transactions when same date.
 
+    const [{ data: batches, error: bErr }, { data: snaps, error: sErr }] = await Promise.all([
+      supabase
+        .from('transaction_upload_batches')
+        .select('community_id, as_of_date, committed_at')
+        .eq('status', 'committed')
+        .order('as_of_date', { ascending: false })
+        .limit(50000),
+      supabase
+        .from('owner_ar_snapshots')
+        .select('community_id, snapshot_date')
+        .not('approved_at', 'is', null)
+        .order('snapshot_date', { ascending: false })
+        .limit(50000),
+    ]);
+    if (bErr) console.warn('[owner-ar/staleness] transaction_upload_batches read failed:', bErr.message);
+    if (sErr) console.warn('[owner-ar/staleness] owner_ar_snapshots read failed:', sErr.message);
+
+    // Merge: latest per community, preferring batches when dates tie.
     const latestByCommunity = new Map();
+    for (const b of (batches || [])) {
+      if (!latestByCommunity.has(b.community_id)) {
+        latestByCommunity.set(b.community_id, { date: b.as_of_date, source: 'transactions' });
+      }
+    }
     for (const s of (snaps || [])) {
-      if (!latestByCommunity.has(s.community_id)) {
-        latestByCommunity.set(s.community_id, s.snapshot_date);
+      const existing = latestByCommunity.get(s.community_id);
+      if (!existing) {
+        latestByCommunity.set(s.community_id, { date: s.snapshot_date, source: 'snapshot' });
+      } else if (s.snapshot_date > existing.date) {
+        // Snapshot newer than transaction batch — unusual but respect it
+        latestByCommunity.set(s.community_id, { date: s.snapshot_date, source: 'snapshot' });
       }
     }
 
     const today = new Date();
     const todayStr = today.toISOString().slice(0, 10);
     const rows = (communities || []).map((c) => {
-      const last = latestByCommunity.get(c.id) || null;
+      const lastEntry = latestByCommunity.get(c.id) || null;
+      const last = lastEntry?.date || null;
       let daysSince = null;
       if (last) {
         const lastDt = new Date(last + 'T00:00:00Z');
@@ -503,6 +528,9 @@ router.get('/staleness', async (req, res) => {
         last_snapshot_date: last,
         days_since: daysSince,
         severity,
+        // Surface which source provided the freshest signal so the UI
+        // can distinguish (or future endpoints can route on it).
+        source: lastEntry?.source || null,
       };
     });
 
