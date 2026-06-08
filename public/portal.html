@@ -1147,7 +1147,12 @@ function renderPortal(ctx) {
   // always-on by definition. ctx.demo is the URL-param demo mode (older
   // path); ctx.community.is_demo is the seeded demo-community flag
   // (Drama Creek per migration 184). Either signal opens the portal.
-  if (!ctx.community?.portal_active && !ctx.demo && !ctx.community?.is_demo) {
+  //
+  // Manager mode also bypasses — staff are intentionally previewing
+  // communities that may not have homeowner portal flipped on yet.
+  // That's the whole point of the manager view: see what they'll see
+  // BEFORE the gate opens.
+  if (!ctx.community?.portal_active && !ctx.demo && !ctx.community?.is_demo && !ctx.manager_mode?.active) {
     renderInactive({
       title: 'Portal not yet available for your community',
       message: `Your community's portal is being prepared. In the meantime, contact Bedrock at <a href="mailto:info@bedrocktx.com">info@bedrocktx.com</a> or (832) 588-2485.`,

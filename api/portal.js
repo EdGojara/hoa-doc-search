@@ -1345,6 +1345,14 @@ router.get('/me', async (req, res) => {
         started_at: mimic.started_at,
         expires_at: mimic.expires_at,
       } : null,
+      // Manager mode flag — surfaced even on the picked-property branch
+      // so the frontend can bypass the portal_active gate (staff are
+      // intentionally previewing communities that haven't gone live yet)
+      // and so the navy "MANAGER VIEW" banner renders.
+      manager_mode: req._managerView ? {
+        active: true,
+        portfolio_wide: !!req._managerView.portfolio_wide,
+      } : null,
     });
   } catch (err) {
     console.error('[portal] /me failed:', err.message);
