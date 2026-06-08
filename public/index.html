@@ -6024,6 +6024,7 @@
       body.innerHTML = `
         ${likelyRentalChip}
         <div id="hpEnforcementSlot"></div>
+        <div id="hpBalanceCompositionSlot"></div>
         ${currentResHtml}
         <h4 style="margin:0 0 6px 0; font-size:13px; color:#1E2761;">Ownership history</h4>
         ${rendRel(j.ownerships, 'Owner', false)}
@@ -6034,6 +6035,9 @@
       // colored chip (bankruptcy = red, at_legal = red, payment plan = blue,
       // collections = orange, current = gray). Click chip → modal to change.
       hpLoadEnforcementState(j.property.id);
+      // Load balance composition + amenity decision (composition drives whether
+      // pool/clubhouse access can be denied — fines-only ≠ assessment-class).
+      hpLoadBalanceComposition(j.property.id);
     } catch (e) {
       body.innerHTML = `<div style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</div>`;
     }
@@ -6094,6 +6098,90 @@
       `;
     } catch (e) {
       slot.innerHTML = `<div style="color:#94a3b8; font-size:12px; margin-bottom:12px;">Couldn't load enforcement state: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ===== Balance composition + amenity access =================================
+  // Shows the breakdown of the AR balance by category and the amenity-access
+  // decision. Composition-aware: a $500 balance composed entirely of fines
+  // does NOT trigger pool/clubhouse denial. Only assessment-class delinquent
+  // (assessment + late_fee + interest, no payment plan, not in bankruptcy)
+  // triggers denial. Operator sees the WHY in one glance.
+  async function hpLoadBalanceComposition(propertyId) {
+    const slot = document.getElementById('hpBalanceCompositionSlot');
+    if (!slot) return;
+    try {
+      const r = await fetch(`/api/contacts/property/${encodeURIComponent(propertyId)}/balance-composition`);
+      if (!r.ok) {
+        // 404 = property not found (race) — hide silently. Other = surface.
+        if (r.status === 404) { slot.innerHTML = ''; return; }
+        const j = await r.json().catch(() => ({}));
+        slot.innerHTML = `<div style="color:#94a3b8; font-size:12px; margin-bottom:12px;">Balance composition unavailable: ${escapeHtml(j.error || 'error')}</div>`;
+        return;
+      }
+      const j = await r.json();
+      const t = j.totals || {};
+      const totalCents = Number(t.total_cents || 0);
+      const fmt = (c) => '$' + (Number(c || 0) / 100).toFixed(2);
+
+      // Hide entirely when balance is zero/credit AND there's nothing
+      // meaningful to surface — keeps property panel clean for current accounts.
+      if (totalCents === 0 && (j.composition || []).length === 0) {
+        slot.innerHTML = '';
+        return;
+      }
+
+      const decision = j.amenity_decision || {};
+      const amenityChip = decision.allowed
+        ? `<span style="background:#dcfce7; color:#15803d; border:1px solid #22c55e; padding:3px 9px; border-radius:6px; font-size:11.5px; font-weight:600; white-space:nowrap;">🏊 Amenity access: ALLOWED</span>`
+        : `<span style="background:#fee2e2; color:#991b1b; border:1px solid #ef4444; padding:3px 9px; border-radius:6px; font-size:11.5px; font-weight:600; white-space:nowrap;">🚫 Amenity access: DENIED</span>`;
+
+      // Composition rows — only show non-zero categories with friendly labels
+      const CAT_LABELS = {
+        assessment:    'Assessment',
+        late_fee:      'Late fee',
+        interest:      'Interest',
+        fine:          'Fine (violation)',
+        attorney_fee:  'Attorney fee',
+        admin_fee:     'Admin / certified',
+        payment:       'Payment',
+        credit:        'Credit',
+        refund:        'Refund',
+        adjustment:    'Adjustment',
+        prior_balance: 'Prior balance',
+        other:         'Other',
+      };
+      const compRows = (j.composition || [])
+        .filter(r => Number(r.amount_cents) !== 0)
+        .map(r => {
+          const isAssessClass = r.charge_category === 'assessment' || r.charge_category === 'late_fee' || r.charge_category === 'interest';
+          const color = isAssessClass ? '#b91c1c' : '#475569';
+          return `<div style="display:flex; justify-content:space-between; padding:3px 0; font-size:12.5px; color:${color};">
+            <span>${CAT_LABELS[r.charge_category] || r.charge_category}${isAssessClass ? ' <span style="font-size:10px; color:#dc2626;">★</span>' : ''}</span>
+            <span style="font-family:ui-monospace,monospace; font-weight:600;">${fmt(r.amount_cents)}</span>
+          </div>`;
+        }).join('');
+
+      slot.innerHTML = `
+        <div style="background:#f8fafc; border:1px solid #e2e8f0; padding:10px 14px; border-radius:8px; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px; flex-wrap:wrap;">
+            <div>
+              <div style="font-size:10px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; color:#64748b;">Balance composition</div>
+              <div style="font-size:14px; font-weight:700; color:#0B1D34; margin-top:2px;">Total ${fmt(totalCents)}</div>
+            </div>
+            ${amenityChip}
+          </div>
+          ${compRows ? `<div style="border-top:1px solid #e2e8f0; padding-top:6px;">${compRows}</div>` : ''}
+          <div style="font-size:11px; color:#64748b; margin-top:8px; line-height:1.4; border-top:1px solid #e2e8f0; padding-top:6px;">
+            <strong>${decision.allowed ? '✓ Why allowed:' : '⚠ Why denied:'}</strong> ${escapeHtml(decision.reason || '')}
+          </div>
+          <div style="font-size:10px; color:#94a3b8; margin-top:4px;">
+            ★ = assessment class — only these drive amenity denial. Fines / attorney / admin fees alone cannot deny access.
+          </div>
+        </div>
+      `;
+    } catch (e) {
+      slot.innerHTML = `<div style="color:#94a3b8; font-size:12px; margin-bottom:12px;">Balance composition unavailable: ${escapeHtml(e.message)}</div>`;
     }
   }
 
