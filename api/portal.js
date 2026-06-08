@@ -607,6 +607,126 @@ router.post('/consume', async (req, res) => {
 // and includes a `mimic` block so the frontend can render the warning banner.
 // ============================================================================
 // ============================================================================
+// POST /api/portal/staff-enter
+// Bridge — convert a Bedrock staff Supabase auth session into a portal
+// manager session. No magic link needed; the user is already authenticated
+// via Microsoft 365.
+//
+// Flow:
+//   1. Client sends Authorization: Bearer <supabase_jwt> from their
+//      already-active trustEd staff session
+//   2. We validate the JWT via Supabase auth
+//   3. Check user_profiles row exists and is_active
+//   4. Auto-provision (or update) portal_users row with role='manager'
+//      keyed on email — idempotent, same user can re-enter anytime
+//   5. Auto-grant portfolio-wide scope (community_id=NULL)
+//   6. Set portal cookie pointing at the manager portal_user
+//   7. Return ok — client navigates to /portal
+//
+// Single-tenant lock: rejects any email not under bedrocktx.com.
+// ============================================================================
+router.post('/staff-enter', async (req, res) => {
+  try {
+    const auth = req.headers.authorization || '';
+    const token = auth.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!token) return res.status(401).json({ error: 'missing_bearer_token' });
+
+    // Validate the Supabase JWT
+    const { data: { user }, error: userErr } = await supabase.auth.getUser(token);
+    if (userErr || !user) return res.status(401).json({ error: 'invalid_supabase_session' });
+
+    // Single-tenant: only bedrocktx.com staff (matches the Azure AD
+    // single-tenant lock on the OAuth app)
+    const email = String(user.email || '').toLowerCase();
+    if (!email.endsWith('@bedrocktx.com')) {
+      return res.status(403).json({ error: 'tenant_locked', message: 'Only @bedrocktx.com accounts can use the manager portal.' });
+    }
+
+    // Verify active user_profile (same gate as the existing staff-cookie
+    // exchange — if the staff account is deactivated, this fails)
+    const { data: profile } = await supabase
+      .from('user_profiles')
+      .select('id, email, role, is_active')
+      .eq('id', user.id)
+      .maybeSingle();
+    if (!profile) {
+      return res.status(403).json({ error: 'no_profile', message: 'No user_profiles row. The handle_new_user trigger from migration 039 may not be installed.' });
+    }
+    if (profile.is_active === false) {
+      return res.status(403).json({ error: 'account_inactive' });
+    }
+
+    // Find or create the portal_user with role='manager' for this email
+    const fullName = user.user_metadata?.full_name
+      || user.user_metadata?.name
+      || profile.email
+      || email;
+
+    let { data: portalUser } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('email', email)
+      .maybeSingle();
+
+    if (portalUser) {
+      // Promote to manager if not already (staff can hold multiple roles
+      // implicitly; we always want them as manager for this flow)
+      if (portalUser.role !== 'manager' || portalUser.status !== 'active') {
+        await supabase
+          .from('portal_users')
+          .update({ role: 'manager', status: 'active' })
+          .eq('id', portalUser.id);
+      }
+    } else {
+      const { data: created, error: createErr } = await supabase
+        .from('portal_users')
+        .insert({
+          management_company_id: BEDROCK_MGMT_CO_ID,
+          email,
+          full_name: fullName,
+          role: 'manager',
+          status: 'active',
+        })
+        .select()
+        .single();
+      if (createErr) return res.status(500).json({ error: createErr.message });
+      portalUser = created;
+    }
+
+    // Grant portfolio-wide scope (idempotent — composite PK)
+    await supabase
+      .from('portal_manager_scope')
+      .upsert({
+        portal_user_id: portalUser.id,
+        community_id: null,
+        granted_by: 'staff_sso_bridge',
+        revoked_at: null,
+      }, { onConflict: 'portal_user_id,community_id' });
+
+    // Set the portal cookie
+    setPortalCookie(res, signCookie(portalUser.id));
+
+    await logAudit('manager_session_started', {
+      portal_user_id: portalUser.id,
+      ip_address: req.ip,
+      user_agent: req.headers['user-agent'] || null,
+      notes: `Staff SSO bridge for ${email}`,
+    });
+
+    res.json({
+      ok: true,
+      portal_user_id: portalUser.id,
+      email,
+      redirect: '/portal',
+    });
+  } catch (err) {
+    console.error('[portal] staff-enter failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // GET /api/portal/manager/properties
 // Browse properties available to the manager. Powers the property picker
 // on the manager portal landing. Search by address, owner name, or

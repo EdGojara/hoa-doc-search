@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Entering portal — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&family=Inter:wght@400;500;600&display=swap">
+<style>
+  html, body { margin:0; padding:0; background:#f5f4ed; font-family:Inter,-apple-system,sans-serif; color:#1a1a1a; min-height:100vh; }
+  .wrap { display:flex; flex-direction:column; align-items:center; justify-content:center; min-height:100vh; padding:24px; }
+  .card { background:#fff; border:1px solid #e5e3da; border-radius:14px; padding:32px 36px; max-width:480px; width:100%; text-align:center; box-shadow:0 4px 24px rgba(11,29,52,0.06); }
+  h1 { font-family:'Cormorant Garamond', Georgia, serif; font-size:22px; font-weight:500; color:#0B1D34; margin:0 0 8px; }
+  .sub { font-size:14px; color:#6b7280; line-height:1.5; margin-bottom:24px; }
+  .spinner { display:inline-block; width:20px; height:20px; border:2px solid #cbd5e1; border-top-color:#0B1D34; border-radius:50%; animation:spin 0.8s linear infinite; vertical-align:-4px; margin-right:8px; }
+  @keyframes spin { to { transform:rotate(360deg); } }
+  .err { background:#fef2f2; border:1px solid #fecaca; color:#991b1b; padding:12px 16px; border-radius:8px; font-size:13px; line-height:1.5; text-align:left; }
+  .btn { display:inline-block; background:#0B1D34; color:#fff; padding:10px 22px; border-radius:8px; text-decoration:none; font-weight:500; font-size:14px; margin-top:16px; }
+</style>
+<script src="https://unpkg.com/@supabase/supabase-js@2"></script>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Entering portal as manager</h1>
+    <div class="sub">Using your existing Bedrock sign-in — no password needed.</div>
+    <div id="status"><span class="spinner"></span>Authenticating…</div>
+  </div>
+</div>
+<script>
+'use strict';
+
+async function enter() {
+  const status = document.getElementById('status');
+  try {
+    // Load Supabase config from the server (same endpoint login.html uses)
+    const cfgRes = await fetch('/api/auth/config');
+    const cfg = await cfgRes.json();
+    if (!cfg.enabled) {
+      status.innerHTML = '<div class="err">Sign-in is not configured on this server yet. Contact info@bedrocktx.com.</div>';
+      return;
+    }
+    const supa = window.supabase.createClient(cfg.supabase_url, cfg.supabase_anon_key);
+
+    // Look for an active Supabase session (set by your /login.html flow)
+    const { data: { session } } = await supa.auth.getSession();
+    if (!session) {
+      // Not signed in — send them through Microsoft login first, then back here
+      status.innerHTML = '<div class="err">You need to sign in to trustEd first.</div><a class="btn" href="/login.html?next=' + encodeURIComponent(window.location.pathname) + '">Sign in →</a>';
+      return;
+    }
+
+    // Bridge: trade the Supabase JWT for a portal manager session
+    const r = await fetch('/api/portal/staff-enter', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + session.access_token,
+      },
+    });
+    const j = await r.json();
+    if (!r.ok) {
+      status.innerHTML = '<div class="err">Could not enter portal: <strong>' + (j.error || ('HTTP ' + r.status)) + '</strong>' + (j.message ? '<br><br>' + j.message : '') + '</div><a class="btn" href="/">← Back to trustEd</a>';
+      return;
+    }
+
+    // Success — go to the portal manager picker
+    window.location.href = j.redirect || '/portal';
+  } catch (e) {
+    status.innerHTML = '<div class="err">Bridge failed: ' + (e.message || 'unknown error') + '</div><a class="btn" href="/">← Back to trustEd</a>';
+  }
+}
+enter();
+</script>
+</body>
+</html>
