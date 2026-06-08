@@ -1199,6 +1199,236 @@ router.post('/property-residencies/:id/grant-portal-access', express.json(), asy
   }
 });
 
+// ============================================================================
+// PROPERTY ENFORCEMENT STATE — migration 202
+// ----------------------------------------------------------------------------
+// CATASTROPHIC-OUTPUT CLASS surface. Wrong data here means regulatory
+// violation (11 USC §362 automatic stay, FDCPA, etc.). Every state change
+// writes an audit row with operator identity + reason. The UI requires
+// confirmation + reason on every change.
+// ============================================================================
+
+const ENFORCEMENT_STATES = ['current', 'on_payment_plan', 'in_collections', 'at_legal', 'in_bankruptcy', 'lien_filed', 'judgment'];
+
+// GET /api/property-enforcement-state/:propertyId
+// Returns current state + last 10 audit entries
+router.get('/property-enforcement-state/:propertyId', async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+
+    const [{ data: currentRow }, { data: history }] = await Promise.all([
+      supabase.from('property_enforcement_states')
+        .select('*')
+        .eq('property_id', propertyId)
+        .is('ended_at', null)
+        .maybeSingle(),
+      supabase.from('property_enforcement_state_audit')
+        .select('id, action, state_before, state_after, changed_fields, performed_by, performed_at, reason')
+        .eq('property_id', propertyId)
+        .order('performed_at', { ascending: false })
+        .limit(10),
+    ]);
+
+    res.json({
+      current: currentRow || null,
+      audit_log: history || [],
+      allowed_states: ENFORCEMENT_STATES,
+    });
+  } catch (err) {
+    console.error('[enforcement-state] get failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/property-enforcement-state/:propertyId
+// Set or change the active enforcement state. Body requires:
+//   { state, reason, performed_by, ...state-specific fields }
+//
+// Behavior:
+//   - End-dates any existing active row (status → 'reverted by new state')
+//   - Inserts new row with the requested state + fields
+//   - Writes audit log entry
+//
+// Validates:
+//   - state must be one of ENFORCEMENT_STATES
+//   - reason is REQUIRED (regulatory defense trail)
+//   - performed_by is REQUIRED (operator identity)
+//   - bankruptcy state requires bankruptcy_case_number + bankruptcy_chapter
+//   - on_payment_plan requires payment_plan_terms_text or monthly_cents
+//   - at_legal / in_collections require attorney_name or attorney_firm
+router.post('/property-enforcement-state/:propertyId', express.json(), async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    const b = req.body || {};
+
+    if (!b.state || !ENFORCEMENT_STATES.includes(b.state)) {
+      return res.status(400).json({ error: 'invalid_state', allowed: ENFORCEMENT_STATES });
+    }
+    if (!b.reason || !String(b.reason).trim()) {
+      return res.status(400).json({ error: 'reason_required', message: 'Every enforcement state change must include a reason. This is the regulatory defense trail.' });
+    }
+    if (!b.performed_by || !String(b.performed_by).trim()) {
+      return res.status(400).json({ error: 'performed_by_required' });
+    }
+
+    // State-specific required-field validation
+    if (b.state === 'in_bankruptcy') {
+      if (!b.bankruptcy_case_number || !b.bankruptcy_chapter) {
+        return res.status(400).json({ error: 'bankruptcy_requires_case_number_and_chapter' });
+      }
+    }
+    if (b.state === 'on_payment_plan') {
+      if (!b.payment_plan_terms_text && !b.payment_plan_monthly_cents) {
+        return res.status(400).json({ error: 'payment_plan_requires_terms_or_monthly' });
+      }
+    }
+    if (b.state === 'at_legal' || b.state === 'in_collections') {
+      if (!b.attorney_name && !b.attorney_firm) {
+        return res.status(400).json({ error: 'attorney_name_or_firm_required' });
+      }
+    }
+
+    // Resolve community_id + contact_id from the property
+    const { data: prop } = await supabase
+      .from('properties')
+      .select('id, community_id')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+
+    const { data: ownership } = await supabase
+      .from('property_ownerships')
+      .select('contact_id')
+      .eq('property_id', propertyId)
+      .is('end_date', null)
+      .order('start_date', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+
+    const now = new Date().toISOString();
+
+    // 1. End-date any existing active row
+    const { data: previous } = await supabase
+      .from('property_enforcement_states')
+      .select('id, state')
+      .eq('property_id', propertyId)
+      .is('ended_at', null)
+      .maybeSingle();
+
+    if (previous) {
+      await supabase
+        .from('property_enforcement_states')
+        .update({ ended_at: now, ended_by: b.performed_by, ended_reason: `Replaced by new state: ${b.reason}` })
+        .eq('id', previous.id);
+    }
+
+    // 2. Insert new row
+    const insertPayload = {
+      property_id: propertyId,
+      community_id: prop.community_id,
+      contact_id: ownership?.contact_id || null,
+      state: b.state,
+      effective_at: b.effective_at || now,
+      expected_through: b.expected_through || null,
+      attorney_name: b.attorney_name || null,
+      attorney_firm: b.attorney_firm || null,
+      attorney_email: b.attorney_email || null,
+      attorney_phone: b.attorney_phone || null,
+      bankruptcy_chapter: b.bankruptcy_chapter || null,
+      bankruptcy_case_number: b.bankruptcy_case_number || null,
+      bankruptcy_court: b.bankruptcy_court || null,
+      bankruptcy_filing_date: b.bankruptcy_filing_date || null,
+      bankruptcy_attorney_name: b.bankruptcy_attorney_name || null,
+      bankruptcy_attorney_email: b.bankruptcy_attorney_email || null,
+      bankruptcy_attorney_phone: b.bankruptcy_attorney_phone || null,
+      payment_plan_terms_text: b.payment_plan_terms_text || null,
+      payment_plan_monthly_cents: b.payment_plan_monthly_cents || null,
+      payment_plan_remaining_cents: b.payment_plan_remaining_cents || null,
+      notes: b.notes || null,
+      created_by: b.performed_by,
+    };
+
+    const { data: created, error: insertErr } = await supabase
+      .from('property_enforcement_states')
+      .insert(insertPayload)
+      .select()
+      .single();
+    if (insertErr) {
+      console.error('[enforcement-state] insert failed:', insertErr.message);
+      return res.status(500).json({ error: insertErr.message });
+    }
+
+    // 3. Audit row
+    try {
+      await supabase.from('property_enforcement_state_audit').insert({
+        property_id: propertyId,
+        state_row_id: created.id,
+        action: previous ? 'updated' : 'created',
+        state_before: previous?.state || null,
+        state_after: b.state,
+        changed_fields: { state: { before: previous?.state || null, after: b.state } },
+        performed_by: b.performed_by,
+        ip_address: req.ip,
+        reason: b.reason,
+      });
+    } catch (e) {
+      console.warn('[enforcement-state] audit log insert failed (non-fatal):', e.message);
+    }
+
+    res.json({ ok: true, current: created, previous: previous || null });
+  } catch (err) {
+    console.error('[enforcement-state] set failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// POST /api/property-enforcement-state/:propertyId/end — lift the active state
+// (e.g., bankruptcy dismissed, payment plan completed). Returns to default
+// (no active row).
+router.post('/property-enforcement-state/:propertyId/end', express.json(), async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.reason || !b.performed_by) {
+      return res.status(400).json({ error: 'reason_and_performed_by_required' });
+    }
+    const propertyId = req.params.propertyId;
+
+    const { data: active } = await supabase
+      .from('property_enforcement_states')
+      .select('id, state')
+      .eq('property_id', propertyId)
+      .is('ended_at', null)
+      .maybeSingle();
+    if (!active) return res.status(404).json({ error: 'no_active_state' });
+
+    const now = new Date().toISOString();
+    await supabase
+      .from('property_enforcement_states')
+      .update({ ended_at: now, ended_by: b.performed_by, ended_reason: b.reason })
+      .eq('id', active.id);
+
+    try {
+      await supabase.from('property_enforcement_state_audit').insert({
+        property_id: propertyId,
+        state_row_id: active.id,
+        action: 'ended',
+        state_before: active.state,
+        state_after: null,
+        performed_by: b.performed_by,
+        ip_address: req.ip,
+        reason: b.reason,
+      });
+    } catch (e) {
+      console.warn('[enforcement-state] end audit failed (non-fatal):', e.message);
+    }
+
+    res.json({ ok: true, ended_state: active.state });
+  } catch (err) {
+    console.error('[enforcement-state] end failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/property-residencies', express.json(), async (req, res) => {
   try {
     const b = req.body || {};

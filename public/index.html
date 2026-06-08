@@ -6023,13 +6023,292 @@
       }
       body.innerHTML = `
         ${likelyRentalChip}
+        <div id="hpEnforcementSlot"></div>
         ${currentResHtml}
         <h4 style="margin:0 0 6px 0; font-size:13px; color:#1E2761;">Ownership history</h4>
         ${rendRel(j.ownerships, 'Owner', false)}
         <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Residency history</h4>
         ${rendRel(j.residencies, 'Resident', true)}`;
+      // Load enforcement state asynchronously so the panel renders fast.
+      // Catastrophic-output discipline: shows current state prominently with
+      // colored chip (bankruptcy = red, at_legal = red, payment plan = blue,
+      // collections = orange, current = gray). Click chip → modal to change.
+      hpLoadEnforcementState(j.property.id);
     } catch (e) {
       body.innerHTML = `<div style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ===== Enforcement state =================================================
+  // CATASTROPHIC-OUTPUT CLASS surface. Wrong data = regulatory violation
+  // (11 USC §362 bankruptcy automatic stay, FDCPA scoping, etc.). Operator
+  // confirmation + mandatory reason on every change.
+  const ENFORCEMENT_STATE_LABELS = {
+    current:         { label: '✓ Current',          bg: '#dcfce7', fg: '#15803d', border: '#22c55e' },
+    on_payment_plan: { label: '💳 Payment plan',     bg: '#dbeafe', fg: '#1e40af', border: '#3b82f6' },
+    in_collections:  { label: '⚠ Collections',       bg: '#fef3c7', fg: '#92400e', border: '#f59e0b' },
+    at_legal:        { label: '⚖ At legal',          bg: '#fee2e2', fg: '#991b1b', border: '#ef4444' },
+    in_bankruptcy:   { label: '🛡 Bankruptcy (stay)', bg: '#fce7f3', fg: '#9f1239', border: '#e11d48' },
+    lien_filed:      { label: '📋 Lien filed',       bg: '#f3e8ff', fg: '#6b21a8', border: '#a855f7' },
+    judgment:        { label: '🏛 Judgment',         bg: '#e0e7ff', fg: '#3730a3', border: '#6366f1' },
+  };
+
+  async function hpLoadEnforcementState(propertyId) {
+    const slot = document.getElementById('hpEnforcementSlot');
+    if (!slot) return;
+    try {
+      const r = await fetch(`/api/contacts/property-enforcement-state/${encodeURIComponent(propertyId)}`);
+      const j = await r.json();
+      const current = j.current;
+      const state = current?.state || 'current';
+      const cfg = ENFORCEMENT_STATE_LABELS[state] || ENFORCEMENT_STATE_LABELS.current;
+      const isImplicitCurrent = !current; // no row = implicit current
+
+      // Special bankruptcy callout — surface the stay loudly
+      let bankCallout = '';
+      if (state === 'in_bankruptcy') {
+        bankCallout = `<div style="background:#fee2e2; color:#991b1b; padding:6px 10px; border-radius:6px; font-size:11.5px; margin-top:6px; line-height:1.4;">
+          ⚠ <strong>Automatic stay active (11 USC §362).</strong> Do NOT send letters, call, assess fines, or post liens. Refer to bankruptcy attorney${current.bankruptcy_attorney_name ? ' (' + escapeHtml(current.bankruptcy_attorney_name) + ')' : ''}.
+        </div>`;
+      } else if (state === 'at_legal' || state === 'in_collections') {
+        bankCallout = `<div style="background:#fef3c7; color:#92400e; padding:6px 10px; border-radius:6px; font-size:11.5px; margin-top:6px; line-height:1.4;">
+          ⚠ FDCPA — Bedrock cannot negotiate. Refer to ${escapeHtml(current.attorney_name || current.attorney_firm || 'counsel on file')}.
+        </div>`;
+      }
+
+      slot.innerHTML = `
+        <div style="background:${cfg.bg}; border:1.5px solid ${cfg.border}; color:${cfg.fg}; padding:10px 14px; border-radius:8px; margin-bottom:12px;">
+          <div style="display:flex; align-items:center; justify-content:space-between; gap:10px;">
+            <div style="flex:1; min-width:0;">
+              <div style="font-size:10px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; opacity:0.7;">Enforcement state</div>
+              <div style="font-size:14px; font-weight:700; margin-top:2px;">${cfg.label}</div>
+              ${current && current.effective_at ? `<div style="font-size:11px; opacity:0.7; margin-top:2px;">Since ${escapeHtml(new Date(current.effective_at).toLocaleDateString())}${current.notes ? ' · ' + escapeHtml(current.notes.slice(0, 80)) : ''}</div>` : ''}
+            </div>
+            <div style="display:flex; gap:6px;">
+              <button onclick="hpOpenEnforcementModal('${propertyId}', ${JSON.stringify(current || null).replace(/"/g, '&quot;')})" style="background:#fff; color:#0B1D34; border:1px solid currentColor; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">${current ? '✏ Change' : '+ Set state'}</button>
+              ${current ? `<button onclick="hpEndEnforcementState('${propertyId}', '${escapeHtml(state)}')" style="background:#fff; color:#0B1D34; border:1px solid currentColor; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">↩ End</button>` : ''}
+            </div>
+          </div>
+          ${bankCallout}
+        </div>
+      `;
+    } catch (e) {
+      slot.innerHTML = `<div style="color:#94a3b8; font-size:12px; margin-bottom:12px;">Couldn't load enforcement state: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function hpOpenEnforcementModal(propertyId, current) {
+    const m = document.getElementById('hpEnforcementModal') || (function() {
+      const mod = document.createElement('div');
+      mod.id = 'hpEnforcementModal';
+      mod.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(15,23,42,0.6); z-index:10000; align-items:flex-start; justify-content:center; padding:20px; overflow-y:auto;';
+      document.body.appendChild(mod);
+      return mod;
+    })();
+
+    const cur = current || {};
+    const initialState = cur.state || '';
+    m.innerHTML = `
+      <div style="background:#fff; max-width:640px; width:100%; border-radius:14px; padding:24px 28px; margin-top:40px;">
+        <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:14px;">
+          <div>
+            <h3 style="margin:0; color:#0B1D34; font-size:18px;">Set enforcement state</h3>
+            <div style="font-size:12.5px; color:#64748b; margin-top:4px; line-height:1.5;">
+              ⚠ Catastrophic-output class. Wrong data here = regulatory violation. Every change is logged with your email + reason for regulatory defense.
+            </div>
+          </div>
+          <button onclick="document.getElementById('hpEnforcementModal').style.display='none'" style="background:none; border:0; font-size:22px; cursor:pointer; color:#94a3b8;">×</button>
+        </div>
+
+        <div style="display:flex; flex-direction:column; gap:14px;">
+          <div>
+            <label style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">New state *</label>
+            <select id="esState" onchange="hpEnforcementUpdateFields()" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+              <option value="">— Select —</option>
+              <option value="current" ${initialState==='current'?'selected':''}>✓ Current (no enforcement)</option>
+              <option value="on_payment_plan" ${initialState==='on_payment_plan'?'selected':''}>💳 On payment plan</option>
+              <option value="in_collections" ${initialState==='in_collections'?'selected':''}>⚠ In collections</option>
+              <option value="at_legal" ${initialState==='at_legal'?'selected':''}>⚖ At legal (with attorney)</option>
+              <option value="in_bankruptcy" ${initialState==='in_bankruptcy'?'selected':''}>🛡 In bankruptcy</option>
+              <option value="lien_filed" ${initialState==='lien_filed'?'selected':''}>📋 Lien filed</option>
+              <option value="judgment" ${initialState==='judgment'?'selected':''}>🏛 Judgment obtained</option>
+            </select>
+          </div>
+
+          <div id="esConditionalFields" style="display:flex; flex-direction:column; gap:12px;"></div>
+
+          <div>
+            <label style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Reason for this change *</label>
+            <textarea id="esReason" rows="2" placeholder="e.g., Received Ch 13 bankruptcy notice from court; case filed 6/3/2026"
+                      style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px; font-family:inherit; resize:vertical;"></textarea>
+          </div>
+
+          <div>
+            <label style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Notes (operator-only)</label>
+            <textarea id="esNotes" rows="2" placeholder="Internal context for staff (not shown to homeowner)"
+                      style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px; font-family:inherit; resize:vertical;">${escapeHtml(cur.notes || '')}</textarea>
+          </div>
+
+          <div id="esStatus" style="font-size:13px; min-height:18px;"></div>
+
+          <div style="display:flex; gap:10px; justify-content:flex-end;">
+            <button onclick="document.getElementById('hpEnforcementModal').style.display='none'" style="background:#fff; border:1px solid #cbd5e1; color:#475569; padding:9px 18px; border-radius:6px; font-size:14px; cursor:pointer; font-weight:500;">Cancel</button>
+            <button onclick="hpSubmitEnforcementState('${propertyId}')" id="esSaveBtn" style="background:#0B1D34; color:#fff; border:0; padding:9px 22px; border-radius:6px; font-size:14px; cursor:pointer; font-weight:600;">Save state</button>
+          </div>
+        </div>
+      </div>
+    `;
+    m.style.display = 'flex';
+    // Pre-populate conditional fields for current state
+    setTimeout(() => hpEnforcementUpdateFields(cur), 0);
+  }
+
+  function hpEnforcementUpdateFields(existing) {
+    const state = document.getElementById('esState').value;
+    const slot = document.getElementById('esConditionalFields');
+    const e = existing || {};
+    const field = (id, label, value, placeholder, type) => `
+      <div>
+        <label style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">${label}</label>
+        <input id="${id}" type="${type || 'text'}" value="${escapeHtml(value || '')}" placeholder="${escapeHtml(placeholder || '')}"
+               style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+      </div>`;
+    if (state === 'in_bankruptcy') {
+      slot.innerHTML = `
+        <div style="background:#fef2f2; border:1px solid #fecaca; color:#991b1b; padding:10px 14px; border-radius:6px; font-size:12.5px; line-height:1.5;">
+          🛡 <strong>11 USC §362 automatic stay will activate.</strong> Once saved, Bedrock cannot send letters, call, assess fines, or post liens until the case is dismissed/closed. Verify with the bankruptcy court before saving.
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;">
+          <div>
+            <label style="font-size:11px; color:#64748b; text-transform:uppercase; letter-spacing:0.05em; font-weight:600;">Chapter *</label>
+            <select id="esBkChapter" style="width:100%; padding:9px 11px; border:1px solid #cbd5e1; border-radius:6px; font-size:14px; margin-top:4px;">
+              <option value="">—</option>
+              <option value="7"  ${e.bankruptcy_chapter==='7' ?'selected':''}>Chapter 7</option>
+              <option value="11" ${e.bankruptcy_chapter==='11'?'selected':''}>Chapter 11</option>
+              <option value="12" ${e.bankruptcy_chapter==='12'?'selected':''}>Chapter 12</option>
+              <option value="13" ${e.bankruptcy_chapter==='13'?'selected':''}>Chapter 13</option>
+            </select>
+          </div>
+          ${field('esBkCase', 'Case number *', e.bankruptcy_case_number, 'e.g., 26-12345')}
+          ${field('esBkCourt', 'Court', e.bankruptcy_court, 'e.g., S.D. Tex.')}
+          ${field('esBkFilingDate', 'Filing date', e.bankruptcy_filing_date, '', 'date')}
+          ${field('esBkAttorneyName', 'Bankruptcy attorney name', e.bankruptcy_attorney_name, 'Their attorney, not yours')}
+          ${field('esBkAttorneyEmail', 'Bankruptcy attorney email', e.bankruptcy_attorney_email, '', 'email')}
+        </div>
+      `;
+    } else if (state === 'at_legal' || state === 'in_collections') {
+      slot.innerHTML = `
+        <div style="background:#fef3c7; border:1px solid #fbbf24; color:#92400e; padding:10px 14px; border-radius:6px; font-size:12.5px; line-height:1.5;">
+          ⚠ FDCPA — once at-legal, Bedrock cannot negotiate or discuss with the homeowner. All direct contact must go through the attorney below.
+        </div>
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;">
+          ${field('esAttName', 'Attorney name *', e.attorney_name, '')}
+          ${field('esAttFirm', 'Firm', e.attorney_firm, '')}
+          ${field('esAttEmail', 'Email', e.attorney_email, '', 'email')}
+          ${field('esAttPhone', 'Phone', e.attorney_phone, '')}
+        </div>
+      `;
+    } else if (state === 'on_payment_plan') {
+      slot.innerHTML = `
+        <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px 14px;">
+          ${field('esPpTerms', 'Plan terms (free-form) *', e.payment_plan_terms_text, '$200/month through Oct 2026')}
+          ${field('esPpMonthly', 'Monthly ($)', e.payment_plan_monthly_cents != null ? (e.payment_plan_monthly_cents/100).toFixed(2) : '', '', 'number')}
+          ${field('esPpRemaining', 'Remaining balance ($)', e.payment_plan_remaining_cents != null ? (e.payment_plan_remaining_cents/100).toFixed(2) : '', '', 'number')}
+          ${field('esPpThrough', 'Expected through', e.expected_through, '', 'date')}
+        </div>
+      `;
+    } else {
+      slot.innerHTML = '';
+    }
+  }
+
+  async function hpSubmitEnforcementState(propertyId) {
+    const state = document.getElementById('esState').value;
+    const reason = document.getElementById('esReason').value.trim();
+    const status = document.getElementById('esStatus');
+
+    if (!state) { status.innerHTML = '<span style="color:#b91c1c;">Pick a state.</span>'; return; }
+    if (!reason) { status.innerHTML = '<span style="color:#b91c1c;">Reason is required (regulatory defense).</span>'; return; }
+
+    const payload = {
+      state,
+      reason,
+      performed_by: window.currentUserEmail || 'staff',
+      notes: document.getElementById('esNotes').value.trim() || null,
+    };
+
+    if (state === 'in_bankruptcy') {
+      payload.bankruptcy_chapter = document.getElementById('esBkChapter')?.value || null;
+      payload.bankruptcy_case_number = document.getElementById('esBkCase')?.value.trim() || null;
+      payload.bankruptcy_court = document.getElementById('esBkCourt')?.value.trim() || null;
+      payload.bankruptcy_filing_date = document.getElementById('esBkFilingDate')?.value || null;
+      payload.bankruptcy_attorney_name = document.getElementById('esBkAttorneyName')?.value.trim() || null;
+      payload.bankruptcy_attorney_email = document.getElementById('esBkAttorneyEmail')?.value.trim() || null;
+      if (!payload.bankruptcy_case_number || !payload.bankruptcy_chapter) {
+        status.innerHTML = '<span style="color:#b91c1c;">Bankruptcy chapter + case number are required.</span>';
+        return;
+      }
+    } else if (state === 'at_legal' || state === 'in_collections') {
+      payload.attorney_name = document.getElementById('esAttName')?.value.trim() || null;
+      payload.attorney_firm = document.getElementById('esAttFirm')?.value.trim() || null;
+      payload.attorney_email = document.getElementById('esAttEmail')?.value.trim() || null;
+      payload.attorney_phone = document.getElementById('esAttPhone')?.value.trim() || null;
+      if (!payload.attorney_name && !payload.attorney_firm) {
+        status.innerHTML = '<span style="color:#b91c1c;">Attorney name or firm is required.</span>';
+        return;
+      }
+    } else if (state === 'on_payment_plan') {
+      payload.payment_plan_terms_text = document.getElementById('esPpTerms')?.value.trim() || null;
+      const monthly = document.getElementById('esPpMonthly')?.value;
+      const remaining = document.getElementById('esPpRemaining')?.value;
+      payload.payment_plan_monthly_cents = monthly ? Math.round(Number(monthly) * 100) : null;
+      payload.payment_plan_remaining_cents = remaining ? Math.round(Number(remaining) * 100) : null;
+      payload.expected_through = document.getElementById('esPpThrough')?.value || null;
+      if (!payload.payment_plan_terms_text && !payload.payment_plan_monthly_cents) {
+        status.innerHTML = '<span style="color:#b91c1c;">Plan terms or monthly amount is required.</span>';
+        return;
+      }
+    }
+
+    if (!confirm(`Confirm: set this property to "${state}"?\n\nThis writes an audit-log row with your email and the reason. The state takes effect immediately.`)) return;
+
+    const btn = document.getElementById('esSaveBtn');
+    btn.disabled = true;
+    btn.textContent = 'Saving…';
+    try {
+      const r = await fetch(`/api/contacts/property-enforcement-state/${encodeURIComponent(propertyId)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      status.innerHTML = '<span style="color:#15803d;">✓ Saved.</span>';
+      setTimeout(() => {
+        document.getElementById('hpEnforcementModal').style.display = 'none';
+        hpLoadEnforcementState(propertyId);
+      }, 500);
+    } catch (e) {
+      status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(e.message)}</span>`;
+      btn.disabled = false;
+      btn.textContent = 'Save state';
+    }
+  }
+
+  async function hpEndEnforcementState(propertyId, currentState) {
+    const reason = prompt(`End the "${currentState}" state for this property?\n\nUse this when:\n  • Bankruptcy case dismissed or closed\n  • Payment plan completed\n  • Account returned to current standing\n\nReason for ending (regulatory defense — required):`, '');
+    if (!reason || !reason.trim()) return;
+    try {
+      const r = await fetch(`/api/contacts/property-enforcement-state/${encodeURIComponent(propertyId)}/end`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason: reason.trim(), performed_by: window.currentUserEmail || 'staff' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      hpLoadEnforcementState(propertyId);
+    } catch (e) {
+      alert('End failed: ' + e.message);
     }
   }
 
