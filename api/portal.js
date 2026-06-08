@@ -1158,24 +1158,25 @@ router.get('/me', async (req, res) => {
       community.portal_active = true;
     }
 
-    // Balance — most recent owner_ar_snapshot for this property
+    // Balance — single resolver. Tries v_homeowner_current_balance
+    // (canonical post-Jun-2026), falls back to owner_ar_snapshots for
+    // legacy data. See lib/ar/resolve_current_ar.js for merge logic.
     let balance = { status: 'unknown', amount_cents: null, as_of: null };
     try {
-      const { data: snap } = await supabase
-        .from('owner_ar_snapshots')
-        .select('balance_total, snapshot_date, enforcement_stage, at_legal, in_collections, payment_plan_active')
-        .eq('property_id', prop.id)
-        .order('snapshot_date', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      if (snap) {
-        const cents = snap.balance_total != null ? Math.round(Number(snap.balance_total) * 100) : null;
-        const isPastDue = snap.at_legal || snap.in_collections
-          || ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed'].includes(snap.enforcement_stage || '');
+      const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
+      const ar = await resolveCurrentAR(supabase, {
+        propertyId: prop.id,
+        vantacaAccountId: prop.vantaca_account_id,
+        communityId: prop.community_id,
+      });
+      if (ar) {
+        const isPastDue = ar.at_legal || ar.in_collections
+          || ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed'].includes(ar.enforcement_stage || '');
         balance = {
-          amount_cents: cents,
-          as_of: snap.snapshot_date,
-          status: (cents == null || cents <= 0) ? 'current' : (isPastDue ? 'past_due' : 'open_balance'),
+          amount_cents: ar.balance_cents,
+          as_of: ar.as_of,
+          source: ar.source,
+          status: (ar.balance_cents == null || ar.balance_cents <= 0) ? 'current' : (isPastDue ? 'past_due' : 'open_balance'),
         };
       }
     } catch (_) { /* gracefully degrade */ }
