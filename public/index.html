@@ -8791,9 +8791,16 @@
 
     <!-- Knowledge base management -->
     <div class="panel">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
-        <h3 style="margin:0;">📦 Loaded Knowledge Base</h3>
-        <button class="secondary-btn" onclick="helpToggleUploader()" id="help-uploader-toggle" style="font-size:12px; padding:4px 10px;">+ Add document</button>
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px; flex-wrap:wrap;">
+        <h3 style="margin:0; cursor:pointer; user-select:none;" onclick="helpToggleLoadedDocs()">
+          <span id="help-loaded-caret" style="display:inline-block; transition:transform 0.15s; transform:rotate(-90deg); font-size:13px;">▼</span>
+          📦 Loaded Knowledge Base
+          <span id="help-loaded-summary" style="font-size:12px; font-weight:400; color:#64748b; margin-left:6px;"></span>
+        </h3>
+        <div style="display:flex; gap:6px;">
+          <button class="secondary-btn" onclick="helpToggleLoadedDocs()" id="help-loaded-toggle" style="font-size:12px; padding:4px 10px;">Show docs</button>
+          <button class="secondary-btn" onclick="helpToggleUploader()" id="help-uploader-toggle" style="font-size:12px; padding:4px 10px;">+ Add document</button>
+        </div>
       </div>
       <div id="help-uploader" style="display:none; background:#f9f9f9; border:1px solid #e0e0e0; border-radius:6px; padding:14px; margin-bottom:14px;">
         <p style="font-size:12px; color:#666; margin:0 0 10px 0;">
@@ -8877,7 +8884,9 @@
         <input type="file" id="help-upload-file" accept=".pdf" style="display:none" onchange="if(this.files[0]) helpUploadFile(this.files[0])">
         <div id="help-upload-status" style="margin-top:10px;"></div>
       </div>
-      <div id="help-docs-list" style="font-size:13px;">Loading…</div>
+      <div id="help-docs-list-wrapper" style="display:none;">
+        <div id="help-docs-list" style="font-size:13px;">Loading…</div>
+      </div>
     </div>
 
     <!-- ====================================================================
@@ -28536,6 +28545,19 @@ ${questionsPage}
     else { u.style.display = 'none'; t.textContent = '+ Add document'; }
   }
 
+  // Collapse/expand the loaded-docs list. Default-collapsed because the KB
+  // section below is what Ed needs to reach without scrolling.
+  function helpToggleLoadedDocs() {
+    const wrap = document.getElementById('help-docs-list-wrapper');
+    const btn = document.getElementById('help-loaded-toggle');
+    const caret = document.getElementById('help-loaded-caret');
+    if (!wrap) return;
+    const showing = wrap.style.display !== 'none';
+    wrap.style.display = showing ? 'none' : 'block';
+    if (btn) btn.textContent = showing ? 'Show docs' : 'Hide docs';
+    if (caret) caret.style.transform = showing ? 'rotate(-90deg)' : 'rotate(0deg)';
+  }
+
   async function helpLoadDocs() {
     const el = document.getElementById('help-docs-list');
     el.innerHTML = '<div style="color:#888;">Loading…</div>';
@@ -28544,6 +28566,9 @@ ${questionsPage}
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'Failed to load');
       const docs = data.documents || [];
+      // Surface count in the collapsed header so collapsed != hidden
+      const summary = document.getElementById('help-loaded-summary');
+      if (summary) summary.textContent = docs.length === 0 ? '(0)' : `(${docs.length} doc${docs.length === 1 ? '' : 's'})`;
       if (docs.length === 0) {
         el.innerHTML = `<div style="padding:20px; text-align:center; color:#888;">
           No documents loaded yet. Click <strong>+ Add document</strong> above to drop your first PDF.
