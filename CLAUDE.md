@@ -549,6 +549,42 @@ timezone offset.
 Fixes landed in commits `e68a3bb` (helper + bridge payload) and
 follow-up (preview + success-popup display cross-check).
 
+### New tables without service_role GRANTs are silently unwritable
+
+**Scar**: 2026-06-08, hit this THREE TIMES in one evening:
+- `vantaca_imports` (migration 168) — fixed by migration 196
+- `transaction_upload_batches` + `homeowner_transactions` (migration 195) — fixed by migration 200
+
+Pattern: a migration creates a new table the API will write to, but
+forgets the `GRANT` to service_role. Default privileges don't propagate
+cleanly across migrations in this Supabase setup. The Node.js API uses
+the service role key for all writes; without an explicit GRANT, Postgres
+rejects every INSERT/UPDATE/DELETE with:
+```
+permission denied for table <name>
+```
+
+This shows up as "extraction succeeded but downstream write failed" in
+extractor pipelines, or as silent 500s on direct endpoints. The error
+message is clear once you see it — but the developer typically doesn't,
+because the failure happens deep in a side-effect chain and the
+extractor returns "Completed" anyway.
+
+**Rule**: Every migration that creates a NEW TABLE the Node.js API will
+write to MUST include explicit grants in the SAME migration:
+
+```sql
+GRANT SELECT, INSERT, UPDATE, DELETE ON <new_table> TO service_role;
+GRANT SELECT                          ON <new_table> TO authenticated;
+```
+
+If the table is read-only by the API, drop INSERT/UPDATE/DELETE. If it's
+operator-only and never client-facing, drop the authenticated grant.
+
+This pairs with the existing "DROP VIEW loses GRANTs — must re-issue"
+rule above. Both reduce to: **never assume Postgres will pick the right
+privileges; always state them.**
+
 ### Supabase 1000-row silent truncation
 
 **Scar**: 2026-06-01, hit the same bug **7 times across two repos** in
