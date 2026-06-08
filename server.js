@@ -832,6 +832,12 @@ app.use('/api/insurance', insuranceRouter);
 const { router: helpRouter } = require('./api/help');
 app.use('/api/help', helpRouter);
 
+// Knowledge Base — legal / regulatory / policy reference articles. Ingested
+// chunks land in the unified knowledge substrate and become retrievable by
+// Claire (voice) + askEd (chat) automatically via the existing hybrid retriever.
+const { router: kbRouter } = require('./api/kb');
+app.use('/api/kb', kbRouter);
+
 // Community profile + facts (per-community operational knowledge layer)
 const { router: communityProfileRouter, buildCommunityContextBlock } = require('./api/communities');
 app.use('/api/community-profile', communityProfileRouter);
