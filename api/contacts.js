@@ -1429,6 +1429,88 @@ router.post('/property-enforcement-state/:propertyId/end', express.json(), async
   }
 });
 
+// ============================================================================
+// GET /api/property/:propertyId/balance-composition
+// Returns the balance broken down by charge category for the property,
+// plus the amenity-access decision. Powers the operator UI panel that
+// shows "this property owes $X total — $Y assessment, $Z fines, $W
+// attorney — amenity access: ALLOWED / DENIED because…".
+//
+// One round-trip, no client-side aggregation. Audit-safe replay: same
+// inputs → same decision.
+// ============================================================================
+router.get('/property/:propertyId/balance-composition', async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
+
+    // Look up the property's vantaca account + community for the view query
+    const { data: prop, error: pErr } = await supabase
+      .from('properties')
+      .select('id, vantaca_account_id, community_id, street_address')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+
+    // Pull composition rows (already grouped server-side by the view)
+    let composition = [];
+    if (prop.vantaca_account_id && prop.community_id) {
+      const { data: rows, error: cErr } = await supabase
+        .from('v_homeowner_balance_composition')
+        .select('charge_category, amount_cents, txn_count, earliest_txn_date, latest_txn_date')
+        .eq('community_id', prop.community_id)
+        .eq('vantaca_account_id', prop.vantaca_account_id)
+        .order('amount_cents', { ascending: false });
+      if (cErr) throw cErr;
+      composition = rows || [];
+    }
+
+    // Compute total + buckets
+    let assessmentClassCents = 0, fineClassCents = 0, attorneyCents = 0, adminCents = 0;
+    let paymentCents = 0, creditCents = 0, otherCents = 0;
+    for (const r of composition) {
+      const c = Number(r.amount_cents || 0);
+      if (r.charge_category === 'assessment' || r.charge_category === 'late_fee' || r.charge_category === 'interest') assessmentClassCents += c;
+      else if (r.charge_category === 'fine') fineClassCents += c;
+      else if (r.charge_category === 'attorney_fee') attorneyCents += c;
+      else if (r.charge_category === 'admin_fee') adminCents += c;
+      else if (r.charge_category === 'payment') paymentCents += c;
+      else if (r.charge_category === 'credit' || r.charge_category === 'refund') creditCents += c;
+      else otherCents += c;
+    }
+    const totalCents = assessmentClassCents + fineClassCents + attorneyCents + adminCents + paymentCents + creditCents + otherCents;
+
+    // Run the amenity-access decision (uses same view internally)
+    const { evaluateAmenityAccess } = require('../lib/ar/amenity_access');
+    const decision = await evaluateAmenityAccess(supabase, {
+      propertyId,
+      vantacaAccountId: prop.vantaca_account_id,
+      communityId: prop.community_id,
+    });
+
+    res.json({
+      ok: true,
+      property: { id: prop.id, street_address: prop.street_address, vantaca_account_id: prop.vantaca_account_id },
+      composition,
+      totals: {
+        total_cents: totalCents,
+        assessment_class_cents: assessmentClassCents,
+        fine_cents: fineClassCents,
+        attorney_fee_cents: attorneyCents,
+        admin_fee_cents: adminCents,
+        payment_cents: paymentCents,
+        credit_cents: creditCents,
+        other_cents: otherCents,
+      },
+      amenity_decision: decision,
+    });
+  } catch (err) {
+    console.error('[balance-composition] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/property-residencies', express.json(), async (req, res) => {
   try {
     const b = req.body || {};
