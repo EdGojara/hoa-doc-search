@@ -1511,6 +1511,119 @@ router.get('/property/:propertyId/balance-composition', async (req, res) => {
   }
 });
 
+// ============================================================================
+// GET /api/property/:propertyId/ledger
+// Returns transaction ledger for the property, newest first. Includes
+// charge_category so operator can override if auto-categorization missed.
+// Bounded LIMIT 500 — most properties have <100 rows; safety cap.
+// ============================================================================
+router.get('/property/:propertyId/ledger', async (req, res) => {
+  try {
+    const propertyId = req.params.propertyId;
+    if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
+
+    const { data: prop, error: pErr } = await supabase
+      .from('properties')
+      .select('id, vantaca_account_id, community_id')
+      .eq('id', propertyId)
+      .maybeSingle();
+    if (pErr) throw pErr;
+    if (!prop) return res.status(404).json({ error: 'property_not_found' });
+
+    // Pull from committed batches only — pending uploads aren't truth yet
+    const { data: rows, error } = await supabase
+      .from('homeowner_transactions')
+      .select(`
+        id, transaction_date, description, txn_type, charge_category,
+        amount_cents, running_balance_cents, is_operator_override,
+        source_batch_id
+      `)
+      .eq('property_id', propertyId)
+      .order('transaction_date', { ascending: false })
+      .order('source_row_index', { ascending: false })
+      .limit(500);
+    if (error) throw error;
+
+    // Only show rows from committed batches
+    let visibleRows = rows || [];
+    const batchIds = [...new Set(visibleRows.map(r => r.source_batch_id).filter(Boolean))];
+    if (batchIds.length > 0) {
+      const { data: batches } = await supabase
+        .from('transaction_upload_batches')
+        .select('id, status')
+        .in('id', batchIds);
+      const committedSet = new Set((batches || []).filter(b => b.status === 'committed').map(b => b.id));
+      visibleRows = visibleRows.filter(r => committedSet.has(r.source_batch_id));
+    }
+
+    res.json({ ok: true, transactions: visibleRows, count: visibleRows.length });
+  } catch (err) {
+    console.error('[ledger] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// PATCH /api/transaction/:id/category
+// Operator override of charge_category on a single ledger row. Requires
+// reason + performed_by. Sets is_operator_override=TRUE so future backfills
+// don't overwrite the human judgment. Audit row written.
+// ============================================================================
+router.patch('/transaction/:id/category', express.json(), async (req, res) => {
+  try {
+    const id = req.params.id;
+    const b = req.body || {};
+    if (!b.category) return res.status(400).json({ error: 'category_required' });
+    if (!b.reason || !b.performed_by) {
+      return res.status(400).json({ error: 'reason_and_performed_by_required' });
+    }
+    const ALLOWED = [
+      'assessment', 'late_fee', 'interest',
+      'fine', 'attorney_fee', 'admin_fee',
+      'payment', 'credit', 'refund',
+      'adjustment', 'prior_balance', 'other',
+    ];
+    if (!ALLOWED.includes(b.category)) {
+      return res.status(400).json({ error: 'invalid_category', allowed: ALLOWED });
+    }
+
+    // Read the BEFORE value for audit
+    const { data: existing, error: e1 } = await supabase
+      .from('homeowner_transactions')
+      .select('id, charge_category')
+      .eq('id', id)
+      .maybeSingle();
+    if (e1) throw e1;
+    if (!existing) return res.status(404).json({ error: 'transaction_not_found' });
+
+    // Apply the update
+    const { error: e2 } = await supabase
+      .from('homeowner_transactions')
+      .update({ charge_category: b.category, is_operator_override: true })
+      .eq('id', id);
+    if (e2) throw e2;
+
+    // Write audit row (best-effort)
+    try {
+      await supabase.from('homeowner_transaction_category_audit').insert({
+        transaction_id: id,
+        category_before: existing.charge_category,
+        category_after: b.category,
+        reason: b.reason,
+        performed_by: b.performed_by,
+        ip_address: req.ip,
+      });
+    } catch (e) {
+      console.warn('[txn-category-override] audit insert failed (non-fatal):', e.message);
+    }
+
+    res.json({ ok: true, category_before: existing.charge_category, category_after: b.category });
+  } catch (err) {
+    console.error('[txn-category-override] failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/property-residencies', express.json(), async (req, res) => {
   try {
     const b = req.body || {};

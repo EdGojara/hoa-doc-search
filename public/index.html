@@ -6169,7 +6169,10 @@
               <div style="font-size:10px; letter-spacing:0.1em; text-transform:uppercase; font-weight:700; color:#64748b;">Balance composition</div>
               <div style="font-size:14px; font-weight:700; color:#0B1D34; margin-top:2px;">Total ${fmt(totalCents)}</div>
             </div>
-            ${amenityChip}
+            <div style="display:flex; gap:6px; align-items:center;">
+              ${amenityChip}
+              <button onclick="hpOpenLedgerModal('${propertyId}')" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; border-radius:5px; padding:4px 10px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">📒 Ledger</button>
+            </div>
           </div>
           ${compRows ? `<div style="border-top:1px solid #e2e8f0; padding-top:6px;">${compRows}</div>` : ''}
           <div style="font-size:11px; color:#64748b; margin-top:8px; line-height:1.4; border-top:1px solid #e2e8f0; padding-top:6px;">
@@ -6184,6 +6187,133 @@
       slot.innerHTML = `<div style="color:#94a3b8; font-size:12px; margin-bottom:12px;">Balance composition unavailable: ${escapeHtml(e.message)}</div>`;
     }
   }
+
+  // ===== Ledger modal — view + override transaction categories =================
+  // Lists transactions for the property with current charge_category.
+  // Each row has a dropdown — change it, give reason, save. Audited.
+  // Categories with ★ marker are assessment-class (drive amenity denial).
+  const TXN_CATEGORIES = [
+    { v: 'assessment',    l: 'Assessment ★' },
+    { v: 'late_fee',      l: 'Late fee ★' },
+    { v: 'interest',      l: 'Interest ★' },
+    { v: 'fine',          l: 'Fine (violation)' },
+    { v: 'attorney_fee',  l: 'Attorney fee' },
+    { v: 'admin_fee',     l: 'Admin / certified' },
+    { v: 'payment',       l: 'Payment' },
+    { v: 'credit',        l: 'Credit' },
+    { v: 'refund',        l: 'Refund' },
+    { v: 'adjustment',    l: 'Adjustment' },
+    { v: 'prior_balance', l: 'Prior balance' },
+    { v: 'other',         l: 'Other' },
+  ];
+
+  window.hpOpenLedgerModal = async function (propertyId) {
+    // Build modal scaffolding first so user sees instant feedback
+    let modal = document.getElementById('hpLedgerModal');
+    if (modal) modal.remove();
+    modal = document.createElement('div');
+    modal.id = 'hpLedgerModal';
+    modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    modal.innerHTML = `
+      <div style="background:#fff; border-radius:10px; max-width:980px; width:100%; max-height:88vh; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.3);">
+        <div style="padding:14px 22px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between;">
+          <h3 style="margin:0; color:#0B1D34; font-size:17px;">Transaction ledger</h3>
+          <button onclick="document.getElementById('hpLedgerModal').remove()" style="background:none; border:0; font-size:24px; color:#64748b; cursor:pointer; line-height:1;">×</button>
+        </div>
+        <div id="hpLedgerBody" style="padding:14px 22px; overflow-y:auto; flex:1;">
+          <div style="color:#94a3b8; font-size:13px;">Loading ledger…</div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+
+    try {
+      const r = await fetch(`/api/contacts/property/${encodeURIComponent(propertyId)}/ledger`);
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'load failed');
+      const txns = j.transactions || [];
+      const body = document.getElementById('hpLedgerBody');
+      if (!body) return;
+
+      if (txns.length === 0) {
+        body.innerHTML = '<div style="color:#94a3b8; font-size:13px; padding:20px 0; text-align:center;">No transactions on file for this property.</div>';
+        return;
+      }
+
+      const fmt = (c) => '$' + (Number(c || 0) / 100).toFixed(2);
+      const rowHtml = txns.map(t => {
+        const opts = TXN_CATEGORIES.map(c =>
+          `<option value="${c.v}"${c.v === (t.charge_category || 'other') ? ' selected' : ''}>${c.l}</option>`
+        ).join('');
+        const overrideBadge = t.is_operator_override
+          ? `<span title="Operator-set" style="display:inline-block; background:#dbeafe; color:#1e40af; font-size:9.5px; padding:1px 5px; border-radius:3px; font-weight:600; margin-left:4px;">SET</span>`
+          : '';
+        const amt = Number(t.amount_cents || 0);
+        const amtColor = amt < 0 ? '#15803d' : '#0B1D34';
+        return `
+          <tr>
+            <td style="padding:6px 8px; font-size:12px; color:#475569; white-space:nowrap;">${escapeHtml(t.transaction_date || '')}</td>
+            <td style="padding:6px 8px; font-size:12.5px; color:#0B1D34;">${escapeHtml(t.description || '')}</td>
+            <td style="padding:6px 8px; text-align:right; font-family:ui-monospace,monospace; font-size:12.5px; color:${amtColor}; font-weight:600; white-space:nowrap;">${fmt(amt)}</td>
+            <td style="padding:6px 8px; white-space:nowrap;">
+              <select id="cat_${t.id}" style="font-size:12px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px; background:#fff;">${opts}</select>${overrideBadge}
+            </td>
+            <td style="padding:6px 8px; white-space:nowrap;">
+              <button onclick="hpSaveCategoryOverride('${t.id}', '${propertyId}')" style="background:#0B1D34; color:#fff; border:0; padding:4px 10px; border-radius:4px; font-size:11.5px; font-weight:600; cursor:pointer;">Save</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      body.innerHTML = `
+        <div style="font-size:11.5px; color:#64748b; margin-bottom:8px;">
+          ${txns.length} transactions. Change a category to override the auto-classification. Each save is audited (who / when / why). ★ = assessment class — these are the only categories that can trigger amenity denial.
+        </div>
+        <div style="overflow-x:auto; border:1px solid #e2e8f0; border-radius:6px;">
+          <table style="width:100%; border-collapse:collapse;">
+            <thead style="background:#f8fafc;">
+              <tr>
+                <th style="text-align:left; padding:8px; font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Date</th>
+                <th style="text-align:left; padding:8px; font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Description</th>
+                <th style="text-align:right; padding:8px; font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Amount</th>
+                <th style="text-align:left; padding:8px; font-size:11px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.05em;">Category</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody>${rowHtml}</tbody>
+          </table>
+        </div>
+      `;
+    } catch (e) {
+      const body = document.getElementById('hpLedgerBody');
+      if (body) body.innerHTML = `<div style="color:#b91c1c; font-size:13px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  };
+
+  window.hpSaveCategoryOverride = async function (txnId, propertyId) {
+    const sel = document.getElementById(`cat_${txnId}`);
+    if (!sel) return;
+    const newCategory = sel.value;
+    const reason = prompt(`Why is this transaction being recategorized as "${newCategory}"?`);
+    if (!reason || !reason.trim()) return;
+    const performedBy = (window.currentUserEmail || '') || prompt('Your email (for audit):');
+    if (!performedBy || !performedBy.trim()) return;
+
+    try {
+      const r = await fetch(`/api/contacts/transaction/${encodeURIComponent(txnId)}/category`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category: newCategory, reason: reason.trim(), performed_by: performedBy.trim() }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || 'save failed');
+      // Refresh ledger modal AND the balance composition card
+      hpOpenLedgerModal(propertyId);
+      hpLoadBalanceComposition(propertyId);
+    } catch (e) {
+      alert(`Couldn't save override: ${e.message}`);
+    }
+  };
 
   function hpOpenEnforcementModal(propertyId, current) {
     const m = document.getElementById('hpEnforcementModal') || (function() {
