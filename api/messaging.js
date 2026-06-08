@@ -440,14 +440,31 @@ router.get('/threads/:id/audit', async (req, res) => {
 // =============================================================================
 router.get('/portal/threads', async (req, res) => {
   try {
-    const contactId = req.query.contact_id;
-    if (!contactId) return res.status(400).json({ error: 'contact_id_required' });
-    // TODO: verify contact_id matches signed magic-link cookie
+    // Resolve identity from the signed portal cookie — DON'T trust
+    // a client-supplied contact_id (Ed 2026-06-08 audit found this
+    // was open for any caller to read any homeowner's threads).
+    const { resolvePortalUser } = require('./portal');
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
 
+    // Look up which contact this portal user is linked to (cookie → user → contact)
+    const { data: pUser } = await supabase
+      .from('portal_users')
+      .select('contact_id, status')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    if (!pUser || pUser.status === 'revoked') return res.status(401).json({ error: 'session_invalid' });
+    const contactId = pUser.contact_id;
+    if (!contactId) return res.json({ threads: [] });
+
+    // Get the homeowner's property_ids via property_ownerships (the
+    // canonical ownership table; the older property_owners typo from
+    // before this audit was a non-existent table).
     const { data: properties } = await supabase
-      .from('property_owners')
+      .from('property_ownerships')
       .select('property_id')
-      .eq('contact_id', contactId);
+      .eq('contact_id', contactId)
+      .is('end_date', null);
     const propertyIds = (properties || []).map((p) => p.property_id).filter(Boolean);
     if (propertyIds.length === 0) return res.json({ threads: [] });
 
@@ -475,9 +492,22 @@ router.get('/portal/threads', async (req, res) => {
 // =============================================================================
 router.get('/portal/properties/:propertyId/threads', async (req, res) => {
   try {
-    const contactId = req.query.contact_id;
-    if (!contactId) return res.status(400).json({ error: 'contact_id_required' });
-    // TODO: verify contact_id matches signed magic-link cookie AND owns the property
+    // Same auth pattern as /portal/threads — resolve identity from the
+    // signed cookie. Additionally verify the property is one the signed-in
+    // homeowner has access to (no enumeration of other people's threads).
+    const { resolvePortalUser } = require('./portal');
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+
+    const propertyId = req.params.propertyId;
+    const { data: scope } = await supabase
+      .from('portal_user_properties')
+      .select('property_id')
+      .eq('portal_user_id', portalUserId)
+      .eq('property_id', propertyId)
+      .is('revoked_at', null)
+      .maybeSingle();
+    if (!scope) return res.status(403).json({ error: 'property_not_in_scope' });
 
     const { data, error } = await supabase
       .from('homeowner_threads')
@@ -487,8 +517,7 @@ router.get('/portal/properties/:propertyId/threads', async (req, res) => {
         properties:property_id(street_address, lot_number),
         communities:community_id(name)
       `)
-      .eq('property_id', req.params.propertyId)
-      .eq('primary_contact_id', contactId)
+      .eq('property_id', propertyId)
       .order('last_message_at', { ascending: false, nullsFirst: false });
     if (error) return res.status(500).json({ error: safeErrorMessage(error) });
     res.json({ threads: data || [] });
