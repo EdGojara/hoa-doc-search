@@ -170,7 +170,7 @@ function resolvePortalUser(req) {
 //   const user = await assertOwnerLikeRole(req, res);
 //   if (!user) return;
 // ============================================================================
-const OWNER_LIKE_ROLES = new Set(['homeowner', 'board_member', 'staff', 'admin']);
+const OWNER_LIKE_ROLES = new Set(['homeowner', 'board_member', 'staff', 'admin', 'manager']);
 
 async function resolveUserWithRole(req, res) {
   const { portalUserId, mimic } = resolvePortalUser(req);
