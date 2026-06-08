@@ -1026,7 +1026,19 @@ async function loadPortal() {
       window.location.href = '/portal-login.html';
       return null;
     }
-    if (!r.ok) throw new Error('Could not load portal');
+    if (!r.ok) {
+      // Surface the actual server-side error so we can diagnose rather than
+      // staring at a generic "Could not load portal" message.
+      let serverMsg = `HTTP ${r.status}`;
+      try {
+        const errBody = await r.json();
+        if (errBody?.error) serverMsg = errBody.error;
+        if (errBody?.message) serverMsg += ` — ${errBody.message}`;
+      } catch (_) {
+        try { serverMsg = (await r.text()).slice(0, 300); } catch (__) {}
+      }
+      throw new Error(serverMsg);
+    }
     return await r.json();
   } catch (err) {
     return { error: err.message };
@@ -1398,7 +1410,13 @@ function renderManagerPicker(ctx) {
         <div style="font-size: 11px; color: #D4AF37; letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Manager view</div>
         <div style="font-family: Georgia, serif; font-size: 26px; font-weight: 500; line-height: 1.2;">Browse the portfolio</div>
         <div style="font-size: 14px; color: rgba(255,255,255,0.75); margin-top: 8px; line-height: 1.5;">
-          Signed in as <strong style="color: #fff;">${escapeHtml(ctx.user?.email || 'staff')}</strong> · ${ctx.manager_mode?.portfolio_wide ? 'Portfolio-wide access' : `Scoped to ${ctx.manager_mode?.scoped_community_count || '?'} communit${ctx.manager_mode?.scoped_community_count === 1 ? 'y' : 'ies'}`}
+          Signed in as <strong style="color: #fff;">${escapeHtml(ctx.user?.email || 'staff')}</strong> · ${
+            ctx.manager_mode?.portfolio_wide
+              ? 'Portfolio-wide access'
+              : (typeof ctx.manager_mode?.scoped_community_count === 'number'
+                  ? `Scoped to ${ctx.manager_mode.scoped_community_count} communit${ctx.manager_mode.scoped_community_count === 1 ? 'y' : 'ies'}`
+                  : 'Browsing the portfolio')
+          }
         </div>
         <div style="font-size: 12.5px; color: rgba(255,255,255,0.65); margin-top: 6px;">
           Every property you open is logged with your email and timestamp. Read-only view.
