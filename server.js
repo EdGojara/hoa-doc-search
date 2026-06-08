@@ -858,6 +858,12 @@ app.use('/api/email-campaigns', emailCampaignsRouter);
 const transactionsRouter = require('./api/transactions');
 app.use('/api/transactions', transactionsRouter);
 
+// Today dashboard — operator command center data. ONE round-trip,
+// loaded on Home-tab open or manual refresh only (no polling, no
+// background jobs). Cost-conscious per Ed 2026-06-08 standing rule.
+const todayRouter = require('./api/today');
+app.use('/api/today', todayRouter);
+
 // ARC historical decisions — structured library of past approvals/denials
 // (informational context for the AI assessment engine; never binding precedent)
 const { router: arcHistoryRouter } = require('./api/arc_history');

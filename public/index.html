@@ -1548,6 +1548,25 @@
       .active-drive-row.stale .stats { color: #fb923c; }
     </style>
 
+    <!-- ====================================================================
+         TODAY panel — operator command center. ONE round-trip to
+         /api/today on tab-open + manual refresh button. No polling.
+         Cost-conscious per Ed 2026-06-08.
+         ==================================================================== -->
+    <div id="todayPanel" style="background:linear-gradient(135deg,#0B1D34 0%,#1A2F4F 100%); color:#fff; border-radius:14px; padding:22px 26px; margin-bottom:18px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:18px;">
+        <div>
+          <div style="font-size:10.5px; color:#D4AF37; letter-spacing:0.18em; text-transform:uppercase; font-weight:700;">Today</div>
+          <div style="font-family:Georgia,serif; font-size:22px; font-weight:500; margin-top:4px;" id="todayGreeting">Welcome back</div>
+          <div style="font-size:12.5px; color:rgba(255,255,255,0.65); margin-top:2px;" id="todayGeneratedAt">—</div>
+        </div>
+        <button onclick="todayLoad(true)" id="todayRefreshBtn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:8px 16px; font-size:13px; font-weight:500; cursor:pointer; transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.18)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">↻ Refresh</button>
+      </div>
+      <div id="todayBody" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px;">
+        <div style="color:rgba(255,255,255,0.65); font-size:13px; padding:24px; text-align:center; grid-column:1/-1;">Click Refresh to load today's view.</div>
+      </div>
+    </div>
+
     <div id="homeTilesGrid" style="display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:14px;">
       <div style="color:#94a3b8; font-size:13px; padding:30px; text-align:center; grid-column:1/-1;">Loading your tiles…</div>
     </div>
@@ -24177,12 +24196,119 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const initialMs = window._ACTIVE_DRIVES_POLL_MS || ACTIVE_DRIVES_POLL_IDLE_MS;
     activeDrivesTimer = setTimeout(tick, initialMs);
   }
+
+  // ===========================================================================
+  // TODAY panel — one round-trip on tab open + manual refresh.
+  // No polling. Session-cached so re-opening Home doesn't re-fetch.
+  // ===========================================================================
+  let _todayCache = null;
+
+  async function todayLoad(force) {
+    if (_todayCache && !force) {
+      todayRender(_todayCache);
+      return;
+    }
+    const body = document.getElementById('todayBody');
+    const btn  = document.getElementById('todayRefreshBtn');
+    if (body) body.innerHTML = '<div style="color:rgba(255,255,255,0.65); font-size:13px; padding:24px; text-align:center; grid-column:1/-1;">Loading…</div>';
+    if (btn) { btn.disabled = true; btn.textContent = '⋯ Loading'; }
+    try {
+      const r = await fetch('/api/today');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      _todayCache = j;
+      todayRender(j);
+    } catch (e) {
+      if (body) body.innerHTML = `<div style="color:#fda4af; font-size:13px; padding:24px; text-align:center; grid-column:1/-1;">Load failed: ${escapeHtml(e.message)}</div>`;
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '↻ Refresh'; }
+    }
+  }
+
+  function todayRender(j) {
+    const body = document.getElementById('todayBody');
+    if (!body) return;
+    const genStamp = document.getElementById('todayGeneratedAt');
+    if (genStamp) {
+      const gd = new Date(j.generated_at);
+      const hh = gd.getHours();
+      const ampm = hh >= 12 ? 'PM' : 'AM';
+      const hh12 = (hh % 12) || 12;
+      const mm = String(gd.getMinutes()).padStart(2, '0');
+      genStamp.textContent = `Snapshot · ${hh12}:${mm} ${ampm}`;
+    }
+    // Personalized greeting
+    const hour = new Date().getHours();
+    const greet = hour < 12 ? 'Good morning' : (hour < 17 ? 'Good afternoon' : 'Good evening');
+    const me = window.currentUser || {};
+    const firstName = ((me.full_name || me.email || '').split(/\s+|@/)[0]) || '';
+    const greetEl = document.getElementById('todayGreeting');
+    if (greetEl) greetEl.textContent = firstName ? `${greet}, ${firstName}` : greet;
+
+    const card = (title, headline, sub, items, emptyText, accent) => `
+      <div style="background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.1); border-radius:10px; padding:14px 16px;">
+        <div style="display:flex; justify-content:space-between; align-items:baseline; margin-bottom:8px;">
+          <div style="font-size:10px; color:#D4AF37; letter-spacing:0.12em; text-transform:uppercase; font-weight:700;">${title}</div>
+          ${sub ? `<div style="font-size:11px; color:rgba(255,255,255,0.55);">${sub}</div>` : ''}
+        </div>
+        <div style="font-family:Georgia,serif; font-size:24px; font-weight:500; margin-bottom:6px; color:${accent || '#fff'};">${headline}</div>
+        <div style="font-size:12px; color:rgba(255,255,255,0.7); line-height:1.55;">
+          ${items.length ? items.map(i => `<div style="padding:4px 0; border-top:1px solid rgba(255,255,255,0.06);">${i}</div>`).join('') : `<div style="color:rgba(255,255,255,0.4); padding:6px 0;">${emptyText}</div>`}
+        </div>
+      </div>
+    `;
+
+    // Inbox card
+    const inboxHeadline = j.inbox.count === 0 ? 'All caught up' : `${j.inbox.count} need${j.inbox.count === 1 ? 's' : ''} you`;
+    const inboxAccent = j.inbox.count > 0 ? '#fbbf24' : '#86efac';
+    const inboxItems = j.inbox.items.map(i => {
+      const slaIcon = { overdue: '🔴', red: '🟠', yellow: '🟡', green: '🟢' }[i.sla] || '·';
+      return `${slaIcon} <strong>${escapeHtml(i.community_name)}</strong> · ${escapeHtml((i.subject || '').slice(0, 60))}`;
+    });
+
+    // Calls card
+    const callsHeadline = j.calls.count_today === 0 ? 'No calls today' : `${j.calls.count_today} call${j.calls.count_today === 1 ? '' : 's'} today`;
+    const callsItems = j.calls.items.map(c => {
+      const when = c.started_at ? new Date(c.started_at).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '—';
+      const concern = c.brief_concern ? ` · ${escapeHtml(c.brief_concern.slice(0, 60))}` : '';
+      return `📞 ${escapeHtml(when)} · ${escapeHtml(c.community_name || 'unrouted')}${concern}`;
+    });
+
+    // Uploads card
+    const uploadsHeadline = j.uploads.count === 0 ? 'No recent imports' : `${j.uploads.count} recent`;
+    const uploadsItems = j.uploads.items.map(u => {
+      const when = u.imported_at ? new Date(u.imported_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+      const status = u.status === 'completed' ? '✓' : (u.status === 'failed' ? '✗' : '⋯');
+      return `${status} ${escapeHtml(when)} · ${escapeHtml(u.community_name || 'unrouted')} · ${escapeHtml(u.report_type || 'unknown')}`;
+    });
+
+    // AR freshness card
+    const arHeadline = j.ar_freshness.stale_count === 0 ? 'All current' : `${j.ar_freshness.stale_count} stale`;
+    const arAccent = j.ar_freshness.stale_count > 0 ? '#fbbf24' : '#86efac';
+    const arItems = j.ar_freshness.items.map(c => {
+      const dot = c.severity === 'never' ? '⚪' : (c.severity === 'very_stale' ? '🔴' : (c.severity === 'stale' ? '🟡' : '🟢'));
+      const age = c.last_as_of ? `${c.days_since}d ago` : 'never';
+      return `${dot} <strong>${escapeHtml(c.community_name)}</strong> · ${escapeHtml(age)}`;
+    });
+
+    body.innerHTML = `
+      ${card('Inbox', inboxHeadline, 'Threads awaiting first response or follow-up', inboxItems, 'No pending threads.', inboxAccent)}
+      ${card('Calls', callsHeadline, `${j.calls.count_recent} in last batch`, callsItems, 'No recent calls.', '#fff')}
+      ${card('Vantaca imports', uploadsHeadline, 'Last 5', uploadsItems, 'No imports yet.', '#fff')}
+      ${card('AR freshness', arHeadline, `${j.ar_freshness.total_communities} communities`, arItems, 'All communities current.', arAccent)}
+    `;
+  }
+
   // Boot the poller as soon as the home tab is rendered.
 
   function homeRender() {
     const grid = document.getElementById('homeTilesGrid');
     if (!grid) return;
     startActiveDrivesPoller();
+    // Load Today panel once on tab render. Cached for the session so
+    // navigating away and back doesn't re-fetch. Operator clicks
+    // Refresh when they want new data (cost-conscious — no polling).
+    todayLoad(false);
     const tileKeys = homeGetTiles();
     // Personalize the welcome line with the operator's first name when we have it
     const me = window.currentUser || {};
