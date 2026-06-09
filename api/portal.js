@@ -1043,18 +1043,23 @@ router.get('/me', async (req, res) => {
       // homeowner's name (not the manager's). This is what "see what they
       // see" actually requires — staff name in the header makes the
       // preview misleading.
+      // contacts has full_name + preferred_name only; no first_name column.
       let homeownerName = null;
       try {
-        const { data: ownerships } = await supabase
+        const { data: ownerRows, error: ownerErr } = await supabase
           .from('property_ownerships')
-          .select('contacts:contact_id (full_name, preferred_name, first_name)')
+          .select('is_primary, contacts:contact_id (full_name, preferred_name)')
           .eq('property_id', pickedProp.id)
           .is('end_date', null)
-          .limit(1)
-          .maybeSingle();
-        const c = ownerships?.contacts;
+          .limit(5);
+        if (ownerErr) {
+          console.warn('[portal /me manager] owner query error:', ownerErr.message);
+        }
+        // Pick the primary owner if present; else the first
+        const primary = (ownerRows || []).find(r => r.is_primary) || (ownerRows || [])[0];
+        const c = primary?.contacts;
         if (c) {
-          homeownerName = c.preferred_name || c.full_name || c.first_name || null;
+          homeownerName = c.preferred_name || c.full_name || null;
         }
       } catch (e) {
         console.warn('[portal /me manager] owner lookup failed (non-fatal):', e.message);
