@@ -1502,7 +1502,11 @@ async function managerLoadProperties() {
 }
 
 function managerOpenProperty(propertyId) {
-  // Re-render the portal as that property's homeowner view
+  // Persist the selection so EVERY portal-* subpage can read it from
+  // sessionStorage. Without this, clicking a tile (Balance, Compliance,
+  // Documents, etc.) reaches the API with no property_id and the
+  // manager gets empty results.
+  setStoredPropertyId(propertyId);
   window.location.href = '/portal?property_id=' + encodeURIComponent(propertyId);
 }
 
@@ -1669,6 +1673,13 @@ function _dismissTutorial() {
 // =============================================================================
 (async () => {
   const ctx = await loadPortal();
+  // Belt-and-suspenders: persist the focused property to sessionStorage so
+  // every portal-* subpage can read it. Covers cases where the user
+  // arrives at /portal without going through the picker (deep link,
+  // refresh after auth, etc.).
+  if (ctx?.property?.id) {
+    try { setStoredPropertyId(ctx.property.id); } catch (_) {}
+  }
   applyDemoBanner(ctx);
   applyMimicBanner(ctx);
   applyManagerBanner(ctx);

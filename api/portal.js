@@ -240,7 +240,7 @@ async function resolveScopedProperty(req, supabase, user) {
     const { data: pickedProp } = await supabase
       .from('properties')
       .select(`
-        id, street_address, vantaca_account_id, community_id,
+        id, street_address, lot_number, vantaca_account_id, community_id,
         communities:community_id (id, name, slug, hoa_legal_name)
       `)
       .eq('id', requestedPropertyId)
@@ -268,7 +268,7 @@ async function resolveScopedProperty(req, supabase, user) {
     .select(`
       property_id,
       properties:property_id (
-        id, street_address, vantaca_account_id, community_id,
+        id, street_address, lot_number, vantaca_account_id, community_id,
         communities:community_id (id, name, slug, hoa_legal_name)
       )
     `)
@@ -1657,24 +1657,13 @@ router.get('/compliance', async (req, res) => {
     // Migration 186 capability matrix.
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
-    const portalUserId = roleCheck.user.id;
 
-    // Resolve property scope (first property for v0; multi-property in follow-on)
-    const { data: scopes } = await supabase
-      .from('portal_user_properties')
-      .select(`
-        property_id,
-        properties:property_id (
-          id, street_address, lot_number, block_number, section_number,
-          community_id,
-          communities:community_id (id, name, slug, hoa_legal_name)
-        )
-      `)
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null)
-      .limit(1);
-
-    const prop = (scopes && scopes[0]?.properties) || null;
+    // Owner-or-manager scope resolution
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    const prop = scoped.property;
     if (!prop) {
       return res.json({
         status: 'unscoped',
@@ -1944,13 +1933,18 @@ router.get('/documents', async (req, res) => {
         prop = r.properties;
       }
     } else {
-      const { data: scopes } = await supabase
-        .from('portal_user_properties')
-        .select(`property_id, properties:property_id (community_id, communities:community_id (id, name, slug))`)
-        .eq('portal_user_id', portalUserId)
-        .is('revoked_at', null)
-        .limit(1);
-      prop = (scopes && scopes[0]?.properties) || null;
+      // Owner or manager — single helper handles both scope paths
+      const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+      if (scoped.error === 'property_outside_manager_scope') {
+        return res.status(403).json({ error: scoped.error });
+      }
+      // resolveScopedProperty returns a richer property shape; we only need
+      // the community linkage downstream, so map to the same shape the
+      // renter path produces.
+      prop = scoped.property ? {
+        community_id: scoped.property.community_id,
+        communities: scoped.property.communities,
+      } : null;
     }
     if (!prop) return res.json({ community: null, groups: {} });
 
@@ -2017,20 +2011,25 @@ router.get('/documents', async (req, res) => {
 // ============================================================================
 router.get('/property', async (req, res) => {
   try {
-    const { portalUserId } = resolvePortalUser(req);
-    if (!portalUserId) return res.status(401).json({ error: 'not signed in' });
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
 
-    const { data: scopes } = await supabase
-      .from('portal_user_properties')
-      .select(`property_id, properties:property_id (
+    // Owner-or-manager scope resolution
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    if (!scoped.property) return res.json({ property: null });
+    // Re-query for the full property details (extra columns not in helper)
+    const { data: prop } = await supabase
+      .from('properties')
+      .select(`
         id, street_address, unit, city, state, zip, property_type, lot_number,
         community_id, vantaca_account_id, notes, created_at,
         communities:community_id (id, name, slug, hoa_legal_name)
-      )`)
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null)
-      .limit(1);
-    const prop = (scopes && scopes[0]?.properties) || null;
+      `)
+      .eq('id', scoped.property.id)
+      .maybeSingle();
     if (!prop) return res.json({ property: null });
 
     // Owners of record (current — end_date IS NULL)
@@ -2388,18 +2387,13 @@ router.get('/meetings', async (req, res) => {
     // in TX § 209). Migration 186 capability matrix.
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
-    const portalUserId = roleCheck.user.id;
 
-    const { data: scopes } = await supabase
-      .from('portal_user_properties')
-      .select(`property_id, properties:property_id (
-        community_id,
-        communities:community_id (id, name, slug, hoa_legal_name)
-      )`)
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null)
-      .limit(1);
-    const prop = (scopes && scopes[0]?.properties) || null;
+    // Owner-or-manager scope resolution
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    const prop = scoped.property;
     if (!prop) return res.json({ community: null, upcoming: [], past: [] });
 
     const community = prop.communities || {};
