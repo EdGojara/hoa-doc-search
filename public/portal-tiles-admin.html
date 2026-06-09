@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal Tile Admin · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34; --gold: #D4AF37; --cream: #FAFAF6; --cream-soft: #F5F4ED;
+    --rule: #E5E3DA; --ink: #1a1a1a; --ink-soft: #4a4a4a; --ink-faint: #7a7a7a;
+    --good: #15803d; --good-bg: #dcfce7; --good-bd: #22c55e;
+    --warn: #92400e; --warn-bg: #fef3c7; --warn-bd: #f59e0b;
+    --bad:  #6b7280; --bad-bg:  #f3f4f6; --bad-bd:  #cbd5e1;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, sans-serif;
+  }
+  html, body { margin:0; padding:0; background: var(--cream-soft); color: var(--ink); font-family: var(--font-sans); font-size: 13.5px; }
+  header.top { background:#fff; border-bottom:1px solid var(--rule); padding:14px 24px; display:flex; align-items:center; justify-content:space-between; }
+  header.top h1 { margin:0; font-family: var(--font-serif); font-weight:500; font-size:20px; color: var(--navy); }
+  header.top .sub { font-size:11.5px; color: var(--ink-faint); margin-top:2px; }
+  .container { max-width: 1500px; margin: 0 auto; padding: 22px 24px 60px; }
+  .intro { background:#fff; border:1px solid var(--rule); border-radius:10px; padding:14px 18px; margin-bottom:16px; }
+  .intro h2 { margin:0 0 6px; font-family: var(--font-serif); font-weight:500; font-size:18px; color: var(--navy); }
+  .intro p { margin:0; font-size:12.5px; color: var(--ink-soft); line-height:1.5; }
+  .legend { display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; font-size:11.5px; }
+  .legend span { display:inline-flex; align-items:center; gap:5px; }
+  .legend i { display:inline-block; width:10px; height:10px; border-radius:2px; }
+  .legend .live { background: var(--good-bd); }
+  .legend .cs   { background: var(--warn-bd); }
+  .legend .hidden { background: var(--bad-bd); }
+  .toolbar { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; padding:10px 14px; background:#fff; border:1px solid var(--rule); border-radius:8px; }
+  .toolbar input[type="search"] { padding:6px 10px; font-size:13px; border:1px solid #cbd5e1; border-radius:5px; flex:1; min-width:200px; }
+  .saving { color: var(--gold); font-size:12px; font-weight:600; }
+  .saved { color: var(--good); font-size:12px; font-weight:600; }
+  .err { color:#b91c1c; font-size:12px; }
+  table.grid { width:100%; border-collapse:separate; border-spacing:0; background:#fff; border-radius:10px; overflow:hidden; box-shadow:0 1px 3px rgba(11,29,52,0.04); }
+  table.grid th, table.grid td { padding:8px 10px; border-bottom:1px solid var(--rule); font-size:12.5px; vertical-align:middle; }
+  table.grid thead th { background: var(--cream); position: sticky; top: 0; z-index: 2; color: var(--navy); font-weight:600; text-align:left; font-size:11px; text-transform:uppercase; letter-spacing:0.04em; border-bottom:2px solid var(--rule); }
+  table.grid th.tile-col { text-align:center; font-size:10px; max-width:80px; }
+  table.grid th.tile-col .icon { font-size:18px; display:block; margin-bottom:2px; }
+  table.grid td.community { font-weight:600; color: var(--navy); white-space:nowrap; }
+  table.grid td.community .slug { font-weight:400; font-size:10.5px; color: var(--ink-faint); font-family:ui-monospace, monospace; }
+  table.grid td.toggle-cell { text-align:center; }
+  table.grid tr:hover { background:#fafbfc; }
+  .switch { position:relative; display:inline-block; width:36px; height:20px; }
+  .switch input { opacity:0; width:0; height:0; }
+  .switch .slider { position:absolute; cursor:pointer; inset:0; background:#cbd5e1; border-radius:20px; transition:0.15s; }
+  .switch .slider::before { position:absolute; content:""; height:14px; width:14px; left:3px; bottom:3px; background:#fff; border-radius:50%; transition:0.15s; }
+  .switch input:checked + .slider { background: var(--good-bd); }
+  .switch input:checked + .slider::before { transform: translateX(16px); }
+  select.tile-status {
+    font-size:11.5px; padding:3px 6px; border-radius:4px; border:1px solid var(--rule);
+    background:#fff; cursor:pointer; min-width:90px; font-family: var(--font-sans);
+  }
+  select.tile-status.live    { background: var(--good-bg); color: var(--good); border-color: var(--good-bd); font-weight:600; }
+  select.tile-status.coming_soon { background: var(--warn-bg); color: var(--warn); border-color: var(--warn-bd); font-weight:600; }
+  select.tile-status.hidden  { background: var(--bad-bg); color: var(--bad); border-color: var(--bad-bd); }
+  .row-active-off td:not(.community-col):not(.active-col) { opacity:0.4; }
+  .footer-tip { margin-top:18px; padding:10px 14px; background:#fffbe6; border:1px solid #f3d894; border-radius:6px; font-size:12px; color:#78350f; line-height:1.5; }
+  .loading { padding:40px; text-align:center; color: var(--ink-faint); }
+</style>
+</head>
+<body>
+<header class="top">
+  <div>
+    <h1>Portal Tile Admin</h1>
+    <div class="sub">Per-community control over which homeowner-portal tiles are visible, coming soon, or hidden.</div>
+  </div>
+  <a href="/" style="text-decoration:none; color: var(--navy); font-size:12px;">← trustEd</a>
+</header>
+
+<div class="container">
+  <div class="intro">
+    <h2>One grid for every community × every tile</h2>
+    <p>
+      Each row is a community. The first toggle is the master kill-switch (<strong>Active</strong> = homeowners can log in;
+      off = portal blocked entirely). The remaining columns are individual tiles —
+      pick <strong>Live</strong> when the data/feature is ready, <strong>Coming Soon</strong> when it's planned, or
+      <strong>Hidden</strong> for tiles that don't apply (no pool, no clubhouse, etc). Changes save automatically.
+    </p>
+    <div class="legend">
+      <span><i class="live"></i> Live — tile shows and links to working page</span>
+      <span><i class="cs"></i> Coming Soon — tile shows but with placeholder copy</span>
+      <span><i class="hidden"></i> Hidden — tile not rendered for this community</span>
+    </div>
+  </div>
+
+  <div class="toolbar">
+    <input type="search" id="search" placeholder="Filter by community name or slug…" oninput="filterRows()">
+    <span id="status" style="margin-left:auto;"></span>
+  </div>
+
+  <div id="loading" class="loading">Loading communities…</div>
+  <div id="grid-wrap" style="display:none; overflow-x:auto;">
+    <table class="grid" id="grid">
+      <thead><tr id="thead-row"></tr></thead>
+      <tbody id="tbody"></tbody>
+    </table>
+  </div>
+
+  <div class="footer-tip">
+    <strong>Heads-up:</strong> flipping a tile to <strong>Live</strong> with no data behind it will surface the bare empty
+    state for homeowners (e.g., Balance with no AR import shows "balance not yet on file"). Confirm data is loaded before
+    going live. Tip: leave portal <strong>Active</strong> off while you're staging tile config, then flip it on once the
+    community is ready for homeowners to sign in.
+  </div>
+</div>
+
+<script>
+'use strict';
+
+// Tile catalog — keep in sync with MODULES in portal.html.
+// (Order here = column order in the grid.)
+const TILES = [
+  { key: 'property_summary', label: 'Property\nSummary', icon: '🏠' },
+  { key: 'balance',          label: 'Account\nBalance',  icon: '💵' },
+  { key: 'compliance',       label: 'Compliance', icon: '✅' },
+  { key: 'messages',         label: 'Messages',   icon: '💬' },
+  { key: 'arc',              label: 'ARC',        icon: '🎨' },
+  { key: 'key_fob',          label: 'Pool / Gate', icon: '🔑' },
+  { key: 'clubhouse',        label: 'Clubhouse',  icon: '🏛️' },
+  { key: 'documents',        label: 'Documents',  icon: '📁' },
+  { key: 'financials',       label: 'Financials', icon: '📊' },
+  { key: 'meetings',         label: 'Meetings',   icon: '📅' },
+  { key: 'map',              label: 'Map',        icon: '🗺️' },
+  { key: 'contacts',         label: 'Contacts',   icon: '📞' },
+];
+
+const STATUSES = [
+  { value: 'live',        label: 'Live' },
+  { value: 'coming_soon', label: 'Coming Soon' },
+  { value: 'hidden',      label: 'Hidden' },
+];
+
+const $ = (id) => document.getElementById(id);
+const setStatus = (text, cls) => {
+  const el = $('status');
+  el.textContent = text;
+  el.className = cls || '';
+};
+const escapeHtml = (s) => String(s || '').replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));
+
+let _communities = [];
+
+async function load() {
+  setStatus('');
+  try {
+    const r = await fetch('/api/portal-admin/communities', { credentials: 'same-origin' });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const j = await r.json();
+    _communities = (j.communities || []).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    renderHead();
+    renderRows();
+    $('loading').style.display = 'none';
+    $('grid-wrap').style.display = 'block';
+  } catch (e) {
+    $('loading').innerHTML = '<div class="err">Could not load communities: ' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+function renderHead() {
+  const tr = $('thead-row');
+  let html = '<th style="min-width:200px;">Community</th>';
+  html += '<th class="tile-col" title="Master kill switch — overall portal access"><span class="icon">⚙️</span>Active</th>';
+  for (const t of TILES) {
+    html += `<th class="tile-col" title="${escapeHtml(t.key)}"><span class="icon">${t.icon}</span>${t.label.replace('\n','<br>')}</th>`;
+  }
+  tr.innerHTML = html;
+}
+
+function renderRows() {
+  const tbody = $('tbody');
+  tbody.innerHTML = '';
+  for (const c of _communities) {
+    const tr = document.createElement('tr');
+    tr.dataset.slug = c.slug || '';
+    tr.dataset.name = (c.name || '').toLowerCase();
+    if (!c.portal_active) tr.classList.add('row-active-off');
+
+    let html = `<td class="community community-col">${escapeHtml(c.name || '—')}<div class="slug">${escapeHtml(c.slug || '')}</div></td>`;
+    html += `<td class="toggle-cell active-col">
+      <label class="switch">
+        <input type="checkbox" data-cid="${c.id}" data-field="portal_active" ${c.portal_active ? 'checked' : ''}>
+        <span class="slider"></span>
+      </label>
+    </td>`;
+
+    const cfg = c.portal_module_config || {};
+    for (const t of TILES) {
+      const cur = cfg[t.key]?.status || 'coming_soon';
+      let optHtml = '';
+      for (const s of STATUSES) {
+        optHtml += `<option value="${s.value}" ${s.value === cur ? 'selected' : ''}>${s.label}</option>`;
+      }
+      html += `<td class="toggle-cell">
+        <select class="tile-status ${cur}" data-cid="${c.id}" data-tile="${t.key}">${optHtml}</select>
+      </td>`;
+    }
+    tr.innerHTML = html;
+    tbody.appendChild(tr);
+  }
+
+  // Wire change handlers
+  tbody.querySelectorAll('select.tile-status').forEach(sel => sel.addEventListener('change', onTileChange));
+  tbody.querySelectorAll('input[data-field="portal_active"]').forEach(cb => cb.addEventListener('change', onActiveChange));
+}
+
+async function onTileChange(e) {
+  const sel = e.target;
+  const cid = sel.dataset.cid;
+  const tile = sel.dataset.tile;
+  const status = sel.value;
+  // Repaint color
+  sel.className = 'tile-status ' + status;
+  setStatus('⚙️ Saving…', 'saving');
+  try {
+    const r = await fetch('/api/portal-admin/community/' + encodeURIComponent(cid) + '/module-config', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        module_patch: { [tile]: { status } },
+        updated_by: 'tile_admin_ui',
+      }),
+    });
+    if (!r.ok) {
+      let _m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) _m = `${j.error}${j.message ? ' — ' + j.message : ''}`; } catch(_){}
+      throw new Error(_m);
+    }
+    setStatus('✓ Saved', 'saved');
+    setTimeout(() => setStatus(''), 2000);
+    // Update in-memory cache
+    const c = _communities.find(x => x.id === cid);
+    if (c) {
+      c.portal_module_config = c.portal_module_config || {};
+      c.portal_module_config[tile] = { status };
+    }
+  } catch (err) {
+    setStatus('❌ ' + err.message, 'err');
+  }
+}
+
+async function onActiveChange(e) {
+  const cb = e.target;
+  const cid = cb.dataset.cid;
+  const portal_active = cb.checked;
+  setStatus('⚙️ Saving…', 'saving');
+  // Toggle row dim
+  const tr = cb.closest('tr');
+  if (tr) tr.classList.toggle('row-active-off', !portal_active);
+  try {
+    const r = await fetch('/api/portal-admin/community/' + encodeURIComponent(cid) + '/module-config', {
+      method: 'PATCH',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ portal_active, updated_by: 'tile_admin_ui' }),
+    });
+    if (!r.ok) {
+      let _m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) _m = `${j.error}${j.message ? ' — ' + j.message : ''}`; } catch(_){}
+      throw new Error(_m);
+    }
+    setStatus('✓ Saved', 'saved');
+    setTimeout(() => setStatus(''), 2000);
+    const c = _communities.find(x => x.id === cid);
+    if (c) c.portal_active = portal_active;
+  } catch (err) {
+    setStatus('❌ ' + err.message, 'err');
+    cb.checked = !portal_active;
+    if (tr) tr.classList.toggle('row-active-off', portal_active);
+  }
+}
+
+function filterRows() {
+  const q = $('search').value.trim().toLowerCase();
+  $('tbody').querySelectorAll('tr').forEach(tr => {
+    const hit = !q || (tr.dataset.name || '').includes(q) || (tr.dataset.slug || '').toLowerCase().includes(q);
+    tr.style.display = hit ? '' : 'none';
+  });
+}
+
+load();
+</script>
+</body>
+</html>

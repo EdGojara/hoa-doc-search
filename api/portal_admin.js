@@ -578,7 +578,7 @@ router.get('/communities', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('communities')
-      .select('id, name, slug, portal_active')
+      .select('id, name, slug, portal_active, portal_module_config')
       .order('name', { ascending: true })
       .limit(500);
     if (error) throw error;
