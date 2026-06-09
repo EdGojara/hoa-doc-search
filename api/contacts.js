@@ -1792,6 +1792,55 @@ router.patch('/properties/:id', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// GET /api/contacts/by-community/:communityId
+// Returns contacts who own at least one property in the given community.
+// Used by the ARC committee admin dropdown to pick committee members from
+// the actual homeowner roster (not arbitrary contacts).
+router.get('/contacts/by-community/:communityId', async (req, res) => {
+  try {
+    // Pull ALL property IDs via paginated range (Waterview is 1171 — exceeds
+    // PostgREST 1000-row default; CLAUDE.md scar). Then fetch ownerships
+    // chunked in groups of 500 IDs to avoid request size limits.
+    const propertyIds = [];
+    let offset = 0;
+    const pageSize = 1000;
+    while (true) {
+      const { data, error } = await supabase
+        .from('properties')
+        .select('id')
+        .eq('community_id', req.params.communityId)
+        .range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      const ids = (data || []).map(p => p.id);
+      propertyIds.push(...ids);
+      if (ids.length < pageSize) break;
+      offset += pageSize;
+      if (propertyIds.length > 50000) break; // safety cap
+    }
+    if (propertyIds.length === 0) return res.json({ contacts: [] });
+
+    // Fetch ownerships in chunks
+    const seen = new Map();
+    for (let i = 0; i < propertyIds.length; i += 500) {
+      const chunk = propertyIds.slice(i, i + 500);
+      const { data, error } = await supabase
+        .from('property_ownerships')
+        .select(`contact:contact_id (id, full_name, primary_email, primary_phone)`)
+        .is('end_date', null)
+        .in('property_id', chunk);
+      if (error) throw error;
+      for (const r of (data || [])) {
+        const c = r.contact;
+        if (c && !seen.has(c.id)) seen.set(c.id, c);
+      }
+    }
+    res.json({ contacts: Array.from(seen.values()) });
+  } catch (err) {
+    console.error('[contacts] by-community failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // CONTACTS
 // ---------------------------------------------------------------------------
 router.get('/contacts', async (req, res) => {
