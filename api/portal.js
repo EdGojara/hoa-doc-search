@@ -2282,19 +2282,15 @@ router.get('/transactions', async (req, res) => {
   try {
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
-    const portalUserId = roleCheck.user.id;
 
-    // Resolve property — use the homeowner_path pattern from /balance
-    const { data: scopes } = await supabase
-      .from('portal_user_properties')
-      .select('property_id, properties:property_id (id, vantaca_account_id, community_id, street_address, communities:community_id (id, name))')
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null);
-    const props = (scopes || []).map(s => s.properties).filter(Boolean);
-    if (!props.length) return res.json({ property: null, transactions: [], balance: null, freshness: null });
+    // Owner-or-manager scope resolution
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    const prop = scoped.property;
+    if (!prop) return res.json({ property: null, transactions: [], balance: null, freshness: null });
 
-    const requestedPropertyId = String(req.query?.property_id || '').trim();
-    const prop = (requestedPropertyId && props.find(p => String(p.id) === requestedPropertyId)) || props[0];
     const community = prop.communities || {};
     const vantacaAccountId = prop.vantaca_account_id;
 
@@ -2545,27 +2541,56 @@ router.post('/logout', async (req, res) => {
 // ============================================================================
 
 // Resolve the contact_id + accessible property_ids for the signed-in
-// portal user. Returns null if not authenticated.
+// portal user. Returns null if not authenticated. Manager-aware: if the
+// user is a manager and ?property_id is passed AND the property is in
+// scope, that property_id is returned so the manager sees the same
+// messages a real homeowner would.
 async function resolveHomeownerScope(req) {
   const { portalUserId } = resolvePortalUser(req);
   if (!portalUserId) return null;
 
-  // portal_users -> contact_id (canonical homeowner identity)
+  // portal_users -> contact_id + role
   const { data: user } = await supabase
     .from('portal_users')
-    .select('id, contact_id, email, full_name')
+    .select('id, contact_id, email, full_name, role')
     .eq('id', portalUserId)
     .maybeSingle();
   if (!user) return null;
 
-  // portal_user_properties -> property_ids this user can see
-  const { data: scopes } = await supabase
-    .from('portal_user_properties')
-    .select('property_id')
-    .eq('portal_user_id', portalUserId);
-  const propertyIds = (scopes || []).map((s) => s.property_id).filter(Boolean);
+  let propertyIds = [];
 
-  return { portal_user_id: portalUserId, contact_id: user.contact_id, full_name: user.full_name, email: user.email, property_ids: propertyIds };
+  if (user.role === 'manager') {
+    // Manager path — read property_id from query (or stored). Verify scope.
+    const requestedPid = String(req.query?.property_id || '').trim();
+    if (requestedPid) {
+      const { data: prop } = await supabase
+        .from('properties')
+        .select('id, community_id')
+        .eq('id', requestedPid)
+        .maybeSingle();
+      if (prop) {
+        const { data: scopeRows } = await supabase
+          .from('portal_manager_scope')
+          .select('community_id')
+          .eq('portal_user_id', user.id)
+          .is('revoked_at', null);
+        const portfolioWide = (scopeRows || []).some(s => s.community_id === null);
+        const allowed = new Set((scopeRows || []).map(s => s.community_id).filter(Boolean));
+        if (portfolioWide || allowed.has(prop.community_id)) {
+          propertyIds = [prop.id];
+        }
+      }
+    }
+  } else {
+    // Owner / renter / board — portal_user_properties is the scope source
+    const { data: scopes } = await supabase
+      .from('portal_user_properties')
+      .select('property_id')
+      .eq('portal_user_id', portalUserId);
+    propertyIds = (scopes || []).map((s) => s.property_id).filter(Boolean);
+  }
+
+  return { portal_user_id: portalUserId, contact_id: user.contact_id, full_name: user.full_name, email: user.email, role: user.role, property_ids: propertyIds };
 }
 
 // ----------------------------------------------------------------------------

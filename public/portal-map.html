@@ -468,7 +468,10 @@ function getQueryParams() {
   if (!slug && !isDemo) {
     // Auth mode: figure out community from /api/portal/me
     try {
-      const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+      let _pid = ''; try { _pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+      const _urlPid = new URLSearchParams(window.location.search).get('property_id') || '';
+      const _propId = _urlPid || _pid;
+      const r = await fetch('/api/portal/me' + (_propId ? '?property_id=' + encodeURIComponent(_propId) : ''), { credentials: 'same-origin' });
       if (r.status === 401) {
         window.location.href = '/portal-login.html';
         return;
@@ -498,7 +501,7 @@ function getQueryParams() {
   // Real data
   try {
     const r = await fetch(`/api/portal/map/${encodeURIComponent(slug)}`);
-    if (!r.ok) throw new Error('Could not load map data');
+    if (!r.ok) { let _m=`HTTP ${r.status}`; try { const j=await r.json(); if(j?.error) _m=`${j.error}${j.message?' — '+j.message:''}`; } catch(_){} throw new Error(_m); }
     const data = await r.json();
     renderMap(data);
   } catch (err) {

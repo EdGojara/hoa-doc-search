@@ -213,7 +213,10 @@ let currentThread = null;
 // -----------------------------
 async function boot() {
   try {
-    const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+    let _pid = ''; try { _pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+    const _urlPid = new URLSearchParams(window.location.search).get('property_id') || '';
+    const _propId = _urlPid || _pid;
+    const r = await fetch('/api/portal/me' + (_propId ? '?property_id=' + encodeURIComponent(_propId) : ''), { credentials: 'same-origin' });
     if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
     const me = await r.json();
     portalScope = me;
@@ -271,7 +274,8 @@ async function loadList() {
   main.innerHTML = '<div class="empty"><div class="title">Loading…</div></div>';
 
   try {
-    const r = await fetch('/api/portal/messages', { credentials: 'same-origin' });
+    let _mpid = ''; try { _mpid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+    const r = await fetch('/api/portal/messages' + (_mpid ? '?property_id=' + encodeURIComponent(_mpid) : ''), { credentials: 'same-origin' });
     if (!r.ok) throw new Error('HTTP ' + r.status);
     const j = await r.json();
     const threads = j.threads || [];
