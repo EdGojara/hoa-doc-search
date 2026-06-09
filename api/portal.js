@@ -212,6 +212,75 @@ async function assertOwnerLikeRole(req, res) {
   return resolved;
 }
 
+// ----------------------------------------------------------------------------
+// resolveScopedProperty(req, supabase, user)
+// ----------------------------------------------------------------------------
+// Single helper that resolves "which property are we serving data for?"
+// across the OWNER path (portal_user_properties) and the MANAGER path
+// (portal_manager_scope + ?property_id query param).
+//
+// Returns:
+//   { property: { id, street_address, vantaca_account_id, community_id,
+//                 communities: { id, name, slug, hoa_legal_name } } | null,
+//     allProperties: array,   // empty for managers (no fixed scope list)
+//     isManager: boolean }
+//
+// Per-endpoint code reads property.id / vantaca_account_id / community_id
+// from this without caring whether the user is an owner or a manager.
+// ----------------------------------------------------------------------------
+async function resolveScopedProperty(req, supabase, user) {
+  const isManager = user.role === 'manager';
+  const requestedPropertyId = String(req.query?.property_id || '').trim();
+
+  if (isManager) {
+    if (!requestedPropertyId) {
+      return { property: null, allProperties: [], isManager: true };
+    }
+    // Verify the property is in the manager's scope
+    const { data: pickedProp } = await supabase
+      .from('properties')
+      .select(`
+        id, street_address, vantaca_account_id, community_id,
+        communities:community_id (id, name, slug, hoa_legal_name)
+      `)
+      .eq('id', requestedPropertyId)
+      .maybeSingle();
+    if (!pickedProp) return { property: null, allProperties: [], isManager: true };
+
+    const { data: scopeRows } = await supabase
+      .from('portal_manager_scope')
+      .select('community_id')
+      .eq('portal_user_id', user.id)
+      .is('revoked_at', null);
+    const portfolioWide = (scopeRows || []).some(s => s.community_id === null);
+    if (!portfolioWide) {
+      const allowed = new Set((scopeRows || []).map(s => s.community_id).filter(Boolean));
+      if (!allowed.has(pickedProp.community_id)) {
+        return { property: null, allProperties: [], isManager: true, error: 'property_outside_manager_scope' };
+      }
+    }
+    return { property: pickedProp, allProperties: [], isManager: true };
+  }
+
+  // OWNER path — pull from portal_user_properties
+  const { data: scopes } = await supabase
+    .from('portal_user_properties')
+    .select(`
+      property_id,
+      properties:property_id (
+        id, street_address, vantaca_account_id, community_id,
+        communities:community_id (id, name, slug, hoa_legal_name)
+      )
+    `)
+    .eq('portal_user_id', user.id)
+    .is('revoked_at', null);
+  const props = (scopes || []).map(s => s.properties).filter(Boolean);
+  if (!props.length) return { property: null, allProperties: [], isManager: false };
+
+  const focus = (requestedPropertyId && props.find(p => String(p.id) === requestedPropertyId)) || props[0];
+  return { property: focus, allProperties: props, isManager: false };
+}
+
 function makeMagicToken() {
   return crypto.randomBytes(32).toString('hex');
 }
@@ -2094,22 +2163,28 @@ router.get('/balance', async (req, res) => {
     // financial info. Migration 186 capability matrix.
     const roleCheck = await assertOwnerLikeRole(req, res);
     if (!roleCheck) return;
-    const portalUserId = roleCheck.user.id;
 
-    const { data: scopes } = await supabase
-      .from('portal_user_properties')
-      .select(`property_id, properties:property_id (
-        id, street_address, community_id,
-        communities:community_id (id, name, slug, hoa_legal_name)
-      )`)
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null)
-      .limit(1);
-    const prop = (scopes && scopes[0]?.properties) || null;
+    // Resolve target property — handles both owner and manager scope
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    const prop = scoped.property;
     if (!prop) return res.json({ property: null });
 
     const community = prop.communities || {};
 
+    // Current balance via the unified resolver — single source of truth
+    // across the transactions view + owner_ar_snapshots + enforcement state.
+    const { resolveCurrentAR } = require('../lib/ar/resolve_current_ar');
+    const ar = await resolveCurrentAR(supabase, {
+      propertyId: prop.id,
+      vantacaAccountId: prop.vantaca_account_id,
+      communityId: prop.community_id,
+    });
+
+    // Snapshot history — still useful for the 12-month aging chart even
+    // when the current balance comes from transactions. Empty array is fine.
     const { data: snaps } = await supabase
       .from('owner_ar_snapshots')
       .select(`
@@ -2122,18 +2197,35 @@ router.get('/balance', async (req, res) => {
       .order('snapshot_date', { ascending: false })
       .limit(12);
 
-    const current = (snaps || [])[0] || null;
-    let statusKey = 'no_snapshot';
-    if (current) {
-      const cents = current.balance_total != null ? Math.round(Number(current.balance_total) * 100) : null;
-      const isPastDue = current.at_legal || current.in_collections
+    let statusKey = 'no_data';
+    let currentBlock = null;
+    if (ar && ar.balance_cents != null) {
+      const cents = Number(ar.balance_cents);
+      const isPastDue = !!(ar.at_legal || ar.in_collections
         || ['certified_209', 'at_legal', 'with_attorney', 'in_collections', 'judgment', 'lien_filed']
-            .includes(String(current.enforcement_stage || '').toLowerCase());
-      statusKey = cents == null ? 'unknown'
-                : cents <= 0 ? 'current'
-                : isPastDue ? 'past_due'
-                : 'open_balance';
+            .includes(String(ar.enforcement_stage || '').toLowerCase()));
+      statusKey = cents <= 0 ? 'current' : (isPastDue ? 'past_due' : 'open_balance');
+
+      // Aging buckets come from the latest snapshot if present; transactions
+      // doesn't carry aging metadata. So we surface them when we have them.
+      const snapBuckets = (snaps && snaps[0]) || null;
+      currentBlock = {
+        snapshot_date: ar.as_of,
+        balance_total: cents / 100,
+        bucket_0_30: Number(snapBuckets?.bucket_0_30 || 0),
+        bucket_31_60: Number(snapBuckets?.bucket_31_60 || 0),
+        bucket_61_90: Number(snapBuckets?.bucket_61_90 || 0),
+        bucket_91_120: Number(snapBuckets?.bucket_91_120 || 0),
+        bucket_over_120: Number(snapBuckets?.bucket_over_120 || 0),
+        at_legal: !!ar.at_legal,
+        in_collections: !!ar.in_collections,
+        payment_plan_active: !!ar.payment_plan_active,
+        payment_plan_terms_text: ar.payment_plan_terms_text || null,
+        enforcement_stage: ar.enforcement_stage || null,
+        source: ar.source,
+      };
     }
+    const current = currentBlock;
 
     res.json({
       property: {
