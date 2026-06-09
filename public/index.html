@@ -12644,10 +12644,10 @@ www.bluewaterpools.com" style="width:100%; border:1px solid #d0d7de; border-radi
           </label>
         </div>
         <div class="acc-ai-actions">
-          <button class="acc-action-btn approve" onclick="accFinalize('approve', '${a.id}')">✓ Approve &amp; send</button>
-          <button class="acc-action-btn conditional" onclick="accFinalize('approve_with_conditions', '${a.id}')">⚠ Approve with conditions</button>
-          <button class="acc-action-btn more-info" onclick="accFinalize('request_more_info', '${a.id}')">📝 Request more info</button>
-          <button class="acc-action-btn deny" onclick="accFinalize('deny', '${a.id}')">✗ Deny</button>
+          <button class="acc-action-btn approve" onclick="accFinalize('approve', '${a.id}')">✓ Approve — preview letter</button>
+          <button class="acc-action-btn conditional" onclick="accFinalize('approve_with_conditions', '${a.id}')">⚠ Approve w/ conditions — preview letter</button>
+          <button class="acc-action-btn more-info" onclick="accFinalize('request_more_info', '${a.id}')">📝 Request more info (stays in queue)</button>
+          <button class="acc-action-btn deny" onclick="accFinalize('deny', '${a.id}')">✗ Deny — preview letter</button>
           <button class="secondary-btn" style="margin-left:auto;" onclick="accCopyToClipboard('${a.id}')">📋 Copy message</button>
         </div>
         <p id="acc-action-status" style="margin-top:10px; font-size:12px; text-align:right;"></p>
@@ -12775,16 +12775,109 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       });
       const j = await r.json();
       if (j.error) throw new Error(j.error);
-      let successMsg = '✓ Done — homeowner can see the response on their status page now.';
-      if (j.promoted_to_history) successMsg += ' Added to ACC History library — AI will reference this on future similar applications.';
-      status.textContent = successMsg;
-      status.style.color = '#166534';
-      setTimeout(() => accOpenDetail(appId), 1200);
+
+      // request_more_info stays in queue — no letter goes out
+      if (action === 'request_more_info') {
+        status.textContent = '✓ Recorded — application stays in queue for follow-up.';
+        status.style.color = '#166534';
+        setTimeout(() => accOpenDetail(appId), 1200);
+        return;
+      }
+
+      // Approve / deny → preview the drafted letter + explicit Send button
+      const finalStatus = (action === 'deny') ? 'denied' : 'approved';
+      status.textContent = '✓ Letter drafted — preview below, click Send when ready.';
+      status.style.color = '#a16207';
+      accOpenLetterPreview(appId, j.decision_letter_html, j.decision_letter_subject, finalStatus, j.application?.submitter_email);
     } catch (err) {
       status.textContent = 'Error: ' + err.message; status.style.color = '#b91c1c';
     }
   }
   window.accFinalize = accFinalize;
+
+  // ----- Letter preview + send modal (Phase 1A) ------------------------------
+  // After finalize, the API returns a rendered decision letter draft. We show
+  // it here as a preview; staff can edit the body in the textarea, re-render,
+  // and click Send to actually deliver via /send-decision.
+  function accOpenLetterPreview(appId, letterHtml, subject, finalStatus, recipientEmail) {
+    // Remove any existing modal
+    const existing = document.getElementById('acc-letter-modal');
+    if (existing) existing.remove();
+
+    const modal = document.createElement('div');
+    modal.id = 'acc-letter-modal';
+    modal.style.cssText = 'position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:9999; display:flex; align-items:center; justify-content:center; padding:20px;';
+    modal.innerHTML = `
+      <div style="background:#fff; border-radius:10px; max-width:1100px; width:100%; max-height:92vh; display:flex; flex-direction:column; box-shadow:0 20px 60px rgba(0,0,0,0.35);">
+        <div style="padding:14px 22px; border-bottom:1px solid #e2e8f0; display:flex; align-items:center; justify-content:space-between; gap:12px;">
+          <div>
+            <h3 style="margin:0; color:#0B1D34; font-size:17px;">Preview decision letter</h3>
+            <div style="font-size:12px; color:#64748b; margin-top:2px;">
+              Will send to <strong>${(recipientEmail || '—').replace(/[<>&]/g, c => ({'<':'&lt;','>':'&gt;','&':'&amp;'}[c]))}</strong> with the letter attached as PDF.
+            </div>
+          </div>
+          <button onclick="document.getElementById('acc-letter-modal').remove();" style="background:none; border:0; font-size:24px; color:#64748b; cursor:pointer; line-height:1;">×</button>
+        </div>
+        <div style="flex:1; min-height:0; display:grid; grid-template-columns:1fr 1fr; overflow:hidden;">
+          <div style="padding:14px 18px; border-right:1px solid #e2e8f0; overflow-y:auto; background:#f9fafb;">
+            <div style="font-size:11.5px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Subject</div>
+            <input id="acc-letter-subject" type="text" value="${(subject || '').replace(/"/g, '&quot;')}" style="width:100%; padding:6px 10px; border:1px solid #cbd5e1; border-radius:5px; font-size:13px; margin-bottom:12px;">
+            <div style="font-size:11.5px; color:#64748b; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; margin-bottom:6px;">Letter preview (read-only — re-finalize with edited message to change)</div>
+            <div style="font-size:11px; color:#94a3b8; margin-bottom:10px;">To edit the body, close this modal, change the "Message to homeowner" field above, and re-run Approve/Deny.</div>
+          </div>
+          <div style="overflow-y:auto;">
+            <iframe id="acc-letter-iframe" style="width:100%; height:100%; border:0; background:#fff;" sandbox="allow-same-origin"></iframe>
+          </div>
+        </div>
+        <div style="padding:14px 22px; border-top:1px solid #e2e8f0; display:flex; justify-content:flex-end; gap:10px; align-items:center;">
+          <div id="acc-send-status" style="margin-right:auto; font-size:12.5px;"></div>
+          <button onclick="document.getElementById('acc-letter-modal').remove();" style="background:#fff; color:#0B1D34; border:1px solid #cbd5e1; padding:8px 16px; border-radius:6px; font-size:13px; cursor:pointer;">Save draft &amp; close</button>
+          <button id="acc-send-btn" onclick="accSendDecision('${appId}', '${finalStatus}')" style="background:#0B1D34; color:#fff; border:0; padding:8px 18px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">✉ Send to homeowner</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    const iframe = document.getElementById('acc-letter-iframe');
+    if (iframe && iframe.contentWindow) {
+      iframe.contentWindow.document.open();
+      iframe.contentWindow.document.write(letterHtml || '<p style="padding:20px; font-family:sans-serif; color:#64748b;">(no letter rendered)</p>');
+      iframe.contentWindow.document.close();
+    }
+  }
+  window.accOpenLetterPreview = accOpenLetterPreview;
+
+  async function accSendDecision(appId, finalStatus) {
+    const sendBtn = document.getElementById('acc-send-btn');
+    const status = document.getElementById('acc-send-status');
+    const subject = document.getElementById('acc-letter-subject')?.value?.trim() || null;
+    sendBtn.disabled = true;
+    status.textContent = 'Rendering PDF + sending email…'; status.style.color = '#a16207';
+
+    try {
+      const headers = { 'Content-Type': 'application/json' };
+      try {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) headers.Authorization = 'Bearer ' + session.access_token;
+      } catch (_) {}
+      const r = await fetch('/api/applications/' + appId + '/send-decision', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({ final_status: finalStatus, subject }),
+      });
+      const j = await r.json();
+      if (!j.ok) throw new Error(j.error || j.email_error || 'send failed');
+      status.textContent = '✓ Sent to ' + j.sent_to + ' — application closed.';
+      status.style.color = '#15803d';
+      setTimeout(() => {
+        document.getElementById('acc-letter-modal')?.remove();
+        accOpenDetail(appId);
+      }, 1500);
+    } catch (err) {
+      status.textContent = '✗ ' + err.message; status.style.color = '#b91c1c';
+      sendBtn.disabled = false;
+    }
+  }
+  window.accSendDecision = accSendDecision;
 
   function accCopyToClipboard(appId) {
     const msg = document.getElementById('acc-msg').value;
