@@ -22,6 +22,7 @@
 
 const express = require('express');
 const crypto = require('crypto');
+const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { safeErrorMessage } = require('./_safe_error');
 const { sendEmail } = require('../lib/notifications/email');
@@ -2807,6 +2808,275 @@ router.post('/messages/:threadId/reply', express.json({ limit: '256kb' }), async
 });
 
 // ----------------------------------------------------------------------------
+// ============================================================================
+// ARC SUBMISSIONS FROM THE PORTAL — drag-drop friendly
+// ----------------------------------------------------------------------------
+// Ed 2026-06-09 — Homeowners who are signed into the portal can submit an
+// ARC application without re-typing their property + email. Drag-drop of
+// the form PDF + photos goes through the same completeness + assessment
+// pipeline as /apply/<slug> public submissions.
+//
+// Endpoints:
+//   POST  /api/portal/arc/submit  — multipart upload (form file + photos
+//                                   + JSON application_data field)
+//   GET   /api/portal/arc         — list MY applications (open + past)
+// ============================================================================
+const portalArcUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 12 * 1024 * 1024, files: 20 },
+});
+
+router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+
+    // Owner-or-manager scope resolution — same helper as the rest of the
+    // portal subpages. property_id can come via ?property_id or stored.
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    if (!scoped.property) return res.status(400).json({ error: 'no_property_scope' });
+    const prop = scoped.property;
+    const community = prop.communities || {};
+    if (!community.id) return res.status(400).json({ error: 'community_lookup_failed' });
+
+    // Parse application_data + service type
+    const b = req.body || {};
+    let applicationData = {};
+    if (b.application_data) {
+      try { applicationData = JSON.parse(b.application_data); }
+      catch (_) { return res.status(400).json({ error: 'application_data_must_be_json' }); }
+    } else {
+      // Allow top-level fields too — convenient for simple drag-drop UX
+      for (const k of Object.keys(b)) {
+        if (!['service_type', 'description', 'signature_name', 'agreed_to_indemnification'].includes(k)) continue;
+        applicationData[k] = b[k];
+      }
+    }
+
+    const serviceType = (b.service_type || applicationData.service_type || 'arc').toLowerCase();
+
+    // Find the corresponding community_service for this community + ARC.
+    // Schema uses community_services to scope ARC vs fob vs clubhouse per
+    // community; for ARC we expect type='arc' (or arc_application — depends
+    // on community).
+    const { data: service } = await supabase
+      .from('community_services')
+      .select('id, service_type, name')
+      .eq('community_id', community.id)
+      .in('service_type', ['arc', 'arc_application'])
+      .limit(1)
+      .maybeSingle();
+    if (!service) {
+      return res.status(400).json({ error: 'arc_not_configured_for_community' });
+    }
+
+    // Generate reference number — same format as the public flow
+    // (e.g., "QR-ARC-2026-0001" — community-prefix + type + year + counter).
+    // We re-use the public-side counter strategy: query existing references
+    // for this community + year and increment.
+    const yr = new Date().getFullYear();
+    const slug = community.slug || 'COM';
+    const prefix = `${slug.slice(0, 3).toUpperCase()}-ARC-${yr}-`;
+    const { data: refRows } = await supabase
+      .from('community_applications')
+      .select('reference_number')
+      .like('reference_number', `${prefix}%`)
+      .order('reference_number', { ascending: false })
+      .limit(1);
+    let nextNum = 1;
+    if (refRows && refRows[0]) {
+      const match = refRows[0].reference_number.match(/-(\d+)$/);
+      if (match) nextNum = parseInt(match[1], 10) + 1;
+    }
+    const reference = `${prefix}${String(nextNum).padStart(4, '0')}`;
+
+    // Look up portal user for submitter info
+    const { portalUserId } = resolvePortalUser(req);
+    const { data: pu } = await supabase
+      .from('portal_users')
+      .select('full_name, email')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    const submitterName = applicationData.signed_by_name
+      || (b.signature_name && b.signature_name.trim())
+      || pu?.full_name
+      || pu?.email
+      || 'Portal Homeowner';
+    const submitterEmail = pu?.email || 'homeowner@unknown.invalid';
+
+    // Stamp signature into application_data (same shape as public flow)
+    applicationData.signature = {
+      signed_by_name: submitterName,
+      signed_at: new Date().toISOString(),
+      agreed_to_indemnification: String(b.agreed_to_indemnification || '').toLowerCase() === 'true',
+      source: 'portal_drag_drop',
+    };
+
+    // Insert as draft, will flip to incomplete/pending_review after
+    // completeness check
+    const { data: app, error: insErr } = await supabase
+      .from('community_applications')
+      .insert({
+        management_company_id: BEDROCK_MGMT_CO_ID,
+        community_id: community.id,
+        community_service_id: service.id,
+        reference_number: reference,
+        service_type: serviceType,
+        submitter_name: submitterName,
+        submitter_email: submitterEmail,
+        property_address: prop.street_address,
+        application_data: applicationData,
+        final_status: 'draft',
+        submitted_at: new Date().toISOString(),
+        client_ip: (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim() || null,
+        user_agent: req.headers['user-agent'] || null,
+      })
+      .select()
+      .single();
+    if (insErr) throw insErr;
+
+    // Save uploaded files (form PDF and/or photos) to storage
+    const files = req.files || [];
+    const savedAttachments = [];
+    for (const f of files) {
+      try {
+        const isPhoto = /^image\//i.test(f.mimetype);
+        const isPdf = /pdf$/i.test(f.mimetype) || /\.pdf$/i.test(f.originalname || '');
+        if (!isPhoto && !isPdf) continue;
+        const safeName = (f.originalname || 'upload').replace(/[^A-Za-z0-9._-]+/g, '_').slice(0, 80) || 'upload';
+        const storagePath = `applications/${app.id}/${Date.now()}_${safeName}`;
+        const { error: stErr } = await supabase.storage
+          .from('documents')
+          .upload(storagePath, f.buffer, { contentType: f.mimetype, upsert: false });
+        if (stErr) { console.warn('[portal/arc] storage upload failed:', stErr.message); continue; }
+        const { data: attRow } = await supabase.from('application_attachments').insert({
+          application_id: app.id,
+          attachment_type: isPdf ? 'application_form' : 'photo_current',
+          file_path: storagePath,
+          original_filename: f.originalname,
+          file_size_bytes: f.size,
+          file_mime_type: f.mimetype,
+        }).select('id').single();
+        savedAttachments.push({
+          id: attRow?.id,
+          name: f.originalname,
+          kind: isPdf ? 'application_form' : 'photo_current',
+          mime: f.mimetype,
+        });
+      } catch (e) {
+        console.warn('[portal/arc] attachment record failed:', e.message);
+      }
+    }
+
+    // Run completeness check
+    const { checkCompleteness } = require('../lib/applications/completeness');
+    const completeness = checkCompleteness({
+      service_type: serviceType,
+      application_data: applicationData,
+      attachments: savedAttachments,
+    });
+
+    const stagedStatus = completeness.passed ? 'pending_review' : 'incomplete';
+    await supabase
+      .from('community_applications')
+      .update({
+        completeness_passed: completeness.passed,
+        completeness_checked_at: new Date().toISOString(),
+        completeness_issues: completeness.issues,
+        completeness_message: completeness.message,
+        final_status: stagedStatus,
+      })
+      .eq('id', app.id);
+
+    // Audit
+    try {
+      await supabase.from('application_state_log').insert({
+        application_id: app.id,
+        from_status: 'draft',
+        to_status: stagedStatus,
+        actor_kind: 'homeowner',
+        actor_id: portalUserId,
+        actor_display_name: submitterName,
+        reason: completeness.passed ? 'completeness_passed' : 'completeness_failed',
+        metadata: { source: 'portal_drag_drop', files: savedAttachments.length },
+      });
+    } catch (_) {}
+
+    res.json({
+      ok: true,
+      reference_number: reference,
+      application_id: app.id,
+      status_url: `/apply/status/${encodeURIComponent(reference)}`,
+      receipt: {
+        kind: completeness.passed ? 'received' : 'needs_more',
+        title: completeness.passed ? 'We received your application' : 'Almost there — we need a little more',
+        message: completeness.message,
+        submitted_at_iso: app.submitted_at,
+        submitted_at_human: new Date(app.submitted_at).toLocaleString('en-US', {
+          timeZone: 'America/Chicago', dateStyle: 'long', timeStyle: 'short',
+        }) + ' Central',
+        issues: completeness.passed ? null : completeness.issues,
+      },
+      files_uploaded: savedAttachments.length,
+    });
+  } catch (err) {
+    console.error('[portal/arc/submit] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /api/portal/arc — list this portal user's own ARC applications
+router.get('/arc', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (scoped.error === 'property_outside_manager_scope') {
+      return res.status(403).json({ error: scoped.error });
+    }
+    const prop = scoped.property;
+    const filters = supabase
+      .from('community_applications')
+      .select(`
+        id, reference_number, service_type, property_address, submitter_email,
+        submitted_at, completeness_passed, completeness_message,
+        final_status, final_decided_at, decision_letter_sent_at,
+        assessment_summary
+      `)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('submitted_at', { ascending: false })
+      .limit(50);
+
+    // Two match criteria: property OR signed-in user's email. Either qualifies
+    // as "your" application since homeowners often submit from multiple emails.
+    let query = filters;
+    if (prop?.id) {
+      query = query.eq('property_address', prop.street_address);
+    } else {
+      // No property in scope — fall back to email match
+      const { portalUserId } = resolvePortalUser(req);
+      const { data: pu } = await supabase
+        .from('portal_users')
+        .select('email')
+        .eq('id', portalUserId)
+        .maybeSingle();
+      if (!pu?.email) return res.json({ applications: [] });
+      query = query.ilike('submitter_email', pu.email);
+    }
+    const { data: apps, error } = await query;
+    if (error) throw error;
+
+    res.json({ applications: apps || [] });
+  } catch (err) {
+    console.error('[portal/arc] list failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // Helpers
 // ----------------------------------------------------------------------------
 function escapeHtml(s) {

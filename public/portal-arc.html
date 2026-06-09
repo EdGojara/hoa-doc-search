@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Architectural Review · Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34; --gold: #D4AF37; --cream-soft: #F5F4ED;
+    --rule: #E5E3DA; --ink: #1a1a1a; --ink-soft: #4a4a4a; --ink-faint: #7a7a7a;
+    --good: #15803d; --good-bg: #dcfce7;
+    --warn: #92400e; --warn-bg: #fef3c7;
+    --bad: #991b1b; --bad-bg: #fee2e2;
+  }
+  html, body { margin:0; padding:0; background: var(--cream-soft); color: var(--ink); font-family: 'Inter', -apple-system, sans-serif; }
+  header.top { background:#fff; border-bottom:1px solid var(--rule); padding:14px 24px; }
+  header.top h1 { margin:0; font-family:'Cormorant Garamond', Georgia, serif; font-weight:500; font-size:22px; color: var(--navy); }
+  header.top a.back { color: var(--ink-faint); text-decoration:none; font-size:13px; }
+  .container { max-width: 920px; margin: 0 auto; padding: 24px; }
+  .panel { background:#fff; border:1px solid var(--rule); border-radius:10px; padding:20px 24px; margin-bottom:18px; }
+  .panel h2 { margin:0 0 8px; font-family:'Cormorant Garamond', Georgia, serif; font-weight:500; font-size:20px; color: var(--navy); }
+  .panel p.sub { margin:0 0 14px; color: var(--ink-soft); font-size:13.5px; line-height:1.55; }
+  label { display:block; font-size:11.5px; color: var(--ink-faint); text-transform:uppercase; letter-spacing:0.04em; font-weight:600; margin-bottom:4px; }
+  input[type="text"], select, textarea {
+    width:100%; padding:8px 12px; font-size:13.5px; border:1px solid #cbd5e1; border-radius:6px;
+    font-family: inherit; background:#fff; color: var(--ink);
+  }
+  textarea { resize: vertical; min-height: 90px; }
+  .row { display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:14px; }
+  .row.full { grid-template-columns: 1fr; }
+  .dropzone {
+    border:2px dashed var(--gold); background:#fffbeb; padding:30px 20px;
+    border-radius:10px; text-align:center; color: var(--ink-soft); cursor:pointer;
+    transition: background 0.15s;
+  }
+  .dropzone.hover { background:#fef3c7; }
+  .dropzone .icon { font-size:36px; margin-bottom:6px; }
+  .dropzone strong { color: var(--navy); }
+  .file-list { margin-top:12px; }
+  .file-row {
+    display:flex; align-items:center; gap:10px;
+    padding:6px 10px; background:#f8fafc; border:1px solid var(--rule); border-radius:6px;
+    margin-bottom:6px; font-size:12.5px;
+  }
+  .file-row .name { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .file-row .size { color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .file-row button { background:none; border:0; color:#b91c1c; cursor:pointer; font-size:14px; padding:0; }
+  .btn-primary {
+    background: var(--navy); color:#fff; border:0; padding:11px 22px; border-radius:7px;
+    font-size:14px; font-weight:600; cursor:pointer; font-family: inherit;
+  }
+  .btn-primary:disabled { opacity:0.5; cursor: not-allowed; }
+  .terms { font-size:12.5px; color: var(--ink-soft); line-height:1.5; padding:10px; background:#f8fafc; border-radius:6px; }
+  .terms label { display:flex; align-items:flex-start; gap:10px; text-transform:none; letter-spacing:0; font-weight:500; color: var(--ink); font-size:13px; }
+  .terms input[type="checkbox"] { margin-top:3px; }
+  .receipt {
+    padding:18px 20px; border-radius:10px; margin-bottom:18px;
+    font-size:14px; line-height:1.5;
+  }
+  .receipt.ok { background: var(--good-bg); border:1px solid var(--good); color: var(--good); }
+  .receipt.warn { background: var(--warn-bg); border:1px solid var(--warn); color: var(--warn); }
+  .receipt h3 { margin:0 0 6px; font-size:15px; }
+  .receipt .ref { font-family: ui-monospace, monospace; font-weight:700; }
+  .receipt ul { margin:8px 0 0 0; padding-left:18px; }
+  .my-app {
+    padding:12px 14px; background:#f8fafc; border:1px solid var(--rule); border-radius:8px;
+    margin-bottom:8px; display:flex; gap:14px; align-items:flex-start;
+  }
+  .my-app .meta { flex:1; min-width:0; font-size:13px; }
+  .my-app .meta .ref { font-family: ui-monospace, monospace; font-size:11.5px; color: var(--ink-faint); }
+  .my-app .meta .when { color: var(--ink-faint); font-size:11.5px; }
+  .my-app .status { font-size:11px; padding:3px 9px; border-radius:10px; font-weight:600; white-space:nowrap; align-self:center; }
+  .status.draft { background:#f3f4f6; color: var(--ink-soft); }
+  .status.incomplete { background: var(--warn-bg); color: var(--warn); }
+  .status.pending_review,
+  .status.pending_committee_review,
+  .status.pending_send { background:#dbeafe; color:#1e40af; }
+  .status.approved { background: var(--good-bg); color: var(--good); }
+  .status.denied { background: var(--bad-bg); color: var(--bad); }
+  .err { color:#b91c1c; font-size:13px; }
+</style>
+</head>
+<body>
+<header class="top" style="display:flex; align-items:center; justify-content:space-between;">
+  <h1>🏗️ Architectural Review</h1>
+  <a href="/portal" class="back">← Back to portal</a>
+</header>
+
+<div class="container">
+  <div id="receipt-slot"></div>
+
+  <div class="panel">
+    <h2>Submit a request</h2>
+    <p class="sub">
+      For exterior paint, fence, addition, roof, landscape, solar, or pool changes. We'll check your submission for completeness right away and confirm receipt. Decisions usually come back within a few business days.
+    </p>
+
+    <div class="row">
+      <div>
+        <label>Project type</label>
+        <select id="service_type">
+          <option value="paint">Exterior paint</option>
+          <option value="fence">Fence</option>
+          <option value="roof">Roof</option>
+          <option value="addition">Addition (room, deck, patio)</option>
+          <option value="landscape">Landscaping / trees</option>
+          <option value="solar">Solar panels</option>
+          <option value="pool">Pool / spa</option>
+          <option value="arc">Other / general</option>
+        </select>
+      </div>
+      <div>
+        <label>Property</label>
+        <input type="text" id="property_display" readonly>
+      </div>
+    </div>
+
+    <div class="row full">
+      <div>
+        <label>Description of the project</label>
+        <textarea id="description" placeholder="What are you changing or adding? Include materials, colors, dimensions, and contractor if applicable."></textarea>
+      </div>
+    </div>
+
+    <div class="row">
+      <div>
+        <label>Color / material (if applicable)</label>
+        <input type="text" id="color" placeholder="e.g., SW 7008 Alabaster, cedar fence, architectural shingle">
+      </div>
+      <div>
+        <label>Contractor (if applicable)</label>
+        <input type="text" id="contractor" placeholder="Company name">
+      </div>
+    </div>
+
+    <div class="row full">
+      <div>
+        <label>Photos and application form (drag-drop or click)</label>
+        <div id="dropzone" class="dropzone">
+          <div class="icon">📎</div>
+          <div><strong>Drag &amp; drop</strong> photos + your filled application form, or click to choose</div>
+          <div style="font-size:11.5px; color: var(--ink-faint); margin-top:6px;">JPG / PNG photos + PDF for the application. Up to 20 files, 12 MB each.</div>
+        </div>
+        <input type="file" id="files" multiple style="display:none" accept="image/*,application/pdf">
+        <div id="file-list" class="file-list"></div>
+      </div>
+    </div>
+
+    <div class="row full">
+      <div>
+        <label>Electronic signature (full legal name)</label>
+        <input type="text" id="signature_name" placeholder="Type your full legal name">
+      </div>
+    </div>
+
+    <div class="terms" style="margin-bottom:14px;">
+      <label>
+        <input type="checkbox" id="agree">
+        <span>
+          I confirm that I have read the community's CC&amp;Rs and ACC guidelines, and I agree to complete the project within the approved scope. I acknowledge that work begun before approval is at my own risk, and that I am responsible for any modifications required to bring the project into compliance.
+        </span>
+      </label>
+    </div>
+
+    <div style="display:flex; align-items:center; gap:14px;">
+      <button id="submit-btn" class="btn-primary">Submit application</button>
+      <div id="submit-status" style="font-size:13px;"></div>
+    </div>
+  </div>
+
+  <div class="panel">
+    <h2>My applications</h2>
+    <p class="sub">Open requests and past decisions. Click any to check status.</p>
+    <div id="my-apps">
+      <div style="color: var(--ink-faint); font-size:13px;">Loading…</div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+let _selectedFiles = [];
+let _property = null;
+
+function $(id) { return document.getElementById(id); }
+function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function fmtSize(n) { if (!n) return ''; if (n < 1024) return n + ' B'; if (n < 1048576) return (n/1024).toFixed(1) + ' KB'; return (n/1048576).toFixed(1) + ' MB'; }
+
+async function boot() {
+  // Resolve current property + portal user
+  let _pid = ''; try { _pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+  const _urlPid = new URLSearchParams(window.location.search).get('property_id') || '';
+  const _propId = _urlPid || _pid;
+
+  try {
+    const r = await fetch('/api/portal/me' + (_propId ? '?property_id=' + encodeURIComponent(_propId) : ''), { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) {
+      let m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) m = j.error; } catch (_) {}
+      throw new Error(m);
+    }
+    const me = await r.json();
+    _property = me.property;
+    if (_property) {
+      $('property_display').value = _property.address || _property.street_address || '';
+    } else {
+      $('property_display').value = '(no property — please pick from portal)';
+    }
+  } catch (e) {
+    $('property_display').value = '(could not load — ' + e.message + ')';
+  }
+
+  // Load my applications
+  loadMyApplications();
+}
+
+async function loadMyApplications() {
+  const wrap = $('my-apps');
+  try {
+    let _pid = ''; try { _pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+    const r = await fetch('/api/portal/arc' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''), { credentials: 'same-origin' });
+    if (!r.ok) {
+      let m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) m = j.error; } catch (_) {}
+      wrap.innerHTML = '<div class="err">Could not load: ' + escapeHtml(m) + '</div>';
+      return;
+    }
+    const j = await r.json();
+    const apps = j.applications || [];
+    if (apps.length === 0) {
+      wrap.innerHTML = '<div style="color:#7a7a7a; font-size:13px;">No applications yet.</div>';
+      return;
+    }
+    wrap.innerHTML = apps.map(a => {
+      const submitted = a.submitted_at
+        ? new Date(a.submitted_at).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+        : '—';
+      const statusLabel = (s) => {
+        const map = {
+          'draft': 'Draft',
+          'incomplete': 'Needs more',
+          'pending_review': 'In review',
+          'pending_committee_review': 'In review',
+          'pending_send': 'Decision pending',
+          'approved': 'Approved',
+          'denied': 'Denied',
+          'withdrawn': 'Withdrawn',
+          'closed': 'Closed',
+        };
+        return map[s] || s;
+      };
+      return `
+        <div class="my-app">
+          <div class="meta">
+            <div style="font-weight:600; color:#0B1D34;">${escapeHtml(a.service_type)} <span class="ref" style="margin-left:6px;">${escapeHtml(a.reference_number)}</span></div>
+            <div class="when">Submitted ${escapeHtml(submitted)}${a.decision_letter_sent_at ? ' · decision sent ' + new Date(a.decision_letter_sent_at).toLocaleDateString() : ''}</div>
+            ${(a.completeness_passed === false && a.completeness_message) ? `<div style="font-size:12px; color:#92400e; margin-top:4px;">${escapeHtml(a.completeness_message)}</div>` : ''}
+          </div>
+          <div class="status ${escapeHtml(a.final_status)}">${escapeHtml(statusLabel(a.final_status))}</div>
+        </div>
+      `;
+    }).join('');
+  } catch (e) {
+    wrap.innerHTML = '<div class="err">' + escapeHtml(e.message) + '</div>';
+  }
+}
+
+// File input handling
+function bindDropzone() {
+  const dz = $('dropzone');
+  const input = $('files');
+  dz.addEventListener('click', () => input.click());
+  input.addEventListener('change', (e) => addFiles(e.target.files));
+  ['dragenter','dragover'].forEach(evt => dz.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.add('hover');
+  }));
+  ['dragleave','drop'].forEach(evt => dz.addEventListener(evt, (e) => {
+    e.preventDefault(); e.stopPropagation(); dz.classList.remove('hover');
+  }));
+  dz.addEventListener('drop', (e) => addFiles(e.dataTransfer.files));
+}
+
+function addFiles(fileList) {
+  for (const f of Array.from(fileList || [])) {
+    if (_selectedFiles.length >= 20) break;
+    _selectedFiles.push(f);
+  }
+  renderFileList();
+}
+
+function renderFileList() {
+  const wrap = $('file-list');
+  if (_selectedFiles.length === 0) { wrap.innerHTML = ''; return; }
+  wrap.innerHTML = _selectedFiles.map((f, i) => `
+    <div class="file-row">
+      <span>${/^image\//i.test(f.type) ? '📷' : (/pdf$/i.test(f.type) || /\.pdf$/i.test(f.name) ? '📄' : '📎')}</span>
+      <span class="name">${escapeHtml(f.name)}</span>
+      <span class="size">${fmtSize(f.size)}</span>
+      <button onclick="removeFile(${i})" title="Remove">✕</button>
+    </div>
+  `).join('');
+}
+
+function removeFile(i) {
+  _selectedFiles.splice(i, 1);
+  renderFileList();
+}
+window.removeFile = removeFile;
+
+async function submit() {
+  const btn = $('submit-btn');
+  const status = $('submit-status');
+  const service_type = $('service_type').value;
+  const description = $('description').value.trim();
+  const color = $('color').value.trim();
+  const contractor = $('contractor').value.trim();
+  const signature_name = $('signature_name').value.trim();
+  const agree = $('agree').checked;
+
+  if (!description) { status.textContent = 'Please describe the project.'; status.style.color = '#b91c1c'; return; }
+  if (!signature_name || signature_name.length < 2) { status.textContent = 'Please type your full legal name as an electronic signature.'; status.style.color = '#b91c1c'; return; }
+  if (!agree) { status.textContent = 'Please acknowledge the terms before submitting.'; status.style.color = '#b91c1c'; return; }
+
+  const application_data = { service_type, description, color, contractor, signed_by_name: signature_name };
+
+  const fd = new FormData();
+  fd.append('service_type', service_type);
+  fd.append('application_data', JSON.stringify(application_data));
+  fd.append('signature_name', signature_name);
+  fd.append('agreed_to_indemnification', 'true');
+  for (const f of _selectedFiles) fd.append('files', f);
+
+  btn.disabled = true;
+  status.textContent = 'Uploading + checking completeness…';
+  status.style.color = '#92400e';
+
+  try {
+    let _pid = ''; try { _pid = sessionStorage.getItem('bedrock_portal_property_id') || ''; } catch (_) {}
+    const r = await fetch('/api/portal/arc/submit' + (_pid ? '?property_id=' + encodeURIComponent(_pid) : ''), {
+      method: 'POST',
+      credentials: 'same-origin',
+      body: fd,
+    });
+    if (!r.ok) {
+      let m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) m = j.error; } catch (_) {}
+      throw new Error(m);
+    }
+    const j = await r.json();
+    renderReceipt(j);
+    // Clear the form
+    _selectedFiles = []; renderFileList();
+    $('description').value = ''; $('color').value = ''; $('contractor').value = ''; $('signature_name').value = ''; $('agree').checked = false;
+    status.textContent = ''; btn.disabled = false;
+    loadMyApplications();
+  } catch (e) {
+    status.textContent = e.message; status.style.color = '#b91c1c';
+    btn.disabled = false;
+  }
+}
+
+function renderReceipt(j) {
+  const slot = $('receipt-slot');
+  const r = j.receipt || {};
+  const isOk = r.kind === 'received';
+  let issuesHtml = '';
+  if (!isOk && r.issues) {
+    issuesHtml = '<ul>' + r.issues.map(i => '<li>' + escapeHtml(i.ask) + '</li>').join('') + '</ul>';
+  }
+  slot.innerHTML = `
+    <div class="receipt ${isOk ? 'ok' : 'warn'}">
+      <h3>${isOk ? '✓ ' + escapeHtml(r.title) : '⚠ ' + escapeHtml(r.title)}</h3>
+      <div>${escapeHtml(r.message || '').split('\\n').map(line => '<div>' + escapeHtml(line) + '</div>').join('')}</div>
+      ${issuesHtml}
+      <div style="margin-top:10px; font-size:12.5px; opacity:0.85;">
+        Reference: <span class="ref">${escapeHtml(j.reference_number || '')}</span>
+        ${r.submitted_at_human ? ' · submitted ' + escapeHtml(r.submitted_at_human) : ''}
+      </div>
+    </div>
+  `;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  bindDropzone();
+  $('submit-btn').addEventListener('click', submit);
+  boot();
+});
+</script>
+</body>
+</html>
