@@ -3028,6 +3028,283 @@ router.post('/arc/submit', portalArcUpload.any(), async (req, res) => {
   }
 });
 
+// ============================================================================
+// ACC COMMITTEE REVIEW ENDPOINTS (Phase 1C)
+// ----------------------------------------------------------------------------
+// Portal user with contact_id matching a community_arc_committee row sees a
+// queue of applications awaiting their vote. Reviewers see only the
+// application package (form + photos) + the proposed decision letter — never
+// Bedrock's internal multi-persona AI analysis.
+// ============================================================================
+
+// GET /api/portal/acc-reviews — list applications I need to vote on
+router.get('/acc-reviews', async (req, res) => {
+  try {
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+    const { data: pu } = await supabase
+      .from('portal_users')
+      .select('contact_id, email')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    if (!pu?.contact_id) return res.json({ applications: [] });
+
+    // Find committees this user serves on
+    const { data: committees } = await supabase
+      .from('community_arc_committee')
+      .select('community_id, is_chair')
+      .eq('contact_id', pu.contact_id)
+      .eq('is_active', true)
+      .is('removed_at', null);
+    const communityIds = (committees || []).map(c => c.community_id);
+    if (!communityIds.length) return res.json({ applications: [] });
+
+    // Pull applications in pending_committee_review for those communities
+    const { data: apps } = await supabase
+      .from('community_applications')
+      .select(`
+        id, reference_number, service_type, property_address, submitter_name,
+        submitted_at, forwarded_to_committee_at, final_status,
+        community:communities(id, name, slug)
+      `)
+      .in('community_id', communityIds)
+      .eq('final_status', 'pending_committee_review')
+      .order('forwarded_to_committee_at', { ascending: true })
+      .limit(100);
+
+    // Exclude apps I've already voted on
+    const appIds = (apps || []).map(a => a.id);
+    let myVotes = [];
+    if (appIds.length) {
+      const { data } = await supabase
+        .from('application_committee_votes')
+        .select('application_id, vote, voted_at')
+        .eq('committee_member_contact_id', pu.contact_id)
+        .in('application_id', appIds);
+      myVotes = data || [];
+    }
+    const votedSet = new Set(myVotes.map(v => v.application_id));
+
+    res.json({
+      applications: (apps || []).map(a => ({
+        ...a,
+        already_voted: votedSet.has(a.id),
+        my_vote: myVotes.find(v => v.application_id === a.id)?.vote || null,
+      })),
+    });
+  } catch (err) {
+    console.error('[portal/acc-reviews] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// GET /api/portal/acc-reviews/:appId — load the review package
+router.get('/acc-reviews/:appId', async (req, res) => {
+  try {
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+    const { data: pu } = await supabase
+      .from('portal_users')
+      .select('contact_id, email, full_name')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    if (!pu?.contact_id) return res.status(403).json({ error: 'no_contact_linkage' });
+
+    const { data: app, error } = await supabase
+      .from('community_applications')
+      .select(`
+        id, reference_number, service_type, property_address, submitter_name,
+        submitted_at, forwarded_to_committee_at, final_status, application_data,
+        decision_letter_html, decision_letter_subject,
+        community_id, community:communities(id, name, slug)
+      `)
+      .eq('id', req.params.appId)
+      .maybeSingle();
+    if (error) throw error;
+    if (!app) return res.status(404).json({ error: 'application_not_found' });
+
+    // Authorize — must be an active committee member for this community
+    const { data: scope } = await supabase
+      .from('community_arc_committee')
+      .select('id, is_chair')
+      .eq('community_id', app.community_id)
+      .eq('contact_id', pu.contact_id)
+      .eq('is_active', true)
+      .is('removed_at', null)
+      .maybeSingle();
+    if (!scope) return res.status(403).json({ error: 'not_authorized_to_review' });
+
+    // Attachments (homeowner's submission package)
+    const { data: attachments } = await supabase
+      .from('application_attachments')
+      .select('id, attachment_type, original_filename, file_path, file_mime_type, file_size_bytes')
+      .eq('application_id', app.id);
+
+    // Generate signed URLs for each attachment for secure viewing
+    const attachmentsWithUrls = await Promise.all((attachments || []).map(async (a) => {
+      try {
+        const { data: signed } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(a.file_path, 3600);
+        return { ...a, signed_url: signed?.signedUrl || null };
+      } catch (_) {
+        return { ...a, signed_url: null };
+      }
+    }));
+
+    // My existing vote (if any)
+    const { data: myVote } = await supabase
+      .from('application_committee_votes')
+      .select('vote, comments, voted_at')
+      .eq('application_id', app.id)
+      .eq('committee_member_contact_id', pu.contact_id)
+      .maybeSingle();
+
+    res.json({
+      application: {
+        id: app.id,
+        reference_number: app.reference_number,
+        service_type: app.service_type,
+        property_address: app.property_address,
+        submitter_name: app.submitter_name,
+        submitted_at: app.submitted_at,
+        forwarded_to_committee_at: app.forwarded_to_committee_at,
+        application_data: app.application_data,
+        community: app.community,
+      },
+      // Reviewer sees the proposed letter — they verify Bedrock's analysis
+      // matches the application materials.
+      proposed_decision_letter_html: app.decision_letter_html,
+      proposed_decision_subject: app.decision_letter_subject,
+      attachments: attachmentsWithUrls,
+      my_vote: myVote || null,
+      reviewer: { contact_id: pu.contact_id, full_name: pu.full_name, is_chair: scope.is_chair },
+    });
+  } catch (err) {
+    console.error('[portal/acc-reviews/:id] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/portal/acc-reviews/:appId/vote — cast or update my vote
+router.post('/acc-reviews/:appId/vote', express.json({ limit: '16kb' }), async (req, res) => {
+  try {
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+    const { vote, comments } = req.body || {};
+    if (!['approve','deny','request_more_info','abstain'].includes(vote)) {
+      return res.status(400).json({ error: 'invalid_vote' });
+    }
+    const { data: pu } = await supabase
+      .from('portal_users')
+      .select('contact_id, email, full_name')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    if (!pu?.contact_id) return res.status(403).json({ error: 'no_contact_linkage' });
+
+    // Load app + community workflow
+    const { data: app } = await supabase
+      .from('community_applications')
+      .select('id, community_id, final_status, community:communities(id, name, slug, arc_approval_workflow, arc_acc_min_approvals)')
+      .eq('id', req.params.appId)
+      .maybeSingle();
+    if (!app) return res.status(404).json({ error: 'application_not_found' });
+    if (app.final_status !== 'pending_committee_review') {
+      return res.status(409).json({ error: 'application_not_in_committee_review' });
+    }
+
+    // Verify reviewer is on the committee
+    const { data: scope } = await supabase
+      .from('community_arc_committee')
+      .select('id')
+      .eq('community_id', app.community_id)
+      .eq('contact_id', pu.contact_id)
+      .eq('is_active', true)
+      .is('removed_at', null)
+      .maybeSingle();
+    if (!scope) return res.status(403).json({ error: 'not_authorized' });
+
+    // Upsert vote
+    const { error: voteErr } = await supabase
+      .from('application_committee_votes')
+      .upsert({
+        application_id: app.id,
+        committee_member_contact_id: pu.contact_id,
+        vote,
+        comments: comments || null,
+        voted_at: new Date().toISOString(),
+        vote_source: 'portal',
+        ip_address: req.ip || null,
+      }, { onConflict: 'application_id,committee_member_contact_id' });
+    if (voteErr) throw voteErr;
+
+    // Tally + evaluate quorum
+    const { getActiveCommitteeMembers, tallyVotes, evaluateQuorum } = require('../lib/applications/committee');
+    const members = await getActiveCommitteeMembers(supabase, app.community_id);
+    const { counts } = await tallyVotes(supabase, app.id);
+    const quorum = evaluateQuorum({
+      workflow: app.community.arc_approval_workflow,
+      minApprovals: app.community.arc_acc_min_approvals || 0,
+      activeMemberCount: members.length,
+      counts,
+    });
+
+    // If quorum reached approve → auto-send to homeowner
+    // If denial → stay in pending_committee_review (Bedrock staff decides)
+    // If pending → no further action
+    let triggered = null;
+    if (quorum.outcome === 'approved') {
+      try {
+        // Internal callback to send-decision endpoint with skip_committee=true
+        // so it bypasses this check and actually delivers the email.
+        const finalStatus = 'approved';
+        const internalReq = {
+          params: { id: app.id },
+          body: { final_status: finalStatus, skip_committee: true },
+          headers: req.headers,
+          ip: req.ip,
+        };
+        // We can't call the endpoint directly without auth machinery; instead
+        // mark the application back to pending_send and let Bedrock staff
+        // confirm + click send. The committee approved; staff still owns the
+        // physical send button (the audit chain is cleaner this way).
+        await supabase
+          .from('community_applications')
+          .update({ final_status: 'pending_send' })
+          .eq('id', app.id);
+        triggered = { action: 'quorum_met_pending_send' };
+      } catch (e) {
+        console.warn('[portal/acc-reviews/vote] quorum trigger failed (non-fatal):', e.message);
+      }
+    }
+
+    // Audit
+    try {
+      await supabase.from('application_state_log').insert({
+        application_id: app.id,
+        from_status: 'pending_committee_review',
+        to_status: triggered ? 'pending_send' : 'pending_committee_review',
+        actor_kind: 'committee_member',
+        actor_id: pu.contact_id,
+        actor_display_name: pu.full_name || pu.email,
+        reason: `vote_${vote}`,
+        metadata: { counts, quorum_outcome: quorum.outcome, quorum_reason: quorum.reason },
+      });
+    } catch (_) {}
+
+    res.json({
+      ok: true,
+      vote,
+      counts,
+      quorum,
+      triggered,
+    });
+  } catch (err) {
+    console.error('[portal/acc-reviews/vote] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // GET /api/portal/arc — list this portal user's own ARC applications
 router.get('/arc', async (req, res) => {
   try {

@@ -1573,6 +1573,94 @@ router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, re
       || app.decision_letter_subject
       || `Update on your application ${app.reference_number}`;
 
+    // ============================================================
+    // WORKFLOW BRANCH — bedrock_only vs ACC committee
+    // If the community requires committee review, we DO NOT email the
+    // homeowner here. Instead we stamp the letter draft + flip status to
+    // pending_committee_review, then notify the committee. They vote via
+    // the portal. When quorum is hit, this same code path runs to actually
+    // send the email.
+    // ============================================================
+    const { data: commWorkflow } = await supabase
+      .from('communities')
+      .select('arc_approval_workflow, arc_acc_min_approvals, name, slug')
+      .eq('id', app.community_id)
+      .maybeSingle();
+    const workflow = (commWorkflow?.arc_approval_workflow) || 'bedrock_only';
+    const skipCommittee = req.body?.skip_committee === true; // internal callback path
+    const needsCommittee = !skipCommittee && (workflow === 'acc_majority' || workflow === 'acc_unanimous');
+
+    if (needsCommittee) {
+      // Stamp the letter on the row, flip status to pending_committee_review,
+      // notify the committee. The actual send happens after quorum is met.
+      await supabase
+        .from('community_applications')
+        .update({
+          decision_letter_html: letterHtml,
+          decision_letter_subject: letterSubject,
+          final_status: 'pending_committee_review',
+          forwarded_to_committee_at: new Date().toISOString(),
+        })
+        .eq('id', app.id);
+
+      // Get active committee members + their contact info
+      const { getActiveCommitteeMembers } = require('../lib/applications/committee');
+      const members = await getActiveCommitteeMembers(supabase, app.community_id);
+
+      // Notify each committee member by email. Body links to /portal/acc-review.
+      let notified = 0;
+      try {
+        const { sendEmail } = require('../lib/notifications/email');
+        for (const m of members) {
+          const { data: contact } = await supabase
+            .from('contacts')
+            .select('full_name, primary_email')
+            .eq('id', m.contact_id)
+            .maybeSingle();
+          if (!contact?.primary_email) continue;
+          const reviewUrl = `${process.env.APP_BASE_URL || 'https://hoa-doc-search.onrender.com'}/portal/acc-review?app=${app.id}`;
+          await sendEmail({
+            to: contact.primary_email,
+            subject: `ACC review needed — ${commWorkflow?.name || 'application'} ${app.reference_number}`,
+            html: `<p>Hi ${contact.full_name || ''},</p>
+              <p>An ARC application is ready for your review:</p>
+              <ul>
+                <li><strong>Reference:</strong> ${app.reference_number}</li>
+                <li><strong>Property:</strong> ${app.property_address}</li>
+                <li><strong>Type:</strong> ${app.service_type}</li>
+              </ul>
+              <p><a href="${reviewUrl}" style="background:#0B1D34; color:#fff; padding:10px 18px; border-radius:6px; text-decoration:none; display:inline-block; font-weight:600;">Review and vote →</a></p>
+              <p style="font-size:12px; color:#64748b;">You will see the homeowner's application package and Bedrock's proposed decision letter. Vote approve, deny, or request more info.</p>
+              <p style="font-size:12px; color:#64748b;">— Bedrock Association Management</p>`,
+            text: `ACC review needed — ${app.reference_number}\n\nProperty: ${app.property_address}\nType: ${app.service_type}\n\nReview at: ${reviewUrl}`,
+          });
+          notified++;
+        }
+      } catch (e) {
+        console.warn('[applications] committee notification failed (non-fatal):', e.message);
+      }
+
+      await logApplicationState({
+        application_id: app.id,
+        from_status: app.final_status,
+        to_status: 'pending_committee_review',
+        actor_kind: 'staff',
+        actor_id: actor.email,
+        actor_display_name: actorDisplayName(actor),
+        reason: 'forwarded_to_committee',
+        metadata: { workflow, committee_size: members.length, notified },
+      });
+
+      return res.json({
+        ok: true,
+        routed_to_committee: true,
+        committee_size: members.length,
+        notified,
+        workflow,
+        message: `Letter drafted. Forwarded to ${members.length} committee member${members.length === 1 ? '' : 's'} for review. Homeowner will receive the letter automatically once quorum is reached.`,
+      });
+    }
+
     // Render PDF via the shared renderLetterPdfBuffer in server.js
     let pdfBuffer;
     try {

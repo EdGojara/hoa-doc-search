@@ -793,6 +793,17 @@ const MODULES = [
     buildLink: (ctx) => `/portal/property`,
   },
   {
+    key: 'acc_reviews',
+    title: 'ACC Reviews',
+    description: 'Architectural applications awaiting your vote as a committee member.',
+    icon: '📋',
+    section: 'home',
+    cta: 'Review now',
+    buildLink: (_ctx) => `/portal/acc-review`,
+    // Shown only when ctx.acc_reviews_pending > 0 (loaded asynchronously)
+    visibleIf: (ctx) => (ctx?.acc_reviews_pending || 0) > 0,
+  },
+  {
     key: 'messages',
     title: 'Messages',
     description: 'Direct conversation with Bedrock — questions, requests, updates on open items.',
@@ -1089,6 +1100,7 @@ function defaultDemoModuleConfig(slug) {
   // Demo: tiles are live where Bedrock has functional backends, coming-soon otherwise.
   return {
     property_summary: { status: 'live' },
+    acc_reviews:      { status: 'live' },  // committee tile shown only when reviewer has reviews
     messages:         { status: 'live' },  // demo mode: links into Messages page (empty state)
     balance:          { status: 'live' },  // demo mode: renders mock $0 current account
     arc:              { status: 'live' },
@@ -1326,6 +1338,11 @@ function renderTiles(ctx) {
   for (const mod of MODULES) {
     const modCfg = cfg[mod.key] || { status: 'coming_soon' };
     if (modCfg.status === 'hidden') continue;
+
+    // Conditional visibility — tile self-hides when its dependent ctx data
+    // is empty (e.g., ACC Reviews tile only shows when the user actually
+    // has pending reviews).
+    if (typeof mod.visibleIf === 'function' && !mod.visibleIf(ctx)) continue;
 
     // Section break — render a new label + new grid container
     if (mod.section !== lastSection) {
@@ -1684,6 +1701,22 @@ function _dismissTutorial() {
   applyMimicBanner(ctx);
   applyManagerBanner(ctx);
   renderPortal(ctx);
+
+  // After main render, async-fetch the ACC review queue count. If > 0, the
+  // ACC Reviews tile appears at the top of the home section.
+  try {
+    if (ctx?.user?.role !== 'manager') {
+      const r = await fetch('/api/portal/acc-reviews', { credentials: 'same-origin' });
+      if (r.ok) {
+        const j = await r.json();
+        const pending = (j.applications || []).filter(a => !a.already_voted).length;
+        if (pending > 0) {
+          ctx.acc_reviews_pending = pending;
+          renderPortal(ctx);
+        }
+      }
+    }
+  } catch (_) { /* tile just stays hidden */ }
 })();
 </script>
 </body>

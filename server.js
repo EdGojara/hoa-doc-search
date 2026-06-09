@@ -1057,6 +1057,7 @@ app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/arc',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-arc.html')));
+app.get('/portal/acc-review',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-acc-review.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 
 // Builder-specific landing pages — declared BEFORE the generic /builders/:slug

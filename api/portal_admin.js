@@ -574,6 +574,93 @@ router.patch('/community/:communityId/module-config', async (req, res) => {
 // for bulk-invite). Hard cap at 500 — Bedrock has 7 today, would never
 // approach the cap.
 // ============================================================================
+// ACC committee + workflow admin (Phase 1C — Ed 2026-06-09)
+// ----------------------------------------------------------------------------
+// PATCH  /api/portal-admin/community/:cid/arc-workflow  — set workflow + min approvals
+// GET    /api/portal-admin/community/:cid/arc-committee — list committee members
+// POST   /api/portal-admin/community/:cid/arc-committee — add a member
+// DELETE /api/portal-admin/community/:cid/arc-committee/:memberId — remove
+// ============================================================================
+const ARC_WORKFLOWS = ['bedrock_only', 'acc_majority', 'acc_unanimous'];
+
+router.patch('/community/:cid/arc-workflow', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (b.workflow && !ARC_WORKFLOWS.includes(b.workflow)) {
+      return res.status(400).json({ error: 'invalid_workflow', allowed: ARC_WORKFLOWS });
+    }
+    const patch = {};
+    if (b.workflow) patch.arc_approval_workflow = b.workflow;
+    if (typeof b.min_approvals === 'number' && b.min_approvals >= 0) patch.arc_acc_min_approvals = b.min_approvals;
+    if (Object.keys(patch).length === 0) return res.status(400).json({ error: 'nothing_to_update' });
+    const { error } = await supabase.from('communities').update(patch).eq('id', req.params.cid);
+    if (error) throw error;
+    res.json({ ok: true, ...patch });
+  } catch (err) {
+    console.error('[portal_admin] arc-workflow patch failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.get('/community/:cid/arc-committee', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('community_arc_committee')
+      .select(`
+        id, contact_id, position_title, is_chair, is_active,
+        term_starts_at, term_ends_at, added_at, notes,
+        contact:contact_id (full_name, primary_email, primary_phone)
+      `)
+      .eq('community_id', req.params.cid)
+      .is('removed_at', null)
+      .order('is_chair', { ascending: false });
+    if (error) throw error;
+    res.json({ committee: data || [] });
+  } catch (err) {
+    console.error('[portal_admin] arc-committee list failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/community/:cid/arc-committee', async (req, res) => {
+  try {
+    const b = req.body || {};
+    if (!b.contact_id) return res.status(400).json({ error: 'contact_id_required' });
+    const { error } = await supabase.from('community_arc_committee').insert({
+      community_id: req.params.cid,
+      contact_id: b.contact_id,
+      position_title: b.position_title || null,
+      is_chair: !!b.is_chair,
+      term_starts_at: b.term_starts_at || null,
+      term_ends_at: b.term_ends_at || null,
+      added_by: b.added_by || 'admin_ui',
+      notes: b.notes || null,
+    });
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[portal_admin] arc-committee add failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/community/:cid/arc-committee/:memberId', async (req, res) => {
+  try {
+    const b = req.body || {};
+    const { error } = await supabase
+      .from('community_arc_committee')
+      .update({ removed_at: new Date().toISOString(), removed_by: b.removed_by || 'admin_ui', is_active: false })
+      .eq('id', req.params.memberId)
+      .eq('community_id', req.params.cid);
+    if (error) throw error;
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[portal_admin] arc-committee remove failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 router.get('/communities', async (req, res) => {
   try {
     const { data, error } = await supabase

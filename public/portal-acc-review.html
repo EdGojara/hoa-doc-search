@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ACC Review · Bedrock</title>
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34; --gold: #D4AF37; --cream-soft: #F5F4ED;
+    --rule: #E5E3DA; --ink: #1a1a1a; --ink-soft: #4a4a4a; --ink-faint: #7a7a7a;
+    --good: #15803d; --good-bg: #dcfce7;
+    --warn: #92400e; --warn-bg: #fef3c7;
+    --bad: #991b1b; --bad-bg: #fee2e2;
+  }
+  html, body { margin:0; padding:0; background: var(--cream-soft); color: var(--ink); font-family: 'Inter', -apple-system, sans-serif; font-size:14px; }
+  header.top { background:#fff; border-bottom:1px solid var(--rule); padding:14px 24px; display:flex; align-items:center; justify-content:space-between; }
+  header.top h1 { margin:0; font-family:'Cormorant Garamond', Georgia, serif; font-weight:500; font-size:22px; color: var(--navy); }
+  header.top a.back { color: var(--ink-faint); text-decoration:none; font-size:13px; }
+  .container { max-width: 1100px; margin: 0 auto; padding: 22px 24px; }
+  .panel { background:#fff; border:1px solid var(--rule); border-radius:10px; padding:18px 22px; margin-bottom:16px; }
+  .panel h2 { margin:0 0 10px; font-family:'Cormorant Garamond', Georgia, serif; font-weight:500; font-size:19px; color: var(--navy); }
+  .queue-item {
+    display:flex; align-items:center; gap:14px; padding:12px 14px;
+    background:#f8fafc; border:1px solid var(--rule); border-radius:8px; margin-bottom:8px;
+    cursor:pointer; transition: background 0.15s;
+  }
+  .queue-item:hover { background:#eef2f7; }
+  .queue-item.voted { opacity:0.6; }
+  .queue-item .meta { flex:1; min-width:0; }
+  .queue-item .ref { font-family: ui-monospace, monospace; font-size:11px; color: var(--ink-faint); }
+  .queue-item .age { font-size:11px; color: var(--ink-faint); }
+  .age.urgent { color: var(--bad); font-weight:600; }
+  .badge { background:#dbeafe; color:#1e40af; padding:3px 9px; border-radius:10px; font-size:11px; font-weight:600; white-space:nowrap; }
+  .badge.voted { background: var(--good-bg); color: var(--good); }
+  .review-pane { display:grid; grid-template-columns: 1.2fr 1fr; gap:16px; }
+  @media (max-width: 900px) { .review-pane { grid-template-columns: 1fr; } }
+  .photos { display:grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap:10px; }
+  .photo-card { border-radius:8px; overflow:hidden; background:#000; aspect-ratio:1; position:relative; }
+  .photo-card img { width:100%; height:100%; object-fit:cover; cursor:pointer; }
+  .photo-card .label { position:absolute; bottom:6px; left:6px; right:6px; font-size:10.5px; color:#fff; background:rgba(0,0,0,0.5); padding:3px 6px; border-radius:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .field-pair { display:flex; gap:12px; padding:8px 0; border-bottom:1px solid #f0f2f5; font-size:13px; }
+  .field-pair .k { color: var(--ink-faint); min-width:130px; font-weight:500; }
+  .field-pair .v { color: var(--ink); flex:1; white-space:pre-wrap; }
+  iframe.letter { width:100%; height:480px; border:1px solid var(--rule); border-radius:8px; background:#fff; }
+  .vote-row { display:flex; gap:8px; flex-wrap:wrap; margin-top:12px; }
+  .vote-btn {
+    padding:10px 16px; border-radius:7px; border:1px solid; font-weight:600; font-size:13px;
+    cursor:pointer; font-family: inherit; min-width:120px;
+  }
+  .vote-btn:disabled { opacity:0.5; cursor:not-allowed; }
+  .vote-btn.approve { background: var(--good-bg); color: var(--good); border-color: var(--good); }
+  .vote-btn.deny { background: var(--bad-bg); color: var(--bad); border-color: var(--bad); }
+  .vote-btn.info { background: var(--warn-bg); color: var(--warn); border-color: var(--warn); }
+  .vote-btn.abstain { background:#f3f4f6; color: var(--ink-soft); border-color: var(--rule); }
+  .vote-btn.selected { box-shadow: inset 0 0 0 2px currentColor; }
+  textarea.comments { width:100%; padding:10px; border:1px solid var(--rule); border-radius:7px; font-family: inherit; font-size:13px; margin-top:10px; resize: vertical; min-height: 70px; }
+  .my-vote-banner { padding:10px 14px; background: var(--good-bg); color: var(--good); border:1px solid var(--good); border-radius:8px; margin-bottom:12px; font-size:13px; font-weight:600; }
+  .err { color: var(--bad); font-size:13px; }
+  .loading { color: var(--ink-faint); font-size:13px; padding:20px; }
+</style>
+</head>
+<body>
+<header class="top">
+  <h1>📋 ACC Review</h1>
+  <a href="/portal" class="back">← Back to portal</a>
+</header>
+
+<div class="container">
+  <div id="content">
+    <div class="loading">Loading…</div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+function $(id) { return document.getElementById(id); }
+function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+function ageHours(iso) { if (!iso) return null; return (Date.now() - new Date(iso).getTime()) / 1000 / 3600; }
+function fmtAge(iso) {
+  const h = ageHours(iso); if (h == null) return '—';
+  if (h < 1) return Math.round(h * 60) + ' min ago';
+  if (h < 24) return Math.round(h) + 'h ago';
+  return Math.round(h / 24) + 'd ago';
+}
+
+async function loadQueue() {
+  try {
+    const r = await fetch('/api/portal/acc-reviews', { credentials: 'same-origin' });
+    if (r.status === 401) { window.location.href = '/portal-login.html'; return; }
+    if (!r.ok) {
+      let m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) m = j.error; } catch (_) {}
+      throw new Error(m);
+    }
+    const j = await r.json();
+    const apps = j.applications || [];
+    if (!apps.length) {
+      $('content').innerHTML = `
+        <div class="panel">
+          <h2>You're all caught up</h2>
+          <p style="color: var(--ink-soft);">No applications awaiting your vote right now. You'll get an email when one is ready.</p>
+        </div>
+      `;
+      return;
+    }
+    $('content').innerHTML = `
+      <div class="panel">
+        <h2>${apps.length} application${apps.length === 1 ? '' : 's'} awaiting your vote</h2>
+        <div>${apps.map(a => {
+          const h = ageHours(a.forwarded_to_committee_at);
+          const urgent = h != null && h > 72;
+          return `
+            <div class="queue-item ${a.already_voted ? 'voted' : ''}" onclick="loadReview('${a.id}')">
+              <div class="meta">
+                <div style="font-weight:600; color:var(--navy);">${esc(a.community?.name || '')} · ${esc(a.service_type)}</div>
+                <div style="font-size:12.5px; color: var(--ink-soft); margin-top:2px;">${esc(a.property_address)} — ${esc(a.submitter_name)}</div>
+                <div class="ref">${esc(a.reference_number)} · <span class="age ${urgent ? 'urgent' : ''}">${esc(fmtAge(a.forwarded_to_committee_at))}</span></div>
+              </div>
+              <div class="badge ${a.already_voted ? 'voted' : ''}">${a.already_voted ? '✓ Voted ' + esc(a.my_vote) : 'Review →'}</div>
+            </div>
+          `;
+        }).join('')}</div>
+      </div>
+    `;
+  } catch (e) {
+    $('content').innerHTML = '<div class="panel"><div class="err">' + esc(e.message) + '</div></div>';
+  }
+}
+
+async function loadReview(appId) {
+  $('content').innerHTML = '<div class="loading">Loading review package…</div>';
+  try {
+    const r = await fetch('/api/portal/acc-reviews/' + encodeURIComponent(appId), { credentials: 'same-origin' });
+    if (!r.ok) {
+      let m = `HTTP ${r.status}`;
+      try { const j = await r.json(); if (j?.error) m = j.error; } catch (_) {}
+      throw new Error(m);
+    }
+    const j = await r.json();
+    renderReview(j);
+  } catch (e) {
+    $('content').innerHTML = '<div class="panel"><div class="err">' + esc(e.message) + '</div></div>';
+  }
+}
+window.loadReview = loadReview;
+
+function renderReview(d) {
+  const a = d.application;
+  const ad = a.application_data || {};
+  const photos = (d.attachments || []).filter(x => /^image\//.test(x.file_mime_type || ''));
+  const docs = (d.attachments || []).filter(x => !/^image\//.test(x.file_mime_type || ''));
+  const myVote = d.my_vote;
+
+  $('content').innerHTML = `
+    <div style="margin-bottom:14px;">
+      <button onclick="loadQueue()" style="background:#fff; color:var(--navy); border:1px solid var(--rule); padding:6px 14px; border-radius:6px; font-size:13px; cursor:pointer; font-family: inherit;">← Back to queue</button>
+    </div>
+
+    ${myVote ? `<div class="my-vote-banner">You already voted: <strong>${esc(myVote.vote)}</strong> on ${esc(new Date(myVote.voted_at).toLocaleString())}. You may change your vote below.</div>` : ''}
+
+    <div class="panel">
+      <h2>${esc(a.community?.name || '')} · ${esc(a.service_type)}</h2>
+      <div style="color: var(--ink-soft); font-size:13px;">
+        <strong>${esc(a.submitter_name)}</strong> — ${esc(a.property_address)} ·
+        <span style="font-family: ui-monospace, monospace; font-size:11.5px;">${esc(a.reference_number)}</span> ·
+        Submitted ${esc(new Date(a.submitted_at).toLocaleString())}
+      </div>
+    </div>
+
+    <div class="review-pane">
+      <div>
+        <div class="panel">
+          <h2>Application package</h2>
+          ${ad.description || ad.project_description ? `<div class="field-pair"><div class="k">Description</div><div class="v">${esc(ad.description || ad.project_description)}</div></div>` : ''}
+          ${ad.project_type ? `<div class="field-pair"><div class="k">Project type</div><div class="v">${esc(ad.project_type)}</div></div>` : ''}
+          ${ad.color ? `<div class="field-pair"><div class="k">Color / material</div><div class="v">${esc(ad.color)}</div></div>` : ''}
+          ${ad.contractor || ad.contractor_name ? `<div class="field-pair"><div class="k">Contractor</div><div class="v">${esc(ad.contractor || ad.contractor_name)}</div></div>` : ''}
+          ${ad.start_date ? `<div class="field-pair"><div class="k">Start date</div><div class="v">${esc(ad.start_date)}</div></div>` : ''}
+          ${ad.estimated_cost ? `<div class="field-pair"><div class="k">Est. cost</div><div class="v">$${esc(ad.estimated_cost)}</div></div>` : ''}
+          ${ad.signature?.signed_by_name ? `<div class="field-pair"><div class="k">Signed by</div><div class="v">${esc(ad.signature.signed_by_name)}</div></div>` : ''}
+        </div>
+
+        ${photos.length ? `
+          <div class="panel">
+            <h2>Photos (${photos.length})</h2>
+            <div class="photos">
+              ${photos.map(p => `
+                <div class="photo-card">
+                  <a href="${esc(p.signed_url || '#')}" target="_blank" rel="noopener">
+                    <img src="${esc(p.signed_url || '')}" alt="${esc(p.original_filename || '')}">
+                  </a>
+                  <div class="label">${esc(p.original_filename || '')}</div>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        ` : ''}
+
+        ${docs.length ? `
+          <div class="panel">
+            <h2>Other documents</h2>
+            ${docs.map(d => `
+              <div class="field-pair">
+                <div class="k">📄</div>
+                <div class="v"><a href="${esc(d.signed_url || '#')}" target="_blank" rel="noopener">${esc(d.original_filename || '')}</a></div>
+              </div>
+            `).join('')}
+          </div>
+        ` : ''}
+      </div>
+
+      <div>
+        <div class="panel">
+          <h2>Bedrock's proposed decision letter</h2>
+          <div style="font-size:12px; color: var(--ink-faint); margin-bottom:8px;">
+            Bedrock staff has analyzed the application and proposes the letter below. Your vote confirms or pushes back. The homeowner will not see this until the committee approves.
+          </div>
+          <iframe class="letter" id="letter-iframe" sandbox="allow-same-origin"></iframe>
+        </div>
+
+        <div class="panel">
+          <h2>Your vote</h2>
+          <div class="vote-row" id="vote-row">
+            <button class="vote-btn approve ${myVote?.vote === 'approve' ? 'selected' : ''}" data-vote="approve">✓ Approve</button>
+            <button class="vote-btn deny ${myVote?.vote === 'deny' ? 'selected' : ''}" data-vote="deny">✗ Deny</button>
+            <button class="vote-btn info ${myVote?.vote === 'request_more_info' ? 'selected' : ''}" data-vote="request_more_info">? More info</button>
+            <button class="vote-btn abstain ${myVote?.vote === 'abstain' ? 'selected' : ''}" data-vote="abstain">⊘ Abstain</button>
+          </div>
+          <textarea class="comments" id="comments" placeholder="Optional — comments visible to Bedrock and other committee members (never to the homeowner).">${esc(myVote?.comments || '')}</textarea>
+          <div style="display:flex; align-items:center; gap:14px; margin-top:10px;">
+            <button id="cast-btn" disabled style="background: var(--navy); color:#fff; border:0; padding:10px 22px; border-radius:7px; font-weight:600; font-size:13px; cursor:pointer; font-family: inherit;">Cast vote</button>
+            <div id="cast-status" style="font-size:12.5px;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  // Inject the proposed letter into the iframe
+  const iframe = $('letter-iframe');
+  if (iframe && iframe.contentWindow) {
+    iframe.contentWindow.document.open();
+    iframe.contentWindow.document.write(d.proposed_decision_letter_html || '<p style="padding:20px; font-family:sans-serif; color: var(--ink-faint);">(no letter on file)</p>');
+    iframe.contentWindow.document.close();
+  }
+
+  // Wire vote buttons
+  let selected = myVote?.vote || null;
+  const buttons = document.querySelectorAll('#vote-row .vote-btn');
+  const castBtn = $('cast-btn');
+  buttons.forEach(b => b.addEventListener('click', () => {
+    selected = b.dataset.vote;
+    buttons.forEach(x => x.classList.remove('selected'));
+    b.classList.add('selected');
+    castBtn.disabled = false;
+  }));
+  if (selected) castBtn.disabled = false;
+
+  castBtn.addEventListener('click', async () => {
+    if (!selected) return;
+    castBtn.disabled = true;
+    $('cast-status').textContent = 'Saving…';
+    try {
+      const r = await fetch('/api/portal/acc-reviews/' + encodeURIComponent(a.id) + '/vote', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ vote: selected, comments: $('comments').value.trim() || null }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || 'save failed');
+      let msg = `✓ Vote recorded: ${selected}. `;
+      if (j.quorum?.outcome === 'approved') msg += `Quorum met (${j.quorum.reason}) — letter queued for delivery.`;
+      else if (j.quorum?.outcome === 'denied') msg += `Vote raised concerns — Bedrock will follow up.`;
+      else msg += `${j.quorum?.reason || 'awaiting more votes'}.`;
+      $('cast-status').textContent = msg;
+      $('cast-status').style.color = 'var(--good)';
+      setTimeout(() => loadQueue(), 1800);
+    } catch (e) {
+      $('cast-status').textContent = '✗ ' + e.message;
+      $('cast-status').style.color = 'var(--bad)';
+      castBtn.disabled = false;
+    }
+  });
+}
+
+// Direct-link mode: /portal/acc-review?app=<id>
+const params = new URLSearchParams(window.location.search);
+if (params.get('app')) {
+  loadReview(params.get('app'));
+} else {
+  loadQueue();
+}
+</script>
+</body>
+</html>
