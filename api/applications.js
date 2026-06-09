@@ -32,6 +32,26 @@ const OpenAI = require('openai');
 const { safeErrorMessage } = require('./_safe_error');
 const { requireActingUser, actorDisplayName } = require('./_acting_user');
 const { getRelevantChunks } = require('../lib/hybrid_retrieval');
+const { checkCompleteness } = require('../lib/applications/completeness');
+const { renderDecisionLetterHTML } = require('../lib/decision_letter');
+
+// Best-effort audit logger. Never blocks the calling flow on failure.
+async function logApplicationState({ application_id, from_status, to_status, actor_kind, actor_id, actor_display_name, reason, metadata }) {
+  try {
+    await supabase.from('application_state_log').insert({
+      application_id,
+      from_status: from_status || null,
+      to_status,
+      actor_kind,
+      actor_id: actor_id || null,
+      actor_display_name: actor_display_name || null,
+      reason: reason || null,
+      metadata: metadata || null,
+    });
+  } catch (e) {
+    console.warn('[applications] state log insert failed (non-fatal):', e.message);
+  }
+}
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -889,25 +909,82 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
       }
     }
 
-    // Run AI assessment SYNCHRONOUSLY so the manager queue is populated
-    // before the homeowner navigates away. The HOMEOWNER does NOT see the
-    // full AI output — they see a clean receipt + 48hr SLA. The AI output
-    // is for the manager (and optionally, per-community, for the homeowner
-    // once the community has been validated in production for that exposure).
-    const assessmentResult = await runAssessment(app, { triggerSource: 'public_submit' });
+    // ========================================================================
+    // STAGE 1 — completeness check (homeowner-facing, fast, deterministic)
+    // ========================================================================
+    // Look up the attachments we just saved so the completeness checker can
+    // count them. Cheap query — bounded by the file count we just inserted.
+    const { data: attachmentRows } = await supabase
+      .from('application_attachments')
+      .select('id, attachment_type, original_filename, file_mime_type')
+      .eq('application_id', app.id);
+    const completeness = checkCompleteness({
+      service_type: app.service_type,
+      application_data: applicationData,
+      attachments: (attachmentRows || []).map(a => ({
+        id: a.id,
+        name: a.original_filename,
+        kind: a.attachment_type,
+        mime: a.file_mime_type,
+      })),
+    });
 
-    // Receipt for the homeowner — a brief, neutral acknowledgment.
-    const receipt = homeownerReceiptFromAssessment(
-      assessmentResult.assessment,
-      assessmentResult.held_for_review || !assessmentResult.ok
-    );
+    const stagedStatus = completeness.passed ? 'pending_review' : 'incomplete';
+    await supabase
+      .from('community_applications')
+      .update({
+        completeness_passed: completeness.passed,
+        completeness_checked_at: new Date().toISOString(),
+        completeness_issues: completeness.issues,
+        completeness_message: completeness.message,
+        final_status: stagedStatus,
+      })
+      .eq('id', app.id);
+    await logApplicationState({
+      application_id: app.id,
+      from_status: 'draft',
+      to_status: stagedStatus,
+      actor_kind: 'system',
+      reason: completeness.passed ? 'completeness_passed' : 'completeness_failed',
+      metadata: { issues_count: completeness.issues.length },
+    });
 
-    // Per-community flag: do we want to expose the AI's assessment block
-    // to this community's homeowners? Default FALSE (migration 118).
-    const homeownerVisible =
-      service.arc_ai_homeowner_visible === true &&
-      assessmentResult.ok &&
-      !assessmentResult.held_for_review;
+    // ========================================================================
+    // STAGE 2 — internal AI assessment (staff-facing, never sent to homeowner)
+    // Only runs when completeness passes; otherwise we wait for the homeowner
+    // to add missing items.
+    // ========================================================================
+    let assessmentResult = { ok: false, assessment: null, held_for_review: false };
+    if (completeness.passed) {
+      try {
+        assessmentResult = await runAssessment(app, { triggerSource: 'public_submit' });
+      } catch (e) {
+        console.warn('[applications] internal assessment failed (non-fatal):', e.message);
+      }
+    }
+
+    // ========================================================================
+    // RECEIPT TO HOMEOWNER
+    // - When complete: short "we got it" message + reference + as-of timestamp.
+    // - When incomplete: list of items needed (from completeness.message).
+    // The homeowner NEVER sees the full AI multi-persona analysis — that's
+    // Bedrock workpaper (per CLAUDE.md record-ownership classification).
+    // ========================================================================
+    const receipt = {
+      kind: completeness.passed ? 'received' : 'needs_more',
+      title: completeness.passed
+        ? 'We received your application'
+        : 'Almost there — we need a little more',
+      message: completeness.message,
+      submitted_at_iso: app.submitted_at || new Date().toISOString(),
+      submitted_at_human: new Date(app.submitted_at || Date.now())
+        .toLocaleString('en-US', {
+          timeZone: 'America/Chicago',
+          dateStyle: 'long',
+          timeStyle: 'short',
+        }) + ' Central',
+      issues: completeness.passed ? null : completeness.issues,
+    };
 
     res.json({
       ok: true,
@@ -915,9 +992,11 @@ router.post('/public/:slug/submit', upload.any(), async (req, res) => {
       application_id: app.id,
       status_url: `/apply/status/${encodeURIComponent(reference)}`,
       receipt,
-      // assessment block is only included when the community has opted in
-      // AND the assessment passed all guards/validators. Otherwise null.
-      assessment: homeownerVisible ? assessmentResult.assessment : null,
+      // Homeowner-facing assessment block: kept null for Phase 1. The full
+      // AI assessment is staff-only. (Was per-community-opt-in via
+      // service.arc_ai_homeowner_visible — that path stays available for
+      // communities that explicitly opt in, but defaults off for clarity.)
+      assessment: null,
     });
   } catch (err) {
     console.error('[applications] submit failed:', err.message);
@@ -1247,20 +1326,25 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
     // actor's profile name from the user_profiles row.
     const displayName = (decided_by_name && String(decided_by_name).trim()) || actorDisplayName(actor);
 
-    const finalStatusMap = {
+    // STAGED WORKFLOW (Ed 2026-06-09):
+    //   finalize records the decision + drafts the letter, but does NOT
+    //   auto-deliver. final_status is set to 'pending_send' for approve/deny;
+    //   request_more_info goes back to staff queue. Letter goes out only when
+    //   staff (or in Phase 2, the ACC committee) clicks send-decision.
+    const decisionStatusMap = {
       approve: 'approved',
       deny: 'denied',
       approve_with_conditions: 'approved',
-      request_more_info: 'pending_committee_review'
+      request_more_info: 'pending_committee_review',
     };
     const responseTypeMap = {
       approve: 'approval',
       deny: 'denial',
       approve_with_conditions: 'approval',
-      request_more_info: 'request_more_info'
+      request_more_info: 'request_more_info',
     };
-
-    const finalStatus = finalStatusMap[action];
+    const finalStatus = action === 'request_more_info' ? 'pending_committee_review' : 'pending_send';
+    const decisionStatus = decisionStatusMap[action];
 
     // Update the application row
     const patch = {
@@ -1353,9 +1437,258 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
       }
     }
 
-    res.json({ ok: true, application: app, promoted_to_history: promoted });
+    // ========================================================================
+    // RENDER DECISION LETTER DRAFT
+    // - Skipped for request_more_info (no decision yet to render)
+    // - Saved to the row so staff can preview + edit before send-decision
+    // - Letter is workpaper until decision_letter_sent_at is stamped
+    // ========================================================================
+    let decisionLetterHtml = null;
+    let decisionLetterSubject = null;
+    if (action !== 'request_more_info') {
+      try {
+        const projectSummary = (app.application_data && (app.application_data.project_type
+          || app.application_data.project_description
+          || app.application_data.description)) || `${app.service_type} request`;
+        const bodyText = message_to_owner && String(message_to_owner).trim()
+          ? String(message_to_owner).trim()
+          : (action === 'approve'
+              ? `The Architectural Control Committee has approved your application for ${projectSummary}. ${conditions ? 'Approval is granted subject to the following conditions:\n\n' + conditions : ''}`
+              : action === 'approve_with_conditions'
+                ? `The Architectural Control Committee has approved your application for ${projectSummary} with the following conditions:\n\n${conditions || ''}`
+                : `After careful review, the Architectural Control Committee has been unable to approve your application for ${projectSummary}. ${internal_notes || ''}`);
+        decisionLetterHtml = renderDecisionLetterHTML({
+          community: app.community?.name || '',
+          homeowner_name: app.submitter_name,
+          homeowner_address: app.property_address,
+          project_summary: projectSummary,
+          reference_number: app.reference_number,
+          body_text: bodyText,
+        });
+        decisionLetterSubject = action === 'deny'
+          ? `Update on your application ${app.reference_number}`
+          : `Your application ${app.reference_number} has been approved`;
+        await supabase
+          .from('community_applications')
+          .update({
+            decision_letter_html: decisionLetterHtml,
+            decision_letter_subject: decisionLetterSubject,
+          })
+          .eq('id', req.params.id);
+      } catch (e) {
+        console.warn('[applications] decision letter render failed (non-fatal):', e.message);
+      }
+    }
+
+    await logApplicationState({
+      application_id: req.params.id,
+      from_status: app.final_status,
+      to_status: finalStatus,
+      actor_kind: 'staff',
+      actor_id: actor.email,
+      actor_display_name: displayName,
+      reason: `finalize_${action}`,
+      metadata: { action, decision_status: decisionStatus },
+    });
+
+    res.json({
+      ok: true,
+      application: app,
+      promoted_to_history: promoted,
+      decision_letter_html: decisionLetterHtml,
+      decision_letter_subject: decisionLetterSubject,
+      next_step: action === 'request_more_info'
+        ? 'application stays in committee queue — homeowner will not be contacted until staff clarifies what is needed'
+        : 'preview the letter, edit if needed, then click "Send to Homeowner" to deliver',
+    });
   } catch (err) {
     console.error('[applications] finalize failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /:id/send-decision — actually deliver the decision letter to homeowner
+// ----------------------------------------------------------------------------
+// Ed 2026-06-09 — Two-button send: finalize records + drafts, this endpoint
+// is the explicit "send to homeowner" click after staff reviews the draft.
+//
+// Body:
+//   decision_letter_html?:   string (optional override — staff edits)
+//   subject?:                string (optional override)
+//   final_status:            'approved' | 'denied'  (must match the finalize action)
+//
+// What it does:
+//   1. Render letter to PDF (via shared renderLetterPdfBuffer in server.js
+//      — re-imported here lazily so we don't double-require puppeteer).
+//   2. Upload PDF to Supabase storage.
+//   3. Send email via Resend with the PDF attached.
+//   4. Update community_applications:
+//      - final_status from 'pending_send' to 'approved'/'denied'
+//      - decision_letter_sent_at + decision_letter_recipient
+//      - decision_letter_pdf_path
+//   5. Insert application_responses row with response_type='email_sent'.
+//   6. Log audit row.
+// ============================================================================
+router.post('/:id/send-decision', express.json({ limit: '2mb' }), async (req, res) => {
+  try {
+    const actor = await requireActingUser(req, res);
+    if (!actor) return;
+    const { decision_letter_html, subject, final_status } = req.body || {};
+    if (!['approved', 'denied'].includes(final_status)) {
+      return res.status(400).json({ error: 'final_status must be approved or denied' });
+    }
+
+    // Pull the app row
+    const { data: app, error: appErr } = await supabase
+      .from('community_applications')
+      .select(`
+        id, reference_number, submitter_name, submitter_email, property_address,
+        service_type, application_data, final_status, community_id,
+        decision_letter_html, decision_letter_subject,
+        community:communities(id, name, slug)
+      `)
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (appErr) throw appErr;
+    if (!app) return res.status(404).json({ error: 'application_not_found' });
+    if (!['pending_send', 'approved', 'denied'].includes(app.final_status)) {
+      return res.status(409).json({
+        error: 'invalid_state',
+        message: `Cannot send — application is in '${app.final_status}'. Run finalize first.`,
+      });
+    }
+
+    // Prefer the edited letter HTML from the request; fall back to saved draft.
+    const letterHtml = (decision_letter_html && String(decision_letter_html).trim())
+      || app.decision_letter_html;
+    if (!letterHtml) {
+      return res.status(400).json({
+        error: 'no_letter_html',
+        message: 'No decision letter on file. Re-run finalize to draft one.',
+      });
+    }
+    const letterSubject = (subject && String(subject).trim())
+      || app.decision_letter_subject
+      || `Update on your application ${app.reference_number}`;
+
+    // Render PDF via the shared renderLetterPdfBuffer in server.js
+    let pdfBuffer;
+    try {
+      // Lazy require — server.js exports renderLetterPdfBuffer via module.exports
+      // when running as a child router. For inline use, re-import puppeteer here.
+      const puppeteer = require('puppeteer');
+      const browser = await puppeteer.launch({
+        headless: 'new',
+        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+      });
+      try {
+        const page = await browser.newPage();
+        await page.setContent(letterHtml, { waitUntil: 'domcontentloaded', timeout: 20000 });
+        pdfBuffer = await page.pdf({
+          format: 'Letter',
+          printBackground: true,
+          margin: { top: 0, right: 0, bottom: 0, left: 0 },
+          preferCSSPageSize: true,
+        });
+      } finally {
+        try { await browser.close(); } catch (_) {}
+      }
+    } catch (e) {
+      console.error('[applications] PDF render failed:', e.message);
+      return res.status(500).json({ error: 'pdf_render_failed', message: e.message });
+    }
+
+    // Save PDF to storage
+    const pdfPath = `applications/${app.id}/decision-${app.reference_number}-${Date.now()}.pdf`;
+    try {
+      const { error: stErr } = await supabase.storage
+        .from('documents')
+        .upload(pdfPath, pdfBuffer, { contentType: 'application/pdf', upsert: false });
+      if (stErr) throw stErr;
+    } catch (e) {
+      console.error('[applications] PDF upload failed:', e.message);
+      return res.status(500).json({ error: 'pdf_upload_failed', message: e.message });
+    }
+
+    // Send email with PDF attached
+    let emailOk = false;
+    let emailError = null;
+    try {
+      const { sendEmail, isConfigured } = require('../lib/notifications/email');
+      if (!isConfigured()) throw new Error('Resend not configured');
+      const plainBody = `Dear ${app.submitter_name},\n\nAttached is the Architectural Control Committee's decision regarding your application (reference ${app.reference_number}). Please open the attached PDF for the full letter.\n\nIf you have any questions about this decision, please contact Bedrock Association Management at info@bedrocktx.com or (832) 588-2485.\n\nThank you,\nBedrock Association Management — on behalf of ${app.community?.name || 'your association'}`;
+      const result = await sendEmail({
+        to: app.submitter_email,
+        subject: letterSubject,
+        html: letterHtml,
+        text: plainBody,
+        attachments: [{ filename: `decision-${app.reference_number}.pdf`, content: pdfBuffer.toString('base64') }],
+      });
+      emailOk = !!(result && result.ok !== false);
+      if (!emailOk) emailError = result?.error || 'unknown';
+    } catch (e) {
+      emailError = e.message;
+      console.error('[applications] email send failed:', e.message);
+    }
+
+    // Stamp the row
+    const now = new Date().toISOString();
+    await supabase
+      .from('community_applications')
+      .update({
+        final_status,
+        decision_letter_html: letterHtml,
+        decision_letter_subject: letterSubject,
+        decision_letter_pdf_path: pdfPath,
+        decision_letter_sent_at: emailOk ? now : null,
+        decision_letter_recipient: emailOk ? app.submitter_email : null,
+      })
+      .eq('id', app.id);
+
+    // Insert response row for the apply_status timeline
+    try {
+      await supabase.from('application_responses').insert({
+        application_id: app.id,
+        response_type: emailOk ? 'email_sent' : 'send_failed',
+        email_to: app.submitter_email,
+        email_subject: letterSubject,
+        message_to_owner: 'See attached decision letter.',
+        acted_by_user_id: actor.id,
+        action_by_name: actorDisplayName(actor),
+        action_at: now,
+        metadata: {
+          final_status,
+          pdf_path: pdfPath,
+          email_error: emailError,
+        },
+      });
+    } catch (e) {
+      console.warn('[applications] response insert failed (non-fatal):', e.message);
+    }
+
+    await logApplicationState({
+      application_id: app.id,
+      from_status: app.final_status,
+      to_status: final_status,
+      actor_kind: 'staff',
+      actor_id: actor.email,
+      actor_display_name: actorDisplayName(actor),
+      reason: emailOk ? 'decision_letter_sent' : 'decision_letter_send_failed',
+      metadata: { recipient: app.submitter_email, pdf_path: pdfPath, email_error: emailError },
+    });
+
+    res.json({
+      ok: emailOk,
+      sent_to: app.submitter_email,
+      sent_at: emailOk ? now : null,
+      pdf_path: pdfPath,
+      final_status,
+      email_error: emailError,
+    });
+  } catch (err) {
+    console.error('[applications] send-decision failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
