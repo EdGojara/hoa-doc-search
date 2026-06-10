@@ -17093,12 +17093,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       : '';
     const legendStr = (legend.length > 0 ? ` · open: ${legend.join(' · ')}` : '') + coveredSegment;
 
+    // Ed 2026-06-10 — surface "N markers rendered" alongside the API count.
+    // If API returns 721 properties but only 700 markers actually got added,
+    // there's a silent drop in the marker creation loop that the API count
+    // alone won't reveal.
+    const markerCount = inspState.propertyMarkers.length;
+    const renderDelta = (propsResp.properties.length !== markerCount)
+      ? ` · ⚠️ ${propsResp.properties.length - markerCount} pins dropped at render`
+      : '';
     if (propsResp.properties.length === 0 && propsResp.missing_geo_count > 0) {
       setStatus(`⚠️ ${propsResp.missing_geo_count} properties need lat/lng coordinates. ${geocodeBtn('🌐 Run geocoder')}`);
     } else if (propsResp.missing_geo_count > 0) {
-      setStatus(`${propsResp.geo_count} of ${propsResp.total_count} properties on map · tap to select · ${propsResp.missing_geo_count} still missing geo${legendStr} ${geocodeBtn('🌐 Geocode missing')}`);
+      setStatus(`${propsResp.geo_count} of ${propsResp.total_count} properties on map · ${markerCount} pins rendered · ${propsResp.missing_geo_count} missing geo${renderDelta}${legendStr} ${geocodeBtn('🌐 Geocode missing')}`);
     } else if (propsResp.geo_count > 0) {
-      setStatus(`${propsResp.geo_count} properties on map · tap to select${legendStr}`);
+      setStatus(`${propsResp.geo_count} properties · ${markerCount} pins on map · tap to select${renderDelta}${legendStr}`);
     } else {
       setStatus('Map ready · drive the community');
     }
