@@ -2147,21 +2147,46 @@ router.get('/inspections/:id', async (req, res, next) => {
         signedUrl = signed?.signedUrl || null;
       } catch (_) { /* leave null */ }
       const obs = obsByPhoto.get(p.id) || [];
-      // Derive a single ai_verdict for the badge:
-      //   'violation' if ANY observation has severity != clean + not rejected
-      //   'clean' if observations exist (all rejected or all clean)
-      //   'pending' if no observations
+      // Derive a single ai_verdict.
+      // Priority: observations (if any) > photo.ai_findings/ai_is_clean
+      //           (set by analyze when no property matched) > 'pending'
       let ai_verdict = 'pending';
       if (obs.some(o => o.is_violation === true)) ai_verdict = 'violation';
       else if (obs.length > 0) ai_verdict = 'clean';
+      else if (Array.isArray(p.ai_findings) && p.ai_findings.length > 0) ai_verdict = 'violation';
+      else if (p.ai_is_clean === true) ai_verdict = 'clean';
+      // ai_analyzed_at without findings OR clean flag means pending; not
+      // reachable in practice because analyze always sets one of them.
+
+      // For unmatched photos: synthesize "pseudo-observations" from
+      // ai_findings so the review UI can list them with the same shape.
+      // These pseudo-obs have NO id (can't be rejected through the
+      // observations endpoint until the photo is linked to a property).
+      let mergedObservations = obs;
+      if (obs.length === 0 && Array.isArray(p.ai_findings) && p.ai_findings.length > 0) {
+        mergedObservations = p.ai_findings.map((f, idx) => ({
+          id: null,
+          pseudo: true,
+          pseudo_idx: idx,
+          inspection_photo_id: p.id,
+          severity: f.severity,
+          ai_description: f.description,
+          ai_confidence: f.confidence,
+          ai_recommended_action: f.recommended_action,
+          reviewer_status: 'pending',
+          is_violation: f.severity && f.severity !== 'clean',
+        }));
+      }
+
       const propId = p.polygon_match_property_id || p.reviewer_confirmed_property_id || null;
       withUrls.push({
         ...p,
         signed_url: signedUrl,
-        observations: obs,
+        observations: mergedObservations,
         ai_verdict,
         property_id: propId,
         property_address: propId ? (addressByPropId.get(propId) || null) : null,
+        is_unmatched: !propId,
       });
     }
 
@@ -2233,6 +2258,7 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
     let observationsCreated = 0;
     let photosWithFindings = 0;
     let photosClean = 0;
+    let photosUnmatched = 0;
     const failures = [];
 
     for (const photo of photos) {
@@ -2264,19 +2290,37 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
       }
 
       const findings = result.findings || [];
+      const isClean = result.is_clean || findings.length === 0;
 
-      // Property requirement — observations need a property_id (or common_area).
-      // For unmatched photos, surface as failure and move on.
+      // STEP 1 — always store findings ON THE PHOTO itself, regardless of
+      // whether a property is matched. Migration 212. This is the audit
+      // record. Observations are only created when a property exists.
+      try {
+        await supabase
+          .from('inspection_photos')
+          .update({
+            ai_findings:    findings,
+            ai_is_clean:    isClean,
+            ai_analyzed_at: new Date().toISOString(),
+          })
+          .eq('id', photo.id);
+      } catch (e) {
+        console.warn('[analyze] photo update failed (non-fatal):', e.message);
+      }
+
+      // STEP 2 — observations need a property. Unmatched photos still get
+      // their findings recorded on the photo above; the operator can link
+      // them later (existing /photos-needing-link flow) and create
+      // observations then.
       if (!photo.polygon_match_property_id) {
-        if (findings.length > 0) {
-          failures.push({ photo_id: photo.id, reason: 'no_property_match', findings_count: findings.length, hint: 'Photo lacks polygon_match_property_id — link manually via /api/inspections/observations/:id PATCH.' });
-        }
+        photosUnmatched += 1;
+        if (findings.length > 0) photosWithFindings += 1;
+        else photosClean += 1;
         continue;
       }
 
-      // Clean photo: insert ONE "clean" observation as a marker so it shows
-      // up in the audit view as analyzed-clean.
-      if (result.is_clean || findings.length === 0) {
+      // STEP 3a — Clean photo with property: insert ONE "clean" observation
+      if (isClean) {
         const { error } = await supabase.from('property_observations').insert({
           inspection_id:        inspectionId,
           inspection_photo_id:  photo.id,
@@ -2299,7 +2343,7 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
         continue;
       }
 
-      // Findings: one observation row per finding
+      // STEP 3b — Findings: one observation row per finding
       photosWithFindings += 1;
       for (const f of findings) {
         const insertRow = {
@@ -2337,6 +2381,7 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
       analyzed: analyzedCount,
       photos_with_findings: photosWithFindings,
       photos_clean: photosClean,
+      photos_unmatched: photosUnmatched,
       observations_created: observationsCreated,
       photos_total: photos.length,
       photos_skipped_already_analyzed: skipPhotoIds.size,

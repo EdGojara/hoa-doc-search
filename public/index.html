@@ -19601,20 +19601,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       let msg = `✓ Re-analyzed ${j.analyzed} photo${j.analyzed === 1 ? '' : 's'}.\n\n`;
       if (j.mode === 'multi_violation') {
-        msg += `• ${j.photos_with_findings || 0} photos with violation${j.photos_with_findings === 1 ? '' : 's'}\n`;
-        msg += `• ${j.photos_clean || 0} photos AI said clean\n`;
-        msg += `• ${j.observations_created} total observation${j.observations_created === 1 ? '' : 's'} created\n`;
+        msg += `• ${j.photos_with_findings || 0} photo${j.photos_with_findings === 1 ? '' : 's'} with violation${j.photos_with_findings === 1 ? '' : 's'}\n`;
+        msg += `• ${j.photos_clean || 0} photo${j.photos_clean === 1 ? '' : 's'} AI said clean\n`;
+        if (j.photos_unmatched > 0) {
+          msg += `• ${j.photos_unmatched} photo${j.photos_unmatched === 1 ? '' : 's'} have AI findings but no property linked yet\n`;
+        }
+        msg += `• ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created (only for property-matched photos)\n`;
       } else {
         msg += `${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`;
       }
       if (j.failures && j.failures.length) {
-        const noProp = j.failures.filter(f => f.reason === 'no_property_match').length;
-        if (noProp > 0) msg += `\n⚠ ${noProp} photos couldn't be linked to a property — link manually in the Review queue.`;
-        const other = j.failures.filter(f => f.reason !== 'no_property_match').length;
-        if (other > 0) msg += `\n⚠ ${other} photos failed for other reasons (see console).`;
+        msg += `\n⚠ ${j.failures.length} photo${j.failures.length === 1 ? '' : 's'} failed (see console).`;
         console.log('[_inspRunAnalyze] failures:', j.failures);
       }
-      msg += '\n\nOpen "📸 View photos" to review the new findings and Remove false positives.';
+      msg += '\n\nOpen "📸 View photos" to review the AI findings. Unmatched photos show their findings too — link to a property when you confirm a violation.';
       alert(msg);
       await inspReviewLoad();
       await inspLoadRecent();
@@ -22349,16 +22349,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const obs = (p.observations || []).filter(o => o.reviewer_status !== 'rejected');
     const violationObs = obs.filter(o => o.severity && o.severity !== 'clean');
 
-    let bodyHtml = '';
+    // Header showing the unmatched warning + property linkage status
+    let headerHtml = '';
+    if (p.is_unmatched) {
+      headerHtml = `<div style="background:#92400e; color:#fff; padding:6px 12px; border-radius:6px; font-size:11.5px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
+        <span>⚠ This photo isn't linked to a property yet. AI findings shown below but no observation created.</span>
+      </div>`;
+    } else if (p.property_address) {
+      headerHtml = `<div style="color:#86efac; font-size:11.5px; margin-bottom:6px;">🏠 ${p.property_address.replace(/</g, '&lt;')}</div>`;
+    }
+
+    let bodyHtml = headerHtml;
     if (p.ai_verdict === 'violation' && violationObs.length > 0) {
-      bodyHtml = `
-        <div style="margin-bottom:6px; font-weight:600; color:#fca5a5;">⚠ ${violationObs.length} violation${violationObs.length === 1 ? '' : 's'} on this photo</div>
+      bodyHtml += `
+        <div style="margin-bottom:6px; font-weight:600; color:#fca5a5;">⚠ ${violationObs.length} violation${violationObs.length === 1 ? '' : 's'} on this photo${p.is_unmatched ? ' (AI findings — not yet observation rows)' : ''}</div>
         ${violationObs.map((o, i) => `
           <div style="display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-top:${i > 0 ? '1px solid rgba(255,255,255,0.1)' : '0'};">
             <span style="flex:1; font-size:13px; line-height:1.4;">${i + 1}. ${(o.ai_description || '(no description)').replace(/</g, '&lt;')}
               ${o.severity ? `<span style="background:rgba(255,255,255,0.15); padding:1px 7px; border-radius:8px; font-size:10.5px; margin-left:6px;">${o.severity}</span>` : ''}
+              ${o.ai_confidence ? `<span style="background:rgba(255,255,255,0.1); padding:1px 7px; border-radius:8px; font-size:10.5px; margin-left:4px;">conf: ${o.ai_confidence}</span>` : ''}
             </span>
-            <button onclick="inspReviewRemoveObs('${o.id}')" style="background:#fff; color:#991b1b; border:0; padding:3px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ Remove</button>
+            ${o.pseudo
+              ? `<span style="font-size:10.5px; color:#fbbf24;">(link property first)</span>`
+              : `<button onclick="inspReviewRemoveObs('${o.id}')" style="background:#fff; color:#991b1b; border:0; padding:3px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ Remove</button>`}
           </div>
         `).join('')}
       `;
