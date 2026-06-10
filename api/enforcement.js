@@ -1643,12 +1643,18 @@ router.get('/drafts', async (req, res) => {
           full_name: p.owner_name,
           mailing_address: p.owner_mailing_address,
         } : null,
-        observation: o ? {
-          severity: o.severity,
-          ai_description: o.ai_description,
-          ai_confidence: o.ai_confidence,
-          reviewer_notes: o.reviewer_notes,
-          captured_at: o.inspection_photos && o.inspection_photos.captured_at,
+        // Ed 2026-06-10 bug #2: previously this was `o ? {...} : null`, which
+        // discarded the photo_url whenever the observation chain was empty
+        // even when the fallback lookup HAD resolved a photo at the property.
+        // Now the observation object is returned whenever there's either a
+        // real observation row OR a resolved photo_url, so the UI thumbnail
+        // matches what the letter generator's fallback embeds in the PDF.
+        observation: (o || photoUrl) ? {
+          severity: o ? o.severity : null,
+          ai_description: o ? o.ai_description : null,
+          ai_confidence: o ? o.ai_confidence : null,
+          reviewer_notes: o ? o.reviewer_notes : null,
+          captured_at: o && o.inspection_photos && o.inspection_photos.captured_at,
           photo_url: photoUrl,
         } : null,
       };
