@@ -21817,16 +21817,54 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // for full-screen review. Use case: "where are the photos I took today
   // that said no violation?"
   async function inspViewSessionPhotos(inspectionId) {
+    console.log('[inspector] View photos clicked for inspection', inspectionId);
     try {
       const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId));
-      if (!r.ok) { alert('Could not load photos: HTTP ' + r.status); return; }
+      if (!r.ok) {
+        const txt = await r.text().catch(() => '');
+        alert('Could not load photos: HTTP ' + r.status + ' — ' + txt.slice(0, 200));
+        return;
+      }
       const j = await r.json();
       const photos = j.photos || [];
+      console.log(`[inspector] Got ${photos.length} photos for inspection ${inspectionId}`);
       if (photos.length === 0) { alert('No photos on file for this inspection.'); return; }
+
+      // Ensure the lightbox element exists. If the inspection tab DOM was
+      // never rendered (tab not visited this session), build a fallback
+      // modal so the photos are still viewable.
+      let lb = document.getElementById('inspPhotoLightbox');
+      if (!lb) {
+        console.warn('[inspector] Lightbox element missing — creating fallback');
+        lb = document.createElement('div');
+        lb.id = 'inspPhotoLightbox';
+        lb.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:9998; align-items:center; justify-content:center; padding:20px; cursor:pointer;';
+        lb.onclick = (e) => inspCloseLightbox(e);
+        lb.innerHTML = `
+          <div style="max-width:100%; max-height:100%; position:relative;" onclick="event.stopPropagation()">
+            <img id="inspLightboxImg" src="" style="max-width:100%; max-height:calc(100vh - 100px); display:block; border-radius:8px;">
+            <div id="inspLightboxMeta" style="color:#fff; padding:10px 0; text-align:center; font-size:13px;"></div>
+            <div style="position:absolute; top:10px; right:10px; display:flex; gap:8px;">
+              <button onclick="inspLightboxPrev(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:16px; cursor:pointer;">←</button>
+              <button onclick="inspLightboxNext(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:16px; cursor:pointer;">→</button>
+              <button onclick="inspCloseLightbox(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:18px; cursor:pointer;">×</button>
+            </div>
+          </div>
+        `;
+        document.body.appendChild(lb);
+      }
+
       // Stash + open the lightbox at the first photo
       window._inspVisiblePhotos = photos;
-      inspOpenLightbox(0, photos);
+      if (typeof inspOpenLightbox === 'function') {
+        inspOpenLightbox(0, photos);
+      } else {
+        // Fallback inline — set the image directly
+        document.getElementById('inspLightboxImg').src = photos[0].signed_url || '';
+        lb.style.display = 'flex';
+      }
     } catch (e) {
+      console.error('[inspector] inspViewSessionPhotos failed:', e);
       alert('Could not load photos: ' + e.message);
     }
   }
