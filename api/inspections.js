@@ -333,6 +333,45 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
       return res.status(400).json({ error: 'wide-shot photo_role cannot have a paired_wide_photo_id' });
     }
 
+    // ANOMALY DETECTION (Ed 2026-06-10 — sticky-property scar):
+    // If the previous photo in this inspection was taken within 60 seconds
+    // and within 20 meters AND had a property, but this new photo has no
+    // property, log a warning so future regressions show up in Render logs.
+    // This is the smoke-test for the sticky-property bug pattern.
+    try {
+      const { data: prevPhoto } = await supabase
+        .from('inspection_photos')
+        .select('id, captured_at, gps_lat, gps_lng, polygon_match_property_id, reviewer_confirmed_property_id')
+        .eq('inspection_id', inspectionId)
+        .order('captured_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const incomingProp = userSelectedPropertyId || polygonMatchPropertyId;
+      if (prevPhoto && !incomingProp) {
+        const prevTs = new Date(prevPhoto.captured_at || 0).getTime();
+        const thisTs = new Date(capturedAt || 0).getTime();
+        const deltaSec = Math.abs(thisTs - prevTs) / 1000;
+        const prevProp = prevPhoto.polygon_match_property_id || prevPhoto.reviewer_confirmed_property_id;
+        if (prevProp && deltaSec < 60) {
+          let nearGps = false;
+          if (gpsLat != null && gpsLng != null && prevPhoto.gps_lat != null && prevPhoto.gps_lng != null) {
+            const R = 6371000;
+            const φ1 = prevPhoto.gps_lat * Math.PI/180, φ2 = gpsLat * Math.PI/180;
+            const Δφ = (gpsLat - prevPhoto.gps_lat) * Math.PI/180;
+            const Δλ = (gpsLng - prevPhoto.gps_lng) * Math.PI/180;
+            const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+            const distM = 2 * R * Math.asin(Math.sqrt(a));
+            nearGps = distM < 20;
+          } else {
+            nearGps = true; // no GPS data — count time alone
+          }
+          if (nearGps) {
+            console.warn(`[inspections.anomaly] photo ${prevPhoto.id} had property ${prevProp} ${Math.round(deltaSec)}s ago; new photo has NONE — looks like sticky-property bug regression. inspection=${inspectionId}`);
+          }
+        }
+      }
+    } catch (_) { /* anomaly check failure must not block upload */ }
+
     // Insert the photo row
     const photoRow = {
       inspection_id: inspectionId,

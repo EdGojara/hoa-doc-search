@@ -15009,7 +15009,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              confirmed working on iOS Safari 2026-05-28.
              max-width:560px + centered so it doesn't stretch across a wide
              laptop browser. -->
-        <label for="inspPhotoInput" id="inspCaptureBtn" onclick="inspTriggerCaptureNoClick()"
+        <!-- Property attribution banner — pinned right above the capture
+             button so the operator SEES which house the next photo will
+             attach to. Red when no property selected, gold-on-navy when
+             one is. Tappable to clear / switch. Prevents the
+             sticky-property bug from being silent again. -->
+        <div id="inspCaptureProperty" style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 86px); max-width: 560px; margin: 0 auto; z-index: 998; padding: 8px 12px; background: rgba(220, 38, 38, 0.92); color: #fff; border-radius: 10px; font-size: 13px; font-weight: 600; display: none; align-items: center; gap: 8px; box-sizing: border-box; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.18);" onclick="inspCaptureBannerClick()">
+          <span id="inspCaptureBannerIcon">⚠</span>
+          <span id="inspCaptureBannerLabel" style="flex: 1;">Tap a house first</span>
+          <span id="inspCaptureBannerClear" style="opacity: 0.85; font-size: 11px;"></span>
+        </div>
+
+        <label for="inspPhotoInput" id="inspCaptureBtn" onclick="inspTriggerCaptureNoClick(event)"
                 style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: 560px; margin: 0 auto; z-index: 999; padding: 18px; background: var(--gold, #D4AF37); color: var(--navy, #0B1D34); border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; box-shadow: 0 6px 20px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box; pointer-events: auto;">
           <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
           <span id="inspCaptureLabel">Take photo</span>
@@ -17304,12 +17315,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // modal so staff can see who lives there + prior history before deciding
   // to photograph. Close modal to dismiss without losing the pre-selection.
   function inspMapHandleMarkerClick(propertyId, label) {
+    // If a wide is already staged (operator is mid-house) AND they're tapping
+    // a DIFFERENT property, confirm — they might be tapping by accident while
+    // panning the map.
+    if (inspState.stagedWidePhotoId && inspState.selectedPropertyId && inspState.selectedPropertyId !== propertyId) {
+      const switchOk = confirm('You\'re mid-house (wide already captured). Switching to ' + label + ' will end the current house\'s pair. Continue?');
+      if (!switchOk) return;
+      inspEndPropertyPair();
+    }
     inspState.selectedPropertyId = propertyId;
     inspState.selectedPropertyLabel = label;
     const chip = document.getElementById('inspSelectedPropChip');
     const labelEl = document.getElementById('inspSelectedPropLabel');
     if (chip) chip.style.display = 'inline-flex';
     if (labelEl) labelEl.textContent = label;
+    inspUpdateCaptureBanner();
     // Visually highlight: selected marker gold + larger, others reset to
     // their ORIGINAL stage-based color/size (stored on the marker at render
     // time as m._origColor / m._origSize). Falling back to navy here would
@@ -17346,6 +17366,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspState.selectedPropertyLabel = null;
     const chip = document.getElementById('inspSelectedPropChip');
     if (chip) chip.style.display = 'none';
+    inspUpdateCaptureBanner();
     // Restore each pin to its ORIGINAL stage-based color/size — not navy.
     for (const m of inspState.propertyMarkers) {
       const el = m._el;
@@ -17886,6 +17907,41 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // Capture banner — pinned just above the camera button. Tells the operator
+  // WHICH HOUSE the next photo will attach to. Red+warning when no property
+  // is selected. Gold-on-navy with address when one is. Tap to clear. This
+  // is the visual safety net for the sticky-property bug; with this banner
+  // a silent-orphan situation would be obviously visible to the operator.
+  function inspUpdateCaptureBanner() {
+    const banner = document.getElementById('inspCaptureProperty');
+    const icon = document.getElementById('inspCaptureBannerIcon');
+    const label = document.getElementById('inspCaptureBannerLabel');
+    const clear = document.getElementById('inspCaptureBannerClear');
+    if (!banner) return;
+    // Only show when an inspection session is active
+    if (!inspState.sessionId) { banner.style.display = 'none'; return; }
+    banner.style.display = 'flex';
+    if (inspState.selectedPropertyId) {
+      banner.style.background = 'var(--navy, #0B1D34)';
+      if (icon) icon.textContent = '📍';
+      if (label) label.textContent = inspState.selectedPropertyLabel || 'Selected property';
+      if (clear) clear.textContent = '✕ clear';
+    } else {
+      banner.style.background = 'rgba(220, 38, 38, 0.92)';
+      if (icon) icon.textContent = '⚠';
+      if (label) label.textContent = 'No house selected — tap a house on the list/map first';
+      if (clear) clear.textContent = '';
+    }
+  }
+  window.inspUpdateCaptureBanner = inspUpdateCaptureBanner;
+
+  function inspCaptureBannerClick() {
+    // Tap clears (when selected) OR is a no-op (when not selected — operator
+    // needs to go pick a house from list/map).
+    if (inspState.selectedPropertyId) inspClearSelectedProperty();
+  }
+  window.inspCaptureBannerClick = inspCaptureBannerClick;
+
   // Drive Mode — auto-collapses the office-only panels (cure pipeline,
   // drafts queue, letter format, categories editor, Vantaca history) when
   // an inspection session is active so the field operator only sees the
@@ -17937,6 +17993,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       try { inspSetOfficeToolsVisible(false); } catch (_) {}
       // Kick the time-on-drive indicator + paused UI defaults
       try { inspApplyPausedUi(false); inspRefreshTimeOnDrive(); } catch (_) {}
+      // Show the property attribution banner (starts in red "no house selected")
+      try { inspUpdateCaptureBanner(); } catch (_) {}
       // Reset filter button label
       const fb = document.getElementById('inspPhotoFilterBtn');
       if (fb) fb.textContent = inspState.photoFilter === 'all' ? '⚠ Violations only' : '📸 All photos';
@@ -18355,13 +18413,42 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // natively via the label→input bridge regardless of what this function
   // does, so we just use this hook to handle orientation permission
   // (deferred so it doesn't break the gesture chain).
-  function inspTriggerCaptureNoClick() {
+  function inspTriggerCaptureNoClick(event) {
     if (inspState._needsOrientationPermission && typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
       DeviceOrientationEvent.requestPermission().then((perm) => {
         if (perm === 'granted' && inspState._attachOrientationListener) inspState._attachOrientationListener();
         inspState._needsOrientationPermission = false;
       }).catch(() => { inspState._needsOrientationPermission = false; });
+    }
+
+    // SAFETY GATE: if no property is selected, warn the operator before
+    // letting the camera open. Pre-empts the silent-orphan failure mode.
+    // First time per session is a hard stop with a clear message; the operator
+    // can either go select a property OR confirm "take it anyway" knowing
+    // it'll be orphaned. After confirmation, we don't ask again this session
+    // (just the banner stays red) to avoid annoying the operator who is
+    // documenting common-area shots etc.
+    if (inspState.sessionId && !inspState.selectedPropertyId && !inspState._captureWithoutPropertyConfirmed) {
+      const proceed = confirm(
+        '⚠ No house is selected.\n\n' +
+        'This photo will not be linked to any property and will need to be linked later before the AI findings become a violation.\n\n' +
+        'Tap CANCEL to go pick a house from the list/map.\n' +
+        'Tap OK to take it anyway (documentation / common-area shot).'
+      );
+      if (!proceed) {
+        if (event && event.preventDefault) event.preventDefault();
+        if (event && event.stopPropagation) event.stopPropagation();
+        // Briefly highlight the banner so the operator sees where to look
+        const banner = document.getElementById('inspCaptureProperty');
+        if (banner) {
+          banner.style.transform = 'scale(1.04)';
+          banner.style.transition = 'transform 0.18s';
+          setTimeout(() => { banner.style.transform = ''; }, 220);
+        }
+        return false;
+      }
+      inspState._captureWithoutPropertyConfirmed = true;
     }
   }
 
@@ -19385,6 +19472,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.routeFlushTimer = null;
     }
     inspState.sessionId = null;
+    inspState._captureWithoutPropertyConfirmed = false;
+    inspUpdateCaptureBanner();
     inspState.photoCount = 0;
     inspState.photos = [];
     inspState.stagedWidePhotoId = null;
