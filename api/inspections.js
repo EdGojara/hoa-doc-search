@@ -2045,6 +2045,24 @@ router.get('/inspections/:id', async (req, res, next) => {
       .order('captured_at', { ascending: true });
     if (phErr) return res.status(500).json({ error: phErr.message });
 
+    // Also pull observations so the photo viewer can show AI verdict per
+    // photo (flagged violation vs. AI said clean vs. pending). Bedrock
+    // can audit AI misses and operator can Add Violation in-place.
+    const { data: observations } = await supabase
+      .from('property_observations')
+      .select(`
+        id, photo_id, property_id, category_id, severity,
+        reviewer_status, is_violation, ai_confidence, ai_description,
+        violation_id, reviewer_notes
+      `)
+      .eq('inspection_id', id);
+    const obsByPhoto = new Map();
+    for (const o of (observations || [])) {
+      if (!o.photo_id) continue;
+      if (!obsByPhoto.has(o.photo_id)) obsByPhoto.set(o.photo_id, []);
+      obsByPhoto.get(o.photo_id).push(o);
+    }
+
     // Generate signed URLs for the storage paths so the frontend can render
     // them in the reviewer queue. 1-hour expiry is plenty for a review session.
     const withUrls = [];
@@ -2056,7 +2074,15 @@ router.get('/inspections/:id', async (req, res, next) => {
           .createSignedUrl(p.storage_path, 60 * 60);
         signedUrl = signed?.signedUrl || null;
       } catch (_) { /* leave null */ }
-      withUrls.push({ ...p, signed_url: signedUrl });
+      const obs = obsByPhoto.get(p.id) || [];
+      // Derive a single ai_verdict for the badge:
+      //   'violation' if ANY observation is is_violation=true
+      //   'clean' if observations exist but none is is_violation
+      //   'pending' if no observations
+      let ai_verdict = 'pending';
+      if (obs.some(o => o.is_violation === true)) ai_verdict = 'violation';
+      else if (obs.length > 0) ai_verdict = 'clean';
+      withUrls.push({ ...p, signed_url: signedUrl, observations: obs, ai_verdict });
     }
 
     res.json({ inspection: insp, photos: withUrls });
@@ -2762,6 +2788,155 @@ router.post('/inspections/observations/:id/reject', express.json(), async (req, 
 });
 
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// POST /api/inspections/photos/:photoId/add-violation
+// Ed 2026-06-09 — operator override when AI missed a violation. Symmetric
+// to the existing Reject button. Body:
+//   { category_id, severity, property_id?, notes?, reviewer_email? }
+// Steps:
+//   1. If a property_observations row already exists for this photo, update
+//      it: category_id, severity, reviewer_status='confirmed', is_violation=true.
+//   2. Otherwise create one.
+//   3. Open the violation row via the same escalation engine the AI path
+//      uses (decideEscalation) so the stage + cure clock are consistent.
+//
+// NOTE on multiple violations per photo: today this endpoint adds ONE
+// observation/violation. Multiple violations on the same photo = multiple
+// calls to this endpoint with different category_ids. The operator clicks
+// "Add violation" once per issue they spot.
+// ---------------------------------------------------------------------------
+router.post('/inspections/photos/:photoId/add-violation', express.json(), async (req, res) => {
+  try {
+    const photoId = req.params.photoId;
+    const { category_id, severity, property_id, notes, reviewer_email } = req.body || {};
+    if (!category_id) return res.status(400).json({ error: 'category_id_required' });
+    if (!severity) return res.status(400).json({ error: 'severity_required' });
+
+    // Load the photo + inspection context
+    const { data: photo, error: phErr } = await supabase
+      .from('inspection_photos')
+      .select('id, inspection_id, polygon_match_property_id, captured_at, inspections(community_id)')
+      .eq('id', photoId)
+      .maybeSingle();
+    if (phErr) throw phErr;
+    if (!photo) return res.status(404).json({ error: 'photo_not_found' });
+
+    const resolvedPropertyId = property_id || photo.polygon_match_property_id;
+    if (!resolvedPropertyId) {
+      return res.status(400).json({ error: 'property_id_required', message: 'No property linked to this photo. Pass property_id to specify.' });
+    }
+    const communityId = photo.inspections?.community_id;
+
+    // Step 1 — observation: upsert
+    const { data: existing } = await supabase
+      .from('property_observations')
+      .select('id')
+      .eq('photo_id', photoId)
+      .limit(1)
+      .maybeSingle();
+
+    const now = new Date().toISOString();
+    const obsPatch = {
+      property_id: resolvedPropertyId,
+      category_id,
+      severity,
+      reviewer_status: 'confirmed',
+      reviewed_at: now,
+      reviewer_notes: notes || '(operator override — AI missed this)',
+      is_violation: true,
+    };
+
+    let observationId;
+    if (existing) {
+      const { error: upErr } = await supabase
+        .from('property_observations')
+        .update(obsPatch)
+        .eq('id', existing.id);
+      if (upErr) throw upErr;
+      observationId = existing.id;
+    } else {
+      const { data: created, error: insErr } = await supabase
+        .from('property_observations')
+        .insert({
+          ...obsPatch,
+          photo_id: photoId,
+          inspection_id: photo.inspection_id,
+          observed_at: photo.captured_at || now,
+          ai_confidence: 'manual',
+          ai_description: 'Operator-added violation (AI did not flag).',
+        })
+        .select('id')
+        .single();
+      if (insErr) throw insErr;
+      observationId = created.id;
+    }
+
+    // Step 2 — open the violation through the same escalation engine
+    let violation = null;
+    try {
+      const { decideEscalation } = require('../lib/enforcement/escalation');
+      const { data: prio } = await supabase
+        .from('community_enforcement_priorities')
+        .select('priority_weight')
+        .eq('community_id', communityId)
+        .eq('category_id', category_id)
+        .is('end_date', null)
+        .maybeSingle();
+      const priorityWeight = (prio && prio.priority_weight) || 'standard';
+
+      const cutoff = new Date();
+      cutoff.setMonth(cutoff.getMonth() - 12);
+      const { data: priors } = await supabase
+        .from('violations')
+        .select('id, opened_at, primary_category_id, current_stage, quality_status, confidence_weight, source')
+        .eq('property_id', resolvedPropertyId)
+        .eq('primary_category_id', category_id)
+        .gte('opened_at', cutoff.toISOString());
+
+      const decision = decideEscalation({
+        severity,
+        priorityWeight,
+        priors: priors || [],
+        confidenceWeight: 1.0, // operator override → full confidence
+      });
+
+      const { data: viol, error: vErr } = await supabase
+        .from('violations')
+        .insert({
+          property_id: resolvedPropertyId,
+          community_id: communityId,
+          primary_category_id: category_id,
+          current_stage: decision.stage,
+          severity,
+          source: 'operator_added',
+          confidence_weight: 1.0,
+          quality_status: 'confirmed',
+          opened_at: now,
+          opened_by_observation_id: observationId,
+          opened_by_email: reviewer_email || null,
+          opened_reason: notes || 'Operator-added: AI missed this violation',
+        })
+        .select('*')
+        .single();
+      if (vErr) throw vErr;
+      violation = viol;
+
+      // Link observation -> violation
+      await supabase
+        .from('property_observations')
+        .update({ violation_id: viol.id })
+        .eq('id', observationId);
+    } catch (e) {
+      console.warn('[inspections.add-violation] violation insert failed (observation saved):', e.message);
+    }
+
+    res.json({ ok: true, observation_id: observationId, violation });
+  } catch (err) {
+    console.error('[inspections.add-violation]', err.message);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
 // PATCH /api/inspections/observations/:id — reviewer edits property / category
 // before confirming (manual link when GPS+heading didn't auto-match)
 // ---------------------------------------------------------------------------
