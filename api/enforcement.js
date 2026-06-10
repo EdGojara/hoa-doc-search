@@ -1565,12 +1565,43 @@ router.get('/drafts', async (req, res) => {
     const propertyById  = new Map((pRes.data || []).map((p) => [p.property_id, p]));
     const observationById = new Map((oRes.data || []).map((o) => [o.id, o]));
 
+    // FALLBACK PHOTO LOOKUP — Ed 2026-06-10 bug fix.
+    // The single-letter generator (line ~1149) falls back to the most recent
+    // confirmed inspection_photo at the property when the violation's
+    // opened_from_observation_id chain is empty. The drafts queue was not
+    // mirroring that fallback, so letters that visibly contained a photo
+    // were rendering "no photo" in the queue. Identical fallback logic here:
+    // latest photo at the property with photo_role in ('close_up','single')
+    // where reviewer_confirmed_property_id matches. No category filter
+    // (matches the letter generator's behavior exactly).
+    const latestPhotoByProperty = new Map();
+    if (propertyIds.length) {
+      const { data: latestPhotos } = await supabase
+        .from('inspection_photos')
+        .select('storage_path, captured_at, reviewer_confirmed_property_id')
+        .in('reviewer_confirmed_property_id', propertyIds)
+        .in('photo_role', ['close_up', 'single'])
+        .order('captured_at', { ascending: false });
+      for (const ph of (latestPhotos || [])) {
+        if (!latestPhotoByProperty.has(ph.reviewer_confirmed_property_id)) {
+          latestPhotoByProperty.set(ph.reviewer_confirmed_property_id, ph);
+        }
+      }
+    }
+
     // Generate signed URLs for both letter PDFs and observation photos (in parallel)
     const enrichedAll = await Promise.all(drafts.map(async (d) => {
       const v = violationById.get(d.violation_id);
       const p = propertyById.get(d.property_id);
       const o = observationById.get(d.observation_id);
-      const photoPath = o && o.inspection_photos && o.inspection_photos.storage_path;
+      let photoPath = o && o.inspection_photos && o.inspection_photos.storage_path;
+      // Fallback — observation chain empty, use latest confirmed property photo
+      if (!photoPath) {
+        const fallbackPhoto = latestPhotoByProperty.get(d.property_id);
+        if (fallbackPhoto && fallbackPhoto.storage_path) {
+          photoPath = fallbackPhoto.storage_path;
+        }
+      }
       let photoUrl = null;
       if (photoPath) {
         try {
