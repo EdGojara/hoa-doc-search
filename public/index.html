@@ -21812,6 +21812,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // Ed 2026-06-09 — quick photo browser for a past inspection. Fetches all
+  // photos (including ones AI didn't flag) and pipes them into the lightbox
+  // for full-screen review. Use case: "where are the photos I took today
+  // that said no violation?"
+  async function inspViewSessionPhotos(inspectionId) {
+    try {
+      const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId));
+      if (!r.ok) { alert('Could not load photos: HTTP ' + r.status); return; }
+      const j = await r.json();
+      const photos = j.photos || [];
+      if (photos.length === 0) { alert('No photos on file for this inspection.'); return; }
+      // Stash + open the lightbox at the first photo
+      window._inspVisiblePhotos = photos;
+      inspOpenLightbox(0, photos);
+    } catch (e) {
+      alert('Could not load photos: ' + e.message);
+    }
+  }
+  window.inspViewSessionPhotos = inspViewSessionPhotos;
+
   async function inspLoadRecent() {
     const wrap = document.getElementById('inspRecentList');
     try {
@@ -21860,8 +21880,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             ⚠️ Force delete
           </button>
         ` : '';
+        // View photos button — shown on every non-voided inspection so Ed
+        // can browse what was captured (including AI no-violation photos).
+        const viewPhotosBtn = (i.total_photos || 0) > 0 ? `
+          <button type="button" onclick="inspViewSessionPhotos('${i.id}')"
+                  style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="Open all photos from this drive in the gallery — including ones AI didn't flag.">
+            📸 View photos
+          </button>
+        ` : '';
         const closedActions = isClosed ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+            ${viewPhotosBtn}
             <button type="button" onclick="inspResume('${i.id}')"
                     style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
@@ -21872,6 +21902,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         ` : '';
         const activeActions = (!isTerminal) ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+            ${viewPhotosBtn}
             ${analyzeBtn}
             <button type="button" onclick="inspResume('${i.id}')"
                     style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
