@@ -15024,12 +15024,39 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
       <!-- Recently captured photos in this session -->
       <div style="background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 14px;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
-          <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">Captured this session</h3>
-          <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #0B1D34; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; gap:8px; flex-wrap:wrap;">
+          <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">
+            Captured this session
+            <span id="inspTimeOnDrive" style="font-size:11px; color:#64748b; font-weight:500; margin-left:6px;"></span>
+          </h3>
+          <div style="display:flex; gap:6px; flex-wrap:wrap;">
+            <!-- Toggle between "violations only" (default) and "all photos" so
+                 Ed can audit what AI missed. -->
+            <button type="button" id="inspPhotoFilterBtn" onclick="inspTogglePhotoFilter()" style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:6px 10px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;" title="Toggle between violations only and ALL photos taken (including ones AI didn't flag).">📸 All photos</button>
+            <button type="button" id="inspPauseBtn" onclick="inspPauseSession()" style="background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">⏸ Pause</button>
+            <button type="button" id="inspResumeBtn" onclick="inspResumeSession()" style="display:none; background:#dcfce7; border:1px solid #22c55e; color:#15803d; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">▶ Resume</button>
+            <button type="button" onclick="inspEndSession()" style="background: none; border: 1px solid #d0d7de; color: #0B1D34; padding: 6px 12px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;">End inspection</button>
+          </div>
+        </div>
+        <div id="inspPausedBanner" style="display:none; background:#fef3c7; border:1px solid #f59e0b; color:#92400e; padding:8px 12px; border-radius:8px; font-size:12.5px; margin-bottom:10px; font-weight:600;">
+          ⏸ Drive paused — time-on-drive counter stopped. Tap Resume when you start again.
         </div>
         <div id="inspPhotoList" style="display: grid; grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 8px;">
           <div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No photos yet — tap Capture above to start.</div>
+        </div>
+      </div>
+
+      <!-- Photo lightbox — opens when you tap a thumbnail. Fullscreen,
+           swipe-friendly. -->
+      <div id="inspPhotoLightbox" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:9998; align-items:center; justify-content:center; padding:20px; cursor:pointer;" onclick="inspCloseLightbox(event)">
+        <div style="max-width:100%; max-height:100%; position:relative;" onclick="event.stopPropagation()">
+          <img id="inspLightboxImg" src="" style="max-width:100%; max-height:calc(100vh - 100px); display:block; border-radius:8px;">
+          <div id="inspLightboxMeta" style="color:#fff; padding:10px 0; text-align:center; font-size:13px;"></div>
+          <div style="position:absolute; top:10px; right:10px; display:flex; gap:8px;">
+            <button onclick="inspLightboxPrev(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:16px; cursor:pointer;">←</button>
+            <button onclick="inspLightboxNext(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:16px; cursor:pointer;">→</button>
+            <button onclick="inspCloseLightbox(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:18px; cursor:pointer;">×</button>
+          </div>
         </div>
       </div>
     </div>
@@ -17858,10 +17885,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.communityName = sel.options[sel.selectedIndex].textContent;
       inspState.photoCount = 0;
       inspState.photos = [];
+      inspState.isPaused = false;
+      inspState.photoFilter = inspState.photoFilter || 'all';
       // Auto-collapse the office tools panels — operator just needs map +
       // capture + photo list in the field. Cure pipeline, drafts queue,
       // letter format, etc. all stay one click away under "Office tools."
       try { inspSetOfficeToolsVisible(false); } catch (_) {}
+      // Kick the time-on-drive indicator + paused UI defaults
+      try { inspApplyPausedUi(false); inspRefreshTimeOnDrive(); } catch (_) {}
+      // Reset filter button label
+      const fb = document.getElementById('inspPhotoFilterBtn');
+      if (fb) fb.textContent = inspState.photoFilter === 'all' ? '⚠ Violations only' : '📸 All photos';
       // Reset photo-pairing state for the new session
       inspState.stagedWidePhotoId = null;
       inspState.stagedWidePreviewUrl = null;
@@ -18827,13 +18861,34 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspProcessUploadQueue();
   }
 
+  // Allow inspTogglePhotoFilter() to call this under a sibling name
+  function inspRenderPhotoList() { inspRenderPhotos(); }
+  window.inspRenderPhotoList = inspRenderPhotoList;
+
   function inspRenderPhotos() {
     const list = document.getElementById('inspPhotoList');
-    if (inspState.photos.length === 0) {
-      list.innerHTML = '<div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No photos yet — tap Capture above to start.</div>';
+    // Filter: 'all' = show every photo; 'violations_only' = only ones AI
+    // flagged OR ones the operator marked as a violation (covers AI misses
+    // when operator double-tapped to create violation manually).
+    const filter = inspState.photoFilter || 'all';
+    const visible = filter === 'all'
+      ? inspState.photos
+      : inspState.photos.filter(p =>
+          p.has_violation
+          || p.violation_id
+          || p.observation_status === 'confirmed'
+          || (Array.isArray(p.observations) && p.observations.length > 0)
+        );
+
+    if (visible.length === 0) {
+      if (inspState.photos.length === 0) {
+        list.innerHTML = '<div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No photos yet — tap Capture above to start.</div>';
+      } else {
+        list.innerHTML = `<div style="grid-column: 1/-1; color: #94a3b8; font-size: 12px; text-align: center; padding: 20px 0;">No violations flagged yet from ${inspState.photos.length} photo${inspState.photos.length === 1 ? '' : 's'}. Toggle to "📸 All photos" to see them all.</div>`;
+      }
       return;
     }
-    list.innerHTML = inspState.photos.map((p) => {
+    list.innerHTML = visible.map((p, idx) => {
       const status = inspPhotoStatusFor(p);
       const time = p.captured_at ? new Date(p.captured_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '';
       const previewSrc = p._local_preview || (p.signed_url || '');
@@ -18851,12 +18906,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       }
       const pairedBorder = p.paired_wide_photo_id ? 'border: 2px solid #D4AF37;' : '';
       const photoKey = String(p.id || '');
-      return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9; ${pairedBorder}">
+      return `<div style="position:relative; aspect-ratio: 1/1; border-radius: 8px; overflow:hidden; background:#f1f5f9; ${pairedBorder} cursor: pointer;" onclick="inspOpenLightbox(${idx}, window._inspVisiblePhotos || [])">
         ${imgHtml}
         ${roleChip}
         <!-- Delete (×) — top-right corner, above the time chip -->
         <button type="button"
-                onclick="inspDeletePhoto('${photoKey}')"
+                onclick="event.stopPropagation(); inspDeletePhoto('${photoKey}')"
                 title="Delete this photo"
                 style="position:absolute; top:5px; right:6px; width:22px; height:22px; padding:0; line-height:1; border:none; border-radius:50%; background:rgba(220,38,38,0.92); color:#fff; font-size:14px; font-weight:800; cursor:pointer; display:flex; align-items:center; justify-content:center; box-shadow:0 1px 3px rgba(0,0,0,0.35);">×</button>
         <!-- Time stamp — moved to top-left under the role chip (or top-left if no chip) -->
@@ -18865,6 +18920,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="position:absolute; left:0; right:0; bottom:0; padding:5px 6px; background:${status.bg}; color:${status.color}; font-size:10.5px; font-weight:700; text-align:center; letter-spacing:0.02em;">${status.label}</div>
       </div>`;
     }).join('');
+    // Stash the filtered list so the lightbox can navigate within it
+    window._inspVisiblePhotos = visible;
   }
 
   // Delete a photo from the current inspection (or from the local upload queue
@@ -18907,6 +18964,128 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       alert('Delete failed: ' + (e.message || e));
     }
   }
+
+  // -------------------------------------------------------------------
+  // PAUSE / RESUME — Ed 2026-06-09
+  // For weather, lunch, half-day breaks. Each pause is recorded as a
+  // child row so we get accurate time-on-drive metrics.
+  // -------------------------------------------------------------------
+  async function inspPauseSession() {
+    if (!inspState.sessionId) return;
+    const reason = prompt('Pause reason? (weather, lunch, end of half-day, etc.)') || 'unspecified';
+    if (reason === null) return;
+    try {
+      const r = await fetch('/api/inspections/' + inspState.sessionId + '/pause', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reason }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'pause failed');
+      inspState.isPaused = true;
+      inspApplyPausedUi(true);
+    } catch (e) {
+      alert('Pause failed: ' + e.message);
+    }
+  }
+  async function inspResumeSession() {
+    if (!inspState.sessionId) return;
+    try {
+      const r = await fetch('/api/inspections/' + inspState.sessionId + '/resume', { method: 'POST' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'resume failed');
+      inspState.isPaused = false;
+      inspApplyPausedUi(false);
+    } catch (e) {
+      alert('Resume failed: ' + e.message);
+    }
+  }
+  function inspApplyPausedUi(paused) {
+    const pauseBtn = document.getElementById('inspPauseBtn');
+    const resumeBtn = document.getElementById('inspResumeBtn');
+    const banner = document.getElementById('inspPausedBanner');
+    if (pauseBtn) pauseBtn.style.display = paused ? 'none' : '';
+    if (resumeBtn) resumeBtn.style.display = paused ? '' : 'none';
+    if (banner) banner.style.display = paused ? 'block' : 'none';
+  }
+  window.inspPauseSession = inspPauseSession;
+  window.inspResumeSession = inspResumeSession;
+
+  // Time-on-drive — polls the server for the real active-minus-paused
+  // calculation. Displayed inline near "Captured this session" header.
+  async function inspRefreshTimeOnDrive() {
+    if (!inspState.sessionId) return;
+    try {
+      const r = await fetch('/api/inspections/' + inspState.sessionId + '/time-on-drive');
+      if (!r.ok) return;
+      const j = await r.json();
+      const fmt = (s) => {
+        const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+        return h > 0 ? `${h}h ${m}m` : `${m}m`;
+      };
+      const el = document.getElementById('inspTimeOnDrive');
+      if (el) el.textContent = `· active ${fmt(j.active_seconds)}${j.paused_seconds > 0 ? ' (paused ' + fmt(j.paused_seconds) + ')' : ''}`;
+      if (typeof j.currently_paused === 'boolean' && j.currently_paused !== inspState.isPaused) {
+        inspState.isPaused = j.currently_paused;
+        inspApplyPausedUi(j.currently_paused);
+      }
+    } catch (_) {}
+  }
+  // Tick the timer every 30s while a session is active
+  setInterval(() => { if (inspState.sessionId) inspRefreshTimeOnDrive(); }, 30000);
+
+  // -------------------------------------------------------------------
+  // PHOTO FILTER (all vs violations only) — Ed 2026-06-09
+  // Toggle whether the gallery shows ALL photos taken this session or
+  // only those that the AI flagged as a potential violation.
+  // -------------------------------------------------------------------
+  function inspTogglePhotoFilter() {
+    inspState.photoFilter = inspState.photoFilter === 'all' ? 'violations_only' : 'all';
+    const btn = document.getElementById('inspPhotoFilterBtn');
+    if (btn) btn.textContent = inspState.photoFilter === 'all' ? '⚠ Violations only' : '📸 All photos';
+    if (typeof inspRenderPhotoList === 'function') inspRenderPhotoList();
+  }
+  window.inspTogglePhotoFilter = inspTogglePhotoFilter;
+
+  // -------------------------------------------------------------------
+  // PHOTO LIGHTBOX — Ed 2026-06-09
+  // Tap any thumbnail to open fullscreen with prev/next nav.
+  // -------------------------------------------------------------------
+  let _lightboxIdx = 0;
+  let _lightboxList = [];
+  function inspOpenLightbox(index, list) {
+    _lightboxList = list || (inspState.photos || []);
+    _lightboxIdx = Math.max(0, Math.min(index, _lightboxList.length - 1));
+    inspRenderLightbox();
+    document.getElementById('inspPhotoLightbox').style.display = 'flex';
+  }
+  function inspRenderLightbox() {
+    const p = _lightboxList[_lightboxIdx];
+    if (!p) return;
+    const img = document.getElementById('inspLightboxImg');
+    const meta = document.getElementById('inspLightboxMeta');
+    img.src = p.signed_url || p.url || '';
+    const dt = p.captured_at ? new Date(p.captured_at).toLocaleString() : '';
+    meta.textContent = `${_lightboxIdx + 1} of ${_lightboxList.length}${dt ? ' · ' + dt : ''}${p.photo_role ? ' · ' + p.photo_role : ''}`;
+  }
+  function inspCloseLightbox(e) {
+    if (e && e.stopPropagation) e.stopPropagation();
+    document.getElementById('inspPhotoLightbox').style.display = 'none';
+  }
+  function inspLightboxNext(e) {
+    if (e) e.stopPropagation();
+    _lightboxIdx = (_lightboxIdx + 1) % _lightboxList.length;
+    inspRenderLightbox();
+  }
+  function inspLightboxPrev(e) {
+    if (e) e.stopPropagation();
+    _lightboxIdx = (_lightboxIdx - 1 + _lightboxList.length) % _lightboxList.length;
+    inspRenderLightbox();
+  }
+  window.inspOpenLightbox = inspOpenLightbox;
+  window.inspCloseLightbox = inspCloseLightbox;
+  window.inspLightboxNext = inspLightboxNext;
+  window.inspLightboxPrev = inspLightboxPrev;
 
   async function inspEndSession() {
     if (!inspState.sessionId) return;

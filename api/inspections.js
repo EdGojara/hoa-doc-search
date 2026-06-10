@@ -87,7 +87,7 @@ router.patch('/inspections/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { status, notes, ended_at } = req.body || {};
-    const validStatuses = ['in_progress', 'captured', 'ai_analyzed', 'reviewed', 'closed', 'voided'];
+    const validStatuses = ['in_progress', 'paused', 'captured', 'ai_analyzed', 'reviewed', 'closed', 'voided'];
 
     const patch = { updated_at: new Date().toISOString() };
     if (status !== undefined) {
@@ -111,6 +111,124 @@ router.patch('/inspections/:id', async (req, res) => {
   } catch (err) {
     console.error('[inspections.patch]', err);
     res.status(500).json({ error: err.message || 'failed to update inspection' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/inspections/:id/pause  — pause the drive (weather, lunch, etc.)
+// Body: { reason?, notes?, paused_by? }
+// Inserts a row into inspection_pause_segments with paused_at=now and
+// flips inspections.status to 'paused'. Partial unique index on the table
+// blocks double-pause.
+// ---------------------------------------------------------------------------
+router.post('/inspections/:id/pause', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { reason, notes, paused_by } = req.body || {};
+    const now = new Date().toISOString();
+
+    // Open the pause segment first — if there's already an open one, this fails
+    const { error: segErr } = await supabase
+      .from('inspection_pause_segments')
+      .insert({ inspection_id: id, paused_at: now, reason: reason || null, paused_by: paused_by || null, notes: notes || null });
+    if (segErr) {
+      // 23505 = unique violation = already paused
+      if (segErr.code === '23505') return res.status(409).json({ error: 'already_paused' });
+      throw segErr;
+    }
+
+    const { data, error: upErr } = await supabase
+      .from('inspections')
+      .update({ status: 'paused', updated_at: now })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (upErr) throw upErr;
+    res.json({ ok: true, inspection: data, paused_at: now });
+  } catch (err) {
+    console.error('[inspections.pause]', err.message);
+    res.status(500).json({ error: err.message || 'failed to pause' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// POST /api/inspections/:id/resume — resume a paused drive
+// Closes the open pause segment (resumed_at=now) and flips status back to
+// 'in_progress'.
+// ---------------------------------------------------------------------------
+router.post('/inspections/:id/resume', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const now = new Date().toISOString();
+    const { data: seg } = await supabase
+      .from('inspection_pause_segments')
+      .select('id')
+      .eq('inspection_id', id)
+      .is('resumed_at', null)
+      .maybeSingle();
+    if (!seg) return res.status(409).json({ error: 'not_paused' });
+
+    await supabase
+      .from('inspection_pause_segments')
+      .update({ resumed_at: now })
+      .eq('id', seg.id);
+
+    const { data, error } = await supabase
+      .from('inspections')
+      .update({ status: 'in_progress', updated_at: now })
+      .eq('id', id)
+      .select('*')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, inspection: data, resumed_at: now });
+  } catch (err) {
+    console.error('[inspections.resume]', err.message);
+    res.status(500).json({ error: err.message || 'failed to resume' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// GET /api/inspections/:id/time-on-drive — actual active time in seconds.
+// Returns { total_seconds, paused_seconds, active_seconds, segments: [...] }
+// active_seconds = (ended_at OR now) - started_at - sum(pause durations)
+// ---------------------------------------------------------------------------
+router.get('/inspections/:id/time-on-drive', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data: insp, error } = await supabase
+      .from('inspections')
+      .select('id, started_at, ended_at, status')
+      .eq('id', id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!insp) return res.status(404).json({ error: 'inspection_not_found' });
+
+    const { data: segs } = await supabase
+      .from('inspection_pause_segments')
+      .select('paused_at, resumed_at, reason')
+      .eq('inspection_id', id)
+      .order('paused_at', { ascending: true });
+
+    const endRef = insp.ended_at ? new Date(insp.ended_at).getTime() : Date.now();
+    const start = new Date(insp.started_at).getTime();
+    const totalMs = Math.max(0, endRef - start);
+    let pausedMs = 0;
+    for (const s of (segs || [])) {
+      const ps = new Date(s.paused_at).getTime();
+      const pe = s.resumed_at ? new Date(s.resumed_at).getTime() : endRef;
+      pausedMs += Math.max(0, pe - ps);
+    }
+    const activeMs = Math.max(0, totalMs - pausedMs);
+    res.json({
+      total_seconds: Math.round(totalMs / 1000),
+      paused_seconds: Math.round(pausedMs / 1000),
+      active_seconds: Math.round(activeMs / 1000),
+      segments: segs || [],
+      currently_paused: insp.status === 'paused',
+    });
+  } catch (err) {
+    console.error('[inspections.time-on-drive]', err.message);
+    res.status(500).json({ error: err.message || 'failed' });
   }
 });
 
