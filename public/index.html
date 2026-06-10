@@ -14881,6 +14881,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <button class="action-btn" id="inspStartBtn" onclick="inspStart()" style="width: 100%;">Start inspection</button>
       <div id="inspStartError" style="display:none; color:#b91c1c; font-size: 13px; margin-top: 8px;"></div>
 
+      <!-- Voice DRV mode — Ed 2026-06-10: full-screen dashboard-mount
+           inspection. Pick community + your name, mount phone, drive
+           slow, tap-to-talk per violation. Hands stay on the wheel.
+           Best on iPhone Safari (Web Speech reliability).
+           Separate page so the mobile UI gets full-screen real estate
+           without competing with the office controls on this tab. -->
+      <a href="/inspector-voice.html"
+         style="display:block; margin-top:10px; padding:14px 16px; background:linear-gradient(135deg, #D4AF37 0%, #B8941F 100%); color:#0B1D34; text-decoration:none; border-radius:10px; font-size:15px; font-weight:700; text-align:center; box-shadow:0 2px 6px rgba(212,175,55,0.35);">
+        🎙️ Voice drive mode
+        <div style="font-size:11.5px; font-weight:500; opacity:0.85; margin-top:3px;">Mount &amp; drive — tap to talk, hands stay on the wheel</div>
+      </a>
+
       <!-- Manual violation entry — for neighbor reports, board reports,
            force-mow walk-ups, anything that needs to land as a violation
            without a full drive-by inspection session. Opens a modal so the
