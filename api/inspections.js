@@ -3174,6 +3174,224 @@ router.post('/inspections/:id/backfill-orphan-photos', express.json(), async (re
   }
 });
 
+// ============================================================================
+// VOICE DRV CAPTURE (Ed 2026-06-10)
+// ============================================================================
+// POST /api/inspections/:id/voice-capture
+// Hands-free inspection. Inspector drives, mounts phone on dashboard,
+// speaks a command. The phone snaps a frame, captures GPS + heading,
+// transcribes on-device, and posts here.
+//
+// We:
+//   1. Parse the transcript with our tight command grammar (lib/voice/
+//      drv_command_parser.js) — no LLM call needed for category extraction.
+//   2. Save the photo to storage like any other inspection photo.
+//   3. Resolve the property via the same polygon-match RPC the regular
+//      capture endpoint uses (GPS + heading-aware property finder).
+//   4. For each voice-supplied finding, create a property_observations
+//      row pre-categorized + tagged with confidence='medium' (operator
+//      spoke it) and source='voice_capture'.
+//   5. Run categorizePhoto in the background to ALSO get AI's view — if
+//      AI flags additional findings the operator missed, they show up.
+//   6. Return a result the phone can speak back: confirmation message,
+//      photo id, observation count.
+//
+// Multipart body:
+//   photo                — file (jpeg)
+//   transcript           — string (raw STT output)
+//   parsed_action        — optional override, if client parsed locally
+//   parsed_findings_json — optional, ditto
+//   gps_lat, gps_lng     — required for property match
+//   compass_heading_deg  — required for polygon match (heading + GPS)
+//   gps_accuracy_m       — optional
+//   captured_at          — ISO timestamp; defaults to now
+// ============================================================================
+router.post('/inspections/:id/voice-capture', upload.single('photo'), async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    if (!req.file || !req.file.buffer) return res.status(400).json({ error: 'photo_required' });
+
+    const { data: insp, error: iErr } = await supabase
+      .from('inspections')
+      .select('id, community_id, status, communities(id, name)')
+      .eq('id', inspectionId)
+      .maybeSingle();
+    if (iErr || !insp) return res.status(404).json({ error: 'inspection_not_found' });
+
+    const transcript = String(req.body.transcript || '').trim();
+    let parsed = null;
+    if (req.body.parsed_action) {
+      try {
+        parsed = {
+          action: req.body.parsed_action,
+          findings: JSON.parse(req.body.parsed_findings_json || '[]'),
+          note: req.body.parsed_note || null,
+          raw_transcript: transcript,
+        };
+      } catch (_) { parsed = null; }
+    }
+    if (!parsed) {
+      const { parseDrvCommand } = require('../lib/voice/drv_command_parser');
+      parsed = parseDrvCommand(transcript);
+    }
+
+    // Non-capture commands (next_house, skip, end, note) — ack the
+    // transcript without saving a photo. The client decided to send a
+    // photo anyway (mic was open during a "next house" utterance), so
+    // we acknowledge without writing.
+    if (parsed.action !== 'capture' && parsed.action !== 'add_finding') {
+      return res.json({
+        ok: true,
+        kind: parsed.action,
+        say: parsed.action === 'next_house' ? 'Next house. Ready.'
+           : parsed.action === 'skip' ? 'Skipped.'
+           : parsed.action === 'end' ? 'Ending drive.'
+           : 'Heard, but no action.',
+        parsed,
+      });
+    }
+
+    // ---- CAPTURE OR ADD_FINDING ----
+    const gpsLat = req.body.gps_lat ? Number(req.body.gps_lat) : null;
+    const gpsLng = req.body.gps_lng ? Number(req.body.gps_lng) : null;
+    const headingDeg = req.body.compass_heading_deg ? Number(req.body.compass_heading_deg) : null;
+    const gpsAccuracy = req.body.gps_accuracy_m ? Number(req.body.gps_accuracy_m) : null;
+    const capturedAt = req.body.captured_at || new Date().toISOString();
+
+    // Upload photo to storage
+    const stamp = Date.now();
+    const storagePath = `inspections/${inspectionId}/voice-${stamp}.jpg`;
+    const { error: stErr } = await supabase.storage
+      .from('documents')
+      .upload(storagePath, req.file.buffer, { contentType: 'image/jpeg', upsert: false });
+    if (stErr) return res.status(500).json({ error: 'storage_upload_failed', detail: stErr.message });
+
+    // Polygon-match property (if RPC exists; falls through to NULL otherwise)
+    let polygonMatchPropertyId = null;
+    if (gpsLat != null && gpsLng != null) {
+      try {
+        const { data: matches } = await supabase.rpc('match_property_by_point', {
+          p_community_id: insp.community_id,
+          p_lng: gpsLng,
+          p_lat: gpsLat,
+        });
+        if (matches && matches.length > 0) polygonMatchPropertyId = matches[0].property_id;
+      } catch (_) { /* RPC missing — leave NULL, link later */ }
+    }
+
+    // Insert photo row
+    const { data: photo, error: phErr } = await supabase
+      .from('inspection_photos')
+      .insert({
+        inspection_id: inspectionId,
+        storage_path: storagePath,
+        captured_at: capturedAt,
+        gps_lat: gpsLat,
+        gps_lng: gpsLng,
+        gps_accuracy_m: gpsAccuracy,
+        compass_heading_deg: headingDeg,
+        polygon_match_property_id: polygonMatchPropertyId,
+        photo_role: 'single',
+        notes: parsed.raw_transcript ? `voice: "${parsed.raw_transcript}"` : null,
+      })
+      .select('id')
+      .single();
+    if (phErr) return res.status(500).json({ error: 'photo_insert_failed', detail: phErr.message });
+
+    // Resolve category slugs to ids
+    const { data: cats } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug, label');
+    const slugToId = new Map();
+    const slugToLabel = new Map();
+    (cats || []).forEach(c => { slugToId.set(c.slug, c.id); slugToLabel.set(c.slug, c.label); });
+
+    // Create observations from the voice findings
+    const observationsCreated = [];
+    if (polygonMatchPropertyId && parsed.findings.length > 0) {
+      for (const f of parsed.findings) {
+        const categoryId = slugToId.get(f.category_slug);
+        if (!categoryId) continue;
+        const { data: obs, error: oErr } = await supabase
+          .from('property_observations')
+          .insert({
+            inspection_id:        inspectionId,
+            inspection_photo_id:  photo.id,
+            property_id:          polygonMatchPropertyId,
+            community_id:         insp.community_id,
+            category_id:          categoryId,
+            severity:             'moderate', // operator can edit later
+            ai_description:       `Operator-spoken: "${f.matched_phrase}" — review photo for specifics.`,
+            ai_confidence:        f.confidence || 'medium',
+            ai_recommended_action: 'courtesy',
+            reviewer_status:      'pending',
+            reviewer_notes:       `Voice capture. Transcript: "${parsed.raw_transcript}"`,
+            observed_at:          capturedAt,
+          })
+          .select('id')
+          .single();
+        if (!oErr && obs) observationsCreated.push({ id: obs.id, category_slug: f.category_slug });
+      }
+    }
+
+    // Fire the AI vision check in the background — high-recall mode will
+    // pick up anything operator missed. We don't await it; the phone is
+    // ready to drive on.
+    setImmediate(async () => {
+      try {
+        const { categorizePhoto } = require('../lib/enforcement/ai_vision');
+        const result = await categorizePhoto({
+          image_buffer: req.file.buffer,
+          image_media_type: 'image/jpeg',
+          categories: cats || [],
+          context: { community_name: insp.communities?.name },
+        });
+        if (result) {
+          await supabase
+            .from('inspection_photos')
+            .update({
+              ai_findings: result.findings || [],
+              ai_is_clean: !!result.is_clean,
+              ai_analyzed_at: new Date().toISOString(),
+            })
+            .eq('id', photo.id);
+        }
+      } catch (e) {
+        console.warn('[voice-capture] background AI failed (non-fatal):', e.message);
+      }
+    });
+
+    // Build a spoken confirmation the phone can read back
+    const labels = parsed.findings.map(f => slugToLabel.get(f.category_slug) || f.matched_phrase);
+    let say;
+    if (!polygonMatchPropertyId) {
+      say = labels.length > 0
+        ? `Captured ${labels.length} finding${labels.length === 1 ? '' : 's'}. Property not auto-linked — review later.`
+        : `Photo captured. Property not auto-linked — review later.`;
+    } else if (labels.length === 0) {
+      say = `Photo captured. AI is reviewing.`;
+    } else if (labels.length === 1) {
+      say = `Captured ${labels[0]}.`;
+    } else {
+      say = `Captured ${labels.length} findings: ${labels.join(', ')}.`;
+    }
+
+    res.json({
+      ok: true,
+      kind: parsed.action,
+      photo_id: photo.id,
+      property_id: polygonMatchPropertyId,
+      observations: observationsCreated,
+      findings_spoken: parsed.findings,
+      say,
+      parsed,
+    });
+  } catch (err) {
+    console.error('[inspections.voice-capture]', err.message);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
 // ---------------------------------------------------------------------------
 // PATCH /api/inspections/photos/:id/link-property
 // Ed 2026-06-10 — back-link an unmatched photo to a property after the fact.

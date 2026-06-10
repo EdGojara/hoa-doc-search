@@ -473,6 +473,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/agent-training\.html$/,                 // admin-only AI training console — admin check happens inside the page
   /^\/portal$/,                             // homeowner portal landing — auth checked client-side, ?demo=1 supported
   /^\/portal-login\.html$/,                 // magic-link entry page
+  /^\/inspector-voice(\.html)?$/,           // Voice DRV inspector (auth inside page)
   /^\/portal\/.+/,                          // future portal sub-pages (e.g., /portal/property, /portal/balance)
   /^\/builder-dashboard\.html$/,            // DRB Group-facing portal — auth checked via portal cookie inside the page
   /^\/clubhouse\/[^/]+$/,                   // /clubhouse/:slug — public clubhouse rental form (gated server-side by amenity_bookings_active)
@@ -1057,6 +1058,10 @@ app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/arc',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-arc.html')));
+
+// Voice DRV inspector — hands-free dashboard mode. Auth is handled inside
+// the page itself (matches the existing inspector.html pattern).
+app.get('/inspector-voice', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'inspector-voice.html')));
 app.get('/portal/acc-review',(req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-acc-review.html')));
 app.get('/portal/payments',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal.html')));
 
