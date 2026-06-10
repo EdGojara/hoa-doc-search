@@ -18181,8 +18181,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     if (typeof DeviceOrientationEvent !== 'undefined' &&
         typeof DeviceOrientationEvent.requestPermission === 'function') {
-      // iOS 13+ — needs a user gesture; defer the request to the next tap
-      inspState._needsOrientationPermission = true;
+      // iOS 13+ requires a user gesture for orientation permission.
+      // Ed 2026-06-10 lunch fix: ASK NOW during inspStart (which IS a
+      // user gesture — they just tapped Start inspection). Previously we
+      // deferred the request to the first Take Photo tap, but on iOS that
+      // permission dialog consumed the tap's user-gesture chain and the
+      // <label for="inspPhotoInput"> bridge stopped firing on subsequent
+      // taps. Ed lost his morning drive to this. Requesting at Start
+      // means the gesture chain at every Take Photo tap is clean and
+      // goes straight to the iOS camera.
+      DeviceOrientationEvent.requestPermission()
+        .then((perm) => {
+          if (perm === 'granted') attachOrientationListener();
+        })
+        .catch(() => { /* user denied — proceed without heading; GPS only */ });
+      // Mark consumed so the legacy lazy-request paths in capture handlers no-op.
+      inspState._needsOrientationPermission = false;
     } else {
       attachOrientationListener();
     }
