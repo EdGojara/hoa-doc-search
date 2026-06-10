@@ -52,11 +52,32 @@
        them eat ~1/3 of the screen on a phone. Hide them on small viewports
        and tighten the pill spacing so the actual nav buttons surface. */
     @media (max-width: 768px) {
-      #tabSubbar { padding: 6px 8px !important; gap: 4px !important; }
-      .tab-sub-section { display: none !important; }
-      .tab-sub-divider { display: none !important; }
-      .tab-sub-group { padding: 1px 0 !important; gap: 4px !important; }
-      .tab-sub { padding: 5px 10px !important; font-size: 11.5px !important; }
+      /* Ed 2026-06-10 field test #2: hide the entire operations sub-bar on
+         phones. The operator has already navigated to the right tab on a
+         small screen; the sibling pills (ACC / Inspect / Builder ARC /
+         Community Map / ...) just eat vertical space they need for capture
+         + recent inspections. Desktop view unaffected. */
+      #tabSubbar { display: none !important; }
+
+      /* Recent inspections rows: on a phone the action buttons (View
+         photos / Resume / Finalize / Discard / Re-analyze / Back-fill)
+         were getting cut off because they tried to flex-wrap inside a
+         fixed-width row. Stack the row vertically so the actions block
+         drops below the meta and the buttons flow into a full-width
+         wrap grid that stays inside the viewport. */
+      .insp-recent-row {
+        flex-direction: column !important;
+        align-items: stretch !important;
+      }
+      .insp-recent-actions {
+        width: 100% !important;
+        display: grid !important;
+        grid-template-columns: 1fr 1fr !important;
+        gap: 6px !important;
+      }
+      .insp-recent-actions button {
+        width: 100% !important;
+      }
     }
 
     .tab-content { display: none; flex: 1; flex-direction: column; overflow: hidden; }
@@ -22955,7 +22976,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </button>
         ` : '';
         const closedActions = isClosed ? `
-          <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+          <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${viewPhotosBtn}
             ${analyzeBtn}
             ${backfillBtn}
@@ -22968,7 +22989,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </div>
         ` : '';
         const activeActions = (!isTerminal) ? `
-          <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
+          <div class="insp-recent-actions" style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${viewPhotosBtn}
             ${analyzeBtn}
             ${backfillBtn}
@@ -22992,7 +23013,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         ` : '';
         const actions = isClosed ? closedActions : activeActions;
         return `
-          <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid #f1f5f9; gap: 12px; flex-wrap: wrap;">
+          <div class="insp-recent-row" style="display: flex; align-items: center; justify-content: space-between; padding: 10px 8px; border-bottom: 1px solid #f1f5f9; gap: 12px; flex-wrap: wrap;">
             <div style="flex: 1; min-width: 180px;">
               <div style="font-size: 13px; color: #0B1D34; font-weight: 600;">${modeLabel} ${escapeHtml(community)}</div>
               <div style="font-size: 11px; color: #64748b; margin-top: 2px;">${date} · ${photoStr} · ${statusLabel}</div>
