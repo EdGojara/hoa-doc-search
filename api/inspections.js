@@ -2979,25 +2979,35 @@ router.post('/inspections/observations/:id/reject', express.json(), async (req, 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // POST /api/inspections/:id/backfill-orphan-photos
-// Ed 2026-06-10 — recovery from the sticky-property bug that orphaned ~97
-// photos in his June 9 drive. For each unmatched photo, find the nearest
-// MATCHED photo from the same inspection by time + GPS. If within tight
-// thresholds (default: 3 minutes + 30 meters), inherit its property_id and
-// materialize observations from the photo's ai_findings.
+// Ed 2026-06-10 — recovery from the sticky-property bug. CRITICAL: wrong
+// attribution = wrong violation letter = credibility hit. So:
+//   - Default mode is dry_run (returns inferences for review, no writes).
+//   - Apply mode requires explicit confirmation per inference via the body
+//     (req.body.confirmed_inferences = [{orphan_id, property_id}, ...]).
+//   - We do NOT materialize observations from back-filled photos. Photo
+//     gets linked + a clear "BACK-FILLED — verify" note. Operator opens
+//     each photo in View photos, sees the proposed address, and uses the
+//     existing Add Violation flow to create observations from the
+//     ai_findings once they've eyeballed the photo and confirmed.
+//   - Conservative default thresholds: 60 seconds + 15 meters (was 180s
+//     + 30m which produces too many false matches when walking).
 //
-// All inferred links are flagged in reviewer_notes so the operator can
-// spot-check and unlink any wrong inferences via the existing
-// /link-property endpoint.
-//
-// Body (all optional):
-//   { time_window_seconds: 180, distance_meters: 30, dry_run: false }
+// Body (all optional, all defaults conservative):
+//   {
+//     time_window_seconds: 60,
+//     distance_meters: 15,
+//     dry_run: true,                        // default true unless apply provided
+//     confirmed_inferences: [{orphan_id, property_id}],  // explicit apply list
+//   }
 // ---------------------------------------------------------------------------
 router.post('/inspections/:id/backfill-orphan-photos', express.json(), async (req, res) => {
   try {
     const inspectionId = req.params.id;
-    const timeWindowSec = (req.body && req.body.time_window_seconds) || 180;
-    const distMeters = (req.body && req.body.distance_meters) || 30;
-    const dryRun = !!(req.body && req.body.dry_run);
+    const timeWindowSec = (req.body && req.body.time_window_seconds) || 60;
+    const distMeters = (req.body && req.body.distance_meters) || 15;
+    // dry_run defaults TRUE unless explicit confirmed list is passed
+    const hasConfirmed = Array.isArray(req.body?.confirmed_inferences) && req.body.confirmed_inferences.length > 0;
+    const dryRun = hasConfirmed ? false : (req.body?.dry_run !== false);
 
     const { data: insp } = await supabase
       .from('inspections')
@@ -3040,26 +3050,28 @@ router.post('/inspections/:id/backfill-orphan-photos', express.json(), async (re
       return 2 * R * Math.asin(Math.sqrt(a));
     };
 
-    // Resolve enforcement category ids once for observation materialization
-    const { data: cats } = await supabase
-      .from('enforcement_categories')
-      .select('id, slug');
-    const slugToId = new Map();
-    (cats || []).forEach(c => slugToId.set(c.slug, c.id));
+    // Hydrate signed URLs + addresses for the inferences so the review UI
+    // can show photos and addresses side-by-side (no second fetch needed).
+    const propertyIdsForAddresses = new Set();
+    matched.forEach(m => propertyIdsForAddresses.add(m._property_id));
+    let addressByPropId = new Map();
+    if (propertyIdsForAddresses.size > 0) {
+      const { data: props } = await supabase
+        .from('properties')
+        .select('id, street_address')
+        .in('id', Array.from(propertyIdsForAddresses));
+      for (const pr of (props || [])) addressByPropId.set(pr.id, pr.street_address);
+    }
 
-    let linkedCount = 0;
     let skippedFarTime = 0;
     let skippedFarDistance = 0;
-    let observationsCreated = 0;
     const inferences = [];
 
     for (const orph of orphans) {
       const ts = orph.captured_at ? new Date(orph.captured_at).getTime() : null;
       if (ts == null) { skippedFarTime++; continue; }
-      // Find matched photos within time window
       const candidates = matched.filter(m => Math.abs(m._ts - ts) <= timeWindowSec * 1000);
       if (candidates.length === 0) { skippedFarTime++; continue; }
-      // If photo has GPS, filter by distance too. Otherwise time alone.
       let best = null;
       let bestDist = Infinity;
       let bestTimeDelta = Infinity;
@@ -3068,9 +3080,7 @@ router.post('/inspections/:id/backfill-orphan-photos', express.json(), async (re
           ? haversineM(orph.gps_lat, orph.gps_lng, c.gps_lat, c.gps_lng)
           : null;
         const td = Math.abs(c._ts - ts);
-        // If distance is computable, must be within distMeters
         if (d != null && d > distMeters) continue;
-        // Score: prefer smaller time delta, ties broken by smaller distance
         if (td < bestTimeDelta || (td === bestTimeDelta && (d || 0) < bestDist)) {
           best = c;
           bestTimeDelta = td;
@@ -3079,81 +3089,84 @@ router.post('/inspections/:id/backfill-orphan-photos', express.json(), async (re
       }
       if (!best) { skippedFarDistance++; continue; }
 
+      // Sign URLs for the orphan + the anchor so the review UI can show
+      // both photos side-by-side
+      let orphanUrl = null, anchorUrl = null;
+      try {
+        const { data: sa } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(orph.storage_path || '', 60 * 60);
+        orphanUrl = sa?.signedUrl || null;
+      } catch (_) {}
+      try {
+        const { data: sb } = await supabase.storage
+          .from('documents')
+          .createSignedUrl(best.storage_path || '', 60 * 60);
+        anchorUrl = sb?.signedUrl || null;
+      } catch (_) {}
+
       inferences.push({
         orphan_id: orph.id,
-        inherited_from: best.id,
-        inherited_property_id: best._property_id,
+        orphan_signed_url: orphanUrl,
+        orphan_captured_at: orph.captured_at,
+        anchor_id: best.id,
+        anchor_signed_url: anchorUrl,
+        anchor_captured_at: best.captured_at,
+        proposed_property_id: best._property_id,
+        proposed_address: addressByPropId.get(best._property_id) || null,
         time_delta_sec: Math.round(bestTimeDelta / 1000),
         distance_m: Math.round(bestDist),
       });
+    }
 
-      if (dryRun) continue;
+    // DRY-RUN PATH — return inferences for review, no writes.
+    if (dryRun) {
+      return res.json({
+        ok: true,
+        dry_run: true,
+        orphans_total: orphans.length,
+        inferences_proposed: inferences.length,
+        skipped_no_nearby_time: skippedFarTime,
+        skipped_no_nearby_distance: skippedFarDistance,
+        time_window_seconds: timeWindowSec,
+        distance_meters: distMeters,
+        inferences,
+        message: 'Review each inference in the UI and confirm individually. No links written yet.',
+      });
+    }
 
-      // Apply the link
+    // APPLY PATH — only act on the explicit confirmed_inferences list.
+    // Each entry must have orphan_id + property_id (operator may override
+    // the inferred property if they spot a wrong match).
+    let linkedCount = 0;
+    const linked = [];
+    for (const inf of (req.body.confirmed_inferences || [])) {
+      if (!inf || !inf.orphan_id || !inf.property_id) continue;
       try {
-        await supabase
+        const { error: upErr } = await supabase
           .from('inspection_photos')
           .update({
-            reviewer_confirmed_property_id: best._property_id,
-            polygon_match_property_id: orph.polygon_match_property_id || best._property_id,
+            reviewer_confirmed_property_id: inf.property_id,
+            polygon_match_property_id: inf.property_id,
             reviewed_at: new Date().toISOString(),
-            notes: ((orph.notes || '') + ` · backfilled from photo ${best.id} (${Math.round(bestTimeDelta/1000)}s apart${bestDist ? ', ' + Math.round(bestDist) + 'm' : ''})`).slice(0, 500),
+            notes: (`BACK-FILLED ${new Date().toISOString().slice(0,10)} — operator-confirmed. ${inf.note || ''}`).slice(0, 500),
           })
-          .eq('id', orph.id);
-        linkedCount += 1;
-
-        // Materialize observations from ai_findings if present
-        const findings = Array.isArray(orph.ai_findings) ? orph.ai_findings : [];
-        if (orph.ai_is_clean && findings.length === 0) {
-          const { error: err } = await supabase.from('property_observations').insert({
-            inspection_id:        inspectionId,
-            inspection_photo_id:  orph.id,
-            property_id:          best._property_id,
-            community_id:         insp.community_id,
-            severity:             'clean',
-            ai_description:       'AI saw no violations in this photo.',
-            ai_confidence:        'high',
-            reviewer_status:      'rejected',
-            reviewed_at:          new Date().toISOString(),
-            reviewer_notes:       `AI: no violation visible — back-filled link from photo ${best.id}.`,
-            observed_at:          orph.captured_at || new Date().toISOString(),
-          });
-          if (!err) observationsCreated += 1;
-        } else if (findings.length > 0) {
-          for (const f of findings) {
-            const { error: err } = await supabase.from('property_observations').insert({
-              inspection_id:         inspectionId,
-              inspection_photo_id:   orph.id,
-              property_id:           best._property_id,
-              community_id:          insp.community_id,
-              category_id:           (f.category_slug && slugToId.get(f.category_slug)) || null,
-              severity:              f.severity || 'minor',
-              ai_description:        f.description || null,
-              ai_recommended_action: f.recommended_action || 'courtesy',
-              ai_confidence:         f.confidence || 'low',
-              reviewer_status:       'pending',
-              reviewer_notes:        `Back-filled link from photo ${best.id} (${Math.round(bestTimeDelta/1000)}s apart). ${f.notes || ''}`.trim(),
-              observed_at:           orph.captured_at || new Date().toISOString(),
-            });
-            if (!err) observationsCreated += 1;
-          }
+          .eq('id', inf.orphan_id);
+        if (!upErr) {
+          linkedCount += 1;
+          linked.push({ orphan_id: inf.orphan_id, property_id: inf.property_id });
         }
       } catch (e) {
-        console.warn('[backfill] link failed for', orph.id, e.message);
+        console.warn('[backfill apply] link failed for', inf.orphan_id, e.message);
       }
     }
 
     res.json({
       ok: true,
-      dry_run: dryRun,
-      orphans_total: orphans.length,
+      dry_run: false,
       linked: linkedCount,
-      observations_created: observationsCreated,
-      skipped_no_nearby_time: skippedFarTime,
-      skipped_no_nearby_distance: skippedFarDistance,
-      time_window_seconds: timeWindowSec,
-      distance_meters: distMeters,
-      inferences: dryRun ? inferences : inferences.slice(0, 50),  // cap in non-dry payload
+      linked_details: linked,
+      message: 'Links written. Open View photos and use Add Violation on each linked photo to materialize observations from the ai_findings — that confirmation step lives with the human so we never auto-attribute a violation letter.',
     });
   } catch (err) {
     console.error('[inspections.backfill-orphan-photos]', err.message);

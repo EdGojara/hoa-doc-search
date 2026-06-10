@@ -17942,6 +17942,42 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
   window.inspCaptureBannerClick = inspCaptureBannerClick;
 
+  // Attribution toast — surfaces after every photo upload showing which
+  // house it got attached to. Ed 2026-06-10 credibility request:
+  // "it's important for credibility we don't assign wrong pictures to
+  // wrong house." Operator sees attribution at the moment of capture and
+  // can fix wrong attribution before it propagates downstream.
+  function inspShowAttributionToast(propertyId, propertyLabel, photoNum) {
+    let toast = document.getElementById('inspAttribToast');
+    if (!toast) {
+      toast = document.createElement('div');
+      toast.id = 'inspAttribToast';
+      toast.style.cssText = 'position:fixed; left:12px; right:12px; max-width:560px; margin:0 auto; z-index:1000; padding:10px 14px; border-radius:10px; font-size:13.5px; font-weight:600; display:none; align-items:center; gap:10px; box-shadow:0 6px 20px rgba(0,0,0,0.22); transition: bottom 0.2s ease-out, opacity 0.2s; opacity:0; box-sizing:border-box;';
+      document.body.appendChild(toast);
+    }
+    // Position above the camera button (which is at bottom + ~12px + safe-inset)
+    toast.style.bottom = 'calc(env(safe-area-inset-bottom, 0px) + 160px)';
+    if (propertyId) {
+      toast.style.background = '#15803d';
+      toast.style.color = '#fff';
+      toast.innerHTML = `<span style="font-size:18px;">✓</span><span style="flex:1;">Photo ${photoNum} → ${(propertyLabel || 'selected house').replace(/</g, '&lt;')}</span>`;
+    } else {
+      toast.style.background = '#b91c1c';
+      toast.style.color = '#fff';
+      toast.innerHTML = `<span style="font-size:18px;">⚠</span><span style="flex:1;">Photo ${photoNum} → <strong>UNLINKED</strong> · pick a house before next shot</span>`;
+    }
+    toast.style.display = 'flex';
+    // Fade in
+    requestAnimationFrame(() => { toast.style.opacity = '1'; });
+    // Auto-hide after 3.5s (longer for unlinked so operator sees it)
+    clearTimeout(window._inspToastTimer);
+    window._inspToastTimer = setTimeout(() => {
+      toast.style.opacity = '0';
+      setTimeout(() => { toast.style.display = 'none'; }, 250);
+    }, propertyId ? 2200 : 4500);
+  }
+  window.inspShowAttributionToast = inspShowAttributionToast;
+
   // Drive Mode — auto-collapses the office-only panels (cure pipeline,
   // drafts queue, letter format, categories editor, Vantaca history) when
   // an inspection session is active so the field operator only sees the
@@ -18988,6 +19024,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('inspPhotoCount').textContent = inspState.photoCount;
     inspRenderPhotos();
     inspUpdateQueueBadge();
+
+    // 4.5) ATTRIBUTION TOAST — slides up briefly so the operator confirms
+    // which house the photo just landed on. Critical for credibility:
+    // catches wrong-house attribution at the moment of capture rather than
+    // 6 hours later.
+    try {
+      inspShowAttributionToast(
+        metadata.property_id,
+        inspState.selectedPropertyLabel,
+        inspState.photoCount
+      );
+    } catch (_) {}
 
     // 5) Property selection is STICKY — keep it for follow-up photos on
     //    the same house. Operator clears it explicitly by:
@@ -22234,71 +22282,187 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     return modal;
   }
 
-  // Back-fill orphan photos via spatiotemporal proximity. Two-step:
-  //   1. dry_run=true → preview how many would be linked + show 3 examples
-  //   2. confirm → re-call without dry_run to apply
+  // Back-fill orphan photos — INFERENCE REVIEW MODE (Ed 2026-06-10).
+  // Wrong attribution = wrong violation letter = credibility hit. So we
+  // never auto-apply. The button opens a review modal that shows each
+  // proposed inference side-by-side (orphan photo + anchor photo +
+  // proposed address) and the operator confirms each one individually.
+  // No observations are auto-created — operator opens View photos later
+  // and uses Add Violation on each confirmed-linked photo.
   async function inspBackfillOrphans(inspectionId, btn) {
     const original = btn ? btn.innerHTML : '';
-    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Previewing…'; }
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Computing…'; }
     try {
-      // STEP 1 — dry run preview
-      const dr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/backfill-orphan-photos', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dry_run: true }),
-      });
-      const dj = await dr.json();
-      if (!dr.ok) throw new Error(dj.error || ('HTTP ' + dr.status));
-      const wouldLink = dj.linked || (dj.inferences ? dj.inferences.length : 0);
-      const orphans = dj.orphans_total || 0;
-      if (orphans === 0) {
-        alert('No orphan photos on this drive — every photo is already linked to a property.');
-        return;
-      }
-      if (wouldLink === 0) {
-        alert(`Found ${orphans} orphan photo${orphans === 1 ? '' : 's'} but none could be inferred from nearby anchors. Either:\n` +
-              `• No matched photos exist on this drive to inherit from, OR\n` +
-              `• The orphan photos are too far in time/distance from any matched photo.\n\n` +
-              `Use the property dropdown inside View photos to link them manually.`);
-        return;
-      }
-      // Show preview + ask
-      let preview = `Found ${orphans} orphan photo${orphans === 1 ? '' : 's'}. ${wouldLink} can be inferred from nearby matched photos.\n\n` +
-                    `Defaults: within 3 minutes + 30 meters of an anchor.\n\nFirst few inferences:\n`;
-      for (let i = 0; i < Math.min(5, (dj.inferences || []).length); i++) {
-        const inf = dj.inferences[i];
-        preview += `• photo ${inf.orphan_id.slice(0, 8)}… → inherit from ${inf.inherited_from.slice(0, 8)}… (${inf.time_delta_sec}s apart, ${inf.distance_m}m)\n`;
-      }
-      preview += `\nProceed with back-fill?`;
-      if (!confirm(preview)) return;
-
-      // STEP 2 — apply
-      if (btn) btn.innerHTML = '⏳ Linking…';
       const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/backfill-orphan-photos', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ dry_run: false }),
+        body: JSON.stringify({ dry_run: true, time_window_seconds: 60, distance_meters: 15 }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
-      let msg = `✓ Back-filled ${j.linked} photo${j.linked === 1 ? '' : 's'}.\n\n` +
-                `• ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created from stored AI findings\n`;
-      if (j.skipped_no_nearby_time > 0) {
-        msg += `• ${j.skipped_no_nearby_time} skipped — no matched anchor within 3 min\n`;
+      const orphans = j.orphans_total || 0;
+      const inferences = j.inferences || [];
+      if (orphans === 0) {
+        alert('No orphan photos on this drive — every photo is already linked.');
+        return;
       }
-      if (j.skipped_no_nearby_distance > 0) {
-        msg += `• ${j.skipped_no_nearby_distance} skipped — anchor was outside 30m\n`;
+      if (inferences.length === 0) {
+        alert(`Found ${orphans} orphan photo${orphans === 1 ? '' : 's'} but none had a nearby anchor within 60 seconds + 15 meters.\n\n` +
+              `Use "📸 View photos" → click the unmatched photo → pick a house from the dropdown to link manually.`);
+        return;
       }
-      msg += `\nOpen "📸 View photos" to spot-check the inferences. Each back-filled photo has a note explaining which anchor it inherited from.`;
-      alert(msg);
-      await inspLoadRecent();
+      _inspBackfillState = {
+        inspectionId,
+        inferences,           // [{orphan_id, orphan_signed_url, anchor_id, anchor_signed_url, proposed_property_id, proposed_address, time_delta_sec, distance_m}, ...]
+        decisions: new Map(), // orphan_id → 'confirm' | 'reject'
+        idx: 0,
+        orphans_total: orphans,
+        skipped_no_nearby_time: j.skipped_no_nearby_time || 0,
+        skipped_no_nearby_distance: j.skipped_no_nearby_distance || 0,
+      };
+      inspOpenBackfillReview();
     } catch (e) {
-      alert('Back-fill failed: ' + e.message);
+      alert('Back-fill preview failed: ' + e.message);
     } finally {
       if (btn) { btn.disabled = false; btn.innerHTML = original; }
     }
   }
   window.inspBackfillOrphans = inspBackfillOrphans;
+
+  let _inspBackfillState = null;
+
+  function inspOpenBackfillReview() {
+    let modal = document.getElementById('inspBackfillModal');
+    if (!modal) {
+      modal = document.createElement('div');
+      modal.id = 'inspBackfillModal';
+      modal.style.cssText = 'display:none; position:fixed; inset:0; background:#0B1D34; z-index:9997; flex-direction:column;';
+      modal.innerHTML = `
+        <div style="display:flex; align-items:center; gap:12px; padding:10px 16px; background:#000; color:#fff; flex-wrap:wrap;">
+          <div style="font-weight:700; font-size:14px;">🔗 Back-fill review</div>
+          <div id="inspBackfillProgress" style="font-size:12.5px; color:#cbd5e1;"></div>
+          <div style="flex:1;"></div>
+          <button onclick="inspBackfillApplyConfirmed()" style="background:#15803d; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">✓ Apply all confirmed</button>
+          <button onclick="inspCloseBackfillReview()" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
+        </div>
+        <div style="padding:14px 18px; background:#fef3c7; color:#92400e; font-size:12.5px;">
+          ⚠ Wrong attribution = wrong violation letter. Look at BOTH photos. If the anchor is the same house as the orphan, confirm. Otherwise reject — you can link it manually in View photos.
+        </div>
+        <div style="flex:1; display:grid; grid-template-columns:1fr 1fr; gap:8px; padding:14px; min-height:0; background:#0B1D34;">
+          <div style="display:flex; flex-direction:column; min-height:0;">
+            <div style="color:#fbbf24; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; padding:4px 6px;">ORPHAN (no property yet)</div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; background:#000; border-radius:8px; min-height:0; overflow:hidden;">
+              <img id="inspBackfillOrphanImg" src="" style="max-width:100%; max-height:100%; display:block;">
+            </div>
+            <div id="inspBackfillOrphanMeta" style="color:#cbd5e1; font-size:11px; padding:4px 6px;"></div>
+          </div>
+          <div style="display:flex; flex-direction:column; min-height:0;">
+            <div style="color:#86efac; font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; padding:4px 6px;">ANCHOR (has property)</div>
+            <div style="flex:1; display:flex; align-items:center; justify-content:center; background:#000; border-radius:8px; min-height:0; overflow:hidden;">
+              <img id="inspBackfillAnchorImg" src="" style="max-width:100%; max-height:100%; display:block;">
+            </div>
+            <div id="inspBackfillAnchorMeta" style="color:#cbd5e1; font-size:11px; padding:4px 6px;"></div>
+          </div>
+        </div>
+        <div id="inspBackfillProposed" style="text-align:center; color:#fff; font-size:15px; padding:14px; background:#000;"></div>
+        <div style="display:flex; justify-content:center; gap:14px; padding:14px 18px; background:#000;">
+          <button onclick="inspBackfillPrev()" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:10px 18px; border-radius:6px; font-size:13px; cursor:pointer;">← Previous</button>
+          <button onclick="inspBackfillDecide('reject')" id="inspBackfillRejectBtn" style="background:#7f1d1d; color:#fff; border:0; padding:10px 22px; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer;">✕ Reject (different house)</button>
+          <button onclick="inspBackfillDecide('confirm')" id="inspBackfillConfirmBtn" style="background:#15803d; color:#fff; border:0; padding:10px 22px; border-radius:6px; font-size:14px; font-weight:700; cursor:pointer;">✓ Confirm (same house)</button>
+          <button onclick="inspBackfillNext()" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:10px 18px; border-radius:6px; font-size:13px; cursor:pointer;">Next →</button>
+        </div>
+      `;
+      document.body.appendChild(modal);
+    }
+    modal.style.display = 'flex';
+    inspBackfillRender();
+  }
+
+  function inspBackfillRender() {
+    const s = _inspBackfillState;
+    if (!s) return;
+    const inf = s.inferences[s.idx];
+    if (!inf) return;
+    document.getElementById('inspBackfillProgress').textContent =
+      `${s.idx + 1} of ${s.inferences.length} · ${[...s.decisions.values()].filter(v => v === 'confirm').length} confirmed · ${[...s.decisions.values()].filter(v => v === 'reject').length} rejected`;
+    document.getElementById('inspBackfillOrphanImg').src = inf.orphan_signed_url || '';
+    document.getElementById('inspBackfillAnchorImg').src = inf.anchor_signed_url || '';
+    document.getElementById('inspBackfillOrphanMeta').textContent =
+      inf.orphan_captured_at ? new Date(inf.orphan_captured_at).toLocaleString() : '';
+    document.getElementById('inspBackfillAnchorMeta').textContent =
+      (inf.anchor_captured_at ? new Date(inf.anchor_captured_at).toLocaleString() : '') +
+      (inf.proposed_address ? '  ·  ' + inf.proposed_address : '');
+    const decision = s.decisions.get(inf.orphan_id);
+    document.getElementById('inspBackfillProposed').innerHTML =
+      `Proposed link: <strong style="color:#fbbf24;">${(inf.proposed_address || '(loading address…)').replace(/</g, '&lt;')}</strong> ` +
+      `<span style="font-size:12px; color:#94a3b8;">(${inf.time_delta_sec}s apart${inf.distance_m ? ', ' + inf.distance_m + 'm' : ''})</span>` +
+      (decision === 'confirm' ? '<div style="color:#86efac; font-size:13px; margin-top:6px;">✓ Confirmed — will be applied on Apply.</div>' :
+       decision === 'reject'  ? '<div style="color:#fca5a5; font-size:13px; margin-top:6px;">✕ Rejected — link manually in View photos instead.</div>' :
+       '<div style="color:#cbd5e1; font-size:13px; margin-top:6px;">Pick Confirm or Reject below.</div>');
+  }
+
+  function inspBackfillDecide(decision) {
+    const s = _inspBackfillState;
+    if (!s) return;
+    const inf = s.inferences[s.idx];
+    if (!inf) return;
+    s.decisions.set(inf.orphan_id, decision);
+    inspBackfillNext();
+  }
+  window.inspBackfillDecide = inspBackfillDecide;
+
+  function inspBackfillNext() {
+    const s = _inspBackfillState;
+    if (!s) return;
+    if (s.idx < s.inferences.length - 1) {
+      s.idx += 1;
+    } else {
+      // Already at last
+    }
+    inspBackfillRender();
+  }
+  function inspBackfillPrev() {
+    const s = _inspBackfillState;
+    if (!s) return;
+    if (s.idx > 0) s.idx -= 1;
+    inspBackfillRender();
+  }
+  window.inspBackfillNext = inspBackfillNext;
+  window.inspBackfillPrev = inspBackfillPrev;
+
+  function inspCloseBackfillReview() {
+    const m = document.getElementById('inspBackfillModal');
+    if (m) m.style.display = 'none';
+  }
+  window.inspCloseBackfillReview = inspCloseBackfillReview;
+
+  async function inspBackfillApplyConfirmed() {
+    const s = _inspBackfillState;
+    if (!s) return;
+    const confirmedInferences = s.inferences
+      .filter(inf => s.decisions.get(inf.orphan_id) === 'confirm')
+      .map(inf => ({ orphan_id: inf.orphan_id, property_id: inf.proposed_property_id }));
+    if (confirmedInferences.length === 0) {
+      alert('No inferences confirmed yet. Use Confirm on at least one before applying.');
+      return;
+    }
+    if (!confirm(`Apply ${confirmedInferences.length} confirmed link${confirmedInferences.length === 1 ? '' : 's'}?\n\nObservations are NOT auto-created. After linking, open View photos and use "+ Add violation" on each linked photo to materialize observations from the AI findings — that confirmation step lives with you so we never auto-attribute a violation letter.`)) return;
+    try {
+      const r = await fetch('/api/inspections/' + encodeURIComponent(s.inspectionId) + '/backfill-orphan-photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirmed_inferences: confirmedInferences }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      alert(`✓ Linked ${j.linked} photo${j.linked === 1 ? '' : 's'}.\n\nOpen "📸 View photos" → for each linked photo, use "+ Add violation" to materialize the observations from AI findings (after you spot-check the address one more time).`);
+      inspCloseBackfillReview();
+      await inspLoadRecent();
+    } catch (e) {
+      alert('Apply failed: ' + e.message);
+    }
+  }
+  window.inspBackfillApplyConfirmed = inspBackfillApplyConfirmed;
 
   async function inspViewSessionPhotos(inspectionId) {
     console.log('[inspector] Opening review modal for inspection', inspectionId);
