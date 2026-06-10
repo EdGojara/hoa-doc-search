@@ -3616,6 +3616,79 @@ router.post('/violations/:id/assess-fine', express.json(), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
+// POST /api/enforcement/violations/:id/resolve
+//   Manually close an open violation. Ed 2026-06-10: needed for the cases
+//   where a violation gets cured WITHOUT a fresh inspection finding —
+//   homeowner emails/texts a photo saying "we mowed", manager spots the
+//   cure during a drive-by without logging a full inspection, or the
+//   board says "let's drop this one" for a documented reason.
+//
+//   The system already auto-closes when a new inspection at the property
+//   finds the category clean. This endpoint covers the explicit-manual
+//   close path so staff don't have to log a fake inspection to close
+//   one violation.
+//
+//   Body: { resolved_via, resolved_notes }
+//     resolved_via: 'manual_cured' (default) | 'manual_board_dismissed' |
+//                   'manual_owner_confirmed' | 'manual_other'
+//     resolved_notes: free text required for audit trail
+//
+//   Refuses if violation is already in a terminal stage. Single source of
+//   truth: this is the ONLY way to set current_stage='cured' or 'closed'
+//   from outside the AI-analyze observation chain.
+// ---------------------------------------------------------------------------
+const ALLOWED_RESOLVE_VIA = new Set([
+  'manual_cured',
+  'manual_board_dismissed',
+  'manual_owner_confirmed',
+  'manual_other',
+]);
+router.post('/violations/:id/resolve', express.json(), async (req, res) => {
+  try {
+    const violationId = req.params.id;
+    const body = req.body || {};
+    const resolvedVia = body.resolved_via || 'manual_cured';
+    const resolvedNotes = (body.resolved_notes || '').trim();
+    if (!ALLOWED_RESOLVE_VIA.has(resolvedVia)) {
+      return res.status(400).json({ error: `resolved_via must be one of: ${[...ALLOWED_RESOLVE_VIA].join(', ')}` });
+    }
+    if (!resolvedNotes) {
+      return res.status(400).json({ error: 'resolved_notes required for audit trail' });
+    }
+
+    const { data: v, error: vErr } = await supabase
+      .from('violations')
+      .select('id, current_stage, property_id, community_id')
+      .eq('id', violationId)
+      .maybeSingle();
+    if (vErr || !v) return res.status(404).json({ error: 'violation not found' });
+    if (v.current_stage === 'cured' || v.current_stage === 'closed' || v.current_stage === 'voided') {
+      return res.status(400).json({ error: `violation already in terminal stage '${v.current_stage}'` });
+    }
+
+    const targetStage = (resolvedVia === 'manual_board_dismissed' || resolvedVia === 'manual_other')
+      ? 'closed'
+      : 'cured';
+
+    const { error: uErr } = await supabase
+      .from('violations')
+      .update({
+        current_stage: targetStage,
+        resolved_via: resolvedVia,
+        resolved_at: new Date().toISOString(),
+        resolved_notes: resolvedNotes,
+      })
+      .eq('id', violationId);
+    if (uErr) return res.status(500).json({ error: uErr.message });
+
+    res.json({ ok: true, violation_id: violationId, new_stage: targetStage, resolved_via: resolvedVia });
+  } catch (err) {
+    console.error('[enforcement.resolve]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // GET /api/enforcement/fine-queue?community_id=&status=
 //   Lists fines in the posting queue. Default: queued + recently posted.
 // ---------------------------------------------------------------------------
