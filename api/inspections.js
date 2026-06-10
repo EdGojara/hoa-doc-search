@@ -2939,6 +2939,190 @@ router.post('/inspections/observations/:id/reject', express.json(), async (req, 
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// POST /api/inspections/:id/backfill-orphan-photos
+// Ed 2026-06-10 — recovery from the sticky-property bug that orphaned ~97
+// photos in his June 9 drive. For each unmatched photo, find the nearest
+// MATCHED photo from the same inspection by time + GPS. If within tight
+// thresholds (default: 3 minutes + 30 meters), inherit its property_id and
+// materialize observations from the photo's ai_findings.
+//
+// All inferred links are flagged in reviewer_notes so the operator can
+// spot-check and unlink any wrong inferences via the existing
+// /link-property endpoint.
+//
+// Body (all optional):
+//   { time_window_seconds: 180, distance_meters: 30, dry_run: false }
+// ---------------------------------------------------------------------------
+router.post('/inspections/:id/backfill-orphan-photos', express.json(), async (req, res) => {
+  try {
+    const inspectionId = req.params.id;
+    const timeWindowSec = (req.body && req.body.time_window_seconds) || 180;
+    const distMeters = (req.body && req.body.distance_meters) || 30;
+    const dryRun = !!(req.body && req.body.dry_run);
+
+    const { data: insp } = await supabase
+      .from('inspections')
+      .select('id, community_id')
+      .eq('id', inspectionId)
+      .maybeSingle();
+    if (!insp) return res.status(404).json({ error: 'inspection_not_found' });
+
+    const { data: allPhotos, error } = await supabase
+      .from('inspection_photos')
+      .select('id, captured_at, gps_lat, gps_lng, polygon_match_property_id, reviewer_confirmed_property_id, ai_findings, ai_is_clean')
+      .eq('inspection_id', inspectionId)
+      .order('captured_at', { ascending: true });
+    if (error) throw error;
+
+    const matched = (allPhotos || []).filter(p =>
+      p.polygon_match_property_id || p.reviewer_confirmed_property_id
+    ).map(p => ({
+      ...p,
+      _property_id: p.polygon_match_property_id || p.reviewer_confirmed_property_id,
+      _ts: p.captured_at ? new Date(p.captured_at).getTime() : 0,
+    }));
+    const orphans = (allPhotos || []).filter(p =>
+      !(p.polygon_match_property_id || p.reviewer_confirmed_property_id)
+    );
+    if (orphans.length === 0) {
+      return res.json({ ok: true, orphans: 0, linked: 0, message: 'no orphan photos found' });
+    }
+    if (matched.length === 0) {
+      return res.json({ ok: true, orphans: orphans.length, linked: 0, message: 'no matched anchor photos to inherit from — link at least one photo per house manually first' });
+    }
+
+    // For each orphan, find nearest-in-time matched photo
+    const haversineM = (lat1, lng1, lat2, lng2) => {
+      if (lat1 == null || lng1 == null || lat2 == null || lng2 == null) return null;
+      const R = 6371000;
+      const φ1 = lat1 * Math.PI/180, φ2 = lat2 * Math.PI/180;
+      const Δφ = (lat2 - lat1) * Math.PI/180, Δλ = (lng2 - lng1) * Math.PI/180;
+      const a = Math.sin(Δφ/2)**2 + Math.cos(φ1)*Math.cos(φ2)*Math.sin(Δλ/2)**2;
+      return 2 * R * Math.asin(Math.sqrt(a));
+    };
+
+    // Resolve enforcement category ids once for observation materialization
+    const { data: cats } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug');
+    const slugToId = new Map();
+    (cats || []).forEach(c => slugToId.set(c.slug, c.id));
+
+    let linkedCount = 0;
+    let skippedFarTime = 0;
+    let skippedFarDistance = 0;
+    let observationsCreated = 0;
+    const inferences = [];
+
+    for (const orph of orphans) {
+      const ts = orph.captured_at ? new Date(orph.captured_at).getTime() : null;
+      if (ts == null) { skippedFarTime++; continue; }
+      // Find matched photos within time window
+      const candidates = matched.filter(m => Math.abs(m._ts - ts) <= timeWindowSec * 1000);
+      if (candidates.length === 0) { skippedFarTime++; continue; }
+      // If photo has GPS, filter by distance too. Otherwise time alone.
+      let best = null;
+      let bestDist = Infinity;
+      let bestTimeDelta = Infinity;
+      for (const c of candidates) {
+        const d = (orph.gps_lat != null && c.gps_lat != null)
+          ? haversineM(orph.gps_lat, orph.gps_lng, c.gps_lat, c.gps_lng)
+          : null;
+        const td = Math.abs(c._ts - ts);
+        // If distance is computable, must be within distMeters
+        if (d != null && d > distMeters) continue;
+        // Score: prefer smaller time delta, ties broken by smaller distance
+        if (td < bestTimeDelta || (td === bestTimeDelta && (d || 0) < bestDist)) {
+          best = c;
+          bestTimeDelta = td;
+          bestDist = d || 0;
+        }
+      }
+      if (!best) { skippedFarDistance++; continue; }
+
+      inferences.push({
+        orphan_id: orph.id,
+        inherited_from: best.id,
+        inherited_property_id: best._property_id,
+        time_delta_sec: Math.round(bestTimeDelta / 1000),
+        distance_m: Math.round(bestDist),
+      });
+
+      if (dryRun) continue;
+
+      // Apply the link
+      try {
+        await supabase
+          .from('inspection_photos')
+          .update({
+            reviewer_confirmed_property_id: best._property_id,
+            polygon_match_property_id: orph.polygon_match_property_id || best._property_id,
+            reviewed_at: new Date().toISOString(),
+            notes: ((orph.notes || '') + ` · backfilled from photo ${best.id} (${Math.round(bestTimeDelta/1000)}s apart${bestDist ? ', ' + Math.round(bestDist) + 'm' : ''})`).slice(0, 500),
+          })
+          .eq('id', orph.id);
+        linkedCount += 1;
+
+        // Materialize observations from ai_findings if present
+        const findings = Array.isArray(orph.ai_findings) ? orph.ai_findings : [];
+        if (orph.ai_is_clean && findings.length === 0) {
+          const { error: err } = await supabase.from('property_observations').insert({
+            inspection_id:        inspectionId,
+            inspection_photo_id:  orph.id,
+            property_id:          best._property_id,
+            community_id:         insp.community_id,
+            severity:             'clean',
+            ai_description:       'AI saw no violations in this photo.',
+            ai_confidence:        'high',
+            reviewer_status:      'rejected',
+            reviewed_at:          new Date().toISOString(),
+            reviewer_notes:       `AI: no violation visible — back-filled link from photo ${best.id}.`,
+            observed_at:          orph.captured_at || new Date().toISOString(),
+          });
+          if (!err) observationsCreated += 1;
+        } else if (findings.length > 0) {
+          for (const f of findings) {
+            const { error: err } = await supabase.from('property_observations').insert({
+              inspection_id:         inspectionId,
+              inspection_photo_id:   orph.id,
+              property_id:           best._property_id,
+              community_id:          insp.community_id,
+              category_id:           (f.category_slug && slugToId.get(f.category_slug)) || null,
+              severity:              f.severity || 'minor',
+              ai_description:        f.description || null,
+              ai_recommended_action: f.recommended_action || 'courtesy',
+              ai_confidence:         f.confidence || 'low',
+              reviewer_status:       'pending',
+              reviewer_notes:        `Back-filled link from photo ${best.id} (${Math.round(bestTimeDelta/1000)}s apart). ${f.notes || ''}`.trim(),
+              observed_at:           orph.captured_at || new Date().toISOString(),
+            });
+            if (!err) observationsCreated += 1;
+          }
+        }
+      } catch (e) {
+        console.warn('[backfill] link failed for', orph.id, e.message);
+      }
+    }
+
+    res.json({
+      ok: true,
+      dry_run: dryRun,
+      orphans_total: orphans.length,
+      linked: linkedCount,
+      observations_created: observationsCreated,
+      skipped_no_nearby_time: skippedFarTime,
+      skipped_no_nearby_distance: skippedFarDistance,
+      time_window_seconds: timeWindowSec,
+      distance_meters: distMeters,
+      inferences: dryRun ? inferences : inferences.slice(0, 50),  // cap in non-dry payload
+    });
+  } catch (err) {
+    console.error('[inspections.backfill-orphan-photos]', err.message);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // PATCH /api/inspections/photos/:id/link-property
 // Ed 2026-06-10 — back-link an unmatched photo to a property after the fact.
 // Sets reviewer_confirmed_property_id + polygon_match_property_id.

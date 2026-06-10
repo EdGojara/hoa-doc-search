@@ -22145,6 +22145,72 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     return modal;
   }
 
+  // Back-fill orphan photos via spatiotemporal proximity. Two-step:
+  //   1. dry_run=true → preview how many would be linked + show 3 examples
+  //   2. confirm → re-call without dry_run to apply
+  async function inspBackfillOrphans(inspectionId, btn) {
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Previewing…'; }
+    try {
+      // STEP 1 — dry run preview
+      const dr = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/backfill-orphan-photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run: true }),
+      });
+      const dj = await dr.json();
+      if (!dr.ok) throw new Error(dj.error || ('HTTP ' + dr.status));
+      const wouldLink = dj.linked || (dj.inferences ? dj.inferences.length : 0);
+      const orphans = dj.orphans_total || 0;
+      if (orphans === 0) {
+        alert('No orphan photos on this drive — every photo is already linked to a property.');
+        return;
+      }
+      if (wouldLink === 0) {
+        alert(`Found ${orphans} orphan photo${orphans === 1 ? '' : 's'} but none could be inferred from nearby anchors. Either:\n` +
+              `• No matched photos exist on this drive to inherit from, OR\n` +
+              `• The orphan photos are too far in time/distance from any matched photo.\n\n` +
+              `Use the property dropdown inside View photos to link them manually.`);
+        return;
+      }
+      // Show preview + ask
+      let preview = `Found ${orphans} orphan photo${orphans === 1 ? '' : 's'}. ${wouldLink} can be inferred from nearby matched photos.\n\n` +
+                    `Defaults: within 3 minutes + 30 meters of an anchor.\n\nFirst few inferences:\n`;
+      for (let i = 0; i < Math.min(5, (dj.inferences || []).length); i++) {
+        const inf = dj.inferences[i];
+        preview += `• photo ${inf.orphan_id.slice(0, 8)}… → inherit from ${inf.inherited_from.slice(0, 8)}… (${inf.time_delta_sec}s apart, ${inf.distance_m}m)\n`;
+      }
+      preview += `\nProceed with back-fill?`;
+      if (!confirm(preview)) return;
+
+      // STEP 2 — apply
+      if (btn) btn.innerHTML = '⏳ Linking…';
+      const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId) + '/backfill-orphan-photos', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ dry_run: false }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      let msg = `✓ Back-filled ${j.linked} photo${j.linked === 1 ? '' : 's'}.\n\n` +
+                `• ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created from stored AI findings\n`;
+      if (j.skipped_no_nearby_time > 0) {
+        msg += `• ${j.skipped_no_nearby_time} skipped — no matched anchor within 3 min\n`;
+      }
+      if (j.skipped_no_nearby_distance > 0) {
+        msg += `• ${j.skipped_no_nearby_distance} skipped — anchor was outside 30m\n`;
+      }
+      msg += `\nOpen "📸 View photos" to spot-check the inferences. Each back-filled photo has a note explaining which anchor it inherited from.`;
+      alert(msg);
+      await inspLoadRecent();
+    } catch (e) {
+      alert('Back-fill failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+  }
+  window.inspBackfillOrphans = inspBackfillOrphans;
+
   async function inspViewSessionPhotos(inspectionId) {
     console.log('[inspector] Opening review modal for inspection', inspectionId);
     inspBuildReviewModal();
@@ -22590,6 +22656,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             🔄 Re-analyze (multi-violation)
           </button>
         ` : '';
+        // Back-fill orphaned photos via spatiotemporal proximity. Recovery
+        // tool for the sticky-property bug — links unmatched photos to the
+        // nearest-in-time MATCHED photo from the same drive.
+        const backfillBtn = canAnalyze ? `
+          <button type="button" onclick="inspBackfillOrphans('${i.id}', this)"
+                  style="background: #fbbf24; color: #0B1D34; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
+                  title="For unmatched photos: inherit the property_id from the nearest-in-time photo that DOES have one. Recovery for the sticky-property bug. Defaults: 3 minutes + 30 meters.">
+            🔗 Back-fill orphans
+          </button>
+        ` : '';
         // Admin-only force-delete button. Shown to role='admin' users on
         // BOTH active and closed inspections — bypasses the regular Discard
         // refusal gates (finalized status + opened-violations). Voids any
@@ -22615,6 +22691,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${viewPhotosBtn}
             ${analyzeBtn}
+            ${backfillBtn}
             <button type="button" onclick="inspResume('${i.id}')"
                     style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
@@ -22627,6 +22704,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${viewPhotosBtn}
             ${analyzeBtn}
+            ${backfillBtn}
             <button type="button" onclick="inspResume('${i.id}')"
                     style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Reload this inspection into the live capture UI — add more photos, delete the wrong ones, retry analyze, then Finalize when done.">
