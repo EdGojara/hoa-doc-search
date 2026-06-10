@@ -2939,6 +2939,98 @@ router.post('/inspections/observations/:id/reject', express.json(), async (req, 
 
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
+// PATCH /api/inspections/photos/:id/link-property
+// Ed 2026-06-10 — back-link an unmatched photo to a property after the fact.
+// Sets reviewer_confirmed_property_id + polygon_match_property_id.
+// If the photo has ai_findings stored, automatically materializes them into
+// property_observations rows so the audit chain catches up.
+// ---------------------------------------------------------------------------
+router.patch('/inspections/photos/:id/link-property', express.json(), async (req, res) => {
+  try {
+    const photoId = req.params.id;
+    const propertyId = req.body && req.body.property_id;
+    if (!propertyId) return res.status(400).json({ error: 'property_id_required' });
+
+    const { data: photo, error: phErr } = await supabase
+      .from('inspection_photos')
+      .select('id, inspection_id, captured_at, ai_findings, ai_is_clean, polygon_match_property_id, inspections(community_id)')
+      .eq('id', photoId)
+      .maybeSingle();
+    if (phErr) throw phErr;
+    if (!photo) return res.status(404).json({ error: 'photo_not_found' });
+
+    // Update the photo with the property link
+    const { error: upErr } = await supabase
+      .from('inspection_photos')
+      .update({
+        reviewer_confirmed_property_id: propertyId,
+        polygon_match_property_id: photo.polygon_match_property_id || propertyId,
+        reviewed_at: new Date().toISOString(),
+      })
+      .eq('id', photoId);
+    if (upErr) throw upErr;
+
+    // If the photo already has ai_findings, materialize them as observations
+    const communityId = photo.inspections?.community_id;
+    const findings = Array.isArray(photo.ai_findings) ? photo.ai_findings : [];
+    let observationsCreated = 0;
+
+    if (photo.ai_is_clean && findings.length === 0) {
+      // Insert a clean observation
+      const { error } = await supabase.from('property_observations').insert({
+        inspection_id:        photo.inspection_id,
+        inspection_photo_id:  photoId,
+        property_id:          propertyId,
+        community_id:         communityId,
+        severity:             'clean',
+        ai_description:       'AI saw no violations in this photo.',
+        ai_confidence:        'high',
+        reviewer_status:      'rejected',
+        reviewed_at:          new Date().toISOString(),
+        reviewer_notes:       'AI: no violation visible — auto-filed for documentation only.',
+        observed_at:          photo.captured_at || new Date().toISOString(),
+      });
+      if (!error) observationsCreated += 1;
+    } else if (findings.length > 0) {
+      // Resolve category slugs to ids
+      const { data: cats } = await supabase
+        .from('enforcement_categories')
+        .select('id, slug');
+      const slugToId = new Map();
+      (cats || []).forEach(c => slugToId.set(c.slug, c.id));
+
+      for (const f of findings) {
+        const { error } = await supabase.from('property_observations').insert({
+          inspection_id:         photo.inspection_id,
+          inspection_photo_id:   photoId,
+          property_id:           propertyId,
+          community_id:          communityId,
+          category_id:           (f.category_slug && slugToId.get(f.category_slug)) || null,
+          severity:              f.severity || 'minor',
+          ai_description:        f.description || null,
+          ai_recommended_action: f.recommended_action || 'courtesy',
+          ai_confidence:         f.confidence || 'low',
+          reviewer_status:       'pending',
+          reviewer_notes:        f.notes || null,
+          observed_at:           photo.captured_at || new Date().toISOString(),
+        });
+        if (!error) observationsCreated += 1;
+      }
+    }
+
+    res.json({
+      ok: true,
+      property_id: propertyId,
+      observations_created: observationsCreated,
+      findings_materialized: findings.length,
+    });
+  } catch (err) {
+    console.error('[inspections.link-property]', err.message);
+    res.status(500).json({ error: err.message || 'failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // POST /api/inspections/photos/:photoId/add-violation
 // Ed 2026-06-09 — operator override when AI missed a violation. Symmetric
 // to the existing Reject button. Body:

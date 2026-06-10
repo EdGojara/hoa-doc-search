@@ -18446,6 +18446,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function inspEndPropertyPair() {
     inspState.stagedWidePhotoId = null;
     inspState.stagedWidePreviewUrl = null;
+    inspState.stagedWidePropertyHint = null;
+    // "Done with house" also clears the pre-selected property so the
+    // operator's NEXT capture starts fresh for the next house.
+    if (inspState.selectedPropertyId) inspClearSelectedProperty();
     inspUpdateCaptureUi();
   }
 
@@ -18898,8 +18902,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspRenderPhotos();
     inspUpdateQueueBadge();
 
-    // 5) Clear pre-selection so the NEXT capture doesn't re-attribute
-    if (inspState.selectedPropertyId) inspClearSelectedProperty();
+    // 5) Property selection is STICKY — keep it for follow-up photos on
+    //    the same house. Operator clears it explicitly by:
+    //      - Tapping "✓ Done with house" (pair mode)
+    //      - Tapping × on the selected-property chip (single mode)
+    //      - Tapping a different property on the map/list
+    //    The previous behavior cleared after every photo — that's the
+    //    "97 photos failed" bug Ed hit in the field (multi-shot houses
+    //    only got the first photo linked).
 
     // 6) Kick the uploader (also runs on its 5s timer)
     inspProcessUploadQueue();
@@ -22349,11 +22359,19 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const obs = (p.observations || []).filter(o => o.reviewer_status !== 'rejected');
     const violationObs = obs.filter(o => o.severity && o.severity !== 'clean');
 
-    // Header showing the unmatched warning + property linkage status
+    // Header showing the unmatched warning + property linkage status.
+    // For unmatched photos: inline dropdown to back-link to a property.
     let headerHtml = '';
     if (p.is_unmatched) {
-      headerHtml = `<div style="background:#92400e; color:#fff; padding:6px 12px; border-radius:6px; font-size:11.5px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px;">
-        <span>⚠ This photo isn't linked to a property yet. AI findings shown below but no observation created.</span>
+      headerHtml = `<div style="background:#92400e; color:#fff; padding:8px 12px; border-radius:6px; font-size:11.5px; margin-bottom:8px;">
+        <div style="margin-bottom:6px;">⚠ This photo isn't linked to a property yet.</div>
+        <div style="display:flex; gap:6px; align-items:center; flex-wrap:wrap;">
+          <select id="inspLinkPropSelect" style="flex:1; min-width:180px; padding:4px 8px; border-radius:5px; border:0; font-size:12px; color:#0B1D34;">
+            <option value="">— pick a house —</option>
+          </select>
+          <button onclick="inspReviewLinkPhotoProperty()" style="background:#fbbf24; color:#0B1D34; border:0; padding:4px 12px; border-radius:5px; font-size:12px; font-weight:700; cursor:pointer;">Link → create observations</button>
+        </div>
+        <div id="inspLinkPropStatus" style="font-size:11px; margin-top:6px; min-height:14px;"></div>
       </div>`;
     } else if (p.property_address) {
       headerHtml = `<div style="color:#86efac; font-size:11.5px; margin-bottom:6px;">🏠 ${p.property_address.replace(/</g, '&lt;')}</div>`;
@@ -22392,6 +22410,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     `;
     findings.innerHTML = bodyHtml;
+    // Hydrate the link-property dropdown if it's now in the DOM
+    if (p.is_unmatched) {
+      inspReviewHydratePropertyDropdown();
+    }
   }
 
   async function inspReviewRemoveObs(observationId) {
@@ -22427,6 +22449,86 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
   window.inspReviewRemoveObs = inspReviewRemoveObs;
+
+  // Populate the link-property dropdown lazily (community-scoped).
+  // Cached per-community on window._inspPropsCache.
+  window._inspPropsCache = window._inspPropsCache || {};
+  async function inspReviewHydratePropertyDropdown() {
+    const sel = document.getElementById('inspLinkPropSelect');
+    if (!sel) return;
+    // Figure out community from current inspection
+    const inspectionId = window._inspReview.inspectionId;
+    if (!inspectionId) return;
+    if (sel.dataset.hydrated === inspectionId) return;
+    sel.dataset.hydrated = inspectionId;
+
+    try {
+      // The inspection detail endpoint we already called includes
+      // inspection.community_id and inspection.communities. Use what we have.
+      // For Phase 1 just fetch every property in the community.
+      const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId));
+      if (!r.ok) return;
+      const j = await r.json();
+      const communityId = j.inspection?.community_id;
+      if (!communityId) return;
+      if (window._inspPropsCache[communityId]) {
+        _inspFillPropDropdown(window._inspPropsCache[communityId]);
+        return;
+      }
+      const pr = await fetch('/api/contacts/properties?community_id=' + encodeURIComponent(communityId));
+      if (!pr.ok) return;
+      const pj = await pr.json();
+      // pj.properties is an array of v_current_property_owners rows
+      const props = (pj.properties || pj || []).map(p => ({
+        id: p.property_id || p.id,
+        street_address: p.street_address || '',
+      })).filter(p => p.id).sort((a, b) => (a.street_address || '').localeCompare(b.street_address || ''));
+      window._inspPropsCache[communityId] = props;
+      _inspFillPropDropdown(props);
+    } catch (e) {
+      console.warn('[inspector] property dropdown hydrate failed:', e.message);
+    }
+  }
+  function _inspFillPropDropdown(props) {
+    const sel = document.getElementById('inspLinkPropSelect');
+    if (!sel) return;
+    sel.innerHTML = '<option value="">— pick a house —</option>' +
+      props.map(p => `<option value="${p.id}">${(p.street_address || '(no address)').replace(/</g, '&lt;')}</option>`).join('');
+  }
+
+  async function inspReviewLinkPhotoProperty() {
+    const p = window._inspReview.photos[window._inspReview.selectedPhotoIdx];
+    const sel = document.getElementById('inspLinkPropSelect');
+    const statusEl = document.getElementById('inspLinkPropStatus');
+    if (!p || !sel) return;
+    const propertyId = sel.value;
+    if (!propertyId) { if (statusEl) { statusEl.textContent = 'Pick a house first.'; statusEl.style.color = '#fbbf24'; } return; }
+    if (statusEl) { statusEl.textContent = '⚙ Linking + creating observations…'; statusEl.style.color = '#fff'; }
+    try {
+      const r = await fetch('/api/inspections/photos/' + encodeURIComponent(p.id) + '/link-property', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ property_id: propertyId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      if (statusEl) { statusEl.textContent = `✓ Linked. ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`; statusEl.style.color = '#86efac'; }
+      // Re-fetch the whole inspection to pick up the new property_address +
+      // synthesized observations.
+      setTimeout(async () => {
+        const inspId = window._inspReview.inspectionId;
+        const savedIdx = window._inspReview.selectedPhotoIdx;
+        await inspViewSessionPhotos(inspId);
+        // Restore the previous selection
+        window._inspReview.selectedPhotoIdx = Math.min(savedIdx, (window._inspReview.photos || []).length - 1);
+        inspReviewRenderMain();
+        inspReviewRenderSidebar();
+      }, 800);
+    } catch (e) {
+      if (statusEl) { statusEl.textContent = '✗ ' + e.message; statusEl.style.color = '#fca5a5'; }
+    }
+  }
+  window.inspReviewLinkPhotoProperty = inspReviewLinkPhotoProperty;
 
   function inspReviewAddViolation() {
     const p = window._inspReview.photos[window._inspReview.selectedPhotoIdx];
