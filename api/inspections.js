@@ -499,17 +499,17 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
           for (let i = 1; i < findings.length; i++) {
             const f = findings[i];
             const extra = {
-              property_id:    resolvedPropertyId,
-              inspection_id:  insp.id,
-              photo_id:       req.params.id,
-              observed_at:    new Date().toISOString(),
-              severity:       f.severity,
-              ai_description: f.description,
+              property_id:        resolvedPropertyId,
+              community_id:       insp.community_id,
+              inspection_id:      insp.id,
+              inspection_photo_id: req.params.id,
+              observed_at:        new Date().toISOString(),
+              severity:           f.severity,
+              ai_description:     f.description,
               ai_recommended_action: f.recommended_action,
-              ai_confidence:  f.confidence,
-              reviewer_status: 'pending',
-              reviewer_notes: f.notes || null,
-              is_violation:   true,
+              ai_confidence:      f.confidence,
+              reviewer_status:    'pending',
+              reviewer_notes:     f.notes || null,
             };
             if (f.category_slug && slugToId.has(f.category_slug)) {
               extra.category_id = slugToId.get(f.category_slug);
@@ -2100,16 +2100,21 @@ router.get('/inspections/:id', async (req, res, next) => {
     const { data: observations } = await supabase
       .from('property_observations')
       .select(`
-        id, photo_id, property_id, category_id, severity,
-        reviewer_status, is_violation, ai_confidence, ai_description,
-        violation_id, reviewer_notes
+        id, inspection_photo_id, property_id, category_id, severity,
+        reviewer_status, ai_confidence, ai_description,
+        reviewer_notes
       `)
       .eq('inspection_id', id);
     const obsByPhoto = new Map();
     for (const o of (observations || [])) {
-      if (!o.photo_id) continue;
-      if (!obsByPhoto.has(o.photo_id)) obsByPhoto.set(o.photo_id, []);
-      obsByPhoto.get(o.photo_id).push(o);
+      const pid = o.inspection_photo_id;
+      if (!pid) continue;
+      // Derive is_violation from severity (since the column might not exist
+      // on all observation rows — multi-finding analyze sets severity per
+      // finding and 'clean' severity marks no-violation rows).
+      o.is_violation = (o.severity && o.severity !== 'clean' && o.reviewer_status !== 'rejected');
+      if (!obsByPhoto.has(pid)) obsByPhoto.set(pid, []);
+      obsByPhoto.get(pid).push(o);
     }
 
     // Generate signed URLs for the storage paths so the frontend can render
@@ -2158,9 +2163,8 @@ router.get('/inspections/:id', async (req, res, next) => {
 router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
   try {
     const inspectionId = req.params.id;
-    const force = !!(req.body && req.body.force);
+    const force = (req.body && req.body.force) !== false;  // default TRUE — re-analyze always replaces
 
-    // Pull the inspection + its photos
     const { data: insp, error: iErr } = await supabase
       .from('inspections')
       .select('id, community_id, status, communities(id, name)')
@@ -2170,20 +2174,21 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
 
     const { data: photos, error: pErr } = await supabase
       .from('inspection_photos')
-      .select('id, storage_path, polygon_match_property_id, ai_detected_house_number')
+      .select('id, storage_path, polygon_match_property_id, captured_at')
       .eq('inspection_id', inspectionId);
     if (pErr) return res.status(500).json({ error: pErr.message });
     if (!photos || photos.length === 0) {
       return res.json({ analyzed: 0, observations_created: 0, message: 'no photos in this inspection' });
     }
 
-    // Find existing observations to skip (idempotent) unless force=true
     const photoIds = photos.map((p) => p.id);
     const { data: existingObs } = await supabase
       .from('property_observations')
       .select('id, inspection_photo_id')
       .in('inspection_photo_id', photoIds);
 
+    // Force mode (default): delete existing observations for these photos so
+    // the new findings are the source of truth.
     if (force && existingObs && existingObs.length > 0) {
       await supabase.from('property_observations').delete().in('id', existingObs.map((o) => o.id));
     }
@@ -2191,24 +2196,23 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
       ? new Set(existingObs.map((o) => o.inspection_photo_id))
       : new Set();
 
-    // Pull the enforcement category list once (passed to categorizePhoto)
     const { data: categories } = await supabase
       .from('enforcement_categories')
-      .select('id, code, label, description')
-      .eq('is_active', true)
-      .order('label');
-    const catBySlug = new Map();
-    (categories || []).forEach((c) => catBySlug.set(c.code, c));
+      .select('id, slug, label, description')
+      .order('display_order');
+    const slugToId = new Map();
+    (categories || []).forEach((c) => slugToId.set(c.slug, c.id));
 
-    // Analyze each photo
     let analyzedCount = 0;
     let observationsCreated = 0;
+    let photosWithFindings = 0;
+    let photosClean = 0;
     const failures = [];
 
     for (const photo of photos) {
       if (skipPhotoIds.has(photo.id)) continue;
 
-      // Download photo bytes from storage
+      // Download bytes
       let imageBuffer = null;
       try {
         const { data: blob, error: dlErr } = await supabase.storage
@@ -2228,50 +2232,73 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
         context: { community_name: insp.communities && insp.communities.name },
       });
       analyzedCount += 1;
-
-      if (!result || !result.is_violation) {
-        // Still record the analysis result on the photo for audit, but don't
-        // create an observation (no violation visible)
+      if (!result) {
+        failures.push({ photo_id: photo.id, reason: 'ai_returned_null' });
         continue;
       }
 
-      const cat = result.category_slug ? catBySlug.get(result.category_slug) : null;
+      const findings = result.findings || [];
 
-      // Insert observation
-      const insertRow = {
-        inspection_id:         inspectionId,
-        inspection_photo_id:   photo.id,
-        property_id:           photo.polygon_match_property_id || null,
-        community_id:          insp.community_id,
-        category_id:           cat ? cat.id : null,
-        severity:              result.severity || 'minor',
-        ai_description:        result.description || null,
-        ai_recommended_action: result.recommended_action || 'courtesy',
-        ai_confidence:         result.confidence || 'low',
-        reviewer_status:       'pending',
-      };
-
-      // property_observations requires property_id OR common_area_id by
-      // constraint. If neither is set, skip the insert and surface in failures.
-      if (!insertRow.property_id) {
-        // Stash a placeholder observation tied to the inspection only via the
-        // photo link; reviewer queue picks it up by inspection_photo_id.
-        // We use common_area_id=NULL + property_id=NULL would fail the CHECK;
-        // so for v1 we require polygon_match_property_id to have been set
-        // upstream. Report and skip.
-        failures.push({ photo_id: photo.id, reason: 'no_property_match', hint: 'photo lacks polygon_match_property_id — reviewer queue UI will support manual link in next pass' });
+      // Property requirement — observations need a property_id (or common_area).
+      // For unmatched photos, surface as failure and move on.
+      if (!photo.polygon_match_property_id) {
+        if (findings.length > 0) {
+          failures.push({ photo_id: photo.id, reason: 'no_property_match', findings_count: findings.length, hint: 'Photo lacks polygon_match_property_id — link manually via /api/inspections/observations/:id PATCH.' });
+        }
         continue;
       }
 
-      const { error: obsErr } = await supabase.from('property_observations').insert(insertRow);
-      if (obsErr) {
-        failures.push({ photo_id: photo.id, reason: 'insert_failed', error: obsErr.message });
+      // Clean photo: insert ONE "clean" observation as a marker so it shows
+      // up in the audit view as analyzed-clean.
+      if (result.is_clean || findings.length === 0) {
+        const { error } = await supabase.from('property_observations').insert({
+          inspection_id:        inspectionId,
+          inspection_photo_id:  photo.id,
+          property_id:          photo.polygon_match_property_id,
+          community_id:         insp.community_id,
+          severity:             'clean',
+          ai_description:       'AI saw no violations in this photo.',
+          ai_confidence:        'high',
+          reviewer_status:      'rejected',
+          reviewed_at:          new Date().toISOString(),
+          reviewer_notes:       'AI: no violation visible — auto-filed for documentation only.',
+          observed_at:          photo.captured_at || new Date().toISOString(),
+        });
+        if (!error) {
+          photosClean += 1;
+          observationsCreated += 1;
+        } else {
+          failures.push({ photo_id: photo.id, reason: 'clean_insert_failed', error: error.message });
+        }
         continue;
       }
-      observationsCreated += 1;
+
+      // Findings: one observation row per finding
+      photosWithFindings += 1;
+      for (const f of findings) {
+        const insertRow = {
+          inspection_id:         inspectionId,
+          inspection_photo_id:   photo.id,
+          property_id:           photo.polygon_match_property_id,
+          community_id:          insp.community_id,
+          category_id:           (f.category_slug && slugToId.get(f.category_slug)) || null,
+          severity:              f.severity || 'minor',
+          ai_description:        f.description || null,
+          ai_recommended_action: f.recommended_action || 'courtesy',
+          ai_confidence:         f.confidence || 'low',
+          reviewer_status:       'pending',
+          reviewer_notes:        f.notes || null,
+          observed_at:           photo.captured_at || new Date().toISOString(),
+        };
+        const { error: obsErr } = await supabase.from('property_observations').insert(insertRow);
+        if (obsErr) {
+          failures.push({ photo_id: photo.id, reason: 'insert_failed', error: obsErr.message });
+          continue;
+        }
+        observationsCreated += 1;
+      }
     }
 
-    // Bump inspection status if we made progress
     if (analyzedCount > 0) {
       await supabase
         .from('inspections')
@@ -2282,10 +2309,13 @@ router.post('/inspections/:id/analyze', express.json(), async (req, res) => {
     res.json({
       inspection_id: inspectionId,
       analyzed: analyzedCount,
+      photos_with_findings: photosWithFindings,
+      photos_clean: photosClean,
       observations_created: observationsCreated,
       photos_total: photos.length,
       photos_skipped_already_analyzed: skipPhotoIds.size,
       failures,
+      mode: 'multi_violation',
     });
   } catch (err) {
     console.error('[inspections.analyze]', err);
@@ -2876,49 +2906,30 @@ router.post('/inspections/photos/:photoId/add-violation', express.json(), async 
     }
     const communityId = photo.inspections?.community_id;
 
-    // Step 1 — observation: upsert
-    const { data: existing } = await supabase
-      .from('property_observations')
-      .select('id')
-      .eq('photo_id', photoId)
-      .limit(1)
-      .maybeSingle();
-
+    // Step 1 — operator-add ALWAYS creates a new observation row so the
+    // operator can stack multiple findings on one photo (multi-violation
+    // mode). Existing observations from AI stay untouched.
     const now = new Date().toISOString();
-    const obsPatch = {
-      property_id: resolvedPropertyId,
-      category_id,
-      severity,
-      reviewer_status: 'confirmed',
-      reviewed_at: now,
-      reviewer_notes: notes || '(operator override — AI missed this)',
-      is_violation: true,
-    };
-
-    let observationId;
-    if (existing) {
-      const { error: upErr } = await supabase
-        .from('property_observations')
-        .update(obsPatch)
-        .eq('id', existing.id);
-      if (upErr) throw upErr;
-      observationId = existing.id;
-    } else {
-      const { data: created, error: insErr } = await supabase
-        .from('property_observations')
-        .insert({
-          ...obsPatch,
-          photo_id: photoId,
-          inspection_id: photo.inspection_id,
-          observed_at: photo.captured_at || now,
-          ai_confidence: 'manual',
-          ai_description: 'Operator-added violation (AI did not flag).',
-        })
-        .select('id')
-        .single();
-      if (insErr) throw insErr;
-      observationId = created.id;
-    }
+    const { data: created, error: insErr } = await supabase
+      .from('property_observations')
+      .insert({
+        property_id:           resolvedPropertyId,
+        community_id:          communityId,
+        category_id,
+        severity,
+        reviewer_status:       'confirmed',
+        reviewed_at:           now,
+        reviewer_notes:        notes || '(operator override — AI missed this)',
+        inspection_photo_id:   photoId,
+        inspection_id:         photo.inspection_id,
+        observed_at:           photo.captured_at || now,
+        ai_confidence:         'manual',
+        ai_description:        notes || 'Operator-added violation (AI did not flag).',
+      })
+      .select('id')
+      .single();
+    if (insErr) throw insErr;
+    const observationId = created.id;
 
     // Step 2 — open the violation through the same escalation engine
     let violation = null;

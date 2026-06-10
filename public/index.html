@@ -19587,21 +19587,37 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   async function _inspRunAnalyze(inspectionId, btn) {
     const original = btn ? btn.innerHTML : '';
-    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Analyzing…'; }
-    // Remember which inspection's unlinked-photos to surface in the Review queue.
+    if (btn) { btn.disabled = true; btn.innerHTML = '⏳ Re-analyzing all photos…'; }
     inspReviewActiveInspectionId = inspectionId;
     try {
-      const r = await fetch(`/api/inspections/${inspectionId}/analyze`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+      // Force=true by default in the new endpoint — deletes existing
+      // observations + creates fresh ones using the multi-violation prompt.
+      const r = await fetch(`/api/inspections/${inspectionId}/analyze`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: true }),
+      });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
-      let msg = `Analyzed ${j.analyzed} photo${j.analyzed === 1 ? '' : 's'} — ${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`;
-      if (j.photos_skipped_already_analyzed > 0) msg += ` (${j.photos_skipped_already_analyzed} skipped — already analyzed)`;
-      if (j.failures && j.failures.length) {
-        msg += `\n\n${j.failures.length} photo${j.failures.length === 1 ? '' : 's'} need manual property assignment — see the yellow panel in the Review queue below.`;
-        console.log('[_inspRunAnalyze] skipped photos:', j.failures);
+      let msg = `✓ Re-analyzed ${j.analyzed} photo${j.analyzed === 1 ? '' : 's'}.\n\n`;
+      if (j.mode === 'multi_violation') {
+        msg += `• ${j.photos_with_findings || 0} photos with violation${j.photos_with_findings === 1 ? '' : 's'}\n`;
+        msg += `• ${j.photos_clean || 0} photos AI said clean\n`;
+        msg += `• ${j.observations_created} total observation${j.observations_created === 1 ? '' : 's'} created\n`;
+      } else {
+        msg += `${j.observations_created} observation${j.observations_created === 1 ? '' : 's'} created.`;
       }
+      if (j.failures && j.failures.length) {
+        const noProp = j.failures.filter(f => f.reason === 'no_property_match').length;
+        if (noProp > 0) msg += `\n⚠ ${noProp} photos couldn't be linked to a property — link manually in the Review queue.`;
+        const other = j.failures.filter(f => f.reason !== 'no_property_match').length;
+        if (other > 0) msg += `\n⚠ ${other} photos failed for other reasons (see console).`;
+        console.log('[_inspRunAnalyze] failures:', j.failures);
+      }
+      msg += '\n\nOpen "📸 View photos" to review the new findings and Remove false positives.';
       alert(msg);
       await inspReviewLoad();
+      await inspLoadRecent();
     } catch (e) {
       alert('Analyze failed: ' + e.message);
     } finally {
@@ -22150,14 +22166,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const isClosed = (i.status === 'closed');
         const isVoided = (i.status === 'voided');
         const isTerminal = isClosed || isVoided;
-        // Analyze action — only useful while there's pending capture or
-        // already-captured photos that haven't been turned into observations.
-        const canAnalyze = !isTerminal && (i.total_photos || 0) > 0;
+        // Re-analyze action — works on any non-voided inspection so Ed can
+        // re-run the multi-violation prompt on past drives. Default
+        // behavior wipes existing observations + creates new ones from
+        // findings (force=true on the endpoint).
+        const canAnalyze = !isVoided && (i.total_photos || 0) > 0;
         const analyzeBtn = canAnalyze ? `
           <button type="button" onclick="inspAnalyzeFromList('${i.id}', this)"
                   style="background: #15803d; color: #fff; border: none; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
-                  title="Run analysis on each photo in this inspection → create observation rows → populate the Review queue.">
-            ▶ Analyze
+                  title="Re-run AI on every photo in this drive. Replaces existing observations with the new multi-violation findings.">
+            🔄 Re-analyze (multi-violation)
           </button>
         ` : '';
         // Admin-only force-delete button. Shown to role='admin' users on
@@ -22184,6 +22202,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         const closedActions = isClosed ? `
           <div style="display: flex; gap: 6px; flex-shrink: 0; flex-wrap: wrap;">
             ${viewPhotosBtn}
+            ${analyzeBtn}
             <button type="button" onclick="inspResume('${i.id}')"
                     style="background: #fff; color: #0B1D34; border: 1px solid #cbd5e1; padding: 6px 10px; border-radius: 6px; font-size: 12px; font-weight: 600; cursor: pointer;"
                     title="Reopen this inspection and load it back into the live capture UI — add photos, fix observations, then Finalize again.">
