@@ -22082,63 +22082,360 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
-  // Ed 2026-06-09 — quick photo browser for a past inspection. Fetches all
-  // photos (including ones AI didn't flag) and pipes them into the lightbox
-  // for full-screen review. Use case: "where are the photos I took today
-  // that said no violation?"
+  // Ed 2026-06-10 — INSPECTION REVIEW MODAL
+  // Property-grouped view of every photo from a drive. Sidebar lists houses
+  // (or "Unmatched photos" for orphan shots); main panel shows the currently
+  // selected photo full-size with its AI findings + per-finding Remove and
+  // Add Violation buttons. Built at document.body level so it works from
+  // ANY tab and survives the inspection tab being unrendered.
+  //
+  // State lives on window._inspReview so it's debuggable in DevTools.
+  window._inspReview = window._inspReview || {
+    inspectionId: null,
+    photos: [],          // all photos from the API
+    filter: 'all',       // 'all' | 'violation' | 'clean' | 'pending'
+    groups: [],          // [{ property_id, address, photos: [...], any_violation }]
+    selectedPhotoIdx: -1,
+  };
+
+  function inspBuildReviewModal() {
+    // Reuse if already in DOM
+    let modal = document.getElementById('inspReviewModal');
+    if (modal) return modal;
+    modal = document.createElement('div');
+    modal.id = 'inspReviewModal';
+    modal.style.cssText = 'display:none; position:fixed; inset:0; background:#0B1D34; z-index:9998; flex-direction:column;';
+    modal.innerHTML = `
+      <div style="display:flex; align-items:center; gap:12px; padding:10px 16px; background:#000; color:#fff; flex-wrap:wrap;">
+        <div style="font-weight:700; font-size:14px;">📸 Inspection review</div>
+        <div id="inspReviewSummary" style="font-size:12px; color:#cbd5e1; margin-right:10px;"></div>
+        <button onclick="inspReviewSetFilter('all')" id="inspReviewFilterAll" class="rev-chip" style="background:#fff; color:#0B1D34; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">All</button>
+        <button onclick="inspReviewSetFilter('violation')" id="inspReviewFilterViolation" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">⚠ Violations</button>
+        <button onclick="inspReviewSetFilter('clean')" id="inspReviewFilterClean" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">✓ AI said clean</button>
+        <button onclick="inspReviewSetFilter('pending')" id="inspReviewFilterPending" class="rev-chip" style="background:rgba(255,255,255,0.15); color:#fff; border:0; padding:5px 12px; border-radius:14px; font-size:12px; font-weight:600; cursor:pointer;">❓ Not analyzed</button>
+        <button onclick="inspCloseReview()" style="margin-left:auto; background:rgba(255,255,255,0.2); color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:14px; cursor:pointer;">× Close</button>
+      </div>
+      <div style="flex:1; display:flex; min-height:0;">
+        <!-- Sidebar — houses with photo strips -->
+        <div id="inspReviewSidebar" style="width:300px; max-width:35%; background:#1a2a3e; overflow-y:auto; border-right:1px solid #243651;">
+          <div style="padding:20px; color:#94a3b8; font-size:12.5px; text-align:center;">Loading…</div>
+        </div>
+        <!-- Main viewer -->
+        <div style="flex:1; display:flex; flex-direction:column; background:#0B1D34; min-width:0;">
+          <div style="flex:1; display:flex; align-items:center; justify-content:center; padding:14px; min-height:0; position:relative;">
+            <img id="inspReviewImg" src="" style="max-width:100%; max-height:100%; border-radius:8px; box-shadow:0 6px 30px rgba(0,0,0,0.5);">
+            <button onclick="inspReviewPrev()" style="position:absolute; left:12px; top:50%; transform:translateY(-50%); background:rgba(255,255,255,0.15); color:#fff; border:0; padding:10px 14px; border-radius:6px; font-size:18px; cursor:pointer;">←</button>
+            <button onclick="inspReviewNext()" style="position:absolute; right:12px; top:50%; transform:translateY(-50%); background:rgba(255,255,255,0.15); color:#fff; border:0; padding:10px 14px; border-radius:6px; font-size:18px; cursor:pointer;">→</button>
+          </div>
+          <div id="inspReviewFindings" style="background:rgba(0,0,0,0.5); padding:12px 16px; color:#fff; max-height:240px; overflow-y:auto;"></div>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(modal);
+    return modal;
+  }
+
   async function inspViewSessionPhotos(inspectionId) {
-    console.log('[inspector] View photos clicked for inspection', inspectionId);
+    console.log('[inspector] Opening review modal for inspection', inspectionId);
+    inspBuildReviewModal();
+    document.getElementById('inspReviewModal').style.display = 'flex';
+    document.getElementById('inspReviewSidebar').innerHTML = '<div style="padding:20px; color:#94a3b8; font-size:12.5px; text-align:center;">Loading…</div>';
+    document.getElementById('inspReviewImg').src = '';
+    document.getElementById('inspReviewFindings').innerHTML = '';
+
     try {
       const r = await fetch('/api/inspections/' + encodeURIComponent(inspectionId));
       if (!r.ok) {
         const txt = await r.text().catch(() => '');
-        alert('Could not load photos: HTTP ' + r.status + ' — ' + txt.slice(0, 200));
+        document.getElementById('inspReviewSidebar').innerHTML =
+          `<div style="padding:20px; color:#fca5a5; font-size:12.5px;">Could not load: HTTP ${r.status} ${txt.slice(0, 200)}</div>`;
         return;
       }
       const j = await r.json();
       const photos = j.photos || [];
       console.log(`[inspector] Got ${photos.length} photos for inspection ${inspectionId}`);
-      if (photos.length === 0) { alert('No photos on file for this inspection.'); return; }
 
-      // Ensure the lightbox element exists. If the inspection tab DOM was
-      // never rendered (tab not visited this session), build a fallback
-      // modal so the photos are still viewable.
-      let lb = document.getElementById('inspPhotoLightbox');
-      if (!lb) {
-        console.warn('[inspector] Lightbox element missing — creating fallback');
-        lb = document.createElement('div');
-        lb.id = 'inspPhotoLightbox';
-        lb.style.cssText = 'display:none; position:fixed; inset:0; background:rgba(0,0,0,0.9); z-index:9998; align-items:center; justify-content:center; padding:20px; cursor:pointer;';
-        lb.onclick = (e) => inspCloseLightbox(e);
-        lb.innerHTML = `
-          <div style="max-width:100%; max-height:100%; position:relative;" onclick="event.stopPropagation()">
-            <img id="inspLightboxImg" src="" style="max-width:100%; max-height:calc(100vh - 100px); display:block; border-radius:8px;">
-            <div id="inspLightboxMeta" style="color:#fff; padding:10px 0; text-align:center; font-size:13px;"></div>
-            <div style="position:absolute; top:10px; right:10px; display:flex; gap:8px;">
-              <button onclick="inspLightboxPrev(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:16px; cursor:pointer;">←</button>
-              <button onclick="inspLightboxNext(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:16px; cursor:pointer;">→</button>
-              <button onclick="inspCloseLightbox(event)" style="background:rgba(255,255,255,0.2); color:#fff; border:0; padding:8px 14px; border-radius:6px; font-size:18px; cursor:pointer;">×</button>
-            </div>
-          </div>
-        `;
-        document.body.appendChild(lb);
+      // Group photos by property. property_id + property_address come back
+      // from the API directly (no second fetch needed).
+      const groupMap = new Map();  // key = property_id || 'unmatched'
+      for (const p of photos) {
+        const key = p.property_id || 'unmatched';
+        if (!groupMap.has(key)) {
+          groupMap.set(key, {
+            property_id: key === 'unmatched' ? null : key,
+            address: p.property_address || '',
+            photos: [],
+            any_violation: false,
+          });
+        }
+        const g = groupMap.get(key);
+        g.photos.push(p);
+        if (p.ai_verdict === 'violation') g.any_violation = true;
+        // First non-empty address wins
+        if (!g.address && p.property_address) g.address = p.property_address;
       }
 
-      // Stash + open the lightbox at the first photo
-      window._inspVisiblePhotos = photos;
-      if (typeof inspOpenLightbox === 'function') {
-        inspOpenLightbox(0, photos);
-      } else {
-        // Fallback inline — set the image directly
-        document.getElementById('inspLightboxImg').src = photos[0].signed_url || '';
-        lb.style.display = 'flex';
-      }
+      // Final sort: violation-houses first, then alphabetical
+      const groups = Array.from(groupMap.values()).sort((a, b) => {
+        if (a.any_violation !== b.any_violation) return a.any_violation ? -1 : 1;
+        if (a.property_id === null) return 1;  // unmatched last
+        return (a.address || '').localeCompare(b.address || '');
+      });
+
+      window._inspReview.inspectionId = inspectionId;
+      window._inspReview.photos = photos;
+      window._inspReview.groups = groups;
+      window._inspReview.filter = 'all';
+      // Select the first photo in the first group with any photos in the current filter
+      const firstPhoto = inspReviewFirstFilteredPhoto();
+      window._inspReview.selectedPhotoIdx = firstPhoto ? photos.indexOf(firstPhoto) : -1;
+
+      inspReviewRenderSidebar();
+      inspReviewRenderMain();
+      inspReviewUpdateFilterChips();
     } catch (e) {
       console.error('[inspector] inspViewSessionPhotos failed:', e);
-      alert('Could not load photos: ' + e.message);
+      document.getElementById('inspReviewSidebar').innerHTML =
+        `<div style="padding:20px; color:#fca5a5; font-size:12.5px;">Could not load: ${(e && e.message) || e}</div>`;
     }
   }
   window.inspViewSessionPhotos = inspViewSessionPhotos;
+
+  function inspCloseReview() {
+    const m = document.getElementById('inspReviewModal');
+    if (m) m.style.display = 'none';
+  }
+  window.inspCloseReview = inspCloseReview;
+
+  function inspReviewFirstFilteredPhoto() {
+    const photos = window._inspReview.photos || [];
+    const f = window._inspReview.filter;
+    return photos.find(p => f === 'all' || (p.ai_verdict || 'pending') === f);
+  }
+
+  function inspReviewSetFilter(f) {
+    window._inspReview.filter = f;
+    const fp = inspReviewFirstFilteredPhoto();
+    window._inspReview.selectedPhotoIdx = fp ? window._inspReview.photos.indexOf(fp) : -1;
+    inspReviewRenderSidebar();
+    inspReviewRenderMain();
+    inspReviewUpdateFilterChips();
+  }
+  window.inspReviewSetFilter = inspReviewSetFilter;
+
+  function inspReviewUpdateFilterChips() {
+    const photos = window._inspReview.photos || [];
+    const counts = {
+      all: photos.length,
+      violation: photos.filter(p => p.ai_verdict === 'violation').length,
+      clean: photos.filter(p => p.ai_verdict === 'clean').length,
+      pending: photos.filter(p => (p.ai_verdict || 'pending') === 'pending').length,
+    };
+    const active = window._inspReview.filter;
+    [['all', 'All'], ['violation', '⚠ Violations'], ['clean', '✓ AI said clean'], ['pending', '❓ Not analyzed']].forEach(([k, label]) => {
+      const btn = document.getElementById('inspReviewFilter' + k.charAt(0).toUpperCase() + k.slice(1));
+      if (!btn) return;
+      const isActive = active === k;
+      btn.style.background = isActive ? '#fff' : 'rgba(255,255,255,0.15)';
+      btn.style.color = isActive ? '#0B1D34' : '#fff';
+      btn.textContent = `${label} (${counts[k]})`;
+    });
+    const summary = document.getElementById('inspReviewSummary');
+    if (summary) summary.textContent = `${photos.length} photos · ${window._inspReview.groups.length} houses`;
+  }
+
+  function inspReviewRenderSidebar() {
+    const wrap = document.getElementById('inspReviewSidebar');
+    if (!wrap) return;
+    const f = window._inspReview.filter;
+    const photoSetForFilter = (photos) => photos.filter(p => f === 'all' || (p.ai_verdict || 'pending') === f);
+    // Only show groups that have at least one photo matching the current filter
+    const visibleGroups = window._inspReview.groups
+      .map(g => ({ ...g, visiblePhotos: photoSetForFilter(g.photos) }))
+      .filter(g => g.visiblePhotos.length > 0);
+
+    if (visibleGroups.length === 0) {
+      wrap.innerHTML = '<div style="padding:24px; color:#94a3b8; font-size:12.5px; text-align:center;">No photos match this filter.</div>';
+      return;
+    }
+
+    const selectedId = window._inspReview.selectedPhotoIdx >= 0
+      ? (window._inspReview.photos[window._inspReview.selectedPhotoIdx]?.id || null)
+      : null;
+
+    wrap.innerHTML = visibleGroups.map((g) => {
+      const head = g.property_id
+        ? (g.address || '(loading…)')
+        : 'Unmatched photos';
+      const flag = g.any_violation
+        ? '<span style="background:#dc2626; color:#fff; padding:2px 7px; border-radius:8px; font-size:10px; font-weight:700; margin-left:6px;">⚠</span>'
+        : '';
+      const thumbs = g.visiblePhotos.map((p) => {
+        const isSelected = p.id === selectedId;
+        const verdictColor = p.ai_verdict === 'violation' ? '#dc2626' :
+                             p.ai_verdict === 'clean' ? '#16a34a' :
+                             '#64748b';
+        return `<div onclick="inspReviewSelectPhoto('${p.id}')" style="position:relative; cursor:pointer; aspect-ratio:1/1; border-radius:6px; overflow:hidden; background:#000; border:2.5px solid ${isSelected ? '#D4AF37' : verdictColor};">
+          ${p.signed_url ? `<img src="${p.signed_url}" style="width:100%; height:100%; object-fit:cover;">` : '<div style="width:100%; height:100%; background:#1a2a3e;"></div>'}
+        </div>`;
+      }).join('');
+      return `
+        <div style="padding:12px 14px; border-bottom:1px solid #243651;">
+          <div style="color:#fff; font-size:13px; font-weight:600; margin-bottom:6px; display:flex; align-items:center; flex-wrap:wrap;">${head}${flag}</div>
+          <div style="color:#94a3b8; font-size:11px; margin-bottom:8px;">${g.visiblePhotos.length} photo${g.visiblePhotos.length === 1 ? '' : 's'}</div>
+          <div style="display:grid; grid-template-columns:repeat(3, 1fr); gap:6px;">${thumbs}</div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  function inspReviewSelectPhoto(photoId) {
+    const photos = window._inspReview.photos || [];
+    const idx = photos.findIndex(p => p.id === photoId);
+    if (idx < 0) return;
+    window._inspReview.selectedPhotoIdx = idx;
+    inspReviewRenderMain();
+    inspReviewRenderSidebar();  // re-render to update highlight border
+  }
+  window.inspReviewSelectPhoto = inspReviewSelectPhoto;
+
+  function inspReviewNext() {
+    const photos = window._inspReview.photos || [];
+    const f = window._inspReview.filter;
+    if (!photos.length) return;
+    let idx = window._inspReview.selectedPhotoIdx;
+    for (let step = 0; step < photos.length; step++) {
+      idx = (idx + 1) % photos.length;
+      const p = photos[idx];
+      if (f === 'all' || (p.ai_verdict || 'pending') === f) {
+        window._inspReview.selectedPhotoIdx = idx;
+        inspReviewRenderMain();
+        inspReviewRenderSidebar();
+        return;
+      }
+    }
+  }
+  function inspReviewPrev() {
+    const photos = window._inspReview.photos || [];
+    const f = window._inspReview.filter;
+    if (!photos.length) return;
+    let idx = window._inspReview.selectedPhotoIdx;
+    for (let step = 0; step < photos.length; step++) {
+      idx = (idx - 1 + photos.length) % photos.length;
+      const p = photos[idx];
+      if (f === 'all' || (p.ai_verdict || 'pending') === f) {
+        window._inspReview.selectedPhotoIdx = idx;
+        inspReviewRenderMain();
+        inspReviewRenderSidebar();
+        return;
+      }
+    }
+  }
+  window.inspReviewNext = inspReviewNext;
+  window.inspReviewPrev = inspReviewPrev;
+
+  function inspReviewRenderMain() {
+    const photos = window._inspReview.photos || [];
+    const p = photos[window._inspReview.selectedPhotoIdx];
+    const img = document.getElementById('inspReviewImg');
+    const findings = document.getElementById('inspReviewFindings');
+    if (!p) {
+      if (img) img.src = '';
+      if (findings) findings.innerHTML = '<div style="color:#94a3b8; font-size:12.5px; text-align:center; padding:14px;">No photo selected.</div>';
+      return;
+    }
+    if (img) img.src = p.signed_url || '';
+
+    const obs = (p.observations || []).filter(o => o.reviewer_status !== 'rejected');
+    const violationObs = obs.filter(o => o.severity && o.severity !== 'clean');
+
+    let bodyHtml = '';
+    if (p.ai_verdict === 'violation' && violationObs.length > 0) {
+      bodyHtml = `
+        <div style="margin-bottom:6px; font-weight:600; color:#fca5a5;">⚠ ${violationObs.length} violation${violationObs.length === 1 ? '' : 's'} on this photo</div>
+        ${violationObs.map((o, i) => `
+          <div style="display:flex; align-items:flex-start; gap:8px; padding:6px 0; border-top:${i > 0 ? '1px solid rgba(255,255,255,0.1)' : '0'};">
+            <span style="flex:1; font-size:13px; line-height:1.4;">${i + 1}. ${(o.ai_description || '(no description)').replace(/</g, '&lt;')}
+              ${o.severity ? `<span style="background:rgba(255,255,255,0.15); padding:1px 7px; border-radius:8px; font-size:10.5px; margin-left:6px;">${o.severity}</span>` : ''}
+            </span>
+            <button onclick="inspReviewRemoveObs('${o.id}')" style="background:#fff; color:#991b1b; border:0; padding:3px 10px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ Remove</button>
+          </div>
+        `).join('')}
+      `;
+    } else if (p.ai_verdict === 'clean') {
+      bodyHtml = '<div style="color:#86efac; font-size:13px; padding:6px 0;">✓ AI saw no violations in this photo.</div>';
+    } else {
+      bodyHtml = '<div style="color:#cbd5e1; font-size:13px; padding:6px 0;">❓ This photo has not been analyzed yet. Click <strong>🔄 Re-analyze (multi-violation)</strong> on the inspection row.</div>';
+    }
+
+    bodyHtml += `
+      <div style="margin-top:10px; padding-top:10px; border-top:1px solid rgba(255,255,255,0.1); display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px;">
+        <div style="font-size:11.5px; color:#94a3b8;">
+          ${p.captured_at ? new Date(p.captured_at).toLocaleString() : ''}
+          ${p.photo_role ? ' · ' + p.photo_role : ''}
+          · photo ${window._inspReview.selectedPhotoIdx + 1} of ${photos.length}
+        </div>
+        <button onclick="inspReviewAddViolation()" style="background:#dc2626; color:#fff; border:0; padding:6px 14px; border-radius:6px; font-size:12.5px; font-weight:600; cursor:pointer;">+ Add violation</button>
+      </div>
+    `;
+    findings.innerHTML = bodyHtml;
+  }
+
+  async function inspReviewRemoveObs(observationId) {
+    if (!confirm('Remove this AI finding? (Other findings on this photo stay.)')) return;
+    try {
+      const r = await fetch('/api/inspections/observations/' + encodeURIComponent(observationId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewer_status: 'rejected', reviewer_notes: 'Operator removed — false positive.' }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Remove failed: ' + (j.error || ('HTTP ' + r.status)));
+        return;
+      }
+      // Mutate locally so UI updates instantly
+      const p = window._inspReview.photos[window._inspReview.selectedPhotoIdx];
+      if (p && Array.isArray(p.observations)) {
+        const obs = p.observations.find(o => o.id === observationId);
+        if (obs) {
+          obs.reviewer_status = 'rejected';
+          obs.is_violation = false;
+        }
+        const hasViolation = p.observations.some(o => o.reviewer_status !== 'rejected' && o.severity && o.severity !== 'clean');
+        const hasAny = p.observations.length > 0;
+        p.ai_verdict = hasViolation ? 'violation' : (hasAny ? 'clean' : 'pending');
+      }
+      inspReviewRenderMain();
+      inspReviewRenderSidebar();
+      inspReviewUpdateFilterChips();
+    } catch (e) {
+      alert('Remove failed: ' + e.message);
+    }
+  }
+  window.inspReviewRemoveObs = inspReviewRemoveObs;
+
+  function inspReviewAddViolation() {
+    const p = window._inspReview.photos[window._inspReview.selectedPhotoIdx];
+    if (!p) return;
+    _addVioPhotoId = p.id;
+    // Reuse the existing Add Violation modal already in the DOM
+    if (!_addVioCategoriesLoaded) {
+      fetch('/api/enforcement/categories').then(r => r.json()).then(j => {
+        const sel = document.getElementById('inspAddVioCategory');
+        if (sel) {
+          sel.innerHTML = '<option value="">— select category —</option>' +
+            (j.categories || []).map(c => `<option value="${c.id}">${(c.label || c.slug || '').replace(/</g, '&lt;')}</option>`).join('');
+        }
+        _addVioCategoriesLoaded = true;
+      }).catch(e => alert('Could not load categories: ' + e.message));
+    }
+    const statusEl = document.getElementById('inspAddVioStatus');
+    if (statusEl) statusEl.textContent = '';
+    const modal = document.getElementById('inspAddViolationModal');
+    if (modal) modal.style.display = 'flex';
+  }
+  window.inspReviewAddViolation = inspReviewAddViolation;
 
   async function inspLoadRecent() {
     const wrap = document.getElementById('inspRecentList');

@@ -2117,6 +2117,24 @@ router.get('/inspections/:id', async (req, res, next) => {
       obsByPhoto.get(pid).push(o);
     }
 
+    // Hydrate property addresses for the photos so the UI can group by
+    // house without a second round-trip. Use the canonical address column
+    // on properties.
+    const propertyIds = Array.from(new Set((photos || [])
+      .map(p => p.polygon_match_property_id || p.reviewer_confirmed_property_id)
+      .filter(Boolean)));
+    const addressByPropId = new Map();
+    if (propertyIds.length > 0) {
+      for (let i = 0; i < propertyIds.length; i += 500) {
+        const batch = propertyIds.slice(i, i + 500);
+        const { data: props } = await supabase
+          .from('properties')
+          .select('id, street_address')
+          .in('id', batch);
+        for (const pr of (props || [])) addressByPropId.set(pr.id, pr.street_address);
+      }
+    }
+
     // Generate signed URLs for the storage paths so the frontend can render
     // them in the reviewer queue. 1-hour expiry is plenty for a review session.
     const withUrls = [];
@@ -2130,13 +2148,21 @@ router.get('/inspections/:id', async (req, res, next) => {
       } catch (_) { /* leave null */ }
       const obs = obsByPhoto.get(p.id) || [];
       // Derive a single ai_verdict for the badge:
-      //   'violation' if ANY observation is is_violation=true
-      //   'clean' if observations exist but none is is_violation
+      //   'violation' if ANY observation has severity != clean + not rejected
+      //   'clean' if observations exist (all rejected or all clean)
       //   'pending' if no observations
       let ai_verdict = 'pending';
       if (obs.some(o => o.is_violation === true)) ai_verdict = 'violation';
       else if (obs.length > 0) ai_verdict = 'clean';
-      withUrls.push({ ...p, signed_url: signedUrl, observations: obs, ai_verdict });
+      const propId = p.polygon_match_property_id || p.reviewer_confirmed_property_id || null;
+      withUrls.push({
+        ...p,
+        signed_url: signedUrl,
+        observations: obs,
+        ai_verdict,
+        property_id: propId,
+        property_address: propId ? (addressByPropId.get(propId) || null) : null,
+      });
     }
 
     res.json({ inspection: insp, photos: withUrls });
