@@ -14980,14 +14980,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           </button>
         </div>
 
-        <!-- Staged-wide chip (shown only after a wide is staged) -->
+        <!-- Staged-wide chip — shown after a wide is staged. Tells the operator:
+             "your next photo will be a close-up linked to this house. Take as
+             many close-ups as you want — one per violation. Tap Done when
+             you're finished with this house." -->
         <div id="inspWidePairChip" style="display:none; background:#fff7ed; border:1px solid #fed7aa; border-radius:10px; padding:8px 10px; margin-bottom: 8px; align-items:center; gap:10px;">
           <div id="inspWideThumb" style="width:42px; height:42px; border-radius:6px; background:#0B1D34; flex-shrink:0; overflow:hidden; display:flex; align-items:center; justify-content:center; color:#fff; font-size:18px;">🏠</div>
           <div style="flex:1; min-width:0;">
-            <div style="font-size:10.5px; color:#9a3412; text-transform:uppercase; letter-spacing:0.06em; font-weight:700;">Next shot: close-up linked to ↓</div>
+            <div style="font-size:10.5px; color:#9a3412; text-transform:uppercase; letter-spacing:0.06em; font-weight:700;">Capturing violations on this house</div>
             <div id="inspWidePairLabel" style="font-size:12.5px; color:#0B1D34; font-weight:600; white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">Wide shot · uploading…</div>
+            <div style="font-size:10.5px; color:#92400e; margin-top:2px;">Take a close-up for each violation. <span id="inspPairCloseupCount" style="font-weight:700;"></span></div>
           </div>
-          <button type="button" onclick="inspEndPropertyPair()" title="Cancel — next shot will be a single instead" style="background:#fff; border:1px solid #fca5a5; color:#b91c1c; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:600; cursor:pointer; white-space:nowrap;">✕ Cancel pair</button>
+          <button type="button" onclick="inspEndPropertyPair()" title="Finish with this house — next shot will be a new wide for a new property" style="background:#fff; border:1px solid #fed7aa; color:#9a3412; padding:6px 10px; border-radius:6px; font-size:11px; font-weight:700; cursor:pointer; white-space:nowrap;">✓ Done with house</button>
         </div>
 
         <!-- iOS-bulletproof pattern: <label for=> bridges directly to the
@@ -15006,7 +15010,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              max-width:560px + centered so it doesn't stretch across a wide
              laptop browser. -->
         <label for="inspPhotoInput" id="inspCaptureBtn" onclick="inspTriggerCaptureNoClick()"
-                style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: 560px; margin: 0 auto; z-index: 60; padding: 18px; background: var(--gold, #D4AF37); color: var(--navy, #0B1D34); border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box;">
+                style="position: fixed; left: 12px; right: 12px; bottom: calc(env(safe-area-inset-bottom, 0px) + 12px); max-width: 560px; margin: 0 auto; z-index: 999; padding: 18px; background: var(--gold, #D4AF37); color: var(--navy, #0B1D34); border-radius: 14px; font-size: 18px; font-weight: 700; cursor: pointer; -webkit-tap-highlight-color: transparent; touch-action: manipulation; box-shadow: 0 6px 20px rgba(0,0,0,0.18); display: flex; align-items: center; justify-content: center; gap: 12px; box-sizing: border-box; pointer-events: auto;">
           <span id="inspCaptureIcon" style="font-size: 26px;">📸</span>
           <span id="inspCaptureLabel">Take photo</span>
         </label>
@@ -15029,6 +15033,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </div>
     </div>
+
+    <!-- DRIVE MODE TOGGLE — when an inspection session is active, the field
+         operator only needs map + capture + photo list. Cure pipeline,
+         drafts queue, categories editor, letter format, and Vantaca history
+         are all collapsed under "Office tools" to free up screen real
+         estate on a phone in the field. Click to expand when at desk. -->
+    <div id="inspOfficeToolsWrap" class="insp-office-tools" style="margin-top: 20px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; cursor:pointer;" onclick="inspToggleOfficeTools()">
+        <div>
+          <strong style="color:#0B1D34; font-size:13px;">🧰 Office tools</strong>
+          <span style="color:#64748b; font-size:11.5px; margin-left:6px;">Cure pipeline, drafts queue, letter format, categories editor, Vantaca history</span>
+        </div>
+        <span id="inspOfficeToolsCaret" style="color:#0B1D34; font-size:13px; font-weight:700; transform:rotate(-90deg); transition: transform 0.15s;">▼</span>
+      </div>
+    </div>
+    <div id="inspOfficeToolsBody" style="display:none;">
 
     <!-- CURE-LAPSE PANEL — violations whose cure period has passed without
          resolution. Process button bumps stage + drafts the new letter.
@@ -15562,6 +15582,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     </div>
 
   </div>
+  </div><!-- /inspOfficeToolsBody -->
 
   <!-- Manual violation entry modal — neighbor/board reports, force-mow walk-ups.
        Hidden by default; opened by manualVioOpen(). Reuses the same iOS
@@ -17794,6 +17815,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
   }
 
+  // Drive Mode — auto-collapses the office-only panels (cure pipeline,
+  // drafts queue, letter format, categories editor, Vantaca history) when
+  // an inspection session is active so the field operator only sees the
+  // map + property list + capture controls. Click the header to expand
+  // when back at the desk.
+  function inspSetOfficeToolsVisible(visible) {
+    const body = document.getElementById('inspOfficeToolsBody');
+    const caret = document.getElementById('inspOfficeToolsCaret');
+    if (!body) return;
+    body.style.display = visible ? 'block' : 'none';
+    if (caret) caret.style.transform = visible ? 'rotate(0deg)' : 'rotate(-90deg)';
+  }
+  function inspToggleOfficeTools() {
+    const body = document.getElementById('inspOfficeToolsBody');
+    if (!body) return;
+    inspSetOfficeToolsVisible(body.style.display === 'none');
+  }
+  window.inspSetOfficeToolsVisible = inspSetOfficeToolsVisible;
+  window.inspToggleOfficeTools = inspToggleOfficeTools;
+
   async function inspStart() {
     const sel = document.getElementById('inspCommunity');
     const err = document.getElementById('inspStartError');
@@ -17817,6 +17858,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.communityName = sel.options[sel.selectedIndex].textContent;
       inspState.photoCount = 0;
       inspState.photos = [];
+      // Auto-collapse the office tools panels — operator just needs map +
+      // capture + photo list in the field. Cure pipeline, drafts queue,
+      // letter format, etc. all stay one click away under "Office tools."
+      try { inspSetOfficeToolsVisible(false); } catch (_) {}
       // Reset photo-pairing state for the new session
       inspState.stagedWidePhotoId = null;
       inspState.stagedWidePreviewUrl = null;
@@ -18353,6 +18398,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         pairLabel.textContent = inspState.stagedWidePropertyHint
           ? `Wide shot · ${inspState.stagedWidePropertyHint}`
           : 'Wide shot for this property';
+      }
+      // Count close-ups already taken under this wide so the operator sees
+      // their progress. Each close-up = one violation candidate.
+      const ccount = (inspState.photos || []).filter(p =>
+        p.paired_wide_photo_id === inspState.stagedWidePhotoId
+      ).length;
+      const counterEl = document.getElementById('inspPairCloseupCount');
+      if (counterEl) {
+        counterEl.textContent = ccount === 0
+          ? ''
+          : `${ccount} close-up${ccount === 1 ? '' : 's'} so far.`;
       }
     } else {
       label.textContent = 'Take photo';
