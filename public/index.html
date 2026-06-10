@@ -19168,24 +19168,76 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     meta.textContent = `${dt}${p.photo_role ? ' · ' + p.photo_role : ''}${p.original_filename ? ' · ' + p.original_filename : ''}`;
     if (counter) counter.textContent = `${_lightboxIdx + 1} of ${_lightboxList.length}`;
 
-    // AI verdict badge
+    // AI verdict badge + list of findings (each rejectable independently)
     const verdict = p.ai_verdict || 'pending';
+    const violationObs = (p.observations || []).filter(o => o.is_violation !== false && o.reviewer_status !== 'rejected');
     let badgeHtml;
-    if (verdict === 'violation') {
-      const cats = (p.observations || []).filter(o => o.is_violation).map(o => o.category_id).filter(Boolean).length;
-      badgeHtml = `<span style="background:#fee2e2; color:#991b1b; padding:4px 12px; border-radius:12px; font-size:13px; font-weight:600;">⚠ AI flagged ${cats || 1} violation${cats === 1 ? '' : 's'}</span>`;
+    if (verdict === 'violation' || violationObs.length > 0) {
+      badgeHtml = `<div style="background:#fee2e2; color:#991b1b; padding:8px 14px; border-radius:8px; font-size:13px; font-weight:600; display:inline-block; max-width:100%;">
+        <div style="margin-bottom:${violationObs.length > 0 ? '6px' : '0'};">⚠ AI flagged ${violationObs.length} violation${violationObs.length === 1 ? '' : 's'} on this photo</div>
+        ${violationObs.map((o, i) => `
+          <div style="display:flex; align-items:center; gap:8px; padding:4px 0; border-top:${i > 0 ? '1px solid #fca5a5' : '0'};">
+            <span style="flex:1; text-align:left; font-weight:500;">
+              ${i + 1}. ${(o.ai_description || '(no description)').replace(/</g, '&lt;')}
+              ${o.severity ? `<span style="background:#fff; color:#991b1b; padding:1px 6px; border-radius:8px; font-size:10.5px; margin-left:6px;">${o.severity}</span>` : ''}
+            </span>
+            <button onclick="inspRejectObservation('${o.id}', event)" title="Remove this violation (false positive)" style="background:#fff; color:#991b1b; border:1px solid #fca5a5; padding:3px 9px; border-radius:5px; font-size:11px; cursor:pointer;">✕ Remove</button>
+          </div>
+        `).join('')}
+      </div>`;
     } else if (verdict === 'clean') {
-      badgeHtml = `<span style="background:#dcfce7; color:#15803d; padding:4px 12px; border-radius:12px; font-size:13px; font-weight:600;">✓ AI said no violation</span>`;
+      badgeHtml = `<span style="background:#dcfce7; color:#15803d; padding:4px 12px; border-radius:12px; font-size:13px; font-weight:600;">✓ AI saw no violations in this photo</span>`;
     } else {
       badgeHtml = `<span style="background:rgba(255,255,255,0.15); color:#fff; padding:4px 12px; border-radius:12px; font-size:13px; font-weight:600;">❓ Not yet analyzed</span>`;
     }
     badge.innerHTML = badgeHtml;
 
-    // Add Violation button visibility — hide if AI already flagged it
+    // Add Violation button always available — operator can stack MORE
+    // violations on a photo if AI still missed something (e.g., AI caught
+    // trash but missed dead grass).
     if (addBtn) {
-      addBtn.style.display = (verdict === 'violation') ? 'none' : '';
+      addBtn.style.display = '';
     }
   }
+
+  // Per-observation reject — operator dismisses a single AI finding without
+  // affecting other findings on the same photo. Ed 2026-06-09.
+  async function inspRejectObservation(observationId, e) {
+    if (e) e.stopPropagation();
+    if (!confirm('Remove this AI finding? (Mark it as a false positive — other findings on this photo stay.)')) return;
+    try {
+      const r = await fetch('/api/inspections/observations/' + encodeURIComponent(observationId), {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ reviewer_status: 'rejected', reviewer_notes: 'Operator removed — false positive.' }),
+      });
+      if (!r.ok) {
+        const j = await r.json().catch(() => ({}));
+        alert('Reject failed: ' + (j.error || ('HTTP ' + r.status)));
+        return;
+      }
+      // Mutate the local photo's observations array so the UI updates
+      const p = _lightboxList[_lightboxIdx];
+      if (p && Array.isArray(p.observations)) {
+        const obs = p.observations.find(o => o.id === observationId);
+        if (obs) {
+          obs.reviewer_status = 'rejected';
+          obs.is_violation = false;
+        }
+        // Recompute ai_verdict
+        const hasViolation = p.observations.some(o => o.is_violation === true && o.reviewer_status !== 'rejected');
+        const hasAny = p.observations.length > 0;
+        p.ai_verdict = hasViolation ? 'violation' : (hasAny ? 'clean' : 'pending');
+        const fp = _lightboxFullList.find(x => x.id === p.id);
+        if (fp) fp.ai_verdict = p.ai_verdict;
+      }
+      inspUpdateLightboxFilterButtons();
+      inspRenderLightbox();
+    } catch (err) {
+      alert('Reject failed: ' + err.message);
+    }
+  }
+  window.inspRejectObservation = inspRejectObservation;
   function inspCloseLightbox(e) {
     if (e && e.stopPropagation) e.stopPropagation();
     document.getElementById('inspPhotoLightbox').style.display = 'none';

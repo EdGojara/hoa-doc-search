@@ -451,51 +451,100 @@ router.post('/inspections/:id/photos', upload.single('photo'), async (req, res) 
             return;
           }
 
-          // Build the update payload. Map AI's category_slug to category_id.
-          const updates = {
-            severity:               result.severity,
-            ai_description:         result.description,
-            ai_recommended_action:  result.recommended_action,
-            ai_confidence:          result.confidence,
+          // NEW (Ed 2026-06-09): result is { is_clean, findings[] } — one
+          // photo can produce MULTIPLE observations (one per finding).
+          //
+          // Strategy:
+          //   - If is_clean: update seed observation to 'rejected' (no violation).
+          //   - If 1 finding: update seed observation with finding[0] (no extra rows).
+          //   - If N findings: update seed with findings[0], INSERT N-1 more rows.
+          //
+          // Each finding gets its own auto-draft consideration.
+          const findings = result.findings || [];
+          if (result.is_clean || findings.length === 0) {
+            await supabase.from('property_observations')
+              .update({
+                severity:        'clean',
+                ai_description:  'AI saw no violations in this photo.',
+                ai_confidence:   'high',
+                reviewer_status: 'rejected',
+                reviewed_at:     new Date().toISOString(),
+                reviewer_notes:  'AI: no violation visible — auto-filed for documentation only.',
+              })
+              .eq('id', observationId);
+            console.log(`[ai_vision] observation ${observationId} → clean (no findings)`);
+            return;
+          }
+
+          // Apply findings[0] to the seed observation
+          const seedFinding = findings[0];
+          const seedUpdate = {
+            severity:               seedFinding.severity,
+            ai_description:         seedFinding.description,
+            ai_recommended_action:  seedFinding.recommended_action,
+            ai_confidence:          seedFinding.confidence,
           };
-          if (result.category_slug && slugToId.has(result.category_slug)) {
-            updates.category_id = slugToId.get(result.category_slug);
+          if (seedFinding.category_slug && slugToId.has(seedFinding.category_slug)) {
+            seedUpdate.category_id = slugToId.get(seedFinding.category_slug);
           }
-          // Internal note (notes column) — combine AI notes with the raw response
-          // tag for traceability if confidence is low.
-          if (result.notes || result.confidence === 'low') {
-            updates.reviewer_notes = result.notes ||
-              `AI low-confidence — recommend human review of the photo before any action.`;
+          if (seedFinding.notes || seedFinding.confidence === 'low') {
+            seedUpdate.reviewer_notes = seedFinding.notes ||
+              'AI low-confidence — recommend human review of the photo before any action.';
           }
-          // Clean photos (no violation visible) get reviewer_status='rejected' so
-          // they don't pollute the Drafts queue. Operator can still see them in the
-          // Recent inspection detail.
-          if (!result.is_violation || result.severity === 'clean') {
-            updates.reviewer_status = 'rejected';
-            updates.reviewed_at = new Date().toISOString();
-            updates.reviewer_notes = (updates.reviewer_notes ? updates.reviewer_notes + ' · ' : '') +
-              'AI: no violation visible — auto-filed for documentation only.';
-          }
+          await supabase.from('property_observations').update(seedUpdate).eq('id', observationId);
+          console.log(`[ai_vision] photo ${req.params.id} → ${findings.length} finding(s); seed observation ${observationId} categorized as ${seedFinding.category_slug || 'no-match'} / ${seedFinding.severity}`);
 
-          await supabase.from('property_observations').update(updates).eq('id', observationId);
-          console.log(`[ai_vision] observation ${observationId} categorized: ${result.category_slug || 'no-match'} / ${result.severity} / conf=${result.confidence} / violation=${result.is_violation}`);
-
-          // ---- Phase 6c: AUTO-DRAFT LETTER if conditions are right ----
-          // Auto-draft only when:
-          //   - AI saw a real violation (is_violation && severity != 'clean')
-          //   - Confidence is medium or high (low confidence → human reviews
-          //     the photo first, no drafted letter yet)
-          //   - We matched to a known category slug (no_category → can't run
-          //     escalation engine)
-          // Otherwise observation stays 'pending' for full manual review and
-          // the operator chooses category + opens violation manually in Phase 6d.
-          if (result.is_violation && result.severity !== 'clean' &&
-              ['medium','high'].includes(result.confidence) &&
-              result.category_slug && slugToId.has(result.category_slug)) {
+          // INSERT additional observations for findings[1..N]
+          const extraObservationIds = [];
+          for (let i = 1; i < findings.length; i++) {
+            const f = findings[i];
+            const extra = {
+              property_id:    resolvedPropertyId,
+              inspection_id:  insp.id,
+              photo_id:       req.params.id,
+              observed_at:    new Date().toISOString(),
+              severity:       f.severity,
+              ai_description: f.description,
+              ai_recommended_action: f.recommended_action,
+              ai_confidence:  f.confidence,
+              reviewer_status: 'pending',
+              reviewer_notes: f.notes || null,
+              is_violation:   true,
+            };
+            if (f.category_slug && slugToId.has(f.category_slug)) {
+              extra.category_id = slugToId.get(f.category_slug);
+            }
             try {
-              // Use the same library code the manual /open-violation endpoint uses,
-              // requiring HTTP call so we hit the route's full pipeline (engine
-              // decision → violation row + interaction record).
+              const { data: row, error } = await supabase
+                .from('property_observations')
+                .insert(extra)
+                .select('id')
+                .single();
+              if (error) throw error;
+              extraObservationIds.push(row.id);
+              console.log(`[ai_vision] extra observation ${row.id} (finding ${i + 1}/${findings.length}) ${f.category_slug || 'no-match'} / ${f.severity}`);
+            } catch (e) {
+              console.warn(`[ai_vision] extra observation insert failed (finding ${i}):`, e.message);
+            }
+          }
+
+          // Auto-draft a letter for EACH high/medium-confidence finding (per
+          // Ed: each violation gets its own draft so the operator can pick
+          // which to send or merge).
+          const findingsForDraft = findings
+            .map((f, idx) => ({
+              finding: f,
+              observationId: idx === 0 ? observationId : extraObservationIds[idx - 1],
+            }))
+            .filter(x => x.observationId)
+            .filter(x => ['medium', 'high'].includes(x.finding.confidence))
+            .filter(x => x.finding.severity !== 'clean')
+            .filter(x => x.finding.category_slug && slugToId.has(x.finding.category_slug));
+
+          // For each high/medium-confidence finding with a known category,
+          // open a violation + draft the letter. Loop over findingsForDraft.
+          for (const { finding: result, observationId } of findingsForDraft) {
+            try {
               const { decideEscalation } = require('../lib/enforcement/escalation');
               const categoryId = slugToId.get(result.category_slug);
 
