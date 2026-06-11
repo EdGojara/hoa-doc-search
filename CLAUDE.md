@@ -715,6 +715,97 @@ truncated result: the helper everywhere, no per-endpoint heroics, no
 
 ---
 
+## Extraction surfaces — the staff-self-serve pattern (Ed 2026-06-10)
+
+Any feature where a file (CSV / PDF / XLSX / email / image / etc.) gets
+parsed into structured rows is an **extraction surface**. Vantaca
+violations, county appraisal CSVs, financial statements, estoppel
+requests, ARC submissions, insurance dec pages, vendor invoices,
+governing docs — all extraction surfaces.
+
+Standing requirement before any extraction surface ships, and before
+any change to one:
+
+### 1) Permanent fixture corpus + regression test runner
+
+Real production files become permanent test cases. Pattern:
+
+```
+tests/fixtures/<surface-name>/
+  <community-slug>-<period>.<ext>     ← real file from a customer
+  expected-counts.json                ← min_rows / max_rows / stage
+                                       distribution / known-row asserts
+  README.md                           ← how to add a new fixture
+tests/test_<surface-name>_extraction.js
+```
+
+Every staff-blocking import shape becomes a new fixture + JSON entry.
+Adding a fixture is a 30-second drop-in (file in dir, 5 lines of JSON,
+re-run) — no test code changes. The runner is wired to `npm test` so
+every change to the extractor runs the full corpus before merging.
+
+PDF / AI-based extractions get tolerance bands (min/max), not exact
+counts — they're non-deterministic by nature. Catch real failures
+(zero rows, truncation, missing-row assertions) without flapping on
+normal model variance. Single deterministic surface (CSV / XLSX) is
+the strict assertion path.
+
+**Canonical reference**: `tests/test_vantaca_extraction.js` +
+`tests/fixtures/vantaca-violations/`.
+
+### 2) Self-diagnosing UI on every parse failure
+
+When extraction fails, the UI does NOT show a bare error string.
+The error response includes a `diagnostic` object:
+
+```js
+return res.status(400).json({
+  error: '...',
+  diagnostic: {
+    headers,                  // what we saw
+    sample_rows,              // first 3 data rows
+    auto_detected_mapping,    // what auto-detect found (per field)
+    required_fields,          // what we need
+    help,                     // one-line plain-English instruction
+  },
+});
+```
+
+The frontend renders this as an inline panel with:
+- A data preview table (first 3 rows × all columns, with column numbers)
+- A dropdown per required field showing every column with header+sample
+- An "auto-detected" / "required" / "optional" badge per row
+- A "Retry with these columns" button that re-submits with a
+  `manual_mapping` form field ({field: columnIndex})
+
+The parser accepts the manual_mapping override and uses it instead of
+auto-detect. Single shared row-extraction code path (the override and
+auto-detect cannot silently diverge).
+
+**Canonical reference**:
+- Backend: `lib/enforcement/vantaca_violation_import.js`
+  (`parseVantacaViolations(buffer, filename, { manualMapping })`)
+  + `api/enforcement.js` POST `/vantaca-violations/preview`
+- Frontend: `public/index.html` `inspVViPreview` / `inspVViRenderDiagnostic`
+  / `inspVViDiagnosticRetry`
+
+### Why this matters
+
+Every extraction surface is a place where domain shape varies wildly
+across real files. The first version always handles the file in front
+of us. The second file is shaped slightly differently and the import
+breaks for staff. Old loop: staff escalates to Ed → Ed digs in → Ed
+ships a one-off patch → next file breaks differently. That loop is
+the encode-Ed problem applied to the platform's resilience instead of
+its judgment. See memory `project_ed_not_in_loop_test`.
+
+**New default**: the system surfaces what it saw + lets staff resolve.
+Every new file shape Laurie sees that breaks either works OR she can
+fix it cold via the override dropdowns in 30 seconds, no Ed in the
+loop. The file then becomes a fixture so it never breaks again.
+
+---
+
 ## Catastrophic-output surfaces (require the schema + gold-standard pattern)
 
 These features produce outputs where bugs end up in court or in front of a
