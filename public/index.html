@@ -59,12 +59,14 @@
          + recent inspections. Desktop view unaffected. */
       #tabSubbar { display: none !important; }
 
-      /* Ed 2026-06-10 follow-up: Take photo button + No-house-selected
-         banner were position:fixed at the bottom of the viewport, which on
-         mobile screens covered the Recent inspections row's action buttons
-         (Resume / Finalize / Discard). Pull them into normal page flow on
-         mobile so scrolling reveals everything underneath. Desktop keeps
-         the fixed-thumb-reach behavior for in-car use on iPad / tablet. */
+      /* Ed 2026-06-10 — mobile capture bar: when NO inspection is active,
+         the banner + Take photo button sit in normal page flow (the prior
+         "unfix" fix). When an inspection IS active (body.insp-active),
+         they pin to the very top of the viewport so the operator always
+         sees the selected house + can capture in one tap, while the rest
+         of the page (Recent inspections, Office Tools) scrolls underneath. */
+
+      /* Default mobile = normal flow */
       #inspCaptureBtn {
         position: static !important;
         left: auto !important;
@@ -80,6 +82,45 @@
         bottom: auto !important;
         max-width: none !important;
         margin: 8px 0 !important;
+      }
+
+      /* Inspection active = pin to top */
+      body.insp-active #inspCaptureProperty {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
+        bottom: auto !important;
+        max-width: none !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        z-index: 1001 !important;
+        padding: 10px 14px !important;
+      }
+      body.insp-active #inspCaptureBtn {
+        position: fixed !important;
+        top: 44px !important;   /* sits below the banner; banner is ~44px when shown */
+        left: 0 !important;
+        right: 0 !important;
+        bottom: auto !important;
+        max-width: none !important;
+        margin: 0 !important;
+        border-radius: 0 !important;
+        padding: 16px !important;
+        z-index: 1000 !important;
+      }
+      /* When the banner is hidden (display:none via JS — e.g. paused state),
+         the gold button hugs the top instead of leaving a 44px gap. CSS
+         can't read sibling display, so we ride on the JS-controlled state
+         class: when banner is display:none, also drop button to top:0. */
+      body.insp-active #inspCaptureProperty[style*="display: none"] ~ #inspCaptureBtn,
+      body.insp-active #inspCaptureProperty[style*="display:none"] ~ #inspCaptureBtn {
+        top: 0 !important;
+      }
+      /* Push the inspect tab content down so the first row of content
+         isn't hidden behind the pinned capture bar on load. */
+      body.insp-active #tab-inspect {
+        padding-top: 110px !important;
       }
 
       /* Recent inspections rows: on a phone the action buttons (View
@@ -18146,6 +18187,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.photos = [];
       inspState.isPaused = false;
       inspState.photoFilter = inspState.photoFilter || 'all';
+      // Ed 2026-06-10: body class flag for CSS — on mobile, lets the
+      // banner + Take photo button pin to the top of the page only while
+      // an inspection is actually running. Off => normal page flow.
+      document.body.classList.add('insp-active');
       // Auto-collapse the office tools panels — operator just needs map +
       // capture + photo list in the field. Cure pipeline, drafts queue,
       // letter format, etc. all stay one click away under "Office tools."
@@ -19663,6 +19708,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     inspState.photos = [];
     inspState.stagedWidePhotoId = null;
     inspState.stagedWidePreviewUrl = null;
+    // Clear body flag — mobile capture bar unpins from top, page returns
+    // to normal flow.
+    document.body.classList.remove('insp-active');
     inspState.stagedWidePropertyHint = null;
     if (typeof inspUpdateCaptureUi === 'function') inspUpdateCaptureUi();
     inspState.routePings = [];
@@ -23249,6 +23297,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       inspState.stagedWidePreviewUrl     = null;
       inspState.stagedWidePropertyHint   = null;
       inspState.listLoaded               = false;
+      // Flag the body so the mobile capture bar pins to the top.
+      document.body.classList.add('insp-active');
       inspState.listData                 = null;
 
       // Pull the community name (Recent endpoint joins it but detail might not).
