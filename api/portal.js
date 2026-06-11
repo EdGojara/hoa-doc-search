@@ -32,7 +32,12 @@ const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 
 const COOKIE_NAME = 'TRUSTED_PORTAL';
 const COOKIE_TTL_DAYS = 30;
-const MAGIC_LINK_TTL_HOURS = 1;
+// Ed 2026-06-11: bumped from 1 → 2 hours. Real-world feedback (Karla Rutan,
+// DRB Group): a 1-hour link can already expire by the time the email
+// reaches a busy builder's inbox + they get back to their desk. 2 hours
+// covers the typical "I'll get to it after my next call" window without
+// extending the attack surface meaningfully.
+const MAGIC_LINK_TTL_HOURS = 2;
 
 // Mimic session — staff renders the portal as a specific portal_user with
 // audit logging. Separate cookie so a staff member's own portal session (if
@@ -587,7 +592,7 @@ router.post('/request-link', express.json({ limit: '8kb' }), async (req, res) =>
 router.post('/consume', async (req, res) => {
   try {
     const token = req.query.token || req.body?.token;
-    if (!token) return res.status(400).json({ error: 'token is required' });
+    if (!token) return res.status(400).json({ error: 'token is required', error_kind: 'invalid' });
 
     const { data: link } = await supabase
       .from('portal_magic_links')
@@ -595,10 +600,40 @@ router.post('/consume', async (req, res) => {
       .eq('token', token)
       .maybeSingle();
 
-    if (!link) return res.status(400).json({ error: 'sign-in link is invalid' });
-    if (link.used_at) return res.status(400).json({ error: 'sign-in link already used' });
+    // Ed 2026-06-11: structured error_kind so the frontend can show clear
+    // "your link expired, here's how to get a new one" copy rather than a
+    // generic error string. user_email_hint surfaces a masked email only
+    // when the token was real (we already confirmed it via .eq) — letting
+    // the frontend pre-fill the renewal form so the user doesn't have to
+    // remember which email they registered with.
+    if (!link) return res.status(400).json({ error: 'sign-in link is invalid', error_kind: 'invalid' });
+
+    let userEmailHint = null;
+    if (link.portal_user_id) {
+      const { data: u } = await supabase.from('portal_users')
+        .select('email').eq('id', link.portal_user_id).maybeSingle();
+      if (u && u.email) {
+        // Masked form: "kr***@drbgroup.com" — enough to pre-fill, not enough to enumerate.
+        const [lhs, rhs] = u.email.split('@');
+        userEmailHint = `${lhs.slice(0, 2)}${'*'.repeat(Math.max(1, lhs.length - 2))}@${rhs}`;
+      }
+    }
+
+    if (link.used_at) {
+      return res.status(400).json({
+        error: 'sign-in link already used',
+        error_kind: 'used',
+        renewable: true,
+        user_email_hint: userEmailHint,
+      });
+    }
     if (new Date(link.expires_at) < new Date()) {
-      return res.status(400).json({ error: 'sign-in link has expired' });
+      return res.status(400).json({
+        error: 'sign-in link has expired',
+        error_kind: 'expired',
+        renewable: true,
+        user_email_hint: userEmailHint,
+      });
     }
 
     // Confirm user still active
@@ -608,7 +643,7 @@ router.post('/consume', async (req, res) => {
       .eq('id', link.portal_user_id)
       .single();
     if (!user || user.status === 'revoked') {
-      return res.status(403).json({ error: 'account is not active' });
+      return res.status(403).json({ error: 'account is not active', error_kind: 'revoked', renewable: false });
     }
 
     // Mark single-use

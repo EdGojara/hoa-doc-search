@@ -261,13 +261,78 @@ function toast(msg, kind) {
       } catch (_) { /* fetch failure → default to /portal */ }
       window.location.href = dest;
     } else {
+      // Ed 2026-06-11: instead of a toast that fades, render an inline
+      // panel with clear renewal instructions. Pre-fill the email field
+      // from the masked hint so the user doesn't have to remember which
+      // address they registered with.
       const data = await r.json().catch(() => ({}));
-      toast(data.error || 'Sign-in link has expired or is invalid. Try requesting a new one.', 'error');
+      renderRenewalState(data);
     }
   } catch (err) {
-    toast('Could not sign you in. Please try requesting a new link.', 'error');
+    renderRenewalState({ error_kind: 'invalid', renewable: true, error: 'Could not sign you in — network or server issue.' });
   }
 })();
+
+function renderRenewalState(data) {
+  const kind = data.error_kind || 'invalid';
+  const renewable = data.renewable !== false;  // default to renewable
+  const COPY = {
+    expired: {
+      title: '⏱ Your sign-in link expired',
+      body:  'Sign-in links are good for 2 hours. Yours has passed that window. No problem — enter your email below and we\'ll send a fresh one.',
+    },
+    used:    {
+      title: '✓ That link was already used',
+      body:  'Each sign-in link works once. Enter your email below to get a new one.',
+    },
+    invalid: {
+      title: 'Couldn\'t use that sign-in link',
+      body:  'The link may have been copied incompletely from your email. Enter your email below to send yourself a fresh one.',
+    },
+    revoked: {
+      title: 'Account inactive',
+      body:  'Your access has been turned off by an administrator. If this looks wrong, email info@bedrocktx.com.',
+    },
+  };
+  const copy = COPY[kind] || COPY.invalid;
+
+  // Pre-fill the email if we got a masked hint back. The user can correct
+  // it before submitting — the masked form ("kr***@drbgroup.com") nudges
+  // their memory without being usable as-is.
+  if (data.user_email_hint) {
+    const emailEl = document.getElementById('email');
+    if (emailEl) {
+      emailEl.value = data.user_email_hint;
+      emailEl.placeholder = 'Enter your full email';
+      emailEl.focus();
+      // Move cursor to start so the user can type their full email easily.
+      try { emailEl.setSelectionRange(0, emailEl.value.length); } catch (_) {}
+    }
+  }
+
+  // Render the panel above the form so it's the first thing they see.
+  const wrap = document.querySelector('.card') || document.body;
+  const existing = document.getElementById('renewalPanel');
+  if (existing) existing.remove();
+  const panel = document.createElement('div');
+  panel.id = 'renewalPanel';
+  panel.style.cssText = renewable
+    ? 'background:#fef3c7; border:1px solid #fbbf24; color:#78350f; padding:14px 16px; border-radius:10px; margin-bottom:18px;'
+    : 'background:#fecaca; border:1px solid #dc2626; color:#991b1b; padding:14px 16px; border-radius:10px; margin-bottom:18px;';
+  panel.innerHTML = `
+    <div style="font-weight:700; font-size:14px; margin-bottom:4px;">${copy.title}</div>
+    <div style="font-size:12.5px; line-height:1.5;">${copy.body}</div>
+  `;
+  wrap.insertBefore(panel, wrap.firstChild);
+
+  // Clean the ?token=... from the URL so a page refresh doesn't re-trigger
+  // the failure path — keeps the panel visible but resets the URL to a
+  // clean state.
+  try {
+    const cleanUrl = window.location.pathname;
+    window.history.replaceState({}, document.title, cleanUrl);
+  } catch (_) {}
+}
 
 document.getElementById('emailForm').addEventListener('submit', async (e) => {
   e.preventDefault();
