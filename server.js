@@ -689,7 +689,26 @@ app.post('/api/auth/exchange-supabase-session', express.json({ limit: '8kb' }), 
 // explicit URL.
 app.get('/', (req, res, next) => {
   const host = String(req.get('host') || '').toLowerCase();
-  if (host.startsWith('my.') || host.startsWith('app.')) {
+  // Ed 2026-06-11 evening regression fix: previously this redirected BOTH
+  // my.* and app.* roots to /portal-login.html. That broke Ed's own staff
+  // sign-in because the Microsoft 365 auth callback returns to / on
+  // app.bedrocktxai.com — the redirect intercepted the callback and lost
+  // his ?code= / ?state= params. Staff couldn't complete login.
+  //
+  // Clean separation by subdomain intent:
+  //   - my.bedrocktxai.com  → portal subdomain ("my home / my account") —
+  //                            redirect builders/homeowners straight to
+  //                            the magic-link sign-in.
+  //   - app.bedrocktxai.com → staff trustEd app subdomain — DO NOT
+  //                            redirect. Staff hit /, get the SPA, which
+  //                            handles auth itself (Microsoft 365 callback
+  //                            still works here).
+  //
+  // Also skip the redirect entirely if there's an OAuth callback (?code= or
+  // ?state= in the query) — belt-and-suspenders against any future host
+  // where the staff flow lands on a redirected root.
+  const hasOAuthCallback = req.query && (req.query.code || req.query.state);
+  if (host.startsWith('my.') && !hasOAuthCallback) {
     return res.redirect(302, '/portal-login.html');
   }
   return next();
