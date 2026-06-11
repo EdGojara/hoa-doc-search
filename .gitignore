@@ -2,3 +2,9 @@ node_modules/
 .env
 docs/
 .cache/
+
+# County parcel shapefiles — FBCAD/HCAD bulk data, hundreds of MB.
+# Downloaded by scripts/enrich_parcel_centroids_fbcad.js when needed.
+# Re-download from www.fbcad.org/gis-data/ rather than committing.
+scripts/fbcad-data/
+scripts/hcad-data/
