@@ -249,7 +249,20 @@ function toast(msg, kind) {
           // dead-end for builders because they have no portal_user_properties
           // rows by design.
           if (me.user && me.user.role === 'builder') {
-            dest = '/builder-dashboard.html';
+            // Ed 2026-06-11: builders land on the SUBMISSION page (with
+            // pre-loaded master plans), not the empty dashboard. The
+            // dashboard exists for reviewing prior submissions but is
+            // useless as a first-touch landing — empty list, no clear
+            // path to file a new application. Submission page IS the
+            // call-to-action.
+            //
+            // Hardcoded to DRB at August Meadows for now since DRB Group
+            // is the only builder onboarded. When other builder/community
+            // pairs come online, query portal_user_builders ->
+            // builder_companies -> active community page mapping and pick
+            // the right URL. If a builder has multiple active communities,
+            // fall back to /builder-dashboard.html so they pick.
+            dest = '/builders/august-meadows-drb';
           } else {
             // Board check (existing pattern)
             const lastView = localStorage.getItem('bedrock_portal_last_view');
