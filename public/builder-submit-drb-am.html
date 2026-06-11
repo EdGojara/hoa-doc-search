@@ -397,6 +397,16 @@
       <div class="bdrk">
         <div class="wm">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
         <div class="sub">Reviewed by Bedrock</div>
+        <!-- Ed 2026-06-11: portal nav for authenticated builders. Since
+             the magic-link routing now sends builders straight to this
+             submission page (not the empty dashboard), they need a clear
+             way to get to their submission history + a way to sign out.
+             Links are JS-conditional: hidden by default, shown only when
+             the user is signed in (detected via /api/portal/me). -->
+        <div class="portal-nav" id="portalNav" style="display:none; margin-top:8px; display:flex; gap:14px; font-size:11.5px;">
+          <a href="/builder-dashboard.html" style="color:#1A3050; text-decoration:none; border-bottom:1px solid #D4AF37;">Your submissions →</a>
+          <a href="#" id="signoutLink" style="color:#64748b; text-decoration:none;">Sign out</a>
+        </div>
       </div>
     </div>
 
@@ -596,6 +606,30 @@
     t.textContent = msg;
     document.body.appendChild(t);
     setTimeout(() => t.remove(), 5500);
+  }
+
+  // ---- Portal nav: show "Your submissions" + "Sign out" only when the
+  // user is actually signed in. Ed 2026-06-11: builders need a path to
+  // their history + sign-out from this submission page, since the magic
+  // link routes them straight here (not the dashboard). ----
+  (async function wirePortalNav() {
+    try {
+      const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+      if (!r.ok) return; // not signed in — leave nav hidden
+      const me = await r.json();
+      if (!me.user) return;
+      const nav = $('portalNav');
+      if (nav) nav.style.display = 'flex';
+    } catch (_) { /* network failure — leave hidden, no harm */ }
+  })();
+
+  const _signoutEl = $('signoutLink');
+  if (_signoutEl) {
+    _signoutEl.addEventListener('click', async (e) => {
+      e.preventDefault();
+      try { await fetch('/api/portal/logout', { method: 'POST', credentials: 'same-origin' }); } catch (_) {}
+      window.location.href = '/portal-login.html';
+    });
   }
 
   // ---- Plan dropdown: load the full DRB master plan list from the
