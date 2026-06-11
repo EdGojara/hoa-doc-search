@@ -22519,25 +22519,39 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       status.innerHTML = `<span style="color:#15803d;">✓ Added ${j.inserted_count} new categories${j.skipped_existing_count > 0 ? ` (${j.skipped_existing_count} already existed)` : ''}. Re-resolving…</span>`;
 
-      // Re-resolve the cached preview against the updated category list
+      // Re-resolve the preview against the updated category list.
+      // PDF path: re-resolve uses the cached job_id (rows live server-side).
+      // CSV / XLSX path: there's no job (synchronous parse) — but the file
+      // is still in the file input and the parse is fast, so just call
+      // inspVViPreview() again. The new category labels will now match.
+      // Ed 2026-06-10: prior code dead-ended CSVs with "job ID is lost.
+      // Re-upload the PDF" — wrong for CSV, blocked the import flow.
       const jobId = _inspVViPreviewData.job_id || window._inspVViLastJobId;
-      if (!jobId) {
-        status.innerHTML = '<span style="color:#b91c1c;">Categories added, but the job ID is lost. Re-upload the PDF to see the updated preview.</span>';
-        return;
-      }
-      const rr = await fetch(`/api/enforcement/vantaca-violations/preview/${encodeURIComponent(jobId)}/re-resolve`, { method: 'POST' });
-      const rj = await rr.json();
-      if (!rr.ok) throw new Error(rj.error || `HTTP ${rr.status}`);
-
-      _inspVViPreviewData = rj;
-      _inspVViPreviewData.job_id = jobId;
-      status.innerHTML = `<span style="color:#15803d;">✓ Re-resolved: ${rj.total_rows} rows · ${rj.resolved_count} matched · ${rj.unresolved_category_count} still unmatched · ${rj.duplicate_count} duplicates.</span>`;
-      inspVViRenderDiff(rj);
-      const applyBtn = document.getElementById('inspVViApplyBtn');
-      if (rj.resolved_count > 0) {
-        applyBtn.disabled = false;
-        applyBtn.style.opacity = '1';
-        applyBtn.textContent = `✓ Import ${rj.resolved_count} resolved row${rj.resolved_count === 1 ? '' : 's'}`;
+      if (jobId) {
+        // PDF re-resolve path — rows are server-side, just rerun resolution.
+        const rr = await fetch(`/api/enforcement/vantaca-violations/preview/${encodeURIComponent(jobId)}/re-resolve`, { method: 'POST' });
+        const rj = await rr.json();
+        if (!rr.ok) throw new Error(rj.error || `HTTP ${rr.status}`);
+        _inspVViPreviewData = rj;
+        _inspVViPreviewData.job_id = jobId;
+        status.innerHTML = `<span style="color:#15803d;">✓ Re-resolved: ${rj.total_rows} rows · ${rj.resolved_count} matched · ${rj.unresolved_category_count} still unmatched · ${rj.duplicate_count} duplicates.</span>`;
+        inspVViRenderDiff(rj);
+        const applyBtn = document.getElementById('inspVViApplyBtn');
+        if (rj.resolved_count > 0) {
+          applyBtn.disabled = false;
+          applyBtn.style.opacity = '1';
+          applyBtn.textContent = `✓ Import ${rj.resolved_count} resolved row${rj.resolved_count === 1 ? '' : 's'}`;
+        }
+      } else {
+        // CSV / XLSX re-resolve path — file is still in the input, just
+        // re-run preview synchronously. The new categories will now match.
+        const file = document.getElementById('inspVViFile').files[0];
+        if (!file) {
+          status.innerHTML = '<span style="color:#b91c1c;">Categories added, but the file is no longer in the picker. Re-upload to see the updated preview.</span>';
+          return;
+        }
+        status.innerHTML = '<span style="color:#15803d;">✓ Categories added — re-running preview…</span>';
+        await inspVViPreview();
       }
     } catch (e) {
       status.innerHTML = '<span style="color:#b91c1c;">' + escapeHtml(e.message) + '</span>';
