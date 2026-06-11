@@ -22610,11 +22610,17 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const skipped = j.skipped || 0;
     const errors = j.errors || [];
     const wrap = document.getElementById('inspVViDiff');
+    // Suggested action labels — match the suggested_action field the API
+    // returns. Ed 2026-06-10: do NOT default to "safe to ignore" — that
+    // misleads staff when the failure is a real bug (e.g. invalid stage
+    // value crashing a CHECK constraint, like the hearing_pending/notice
+    // issue we hit on Waterview). Constraint failures are usually a parser
+    // bug worth flagging. Read the raw error string per row to decide.
     const SUGGESTED_ACTION_LABELS = {
       add_property:        '🏠 This address isn\'t in trustEd\'s property roster yet. Add it manually from the Properties admin, then re-run the import.',
       add_category:        '🏷️ The category wasn\'t in trustEd. Click "Add categories & re-resolve" before re-importing.',
       review_source:       '📋 The source row is missing a date. Check the Vantaca export for this row.',
-      review_db_constraint:'⚠ Database refused the insert (constraint or duplicate). See the raw error below — usually safe to ignore (means this row already exists).',
+      review_db_constraint:'⚠ Database refused the insert. If the raw error mentions "duplicate" or "unique constraint", the row already exists — safe to ignore. If it mentions "check constraint" or any other failure, this is a real bug — flag it.',
     };
 
     const errorRows = errors.map((e) => {
