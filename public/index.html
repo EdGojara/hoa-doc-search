@@ -22180,7 +22180,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     _inspVViPreviewData = null;
   }
 
-  async function inspVViPreview() {
+  async function inspVViPreview(opts) {
+    opts = opts || {};
     const file = document.getElementById('inspVViFile').files[0];
     const communityId = document.getElementById('inspVViCommunity').value;
     const status = document.getElementById('inspVViStatus');
@@ -22190,11 +22191,21 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const btn = document.getElementById('inspVViPreviewBtn');
     btn.disabled = true; btn.textContent = '⏳ Parsing…';
     status.textContent = '';
+    // Hide any prior diagnostic panel from a previous attempt
+    const priorDiag = document.getElementById('inspVViDiagnostic');
+    if (priorDiag) priorDiag.remove();
 
     try {
       const fd = new FormData();
       fd.append('file', file);
       fd.append('community_id', communityId);
+      // Optional manual override from the self-diagnose panel (Ed 2026-06-10).
+      // When auto-detect fails, staff picks columns from dropdowns and we
+      // re-run preview with their picks. Lets Laurie resolve column-detection
+      // failures without escalating to Ed.
+      if (opts.manualMapping && Object.keys(opts.manualMapping).length > 0) {
+        fd.append('manual_mapping', JSON.stringify(opts.manualMapping));
+      }
       const r = await window._authFetch('/api/enforcement/vantaca-violations/preview', { method: 'POST', body: fd });
       // Server may return HTML on timeout/error — guard against JSON parse errors
       const text = await r.text();
@@ -22203,7 +22214,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       catch (parseErr) {
         throw new Error(`Server returned non-JSON response (HTTP ${r.status}): ${text.slice(0, 200)}`);
       }
-      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      if (!r.ok) {
+        // Self-diagnose path: the server saw the file but couldn't detect
+        // columns. Render an actionable override panel instead of a bare
+        // error string. Staff picks the right column for each required
+        // field and the parser retries.
+        if (j.diagnostic && j.diagnostic.headers) {
+          status.innerHTML = `<span style="color:#b91c1c;">${escapeHtml(j.error || 'Could not auto-detect the file format.')}</span>`;
+          inspVViRenderDiagnostic(j.diagnostic);
+          return;
+        }
+        throw new Error(j.error || `HTTP ${r.status}`);
+      }
 
       // If PDF, the server returned a job_id and is processing in the
       // background. Poll preview-status until done.
@@ -22234,6 +22256,136 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       btn.disabled = false; btn.textContent = '🔍 Preview diff';
     }
   }
+
+  // ----------------------------------------------------------------------
+  // Self-diagnosing import panel — Ed 2026-06-10. When the server can't
+  // auto-detect columns, render an actionable panel showing what the
+  // system saw + dropdowns for each required field. Staff resolves the
+  // import without escalating to Ed. See memory project_ed_not_in_loop_test.
+  // ----------------------------------------------------------------------
+  function inspVViRenderDiagnostic(diag) {
+    const wrap = document.getElementById('inspVViStatus').parentElement;
+    const FIELD_LABELS = {
+      street_address:     'Address column',
+      vantaca_account_id: 'Account # column',
+      category_label:     'Violation Type column',
+      opened_at:          'Violation Date column',
+      stage:              'Status / Stage column (optional)',
+      resolved_at:        'Resolved Date column (optional)',
+      notes:              'Notes column (optional)',
+    };
+    const required = new Set(diag.required_fields || ['street_address', 'category_label', 'opened_at']);
+    const headers = diag.headers || [];
+    const samples = diag.sample_rows || [];
+    const autoMap = diag.auto_detected_mapping || {};
+
+    // For each header, build a column-picker option label that includes
+    // the header name AND the first sample value so staff can see the
+    // actual data rather than just an abstract column name.
+    const columnPickerOptions = (selectedIdx, defaultLabel) => {
+      let html = `<option value="">— pick a column —</option>`;
+      headers.forEach((h, i) => {
+        const sample = (samples[0] && samples[0][i] != null) ? String(samples[0][i]).slice(0, 30) : '';
+        const label = `Col ${i + 1}: ${escapeHtml(h || '(no header)')}${sample ? ' · "' + escapeHtml(sample) + '"' : ''}`;
+        const selected = (selectedIdx != null && selectedIdx === i) ? ' selected' : '';
+        html += `<option value="${i}"${selected}>${label}</option>`;
+      });
+      return html;
+    };
+
+    // Helper: what column did auto-detect pick for this field (if any)?
+    const autoIdx = (field) => {
+      const m = autoMap[field];
+      return (m && typeof m === 'object' && Number.isInteger(m.columnIndex)) ? m.columnIndex : null;
+    };
+
+    const sampleTable = samples.length === 0 ? '' : `
+      <div style="margin-top:10px; font-size:11px; color:#475569;">First data rows the system saw:</div>
+      <div style="overflow-x:auto; margin-top:5px; border:1px solid #e2e8f0; border-radius:6px;">
+        <table style="width:100%; border-collapse:collapse; font-size:11px;">
+          <thead>
+            <tr style="background:#f1f5f9;">
+              ${headers.map((h, i) => `<th style="padding:6px 8px; text-align:left; font-weight:600; color:#0B1D34; border-bottom:1px solid #e2e8f0; white-space:nowrap;">Col ${i+1}<br><span style="font-weight:400; color:#64748b;">${escapeHtml(h || '(no header)')}</span></th>`).join('')}
+            </tr>
+          </thead>
+          <tbody>
+            ${samples.map((row) => `
+              <tr>${headers.map((_, i) => `<td style="padding:5px 8px; border-bottom:1px solid #f1f5f9; color:#0B1D34; white-space:nowrap; max-width:160px; overflow:hidden; text-overflow:ellipsis;">${escapeHtml((row[i] == null ? '' : String(row[i])).slice(0, 60))}</td>`).join('')}</tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>`;
+
+    const fieldRows = Object.entries(FIELD_LABELS).map(([field, label]) => {
+      const isReq = required.has(field);
+      const detected = autoIdx(field);
+      const badge = detected != null
+        ? `<span style="background:#dcfce7; color:#15803d; padding:1px 7px; border-radius:6px; font-size:10px; font-weight:600;">auto-detected</span>`
+        : (isReq
+            ? `<span style="background:#fef3c7; color:#92400e; padding:1px 7px; border-radius:6px; font-size:10px; font-weight:600;">required</span>`
+            : `<span style="color:#94a3b8; font-size:10px;">optional</span>`);
+      return `
+        <div style="display:flex; gap:8px; align-items:center; padding:8px 0; border-bottom:1px solid #f1f5f9;">
+          <div style="min-width:170px; font-size:12.5px; color:#0B1D34; font-weight:600;">
+            ${escapeHtml(label)} ${badge}
+          </div>
+          <select data-vvi-field="${field}" style="flex:1; padding:6px 8px; border:1px solid #cbd5e1; border-radius:6px; font-size:12px;">
+            ${columnPickerOptions(detected, label)}
+          </select>
+        </div>`;
+    }).join('');
+
+    const panel = document.createElement('div');
+    panel.id = 'inspVViDiagnostic';
+    panel.style.cssText = 'margin-top:14px; background:#fffbeb; border:1px solid #f59e0b; border-radius:10px; padding:14px;';
+    panel.innerHTML = `
+      <div style="display:flex; align-items:center; gap:8px; margin-bottom:8px;">
+        <div style="font-weight:700; font-size:13.5px; color:#92400e;">⚠ Couldn't auto-detect columns — pick them manually</div>
+      </div>
+      <div style="font-size:12px; color:#78350f; margin-bottom:6px;">
+        ${escapeHtml(diag.help || 'Pick the column that matches each required field, then retry.')}
+      </div>
+      ${sampleTable}
+      <div style="margin-top:14px; background:#fff; border:1px solid #fde68a; border-radius:8px; padding:6px 12px;">
+        ${fieldRows}
+      </div>
+      <div style="display:flex; gap:8px; margin-top:12px; align-items:center;">
+        <button id="inspVViDiagRetryBtn" onclick="inspVViDiagnosticRetry()" style="background:#0B1D34; color:#fff; border:none; padding:8px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">↻ Retry with these columns</button>
+        <button onclick="document.getElementById('inspVViDiagnostic').remove()" style="background:#fff; color:#475569; border:1px solid #cbd5e1; padding:8px 14px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">Cancel</button>
+      </div>
+    `;
+    wrap.appendChild(panel);
+  }
+
+  // Read the diagnostic panel's dropdown picks, build a manual_mapping
+  // object, re-run preview. Required fields without a pick block the retry.
+  async function inspVViDiagnosticRetry() {
+    const panel = document.getElementById('inspVViDiagnostic');
+    if (!panel) return;
+    const selects = panel.querySelectorAll('select[data-vvi-field]');
+    const manualMapping = {};
+    const missing = [];
+    const REQUIRED = ['category_label', 'opened_at'];
+    let hasPropId = false;
+    selects.forEach((sel) => {
+      const field = sel.dataset.vviField;
+      const v = sel.value;
+      if (v !== '') {
+        manualMapping[field] = Number(v);
+        if (field === 'street_address' || field === 'vantaca_account_id') hasPropId = true;
+      } else if (REQUIRED.includes(field)) {
+        missing.push(field);
+      }
+    });
+    if (!hasPropId) missing.push('street_address or vantaca_account_id');
+    if (missing.length > 0) {
+      alert('Pick a column for each required field:\n  - ' + missing.join('\n  - '));
+      return;
+    }
+    panel.remove();
+    await inspVViPreview({ manualMapping });
+  }
+  window.inspVViDiagnosticRetry = inspVViDiagnosticRetry;
 
   // Poll the background-job status endpoint until terminal state. Updates
   // the status element with progress text along the way so the operator

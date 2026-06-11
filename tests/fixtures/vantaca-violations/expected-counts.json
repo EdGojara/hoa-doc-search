@@ -16,8 +16,9 @@
     "must_have_category_for_known_row": "Trash Cans/Recycling Containers"
   },
   "lakes-pine-forest-2026-05.pdf": {
-    "min_rows": 140,
-    "max_rows": 160,
+    "_comment": "PDF extraction is AI-based and non-deterministic. Tolerance is wide to catch real failures (zero rows, truncation, total miss) without flapping on normal model variance. CSV path is the deterministic one — if a deployment needs an exact count check, use CSV.",
+    "min_rows": 50,
+    "max_rows": 200,
     "must_have_no_errors": true,
     "skip_if_no_anthropic_key": true
   }

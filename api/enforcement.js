@@ -4823,15 +4823,51 @@ router.post('/vantaca-violations/preview', upload.single('file'), async (req, re
       });
     }
 
-    // CSV / Excel — fast enough to do synchronously
-    const result = parseVantacaViolations(req.file.buffer, req.file.originalname);
+    // CSV / Excel — fast enough to do synchronously.
+    // Optional manual_mapping form field: JSON-encoded { field: column_index }
+    // override from the self-diagnose UI when auto-detect failed on the
+    // last attempt. Lets staff resolve "couldn't detect columns" without
+    // escalation. See memory project_ed_not_in_loop_test.
+    let manualMapping = null;
+    if (req.body.manual_mapping) {
+      try {
+        const parsed = JSON.parse(req.body.manual_mapping);
+        if (parsed && typeof parsed === 'object') manualMapping = parsed;
+      } catch (_) { /* bad JSON — ignore, fall back to auto-detect */ }
+    }
+    const result = parseVantacaViolations(req.file.buffer, req.file.originalname, { manualMapping });
     const rows = result.rows;
     const mapping = result.mapping;
     const headers = result.headers;
     const errors = result.errors;
 
     if ((!rows || rows.length === 0) && errors && errors.length > 0) {
-      return res.status(400).json({ error: errors.join(' '), headers, mapping });
+      // Ed 2026-06-10: self-diagnosing import.
+      // On failure, return rich diagnostic data so the staff member can SEE
+      // what the system saw (headers + first few data rows) and tell us
+      // which column is which without escalating to Ed. The frontend
+      // renders this as an actionable panel, not just an error string.
+      // See memory project_ed_not_in_loop_test.
+      let sampleRows = [];
+      try {
+        const xlsx = require('xlsx');
+        const wb = xlsx.read(req.file.buffer, { type: 'buffer', cellDates: true });
+        if (wb.SheetNames.length) {
+          const sheet = wb.Sheets[wb.SheetNames[0]];
+          const aoa = xlsx.utils.sheet_to_json(sheet, { header: 1, defval: null, blankrows: false });
+          sampleRows = aoa.slice(1, 4).map((r) => r.map((c) => c == null ? '' : String(c)));
+        }
+      } catch (_) { /* sample rows are a nice-to-have; failure here non-fatal */ }
+      return res.status(400).json({
+        error: errors.join(' '),
+        diagnostic: {
+          headers,
+          sample_rows: sampleRows,
+          auto_detected_mapping: mapping || {},
+          required_fields: ['street_address', 'vantaca_account_id', 'category_label', 'opened_at'],
+          help: 'Pick which column matches each required field. The system will retry with your overrides.',
+        },
+      });
     }
 
     // Fetch properties + categories for this community to resolve refs
