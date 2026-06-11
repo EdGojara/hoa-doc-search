@@ -22443,9 +22443,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
   function inspVViRenderDiff(j) {
     const wrap = document.getElementById('inspVViDiff');
-    const mapping = Object.entries(j.mapping || {}).map(([f, m]) =>
-      `<div style="font-size:11.5px;"><span style="color:#0B1D34; font-weight:600;">${escapeHtml(f)}</span> ← ${escapeHtml(m.header)}</div>`
-    ).join('');
+    // Ed 2026-06-10 clarity fix: the prior renderer assumed every mapping
+    // entry was {header, columnIndex}, but SSRS + manual-override paths
+    // attach annotation keys (_source, source) that aren't field entries.
+    // Iterate and skip non-entry keys explicitly so we never render an
+    // empty "← " line that reads as broken even when the import works.
+    const SOURCE_LABELS = {
+      vantaca_ssrs_export: 'Auto-detected from Vantaca SSRS report layout',
+      manual_override:     'Using manual column overrides you picked',
+      auto_detect:         'Auto-detected from column header names',
+    };
+    const sourceKey = j.mapping ? (j.mapping._source || j.mapping.source) : null;
+    const sourceLabel = sourceKey ? (SOURCE_LABELS[sourceKey] || sourceKey) : null;
+    const mapping = Object.entries(j.mapping || {})
+      .filter(([f, m]) => !f.startsWith('_') && f !== 'source' && f !== 'columns' && m && typeof m === 'object' && m.header)
+      .map(([f, m]) =>
+        `<div style="font-size:11.5px;"><span style="color:#0B1D34; font-weight:600;">${escapeHtml(f)}</span> ← <span style="color:#475569;">${escapeHtml(m.header)}</span> <span style="color:#94a3b8;">(col ${m.columnIndex + 1})</span></div>`
+      ).join('');
+    const sourceHeader = sourceLabel
+      ? `<div style="font-size:11px; color:#15803d; margin-bottom:6px;">✓ ${escapeHtml(sourceLabel)}</div>`
+      : '';
     const sample = (j.sample_rows || []).slice(0, 3).map((r) =>
       `<tr><td style="padding:3px 6px;">${r._source_row}</td><td style="padding:3px 6px;">${escapeHtml(r.vantaca_account_id || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.street_address || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.category_label || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.opened_at || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.stage || '—')}</td></tr>`
     ).join('');
@@ -22453,6 +22470,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     wrap.innerHTML = `
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
         <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:6px;">Column mapping</div>
+        ${sourceHeader}
         ${mapping || '<span style="color:#94a3b8; font-size:12px;">No columns detected.</span>'}
       </div>
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
