@@ -3290,7 +3290,7 @@ router.get('/portal/my-submissions', async (req, res) => {
         submitted_at, decided_at, decided_by,
         builder_company_id, builder_companies(id, company_name),
         community_id, communities(id, name, slug),
-        master_plan_id, master_plans(id, plan_number, plan_name),
+        master_plan_id, master_plans!master_plan_id(id, plan_number, plan_name),
         builder_application_responses(
           id, response_type, message_to_builder, conditions, denial_reasons,
           decided_at, decided_by, letter_pdf_path, email_sent_at
