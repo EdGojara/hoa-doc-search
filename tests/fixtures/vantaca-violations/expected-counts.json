@@ -20,5 +20,19 @@
     "max_rows": 200,
     "must_have_no_errors": true,
     "skip_if_no_anthropic_key": true
+  },
+  "synthetic-1500-props-2026-05.csv": {
+    "_comment": "Synthetic 1500-property file built to structurally cover the 1000-row truncation bug class (CLAUDE.md scar). Any parser change that quietly drops rows past row 1000 will fail this. 1540 source violations across 1500 properties (600 closed + 400 first + 200 second + 150 certified + 80 pending hearing + 80 hearing notice + 30 fine). Hearing rows COLLIDE with certified rows at the same property (Vantaca's real-world behavior — hearing IS the certified case) and fully dedup, leaving 1380 unique violations. This is CORRECT — it models the canonical-stage dedup the parser is designed to do.",
+    "min_rows": 1370,
+    "max_rows": 1390,
+    "must_have_no_errors": true,
+    "must_have_address_for_known_row": "10000 Synthetic Way",
+    "stage_distribution": {
+      "cured":          { "min": 595, "max": 605 },
+      "courtesy_1":     { "min": 395, "max": 405 },
+      "courtesy_2":     { "min": 195, "max": 205 },
+      "certified_209":  { "min": 145, "max": 155 },
+      "fine_assessed":  { "min": 28,  "max": 32 }
+    }
   }
 }

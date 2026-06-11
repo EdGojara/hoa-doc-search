@@ -804,6 +804,60 @@ Every new file shape Laurie sees that breaks either works OR she can
 fix it cold via the override dropdowns in 30 seconds, no Ed in the
 loop. The file then becomes a fixture so it never breaks again.
 
+### 3) The three-confirmations rule before declaring "done"
+
+**Scar**: Ed 2026-06-10 evening. Vantaca import was declared "fixed" after
+Lakes of Pine Forest (~900 properties, only courtesy_1/2 + certified_209
+stages) passed end-to-end. Then Waterview (1,171 properties, hearing
+process steps in source data) surfaced three NEW bug classes my fixture
+suite structurally could not catch:
+
+1. The 1000-row PostgREST truncation — invisible because the only
+   fixture community was below the cap.
+2. Invented enum values (`hearing_pending`, `hearing_notice`) that
+   crashed `violations_current_stage_check` — invisible because the
+   tests asserted only row counts and stage distribution, not that
+   emitted values are actually accepted by the DB.
+3. A dedup edge case where hearing process pairs collapsed differently
+   than my expectations encoded — passed the test only because my
+   expectations encoded wrong values as correct.
+
+**Rule**: "Done" requires three independent confirmations, not one.
+
+1. **Tests pass on the small/easy fixture** — the one the feature was
+   developed on. Necessary baseline; never sufficient.
+2. **Tests pass on a representative HARD fixture** — for
+   property-count-sensitive code, a 1500+ property synthetic community.
+   For input-shape-sensitive code, the file shape NOT covered by step
+   one. For any code touching CLAUDE.md-named scars, a fixture that
+   specifically triggers the scar's bug class. The fixture corpus
+   has to make the bug class impossible to ship; the rule alone
+   isn't enough.
+3. **Output is accepted by the production constraint layer** — query
+   the actual CHECK constraint or distinct existing values for any
+   enum-like column the parser emits; assert every emitted row's
+   value is in that set. Row counts validate "parser produced
+   output." They don't validate "output is insertable." For
+   `tests/test_vantaca_extraction.js`, the constraint validator
+   loads live distinct values from `violations.current_stage` and
+   fails the test on any parser emission outside that set.
+
+**When tempted to declare "done" after one fixture passes**, ask: "what
+is structurally different about the next case I haven't tested?" Then
+test THAT before reporting completion. If a CLAUDE.md scar names the
+class but my fixtures don't trigger it, the scar list is decoration,
+not discipline.
+
+**Canonical reference**:
+- Synthetic large-scale fixture:
+  `tests/fixtures/vantaca-violations/synthetic-1500-props-2026-05.csv`
+- CHECK constraint validator:
+  `tests/test_vantaca_extraction.js` `loadCanonicalStages()` + the
+  per-row stage assertion inside `runOneFixture`.
+
+See memory `feedback_test_what_ships_not_what_parses` for the rule's
+encoding as a discipline change, not just a one-time fix.
+
 ---
 
 ## Catastrophic-output surfaces (require the schema + gold-standard pattern)

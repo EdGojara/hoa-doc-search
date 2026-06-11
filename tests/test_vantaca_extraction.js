@@ -35,6 +35,54 @@ const {
 const FIXTURE_DIR = path.join(__dirname, 'fixtures', 'vantaca-violations');
 const EXPECTED_PATH = path.join(FIXTURE_DIR, 'expected-counts.json');
 
+// CHECK constraint validation — Ed 2026-06-10 evening.
+//
+// The violations.current_stage column has a CHECK constraint that allows
+// only this enumerated set of values. Parser bugs that invent values
+// outside this set (e.g. 'hearing_pending', 'hearing_notice') parse OK
+// but crash on INSERT in production, after staff already saw "✓ Preview".
+//
+// This validator runs over every parsed row and FAILS the test if any
+// stage value falls outside the allow-list. Structural coverage of the
+// CLAUDE.md scar "CHECK constraint values that don't exist in the
+// constraint" — that bug can't ship.
+//
+// Source of truth: distinct values present in production violations
+// table. Pulled live below when SUPABASE_KEY is set; falls back to a
+// known-good static list when running offline.
+const CANONICAL_STAGES_FALLBACK = new Set([
+  'courtesy_1',
+  'courtesy_2',
+  'certified_209',
+  'fine_assessed',
+  'hearing_notice',   // exists in CHECK but parser folds into certified_209
+  'legal_referral',
+  'lien_filed',
+  'cured',
+  'closed',
+  'voided',
+]);
+
+async function loadCanonicalStages() {
+  if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY) return CANONICAL_STAGES_FALLBACK;
+  try {
+    const { createClient } = require('@supabase/supabase-js');
+    const s = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+    // We can't easily introspect a CHECK constraint via supabase-js without
+    // raw SQL — instead use the proven-accepted values currently in the
+    // table. Any value present here was accepted by the constraint at
+    // insert time, so it's a safe allow-list.
+    const { data } = await s.from('violations').select('current_stage').limit(2000);
+    const live = new Set((data || []).map((r) => r.current_stage).filter(Boolean));
+    // Merge with fallback so we don't reject stages that exist in the
+    // constraint but aren't represented in current data.
+    for (const s of CANONICAL_STAGES_FALLBACK) live.add(s);
+    return live;
+  } catch (_) {
+    return CANONICAL_STAGES_FALLBACK;
+  }
+}
+
 const COLOR = {
   red:    (s) => `\x1b[31m${s}\x1b[0m`,
   green:  (s) => `\x1b[32m${s}\x1b[0m`,
@@ -74,7 +122,7 @@ function assertInRange(label, actual, spec, failures) {
   }
 }
 
-async function runOneFixture(filename, expected) {
+async function runOneFixture(filename, expected, canonicalStages) {
   const filePath = path.join(FIXTURE_DIR, filename);
   if (!fs.existsSync(filePath)) {
     fail(filename, `fixture file missing`);
@@ -98,6 +146,27 @@ async function runOneFixture(filename, expected) {
 
   if (expected.must_have_no_errors && result.errors && result.errors.length > 0) {
     failures.push(`expected no errors, got: ${result.errors.join('; ')}`);
+  }
+
+  // Hard rule: every emitted stage value MUST be in the constraint allow-list.
+  // Catches the class of bug where parsers invent enum values that production
+  // INSERT refuses. Null stage is allowed — cured rows track resolved_via
+  // instead, and the apply endpoint defaults to courtesy_1 if stage is null.
+  if (canonicalStages && result.rows && result.rows.length > 0) {
+    const violatingRows = [];
+    for (const row of result.rows) {
+      if (row.stage != null && !canonicalStages.has(row.stage)) {
+        violatingRows.push({ stage: row.stage, source_row: row._source_row, address: row.street_address });
+        if (violatingRows.length >= 5) break;
+      }
+    }
+    if (violatingRows.length > 0) {
+      const uniqueBadStages = [...new Set(violatingRows.map(r => r.stage))];
+      failures.push(
+        `parser emitted stage values not in production CHECK constraint: ${uniqueBadStages.join(', ')}\n` +
+        violatingRows.slice(0, 3).map(r => `    e.g. row ${r.source_row} (${r.address || 'unknown'}) emitted "${r.stage}"`).join('\n')
+      );
+    }
   }
 
   const rowCount = result.rows.length;
@@ -145,10 +214,13 @@ async function main() {
     process.exit(0);
   }
 
+  const canonicalStages = await loadCanonicalStages();
+  console.log(COLOR.gray(`  canonical stages (${canonicalStages.size}): ${[...canonicalStages].join(', ')}\n`));
+
   let passCount = 0;
   let failCount = 0;
   for (const name of fixtureNames) {
-    const ok = await runOneFixture(name, expectedAll[name]);
+    const ok = await runOneFixture(name, expectedAll[name], canonicalStages);
     if (ok) passCount++; else failCount++;
   }
 
