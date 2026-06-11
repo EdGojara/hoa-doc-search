@@ -676,6 +676,25 @@ app.post('/api/auth/exchange-supabase-session', express.json({ limit: '8kb' }), 
   }
 });
 
+// Host-aware root redirect — Ed 2026-06-11. The portal subdomains
+// (my.bedrocktxai.com, app.bedrocktxai.com) point at this Render app.
+// Without this, a builder/homeowner typing "my.bedrocktxai.com" hits the
+// staff trustEd shell and gets bounced to /login.html (Microsoft staff
+// login) which is the wrong destination. Karla Rutan (DRB Group) hit
+// exactly this on 2026-06-11 — she went to bedrocktxai.com (the marketing
+// site, separate Cloudflare-fronted deploy) which has no portal CTA at
+// all, then to my.bedrocktxai.com which 401'd. Now: if the request lands
+// at the literal root path on a portal subdomain, route them straight to
+// the magic-link sign-in page. Staff continue to hit /login.html via
+// explicit URL.
+app.get('/', (req, res, next) => {
+  const host = String(req.get('host') || '').toLowerCase();
+  if (host.startsWith('my.') || host.startsWith('app.')) {
+    return res.redirect(302, '/portal-login.html');
+  }
+  return next();
+});
+
 app.use(express.static('public'));
 
 // ----------------------------------------------------------------------------
