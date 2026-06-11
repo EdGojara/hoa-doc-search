@@ -59,6 +59,29 @@
          + recent inspections. Desktop view unaffected. */
       #tabSubbar { display: none !important; }
 
+      /* Ed 2026-06-10 follow-up: Take photo button + No-house-selected
+         banner were position:fixed at the bottom of the viewport, which on
+         mobile screens covered the Recent inspections row's action buttons
+         (Resume / Finalize / Discard). Pull them into normal page flow on
+         mobile so scrolling reveals everything underneath. Desktop keeps
+         the fixed-thumb-reach behavior for in-car use on iPad / tablet. */
+      #inspCaptureBtn {
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        max-width: none !important;
+        margin: 10px 0 !important;
+      }
+      #inspCaptureProperty {
+        position: static !important;
+        left: auto !important;
+        right: auto !important;
+        bottom: auto !important;
+        max-width: none !important;
+        margin: 8px 0 !important;
+      }
+
       /* Recent inspections rows: on a phone the action buttons (View
          photos / Resume / Finalize / Discard / Re-analyze / Back-fill)
          were getting cut off because they tried to flex-wrap inside a
