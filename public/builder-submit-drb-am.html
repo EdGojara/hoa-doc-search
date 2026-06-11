@@ -403,9 +403,15 @@
              way to get to their submission history + a way to sign out.
              Links are JS-conditional: hidden by default, shown only when
              the user is signed in (detected via /api/portal/me). -->
+        <!-- Sign out intentionally hidden until DNS / SPF / DKIM fix lands.
+             Reason: self-serve magic-link emails currently can't be delivered
+             (Resend isn't authorized to send for bedrocktxai.com per SPF), so
+             a signed-out builder has no way back in without Ed manually
+             generating a fresh URL. Cookie TTL is 30 days — they stay signed
+             in across browser closes. Once DNS is fixed, restore the
+             #signoutLink anchor and the JS will re-wire. -->
         <div class="portal-nav" id="portalNav" style="display:none; margin-top:8px; display:flex; gap:14px; font-size:11.5px;">
           <a href="/builder-dashboard.html" style="color:#1A3050; text-decoration:none; border-bottom:1px solid #D4AF37;">Your submissions →</a>
-          <a href="#" id="signoutLink" style="color:#64748b; text-decoration:none;">Sign out</a>
         </div>
       </div>
     </div>

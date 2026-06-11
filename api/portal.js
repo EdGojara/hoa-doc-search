@@ -1056,6 +1056,70 @@ router.get('/me', async (req, res) => {
       });
     }
 
+    // BUILDER PATH — Ed 2026-06-11 evening, in support of adding Lennar to
+    // Still Creek Ranch alongside DRB at August Meadows. Each builder needs
+    // to land on THEIR submission page, not a hardcoded one. Look up which
+    // builder_companies this portal user has access to via
+    // portal_user_builders, then resolve the landing URL from a code-level
+    // mapping (single source of truth — extend when onboarding a new
+    // builder/community pair).
+    //
+    // SINGLE SOURCE OF TRUTH for "which page does each builder land on":
+    //   - One entry per builder_companies.company_name
+    //   - Value MUST be a real route declared in server.js (otherwise the
+    //     builder lands on a 404)
+    //   - When a builder has multiple active communities, list them in
+    //     order of preference; the FIRST match wins
+    //   - When NO mapping matches, fall back to the dashboard so the
+    //     builder isn't dead-ended — they can navigate from there
+    const BUILDER_LANDING_URLS = {
+      // Onboarded:
+      'DRB Group':  '/builders/august-meadows-drb',
+      // Placeholder for Lennar at Still Creek Ranch — set when the per-
+      // builder landing page goes live in server.js. If a Lennar user
+      // signs in before this is wired up, they land on /builder-dashboard.html
+      // which is functional but suboptimal.
+      // 'Lennar':  '/builders/still-creek-lennar',
+    };
+
+    const isBuilder = user.role === 'builder';
+    if (isBuilder) {
+      const { data: builderLinks } = await supabase
+        .from('portal_user_builders')
+        .select('builder_companies(id, company_name)')
+        .eq('portal_user_id', user.id)
+        .is('revoked_at', null);
+      const companies = (builderLinks || [])
+        .map((b) => b.builder_companies)
+        .filter(Boolean);
+
+      let landingUrl = '/builder-dashboard.html';
+      for (const c of companies) {
+        if (BUILDER_LANDING_URLS[c.company_name]) {
+          landingUrl = BUILDER_LANDING_URLS[c.company_name];
+          break;
+        }
+      }
+
+      return res.json({
+        user: {
+          name: user.full_name || user.email,
+          email: user.email,
+          role: user.role,
+          tutorial_dismissed: !!user.tutorial_dismissed_at,
+          first_login_at: user.first_login_at,
+          login_count: user.login_count || 0,
+          landing_url: landingUrl,
+          builder_companies: companies.map((c) => c.company_name),
+        },
+        property: null,
+        properties: [],
+        community: { name: 'Builder Portal', slug: '', portal_active: false, is_demo: false },
+        balance: {},
+        compliance: {},
+      });
+    }
+
     // MANAGER PATH (migration 201) — Bedrock staff role that can pick ANY
     // property in the portfolio and render its homeowner view. Eliminates
     // per-homeowner portal_user provisioning for support, QA, training,
