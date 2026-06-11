@@ -262,7 +262,20 @@
   </div>
   <div class="user-chip" id="userChip" style="display:none;">
     <span class="who" id="userWho">—</span>
-    <a class="signout" id="signoutLink">Sign out</a>
+    <!-- Ed 2026-06-11 evening: "+ New submission" link points to the
+         builder's landing URL (resolved from /me) so each builder gets
+         back to their own submission page. DRB → August Meadows DRB
+         form; Lennar → Still Creek Lennar form (when wired). -->
+    <a id="newSubmissionLink" href="/builders/august-meadows-drb"
+       style="color:#1A3050; text-decoration:none; border-bottom:1px solid #D4AF37; margin-right:14px; font-size:12.5px; font-weight:600;">
+      + New submission
+    </a>
+    <!-- Sign out hidden until DNS / SPF / DKIM fix lands. Builder
+         currently can't self-recover a signed-out session because the
+         magic-link email path is blocked at the receiving server's SPF
+         check. Cookie TTL is 30 days so they stay signed in across
+         browser closes. Once DNS is fixed, restore the .signout anchor
+         and its click handler at the bottom of this file. -->
   </div>
 </header>
 
@@ -418,6 +431,21 @@
       document.getElementById('userWho').textContent = builderNames || 'Builder';
       document.getElementById('userChip').style.display = 'flex';
 
+      // Wire the "+ New submission" link to the user's per-builder landing
+      // URL. Pull it from /me so it stays data-driven — DRB users get the
+      // August Meadows DRB form, Lennar users get the Still Creek Lennar
+      // form (when wired), zero hardcoding in this file.
+      try {
+        const meRes = await fetch('/api/portal/me', { credentials: 'same-origin' });
+        if (meRes.ok) {
+          const me = await meRes.json();
+          if (me.user && me.user.landing_url) {
+            const link = document.getElementById('newSubmissionLink');
+            if (link) link.href = me.user.landing_url;
+          }
+        }
+      } catch (_) { /* keep the static default href */ }
+
       document.getElementById('pageSub').textContent =
         `${data.counts.total} total submission${data.counts.total === 1 ? '' : 's'} · ${data.counts.pending} in progress · ${data.counts.decided} decided`;
 
@@ -448,11 +476,16 @@
     }
   }
 
-  document.getElementById('signoutLink').addEventListener('click', async (e) => {
-    e.preventDefault();
-    try { await fetch('/api/portal/logout', { method: 'POST' }); } catch (_) {}
-    window.location.href = '/portal-login.html';
-  });
+  // Sign-out click handler intentionally removed alongside the anchor.
+  // When the bedrocktxai.com SPF/DKIM fix lands and builders can self-
+  // serve a new sign-in link, restore both the .signout anchor in the
+  // header and re-add this handler.
+  // const signoutLink = document.getElementById('signoutLink');
+  // if (signoutLink) signoutLink.addEventListener('click', async (e) => {
+  //   e.preventDefault();
+  //   try { await fetch('/api/portal/logout', { method: 'POST' }); } catch (_) {}
+  //   window.location.href = '/portal-login.html';
+  // });
 
   load();
 </script>
