@@ -52,6 +52,34 @@ const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 // we attempt creation on first letter generation if missing.
 const LETTERS_BUCKET = 'violation-letters';
 let _bucketEnsured = false;
+// Fetch ALL properties for a community, paginating past the PostgREST
+// 1000-row response cap. Used by every Vantaca import path that builds
+// an address/account → property lookup map. Communities like Waterview
+// (1,171 properties) would silently miss 171 properties before this.
+// See CLAUDE.md "Supabase 1000-row silent truncation" scar.
+async function _fetchAllPropertiesForCommunity(communityId, selectCols = 'id, street_address, unit, vantaca_account_id') {
+  const out = [];
+  let offset = 0;
+  const PAGE = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('properties')
+      .select(selectCols)
+      .eq('community_id', communityId)
+      .range(offset, offset + PAGE - 1);
+    if (error) {
+      console.warn('[enforcement._fetchAllPropertiesForCommunity] page failed at offset', offset, ':', error.message);
+      break;
+    }
+    const page = data || [];
+    out.push(...page);
+    if (page.length < PAGE) break;
+    offset += PAGE;
+    if (out.length > 50000) break; // safety cap — no community has 50k properties
+  }
+  return out;
+}
+
 async function _ensureLettersBucket() {
   if (_bucketEnsured) return;
   try {
@@ -4401,13 +4429,12 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
     });
 
     // ---- existing resolution logic (property + category match + dedup) ----
-    const { data: props } = await supabase
-      .from('properties')
-      .select('id, street_address, unit, vantaca_account_id')
-      .eq('community_id', communityId);
+    // Use paginated fetch — PostgREST 1000-row cap would silently drop
+    // properties past row 1000 (Waterview = 1171; CLAUDE.md scar).
+    const props = await _fetchAllPropertiesForCommunity(communityId);
     const byAcct = new Map();
     const byStreet = new Map();
-    (props || []).forEach((p) => {
+    props.forEach((p) => {
       if (p.vantaca_account_id) byAcct.set(String(p.vantaca_account_id), p);
       if (p.street_address) byStreet.set(p.street_address.toLowerCase().trim(), p);
     });
@@ -4692,15 +4719,17 @@ router.post('/vantaca-violations/preview/:jobId/re-resolve', async (req, res) =>
 
     // Re-pull properties + categories (categories may have been bulk-added
     // since the original run — that's the whole point of re-resolve).
-    const [{ data: props }, { data: cats }, { data: existingV }] = await Promise.all([
-      supabase.from('properties').select('id, street_address, unit, vantaca_account_id').eq('community_id', communityId),
+    // Properties via paginated helper — 1000-row cap would drop 1171-property
+    // communities like Waterview.
+    const [props, { data: cats }, { data: existingV }] = await Promise.all([
+      _fetchAllPropertiesForCommunity(communityId),
       supabase.from('enforcement_categories').select('id, slug, label'),
       supabase.from('violations').select('property_id, primary_category_id, opened_at').eq('community_id', communityId).eq('source', 'vantaca_import'),
     ]);
 
     const byAcct = new Map();
     const byStreet = new Map();
-    (props || []).forEach((p) => {
+    props.forEach((p) => {
       if (p.vantaca_account_id) byAcct.set(String(p.vantaca_account_id), p);
       if (p.street_address) byStreet.set(p.street_address.toLowerCase().trim(), p);
     });
@@ -4870,14 +4899,12 @@ router.post('/vantaca-violations/preview', upload.single('file'), async (req, re
       });
     }
 
-    // Fetch properties + categories for this community to resolve refs
-    const { data: props } = await supabase
-      .from('properties')
-      .select('id, street_address, unit, vantaca_account_id')
-      .eq('community_id', communityId);
+    // Fetch properties + categories. Properties via paginated helper to
+    // dodge the PostgREST 1000-row silent cap (Waterview = 1171; CLAUDE.md scar).
+    const props = await _fetchAllPropertiesForCommunity(communityId);
     const byAcct = new Map();
     const byStreet = new Map();
-    (props || []).forEach((p) => {
+    props.forEach((p) => {
       if (p.vantaca_account_id) byAcct.set(String(p.vantaca_account_id), p);
       if (p.street_address) byStreet.set(p.street_address.toLowerCase().trim(), p);
     });
