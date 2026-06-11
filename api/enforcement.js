@@ -5763,10 +5763,32 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
     let skipped = 0;
     const errors = [];
 
+    // Track the original source row alongside the insert payload so error
+    // messages can surface street_address + category_label, not just the
+    // abstract property_id UUID. Ed 2026-06-10: staff sees the human
+    // address in error messages, not "Property xyz-abc-123 failed."
     const valid = [];
+    const originals = [];
     for (const r of rows) {
       if (!r.property_id || !r.category_id || !r.opened_at) {
         skipped += 1;
+        // Capture skipped-row context so the UI can explain WHY each was
+        // skipped (no property match, missing category, missing date).
+        errors.push({
+          source_row: r._source_row,
+          street_address: r.street_address || r.address || null,
+          category_label: r.category_label || null,
+          vantaca_account_id: r.vantaca_account_id || null,
+          opened_at: r.opened_at || null,
+          error: !r.property_id
+            ? 'Property not found in trustEd — address may not be in the roster.'
+            : (!r.category_id
+              ? 'Category not yet in trustEd — re-resolve to map it first.'
+              : 'Missing violation date.'),
+          suggested_action: !r.property_id
+            ? 'add_property'
+            : (!r.category_id ? 'add_category' : 'review_source'),
+        });
         continue;
       }
       valid.push({
@@ -5785,11 +5807,13 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
         quality_status: 'unreviewed',
         review_notes: 'Imported from Vantaca violations export. Needs verification.',
       });
+      originals.push(r);
     }
 
     const BATCH_SIZE = 100;
     for (let i = 0; i < valid.length; i += BATCH_SIZE) {
       const batch = valid.slice(i, i + BATCH_SIZE);
+      const batchOrigs = originals.slice(i, i + BATCH_SIZE);
       const { data, error } = await supabase
         .from('violations')
         .insert(batch)
@@ -5798,10 +5822,20 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
         // On batch failure, fall back to row-by-row to identify which row(s)
         // are bad (constraint violation, etc.) without losing the rest.
         console.warn('[vantaca-violations.apply] batch insert failed, falling back to per-row:', error.message);
-        for (const single of batch) {
+        for (let j = 0; j < batch.length; j++) {
+          const single = batch[j];
+          const origR = batchOrigs[j];
           const { error: singleErr } = await supabase.from('violations').insert(single);
           if (singleErr) {
-            errors.push({ property_id: single.property_id, opened_at: single.opened_at, error: singleErr.message });
+            errors.push({
+              source_row: origR._source_row,
+              street_address: origR.street_address || null,
+              category_label: origR.category_label || null,
+              vantaca_account_id: origR.vantaca_account_id || null,
+              opened_at: single.opened_at,
+              error: singleErr.message,
+              suggested_action: 'review_db_constraint',
+            });
           } else {
             inserted += 1;
           }
@@ -5811,7 +5845,7 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
       }
     }
 
-    res.json({ inserted, skipped, errors });
+    res.json({ inserted, skipped: errors.length, errors });
   } catch (err) {
     console.error('[vantaca-violations.apply]', err);
     res.status(500).json({ error: err.message });
