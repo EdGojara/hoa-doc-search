@@ -41,7 +41,19 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const shapefile = require('shapefile');
+const proj4 = require('proj4');
 const { createClient } = require('@supabase/supabase-js');
+
+// FBCAD ships parcel coordinates in NAD83 / Texas South Central State Plane
+// (US Feet) — confirmed from CamaSummary.prj. We reproject to WGS84
+// (EPSG:4326) to match properties.latitude/longitude. EPSG:2278 = the
+// projected coordinate system identifier. Without this every centroid lands
+// about 10 million meters off the planet's surface.
+const FBCAD_PROJ = '+proj=lcc +lat_0=27.8333333333333 +lon_0=-99 +lat_1=28.3833333333333 +lat_2=30.2833333333333 +x_0=600000 +y_0=4000000 +datum=NAD83 +units=us-ft +no_defs';
+const WGS84_PROJ = '+proj=longlat +datum=WGS84 +no_defs';
+proj4.defs('EPSG:2278', FBCAD_PROJ);
+proj4.defs('EPSG:4326', WGS84_PROJ);
+const reprojectToWgs84 = proj4(FBCAD_PROJ, WGS84_PROJ).forward;
 
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 
@@ -92,7 +104,13 @@ function polygonCentroid(geom) {
   if (!ring || ring.length < 3) return null;
   let sx = 0, sy = 0;
   for (const v of ring) { sx += v[0]; sy += v[1]; }
-  return { lat: sy / ring.length, lng: sx / ring.length };
+  // Centroid in FBCAD's source coordinate system (Texas State Plane US Feet).
+  const planeX = sx / ring.length;
+  const planeY = sy / ring.length;
+  // Reproject to WGS84 (lng, lat) before returning so it matches
+  // properties.latitude / longitude.
+  const [lng, lat] = reprojectToWgs84([planeX, planeY]);
+  return { lat, lng };
 }
 
 // Haversine in meters.
