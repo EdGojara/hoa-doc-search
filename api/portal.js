@@ -3453,6 +3453,162 @@ router.get('/arc', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// VENDOR DIRECTORY — Ed 2026-06-11 evening
+// ----------------------------------------------------------------------------
+// Foundation for the homeowner-data-only vendor directory described in
+// memory project_vendor_directory_pricing_intelligence. Three endpoints
+// at this layer:
+//
+//   GET  /vendor-categories        — public list of categories (no auth)
+//   POST /vendor-experiences       — homeowner submits an experience
+//   GET  /vendor-experiences/mine  — homeowner sees their own submissions
+//
+// Display endpoints (community-scoped lists, vendor detail pages) come in
+// a later phase once we have data to display. The priority right now is
+// the data-collection mechanism — empty UIs train homeowners that the
+// feature is broken.
+//
+// Policy reminders baked into the code:
+//   - No "rating" column. would_hire_again BOOLEAN is the only signal.
+//   - Vendor names are free-text. We don't pre-curate a vendor list.
+//   - Submissions are PERMANENT. No edit-after-submit, no delete. Per
+//     strategy: "BAM does not edit, remove, or influence vendor ratings."
+//     If we ever need a soft-hide for abuse, add it as an admin-only flag
+//     column LATER, not exposed to the submitter.
+// ----------------------------------------------------------------------------
+
+router.get('/vendor-categories', async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('vendor_categories')
+      .select('id, slug, label, display_order')
+      .eq('active', true)
+      .order('display_order', { ascending: true })
+      .order('label', { ascending: true });
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+    res.json({ categories: data || [] });
+  } catch (err) {
+    console.error('[portal.vendor-categories]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.post('/vendor-experiences', express.json({ limit: '32kb' }), async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const user = roleCheck.user;
+
+    // Resolve the user's property to pin the community context. We don't
+    // trust a client-supplied community_id — the experience belongs to the
+    // submitter's home community.
+    const scoped = await resolveScopedProperty(req, supabase, user);
+    if (!scoped.property || !scoped.property.community_id) {
+      return res.status(403).json({
+        error: 'no_property_scope',
+        message: 'Vendor experiences can only be submitted by homeowners linked to a property in a Bedrock-managed community.',
+      });
+    }
+
+    const body = req.body || {};
+    const required = {
+      vendor_name:        String(body.vendor_name || '').trim(),
+      vendor_category_id: String(body.vendor_category_id || '').trim(),
+      would_hire_again:   body.would_hire_again,
+    };
+    if (!required.vendor_name)        return res.status(400).json({ error: 'vendor_name_required' });
+    if (!required.vendor_category_id) return res.status(400).json({ error: 'vendor_category_id_required' });
+    if (typeof required.would_hire_again !== 'boolean') {
+      return res.status(400).json({ error: 'would_hire_again_required', message: 'Must be true or false.' });
+    }
+
+    // Optional fields — validate shape but accept null/missing
+    const project_type    = body.project_type ? String(body.project_type).trim().slice(0, 500) : null;
+    const did_well        = body.did_well ? String(body.did_well).trim().slice(0, 1500) : null;
+    const could_improve   = body.could_improve ? String(body.could_improve).trim().slice(0, 1500) : null;
+
+    // Price — accept dollars from the client, store cents server-side. Reject
+    // negative / NaN / wildly-large values.
+    let price_paid_cents = null;
+    if (body.price_paid_dollars != null && body.price_paid_dollars !== '') {
+      const dollars = Number(body.price_paid_dollars);
+      if (!Number.isFinite(dollars) || dollars < 0 || dollars > 5000000) {
+        return res.status(400).json({ error: 'price_paid_dollars_invalid', message: 'Enter a price between $0 and $5,000,000 (or leave blank).' });
+      }
+      price_paid_cents = Math.round(dollars * 100);
+    }
+
+    const completed_month = body.completed_month != null && body.completed_month !== ''
+      ? Number(body.completed_month) : null;
+    const completed_year  = body.completed_year != null && body.completed_year !== ''
+      ? Number(body.completed_year) : null;
+    if (completed_month != null && !(completed_month >= 1 && completed_month <= 12)) {
+      return res.status(400).json({ error: 'completed_month_invalid' });
+    }
+    if (completed_year != null && !(completed_year >= 2020 && completed_year <= 2050)) {
+      return res.status(400).json({ error: 'completed_year_invalid' });
+    }
+
+    const { data: inserted, error: insErr } = await supabase
+      .from('vendor_experiences')
+      .insert({
+        community_id:        scoped.property.community_id,
+        portal_user_id:      user.id,
+        property_id:         scoped.property.id,
+        vendor_name:         required.vendor_name.slice(0, 200),
+        vendor_category_id:  required.vendor_category_id,
+        project_type,
+        price_paid_cents,
+        would_hire_again:    required.would_hire_again,
+        did_well,
+        could_improve,
+        completed_month,
+        completed_year,
+      })
+      .select('id, vendor_name, submitted_at')
+      .single();
+    if (insErr) {
+      console.error('[portal.vendor-experiences] insert failed:', insErr.message);
+      return res.status(500).json({ error: safeErrorMessage(insErr) });
+    }
+
+    res.json({
+      ok: true,
+      experience: inserted,
+      message: 'Thanks — submission recorded. Your neighbors will see this when they look up this vendor or category.',
+    });
+  } catch (err) {
+    console.error('[portal.vendor-experiences] failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/vendor-experiences/mine', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const user = roleCheck.user;
+
+    const { data, error } = await supabase
+      .from('vendor_experiences')
+      .select(`
+        id, vendor_name, project_type, price_paid_cents, would_hire_again,
+        did_well, could_improve, completed_month, completed_year, submitted_at,
+        vendor_categories:vendor_category_id (slug, label)
+      `)
+      .eq('portal_user_id', user.id)
+      .order('submitted_at', { ascending: false })
+      .limit(100);
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+    res.json({ experiences: data || [] });
+  } catch (err) {
+    console.error('[portal.vendor-experiences.mine]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
 function escapeHtml(s) {

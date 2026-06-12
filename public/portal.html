@@ -841,6 +841,20 @@ const MODULES = [
     cta: 'Reserve a date',
     buildLink: (ctx) => `/clubhouse/${ctx.communitySlug}`,
   },
+  // ── Vendor directory — Ed 2026-06-11 ───────────────────────────────
+  // Homeowner-data-only, no finder's fees, community-scoped. Data
+  // collection FIRST per strategy memo — this tile feeds the input
+  // form. Display surfaces (vendor list, vendor detail) come in a
+  // later phase once enough submissions exist to be meaningful.
+  {
+    key: 'vendor_directory',
+    title: 'Share a vendor experience',
+    description: 'Tell your neighbors who you hired, what you paid, and whether you\'d use them again. No vendor pays for placement — this is community-only.',
+    icon: '🛠️',
+    section: 'requests',
+    cta: 'Share a vendor',
+    buildLink: (_ctx) => `/portal/vendor-feedback`,
+  },
 
   // ── Row 3: Your community ─────────────────────────────────────────
   {
@@ -1104,6 +1118,7 @@ function defaultDemoModuleConfig(slug) {
     messages:         { status: 'live' },  // demo mode: links into Messages page (empty state)
     balance:          { status: 'live' },  // demo mode: renders mock $0 current account
     arc:              { status: 'live' },
+    vendor_directory: { status: 'live' },  // homeowner-data-only directory, no finder's fees
     compliance:       { status: 'live' },  // demo mode: shows mock open + resolved notices
     key_fob:          { status: 'live' },
     clubhouse:        { status: 'live' },  // demo mode: clubhouse always shows the demo flow

@@ -1,0 +1,324 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Share a vendor experience · Bedrock</title>
+  <link rel="stylesheet" href="/brand.css">
+  <style>
+    :root {
+      --navy: #0B1D34;
+      --navy-soft: #1A3050;
+      --gold: #D4AF37;
+      --ink: #0B1D34;
+      --ink-mute: #475569;
+      --ink-faint: #94a3b8;
+      --bg: #f7f5ef;
+      --card: #ffffff;
+      --rule: #e2e8f0;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--ink); min-height: 100vh;
+    }
+    .page-wrap { max-width: 760px; margin: 0 auto; padding: 28px 20px 80px; }
+    .crumb {
+      font-size: 12px; color: var(--ink-faint); margin-bottom: 14px;
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .crumb a { color: var(--ink-mute); text-decoration: none; border-bottom: 1px solid var(--rule); }
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 600; font-size: 30px; margin: 0 0 6px;
+      color: var(--navy);
+    }
+    h1 em { font-style: italic; color: var(--gold); font-weight: 500; }
+    .deck { color: var(--ink-mute); font-size: 15px; line-height: 1.55; margin: 0 0 18px; max-width: 60ch; }
+    .policy-banner {
+      background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 22px;
+      font-size: 12.5px; color: #78350f; line-height: 1.55;
+    }
+    .policy-banner strong { color: #92400e; }
+    .card {
+      background: var(--card); border: 1px solid var(--rule); border-radius: 12px;
+      padding: 22px 22px 8px; margin-bottom: 18px;
+    }
+    .card h2 {
+      font-size: 14px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--ink-mute); margin: 0 0 18px; font-weight: 700;
+    }
+    .field { margin-bottom: 18px; }
+    .field label {
+      display: block; font-size: 11.5px; font-weight: 700; color: var(--ink-mute);
+      text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 5px;
+    }
+    .field label .req { color: #b91c1c; margin-left: 3px; }
+    .field input[type="text"],
+    .field input[type="number"],
+    .field select,
+    .field textarea {
+      width: 100%; padding: 10px 12px;
+      border: 1px solid #cbd5e1; border-radius: 7px;
+      font-size: 14px; color: var(--ink); background: #fff;
+      font-family: inherit;
+    }
+    .field textarea { resize: vertical; min-height: 70px; font-family: inherit; }
+    .field-hint { font-size: 12px; color: var(--ink-faint); margin-top: 4px; }
+    .field-row { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    .toggle-group { display: flex; gap: 10px; }
+    .toggle-group label {
+      flex: 1; cursor: pointer; padding: 12px;
+      background: #fff; border: 2px solid #cbd5e1; border-radius: 8px;
+      text-align: center; text-transform: none; letter-spacing: 0;
+      font-size: 14px; font-weight: 600; color: var(--ink); margin: 0;
+      transition: border 0.15s ease, background 0.15s ease;
+    }
+    .toggle-group label.on { border-color: var(--gold); background: #fffbeb; }
+    .toggle-group input { display: none; }
+    .submit-row {
+      display: flex; justify-content: flex-end; gap: 10px; align-items: center;
+      margin-top: 6px;
+    }
+    .btn {
+      padding: 12px 22px; border-radius: 8px; border: none;
+      font-size: 14px; font-weight: 700; cursor: pointer;
+      font-family: inherit;
+    }
+    .btn-primary { background: var(--navy); color: #fff; }
+    .btn-primary:hover { background: var(--navy-soft); }
+    .btn-primary:disabled { background: var(--ink-faint); cursor: not-allowed; }
+    .btn-link {
+      background: none; color: var(--ink-mute); text-decoration: underline;
+      border: none; padding: 8px 14px; cursor: pointer; font-size: 13px;
+    }
+    .status-line { font-size: 13px; color: var(--ink-mute); }
+    .status-line.ok { color: #15803d; }
+    .status-line.err { color: #b91c1c; }
+    .success-card {
+      background: #dcfce7; border: 1px solid #86efac;
+      border-radius: 12px; padding: 24px; text-align: center;
+      color: #14532d;
+    }
+    .success-card h2 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 22px; font-weight: 600; margin: 0 0 6px;
+      text-transform: none; letter-spacing: 0; color: #14532d;
+    }
+    .success-card p { font-size: 14px; margin: 8px 0; line-height: 1.55; }
+    .success-card .actions { margin-top: 14px; display: flex; justify-content: center; gap: 10px; }
+    @media (max-width: 600px) {
+      .page-wrap { padding: 18px 14px 60px; }
+      h1 { font-size: 24px; }
+      .field-row { grid-template-columns: 1fr; }
+      .card { padding: 18px 16px 8px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <div class="crumb">
+      <a href="/portal">← Your portal</a> · Vendor directory
+    </div>
+    <h1>Share a <em>vendor experience</em></h1>
+    <p class="deck">
+      Help your neighbors. Tell us who you hired, what you paid, and whether you'd use them again.
+      Your submission is permanent and visible to other homeowners in your community.
+    </p>
+    <div class="policy-banner">
+      <strong>How this works.</strong> Bedrock doesn't accept money from vendors. We don't curate this list.
+      All data is submitted by homeowners. We never edit, remove, or influence ratings.
+      <strong>Not BAM-endorsed</strong> — neighbor-submitted data only.
+    </div>
+
+    <div id="loadError" class="status-line err" style="display:none; margin-bottom:14px;"></div>
+    <div id="formArea">
+
+      <form id="vendorForm" autocomplete="off">
+        <div class="card">
+          <h2>The vendor</h2>
+          <div class="field">
+            <label>Vendor / company name <span class="req">*</span></label>
+            <input type="text" id="vendor_name" maxlength="200" required placeholder="e.g. Carlos Painting LLC">
+          </div>
+          <div class="field">
+            <label>Category <span class="req">*</span></label>
+            <select id="vendor_category_id" required>
+              <option value="">Loading categories…</option>
+            </select>
+          </div>
+          <div class="field">
+            <label>Project type <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+            <input type="text" id="project_type" maxlength="500" placeholder="e.g. Repainted exterior trim and front door">
+            <div class="field-hint">Be specific — helps neighbors compare apples to apples.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>What you paid</h2>
+          <div class="field">
+            <label>Price paid <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional but really helpful)</span></label>
+            <input type="number" id="price_paid_dollars" min="0" max="5000000" step="1" placeholder="e.g. 1800">
+            <div class="field-hint">Enter dollars. We'll display ranges to neighbors — never your exact submission tied to your name.</div>
+          </div>
+          <div class="field-row">
+            <div class="field">
+              <label>Completed month <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+              <select id="completed_month">
+                <option value="">—</option>
+                <option value="1">January</option>
+                <option value="2">February</option>
+                <option value="3">March</option>
+                <option value="4">April</option>
+                <option value="5">May</option>
+                <option value="6">June</option>
+                <option value="7">July</option>
+                <option value="8">August</option>
+                <option value="9">September</option>
+                <option value="10">October</option>
+                <option value="11">November</option>
+                <option value="12">December</option>
+              </select>
+            </div>
+            <div class="field">
+              <label>Completed year <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+              <input type="number" id="completed_year" min="2020" max="2050" placeholder="e.g. 2026">
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Would you hire them again?</h2>
+          <div class="field">
+            <label>Honest answer <span class="req">*</span></label>
+            <div class="toggle-group" id="hireAgainGroup">
+              <label data-value="true">
+                <input type="radio" name="would_hire_again" value="true">
+                ✓ Yes, I'd hire them again
+              </label>
+              <label data-value="false">
+                <input type="radio" name="would_hire_again" value="false">
+                ✗ No, I would not
+              </label>
+            </div>
+            <div class="field-hint">No 5-star scale here. A simple yes/no is harder to game and a sharper signal for your neighbors.</div>
+          </div>
+          <div class="field">
+            <label>What did they do well? <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+            <textarea id="did_well" maxlength="1500" rows="3" placeholder="e.g. Showed up on time, cleaned up well, walked us through the work."></textarea>
+          </div>
+          <div class="field">
+            <label>What could they improve? <span style="color:var(--ink-faint); font-weight:500; text-transform:none;">(optional)</span></label>
+            <textarea id="could_improve" maxlength="1500" rows="3" placeholder="e.g. Quote was bid low and they added charges later."></textarea>
+          </div>
+        </div>
+
+        <div class="submit-row">
+          <span id="submitStatus" class="status-line"></span>
+          <button type="button" class="btn-link" onclick="window.location.href='/portal'">Cancel</button>
+          <button type="submit" id="submitBtn" class="btn btn-primary">Submit vendor experience</button>
+        </div>
+      </form>
+
+    </div>
+
+    <div id="successArea" class="success-card" style="display:none;">
+      <h2>✓ Thanks for sharing</h2>
+      <p id="successMessage">Submission recorded. Your neighbors will see this when they look up this vendor or category.</p>
+      <div class="actions">
+        <button type="button" class="btn btn-primary" onclick="document.location.reload();">Submit another</button>
+        <button type="button" class="btn-link" onclick="window.location.href='/portal'">Back to your portal</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ----------------------------------------------------------------------
+    // Vendor experience submission form. Pulls categories from the API at
+    // page load. Submits to /api/portal/vendor-experiences. The server
+    // attaches community_id + property_id automatically from the
+    // authenticated portal user's scope — no client-side trust.
+    // ----------------------------------------------------------------------
+    async function loadCategories() {
+      try {
+        const r = await fetch('/api/portal/vendor-categories', { credentials: 'same-origin' });
+        if (r.status === 401) {
+          // Not signed in — bounce to login
+          window.location.href = '/portal-login.html?return=/portal/vendor-feedback';
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        const sel = document.getElementById('vendor_category_id');
+        sel.innerHTML = '<option value="">— Pick a category —</option>'
+          + (j.categories || []).map((c) =>
+              '<option value="' + c.id + '">' + c.label + '</option>'
+            ).join('');
+      } catch (e) {
+        document.getElementById('loadError').style.display = 'block';
+        document.getElementById('loadError').textContent =
+          'Couldn’t load categories: ' + e.message + '. Try refreshing.';
+      }
+    }
+    loadCategories();
+
+    // Highlight the selected yes/no toggle
+    document.querySelectorAll('#hireAgainGroup label').forEach((lbl) => {
+      lbl.addEventListener('click', () => {
+        document.querySelectorAll('#hireAgainGroup label').forEach((x) => x.classList.remove('on'));
+        lbl.classList.add('on');
+      });
+    });
+
+    // Form submission
+    document.getElementById('vendorForm').addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const status = document.getElementById('submitStatus');
+      const btn = document.getElementById('submitBtn');
+      status.textContent = '';
+      status.className = 'status-line';
+
+      const vendorName = document.getElementById('vendor_name').value.trim();
+      const categoryId = document.getElementById('vendor_category_id').value;
+      const hireRaw = document.querySelector('input[name="would_hire_again"]:checked');
+
+      if (!vendorName)    { status.textContent = 'Vendor name is required.';    status.className = 'status-line err'; return; }
+      if (!categoryId)    { status.textContent = 'Pick a category.';            status.className = 'status-line err'; return; }
+      if (!hireRaw)       { status.textContent = 'Would you hire them again?'; status.className = 'status-line err'; return; }
+
+      const body = {
+        vendor_name: vendorName,
+        vendor_category_id: categoryId,
+        would_hire_again: hireRaw.value === 'true',
+        project_type:     document.getElementById('project_type').value.trim() || null,
+        price_paid_dollars: document.getElementById('price_paid_dollars').value || null,
+        completed_month:    document.getElementById('completed_month').value || null,
+        completed_year:     document.getElementById('completed_year').value || null,
+        did_well:         document.getElementById('did_well').value.trim() || null,
+        could_improve:    document.getElementById('could_improve').value.trim() || null,
+      };
+
+      btn.disabled = true; btn.textContent = 'Submitting…';
+      try {
+        const r = await fetch('/api/portal/vendor-experiences', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || j.message || ('HTTP ' + r.status));
+        document.getElementById('formArea').style.display = 'none';
+        document.getElementById('successArea').style.display = 'block';
+        if (j.message) document.getElementById('successMessage').textContent = j.message;
+      } catch (e) {
+        status.textContent = 'Couldn’t submit: ' + e.message;
+        status.className = 'status-line err';
+        btn.disabled = false; btn.textContent = 'Submit vendor experience';
+      }
+    });
+  </script>
+</body>
+</html>

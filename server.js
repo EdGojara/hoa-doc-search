@@ -1096,6 +1096,7 @@ app.get('/portal/meetings',  (req, res) => res.sendFile(require('path').join(__d
 app.get('/portal/contacts',  (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-contacts.html')));
 app.get('/portal/map',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-map.html')));
 app.get('/portal/arc',       (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-arc.html')));
+app.get('/portal/vendor-feedback', (req, res) => res.sendFile(require('path').join(__dirname, 'public', 'portal-vendor-feedback.html')));
 
 // Voice DRV inspector — hands-free dashboard mode. Auth is handled inside
 // the page itself (matches the existing inspector.html pattern).
