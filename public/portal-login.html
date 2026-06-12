@@ -200,6 +200,21 @@
         Didn't get the email? Check spam, or <a href="#" onclick="window.location.reload();">try again</a>.
       </div>
     </div>
+
+    <!-- Welcome state — shown when ?token=X is present in the URL.
+         Page does NOT auto-consume the token (changed 2026-06-12 after
+         EdgePilot's link-scanning service was burning tokens before the
+         human could click). User clicks the button below to actually
+         consume. Link scanners that load this page won't click the
+         button, so the token survives until the human arrives. -->
+    <div id="welcomeState" style="display:none;">
+      <h1>Welcome back</h1>
+      <div class="subtitle">Click below to finish signing in to your Bedrock portal.</div>
+      <button type="button" class="primary" id="welcomeSignInBtn">Sign in →</button>
+      <div class="helper" style="text-align:center;">
+        This extra click is intentional. Some corporate email security tools follow links automatically to check for safety. The button click confirms it's really you, not a scanner.
+      </div>
+    </div>
   </div>
 
   <footer>
@@ -222,11 +237,31 @@ function toast(msg, kind) {
   setTimeout(() => { t.className = 'toast'; }, 4000);
 }
 
-// Handle ?token=xxx from email — auto-consume and redirect to /portal
-(async function autoConsume() {
+// Handle ?token=xxx from email — show the Welcome panel, do NOT auto-consume.
+//
+// Why no auto-consume (2026-06-12): corporate email security tools (EdgePilot,
+// Microsoft ATP Safe Links, Mimecast, Proofpoint) FOLLOW URLs in emails as
+// part of threat scanning. Some of them execute JavaScript. If this page
+// auto-consumed the token on load, the scanner would burn the token before
+// the human ever clicked. Symptom: customer reports "the link says it's
+// already used and I never clicked it." Fix: require an explicit button
+// click to consume. Scanners load the page but won't click the button.
+(function showWelcomeIfToken() {
   const url = new URL(window.location.href);
   const token = url.searchParams.get('token');
   if (!token) return;
+  // Hide the email form, show the welcome state.
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('welcomeState').style.display = 'block';
+  // Wire the button to consume on click.
+  document.getElementById('welcomeSignInBtn').addEventListener('click', () => consumeAndRoute(token));
+})();
+
+async function consumeAndRoute(token) {
+  const btn = document.getElementById('welcomeSignInBtn');
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Signing in…';
   try {
     const r = await fetch(`/api/portal/consume?token=${encodeURIComponent(token)}`, {
       method: 'POST',
@@ -234,32 +269,17 @@ function toast(msg, kind) {
     });
     if (r.ok) {
       // Role-aware routing — three possible landing pages:
-      //   - /builder-dashboard.html for role='builder' (DRB Group reviewers)
+      //   - /builders/<slug>-<builder> via /me.user.landing_url for builders
       //   - /board-portal for board members who last viewed it
       //   - /portal otherwise (homeowner default)
-      // Always verify role server-side via /me — never trust localStorage
-      // alone to grant access to a privileged surface.
       let dest = '/portal';
       try {
         const meRes = await fetch('/api/portal/me', { credentials: 'same-origin' });
         if (meRes.ok) {
           const me = await meRes.json();
-          // Builder role: hard-route to the builder dashboard. The homeowner
-          // portal hits a "Portal not yet available for your community"
-          // dead-end for builders because they have no portal_user_properties
-          // rows by design.
           if (me.user && me.user.role === 'builder') {
-            // Ed 2026-06-11 evening: routing is now data-driven. The /me
-            // endpoint resolves the right landing URL from the user's
-            // builder_company via portal_user_builders + a central code
-            // mapping (BUILDER_LANDING_URLS in api/portal.js). When a
-            // new builder is onboarded, add one entry to that mapping
-            // and this routing automatically works for them. If the
-            // mapping is missing for some reason, fall back to the
-            // dashboard so the user isn't dead-ended.
             dest = me.user.landing_url || '/builder-dashboard.html';
           } else {
-            // Board check (existing pattern)
             const lastView = localStorage.getItem('bedrock_portal_last_view');
             if (lastView === 'board' && me.is_board_member) {
               dest = '/board-portal';
@@ -269,17 +289,22 @@ function toast(msg, kind) {
       } catch (_) { /* fetch failure → default to /portal */ }
       window.location.href = dest;
     } else {
-      // Ed 2026-06-11: instead of a toast that fades, render an inline
-      // panel with clear renewal instructions. Pre-fill the email field
-      // from the masked hint so the user doesn't have to remember which
-      // address they registered with.
+      // Token rejected — render the renewal panel with masked email hint.
       const data = await r.json().catch(() => ({}));
+      // Restore the regular layout so renderRenewalState can target #loginForm.
+      document.getElementById('welcomeState').style.display = 'none';
+      document.getElementById('loginForm').style.display = 'block';
       renderRenewalState(data);
     }
   } catch (err) {
+    document.getElementById('welcomeState').style.display = 'none';
+    document.getElementById('loginForm').style.display = 'block';
     renderRenewalState({ error_kind: 'invalid', renewable: true, error: 'Could not sign you in. Network or server issue.' });
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
   }
-})();
+}
 
 function renderRenewalState(data) {
   const kind = data.error_kind || 'invalid';
