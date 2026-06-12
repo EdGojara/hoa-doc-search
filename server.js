@@ -465,6 +465,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/event\/[^/]+$/,                       // /event/:slug — public event page
   /^\/event\/[^/]+\/checkin$/,              // /event/:slug/checkin — event checkin (6-digit code gated on the page itself)
   /^\/builders\/[^/]+$/,                    // /builders/:slug — builder submission form (DRB, etc.)
+  /^\/builders\/[^/]+\/master-plan$/,       // /builders/:slug/master-plan — new master plan submission form
   /^\/builders\/status\/[^/]+$/,            // /builders/status/:reference — builder submission status lookup
   /^\/august-meadows-submission-form\.html$/, // standalone printable form for DRB's June batch (Karla's email-form workflow)
   /^\/forms\/august-meadows-submission\.pdf$/, // server-rendered PDF version of the same form (puppeteer print)
