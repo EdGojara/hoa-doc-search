@@ -87,7 +87,9 @@ async function nextReferenceNumber(community) {
 //   builder_acknowledgments (JSON string)
 //   files                   (multipart, 1+ PDFs)
 // ----------------------------------------------------------------------------
-router.post('/', upload.array('files', 6), async (req, res) => {
+// Public path for builder intake (no staff cookie). The bare path is
+// reserved for staff list / staff actions and stays cookie-gated.
+router.post('/public', upload.array('files', 6), async (req, res) => {
   try {
     const b = req.body || {};
     if (!b.community_slug)       return res.status(400).json({ error: 'community_slug is required' });
@@ -301,6 +303,228 @@ router.get('/:id', async (req, res) => {
     res.json({ submission, attachments: attachments || [] });
   } catch (err) {
     console.error('[master_plan_submissions] detail failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
+// POST /:id/finalize — staff-only — approve, approve with conditions, or deny.
+//
+// Body:
+//   action            'approve' | 'approve_with_conditions' | 'deny' | 'request_more_info'
+//   approved_plans    [ { plan_number, plan_name, elevation, elevation_orientation,
+//                         square_footage, stories } ]  — required for approve / approve_with_conditions
+//   conditions        string or array — required for approve_with_conditions
+//   denial_reasons    string or array — required for deny
+//   decided_by        staff signer name (required)
+//
+// On approve / approve_with_conditions:
+//   1. For each approved_plans entry, INSERT into master_plans with
+//      status='approved' (deduped on the existing unique constraint;
+//      conflicts are skipped, not errored).
+//   2. Capture the resulting master_plan_id list onto the submission row.
+//   3. Render the master plan letter HTML via lib/master_plan_letter.
+//   4. Convert to PDF via Puppeteer (same launch pattern as
+//      builder_applications.js).
+//   5. Upload PDF to storage under
+//      builders/{slug}/master-plan-submissions/{year}/{ref}.pdf (overwrite ok).
+//   6. Create a 30-day signed URL for the letter.
+//   7. Update submission row: status, decided_at, decided_by, letter_pdf_path,
+//      letter_signed_url, letter_signed_url_expires_at, created_master_plan_ids.
+//   8. Send email notification to the builder (best-effort, won't block).
+// ----------------------------------------------------------------------------
+const { renderMasterPlanLetterHTML } = require('../lib/master_plan_letter');
+const STORAGE_BUCKET_LETTER = 'documents';
+
+async function renderMasterPlanLetterPdfBuffer(letterArgs) {
+  const html = renderMasterPlanLetterHTML(letterArgs);
+  const puppeteer = require('puppeteer');
+  const browser = await puppeteer.launch({
+    headless: 'new',
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu', '--no-zygote', '--single-process'],
+  });
+  try {
+    const page = await browser.newPage();
+    try {
+      await page.setContent(html, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    } catch (_) { /* render anyway */ }
+    return await page.pdf({
+      format: 'Letter', printBackground: true,
+      margin: { top: 0, right: 0, bottom: 0, left: 0 }, preferCSSPageSize: true,
+    });
+  } finally {
+    try { await browser.close(); } catch (_) {}
+  }
+}
+
+router.post('/:id/finalize', express.json({ limit: '256kb' }), async (req, res) => {
+  try {
+    const { action, approved_plans, conditions, denial_reasons, decided_by } = req.body || {};
+    if (!action) return res.status(400).json({ error: 'action is required' });
+    const validActions = ['approve', 'approve_with_conditions', 'deny', 'request_more_info'];
+    if (!validActions.includes(action)) return res.status(400).json({ error: 'invalid action' });
+    if (!decided_by) return res.status(400).json({ error: 'decided_by is required' });
+    if (action === 'approve_with_conditions' && !conditions) {
+      return res.status(400).json({ error: 'conditions are required for approve_with_conditions' });
+    }
+    if (action === 'deny' && !denial_reasons) {
+      return res.status(400).json({ error: 'denial_reasons are required for deny' });
+    }
+    if ((action === 'approve' || action === 'approve_with_conditions')
+        && (!Array.isArray(approved_plans) || approved_plans.length === 0)) {
+      return res.status(400).json({ error: 'approved_plans array is required for approval' });
+    }
+
+    // Load submission + relationships
+    const { data: submission, error: loadErr } = await supabase
+      .from('master_plan_submissions')
+      .select(`*,
+        community:communities(id, name, slug),
+        builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)
+      `)
+      .eq('id', req.params.id)
+      .single();
+    if (loadErr) throw loadErr;
+    if (!submission) return res.status(404).json({ error: 'submission not found' });
+
+    const responseType = action === 'approve' ? 'approved'
+                      : action === 'approve_with_conditions' ? 'approved_with_conditions'
+                      : action === 'deny' ? 'denied'
+                      : 'info_requested';
+
+    // Create master_plans rows for approved batches.
+    let createdMasterPlanIds = [];
+    if (action === 'approve' || action === 'approve_with_conditions') {
+      for (const p of approved_plans) {
+        const planNumber = String(p.plan_number || '').trim().toUpperCase();
+        const elevation = String(p.elevation || '').trim().toUpperCase();
+        if (!planNumber || !elevation) continue;
+        const { data: row, error: planErr } = await supabase
+          .from('master_plans')
+          .insert({
+            builder_company_id: submission.builder_company_id,
+            plan_number: planNumber,
+            plan_name: p.plan_name || null,
+            elevation,
+            elevation_orientation: p.elevation_orientation || null,
+            square_footage: p.square_footage || null,
+            stories: p.stories || null,
+            default_materials: {},
+            status: 'approved',
+            notes: `Approved via ${submission.reference_number} on ${new Date().toISOString().slice(0,10)}.`,
+            first_approval_application_id: null,
+          })
+          .select('id')
+          .single();
+        if (planErr) {
+          // Unique constraint conflict — plan already in catalog. Look up the
+          // existing row and include its id so we still record the linkage.
+          if (planErr.code === '23505') {
+            const { data: existing } = await supabase
+              .from('master_plans')
+              .select('id')
+              .eq('builder_company_id', submission.builder_company_id)
+              .eq('plan_number', planNumber)
+              .eq('elevation', elevation)
+              .eq('elevation_orientation', p.elevation_orientation || 'standard')
+              .maybeSingle();
+            if (existing) createdMasterPlanIds.push(existing.id);
+          } else {
+            console.warn('[master_plan_submissions] master_plan insert failed:', planErr.message);
+          }
+          continue;
+        }
+        if (row?.id) createdMasterPlanIds.push(row.id);
+      }
+    }
+
+    let letterPath = null, signedUrl = null, signedUrlExpiresAt = null;
+
+    if (action !== 'request_more_info') {
+      const letterArgs = {
+        community: submission.community.name,
+        builder_company_name: submission.builder_company.company_name,
+        builder_contact_name: submission.builder_company.primary_contact_name || submission.submitter_name || '',
+        builder_mailing_address: submission.builder_company.mailing_address || '',
+        submission_title: submission.submission_title,
+        reference_number: submission.reference_number,
+        approved_plans: action === 'deny' ? [] : approved_plans,
+        decision_type: responseType,
+        conditions, denial_reasons,
+        signer_name: decided_by,
+      };
+
+      const pdfBuffer = await renderMasterPlanLetterPdfBuffer(letterArgs);
+      const year = new Date().getFullYear();
+      const slug = submission.community.slug;
+      const storagePath = `builders/${slug}/master-plan-submissions/${year}/${submission.reference_number}.pdf`;
+
+      const up = await supabase.storage.from(STORAGE_BUCKET_LETTER)
+        .upload(storagePath, pdfBuffer, { contentType: 'application/pdf', upsert: true });
+      if (up.error) throw new Error('letter upload: ' + up.error.message);
+      const { data: signed } = await supabase.storage.from(STORAGE_BUCKET_LETTER)
+        .createSignedUrl(storagePath, 60 * 60 * 24 * 30);
+      letterPath = storagePath;
+      signedUrl = signed?.signedUrl || null;
+      signedUrlExpiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    }
+
+    // Update submission row with final decision state.
+    const finalStatus = responseType === 'approved' ? 'approved'
+                      : responseType === 'approved_with_conditions' ? 'approved_with_conditions'
+                      : responseType === 'denied' ? 'denied'
+                      : 'info_requested';
+
+    await supabase
+      .from('master_plan_submissions')
+      .update({
+        status: finalStatus,
+        decided_at: new Date().toISOString(),
+        decided_by,
+        decision_notes: typeof conditions === 'string' ? conditions
+                       : Array.isArray(conditions) ? conditions.join('\n')
+                       : typeof denial_reasons === 'string' ? denial_reasons
+                       : Array.isArray(denial_reasons) ? denial_reasons.join('\n')
+                       : null,
+        letter_pdf_path: letterPath,
+        letter_signed_url: signedUrl,
+        letter_signed_url_expires_at: signedUrlExpiresAt,
+        created_master_plan_ids: createdMasterPlanIds,
+      })
+      .eq('id', submission.id);
+
+    // Fire-and-forget email notification to the builder with the letter link.
+    (async () => {
+      try {
+        const { sendEmail, isConfigured } = require('../lib/notifications/email');
+        if (!isConfigured()) return;
+        const subjBase = responseType === 'denied' ? 'Update on master plan submission'
+                       : responseType === 'approved_with_conditions' ? 'Master plan approval (with conditions)'
+                       : 'Master plan approved';
+        await sendEmail({
+          to: submission.submitter_email,
+          subject: `${subjBase} — ${submission.reference_number}`,
+          html: `<p>The ${submission.community.name} Architectural Control Committee has issued a decision on your master plan submission (${submission.reference_number}).</p>
+            <p>${signedUrl ? `Letter on file: <a href="${signedUrl}">download PDF</a> (link valid 30 days).` : 'The decision letter is on file in your builder portal.'}</p>
+            <p>${(createdMasterPlanIds.length && (responseType.startsWith('approved')))
+                ? `${createdMasterPlanIds.length} plan/elevation entries were added to the ${submission.community.name} approved catalog and will be available in the per-lot construction submission dropdown immediately.`
+                : ''}</p>`,
+          text: `Decision issued for master plan submission ${submission.reference_number}. ${signedUrl ? 'Letter: ' + signedUrl : ''}`,
+        });
+      } catch (e) {
+        console.warn('[master_plan_submissions] decision email failed:', e.message);
+      }
+    })();
+
+    res.json({
+      ok: true,
+      reference_number: submission.reference_number,
+      status: finalStatus,
+      letter_signed_url: signedUrl,
+      created_master_plan_ids: createdMasterPlanIds,
+    });
+  } catch (err) {
+    console.error('[master_plan_submissions] finalize failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });

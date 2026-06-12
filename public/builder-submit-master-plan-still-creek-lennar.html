@@ -383,7 +383,7 @@
       }));
       for (const f of pdfFiles) post.append('files', f);
 
-      const r = await fetch('/api/master-plan-submissions', { method: 'POST', body: post });
+      const r = await fetch('/api/master-plan-submissions/public', { method: 'POST', body: post });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
       renderSuccess(data.reference_number);

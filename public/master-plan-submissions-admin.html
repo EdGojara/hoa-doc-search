@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Master Plan Submissions · Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600&family=Inter:wght@400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --cream: #FAFAF6;
+    --rule: #d8d6cd;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --ok: #2e7d32;
+    --err: #B71C1C;
+    --warn: #b54a07;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+  }
+  html, body { margin: 0; padding: 0; background: var(--cream); color: var(--ink); font-family: var(--font-sans); font-size: 14.5px; line-height: 1.5; min-height: 100vh; }
+  header.app { background: var(--navy); color: var(--cream); padding: 18px 32px; border-bottom: 3px solid var(--gold); display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; }
+  header .brand { font-family: var(--font-serif); font-size: 19px; }
+  header .brand em { color: var(--gold); font-style: italic; }
+  header .util a { color: var(--gold); text-decoration: none; font-size: 12.5px; border-bottom: 1px dotted var(--gold); margin-left: 16px; }
+  .container { max-width: 1280px; margin: 0 auto; padding: 28px 32px 80px; }
+
+  h1 { font-family: var(--font-serif); font-size: 28px; font-weight: 500; color: var(--navy); margin: 0 0 6px; }
+  h1 em { color: var(--gold); font-style: italic; }
+  .subtitle { color: var(--ink-soft); margin: 0 0 22px; font-size: 14px; }
+
+  .filter-row { display: flex; align-items: center; gap: 14px; margin-bottom: 18px; }
+  .filter-row label { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  .filter-row select { padding: 8px 12px; border: 1px solid var(--rule); border-radius: 5px; font-family: inherit; font-size: 14px; background: #fff; }
+
+  .empty { background: #fff; border: 2px dashed var(--rule); border-radius: 10px; padding: 50px 30px; text-align: center; color: var(--ink-faint); }
+  .empty .big { font-size: 16px; color: var(--ink-soft); margin-bottom: 6px; font-weight: 500; }
+
+  .sub-card {
+    background: #fff; border: 1px solid var(--rule); border-radius: 10px;
+    padding: 18px 22px; margin-bottom: 14px;
+    display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: start;
+  }
+  .sub-card .ref {
+    font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12.5px;
+    color: var(--ink-faint); letter-spacing: 0.04em;
+  }
+  .sub-card h3 {
+    font-family: var(--font-serif); font-size: 18px; font-weight: 500; color: var(--navy);
+    margin: 4px 0 6px; line-height: 1.25;
+  }
+  .sub-card .meta { font-size: 12.5px; color: var(--ink-soft); margin: 0 0 4px; }
+  .sub-card .meta strong { color: var(--navy); font-weight: 500; }
+  .sub-card .plans-proposed {
+    margin-top: 8px; font-size: 12.5px; color: var(--ink-soft);
+  }
+  .sub-card .plans-proposed code { background: #f3f1e8; padding: 1px 5px; border-radius: 3px; font-size: 11.5px; }
+
+  .status { display: inline-block; padding: 3px 10px; border-radius: 999px; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; }
+  .status.received { background: #e0f2fe; color: #075985; }
+  .status.under_review { background: #fef3c7; color: #92400e; }
+  .status.info_requested { background: #fef3c7; color: var(--warn); }
+  .status.approved { background: #dcfce7; color: var(--ok); }
+  .status.approved_with_conditions { background: #dcfce7; color: var(--ok); }
+  .status.denied { background: #fee2e2; color: var(--err); }
+  .status.withdrawn { background: #f3f4f6; color: var(--ink-faint); }
+
+  .sub-card-right { text-align: right; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
+  .sub-card-right .submitted { font-size: 11.5px; color: var(--ink-faint); }
+  .sub-card-right button {
+    background: var(--navy); color: var(--cream); border: none;
+    padding: 8px 16px; border-radius: 5px; font-family: inherit; font-size: 13px; font-weight: 500;
+    cursor: pointer;
+  }
+  .sub-card-right button:hover { background: var(--navy-soft); }
+
+  /* ---- Detail modal ---- */
+  .modal-shade { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 1000; display: none; padding: 28px 18px; overflow-y: auto; }
+  .modal-shade.on { display: block; }
+  .modal {
+    background: #fff; max-width: 980px; margin: 0 auto; border-radius: 12px;
+    padding: 26px 30px 30px; box-shadow: 0 12px 40px rgba(0,0,0,0.3);
+  }
+  .modal header.modal-head { background: transparent; padding: 0; border: none; display: flex; align-items: baseline; justify-content: space-between; gap: 14px; margin-bottom: 8px; }
+  .modal h2 { font-family: var(--font-serif); font-size: 22px; color: var(--navy); margin: 0; }
+  .modal .modal-x { background: none; border: none; font-size: 22px; color: var(--ink-faint); cursor: pointer; }
+  .modal .meta-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px 24px; margin: 16px 0 22px; padding: 14px 16px; background: #f7f5ef; border-radius: 8px; font-size: 13px; }
+  .modal .meta-grid .lbl { font-size: 11px; color: var(--ink-faint); letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 2px; font-weight: 600; }
+  .modal .meta-grid .val { color: var(--navy); }
+  .modal .attachments { margin: 16px 0 22px; }
+  .modal .attachments h3 { font-family: var(--font-serif); font-size: 16px; margin: 0 0 8px; color: var(--navy); }
+  .modal .attachments a { display: inline-flex; align-items: center; gap: 8px; padding: 8px 12px; background: #f3f1e8; border-radius: 5px; text-decoration: none; color: var(--navy); font-size: 13px; margin-right: 8px; }
+  .modal .approved-table-wrap { margin: 16px 0 22px; }
+  .modal .approved-table-wrap h3 { font-family: var(--font-serif); font-size: 16px; margin: 0 0 6px; color: var(--navy); }
+  .modal .approved-table-wrap .help { font-size: 12.5px; color: var(--ink-faint); margin: 0 0 10px; }
+  .modal table.approved {
+    width: 100%; border-collapse: collapse; font-size: 13px;
+  }
+  .modal table.approved th, .modal table.approved td { padding: 6px 8px; border-bottom: 1px solid var(--rule); text-align: left; vertical-align: middle; }
+  .modal table.approved th { background: #f7f5ef; font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--ink-soft); }
+  .modal table.approved input { width: 100%; padding: 5px 7px; font-family: inherit; font-size: 13px; border: 1px solid var(--rule); border-radius: 4px; }
+  .modal table.approved .x { background: transparent; border: none; color: var(--err); cursor: pointer; font-size: 15px; }
+  .modal .row-btn { background: #fff; border: 1px dashed var(--rule); padding: 8px 12px; border-radius: 5px; font-size: 13px; cursor: pointer; color: var(--navy); }
+  .modal .conds-wrap { margin: 16px 0 22px; }
+  .modal .conds-wrap h3 { font-family: var(--font-serif); font-size: 16px; margin: 0 0 6px; color: var(--navy); }
+  .modal textarea {
+    width: 100%; padding: 10px 12px; font-family: inherit; font-size: 13.5px;
+    border: 1px solid var(--rule); border-radius: 5px; min-height: 80px; resize: vertical;
+  }
+  .modal .decided-by { margin: 0 0 18px; }
+  .modal .decided-by label { font-size: 11px; color: var(--ink-faint); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; display: block; margin-bottom: 4px; }
+  .modal .decided-by input { width: 100%; padding: 8px 10px; font-family: inherit; font-size: 14px; border: 1px solid var(--rule); border-radius: 5px; }
+  .modal .actions { display: flex; gap: 10px; flex-wrap: wrap; padding-top: 16px; border-top: 1px solid var(--rule); }
+  .modal .actions button { padding: 10px 22px; border: none; border-radius: 6px; font-family: inherit; font-size: 14px; font-weight: 500; cursor: pointer; }
+  .modal button.approve { background: var(--ok); color: #fff; }
+  .modal button.approve-cond { background: var(--warn); color: #fff; }
+  .modal button.deny { background: var(--err); color: #fff; }
+  .modal button.cancel { background: #fff; color: var(--ink-soft); border: 1px solid var(--rule); margin-left: auto; }
+
+  .modal .letter-success { background: #f0fdf4; border: 1px solid var(--ok); border-radius: 6px; padding: 14px 16px; margin: 14px 0; font-size: 13.5px; }
+  .modal .letter-success a { color: var(--ok); font-weight: 600; }
+
+  .toast { position: fixed; top: 18px; right: 18px; background: var(--navy); color: #fff; padding: 12px 18px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); z-index: 2000; font-size: 13px; }
+  .toast.error { background: var(--err); }
+  .toast.success { background: var(--ok); }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div>
+    <div class="brand">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+    <div style="font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase; color: rgba(250,250,246,0.65); margin-top: 4px;">Master plan submissions</div>
+  </div>
+  <div class="util">
+    <a href="/">← Platform</a>
+    <a href="/builder-arc-review.html">📐 Per-lot ARC review</a>
+  </div>
+</header>
+
+<div class="container">
+  <h1>Master plan <em>submissions</em></h1>
+  <p class="subtitle">Builder-proposed master plans for catalog approval. Approving here adds the plans to the catalog dropdown that builders see when filing per-lot construction submissions.</p>
+
+  <div class="filter-row">
+    <div>
+      <div><label>Status</label></div>
+      <select id="statusFilter">
+        <option value="">All statuses</option>
+        <option value="received" selected>Received (pending)</option>
+        <option value="under_review">Under review</option>
+        <option value="info_requested">Info requested</option>
+        <option value="approved">Approved</option>
+        <option value="approved_with_conditions">Approved with conditions</option>
+        <option value="denied">Denied</option>
+      </select>
+    </div>
+  </div>
+
+  <div id="list"></div>
+  <div id="empty" class="empty" style="display:none;">
+    <div class="big">No submissions match this filter</div>
+    <div>When a builder submits a new master plan, it'll appear here for review.</div>
+  </div>
+</div>
+
+<!-- Detail / approve modal -->
+<div class="modal-shade" id="modalShade">
+  <div class="modal" id="modal"></div>
+</div>
+
+<script>
+  const $ = (id) => document.getElementById(id);
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function toast(msg, level) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (level || '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 4500);
+  }
+  function fmtDate(iso) { if (!iso) return '—'; try { return new Date(iso).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); } catch (_) { return iso; } }
+
+  $('statusFilter').addEventListener('change', loadList);
+
+  async function loadList() {
+    const status = $('statusFilter').value;
+    const r = await fetch('/api/master-plan-submissions' + (status ? '?status=' + encodeURIComponent(status) : ''));
+    if (!r.ok) { toast('Couldn\'t load submissions', 'error'); return; }
+    const j = await r.json();
+    renderList(j.submissions || []);
+  }
+
+  function renderList(subs) {
+    const list = $('list');
+    const empty = $('empty');
+    if (!subs.length) { list.innerHTML = ''; empty.style.display = 'block'; return; }
+    empty.style.display = 'none';
+    list.innerHTML = subs.map((s) => {
+      const planList = (s.plan_numbers_proposed || []).map(esc).join(', ');
+      return `
+        <div class="sub-card">
+          <div>
+            <div class="ref">${esc(s.reference_number || '—')}</div>
+            <h3>${esc(s.submission_title)}</h3>
+            <p class="meta"><strong>${esc(s.builder_company?.company_name || '—')}</strong> @ ${esc(s.community?.name || '—')}</p>
+            <p class="meta">${esc(s.submitter_name || '')} ${s.submitter_email ? '&lt;' + esc(s.submitter_email) + '&gt;' : ''}</p>
+            ${planList ? `<p class="plans-proposed">Proposed plans: <code>${planList}</code></p>` : ''}
+          </div>
+          <div class="sub-card-right">
+            <span class="status ${esc(s.status)}">${esc((s.status || '').replace(/_/g, ' '))}</span>
+            <span class="submitted">Submitted ${fmtDate(s.submitted_at)}</span>
+            <button data-id="${esc(s.id)}">${s.status === 'received' || s.status === 'under_review' ? 'Review →' : 'View →'}</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+    list.querySelectorAll('button[data-id]').forEach((b) => b.addEventListener('click', () => openSubmission(b.dataset.id)));
+  }
+
+  async function openSubmission(id) {
+    const r = await fetch('/api/master-plan-submissions/' + id);
+    if (!r.ok) { toast('Couldn\'t load submission', 'error'); return; }
+    const j = await r.json();
+    renderModal(j.submission, j.attachments || []);
+  }
+
+  function renderModal(s, attachments) {
+    const proposed = (s.plan_numbers_proposed || []).map((pn) => ({
+      plan_number: pn, plan_name: '', elevation: '', elevation_orientation: 'standard', square_footage: '', stories: '',
+    }));
+
+    const html = `
+      <header class="modal-head">
+        <h2>${esc(s.submission_title)}</h2>
+        <button class="modal-x" id="closeModal">×</button>
+      </header>
+      <div class="ref" style="font-family: ui-monospace, monospace; font-size: 12.5px; color: #7a7a7a;">${esc(s.reference_number)} &nbsp;·&nbsp; <span class="status ${esc(s.status)}">${esc((s.status || '').replace(/_/g, ' '))}</span></div>
+
+      <div class="meta-grid">
+        <div><div class="lbl">Builder</div><div class="val">${esc(s.builder_company?.company_name || '—')}</div></div>
+        <div><div class="lbl">Community</div><div class="val">${esc(s.community?.name || '—')}</div></div>
+        <div><div class="lbl">Submitter</div><div class="val">${esc(s.submitter_name || '—')} &lt;${esc(s.submitter_email || '')}&gt;</div></div>
+        <div><div class="lbl">Submitter phone</div><div class="val">${esc(s.submitter_phone || '—')}</div></div>
+        <div><div class="lbl">Submitted</div><div class="val">${fmtDate(s.submitted_at)}</div></div>
+        <div><div class="lbl">Plan numbers proposed</div><div class="val">${(s.plan_numbers_proposed || []).map(esc).join(', ') || '—'}</div></div>
+      </div>
+
+      ${s.description ? `<div style="margin-bottom: 16px;"><div class="lbl" style="font-size: 11px; color: #7a7a7a; letter-spacing: 0.06em; text-transform: uppercase; margin-bottom: 4px; font-weight: 600;">Builder notes</div><div style="font-size: 13.5px; color: #4a4a4a; padding: 12px 14px; background: #f7f5ef; border-radius: 6px; white-space: pre-wrap;">${esc(s.description)}</div></div>` : ''}
+
+      ${attachments.length ? `
+        <div class="attachments">
+          <h3>Submitted PDFs</h3>
+          ${attachments.map((a) => `<a href="#" data-att-id="${esc(a.id)}" class="att-link">📄 ${esc(a.original_filename || a.kind)} (${a.size_bytes ? (a.size_bytes / 1024 / 1024).toFixed(2) + ' MB' : '?'})</a>`).join('')}
+        </div>
+      ` : ''}
+
+      ${s.status === 'approved' || s.status === 'approved_with_conditions' || s.status === 'denied' ? `
+        <div class="letter-success">
+          <strong>Decision letter on file.</strong> ${s.letter_signed_url ? `<a href="${esc(s.letter_signed_url)}" target="_blank" rel="noopener">Download PDF</a>` : 'Letter PDF stored.'} Decided by ${esc(s.decided_by || 'BAM')} on ${fmtDate(s.decided_at)}.
+        </div>
+      ` : `
+        <div class="approved-table-wrap">
+          <h3>Plans to add to the catalog</h3>
+          <p class="help">Enter each plan/elevation combination being approved. Add rows from the proposed list at the bottom or manually. Plan number + elevation are required; the rest are optional but recommended for the letter.</p>
+          <table class="approved" id="approvedTable">
+            <thead>
+              <tr>
+                <th style="width:14%;">Plan #</th>
+                <th style="width:20%;">Plan name</th>
+                <th style="width:10%;">Elev</th>
+                <th style="width:14%;">Orientation</th>
+                <th style="width:14%;">Sq ft</th>
+                <th style="width:8%;">Stories</th>
+                <th style="width:6%;"></th>
+              </tr>
+            </thead>
+            <tbody id="approvedBody"></tbody>
+          </table>
+          <button type="button" class="row-btn" id="addRowBtn" style="margin-top:8px;">+ Add row</button>
+        </div>
+
+        <div class="conds-wrap">
+          <h3>Conditions or notes (optional)</h3>
+          <p class="help">For approve_with_conditions: list each condition on a separate line. For deny: list items requiring revision.</p>
+          <textarea id="conditionsText" placeholder="One condition per line. Leave blank for clean approval."></textarea>
+        </div>
+
+        <div class="decided-by">
+          <label>Decided by (your name)</label>
+          <input type="text" id="decidedBy" placeholder="e.g. Ed Gojara">
+        </div>
+
+        <div class="actions">
+          <button class="approve" id="actionApprove">✓ Approve</button>
+          <button class="approve-cond" id="actionApproveCond">⚠ Approve with conditions</button>
+          <button class="deny" id="actionDeny">✗ Deny</button>
+          <button class="cancel" id="actionCancel">Cancel</button>
+        </div>
+      `}
+    `;
+
+    $('modal').innerHTML = html;
+    $('modalShade').classList.add('on');
+    $('closeModal').addEventListener('click', closeModal);
+    document.querySelectorAll('.att-link').forEach((a) => a.addEventListener('click', async (e) => {
+      e.preventDefault();
+      const id = a.dataset.attId;
+      const r = await fetch('/api/master-plan-submissions/' + s.id);
+      // Use existing API to get signed URL for the attachment
+      // For now, just use storage-direct signed-url helper via supabase client side
+      // Simpler: hit a generic signed-url endpoint. We don't have one for these
+      // attachments yet, so fall back to opening the storage_path in supabase
+      // dashboard would be ugly. Just use the dedicated GET endpoint.
+      const r2 = await fetch('/api/master-plan-submissions/' + s.id);
+      const j2 = await r2.json();
+      const att = (j2.attachments || []).find((x) => x.id === id);
+      if (!att) return;
+      // We don't have a per-attachment signed URL endpoint built; open via
+      // master-plan-submissions GET response. For now show the storage path.
+      toast('Attachment storage path: ' + att.storage_path);
+    }));
+
+    if (s.status !== 'approved' && s.status !== 'approved_with_conditions' && s.status !== 'denied') {
+      const body = $('approvedBody');
+      // Seed with proposed plan numbers (empty elevations to fill in)
+      const seed = proposed.length ? proposed : [{}];
+      seed.forEach((p) => body.appendChild(buildRow(p)));
+      $('addRowBtn').addEventListener('click', () => body.appendChild(buildRow({})));
+      $('actionApprove').addEventListener('click', () => submitDecision(s.id, 'approve'));
+      $('actionApproveCond').addEventListener('click', () => submitDecision(s.id, 'approve_with_conditions'));
+      $('actionDeny').addEventListener('click', () => submitDecision(s.id, 'deny'));
+      $('actionCancel').addEventListener('click', closeModal);
+    }
+  }
+
+  function buildRow(p) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><input type="text" class="planNum" value="${esc(p.plan_number || '')}" placeholder="4900"></td>
+      <td><input type="text" class="planName" value="${esc(p.plan_name || '')}" placeholder="Tesla"></td>
+      <td><input type="text" class="elev" value="${esc(p.elevation || '')}" placeholder="C4"></td>
+      <td>
+        <select class="elevOrient">
+          <option value="standard"${p.elevation_orientation === 'standard' || !p.elevation_orientation ? ' selected' : ''}>standard</option>
+          <option value="left"${p.elevation_orientation === 'left' ? ' selected' : ''}>left</option>
+          <option value="right"${p.elevation_orientation === 'right' ? ' selected' : ''}>right</option>
+        </select>
+      </td>
+      <td><input type="number" class="sqft" value="${p.square_footage || ''}" placeholder="1922"></td>
+      <td><input type="number" step="0.5" class="stories" value="${p.stories || ''}" placeholder="1"></td>
+      <td><button type="button" class="x">✕</button></td>
+    `;
+    tr.querySelector('.x').addEventListener('click', () => tr.remove());
+    return tr;
+  }
+
+  function collectApprovedPlans() {
+    const rows = document.querySelectorAll('#approvedBody tr');
+    const out = [];
+    rows.forEach((tr) => {
+      const planNum = tr.querySelector('.planNum').value.trim();
+      const elev = tr.querySelector('.elev').value.trim();
+      if (!planNum || !elev) return;
+      out.push({
+        plan_number: planNum,
+        plan_name: tr.querySelector('.planName').value.trim() || null,
+        elevation: elev,
+        elevation_orientation: tr.querySelector('.elevOrient').value || 'standard',
+        square_footage: Number(tr.querySelector('.sqft').value) || null,
+        stories: Number(tr.querySelector('.stories').value) || null,
+      });
+    });
+    return out;
+  }
+
+  async function submitDecision(id, action) {
+    const decidedBy = $('decidedBy').value.trim();
+    if (!decidedBy) { toast('Enter your name in "Decided by"', 'error'); return; }
+
+    const conditionsRaw = $('conditionsText').value.trim();
+    const conditions = action === 'approve_with_conditions' ? (conditionsRaw || null) : null;
+    const denialReasons = action === 'deny' ? (conditionsRaw || null) : null;
+    const approvedPlans = action === 'deny' ? [] : collectApprovedPlans();
+
+    if ((action === 'approve' || action === 'approve_with_conditions') && approvedPlans.length === 0) {
+      toast('Add at least one plan row before approving', 'error'); return;
+    }
+    if (action === 'approve_with_conditions' && !conditions) {
+      toast('Conditions are required for approve_with_conditions', 'error'); return;
+    }
+    if (action === 'deny' && !denialReasons) {
+      toast('Denial reasons are required', 'error'); return;
+    }
+
+    if (!confirm(action === 'approve' ? 'Approve and add ' + approvedPlans.length + ' plan/elevations to the catalog?' :
+                 action === 'approve_with_conditions' ? 'Approve with ' + approvedPlans.length + ' plans + ' + conditions.split(/\n/).length + ' conditions?' :
+                 'Deny this submission?')) return;
+
+    const r = await fetch('/api/master-plan-submissions/' + id + '/finalize', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action,
+        approved_plans: approvedPlans,
+        conditions,
+        denial_reasons: denialReasons,
+        decided_by: decidedBy,
+      }),
+    });
+    const j = await r.json();
+    if (!r.ok) { toast('Failed: ' + (j.error || r.status), 'error'); return; }
+    toast('Decision recorded. Letter rendered. Builder notified.', 'success');
+    closeModal();
+    loadList();
+  }
+
+  function closeModal() { $('modalShade').classList.remove('on'); $('modal').innerHTML = ''; }
+  $('modalShade').addEventListener('click', (e) => { if (e.target === $('modalShade')) closeModal(); });
+
+  loadList();
+</script>
+
+</body>
+</html>

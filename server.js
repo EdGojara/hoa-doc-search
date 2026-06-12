@@ -489,8 +489,7 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/builder-applications$/,             // POST intake (kill-switched per community)
   /^\/api\/builder-applications\/[0-9a-f-]+\/attachments$/, // file uploads tied to a submission id
   /^\/api\/builder-applications\/portal\/my-submissions$/,  // builder-dashboard.html bootstrap; auth via portal cookie inside
-  /^\/api\/master-plan-submissions$/,          // POST master plan submission (builder-facing intake)
-  /^\/api\/master-plan-submissions\/public\b/, // community lookup for the master plan form
+  /^\/api\/master-plan-submissions\/public\b/, // builder-facing intake (POST /public) + community lookup. Staff list/detail/finalize stay at the bare path and require staff cookie.
   /^\/api\/portal\/request-link$/,             // POST magic-link send (anti-enumeration)
   /^\/api\/portal\/consume$/,                  // POST magic-link consume + cookie set
   /^\/api\/portal\/me$/,                       // GET portal context (gated by cookie, not staff)
@@ -905,6 +904,9 @@ app.use('/api/community-photos', communityPhotosRouter);
 
 const masterPlanSubmissionsRouter = require('./api/master_plan_submissions');
 app.use('/api/master-plan-submissions', masterPlanSubmissionsRouter);
+app.get('/admin/master-plan-submissions', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'master-plan-submissions-admin.html'));
+});
 app.get('/admin/community-photos', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community-photos-admin.html'));
 });
