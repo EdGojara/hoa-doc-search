@@ -3609,6 +3609,224 @@ router.get('/vendor-experiences/mine', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// DISPLAY ENDPOINTS — Ed 2026-06-11 evening, focus-group prep build.
+//
+//   GET /vendor-directory/feed            — recency-ordered vendor cards
+//                                            scoped to user's community
+//   GET /vendor-directory/categories      — categories with counts
+//   GET /vendor-directory/vendor          — full detail for one vendor
+//                                            ?name=Carlos+Painting&category_id=xxx
+//
+// All scoped to the authenticated portal user's community via
+// resolveScopedProperty — never trusts a client-supplied community_id.
+//
+// Aggregation policy (per project_vendor_directory_pricing_intelligence):
+//   - Vendor "card" = group of submissions sharing same vendor_name +
+//     category_id within the same community. Exact-match grouping for v1
+//     (Carlos Painting vs Carlos Painting LLC are separate vendors). Name
+//     normalization is a known future feature.
+//   - Pricing summary requires 5+ submissions to display (avoids
+//     "one neighbor's $4,800 outlier looks authoritative").
+//   - "% would hire again" is rounded over ALL submissions for that
+//     vendor — bad submissions stay permanently, no editorial removal.
+//   - Recency weighting is NOT applied in v1 — feed shows all; sorting
+//     by submitted_at DESC gives the natural recency-first behavior the
+//     strategy memo describes.
+// ----------------------------------------------------------------------------
+
+function _slugifyVendorKey(vendor_name, vendor_category_id) {
+  // Group-by key for aggregating submissions into "vendor cards." Same vendor
+  // name in two different categories = two different cards (a handyman doing
+  // landscaping is treated separately from a handyman doing electrical).
+  return String(vendor_name || '').toLowerCase().trim() + '|' + String(vendor_category_id || '');
+}
+
+function _aggregateVendorCards(rows, opts = {}) {
+  const minPricingThreshold = opts.minPricingThreshold || 5;
+  const groups = new Map();
+  for (const r of rows) {
+    const key = _slugifyVendorKey(r.vendor_name, r.vendor_category_id);
+    if (!groups.has(key)) {
+      groups.set(key, {
+        vendor_name:   r.vendor_name,
+        category:      r.vendor_categories || null,
+        submissions:   [],
+      });
+    }
+    groups.get(key).submissions.push(r);
+  }
+  const cards = [];
+  for (const g of groups.values()) {
+    // Sort each vendor's submissions newest-first for any display surface.
+    g.submissions.sort((a, b) => new Date(b.submitted_at) - new Date(a.submitted_at));
+    const n = g.submissions.length;
+    const wouldHireCount = g.submissions.filter((s) => s.would_hire_again === true).length;
+    const pctWouldHire = Math.round((wouldHireCount / n) * 100);
+    const mostRecent = g.submissions[0];
+    // Pricing summary — group by project_type, only show ranges when 5+
+    // for the same project type. Avoids one outlier becoming "the price."
+    const pricingByType = {};
+    for (const s of g.submissions) {
+      const pt = (s.project_type || 'General work').slice(0, 60);
+      if (!pricingByType[pt]) pricingByType[pt] = [];
+      if (s.price_paid_cents != null) pricingByType[pt].push(s.price_paid_cents);
+    }
+    const pricing_summary = [];
+    for (const [pt, prices] of Object.entries(pricingByType)) {
+      if (prices.length >= minPricingThreshold) {
+        prices.sort((a, b) => a - b);
+        pricing_summary.push({
+          project_type: pt,
+          n: prices.length,
+          min_cents: prices[0],
+          max_cents: prices[prices.length - 1],
+          median_cents: prices[Math.floor(prices.length / 2)],
+        });
+      }
+    }
+    cards.push({
+      vendor_name: g.vendor_name,
+      category:    g.category,
+      n_submissions: n,
+      pct_would_hire_again: pctWouldHire,
+      most_recent_at: mostRecent.submitted_at,
+      most_recent_project_type: mostRecent.project_type || null,
+      pricing_summary,
+      submissions: g.submissions,
+    });
+  }
+  return cards;
+}
+
+router.get('/vendor-directory/feed', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property || !scoped.property.community_id) {
+      return res.json({ vendors: [], community: null, empty_reason: 'no_property_scope' });
+    }
+
+    // Optional ?category_id= filter — when the homeowner taps a category chip.
+    const categoryFilter = req.query.category_id ? String(req.query.category_id) : null;
+
+    let q = supabase
+      .from('vendor_experiences')
+      .select(`
+        id, vendor_name, project_type, price_paid_cents, would_hire_again,
+        did_well, could_improve, completed_month, completed_year, submitted_at,
+        vendor_category_id, vendor_categories:vendor_category_id (id, slug, label)
+      `)
+      .eq('community_id', scoped.property.community_id)
+      .order('submitted_at', { ascending: false })
+      .limit(500);
+    if (categoryFilter) q = q.eq('vendor_category_id', categoryFilter);
+    const { data, error } = await q;
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+
+    const cards = _aggregateVendorCards(data || []);
+    // Cards arrive grouped — sort by most-recent-submission across vendors.
+    cards.sort((a, b) => new Date(b.most_recent_at) - new Date(a.most_recent_at));
+    // Strip the full submission list from feed cards — feed is a summary view.
+    // Detail endpoint returns the full submissions.
+    const feed = cards.map((c) => ({ ...c, submissions: undefined }));
+
+    res.json({
+      vendors: feed,
+      community_id: scoped.property.community_id,
+    });
+  } catch (err) {
+    console.error('[portal.vendor-directory.feed]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/vendor-directory/categories', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property || !scoped.property.community_id) {
+      return res.json({ categories: [], community: null });
+    }
+
+    // Get all active categories
+    const { data: cats } = await supabase
+      .from('vendor_categories')
+      .select('id, slug, label, display_order')
+      .eq('active', true)
+      .order('display_order', { ascending: true });
+
+    // Get submission counts per category in this community
+    const { data: experiences } = await supabase
+      .from('vendor_experiences')
+      .select('vendor_category_id, vendor_name')
+      .eq('community_id', scoped.property.community_id);
+
+    const submissionCountByCategory = new Map();
+    const distinctVendorsByCategory = new Map();
+    for (const e of experiences || []) {
+      submissionCountByCategory.set(e.vendor_category_id, (submissionCountByCategory.get(e.vendor_category_id) || 0) + 1);
+      const key = e.vendor_category_id;
+      if (!distinctVendorsByCategory.has(key)) distinctVendorsByCategory.set(key, new Set());
+      distinctVendorsByCategory.get(key).add(String(e.vendor_name || '').toLowerCase().trim());
+    }
+
+    const enriched = (cats || []).map((c) => ({
+      ...c,
+      n_submissions: submissionCountByCategory.get(c.id) || 0,
+      n_vendors: distinctVendorsByCategory.has(c.id) ? distinctVendorsByCategory.get(c.id).size : 0,
+    }));
+    res.json({ categories: enriched });
+  } catch (err) {
+    console.error('[portal.vendor-directory.categories]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+router.get('/vendor-directory/vendor', async (req, res) => {
+  try {
+    const roleCheck = await assertOwnerLikeRole(req, res);
+    if (!roleCheck) return;
+    const scoped = await resolveScopedProperty(req, supabase, roleCheck.user);
+    if (!scoped.property || !scoped.property.community_id) {
+      return res.status(403).json({ error: 'no_property_scope' });
+    }
+
+    const vendorName = String(req.query.name || '').trim();
+    const categoryId = String(req.query.category_id || '').trim();
+    if (!vendorName) return res.status(400).json({ error: 'name_required' });
+    if (!categoryId) return res.status(400).json({ error: 'category_id_required' });
+
+    // Case-insensitive exact match on vendor_name + exact category + community.
+    // Future: normalize vendor names so "Carlos Painting" and "Carlos Painting LLC"
+    // merge. For v1 the operator submits exact strings as-typed.
+    const { data, error } = await supabase
+      .from('vendor_experiences')
+      .select(`
+        id, vendor_name, project_type, price_paid_cents, would_hire_again,
+        did_well, could_improve, completed_month, completed_year, submitted_at,
+        vendor_categories:vendor_category_id (id, slug, label)
+      `)
+      .eq('community_id', scoped.property.community_id)
+      .eq('vendor_category_id', categoryId)
+      .ilike('vendor_name', vendorName)
+      .order('submitted_at', { ascending: false });
+    if (error) return res.status(500).json({ error: safeErrorMessage(error) });
+
+    if (!data || data.length === 0) return res.status(404).json({ error: 'vendor_not_found' });
+
+    const cards = _aggregateVendorCards(data, { minPricingThreshold: 5 });
+    if (cards.length === 0) return res.status(404).json({ error: 'vendor_not_found' });
+
+    res.json({ vendor: cards[0] });
+  } catch (err) {
+    console.error('[portal.vendor-directory.vendor]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // Helpers
 // ----------------------------------------------------------------------------
 function escapeHtml(s) {

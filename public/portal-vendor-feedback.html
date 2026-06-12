@@ -256,6 +256,16 @@
           + (j.categories || []).map((c) =>
               '<option value="' + c.id + '">' + c.label + '</option>'
             ).join('');
+        // Prefill from URL params when arriving from "+ Share your experience"
+        // on a vendor detail page.
+        const params = new URLSearchParams(window.location.search);
+        const prefName = params.get('vendor_name');
+        const prefCat  = params.get('category_id');
+        if (prefName) document.getElementById('vendor_name').value = prefName;
+        if (prefCat) {
+          const opt = Array.from(sel.options).find((o) => o.value === prefCat);
+          if (opt) sel.value = prefCat;
+        }
       } catch (e) {
         document.getElementById('loadError').style.display = 'block';
         document.getElementById('loadError').textContent =

@@ -842,18 +842,19 @@ const MODULES = [
     buildLink: (ctx) => `/clubhouse/${ctx.communitySlug}`,
   },
   // ── Vendor directory — Ed 2026-06-11 ───────────────────────────────
-  // Homeowner-data-only, no finder's fees, community-scoped. Data
-  // collection FIRST per strategy memo — this tile feeds the input
-  // form. Display surfaces (vendor list, vendor detail) come in a
-  // later phase once enough submissions exist to be meaningful.
+  // Browse-first tile. Lands on the recency feed for the homeowner's
+  // community. "+ Share a vendor experience" button at the top of that
+  // page is one click away. Per strategy memo: homeowners more often
+  // need to FIND a vendor than to SHARE one, so browse is the default
+  // CTA. Share remains highly visible inside the browse view.
   {
     key: 'vendor_directory',
-    title: 'Share a vendor experience',
-    description: 'Tell your neighbors who you hired, what you paid, and whether you\'d use them again. No vendor pays for placement — this is community-only.',
+    title: 'Community vendors',
+    description: 'See who your neighbors hired, what they paid, and whether they\'d use them again. No vendor pays for placement — this is community-only.',
     icon: '🛠️',
     section: 'requests',
-    cta: 'Share a vendor',
-    buildLink: (_ctx) => `/portal/vendor-feedback`,
+    cta: 'Browse vendors',
+    buildLink: (_ctx) => `/portal/vendor-directory`,
   },
 
   // ── Row 3: Your community ─────────────────────────────────────────

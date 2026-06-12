@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Community vendors · Bedrock</title>
+  <link rel="stylesheet" href="/brand.css">
+  <style>
+    :root {
+      --navy: #0B1D34;
+      --navy-soft: #1A3050;
+      --gold: #D4AF37;
+      --ink: #0B1D34;
+      --ink-mute: #475569;
+      --ink-faint: #94a3b8;
+      --bg: #f7f5ef;
+      --card: #ffffff;
+      --rule: #e2e8f0;
+      --good: #15803d;
+      --good-bg: #dcfce7;
+      --bad: #b91c1c;
+      --bad-bg: #fee2e2;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--ink); min-height: 100vh;
+    }
+    .page-wrap { max-width: 880px; margin: 0 auto; padding: 28px 20px 80px; }
+    .crumb {
+      font-size: 12px; color: var(--ink-faint); margin-bottom: 14px;
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .crumb a { color: var(--ink-mute); text-decoration: none; border-bottom: 1px solid var(--rule); }
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 600; font-size: 32px; margin: 0 0 6px; color: var(--navy);
+    }
+    h1 em { font-style: italic; color: var(--gold); font-weight: 500; }
+    .deck {
+      color: var(--ink-mute); font-size: 15px; line-height: 1.55;
+      margin: 0 0 18px; max-width: 60ch;
+    }
+    .policy-banner {
+      background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: 10px; padding: 12px 14px; margin-bottom: 22px;
+      font-size: 12.5px; color: #78350f; line-height: 1.55;
+    }
+    .policy-banner strong { color: #92400e; }
+    .share-row {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; margin-bottom: 22px;
+    }
+    .share-row .lhs { font-size: 13px; color: var(--ink-mute); }
+    .share-btn {
+      background: var(--navy); color: #fff; border: none; padding: 11px 22px;
+      border-radius: 8px; text-decoration: none; font-weight: 700;
+      font-size: 13.5px; font-family: inherit; cursor: pointer;
+      transition: background 0.15s ease;
+      white-space: nowrap;
+    }
+    .share-btn:hover { background: var(--navy-soft); }
+    .chips {
+      display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 22px;
+    }
+    .chip {
+      background: var(--card); border: 1px solid var(--rule);
+      padding: 7px 14px; border-radius: 999px;
+      font-size: 12.5px; cursor: pointer; transition: all 0.15s ease;
+      color: var(--ink); font-family: inherit;
+      display: inline-flex; align-items: center; gap: 6px;
+    }
+    .chip:hover { border-color: var(--gold); }
+    .chip.active {
+      background: var(--navy); color: #fff; border-color: var(--navy);
+    }
+    .chip .n { color: var(--ink-faint); font-size: 11px; }
+    .chip.active .n { color: rgba(255,255,255,0.7); }
+    .vendor-card {
+      background: var(--card); border: 1px solid var(--rule);
+      border-radius: 12px; padding: 18px 20px; margin-bottom: 12px;
+      cursor: pointer; transition: all 0.15s ease;
+      text-decoration: none; color: inherit; display: block;
+    }
+    .vendor-card:hover { border-color: var(--gold); box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    .vendor-card .head {
+      display: flex; justify-content: space-between; align-items: flex-start;
+      gap: 14px; margin-bottom: 6px; flex-wrap: wrap;
+    }
+    .vendor-card .name {
+      font-size: 17px; font-weight: 700; color: var(--navy);
+    }
+    .vendor-card .cat {
+      font-size: 11px; color: var(--ink-faint);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-top: 2px;
+    }
+    .vendor-card .trust {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 3px 10px; border-radius: 999px;
+      font-size: 12px; font-weight: 700; white-space: nowrap;
+    }
+    .vendor-card .trust.good { background: var(--good-bg); color: var(--good); }
+    .vendor-card .trust.mid  { background: #fef3c7; color: #92400e; }
+    .vendor-card .trust.bad  { background: var(--bad-bg); color: var(--bad); }
+    .vendor-card .meta {
+      font-size: 12.5px; color: var(--ink-mute); margin-top: 6px;
+      display: flex; gap: 10px; flex-wrap: wrap; align-items: center;
+    }
+    .vendor-card .meta .recent { color: var(--ink-faint); }
+    .vendor-card .recent-project {
+      font-size: 13px; color: var(--ink); margin-top: 6px;
+      padding-top: 6px; border-top: 1px solid var(--rule);
+      font-style: italic;
+    }
+    .empty {
+      background: var(--card); border: 2px dashed var(--rule);
+      border-radius: 14px; padding: 36px 28px; text-align: center;
+      color: var(--ink-mute);
+    }
+    .empty h3 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 22px; font-weight: 600; margin: 0 0 8px; color: var(--navy);
+    }
+    .empty p { margin: 8px auto; max-width: 50ch; line-height: 1.55; }
+    .empty .actions { margin-top: 16px; }
+    .loading {
+      color: var(--ink-faint); padding: 30px; text-align: center; font-size: 13px;
+    }
+    @media (max-width: 600px) {
+      .page-wrap { padding: 18px 14px 60px; }
+      h1 { font-size: 26px; }
+      .share-row { flex-direction: column; align-items: stretch; }
+      .share-btn { text-align: center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <div class="crumb">
+      <a href="/portal">← Your portal</a> · Community vendors
+    </div>
+    <h1>Community <em>vendors</em></h1>
+    <p class="deck" id="deckLine">See who your neighbors hired, what they paid, and whether they'd use them again.</p>
+
+    <div class="policy-banner">
+      <strong>How this works.</strong> Bedrock doesn't accept money from vendors. We don't curate this list. All data is submitted by homeowners. We never edit, remove, or influence ratings.
+      <strong>Not BAM-endorsed</strong> — neighbor-submitted data only.
+    </div>
+
+    <div class="share-row">
+      <div class="lhs">Used a vendor recently? Help your neighbors out.</div>
+      <a href="/portal/vendor-feedback" class="share-btn">+ Share a vendor experience</a>
+    </div>
+
+    <div class="chips" id="chipsRow"><div class="loading" style="padding:8px;">Loading categories…</div></div>
+
+    <div id="vendorList"></div>
+  </div>
+
+  <script>
+    // ----------------------------------------------------------------------
+    // State + data fetch
+    // ----------------------------------------------------------------------
+    const state = {
+      categories: [],
+      activeCategory: null,  // null = show all (feed view)
+      vendors: [],
+    };
+
+    async function loadInitial() {
+      try {
+        const [catsRes, feedRes] = await Promise.all([
+          fetch('/api/portal/vendor-directory/categories', { credentials: 'same-origin' }),
+          fetch('/api/portal/vendor-directory/feed', { credentials: 'same-origin' }),
+        ]);
+        if (catsRes.status === 401 || feedRes.status === 401) {
+          window.location.href = '/portal-login.html?return=/portal/vendor-directory';
+          return;
+        }
+        if (!catsRes.ok || !feedRes.ok) throw new Error('HTTP error');
+        const catsJ = await catsRes.json();
+        const feedJ = await feedRes.json();
+        state.categories = catsJ.categories || [];
+        state.vendors = feedJ.vendors || [];
+        renderChips();
+        renderVendors();
+      } catch (e) {
+        document.getElementById('vendorList').innerHTML =
+          '<div class="empty"><h3>Couldn’t load the directory</h3><p>' + escapeHtml(e.message) + '</p></div>';
+        document.getElementById('chipsRow').innerHTML = '';
+      }
+    }
+    loadInitial();
+
+    async function loadFeed(categoryId) {
+      state.activeCategory = categoryId;
+      renderChips();
+      document.getElementById('vendorList').innerHTML = '<div class="loading">Loading vendors…</div>';
+      try {
+        const url = categoryId
+          ? '/api/portal/vendor-directory/feed?category_id=' + encodeURIComponent(categoryId)
+          : '/api/portal/vendor-directory/feed';
+        const r = await fetch(url, { credentials: 'same-origin' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        state.vendors = j.vendors || [];
+        renderVendors();
+      } catch (e) {
+        document.getElementById('vendorList').innerHTML =
+          '<div class="empty"><h3>Couldn’t load this category</h3><p>' + escapeHtml(e.message) + '</p></div>';
+      }
+    }
+
+    // ----------------------------------------------------------------------
+    // Render
+    // ----------------------------------------------------------------------
+    function renderChips() {
+      const total = state.categories.reduce((sum, c) => sum + (c.n_submissions || 0), 0);
+      const allChip = '<button class="chip ' + (state.activeCategory === null ? 'active' : '') + '" onclick="loadFeed(null)">All <span class="n">' + total + '</span></button>';
+      // Only show categories that have at least one submission. If none have
+      // any submissions yet, still show top categories to seed the mental
+      // model "this is what we collect."
+      const withSubs = state.categories.filter((c) => (c.n_submissions || 0) > 0);
+      const visible = withSubs.length > 0 ? withSubs : state.categories.slice(0, 8);
+      const cats = visible.map((c) =>
+        '<button class="chip ' + (state.activeCategory === c.id ? 'active' : '') + '" onclick="loadFeed(\'' + c.id + '\')">' +
+        escapeHtml(c.label) + ' <span class="n">' + (c.n_submissions || 0) + '</span></button>'
+      ).join('');
+      document.getElementById('chipsRow').innerHTML = allChip + cats;
+    }
+
+    function renderVendors() {
+      const list = document.getElementById('vendorList');
+      if (state.vendors.length === 0) {
+        list.innerHTML = `
+          <div class="empty">
+            <h3>No vendor experiences yet</h3>
+            <p>
+              When your neighbors share who they hired and what they paid, those names show up here —
+              real prices, real reviews, no vendor fees, community-only.
+            </p>
+            <p style="font-weight:600; color: var(--ink);">Be the first to share.</p>
+            <div class="actions">
+              <a href="/portal/vendor-feedback" class="share-btn" style="display:inline-block;">+ Share a vendor experience</a>
+            </div>
+          </div>
+        `;
+        return;
+      }
+      list.innerHTML = state.vendors.map((v) => {
+        const pct = v.pct_would_hire_again || 0;
+        const trustClass = pct >= 75 ? 'good' : (pct >= 50 ? 'mid' : 'bad');
+        const trustLabel = v.n_submissions === 1
+          ? (v.pct_would_hire_again === 100 ? '1 of 1 would hire again' : '1 of 1 would not')
+          : (pct + '% would hire again');
+        const url = '/portal/vendor-directory/vendor?name=' + encodeURIComponent(v.vendor_name) +
+                    (v.category && v.category.id ? '&category_id=' + encodeURIComponent(v.category.id) : '');
+        const recent = v.most_recent_at ? friendlyDate(v.most_recent_at) : '';
+        return `
+          <a class="vendor-card" href="${url}">
+            <div class="head">
+              <div>
+                <div class="name">${escapeHtml(v.vendor_name)}</div>
+                <div class="cat">${escapeHtml(v.category ? v.category.label : '')}</div>
+              </div>
+              <div class="trust ${trustClass}">${trustLabel}</div>
+            </div>
+            <div class="meta">
+              <span>${v.n_submissions} submission${v.n_submissions === 1 ? '' : 's'}</span>
+              ${recent ? '<span class="recent">· most recent ' + recent + '</span>' : ''}
+            </div>
+            ${v.most_recent_project_type
+              ? '<div class="recent-project">"' + escapeHtml(v.most_recent_project_type) + '"</div>'
+              : ''}
+          </a>
+        `;
+      }).join('');
+    }
+
+    // ----------------------------------------------------------------------
+    // Helpers
+    // ----------------------------------------------------------------------
+    function escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function friendlyDate(ts) {
+      const d = new Date(ts);
+      const now = new Date();
+      const days = Math.floor((now - d) / (1000 * 60 * 60 * 24));
+      if (days <= 0) return 'today';
+      if (days === 1) return 'yesterday';
+      if (days < 7)  return days + ' days ago';
+      if (days < 30) return Math.floor(days / 7) + ' week' + (days < 14 ? '' : 's') + ' ago';
+      if (days < 365) return Math.floor(days / 30) + ' month' + (days < 60 ? '' : 's') + ' ago';
+      return Math.floor(days / 365) + ' year' + (days < 730 ? '' : 's') + ' ago';
+    }
+  </script>
+</body>
+</html>

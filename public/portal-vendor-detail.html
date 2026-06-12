@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Vendor · Community vendors · Bedrock</title>
+  <link rel="stylesheet" href="/brand.css">
+  <style>
+    :root {
+      --navy: #0B1D34;
+      --navy-soft: #1A3050;
+      --gold: #D4AF37;
+      --ink: #0B1D34;
+      --ink-mute: #475569;
+      --ink-faint: #94a3b8;
+      --bg: #f7f5ef;
+      --card: #ffffff;
+      --rule: #e2e8f0;
+      --good: #15803d;
+      --good-bg: #dcfce7;
+      --bad: #b91c1c;
+      --bad-bg: #fee2e2;
+    }
+    *, *::before, *::after { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      background: var(--bg); color: var(--ink); min-height: 100vh;
+    }
+    .page-wrap { max-width: 800px; margin: 0 auto; padding: 28px 20px 80px; }
+    .crumb {
+      font-size: 12px; color: var(--ink-faint); margin-bottom: 14px;
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .crumb a { color: var(--ink-mute); text-decoration: none; border-bottom: 1px solid var(--rule); }
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-weight: 600; font-size: 30px; margin: 0 0 4px; color: var(--navy);
+      line-height: 1.15;
+    }
+    .cat {
+      font-size: 12px; color: var(--ink-faint);
+      text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 18px;
+    }
+    .trust-row {
+      display: flex; gap: 12px; flex-wrap: wrap;
+      align-items: center; margin: 14px 0 22px;
+    }
+    .trust-pill {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 14px; border-radius: 999px;
+      font-size: 13px; font-weight: 700;
+    }
+    .trust-pill.good { background: var(--good-bg); color: var(--good); }
+    .trust-pill.mid  { background: #fef3c7; color: #92400e; }
+    .trust-pill.bad  { background: var(--bad-bg); color: var(--bad); }
+    .trust-pill.neutral { background: #e2e8f0; color: var(--ink-mute); }
+    .policy-banner {
+      background: #fffbeb; border: 1px solid #fde68a;
+      border-radius: 10px; padding: 11px 14px; margin-bottom: 22px;
+      font-size: 12.5px; color: #78350f; line-height: 1.5;
+    }
+    .policy-banner strong { color: #92400e; }
+    .section-title {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 17px; font-weight: 600; color: var(--navy);
+      margin: 28px 0 10px; padding-bottom: 6px;
+      border-bottom: 1px solid var(--rule);
+    }
+    .pricing-card {
+      background: var(--card); border: 1px solid var(--rule);
+      border-radius: 12px; padding: 16px 18px; margin-bottom: 8px;
+    }
+    .pricing-card .label {
+      font-size: 11px; color: var(--ink-faint);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 4px;
+    }
+    .pricing-card .stat {
+      font-size: 22px; font-weight: 700; color: var(--navy);
+      font-family: 'Playfair Display', Georgia, serif;
+    }
+    .pricing-card .help { font-size: 12px; color: var(--ink-mute); margin-top: 2px; }
+    .pricing-row {
+      display: grid; grid-template-columns: 1fr 1fr 1fr;
+      gap: 10px; margin-bottom: 8px;
+    }
+    @media (max-width: 600px) {
+      .pricing-row { grid-template-columns: 1fr; }
+    }
+    .pricing-note {
+      font-size: 12.5px; color: var(--ink-mute);
+      padding: 10px 14px; background: #f8fafc;
+      border-radius: 8px; border: 1px dashed var(--rule);
+      margin-top: 8px;
+    }
+    .submission {
+      background: var(--card); border: 1px solid var(--rule);
+      border-radius: 12px; padding: 16px 18px; margin-bottom: 10px;
+    }
+    .submission .top {
+      display: flex; justify-content: space-between; align-items: center;
+      gap: 12px; flex-wrap: wrap; margin-bottom: 8px;
+    }
+    .submission .when {
+      font-size: 12px; color: var(--ink-faint);
+      text-transform: uppercase; letter-spacing: 0.06em;
+    }
+    .submission .would {
+      display: inline-flex; align-items: center; gap: 4px;
+      font-size: 12px; font-weight: 700;
+      padding: 3px 10px; border-radius: 999px;
+    }
+    .submission .would.yes { background: var(--good-bg); color: var(--good); }
+    .submission .would.no  { background: var(--bad-bg); color: var(--bad); }
+    .submission .project {
+      font-size: 15px; font-weight: 600; color: var(--navy); margin-bottom: 4px;
+    }
+    .submission .price {
+      font-size: 13px; color: var(--ink-mute); margin-bottom: 8px;
+    }
+    .submission .reviews {
+      display: grid; grid-template-columns: 1fr 1fr;
+      gap: 10px; margin-top: 8px;
+    }
+    @media (max-width: 600px) {
+      .submission .reviews { grid-template-columns: 1fr; }
+    }
+    .review-block {
+      font-size: 13px; line-height: 1.5; padding: 8px 10px;
+      border-radius: 8px;
+    }
+    .review-block.good { background: #f0fdf4; border-left: 3px solid var(--good); }
+    .review-block.bad  { background: #fef2f2; border-left: 3px solid var(--bad); }
+    .review-block .h {
+      font-size: 10.5px; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-bottom: 3px;
+    }
+    .review-block.good .h { color: var(--good); }
+    .review-block.bad .h  { color: var(--bad); }
+    .empty {
+      background: var(--card); border: 2px dashed var(--rule);
+      border-radius: 14px; padding: 36px 28px; text-align: center;
+      color: var(--ink-mute);
+    }
+    .empty h3 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 22px; font-weight: 600; margin: 0 0 8px; color: var(--navy);
+    }
+    .loading { color: var(--ink-faint); padding: 30px; text-align: center; font-size: 13px; }
+    .share-btn {
+      background: var(--navy); color: #fff; border: none; padding: 11px 22px;
+      border-radius: 8px; text-decoration: none; font-weight: 700;
+      font-size: 13.5px; font-family: inherit; cursor: pointer;
+      display: inline-block;
+    }
+    .share-btn:hover { background: var(--navy-soft); }
+  </style>
+</head>
+<body>
+  <div class="page-wrap">
+    <div class="crumb">
+      <a href="/portal">← Your portal</a> ·
+      <a href="/portal/vendor-directory">Community vendors</a> ·
+      <span id="crumbVendor">Vendor</span>
+    </div>
+    <div id="content">
+      <div class="loading">Loading…</div>
+    </div>
+  </div>
+
+  <script>
+    // ----------------------------------------------------------------------
+    // Read URL params
+    // ----------------------------------------------------------------------
+    const params = new URLSearchParams(window.location.search);
+    const vendorName = params.get('name') || '';
+    const categoryId = params.get('category_id') || '';
+
+    if (!vendorName) {
+      document.getElementById('content').innerHTML =
+        '<div class="empty"><h3>Missing vendor name</h3><p>Try <a href="/portal/vendor-directory">going back to the directory</a>.</p></div>';
+    } else {
+      loadVendor();
+    }
+
+    async function loadVendor() {
+      try {
+        const url = '/api/portal/vendor-directory/vendor?name=' + encodeURIComponent(vendorName) +
+                    (categoryId ? '&category_id=' + encodeURIComponent(categoryId) : '');
+        const r = await fetch(url, { credentials: 'same-origin' });
+        if (r.status === 401) {
+          window.location.href = '/portal-login.html?return=' + encodeURIComponent(window.location.pathname + window.location.search);
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const j = await r.json();
+        if (!j.vendor) throw new Error('Vendor not found');
+        render(j.vendor);
+      } catch (e) {
+        document.getElementById('content').innerHTML =
+          '<div class="empty"><h3>Couldn\'t load this vendor</h3><p>' + escapeHtml(e.message) + '</p><p><a class="share-btn" href="/portal/vendor-directory">← Back to directory</a></p></div>';
+      }
+    }
+
+    function render(v) {
+      document.getElementById('crumbVendor').textContent = v.vendor_name;
+      document.title = v.vendor_name + ' · Community vendors · Bedrock';
+
+      const pct = v.pct_would_hire_again || 0;
+      const trustClass = pct >= 75 ? 'good' : (pct >= 50 ? 'mid' : 'bad');
+      const submissionCount = v.n_submissions || 0;
+      const trustLabel = submissionCount === 0
+        ? 'No reviews yet'
+        : (submissionCount === 1
+          ? (pct === 100 ? '1 of 1 neighbor would hire again' : '1 of 1 would not hire again')
+          : (pct + '% of ' + submissionCount + ' neighbors would hire again'));
+
+      let pricingHtml = '';
+      if (v.pricing && v.pricing.show) {
+        pricingHtml = `
+          <div class="section-title">Pricing (${v.pricing.n} priced submissions)</div>
+          <div class="pricing-row">
+            <div class="pricing-card"><div class="label">Low</div><div class="stat">$${fmt(v.pricing.low)}</div></div>
+            <div class="pricing-card"><div class="label">Typical</div><div class="stat">$${fmt(v.pricing.median)}</div><div class="help">median</div></div>
+            <div class="pricing-card"><div class="label">High</div><div class="stat">$${fmt(v.pricing.high)}</div></div>
+          </div>
+          <div class="pricing-note">Prices vary based on scope, materials, and timing. Use these as a directional reference, not a quote.</div>
+        `;
+      } else if (v.pricing && v.pricing.n_priced > 0) {
+        pricingHtml = `
+          <div class="section-title">Pricing</div>
+          <div class="pricing-note">We show price ranges once 5 or more neighbors have shared pricing for the same vendor. Right now we have ${v.pricing.n_priced}.</div>
+        `;
+      }
+
+      const submissionsHtml = (v.submissions || []).map((s) => {
+        const when = s.completed_month && s.completed_year
+          ? monthName(s.completed_month) + ' ' + s.completed_year
+          : friendlyDate(s.submitted_at);
+        const wouldClass = s.would_hire_again ? 'yes' : 'no';
+        const wouldText  = s.would_hire_again ? '✓ Would hire again' : '✗ Would not hire again';
+        const price = s.price_paid_cents ? '$' + fmt(s.price_paid_cents / 100) + ' paid' : 'Price not shared';
+        return `
+          <div class="submission">
+            <div class="top">
+              <span class="when">${escapeHtml(when)}</span>
+              <span class="would ${wouldClass}">${wouldText}</span>
+            </div>
+            ${s.project_type ? `<div class="project">${escapeHtml(s.project_type)}</div>` : ''}
+            <div class="price">${escapeHtml(price)}</div>
+            ${(s.did_well || s.could_improve) ? `
+              <div class="reviews">
+                ${s.did_well ? `<div class="review-block good"><div class="h">What went well</div>${escapeHtml(s.did_well)}</div>` : ''}
+                ${s.could_improve ? `<div class="review-block bad"><div class="h">Could improve</div>${escapeHtml(s.could_improve)}</div>` : ''}
+              </div>
+            ` : ''}
+          </div>
+        `;
+      }).join('');
+
+      document.getElementById('content').innerHTML = `
+        <h1>${escapeHtml(v.vendor_name)}</h1>
+        <div class="cat">${escapeHtml(v.category ? v.category.label : '')}</div>
+
+        <div class="trust-row">
+          <span class="trust-pill ${submissionCount === 0 ? 'neutral' : trustClass}">${escapeHtml(trustLabel)}</span>
+          <a href="/portal/vendor-feedback?vendor_name=${encodeURIComponent(v.vendor_name)}&category_id=${encodeURIComponent(v.category ? v.category.id : '')}" class="share-btn">+ Share your experience</a>
+        </div>
+
+        <div class="policy-banner">
+          <strong>Reminder.</strong> Bedrock doesn't accept money from vendors. We don't curate this list — all data below is submitted by your neighbors. Not BAM-endorsed.
+        </div>
+
+        ${pricingHtml}
+
+        <div class="section-title">All submissions (${submissionCount})</div>
+        ${submissionsHtml || '<div class="empty"><p>No submissions yet.</p></div>'}
+      `;
+    }
+
+    // ----------------------------------------------------------------------
+    // Helpers
+    // ----------------------------------------------------------------------
+    function escapeHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+    function fmt(n) {
+      const v = Math.round(Number(n) || 0);
+      return v.toLocaleString();
+    }
+    function monthName(m) {
+      const months = ['', 'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+      return months[Number(m)] || '';
+    }
+    function friendlyDate(ts) {
+      if (!ts) return '';
+      const d = new Date(ts);
+      const now = new Date();
+      const days = Math.floor((now - d) / (1000 * 60 * 60 * 24));
+      if (days <= 0) return 'today';
+      if (days === 1) return 'yesterday';
+      if (days < 7)  return days + ' days ago';
+      if (days < 30) return Math.floor(days / 7) + ' weeks ago';
+      if (days < 365) return Math.floor(days / 30) + ' months ago';
+      return Math.floor(days / 365) + ' years ago';
+    }
+  </script>
+</body>
+</html>
