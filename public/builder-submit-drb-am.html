@@ -529,25 +529,16 @@
           <h2>Plan</h2>
           <span class="hint">Pick your DRB plan — details auto-fill</span>
         </div>
-        <div class="grid-2">
-          <div class="field">
-            <label>DRB Plan<span class="req">*</span></label>
-            <select name="plan_number" id="planSelect" required>
-              <option value="">— Loading plans… —</option>
-            </select>
-            <div class="helper">Don't see your plan? Email <a href="mailto:builders@bedrocktx.com" style="color:var(--drb-blue);">builders@bedrocktx.com</a> and we'll add it.</div>
-          </div>
-          <div class="field">
-            <label>Elevation<span class="req">*</span></label>
-            <select name="elevation" required>
-              <option value="">—</option>
-              <option value="A">Elevation A</option>
-              <option value="B">Elevation B</option>
-              <option value="C">Elevation C</option>
-              <option value="D">Elevation D</option>
-            </select>
-          </div>
+        <div class="field">
+          <label>DRB Plan &amp; Elevation<span class="req">*</span></label>
+          <select name="plan_selection" id="planSelect" required>
+            <option value="">— Loading plans… —</option>
+          </select>
+          <div class="helper">Each entry shows plan number, elevation, name, and square footage. Don't see your plan? Email <a href="mailto:builders@bedrocktx.com" style="color:var(--drb-blue);">builders@bedrocktx.com</a> and we'll add it to the catalog.</div>
         </div>
+        <input type="hidden" name="plan_number" id="planNumberHidden">
+        <input type="hidden" name="elevation" id="elevationHidden">
+        <input type="hidden" name="elevation_orientation" id="elevationOrientationHidden">
         <div class="grid-3">
           <div class="field">
             <label>Plan Name <span class="hint" style="font-style:italic;">— auto-filled</span></label>
@@ -666,19 +657,19 @@
       }
       j.master_plans.forEach((p) => {
         const opt = document.createElement('option');
-        // Compose a "plan_number / elevation" value so the form-side
-        // logic still has a unique identifier
-        const valueKey = p.elevation ? `${p.plan_number}-${p.elevation}` : p.plan_number;
+        const orient = p.elevation_orientation && p.elevation_orientation !== 'standard'
+          ? p.elevation_orientation : '';
+        const valueKey = `${p.plan_number || ''}|${p.elevation || ''}|${orient}`;
         opt.value = valueKey;
-        // Build the dropdown label — name + sqft + stories + elevation
-        // when available. Only stick segments in if they exist.
-        const parts = [`DRB ${p.plan_number}${p.elevation ? '-' + p.elevation : ''}`];
+        const orientLabel = orient ? ` ${orient[0].toUpperCase()}${orient.slice(1)}` : '';
+        const parts = [`DRB ${p.plan_number}${p.elevation ? '-' + p.elevation : ''}${orientLabel}`];
         if (p.plan_name) parts.push(p.plan_name);
         if (p.square_footage) parts.push(`${Number(p.square_footage).toLocaleString()} sq ft`);
         if (p.stories) parts.push(`${p.stories} story`);
         opt.textContent = parts.join(' · ');
-        // Stash detail so the change handler below auto-fills the
-        // dependent fields without an extra API hop
+        opt.dataset.planNumber = p.plan_number || '';
+        opt.dataset.elevation = p.elevation || '';
+        opt.dataset.elevationOrientation = orient;
         opt.dataset.name = p.plan_name || '';
         opt.dataset.sqft = p.square_footage || '';
         opt.dataset.stories = p.stories || '';
@@ -691,15 +682,23 @@
     }
   })();
 
-  // ---- Plan dropdown: auto-fill plan_name + sqft + stories ----
+  // ---- Plan dropdown: pulls plan_number + elevation + orientation from the
+  // selected option's dataset and pushes them into the hidden inputs the
+  // form submits. Auto-fills plan_name + sqft + stories as visible context. ----
   $('planSelect').addEventListener('change', (e) => {
     const opt = e.target.selectedOptions[0];
     if (!opt || !opt.value) {
+      $('planNumberHidden').value = '';
+      $('elevationHidden').value = '';
+      $('elevationOrientationHidden').value = '';
       $('planName').value = '';
       $('planSqft').value = '';
       $('planStories').value = '';
       return;
     }
+    $('planNumberHidden').value          = opt.dataset.planNumber          || '';
+    $('elevationHidden').value           = opt.dataset.elevation           || '';
+    $('elevationOrientationHidden').value = opt.dataset.elevationOrientation || '';
     $('planName').value    = opt.dataset.name    || '';
     $('planSqft').value    = opt.dataset.sqft    || '';
     $('planStories').value = opt.dataset.stories || '';
@@ -763,6 +762,7 @@
       plan_number:    get('plan_number'),
       plan_name:      get('plan_name') || undefined,
       elevation:      get('elevation'),
+      elevation_orientation: get('elevation_orientation') || undefined,
       square_footage: getNum('square_footage'),
       stories:        getNum('stories'),
       materials: {
@@ -780,9 +780,15 @@
     const required = ['submitter_email', 'lot_number', 'street_address', 'plan_number', 'elevation'];
     for (const k of required) {
       if (!payload[k]) {
-        const el = document.querySelector(`[name="${k}"]`);
+        // For plan_number / elevation, point the visible error to the plan dropdown
+        // since those are sourced from the plan selection (hidden inputs).
+        const visibleName = (k === 'plan_number' || k === 'elevation') ? 'plan_selection' : k;
+        const el = document.querySelector(`[name="${visibleName}"]`);
         if (el) el.closest('.field')?.classList.add('error');
-        return toast(`${k.replace(/_/g, ' ')} is required`, 'error');
+        const label = (k === 'plan_number' || k === 'elevation')
+          ? 'Pick a plan and elevation from the dropdown'
+          : `${k.replace(/_/g, ' ')} is required`;
+        return toast(label, 'error');
       }
     }
     if (!payload.builder_acknowledgments.compliance || !payload.builder_acknowledgments.change_control) {
