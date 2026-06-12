@@ -277,7 +277,7 @@ function toast(msg, kind) {
       renderRenewalState(data);
     }
   } catch (err) {
-    renderRenewalState({ error_kind: 'invalid', renewable: true, error: 'Could not sign you in — network or server issue.' });
+    renderRenewalState({ error_kind: 'invalid', renewable: true, error: 'Could not sign you in. Network or server issue.' });
   }
 })();
 
@@ -287,7 +287,7 @@ function renderRenewalState(data) {
   const COPY = {
     expired: {
       title: '⏱ Your sign-in link expired',
-      body:  'Sign-in links are good for 2 hours. Yours has passed that window. No problem — enter your email below and we\'ll send a fresh one.',
+      body:  'Sign-in links are good for 2 hours. Yours has passed that window. No problem, enter your email below and we\'ll send a fresh one.',
     },
     used:    {
       title: '✓ That link was already used',

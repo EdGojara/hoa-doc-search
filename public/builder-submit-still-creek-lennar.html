@@ -417,7 +417,7 @@
             <input type="text" name="builder_company_name" value="Lennar Homes" readonly>
           </div>
           <div class="field">
-            <label>Submitter Name <span class="hint" style="font-style:italic;">— purchasing coordinator</span></label>
+            <label>Submitter Name <span class="hint" style="font-style:italic;">(purchasing coordinator)</span></label>
             <input type="text" name="submitter_name" placeholder="Richelle Hearitige" autocomplete="name">
           </div>
           <div class="field">
@@ -473,7 +473,7 @@
       <section class="card">
         <div class="head">
           <h2>Plan</h2>
-          <span class="hint">Pick your Lennar plan — details auto-fill</span>
+          <span class="hint">Pick your Lennar plan, details auto-fill</span>
         </div>
         <div class="grid-2">
           <div class="field">
@@ -499,7 +499,7 @@
         </div>
         <div class="grid-3">
           <div class="field">
-            <label>Plan Name <span class="hint" style="font-style:italic;">— auto-filled</span></label>
+            <label>Plan Name <span class="hint" style="font-style:italic;">(auto-filled)</span></label>
             <input type="text" name="plan_name" id="planName" readonly placeholder="e.g. Walsh">
           </div>
           <div class="field">
@@ -541,7 +541,7 @@
         <div class="grid-3">
           <div class="field">
             <label>Brick</label>
-            <input type="text" name="material_brick" placeholder="Claymex — Germantown">
+            <input type="text" name="material_brick" placeholder="Claymex, Germantown">
           </div>
           <div class="field">
             <label>Exterior Paint</label>
@@ -579,7 +579,7 @@
             <div class="big-text">📄 Drop your submission PDF here</div>
             <div class="small-text">or click to choose a file</div>
             <div class="ai-pitch">
-              Upload a single PDF that includes the plot plan, site survey, elevations, and material schedule. We'll capture additional spec details from the document — no separate retyping required.
+              Upload a single PDF that includes the plot plan, site survey, elevations, and material schedule. We'll capture additional spec details from the document, no separate retyping required.
             </div>
           </div>
         </label>
@@ -661,7 +661,7 @@
         const opt = document.createElement('option');
         opt.value = '';
         opt.disabled = true;
-        opt.textContent = '(no plans on file yet — type the plan number into the form notes for now)';
+        opt.textContent = '(no plans on file yet, type the plan number into the form notes for now)';
         sel.appendChild(opt);
         // Replace dropdown with a free-text input as fallback so submissions
         // aren't blocked while the master plan library is being imported.
@@ -692,7 +692,7 @@
     } catch (err) {
       console.warn('[plan loader] failed', err);
       sel.innerHTML = '<option value="">— Select a plan —</option>'
-        + '<option value="" disabled>(unable to load — refresh page or email us)</option>';
+        + '<option value="" disabled>(unable to load, refresh page or email us)</option>';
     }
   })();
 
