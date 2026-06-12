@@ -489,6 +489,8 @@ const _STAFF_GATE_PUBLIC = [
   /^\/api\/builder-applications$/,             // POST intake (kill-switched per community)
   /^\/api\/builder-applications\/[0-9a-f-]+\/attachments$/, // file uploads tied to a submission id
   /^\/api\/builder-applications\/portal\/my-submissions$/,  // builder-dashboard.html bootstrap; auth via portal cookie inside
+  /^\/api\/master-plan-submissions$/,          // POST master plan submission (builder-facing intake)
+  /^\/api\/master-plan-submissions\/public\b/, // community lookup for the master plan form
   /^\/api\/portal\/request-link$/,             // POST magic-link send (anti-enumeration)
   /^\/api\/portal\/consume$/,                  // POST magic-link consume + cookie set
   /^\/api\/portal\/me$/,                       // GET portal context (gated by cookie, not staff)
