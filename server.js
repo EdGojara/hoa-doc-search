@@ -897,6 +897,12 @@ app.use('/api/email-intelligence', emailIntakeRouter);
 const emailCampaignsRouter = require('./api/email_campaigns');
 app.use('/api/email-campaigns', emailCampaignsRouter);
 
+const communityPhotosRouter = require('./api/community_photos');
+app.use('/api/community-photos', communityPhotosRouter);
+app.get('/admin/community-photos', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'community-photos-admin.html'));
+});
+
 // Transactions — homeowner transaction history mirrored from Vantaca via
 // monthly CSV upload. Migration 195. "Financial activity current as of
 // [date]" disclosure on the portal.

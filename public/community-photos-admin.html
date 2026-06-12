@@ -1,0 +1,363 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Community photos · Bedrock Association Management</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --cream: #FAFAF6;
+    --rule: #d8d6cd;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #6a6a6a;
+    --ok: #2e7d32;
+    --err: #B71C1C;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  html, body {
+    margin: 0; padding: 0;
+    background: var(--cream); color: var(--ink);
+    font-family: var(--font-sans); font-size: 14.5px; line-height: 1.5;
+    min-height: 100vh;
+  }
+  header.app {
+    background: var(--navy); color: var(--cream);
+    padding: 18px 32px;
+    border-bottom: 3px solid var(--gold);
+    display: flex; align-items: center; justify-content: space-between;
+    flex-wrap: wrap; gap: 12px;
+  }
+  .brand { font-family: var(--font-serif); font-size: 20px; }
+  .brand em { color: var(--gold); font-style: italic; }
+  .brand-sub {
+    font-size: 10.5px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: rgba(250,250,246,0.65); margin-top: 4px;
+  }
+  .container { max-width: 1180px; margin: 0 auto; padding: 28px 32px 80px; }
+
+  h1 {
+    font-family: var(--font-serif); font-size: 30px; font-weight: 500;
+    color: var(--navy); margin: 0 0 4px;
+  }
+  h1 em { color: var(--gold); font-style: italic; }
+
+  .controls {
+    background: #fff; border: 1px solid var(--rule); border-radius: 8px;
+    padding: 16px 18px; margin: 18px 0;
+    display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
+  }
+  .controls label { font-size: 12px; color: var(--ink-faint); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  .controls select, .controls input[type=text] {
+    background: #fff; border: 1px solid var(--rule); padding: 8px 12px;
+    font-family: inherit; font-size: 14px; border-radius: 5px; min-width: 200px;
+  }
+  .controls select:focus, .controls input:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(212,175,55,0.18); }
+
+  .dropzone {
+    border: 2px dashed var(--gold);
+    border-radius: 10px;
+    padding: 30px 24px;
+    text-align: center;
+    background: #fbf9ec;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    margin-bottom: 18px;
+  }
+  .dropzone:hover { background: #f6efce; }
+  .dropzone.dragover { background: #f3e7a8; border-color: var(--navy); }
+  .dropzone .big { font-size: 16px; font-weight: 500; color: var(--navy); margin-bottom: 4px; }
+  .dropzone .small { font-size: 13px; color: var(--ink-soft); }
+  .dropzone .pitch { font-size: 12px; color: var(--ink-faint); margin-top: 8px; font-style: italic; line-height: 1.5; }
+  input[type=file] { display: none; }
+
+  .stats {
+    display: flex; gap: 18px; margin: 10px 0 16px;
+    font-size: 13px; color: var(--ink-soft);
+  }
+  .stats .pill {
+    padding: 4px 10px; background: #fff; border: 1px solid var(--rule);
+    border-radius: 999px; color: var(--navy); font-weight: 500;
+  }
+
+  .gallery {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+    margin-top: 12px;
+  }
+  .card {
+    background: #fff; border: 1px solid var(--rule); border-radius: 10px;
+    overflow: hidden; display: flex; flex-direction: column;
+  }
+  .card .image-wrap {
+    background: #f3f1e8; width: 100%; height: 160px;
+    display: flex; align-items: center; justify-content: center;
+    overflow: hidden;
+  }
+  .card img { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .card .body { padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 6px; }
+  .card .filename { font-size: 11.5px; color: var(--ink-faint); word-break: break-word; }
+  .card select, .card input[type=text] {
+    background: #fff; border: 1px solid var(--rule); padding: 5px 8px;
+    font-family: inherit; font-size: 12.5px; border-radius: 4px; width: 100%;
+  }
+  .card .row { display: flex; gap: 6px; }
+  .card .row input { flex: 1; }
+  .card button.del {
+    background: transparent; border: none; color: var(--err);
+    font-size: 12px; padding: 4px 0; cursor: pointer; text-align: left;
+  }
+  .card button.del:hover { text-decoration: underline; }
+  .card .saved { font-size: 11px; color: var(--ok); align-self: flex-end; }
+
+  .empty {
+    padding: 60px 30px; text-align: center; color: var(--ink-faint);
+    background: #fff; border: 2px dashed var(--rule); border-radius: 10px;
+  }
+  .empty .big { font-size: 16px; color: var(--ink-soft); margin-bottom: 6px; font-weight: 500; }
+
+  .toast {
+    position: fixed; top: 18px; right: 18px;
+    background: var(--navy); color: #fff;
+    padding: 12px 18px; border-radius: 6px;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.18);
+    z-index: 1000; font-size: 13px; max-width: 380px;
+  }
+  .toast.error { background: var(--err); }
+  .toast.success { background: var(--ok); }
+
+  @media (max-width: 600px) {
+    .container { padding: 18px 16px 60px; }
+    header.app { padding: 14px 18px; }
+    .gallery { grid-template-columns: 1fr 1fr; gap: 10px; }
+  }
+</style>
+</head>
+<body>
+
+<header class="app">
+  <div>
+    <div class="brand">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+    <div class="brand-sub">Community photos</div>
+  </div>
+</header>
+
+<div class="container">
+  <h1>Community <em>photos</em></h1>
+  <p style="color: var(--ink-soft); margin: 6px 0 18px; font-size: 14px;">
+    The shared photo library, reusable across newsletters, annual reports, board packets, and the portal homepage.
+    Tag each photo by role so the right shot lands in the right slot automatically.
+  </p>
+
+  <div class="controls">
+    <div>
+      <div><label>Community</label></div>
+      <select id="communitySelect"></select>
+    </div>
+    <div>
+      <div><label>Default role for next upload</label></div>
+      <select id="defaultRole">
+        <option value="hero">Hero (cover image)</option>
+        <option value="amenity">Amenity (pool, clubhouse, gym)</option>
+        <option value="landscape">Landscape (trails, common area)</option>
+        <option value="aerial">Aerial (drone, overhead)</option>
+        <option value="signage">Signage (entrance, monument)</option>
+        <option value="event">Event (meeting, party)</option>
+        <option value="general" selected>General</option>
+      </select>
+    </div>
+  </div>
+
+  <label class="dropzone" id="dropzone" for="fileInput">
+    <div class="big">Drop photos here</div>
+    <div class="small">or click to choose</div>
+    <div class="pitch">
+      JPG, PNG, HEIC, or WebP. Up to 12 photos at a time, 12 MB each.
+      You can re-tag the role on any photo after upload.
+    </div>
+  </label>
+  <input type="file" id="fileInput" accept="image/*" multiple>
+
+  <div class="stats">
+    <span class="pill" id="statTotal">0 photos</span>
+    <span class="pill" id="statHero">0 hero</span>
+    <span class="pill" id="statAmenity">0 amenity</span>
+    <span class="pill" id="statLandscape">0 landscape</span>
+    <span class="pill" id="statAerial">0 aerial</span>
+  </div>
+
+  <div id="gallery" class="gallery"></div>
+  <div id="emptyState" class="empty" style="display:none;">
+    <div class="big">No photos uploaded yet for this community</div>
+    <div>Drop some in above to get started. Even a few phone shots help.</div>
+  </div>
+</div>
+
+<script>
+  const ROLES = [
+    { v: 'hero', l: 'Hero' },
+    { v: 'amenity', l: 'Amenity' },
+    { v: 'landscape', l: 'Landscape' },
+    { v: 'aerial', l: 'Aerial' },
+    { v: 'signage', l: 'Signage' },
+    { v: 'event', l: 'Event' },
+    { v: 'general', l: 'General' },
+  ];
+
+  function $(id) { return document.getElementById(id); }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+  function toast(msg, level) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (level || '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 4500);
+  }
+
+  let currentCommunity = null;
+
+  async function loadCommunities() {
+    const r = await fetch('/api/community-profile/');
+    if (!r.ok) { toast('Couldn\'t load communities', 'error'); return; }
+    const data = await r.json();
+    const list = (data.communities || []).filter((c) => c.active !== false);
+    const sel = $('communitySelect');
+    sel.innerHTML = list.map((c) =>
+      `<option value="${esc(c.id)}">${esc(c.name)}</option>`
+    ).join('');
+    // Pre-select Waterview if present (Ed's first use case is the annual report)
+    const waterview = list.find((c) => /waterview/i.test(c.name || c.slug || ''));
+    if (waterview) sel.value = waterview.id;
+    currentCommunity = sel.value;
+    await loadGallery();
+  }
+
+  $('communitySelect') && $('communitySelect').addEventListener('change', async (e) => {
+    currentCommunity = e.target.value;
+    await loadGallery();
+  });
+
+  async function loadGallery() {
+    if (!currentCommunity) return;
+    const r = await fetch('/api/community-photos?community_id=' + encodeURIComponent(currentCommunity));
+    if (!r.ok) { toast('Couldn\'t load photos', 'error'); return; }
+    const j = await r.json();
+    renderGallery(j.photos || []);
+  }
+
+  function renderGallery(photos) {
+    $('statTotal').textContent = photos.length + ' photo' + (photos.length === 1 ? '' : 's');
+    $('statHero').textContent = photos.filter((p) => p.role === 'hero').length + ' hero';
+    $('statAmenity').textContent = photos.filter((p) => p.role === 'amenity').length + ' amenity';
+    $('statLandscape').textContent = photos.filter((p) => p.role === 'landscape').length + ' landscape';
+    $('statAerial').textContent = photos.filter((p) => p.role === 'aerial').length + ' aerial';
+
+    const g = $('gallery');
+    const empty = $('emptyState');
+    if (!photos.length) {
+      g.innerHTML = '';
+      empty.style.display = 'block';
+      return;
+    }
+    empty.style.display = 'none';
+    g.innerHTML = photos.map((p) => `
+      <div class="card" data-id="${esc(p.id)}">
+        <div class="image-wrap">
+          ${p.signed_url ? `<img src="${esc(p.signed_url)}" alt="${esc(p.caption || p.original_filename || '')}">` : `<div style="color: var(--ink-faint); font-size:12px;">no preview</div>`}
+        </div>
+        <div class="body">
+          <select class="roleSel">
+            ${ROLES.map((r) => `<option value="${r.v}"${p.role === r.v ? ' selected' : ''}>${r.l}</option>`).join('')}
+          </select>
+          <input type="text" class="captionIn" placeholder="Caption (optional)" value="${esc(p.caption || '')}">
+          <div class="filename">${esc(p.original_filename || '')}</div>
+          <button class="del">Remove</button>
+        </div>
+      </div>
+    `).join('');
+
+    g.querySelectorAll('.card').forEach((card) => {
+      const id = card.dataset.id;
+      const roleSel = card.querySelector('.roleSel');
+      const captionIn = card.querySelector('.captionIn');
+      const delBtn = card.querySelector('.del');
+      const onChange = async () => {
+        const r = await fetch('/api/community-photos/' + id, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ role: roleSel.value, caption: captionIn.value.trim() || null }),
+        });
+        if (r.ok) {
+          const saved = document.createElement('span');
+          saved.className = 'saved';
+          saved.textContent = 'Saved ✓';
+          card.querySelector('.body').appendChild(saved);
+          setTimeout(() => saved.remove(), 1500);
+        } else {
+          toast('Save failed', 'error');
+        }
+      };
+      roleSel.addEventListener('change', onChange);
+      captionIn.addEventListener('blur', onChange);
+      delBtn.addEventListener('click', async () => {
+        if (!confirm('Remove this photo?')) return;
+        const r = await fetch('/api/community-photos/' + id + '?hard=1', { method: 'DELETE' });
+        if (r.ok) { card.remove(); await loadGallery(); }
+        else toast('Delete failed', 'error');
+      });
+    });
+  }
+
+  // Drag-drop + click-to-pick upload
+  const dz = $('dropzone');
+  const fileInput = $('fileInput');
+  dz.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', () => upload(fileInput.files));
+  ['dragenter', 'dragover'].forEach((ev) => {
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); });
+  });
+  ['dragleave', 'drop'].forEach((ev) => {
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.remove('dragover'); });
+  });
+  dz.addEventListener('drop', (e) => upload(e.dataTransfer.files));
+
+  async function upload(fileList) {
+    const files = Array.from(fileList || []).filter((f) => f.type.startsWith('image/'));
+    if (!files.length) { toast('No image files in that drop', 'error'); return; }
+    if (files.length > 12) { toast('Up to 12 photos per batch. Upload the rest in another drop.', 'error'); return; }
+    if (!currentCommunity) { toast('Pick a community first', 'error'); return; }
+
+    const fd = new FormData();
+    fd.append('community_id', currentCommunity);
+    fd.append('role', $('defaultRole').value);
+    files.forEach((f) => fd.append('files', f));
+
+    dz.querySelector('.big').textContent = 'Uploading ' + files.length + '...';
+    try {
+      const r = await fetch('/api/community-photos', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || ('HTTP ' + r.status));
+      const okCount = (j.uploaded || []).filter((u) => !u.error).length;
+      const errCount = (j.uploaded || []).filter((u) => u.error).length;
+      toast(okCount + ' uploaded' + (errCount ? ', ' + errCount + ' failed' : ''), errCount ? 'error' : 'success');
+      await loadGallery();
+    } catch (err) {
+      toast('Upload failed: ' + err.message, 'error');
+    } finally {
+      dz.querySelector('.big').textContent = 'Drop photos here';
+      fileInput.value = '';
+    }
+  }
+
+  loadCommunities();
+</script>
+
+</body>
+</html>
