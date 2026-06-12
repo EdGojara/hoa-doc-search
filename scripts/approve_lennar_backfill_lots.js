@@ -131,16 +131,15 @@ async function processOne(ref) {
     .from('builder_applications')
     .select(`
       *,
-      community:communities(id, name, slug),
+      community:communities(id, name, slug, builder_arc_fee_cents),
       builder_company:builder_companies(id, company_name, primary_contact_name, primary_contact_email, mailing_address)
     `)
     .eq('reference_number', ref)
     .single();
   if (error) { console.log(`${ref}: load failed — ${error.message}`); return; }
-  if (app.status === 'approved' || app.status === 'approved_with_conditions') {
-    console.log(`${ref}: already ${app.status}, skipping`);
-    return;
-  }
+  // Re-render every time for backfill — Ed iterates on letter format.
+  // Production finalize endpoint guards against re-decisions; this script is
+  // for ops-side re-rendering of the same approved decision.
 
   const mappedMaterials = mapMaterialsForRenderer(app.application_data);
   const letterArgs = {
@@ -160,6 +159,7 @@ async function processOne(ref) {
     reference_number: app.reference_number,
     decision_type: 'approved',
     signer_name: DECIDED_BY,
+    review_fee_cents: app.community?.builder_arc_fee_cents ?? null,
   };
 
   console.log(`\n${ref}: rendering letter for ${app.street_address} (Plan ${app.plan_number}-${app.elevation}${app.elevation_orientation ? ' ' + app.elevation_orientation : ''})`);
@@ -167,20 +167,30 @@ async function processOne(ref) {
   const uploaded = await uploadLetter(pdfBuffer, app.community.slug, app.reference_number);
   console.log(`  ✓ rendered ${(pdfBuffer.length / 1024).toFixed(0)} KB PDF · uploaded ${uploaded.path}`);
 
-  const { error: respErr } = await supabase
+  // Idempotent: if a response already exists for this app + 'approved',
+  // update the letter pointers; otherwise insert. Lets Ed iterate on letter
+  // format without piling up duplicate response rows.
+  const { data: existingResp } = await supabase
     .from('builder_application_responses')
-    .insert({
-      application_id: app.id,
-      response_type: 'approved',
-      decided_by: DECIDED_BY,
-      decided_at: new Date().toISOString(),
-      letter_pdf_path: uploaded.path,
-      letter_signed_url: uploaded.signed_url,
-      letter_signed_url_expires_at: uploaded.signed_url_expires_at,
-      email_subject: `ARC Approval — ${app.street_address} (${app.reference_number})`,
-      email_bcc_archive: true,
-    });
-  if (respErr) { console.log(`  ✗ response insert: ${respErr.message}`); return; }
+    .select('id')
+    .eq('application_id', app.id)
+    .eq('response_type', 'approved')
+    .maybeSingle();
+  const respPayload = {
+    application_id: app.id,
+    response_type: 'approved',
+    decided_by: DECIDED_BY,
+    decided_at: new Date().toISOString(),
+    letter_pdf_path: uploaded.path,
+    letter_signed_url: uploaded.signed_url,
+    letter_signed_url_expires_at: uploaded.signed_url_expires_at,
+    email_subject: `ARC Approval — ${app.street_address} (${app.reference_number})`,
+    email_bcc_archive: true,
+  };
+  const respErr = existingResp
+    ? (await supabase.from('builder_application_responses').update(respPayload).eq('id', existingResp.id)).error
+    : (await supabase.from('builder_application_responses').insert(respPayload)).error;
+  if (respErr) { console.log(`  ✗ response write: ${respErr.message}`); return; }
 
   const { error: updErr } = await supabase
     .from('builder_applications')

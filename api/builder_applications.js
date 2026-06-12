@@ -1079,6 +1079,10 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
         conditions,
         denial_reasons,
         signer_name: decided_by,
+        // Surface the community's ARC review fee on the letter (Ed 2026-06-11)
+        // so the builder has confirmation of the charge for AP reconciliation
+        // against the Bedrock invoice.
+        review_fee_cents: app.community?.builder_arc_fee_cents ?? null,
       };
 
       const pdfBuffer = await renderBuilderLetterPdfBuffer(letterArgs);
