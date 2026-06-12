@@ -977,6 +977,113 @@
       </div>
     </div>
 
+    <!-- Procedures (collapsible — closed by default so it doesn't clutter
+         the day-to-day view. New hire or anyone needing a refresher opens
+         the disclosure for step-by-step instructions per report type). -->
+    <details style="margin-bottom: 16px; background: #fbf9ec; border: 1px solid #D4AF37; border-radius: 8px; padding: 0;">
+      <summary style="padding: 14px 18px; cursor: pointer; font-weight: 600; color: #0B1D34; user-select: none; list-style: none; display: flex; align-items: center; gap: 10px;">
+        <span style="font-size: 18px;">📖</span>
+        <span>How to upload Vantaca exports</span>
+        <span style="font-size: 12px; color: #6a6a6a; font-weight: 400; margin-left: auto;">click to open</span>
+      </summary>
+      <div style="padding: 6px 22px 22px; font-size: 13px; color: #1a1a1a; line-height: 1.6;">
+        <p style="margin: 0 0 14px;">
+          New to this? Each Vantaca export feeds a different surface in trustEd. Below is the playbook for each report type, where to find it in Vantaca, and how often it should be uploaded. The system auto-classifies the file you drop — these procedures are for context, not required reading every time.
+        </p>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">📊 AR Aging Report</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> homeowner balance display, portal balance card, collections workflow, certified §209 letter generation.<br>
+            <strong>Vantaca path:</strong> Reports → Owner Accounts → AR Aging Report (by Owner).<br>
+            <strong>Export as:</strong> PDF.<br>
+            <strong>Cadence:</strong> Monthly minimum, weekly during heavy collection seasons.<br>
+            <strong>What to drop:</strong> One PDF per community, or drop multiple at once.
+          </div>
+        </div>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">📒 Transaction History (Owner Ledger)</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> the per-account running ledger, category breakdown (assessment / interest / late fee / attorney / admin), reconciliation against AR Aging.<br>
+            <strong>Vantaca path:</strong> Reports → Owner Accounts → Transaction History (TransactionHistoryAssoc export).<br>
+            <strong>Export as:</strong> Excel or CSV preferred (cleaner parsing).<br>
+            <strong>Cadence:</strong> Ad-hoc, or any time AR Aging shows a discrepancy that needs investigation.<br>
+            <strong>What to drop:</strong> Full community ledger, ideally covering 12 months or more.
+          </div>
+        </div>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">📚 GL Export (General Ledger)</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> board financial review, monthly close, audit prep, financial statement generation.<br>
+            <strong>Vantaca path:</strong> Reports → Financials → General Ledger Export.<br>
+            <strong>Export as:</strong> Excel or CSV.<br>
+            <strong>Cadence:</strong> Monthly close, plus year-end snapshot for tax/audit.<br>
+            <strong>What to drop:</strong> Full-year or YTD export per community.
+          </div>
+        </div>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">🧾 AP Ledger (Accounts Payable)</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> vendor activity history, vendor performance benchmarks, 1099 prep, AP aging review.<br>
+            <strong>Vantaca path:</strong> Reports → Vendors → AP Ledger / Vendor History.<br>
+            <strong>Export as:</strong> Excel or CSV.<br>
+            <strong>Cadence:</strong> Monthly with the close packet, plus year-end for 1099s.<br>
+            <strong>What to drop:</strong> Per community, or one combined export if your version supports it.
+          </div>
+        </div>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">🏦 Bank Reconciliation</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> monthly close confidence check, board packet bank-rec section, audit trail.<br>
+            <strong>Vantaca path:</strong> Reports → Banking → Bank Reconciliation Report.<br>
+            <strong>Export as:</strong> PDF.<br>
+            <strong>Cadence:</strong> Monthly with the close packet.<br>
+            <strong>What to drop:</strong> One per bank account per community per month.
+          </div>
+        </div>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">📄 Owner Statements</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> homeowner statement archive (so the portal can show prior statements without re-querying Vantaca).<br>
+            <strong>Vantaca path:</strong> Reports → Owner Accounts → Owner Statement (batch print to PDF).<br>
+            <strong>Export as:</strong> PDF batch.<br>
+            <strong>Cadence:</strong> Monthly with the close packet.<br>
+            <strong>What to drop:</strong> A single batched PDF per community is fine; the system splits per account.
+          </div>
+        </div>
+
+        <div style="background: #fff; border: 1px solid #e2e0d6; border-radius: 6px; padding: 14px; margin-bottom: 16px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 4px;">📈 Budget vs Actual</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            <strong>Feeds:</strong> board financial review, variance analysis, year-end recap narrative for annual reports.<br>
+            <strong>Vantaca path:</strong> Reports → Financials → Budget vs. Actual.<br>
+            <strong>Export as:</strong> Excel or PDF.<br>
+            <strong>Cadence:</strong> Monthly with the close packet.<br>
+            <strong>What to drop:</strong> Per community, YTD through close period.
+          </div>
+        </div>
+
+        <div style="background: #f7f5ef; border-left: 3px solid #0B1D34; padding: 12px 14px; border-radius: 4px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 6px;">If a file lands in Needs Review</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            Sometimes the classifier can't tell what community a file belongs to (no community name in header, multi-community export, etc.). Scroll down to the <strong>Recent Imports</strong> list, find the row with status <strong>⚠ Needs Review</strong>, click it, and pick the right community + report type from the dropdowns. Save. The system then routes it normally. No file is ever silently lost; it sits in Needs Review until someone routes it.
+          </div>
+        </div>
+
+        <div style="background: #f7f5ef; border-left: 3px solid #0B1D34; padding: 12px 14px; border-radius: 4px; margin-top: 10px;">
+          <div style="font-weight: 600; color: #0B1D34; margin-bottom: 6px;">Mirror Freshness panel below</div>
+          <div style="font-size: 12px; color: #4a4a4a; line-height: 1.65;">
+            The dashboard below this drop zone shows per-community × per-report-type freshness. Green is current, amber is over 7 days old, red is over 14 days old. Use it to spot which community is overdue for an export pull from Vantaca.
+          </div>
+        </div>
+      </div>
+    </details>
+
     <!-- Drop zone -->
     <div class="panel" style="margin-bottom:16px;">
       <h3 style="margin-top:0;">Drop a Vantaca Export</h3>
@@ -1017,6 +1124,7 @@
           <select id="vi-filter-type" onchange="viLoadList()" style="padding:6px 10px; font-size:12.5px; border:1px solid #d0d7de; border-radius:6px;">
             <option value="">All report types</option>
             <option value="ar_aging">AR Aging</option>
+            <option value="transaction_history">Transaction History</option>
             <option value="gl_export">GL Export</option>
             <option value="ap_ledger">AP Ledger</option>
             <option value="bank_reconciliation">Bank Reconciliation</option>
