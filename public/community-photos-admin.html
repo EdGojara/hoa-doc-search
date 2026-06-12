@@ -178,9 +178,21 @@
     </div>
   </div>
 
+  <div style="display: flex; gap: 12px; margin-bottom: 8px; flex-wrap: wrap;">
+    <a href="/photos/capture" style="flex: 1; min-width: 220px; padding: 16px; background: var(--navy); color: var(--cream); border-radius: 10px; text-decoration: none; text-align: center; font-weight: 500;">
+      📸 Capture mode (mobile)
+      <div style="font-size: 11.5px; opacity: 0.7; margin-top: 4px; letter-spacing: 0.04em; text-transform: uppercase;">Open camera · tag · upload</div>
+    </a>
+    <label for="cameraInput" style="flex: 1; min-width: 220px; padding: 16px; background: #fff; color: var(--navy); border: 1px solid var(--rule); border-radius: 10px; cursor: pointer; text-align: center; font-weight: 500;">
+      📷 Take photo now
+      <div style="font-size: 11.5px; opacity: 0.7; margin-top: 4px; letter-spacing: 0.04em; text-transform: uppercase;">Phone opens camera · desktop picks file</div>
+    </label>
+    <input type="file" id="cameraInput" accept="image/*" capture="environment" style="display:none;">
+  </div>
+
   <label class="dropzone" id="dropzone" for="fileInput">
-    <div class="big">Drop photos here</div>
-    <div class="small">or click to choose</div>
+    <div class="big">Or drop photos here</div>
+    <div class="small">desktop · drag from Finder / Explorer</div>
     <div class="pitch">
       JPG, PNG, HEIC, or WebP. Up to 12 photos at a time, 12 MB each.
       You can re-tag the role on any photo after upload.
@@ -323,6 +335,8 @@
   const fileInput = $('fileInput');
   dz.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', () => upload(fileInput.files));
+  const cameraInput = $('cameraInput');
+  if (cameraInput) cameraInput.addEventListener('change', () => upload(cameraInput.files));
   ['dragenter', 'dragover'].forEach((ev) => {
     dz.addEventListener(ev, (e) => { e.preventDefault(); dz.classList.add('dragover'); });
   });

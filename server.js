@@ -902,6 +902,9 @@ app.use('/api/community-photos', communityPhotosRouter);
 app.get('/admin/community-photos', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community-photos-admin.html'));
 });
+app.get('/photos/capture', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'photos-capture.html'));
+});
 
 // Transactions — homeowner transaction history mirrored from Vantaca via
 // monthly CSV upload. Migration 195. "Financial activity current as of
