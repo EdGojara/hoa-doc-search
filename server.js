@@ -1121,6 +1121,10 @@ app.get('/builders/august-meadows-drb', (req, res) => {
 app.get('/builders/august-meadows-dr', (req, res) => {
   res.redirect(301, '/builders/august-meadows-drb');
 });
+// Lennar at Still Creek Ranch — wired 2026-06-11.
+app.get('/builders/still-creek-lennar', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'builder-submit-still-creek-lennar.html'));
+});
 
 // Public builder submission form — /builders/:slug serves the generic
 // builder-submit.html. The form reads :slug from the path and calls

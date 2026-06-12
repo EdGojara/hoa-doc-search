@@ -1075,11 +1075,8 @@ router.get('/me', async (req, res) => {
     const BUILDER_LANDING_URLS = {
       // Onboarded:
       'DRB Group':  '/builders/august-meadows-drb',
-      // Placeholder for Lennar at Still Creek Ranch — set when the per-
-      // builder landing page goes live in server.js. If a Lennar user
-      // signs in before this is wired up, they land on /builder-dashboard.html
-      // which is functional but suboptimal.
-      // 'Lennar':  '/builders/still-creek-lennar',
+      // Lennar at Still Creek Ranch — wired 2026-06-11.
+      'Lennar':     '/builders/still-creek-lennar',
     };
 
     const isBuilder = user.role === 'builder';
