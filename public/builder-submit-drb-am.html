@@ -403,13 +403,22 @@
              way to get to their submission history + a way to sign out.
              Links are JS-conditional: hidden by default, shown only when
              the user is signed in (detected via /api/portal/me). -->
-        <!-- Sign out intentionally hidden until DNS / SPF / DKIM fix lands.
-             Reason: self-serve magic-link emails currently can't be delivered
-             (Resend isn't authorized to send for bedrocktxai.com per SPF), so
-             a signed-out builder has no way back in without Ed manually
-             generating a fresh URL. Cookie TTL is 30 days — they stay signed
-             in across browser closes. Once DNS is fixed, restore the
-             #signoutLink anchor and the JS will re-wire. -->
+        <!-- No Sign out by design — Ed 2026-06-11 policy decision after the
+             Resend DNS work landed. Reasoning:
+               1. Magic-link UX exists to remove "password to remember"
+                  friction; Sign out re-introduces a "log back in" step.
+               2. Cookie TTL is 30 days — visits twice a month stay
+                  authenticated. That's the whole point.
+               3. Data in this portal isn't bank-grade sensitive — no
+                  meaningful privacy upside vs the friction cost.
+               4. Real-world failure mode: users hit Sign out by accident
+                  and lock themselves out (literally watched this with
+                  Karla Rutan today).
+               5. Shared-computer edge case is handled by the user clearing
+                  their browser cookies — they don't need our button.
+             If a future need genuinely requires sign-out (board-portal
+             elevated access, multi-account switching, etc.), restore the
+             anchor + click handler. Don't add it by default. -->
         <div class="portal-nav" id="portalNav" style="display:none; margin-top:8px; display:flex; gap:14px; font-size:11.5px;">
           <a href="/builder-dashboard.html" style="color:#1A3050; text-decoration:none; border-bottom:1px solid #D4AF37;">Your submissions →</a>
         </div>

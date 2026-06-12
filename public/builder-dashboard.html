@@ -270,12 +270,16 @@
        style="color:#D4AF37; text-decoration:none; border-bottom:1px solid #D4AF37; margin-right:14px; font-size:12.5px; font-weight:600;">
       + New submission
     </a>
-    <!-- Sign out hidden until DNS / SPF / DKIM fix lands. Builder
-         currently can't self-recover a signed-out session because the
-         magic-link email path is blocked at the receiving server's SPF
-         check. Cookie TTL is 30 days so they stay signed in across
-         browser closes. Once DNS is fixed, restore the .signout anchor
-         and its click handler at the bottom of this file. -->
+    <!-- No Sign out by design — Ed 2026-06-11 policy decision after the
+         Resend DNS work landed. Cookie TTL is 30 days; visits twice a
+         month stay authenticated, which is the whole point of magic-link
+         UX (no password to remember). Sign out re-introduces the "log
+         back in" friction the design was meant to eliminate, and the
+         real-world failure mode is users hitting it by accident and
+         locking themselves out. Data here isn't bank-grade sensitive so
+         no meaningful privacy upside. If genuinely needed later (board-
+         portal elevation, multi-account switching), restore the anchor
+         + handler then. Don't add it by default. -->
   </div>
 </header>
 
