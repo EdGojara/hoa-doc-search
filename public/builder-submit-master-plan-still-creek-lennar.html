@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Lennar · Still Creek Ranch · New Master Plan Submission</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@300;400;500;600;700&display=swap">
+<style>
+  * { box-sizing: border-box; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --cream: #FAFAF6;
+    --rule: #d8d6cd;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #6a6a6a;
+    --lennar-blue: #00558C;
+    --lennar-blue-dark: #003E66;
+    --lennar-accent: #C8102E;
+    --font-serif: 'Cormorant Garamond', 'Playfair Display', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+  html, body { margin: 0; padding: 0; background: var(--cream); color: var(--ink); font-family: var(--font-sans); font-size: 14.5px; line-height: 1.5; min-height: 100vh; }
+  header.page { background: #fff; border-bottom: 4px solid var(--gold); padding: 26px 0 22px; }
+  .container { max-width: 920px; margin: 0 auto; padding: 0 32px; }
+  .co-brand { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-bottom: 22px; padding-bottom: 18px; border-bottom: 1px solid var(--rule); }
+  .lennar-mark { display: flex; align-items: center; gap: 12px; }
+  .lennar-mark .mark { width: 46px; height: 46px; border-radius: 4px; background: var(--lennar-blue); display: flex; align-items: center; justify-content: center; color: #fff; font-weight: 700; font-size: 19px; position: relative; }
+  .lennar-mark .mark::after { content: ""; position: absolute; right: -3px; bottom: -3px; width: 11px; height: 11px; background: var(--lennar-accent); border-radius: 2px; }
+  .lennar-mark .name { font-family: var(--font-serif); font-size: 19px; font-weight: 500; color: var(--navy); }
+  .lennar-mark .sub { font-size: 10.5px; color: var(--ink-faint); letter-spacing: 0.14em; text-transform: uppercase; margin-top: 2px; }
+  .bdrk { text-align: right; }
+  .bdrk .wm { font-family: var(--font-serif); font-size: 18px; color: var(--navy); line-height: 1; }
+  .bdrk .wm em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .bdrk .sub { font-size: 10px; color: var(--ink-faint); letter-spacing: 0.14em; text-transform: uppercase; margin-top: 4px; }
+
+  h1 { font-family: var(--font-serif); font-size: 30px; font-weight: 500; margin: 0 0 4px; color: var(--navy); letter-spacing: -0.01em; }
+  h1 em { color: var(--gold); font-style: italic; }
+  .subtitle { font-size: 14.5px; color: var(--ink-soft); margin: 0; }
+
+  .pill-nav { display: flex; gap: 8px; margin: 22px 0 0; padding-top: 18px; border-top: 1px solid var(--rule); flex-wrap: wrap; }
+  .pill-nav a, .pill-nav span {
+    padding: 8px 16px; border-radius: 999px; font-size: 12.5px; font-weight: 500;
+    text-decoration: none; border: 1px solid var(--rule); background: #fff;
+    color: var(--navy); display: inline-flex; align-items: center; gap: 6px;
+  }
+  .pill-nav .active { background: var(--navy); color: var(--cream); border-color: var(--navy); }
+  .pill-nav a:hover { background: #f3f1e8; }
+
+  main { padding: 36px 0 80px; }
+  section.card { background: #fff; border: 1px solid var(--rule); border-radius: 8px; padding: 24px 28px; margin-bottom: 20px; }
+  section.card .head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid var(--rule); }
+  section.card h2 { font-family: var(--font-serif); font-size: 19px; font-weight: 500; margin: 0; color: var(--navy); }
+  section.card .hint { font-size: 12px; color: var(--ink-faint); font-style: italic; }
+
+  .grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 680px) { .grid-2 { grid-template-columns: 1fr; } .container { padding: 0 18px; } .co-brand { flex-direction: column; align-items: flex-start; } .bdrk { text-align: left; } }
+
+  .field { display: flex; flex-direction: column; gap: 5px; margin-bottom: 12px; }
+  .field label { font-size: 11px; color: var(--ink-faint); letter-spacing: 0.06em; text-transform: uppercase; font-weight: 600; }
+  .field label .req { color: var(--lennar-accent); margin-left: 2px; }
+  .field input, .field textarea {
+    background: #fff; border: 1px solid var(--rule); color: var(--ink);
+    padding: 10px 12px; font-family: inherit; font-size: 14px; border-radius: 5px;
+  }
+  .field input[readonly] { background: #f8f7f1; color: var(--ink-soft); cursor: not-allowed; }
+  .field input:focus, .field textarea:focus { outline: none; border-color: var(--gold); box-shadow: 0 0 0 3px rgba(212,175,55,0.18); }
+  .field textarea { min-height: 90px; font-family: inherit; resize: vertical; }
+  .field .helper { font-size: 11.5px; color: var(--ink-faint); margin-top: 2px; font-style: italic; }
+  .field.error input, .field.error textarea { border-color: var(--lennar-accent); }
+
+  .dropzone {
+    border: 2px dashed var(--gold); border-radius: 8px; padding: 28px;
+    text-align: center; background: #fbf9ec; cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+  }
+  .dropzone:hover { background: #f8f3d8; border-color: var(--lennar-blue); }
+  .dropzone.has-file { background: #f0f7f0; border-color: #2e7d32; border-style: solid; }
+  .dropzone .big-text { font-size: 16px; color: var(--navy); font-weight: 600; margin-bottom: 4px; }
+  .dropzone .small-text { font-size: 12.5px; color: var(--ink-soft); }
+  .dropzone .ai-pitch { margin-top: 14px; padding-top: 12px; border-top: 1px dashed rgba(212,175,55,0.5); font-size: 11.5px; color: var(--ink-faint); line-height: 1.55; }
+  .dropzone .ai-pitch strong { color: var(--navy); }
+  input[type=file] { display: none; }
+  .file-list { margin-top: 10px; }
+  .file-list .file-row {
+    display: flex; align-items: center; gap: 10px; padding: 8px 10px;
+    background: #f8f7f1; border-radius: 5px; margin-top: 6px; font-size: 13px;
+  }
+  .file-list .file-row .name { flex: 1; }
+  .file-list .file-row .size { color: var(--ink-faint); font-size: 11.5px; }
+  .file-list .file-row .x {
+    background: transparent; border: none; color: var(--ink-faint);
+    cursor: pointer; font-size: 16px;
+  }
+
+  .ack { display: flex; align-items: flex-start; gap: 10px; padding: 12px 14px; background: #fbf9ec; border-left: 3px solid var(--gold); border-radius: 4px; margin-bottom: 10px; }
+  .ack input[type=checkbox] { width: 17px; height: 17px; accent-color: var(--lennar-blue); flex-shrink: 0; margin-top: 2px; }
+  .ack label { font-size: 12.5px; color: var(--ink-soft); line-height: 1.45; }
+  .ack label strong { color: var(--navy); }
+
+  .submit-row { display: flex; justify-content: space-between; align-items: center; margin-top: 24px; gap: 16px; flex-wrap: wrap; }
+  .submit-note { font-size: 12px; color: var(--ink-faint); flex: 1; min-width: 220px; }
+  button.submit-btn {
+    background: var(--lennar-blue); color: #fff; border: none;
+    padding: 14px 32px; font-family: inherit; font-size: 14.5px; font-weight: 600;
+    border-radius: 6px; cursor: pointer; letter-spacing: 0.02em;
+  }
+  button.submit-btn:hover { background: var(--lennar-blue-dark); }
+  button.submit-btn:disabled { background: var(--ink-faint); cursor: not-allowed; }
+  .loader {
+    display: inline-block; width: 12px; height: 12px;
+    border: 2px solid #fff; border-top-color: transparent;
+    border-radius: 50%; animation: spin 0.8s linear infinite;
+    margin-right: 6px; vertical-align: -1px;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  .toast { position: fixed; top: 18px; right: 18px; background: var(--navy); color: #fff; padding: 12px 18px; border-radius: 6px; box-shadow: 0 6px 24px rgba(0,0,0,0.18); z-index: 1000; font-size: 13px; max-width: 360px; }
+  .toast.error { background: var(--lennar-accent); }
+  .toast.success { background: #2e7d32; }
+
+  .success-panel { background: #fff; border: 1px solid var(--rule); border-top: 4px solid #2e7d32; border-radius: 8px; padding: 36px; text-align: center; margin: 30px 0; }
+  .success-panel h2 { font-family: var(--font-serif); font-size: 28px; color: var(--navy); margin: 0 0 10px; }
+  .success-panel .ref { display: inline-block; background: #fbf9ec; border: 1px solid var(--gold); padding: 8px 18px; border-radius: 6px; font-family: ui-monospace, monospace; color: var(--navy); font-size: 17px; letter-spacing: 0.04em; margin: 14px 0 18px; font-weight: 600; }
+  .success-panel p { color: var(--ink-soft); margin: 8px 0; }
+  .success-panel .portal-cta { display: inline-block; margin-top: 18px; background: var(--navy); color: #fff; text-decoration: none; padding: 11px 22px; border-radius: 6px; font-weight: 600; font-size: 13.5px; }
+</style>
+</head>
+<body>
+
+<header class="page">
+  <div class="container">
+    <div class="co-brand">
+      <div>
+        <div class="lennar-mark">
+          <div class="mark">L</div>
+          <div>
+            <div class="name">Lennar Homes</div>
+            <div class="sub">Builder Portal · Still Creek Ranch</div>
+          </div>
+        </div>
+      </div>
+      <div class="bdrk">
+        <div class="wm">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+        <div class="sub">Reviewed by Bedrock</div>
+        <div class="portal-nav" id="portalNav" style="display:none; margin-top:8px; display:flex; gap:14px; font-size:11.5px;">
+          <a href="/builder-dashboard.html" style="color:#1A3050; text-decoration:none; border-bottom:1px solid #D4AF37;">Your submissions →</a>
+        </div>
+      </div>
+    </div>
+
+    <h1>New master plan <em>submission</em></h1>
+    <p class="subtitle">Add a new floor plan to the Still Creek Ranch approved catalog. Once approved, your subsequent lot submissions can reference this plan.</p>
+
+    <div class="pill-nav">
+      <a href="/builders/still-creek-lennar">🏠 New construction (per-lot)</a>
+      <span class="active">📐 New master plan</span>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="container">
+    <div id="successWrap" style="display:none;"></div>
+
+    <form id="submitForm" novalidate>
+      <section class="card">
+        <div class="head">
+          <h2>Builder &amp; Submitter</h2>
+          <span class="hint">Who is filing this submission</span>
+        </div>
+        <div class="grid-2">
+          <div class="field">
+            <label>Builder Company<span class="req">*</span></label>
+            <input type="text" name="builder_company_name" value="Lennar" readonly>
+          </div>
+          <div class="field">
+            <label>Submitter Name <span class="hint" style="font-style:italic;">(construction administrator)</span></label>
+            <input type="text" name="submitter_name" placeholder="Teresa Contreras" autocomplete="name">
+          </div>
+          <div class="field">
+            <label>Submitter Email<span class="req">*</span></label>
+            <input type="email" name="submitter_email" placeholder="teresa.contreras@lennar.com" autocomplete="email" required>
+          </div>
+          <div class="field">
+            <label>Submitter Phone</label>
+            <input type="tel" name="submitter_phone" placeholder="(xxx) xxx-xxxx" autocomplete="tel">
+          </div>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="head">
+          <h2>About this submission</h2>
+          <span class="hint">What's being proposed for the catalog</span>
+        </div>
+        <div class="field">
+          <label>Submission title<span class="req">*</span></label>
+          <input type="text" name="submission_title" placeholder="e.g. Lennar Classic 4 Side, Q3 2026 Addition" required>
+          <div class="helper">A short label so we can refer to this batch later (Bedrock-internal, not on the decision letter).</div>
+        </div>
+        <div class="field">
+          <label>Plan numbers being submitted</label>
+          <input type="text" name="plan_numbers_proposed" placeholder="e.g. 4900, 4910, 4920">
+          <div class="helper">Comma-separated. Optional, the system reads them from the PDF too.</div>
+        </div>
+        <div class="field">
+          <label>Description / notes</label>
+          <textarea name="description" placeholder="Tell us what's new, what's different from prior submittals, any specific elevation handedness or material updates we should look at first."></textarea>
+        </div>
+      </section>
+
+      <section class="card">
+        <div class="head">
+          <h2>Master plan PDF set</h2>
+          <span class="hint">Drop the full plan package</span>
+        </div>
+        <label class="dropzone" id="dropzone" for="pdfInput">
+          <div id="dzText">
+            <div class="big-text">📐 Drop your master plan PDFs here</div>
+            <div class="small-text">or click to choose files</div>
+            <div class="ai-pitch">
+              Upload the complete plan set covering every elevation, orientation, and structural detail.
+              We'll extract plan numbers, elevation codes, square footage, and stories automatically and surface them to the ARC committee for review.
+              Multiple PDFs accepted (cover sheet + per-elevation pages).
+            </div>
+          </div>
+        </label>
+        <input type="file" id="pdfInput" accept="application/pdf" multiple>
+        <div class="file-list" id="fileList"></div>
+      </section>
+
+      <section class="card">
+        <div class="head">
+          <h2>Acknowledgments</h2>
+          <span class="hint">Required before submitting</span>
+        </div>
+        <div class="ack">
+          <input type="checkbox" id="ackDesignAlignment">
+          <label for="ackDesignAlignment"><strong>Design alignment.</strong> The plans submitted comply with the Still Creek Ranch Design Guidelines, including masonry coverage minimums, two-story compliance, and approved material categories.</label>
+        </div>
+        <div class="ack">
+          <input type="checkbox" id="ackCompleteness">
+          <label for="ackCompleteness"><strong>Completeness.</strong> The PDF set is the complete plan package, including all elevations, floor plans, and material schedules being proposed for approval.</label>
+        </div>
+        <div class="ack">
+          <input type="checkbox" id="ackChangeControl">
+          <label for="ackChangeControl"><strong>Change control.</strong> Once approved, any material change to an approved master plan requires a separate amendment submission before being built. Per-lot variations (brick / paint / shingles) are captured at the construction submission stage.</label>
+        </div>
+
+        <div class="submit-row">
+          <div class="submit-note">By submitting, Lennar authorizes Bedrock to review this master plan set against the Still Creek Ranch Declaration and Design Guidelines. You'll receive a tracking link and a decision letter via email once review is complete.</div>
+          <button type="submit" class="submit-btn" id="submitBtn">Submit for review →</button>
+        </div>
+      </section>
+    </form>
+  </div>
+</main>
+
+<script>
+  function $(id) { return document.getElementById(id); }
+  function toast(msg, level) {
+    const t = document.createElement('div');
+    t.className = 'toast ' + (level || '');
+    t.textContent = msg;
+    document.body.appendChild(t);
+    setTimeout(() => t.remove(), 5500);
+  }
+
+  // Portal nav + prefill from /me
+  (async function wirePortalNav() {
+    try {
+      const r = await fetch('/api/portal/me', { credentials: 'same-origin' });
+      if (!r.ok) return;
+      const me = await r.json();
+      if (!me.user) return;
+      const nav = $('portalNav');
+      if (nav) nav.style.display = 'flex';
+      const emailEl = document.querySelector('[name="submitter_email"]');
+      if (emailEl && !emailEl.value && me.user.email) emailEl.value = me.user.email;
+      const nameEl = document.querySelector('[name="submitter_name"]');
+      if (nameEl && !nameEl.value && me.user.name) nameEl.value = me.user.name;
+    } catch (_) {}
+  })();
+
+  // ---- PDF dropzone (multiple) ----
+  const pdfFiles = [];
+  const dz = $('dropzone');
+  const pdfInput = $('pdfInput');
+  pdfInput.addEventListener('change', () => addFiles(pdfInput.files));
+  ['dragenter', 'dragover'].forEach((ev) => {
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = '#f5efc8'; });
+  });
+  ['dragleave', 'drop'].forEach((ev) => {
+    dz.addEventListener(ev, (e) => { e.preventDefault(); dz.style.background = ''; });
+  });
+  dz.addEventListener('drop', (e) => {
+    const fs = Array.from(e.dataTransfer.files || []).filter((f) => f.type === 'application/pdf');
+    if (fs.length) addFiles(fs);
+    else toast('PDF files only.', 'error');
+  });
+
+  function addFiles(fileList) {
+    for (const f of fileList) {
+      if (f.type !== 'application/pdf') continue;
+      if (pdfFiles.length >= 6) { toast('Up to 6 PDFs per submission.', 'error'); break; }
+      pdfFiles.push(f);
+    }
+    renderFiles();
+  }
+  function renderFiles() {
+    const list = $('fileList');
+    const dzText = $('dzText');
+    if (!pdfFiles.length) {
+      list.innerHTML = '';
+      dz.classList.remove('has-file');
+      dzText.innerHTML = `
+        <div class="big-text">📐 Drop your master plan PDFs here</div>
+        <div class="small-text">or click to choose files</div>
+        <div class="ai-pitch">
+          Upload the complete plan set covering every elevation, orientation, and structural detail.
+          We'll extract plan numbers, elevation codes, square footage, and stories automatically and surface them to the ARC committee for review.
+          Multiple PDFs accepted (cover sheet + per-elevation pages).
+        </div>`;
+      return;
+    }
+    dz.classList.add('has-file');
+    dzText.innerHTML = `
+      <div class="big-text">✓ ${pdfFiles.length} PDF${pdfFiles.length === 1 ? '' : 's'} attached</div>
+      <div class="small-text">Click to add more</div>`;
+    list.innerHTML = pdfFiles.map((f, i) => `
+      <div class="file-row">
+        <span>📄</span>
+        <span class="name">${esc(f.name)}</span>
+        <span class="size">${(f.size / 1024 / 1024).toFixed(2)} MB</span>
+        <button type="button" class="x" data-idx="${i}" title="Remove">✕</button>
+      </div>
+    `).join('');
+    list.querySelectorAll('.x').forEach((b) => b.addEventListener('click', (e) => {
+      const idx = Number(e.target.dataset.idx);
+      pdfFiles.splice(idx, 1);
+      renderFiles();
+    }));
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
+
+  // ---- Submit ----
+  $('submitForm').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    document.querySelectorAll('.field.error').forEach((f) => f.classList.remove('error'));
+
+    const fd = new FormData(ev.target);
+    const get = (k) => (fd.get(k) || '').toString().trim();
+
+    if (!get('submitter_email')) { toast('Submitter email is required.', 'error'); return; }
+    if (!get('submission_title')) { toast('Submission title is required.', 'error'); return; }
+    if (!$('ackDesignAlignment').checked || !$('ackCompleteness').checked || !$('ackChangeControl').checked) {
+      toast('All three acknowledgments must be checked.', 'error'); return;
+    }
+    if (!pdfFiles.length) { toast('Please upload at least one master plan PDF.', 'error'); return; }
+
+    const btn = $('submitBtn');
+    btn.disabled = true;
+    btn.innerHTML = `<span class="loader"></span>Submitting…`;
+
+    try {
+      const post = new FormData();
+      post.append('community_slug', 'still-creek-ranch');
+      post.append('builder_company_name', 'Lennar');
+      post.append('submitter_email', get('submitter_email'));
+      post.append('submitter_name', get('submitter_name'));
+      post.append('submitter_phone', get('submitter_phone'));
+      post.append('submission_title', get('submission_title'));
+      post.append('plan_numbers_proposed', get('plan_numbers_proposed'));
+      post.append('description', get('description'));
+      post.append('builder_acknowledgments', JSON.stringify({
+        design_alignment: true,
+        completeness: true,
+        change_control: true,
+        acknowledged_at: new Date().toISOString(),
+      }));
+      for (const f of pdfFiles) post.append('files', f);
+
+      const r = await fetch('/api/master-plan-submissions', { method: 'POST', body: post });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error || `HTTP ${r.status}`);
+      renderSuccess(data.reference_number);
+    } catch (err) {
+      toast(`Submission failed: ${err.message}`, 'error');
+      btn.disabled = false;
+      btn.innerHTML = 'Submit for review →';
+    }
+  });
+
+  function renderSuccess(refNumber) {
+    $('submitForm').style.display = 'none';
+    const wrap = $('successWrap');
+    wrap.style.display = 'block';
+    wrap.innerHTML = `
+      <div class="success-panel">
+        <h2>Submission received ✓</h2>
+        <div class="ref">${esc(refNumber)}</div>
+        <p>The ARC committee will review the proposed master plans and send a decision letter to your inbox.</p>
+        <p>Once approved, the plans will appear in the dropdown the next time you start a new construction submission.</p>
+        <a class="portal-cta" href="/builder-dashboard.html">View your submissions →</a>
+      </div>
+    `;
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+</script>
+
+</body>
+</html>

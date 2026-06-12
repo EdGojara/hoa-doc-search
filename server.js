@@ -899,6 +899,9 @@ app.use('/api/email-campaigns', emailCampaignsRouter);
 
 const communityPhotosRouter = require('./api/community_photos');
 app.use('/api/community-photos', communityPhotosRouter);
+
+const masterPlanSubmissionsRouter = require('./api/master_plan_submissions');
+app.use('/api/master-plan-submissions', masterPlanSubmissionsRouter);
 app.get('/admin/community-photos', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'community-photos-admin.html'));
 });
@@ -1133,6 +1136,12 @@ app.get('/builders/august-meadows-dr', (req, res) => {
 // Lennar at Still Creek Ranch — wired 2026-06-11.
 app.get('/builders/still-creek-lennar', (req, res) => {
   res.sendFile(require('path').join(__dirname, 'public', 'builder-submit-still-creek-lennar.html'));
+});
+// Master plan submission (separate from per-lot submission). Teresa Contreras
+// 2026-06-12 surfaced the gap; this is the builder-facing front door for
+// proposing new master plans to the catalog.
+app.get('/builders/still-creek-lennar/master-plan', (req, res) => {
+  res.sendFile(require('path').join(__dirname, 'public', 'builder-submit-master-plan-still-creek-lennar.html'));
 });
 
 // Public builder submission form — /builders/:slug serves the generic
