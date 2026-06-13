@@ -1,0 +1,652 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How We Treat People — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --black: #0a0e16;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--black);
+    color: var(--cream);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .deck { width: 100vw; height: 100dvh; position: relative; }
+  .scene {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 6vh 6vw;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.6s ease;
+    overflow-y: auto;
+  }
+  .scene.active { opacity: 1; pointer-events: auto; }
+  .scene.dark { background: var(--black); color: var(--cream); }
+  .scene.navy { background: linear-gradient(180deg, #0B1D34 0%, #142844 100%); color: var(--cream); }
+  .scene.cream { background: var(--cream); color: var(--ink); }
+
+  .label {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.24em; text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 24px;
+  }
+  .scene.cream .label { color: var(--navy); opacity: 0.5; }
+
+  h1.headline {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(38px, 6vw, 88px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    max-width: 1000px;
+    text-align: center;
+  }
+  h1.headline em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .scene.cream h1.headline em { color: var(--navy); }
+
+  h2.title {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(28px, 4vw, 52px);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    max-width: 880px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .subhead {
+    font-family: var(--font-serif); font-style: italic; font-weight: 400;
+    font-size: clamp(20px, 2.4vw, 30px);
+    max-width: 720px;
+    text-align: center;
+    color: var(--gold);
+    margin-top: 16px;
+  }
+  .scene.cream .subhead { color: var(--navy-soft); }
+
+  p.body {
+    font-family: var(--font-sans); font-size: clamp(16px, 1.4vw, 19px);
+    line-height: 1.7;
+    color: var(--cream);
+    max-width: 700px;
+    margin: 22px auto 0;
+    text-align: center;
+  }
+  .scene.cream p.body { color: var(--ink-soft); }
+  p.body strong { color: var(--gold); font-weight: 500; }
+  .scene.cream p.body strong { color: var(--navy); }
+
+  blockquote.quote {
+    font-family: var(--font-serif); font-style: italic; font-weight: 400;
+    font-size: clamp(26px, 3.2vw, 40px);
+    line-height: 1.35;
+    max-width: 800px;
+    text-align: center;
+    padding: 0 24px;
+    position: relative;
+  }
+  blockquote.quote::before,
+  blockquote.quote::after {
+    content: '"';
+    font-size: 1.4em;
+    color: var(--gold);
+    line-height: 0;
+    vertical-align: -0.25em;
+  }
+  .scene.cream blockquote.quote::before,
+  .scene.cream blockquote.quote::after { color: var(--navy); }
+  .quote-attrib {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); margin-top: 28px;
+  }
+  .scene.cream .quote-attrib { color: var(--navy); }
+
+  .two-column {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 32px;
+    max-width: 860px; margin: 28px auto 0;
+  }
+  @media (max-width: 720px) { .two-column { grid-template-columns: 1fr; gap: 18px; } }
+  .col-card {
+    background: rgba(212,175,55,0.06);
+    border: 1px solid rgba(212,175,55,0.25);
+    border-radius: 10px; padding: 22px 24px;
+  }
+  .col-card .cc-head {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 14px;
+  }
+  .col-card ul { list-style: none; padding: 0; }
+  .col-card li {
+    font-family: var(--font-serif); font-size: clamp(17px, 2vw, 22px);
+    color: var(--cream); padding: 6px 0; line-height: 1.4;
+  }
+  .col-card.negative ul li::before { content: '✕ '; color: var(--gold); margin-right: 8px; }
+  .col-card.positive ul li::before { content: '✓ '; color: var(--gold); margin-right: 8px; }
+
+  .compare-block {
+    max-width: 760px; margin: 28px auto 0; text-align: left;
+  }
+  .compare-block .cb-row {
+    padding: 20px 24px; border-radius: 10px; margin-bottom: 16px;
+  }
+  .compare-block .cb-row.bad {
+    background: rgba(212,175,55,0.04);
+    border: 1px solid rgba(212,175,55,0.2);
+  }
+  .compare-block .cb-row.good {
+    background: rgba(212,175,55,0.12);
+    border: 1px solid rgba(212,175,55,0.5);
+  }
+  .compare-block .cb-label {
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 10px;
+  }
+  .compare-block .cb-text {
+    font-family: var(--font-serif); font-style: italic;
+    font-size: clamp(18px, 2vw, 24px); line-height: 1.45;
+    color: var(--cream);
+  }
+
+  .standards-list {
+    max-width: 820px; margin: 28px auto 0; text-align: left;
+  }
+  .standards-list .std-item {
+    display: flex; gap: 22px; align-items: flex-start;
+    padding: 22px 0; border-bottom: 1px solid rgba(212,175,55,0.18);
+  }
+  .standards-list .std-item:last-child { border-bottom: none; }
+  .standards-list .std-num {
+    font-family: var(--font-serif); font-size: clamp(40px, 4vw, 56px);
+    color: var(--gold); line-height: 1; min-width: 64px;
+    font-weight: 500; font-style: italic;
+  }
+  .standards-list .std-body { flex: 1; }
+  .standards-list .std-name {
+    font-family: var(--font-serif); font-size: clamp(22px, 2.4vw, 30px);
+    font-weight: 500; color: var(--cream);
+    margin-bottom: 6px; letter-spacing: -0.01em;
+  }
+  .standards-list .std-detail {
+    font-family: var(--font-sans); font-size: 15.5px; line-height: 1.55;
+    color: var(--cream); opacity: 0.85;
+  }
+
+  .recovery-steps {
+    max-width: 680px; margin: 24px auto 0; text-align: left;
+  }
+  .recovery-steps .rs-row {
+    display: flex; gap: 18px; align-items: center;
+    padding: 12px 0; border-bottom: 1px solid rgba(212,175,55,0.2);
+  }
+  .recovery-steps .rs-row:last-child { border-bottom: none; }
+  .recovery-steps .rs-num {
+    font-family: var(--font-mono); font-size: 12px;
+    color: var(--gold); width: 28px; flex-shrink: 0;
+    letter-spacing: 0.06em;
+  }
+  .recovery-steps .rs-text {
+    font-family: var(--font-serif); font-size: clamp(20px, 2.2vw, 26px);
+    color: var(--cream); font-weight: 500;
+  }
+
+  .why-chain {
+    max-width: 780px; margin: 24px auto 0; text-align: left;
+    background: rgba(212,175,55,0.06);
+    border-left: 2px solid var(--gold);
+    padding: 22px 28px; border-radius: 0 8px 8px 0;
+  }
+  .why-chain p {
+    font-family: var(--font-serif); font-style: italic;
+    font-size: clamp(17px, 1.9vw, 22px); line-height: 1.45;
+    margin-bottom: 12px; color: var(--cream);
+  }
+  .why-chain p:last-child { margin-bottom: 0; }
+  .why-chain p strong { color: var(--gold); font-style: normal; font-weight: 600; }
+  .why-chain .root {
+    margin-top: 18px; padding-top: 14px;
+    border-top: 1px solid rgba(212,175,55,0.3);
+    font-family: var(--font-sans); font-style: normal;
+    font-size: 15px; color: var(--gold); font-weight: 600;
+    letter-spacing: 0.04em; text-transform: uppercase;
+  }
+
+  .never-list {
+    max-width: 640px; margin: 24px auto 0; text-align: left;
+  }
+  .never-list .nl {
+    font-family: var(--font-serif); font-size: clamp(20px, 2.2vw, 26px);
+    color: var(--cream); padding: 10px 0;
+    border-bottom: 1px solid rgba(212,175,55,0.15);
+  }
+  .never-list .nl:last-child { border-bottom: none; }
+
+  .culture-statement {
+    max-width: 740px; margin: 28px auto 0; text-align: center;
+    font-family: var(--font-serif); font-size: clamp(20px, 2.2vw, 28px);
+    line-height: 1.55; color: var(--ink-soft); font-weight: 400;
+  }
+  .culture-statement p { margin-bottom: 16px; }
+  .culture-statement p:last-child { margin-bottom: 0; }
+  .culture-statement em { color: var(--navy); font-style: italic; font-weight: 500; }
+
+  .closing-lines { text-align: center; margin-top: 16px; }
+  .closing-lines .cl {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(36px, 5vw, 64px); line-height: 1.1;
+    letter-spacing: -0.02em; color: var(--cream);
+    margin-bottom: 14px;
+  }
+  .closing-lines .cl em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .closing-lines .cl-small {
+    font-family: var(--font-mono); font-size: 13px;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--gold); margin-top: 28px;
+  }
+  .brand-chip {
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); opacity: 0.9;
+    margin-top: 32px;
+  }
+  .scene.cream .brand-chip { color: var(--navy); opacity: 0.6; }
+
+  /* Nav chrome */
+  .nav-chrome {
+    position: fixed; bottom: 24px; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 36px; z-index: 100;
+    pointer-events: none;
+  }
+  .nav-btn {
+    pointer-events: auto;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--cream);
+    padding: 10px 18px; border-radius: 999px;
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.1s;
+    backdrop-filter: blur(8px);
+  }
+  .nav-btn:hover { background: rgba(212,175,55,0.16); border-color: rgba(212,175,55,0.4); }
+  .nav-btn:active { transform: translateY(1px); }
+  .nav-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  .nav-btn.primary { background: var(--gold); color: var(--navy); border-color: var(--gold); font-weight: 600; }
+  .nav-btn.primary:hover { background: var(--gold-bright); }
+  .scene-counter {
+    pointer-events: auto;
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.16em; color: rgba(255,255,255,0.45);
+    text-transform: uppercase;
+  }
+  body.cream-body .scene-counter { color: rgba(11,29,52,0.6); }
+  body.cream-body .nav-btn { background: rgba(11,29,52,0.06); border-color: rgba(11,29,52,0.15); color: var(--navy); }
+  body.cream-body .nav-btn:hover { background: rgba(212,175,55,0.18); border-color: rgba(212,175,55,0.5); }
+  body.cream-body .nav-btn.primary { background: var(--navy); color: var(--cream); border-color: var(--navy); }
+  body.cream-body .nav-btn.primary:hover { background: var(--navy-soft); }
+  .progress {
+    position: fixed; top: 0; left: 0;
+    height: 2px; background: var(--gold);
+    transition: width 0.5s ease;
+    z-index: 100;
+  }
+  .skip-hint {
+    position: fixed; top: 22px; right: 28px;
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.16em; color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    pointer-events: none; z-index: 100;
+  }
+  body.cream-body .skip-hint { color: rgba(11,29,52,0.4); }
+  kbd {
+    font-family: var(--font-mono); font-size: 10px;
+    background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7);
+    padding: 2px 6px; border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  body.cream-body kbd { background: rgba(11,29,52,0.08); color: rgba(11,29,52,0.7); border-color: rgba(11,29,52,0.15); }
+  @media (max-width: 600px) {
+    .scene { padding: 4vh 5vw; }
+    .nav-chrome { padding: 0 16px; bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress" style="width: 0%;"></div>
+<div class="skip-hint">Press <kbd>→</kbd> to advance · <kbd>esc</kbd> to exit</div>
+
+<div class="deck" id="deck">
+
+  <!-- SCENE 1 — Title: One Idea That Changes Everything -->
+  <section class="scene dark" data-scene="1">
+    <div class="label">How We Treat People</div>
+    <blockquote class="quote">We see our customers as invited guests to a party, and we are the hosts.</blockquote>
+    <div class="quote-attrib">Jeff Bezos</div>
+    <p class="body" style="margin-top: 40px;">Most HOA companies treat homeowners like account numbers.</p>
+    <p class="body" style="margin-top: 10px;">Boards like clients to be managed.</p>
+    <p class="body" style="margin-top: 10px;">Vendors like line items.</p>
+    <p class="body" style="margin-top: 28px;"><strong>We treat them like guests.</strong></p>
+    <p class="subhead" style="margin-top: 14px;">That one shift changes every interaction.</p>
+    <div class="brand-chip">Bedrock Association Management</div>
+  </section>
+
+  <!-- SCENE 2 — What a Host Does -->
+  <section class="scene navy" data-scene="2">
+    <div class="label">What a Host Does</div>
+    <h2 class="title">The role we play.</h2>
+    <div class="two-column">
+      <div class="col-card positive">
+        <div class="cc-head">Hosts do</div>
+        <ul>
+          <li>Welcome people</li>
+          <li>Communicate clearly</li>
+          <li>Anticipate needs</li>
+          <li>Solve problems</li>
+          <li>Maintain standards</li>
+          <li>Treat everyone with respect</li>
+        </ul>
+      </div>
+      <div class="col-card negative">
+        <div class="cc-head">Hosts don't</div>
+        <ul>
+          <li>Ignore guests</li>
+          <li>Make guests feel stupid</li>
+          <li>Hide behind policy</li>
+          <li>Create unnecessary friction</li>
+        </ul>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCENE 3 — The Important Nuance -->
+  <section class="scene dark" data-scene="3">
+    <div class="label">The Important Nuance</div>
+    <h1 class="headline">A great host can still say <em>no.</em></h1>
+    <p class="body" style="margin-top: 36px;">A great host can still enforce the rules.</p>
+    <p class="body" style="margin-top: 10px;">A great host does so <strong>respectfully.</strong></p>
+    <p class="subhead" style="margin-top: 32px;">HOA management is unique:</p>
+    <p class="body" style="margin-top: 14px;">We enforce standards <em style="color: var(--gold); font-style: italic;">and</em> deliver hospitality.</p>
+    <p class="body" style="margin-top: 18px;">The best companies do both at the same time.</p>
+    <p class="subhead" style="margin-top: 28px;">Firmness and kindness are not opposites.</p>
+  </section>
+
+  <!-- SCENE 4 — The Daily Question -->
+  <section class="scene dark" data-scene="4">
+    <div class="label">The Daily Question</div>
+    <h2 class="title">Before every interaction ask:</h2>
+    <blockquote class="quote" style="margin-top: 18px;">If this person were a guest in my home, how would I handle this?</blockquote>
+    <p class="body" style="margin-top: 36px;">Not: <em style="font-style: italic; color: var(--gold);">"What's the minimum I have to do?"</em></p>
+    <p class="body" style="margin-top: 10px;">Not: <em style="font-style: italic; color: var(--gold);">"What does the policy say?"</em></p>
+    <p class="body" style="margin-top: 22px;">But: <strong>"How would I treat someone I actually care about?"</strong></p>
+    <p class="subhead" style="margin-top: 28px;">That single question transforms culture.</p>
+  </section>
+
+  <!-- SCENE 5 — What This Sounds Like -->
+  <section class="scene cream" data-scene="5">
+    <div class="label">What This Sounds Like</div>
+    <h2 class="title" style="color: var(--navy);">Same outcome.<br>Different <em style="color: var(--navy); font-style: italic;">experience.</em></h2>
+    <div class="compare-block">
+      <div class="cb-row bad" style="background: rgba(11,29,52,0.05); border-color: rgba(11,29,52,0.15);">
+        <div class="cb-label" style="color: var(--navy); opacity: 0.7;">Bad</div>
+        <div class="cb-text" style="color: var(--ink);">That's the HOA policy.</div>
+      </div>
+      <div class="cb-row good" style="background: rgba(11,29,52,0.1); border-color: var(--navy);">
+        <div class="cb-label" style="color: var(--navy);">Better</div>
+        <div class="cb-text" style="color: var(--ink);">I understand why that would be frustrating. Let me explain what the community's rules require and see how I can help.</div>
+      </div>
+    </div>
+    <p class="body" style="color: var(--ink-soft); margin-top: 32px;">The outcome may be identical.</p>
+    <p class="subhead" style="color: var(--navy); margin-top: 12px;">The experience is completely different.</p>
+  </section>
+
+  <!-- SCENE 6 — The Bedrock Five-Star Standards -->
+  <section class="scene dark" data-scene="6">
+    <div class="label">The Bedrock Five-Star Standards</div>
+    <h1 class="headline" style="font-size: clamp(34px, 5vw, 64px);">Five standards.<br>No exceptions.</h1>
+    <div class="standards-list">
+      <div class="std-item">
+        <div class="std-num">1</div>
+        <div class="std-body">
+          <div class="std-name">Respond quickly.</div>
+          <div class="std-detail">Silence creates anxiety. Guests hate uncertainty more than bad news.</div>
+        </div>
+      </div>
+      <div class="std-item">
+        <div class="std-num">2</div>
+        <div class="std-body">
+          <div class="std-name">Own the issue.</div>
+          <div class="std-detail">If you receive it, you own it until it reaches resolution.</div>
+        </div>
+      </div>
+      <div class="std-item">
+        <div class="std-num">3</div>
+        <div class="std-body">
+          <div class="std-name">Make it easy.</div>
+          <div class="std-detail">Complexity belongs to us, not the guest.</div>
+        </div>
+      </div>
+      <div class="std-item">
+        <div class="std-num">4</div>
+        <div class="std-body">
+          <div class="std-name">Communicate proactively.</div>
+          <div class="std-detail">Never let guests wonder what's happening.</div>
+        </div>
+      </div>
+      <div class="std-item">
+        <div class="std-num">5</div>
+        <div class="std-body">
+          <div class="std-name">Leave people better than we found them.</div>
+          <div class="std-detail">Even difficult interactions should end with people feeling respected.</div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SCENE 7 — When Things Go Wrong -->
+  <section class="scene navy" data-scene="7">
+    <div class="label">Service Recovery</div>
+    <h2 class="title">When things go wrong.</h2>
+    <p class="body">Mistakes happen. <strong>How we recover defines us.</strong></p>
+    <blockquote class="quote" style="margin-top: 32px;">Often people remember recovery more than perfection.</blockquote>
+    <div class="quote-attrib">Horst Schulze · Ritz-Carlton</div>
+    <p class="subhead" style="margin-top: 36px;">The Guest Recovery Process</p>
+    <div class="recovery-steps">
+      <div class="rs-row"><span class="rs-num">01</span><span class="rs-text">Listen completely.</span></div>
+      <div class="rs-row"><span class="rs-num">02</span><span class="rs-text">Acknowledge the concern.</span></div>
+      <div class="rs-row"><span class="rs-num">03</span><span class="rs-text">Explain clearly.</span></div>
+      <div class="rs-row"><span class="rs-num">04</span><span class="rs-text">Solve what can be solved.</span></div>
+      <div class="rs-row"><span class="rs-num">05</span><span class="rs-text">Follow up.</span></div>
+    </div>
+    <p class="body" style="margin-top: 32px;">A complaint handled exceptionally well creates <strong>more loyalty</strong> than if nothing went wrong.</p>
+  </section>
+
+  <!-- SCENE 8 — Standards With Warmth -->
+  <section class="scene dark" data-scene="8">
+    <div class="label">Standards With Warmth</div>
+    <blockquote class="quote">We are ladies and gentlemen serving ladies and gentlemen.</blockquote>
+    <div class="quote-attrib">Horst Schulze · Ritz-Carlton</div>
+    <p class="body" style="margin-top: 40px;">We are not servants.</p>
+    <p class="body" style="margin-top: 10px;">We are not enforcers.</p>
+    <p class="body" style="margin-top: 10px;">We are <strong>professionals who care about people and communities.</strong></p>
+    <p class="body" style="margin-top: 32px;">We can enforce a violation <em style="color: var(--gold); font-style: italic;">and</em> still treat the homeowner with dignity.</p>
+    <p class="body" style="margin-top: 10px;">We can deliver bad news <em style="color: var(--gold); font-style: italic;">and</em> still leave the person feeling respected.</p>
+    <p class="subhead" style="margin-top: 28px;">That is the Bedrock standard.</p>
+  </section>
+
+  <!-- SCENE 9 — What Disney Taught Us -->
+  <section class="scene navy" data-scene="9">
+    <div class="label">Disney</div>
+    <blockquote class="quote">Do what you do so well that they will want to see it again and bring their friends.</blockquote>
+    <div class="quote-attrib">Walt Disney</div>
+    <p class="body" style="margin-top: 40px;">Disney calls customers <strong>guests.</strong></p>
+    <p class="body" style="margin-top: 10px;">They design every touchpoint intentionally.</p>
+    <p class="body" style="margin-top: 10px;">They ask one question before every decision:</p>
+    <blockquote class="quote" style="margin-top: 22px; font-size: clamp(24px, 2.8vw, 34px);">How do we make people feel?</blockquote>
+    <p class="body" style="margin-top: 36px;">HOA management is emotional. Homeowners are frustrated. Boards are stressed.</p>
+    <p class="subhead" style="margin-top: 14px;">How a homeowner feels after talking to us may matter as much as what we actually did.</p>
+  </section>
+
+  <!-- SCENE 10 — Employees First -->
+  <section class="scene cream" data-scene="10">
+    <div class="label">Southwest</div>
+    <blockquote class="quote">The customer comes second. Employees come first.</blockquote>
+    <div class="quote-attrib">Herb Kelleher · Southwest Airlines</div>
+    <p class="body" style="color: var(--ink-soft); margin-top: 40px;">You cannot build a hospitality culture on top of a miserable team.</p>
+    <p class="body" style="color: var(--ink); margin-top: 32px; font-weight: 500;">At Bedrock:</p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 12px;">You have authority to fix small problems immediately.</p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 10px;">You don't need permission to do the right thing.</p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 10px;">Initiative is rewarded. Compliance alone is not enough.</p>
+    <p class="subhead" style="color: var(--navy); margin-top: 28px;">We hired you for potential, character, and curiosity.</p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 8px;"><strong style="color: var(--navy);">Not for HOA expertise.</strong></p>
+  </section>
+
+  <!-- SCENE 11 — The 5 Whys -->
+  <section class="scene dark" data-scene="11">
+    <div class="label">Toyota</div>
+    <blockquote class="quote">Ask why five times about every matter.</blockquote>
+    <div class="quote-attrib">Taiichi Ohno · Toyota</div>
+    <p class="subhead" style="margin-top: 36px;">Example:</p>
+    <div class="why-chain">
+      <p>Homeowner upset about a violation.</p>
+      <p><strong>Why?</strong> → Letter was confusing.</p>
+      <p><strong>Why?</strong> → Legal language was used.</p>
+      <p><strong>Why?</strong> → Template was never updated.</p>
+      <p><strong>Why?</strong> → No one owned the revision process.</p>
+      <p><strong>Why?</strong> → No process existed.</p>
+      <div class="root">Root cause found. System fixed. Never happens again.</div>
+    </div>
+    <p class="subhead" style="margin-top: 32px;">Fix systems, not symptoms.</p>
+  </section>
+
+  <!-- SCENE 12 — Never Stop Learning -->
+  <section class="scene dark" data-scene="12">
+    <div class="label">Microsoft</div>
+    <blockquote class="quote">Don't be a know-it-all. Be a learn-it-all.</blockquote>
+    <div class="quote-attrib">Satya Nadella · Microsoft</div>
+    <p class="body" style="margin-top: 40px;">Mistakes are acceptable.</p>
+    <p class="body" style="margin-top: 10px;"><strong>Failure to learn from mistakes is not.</strong></p>
+    <p class="body" style="margin-top: 32px;">Every correction you make trains the platform.</p>
+    <p class="body" style="margin-top: 10px;">Every question you ask improves the system.</p>
+    <p class="body" style="margin-top: 10px;">Every process you flag gets fixed.</p>
+    <p class="subhead" style="margin-top: 32px;">You are not just doing a job.</p>
+    <p class="body" style="margin-top: 10px;"><strong>You are building a company that gets smarter every day.</strong></p>
+  </section>
+
+  <!-- SCENE 13 — The Bedrock Culture Statement -->
+  <section class="scene cream" data-scene="13">
+    <div class="label">The Culture Statement</div>
+    <h2 class="title" style="color: var(--navy);">At Bedrock, every homeowner,<br>board member, vendor, and resident<br>is our <em style="color: var(--navy); font-style: italic;">guest.</em></h2>
+    <div class="culture-statement">
+      <p>We welcome them with professionalism.</p>
+      <p>We communicate with clarity.</p>
+      <p>We solve problems with urgency.</p>
+      <p>We continuously improve our systems.</p>
+      <p>We maintain community standards with fairness and respect.</p>
+      <p><em>Because great hosts care for both people and the community they share.</em></p>
+    </div>
+  </section>
+
+  <!-- SCENE 14 — The Standard We Never Compromise -->
+  <section class="scene dark" data-scene="14">
+    <div class="label">The Standard We Never Compromise</div>
+    <blockquote class="quote">Only the paranoid survive.</blockquote>
+    <div class="quote-attrib">Andy Grove · Intel</div>
+    <p class="body" style="margin-top: 40px;">Never assume the process is good enough.</p>
+    <p class="body" style="margin-top: 10px;">Never assume the homeowner is satisfied.</p>
+    <p class="body" style="margin-top: 10px;">Never assume we've solved the problem permanently.</p>
+    <p class="subhead" style="margin-top: 32px;">Ask constantly:</p>
+    <blockquote class="quote" style="margin-top: 18px; font-size: clamp(22px, 2.6vw, 32px);">If we started Bedrock today, would we design it this way?</blockquote>
+    <p class="body" style="margin-top: 28px;">If the answer is no — <strong>fix it.</strong></p>
+  </section>
+
+  <!-- SCENE 15 — Closing -->
+  <section class="scene dark" data-scene="15">
+    <div class="closing-lines">
+      <div class="cl">Boards and homeowners</div>
+      <div class="cl">are not <em>interruptions.</em></div>
+      <div class="cl" style="font-size: clamp(28px, 3.6vw, 48px); margin-top: 28px;">They are <em style="color: var(--gold); font-style: italic;">guests</em> of your company.</div>
+      <div class="cl" style="font-size: clamp(22px, 2.6vw, 34px); margin-top: 24px; color: var(--gold); font-style: italic; font-family: var(--font-serif);">Treat them accordingly. Every time. Without exception.</div>
+      <div class="cl-small">How We Treat People · Bedrock</div>
+    </div>
+  </section>
+
+</div>
+
+<div class="nav-chrome">
+  <button class="nav-btn" id="prevBtn" onclick="goPrev()">← Back</button>
+  <div class="scene-counter" id="counter">1 / 15</div>
+  <button class="nav-btn primary" id="nextBtn" onclick="goNext()">Continue →</button>
+</div>
+
+<script>
+  const scenes = document.querySelectorAll('.scene');
+  const total = scenes.length;
+  let current = 0;
+  function render() {
+    scenes.forEach((s, i) => s.classList.toggle('active', i === current));
+    document.getElementById('counter').textContent = current + 1 + ' / ' + total;
+    document.getElementById('prevBtn').disabled = current === 0;
+    const nextBtn = document.getElementById('nextBtn');
+    if (current === total - 1) {
+      nextBtn.textContent = '✓ Done';
+      nextBtn.onclick = () => { window.location.href = '/'; };
+    } else {
+      nextBtn.textContent = 'Continue →';
+      nextBtn.onclick = goNext;
+    }
+    document.getElementById('progress').style.width = ((current + 1) / total) * 100 + '%';
+    const active = scenes[current];
+    document.body.classList.toggle('cream-body', active && active.classList.contains('cream'));
+    if (active && active.classList.contains('cream')) {
+      document.body.style.background = 'var(--cream)';
+    } else {
+      document.body.style.background = 'var(--black)';
+    }
+  }
+  function goNext() { if (current < total - 1) { current++; render(); } }
+  function goPrev() { if (current > 0) { current--; render(); } }
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (current === total - 1) { window.location.href = '/'; }
+      else { goNext(); }
+    } else if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+    else if (e.key === 'Escape') { window.location.href = '/'; }
+  });
+  let touchStartX = 0;
+  document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) < 50) return;
+    if (dx < 0) goNext(); else goPrev();
+  });
+  render();
+</script>
+
+</body>
+</html>

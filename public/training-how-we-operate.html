@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>How We Operate — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #0B1D34;
+    --navy-soft: #2A4870;
+    --gold: #D4AF37;
+    --gold-bright: #e8c96e;
+    --cream: #FAFAF6;
+    --cream-soft: #F5F4ED;
+    --ink: #1a1a1a;
+    --ink-soft: #4a4a4a;
+    --ink-faint: #7a7a7a;
+    --rule: #E5E3DA;
+    --black: #0a0e16;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html, body { height: 100%; }
+  body {
+    font-family: var(--font-sans);
+    background: var(--black);
+    color: var(--cream);
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  .deck { width: 100vw; height: 100dvh; position: relative; }
+  .scene {
+    position: absolute; inset: 0;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center;
+    padding: 6vh 6vw;
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.6s ease;
+    overflow-y: auto;
+  }
+  .scene.active { opacity: 1; pointer-events: auto; }
+  .scene.dark { background: var(--black); color: var(--cream); }
+  .scene.navy { background: linear-gradient(180deg, #0B1D34 0%, #142844 100%); color: var(--cream); }
+  .scene.cream { background: var(--cream); color: var(--ink); }
+  .scene.gold-accent { background: var(--black); color: var(--cream); }
+
+  .label {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.24em; text-transform: uppercase;
+    color: var(--gold);
+    margin-bottom: 24px;
+  }
+  .scene.cream .label { color: var(--navy); opacity: 0.5; }
+
+  h1.headline {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(38px, 6vw, 88px);
+    line-height: 1.05;
+    letter-spacing: -0.02em;
+    max-width: 1000px;
+    text-align: center;
+  }
+  h1.headline em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .scene.cream h1.headline em { color: var(--navy); }
+
+  h2.title {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(28px, 4vw, 52px);
+    line-height: 1.1;
+    letter-spacing: -0.015em;
+    max-width: 880px;
+    text-align: center;
+    margin-bottom: 16px;
+  }
+
+  .subhead {
+    font-family: var(--font-serif); font-style: italic; font-weight: 400;
+    font-size: clamp(20px, 2.4vw, 30px);
+    max-width: 720px;
+    text-align: center;
+    color: var(--gold);
+    margin-top: 16px;
+  }
+  .scene.cream .subhead { color: var(--navy-soft); }
+
+  p.body {
+    font-family: var(--font-sans); font-size: clamp(16px, 1.4vw, 19px);
+    line-height: 1.7;
+    color: var(--cream);
+    max-width: 700px;
+    margin: 22px auto 0;
+    text-align: center;
+  }
+  .scene.cream p.body { color: var(--ink-soft); }
+  p.body strong { color: var(--gold); font-weight: 500; }
+  .scene.cream p.body strong { color: var(--navy); }
+
+  blockquote.quote {
+    font-family: var(--font-serif); font-style: italic; font-weight: 400;
+    font-size: clamp(28px, 3.4vw, 44px);
+    line-height: 1.35;
+    max-width: 800px;
+    text-align: center;
+    padding: 0 24px;
+    position: relative;
+  }
+  blockquote.quote::before,
+  blockquote.quote::after {
+    content: '"';
+    font-size: 1.4em;
+    color: var(--gold);
+    line-height: 0;
+    vertical-align: -0.25em;
+  }
+  .scene.cream blockquote.quote::before,
+  .scene.cream blockquote.quote::after { color: var(--navy); }
+  .quote-attrib {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); margin-top: 28px;
+  }
+  .scene.cream .quote-attrib { color: var(--navy); }
+
+  .pillars {
+    display: grid; grid-template-columns: repeat(3, 1fr); gap: 22px;
+    max-width: 900px; width: 100%; margin: 32px auto 0;
+  }
+  @media (max-width: 720px) { .pillars { grid-template-columns: 1fr; } }
+  .pillar {
+    background: rgba(212,175,55,0.05);
+    border: 1px solid rgba(212,175,55,0.25);
+    border-radius: 10px; padding: 28px 22px;
+    text-align: center;
+  }
+  .pillar .p-word {
+    font-family: var(--font-serif); font-weight: 600;
+    font-size: 28px; color: var(--gold);
+    letter-spacing: -0.01em; margin-bottom: 6px;
+  }
+  .pillar .p-detail {
+    font-size: 13.5px; color: var(--cream); opacity: 0.8; line-height: 1.5;
+  }
+
+  .qa-block {
+    max-width: 760px; margin: 32px auto 0; text-align: center;
+  }
+  .qa-block .qa-question {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 8px;
+  }
+  .qa-block .qa-answer {
+    font-family: var(--font-serif); font-style: italic;
+    font-size: clamp(22px, 2.6vw, 32px);
+    line-height: 1.4; color: var(--cream); margin-bottom: 28px;
+  }
+  .scene.cream .qa-block .qa-answer { color: var(--ink); }
+  .scene.cream .qa-block .qa-question { color: var(--navy); opacity: 0.6; }
+
+  .broken-list {
+    list-style: none; padding: 0;
+    max-width: 640px; margin: 24px auto 0; text-align: left;
+  }
+  .broken-list li {
+    font-family: var(--font-sans); font-size: 17px;
+    color: var(--ink-soft); padding: 12px 0 12px 24px;
+    border-bottom: 1px solid var(--rule); position: relative;
+    line-height: 1.55;
+  }
+  .broken-list li:last-child { border-bottom: none; }
+  .broken-list li::before {
+    content: "✕";
+    position: absolute; left: 0; top: 12px;
+    color: var(--navy); font-weight: 600;
+  }
+
+  .three-questions {
+    max-width: 720px; margin: 32px auto 0; text-align: left;
+  }
+  .three-questions .q-row {
+    display: flex; gap: 18px; align-items: flex-start;
+    padding: 14px 0; border-bottom: 1px solid rgba(212,175,55,0.2);
+  }
+  .three-questions .q-row:last-child { border-bottom: none; }
+  .three-questions .q-num {
+    font-family: var(--font-mono); font-size: 14px;
+    color: var(--gold); flex-shrink: 0;
+    letter-spacing: 0.04em; min-width: 28px;
+  }
+  .three-questions .q-text {
+    font-family: var(--font-serif); font-style: italic;
+    font-size: clamp(18px, 2vw, 24px);
+    color: var(--cream); line-height: 1.4;
+  }
+
+  .culture-statement {
+    max-width: 740px; margin: 28px auto 0; text-align: center;
+    font-family: var(--font-serif); font-size: clamp(20px, 2.2vw, 28px);
+    line-height: 1.55; color: var(--ink-soft); font-weight: 400;
+  }
+  .culture-statement p { margin-bottom: 18px; }
+  .culture-statement p:last-child { margin-bottom: 0; }
+  .culture-statement em { color: var(--navy); font-style: italic; font-weight: 500; }
+
+  .closing-lines {
+    text-align: center; margin-top: 16px;
+  }
+  .closing-lines .cl {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(40px, 5.4vw, 76px); line-height: 1.05;
+    letter-spacing: -0.02em; color: var(--cream);
+    margin-bottom: 12px;
+  }
+  .closing-lines .cl em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .closing-lines .cl-small {
+    font-family: var(--font-mono); font-size: 13px;
+    letter-spacing: 0.2em; text-transform: uppercase;
+    color: var(--gold); margin-top: 28px;
+  }
+
+  .brand-chip {
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--gold); opacity: 0.9;
+    margin-top: 32px;
+  }
+  .scene.cream .brand-chip { color: var(--navy); opacity: 0.6; }
+
+  .nav-chrome {
+    position: fixed; bottom: 24px; left: 0; right: 0;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 36px; z-index: 100;
+    pointer-events: none;
+  }
+  .nav-btn {
+    pointer-events: auto;
+    background: rgba(255,255,255,0.06);
+    border: 1px solid rgba(255,255,255,0.12);
+    color: var(--cream);
+    padding: 10px 18px; border-radius: 999px;
+    font-family: var(--font-sans); font-size: 13px; font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s, border-color 0.2s, transform 0.1s;
+    backdrop-filter: blur(8px);
+  }
+  .nav-btn:hover { background: rgba(212,175,55,0.16); border-color: rgba(212,175,55,0.4); }
+  .nav-btn:active { transform: translateY(1px); }
+  .nav-btn:disabled { opacity: 0.25; cursor: not-allowed; }
+  .nav-btn.primary { background: var(--gold); color: var(--navy); border-color: var(--gold); font-weight: 600; }
+  .nav-btn.primary:hover { background: var(--gold-bright); }
+
+  .scene-counter {
+    pointer-events: auto;
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.16em; color: rgba(255,255,255,0.45);
+    text-transform: uppercase;
+  }
+  body.cream-body .scene-counter { color: rgba(11,29,52,0.6); }
+  body.cream-body .nav-btn { background: rgba(11,29,52,0.06); border-color: rgba(11,29,52,0.15); color: var(--navy); }
+  body.cream-body .nav-btn:hover { background: rgba(212,175,55,0.18); border-color: rgba(212,175,55,0.5); }
+  body.cream-body .nav-btn.primary { background: var(--navy); color: var(--cream); border-color: var(--navy); }
+  body.cream-body .nav-btn.primary:hover { background: var(--navy-soft); }
+
+  .progress {
+    position: fixed; top: 0; left: 0;
+    height: 2px; background: var(--gold);
+    transition: width 0.5s ease;
+    z-index: 100;
+  }
+
+  .skip-hint {
+    position: fixed; top: 22px; right: 28px;
+    font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.16em; color: rgba(255,255,255,0.35);
+    text-transform: uppercase;
+    pointer-events: none;
+    z-index: 100;
+  }
+  body.cream-body .skip-hint { color: rgba(11,29,52,0.4); }
+
+  kbd {
+    font-family: var(--font-mono); font-size: 10px;
+    background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.7);
+    padding: 2px 6px; border-radius: 3px;
+    border: 1px solid rgba(255,255,255,0.15);
+  }
+  body.cream-body kbd { background: rgba(11,29,52,0.08); color: rgba(11,29,52,0.7); border-color: rgba(11,29,52,0.15); }
+
+  @media (max-width: 600px) {
+    .scene { padding: 4vh 5vw; }
+    .nav-chrome { padding: 0 16px; bottom: 16px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="progress" id="progress" style="width: 0%;"></div>
+<div class="skip-hint">Press <kbd>→</kbd> to advance · <kbd>esc</kbd> to exit</div>
+
+<div class="deck" id="deck">
+
+  <!-- SCENE 1 — Title: The Three Pillars -->
+  <section class="scene dark" data-scene="1">
+    <div class="label">How We Operate</div>
+    <h1 class="headline">The Three <em>Pillars</em></h1>
+    <div class="pillars">
+      <div class="pillar"><div class="p-word">Customer First.</div></div>
+      <div class="pillar"><div class="p-word">Own the Outcome.</div></div>
+      <div class="pillar"><div class="p-word">Improve Relentlessly.</div></div>
+    </div>
+    <p class="body" style="margin-top: 36px;">Simple enough for Day 1. Deep enough to guide decisions for years.</p>
+    <div class="brand-chip">Bedrock Association Management</div>
+  </section>
+
+  <!-- SCENE 2 — What Customer First Actually Means -->
+  <section class="scene navy" data-scene="2">
+    <div class="label">Customer First</div>
+    <h2 class="title">What it actually means.</h2>
+    <p class="body">Not <em style="font-style: italic; color: var(--gold);">"the customer is always right."</em></p>
+    <p class="body" style="margin-top: 18px;">It means every decision starts with one question:</p>
+    <blockquote class="quote" style="margin-top: 28px;">Does this make the homeowner's experience genuinely better, or does it just make our job easier?</blockquote>
+    <p class="body" style="margin-top: 28px;">If it only does the second — <strong>we don't ship it.</strong></p>
+  </section>
+
+  <!-- SCENE 3 — Every Complaint Is a Gift -->
+  <section class="scene dark" data-scene="3">
+    <div class="label">Improve Relentlessly</div>
+    <h1 class="headline">Every complaint<br>is a <em>gift.</em></h1>
+    <div class="qa-block">
+      <div class="qa-question">The question is never</div>
+      <div class="qa-answer">Who made the mistake?</div>
+      <div class="qa-question">The question is always</div>
+      <div class="qa-answer">What system allowed this to happen?</div>
+    </div>
+    <p class="body" style="margin-top: 18px;">One complaint → one improvement.</p>
+    <p class="subhead">That's how Bedrock gets smarter every week.</p>
+  </section>
+
+  <!-- SCENE 4 — What We Measure -->
+  <section class="scene dark" data-scene="4">
+    <div class="label">The Metric</div>
+    <h2 class="title">We don't measure activity.<br><em style="color: var(--gold); font-style: italic;">We measure friction.</em></h2>
+    <p class="body" style="margin-top: 28px;">Not <em style="font-style: italic; color: var(--gold);">"how many calls did we take?"</em></p>
+    <p class="body" style="margin-top: 10px;">But <em style="font-style: italic; color: var(--gold);">"how easy was it to do business with Bedrock?"</em></p>
+    <p class="body" style="margin-top: 32px;">A homeowner may dislike an HOA decision and still say:</p>
+    <blockquote class="quote" style="margin-top: 18px; font-size: clamp(22px, 2.6vw, 32px);">Bedrock was responsive and easy to work with.</blockquote>
+    <p class="subhead" style="margin-top: 28px;">That's a win.</p>
+  </section>
+
+  <!-- SCENE 5 — The Broken Window List -->
+  <section class="scene cream" data-scene="5">
+    <div class="label">The Broken Window List</div>
+    <h2 class="title">A living document of friction points.</h2>
+    <p class="body" style="color: var(--ink-soft);">Every month we ask: <strong style="color: var(--navy);">Which broken windows disappeared?</strong></p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 20px; font-weight: 500;">Examples right now:</p>
+    <ul class="broken-list">
+      <li>Homeowners don't know their pool fob status</li>
+      <li>ARC approvals take too long</li>
+      <li>Board packets take hours to produce</li>
+      <li>Residents don't understand their violations</li>
+    </ul>
+    <p class="body" style="color: var(--ink); margin-top: 32px;"><strong style="color: var(--navy);">Your job:</strong> spot broken windows. Surface them. Don't wait to be asked.</p>
+  </section>
+
+  <!-- SCENE 6 — Celebrate Problem Finders -->
+  <section class="scene navy" data-scene="6">
+    <div class="label">Who We Reward</div>
+    <h1 class="headline">Most companies reward firefighters.<br><em>We reward smoke detectors.</em></h1>
+    <blockquote class="quote" style="margin-top: 40px; font-size: clamp(22px, 2.6vw, 32px);">Thank you for identifying a process weakness before it affected 100 homeowners.</blockquote>
+    <p class="body" style="margin-top: 36px;">If you find something broken, <strong>you are not causing a problem.</strong></p>
+    <p class="subhead">You are building the company.</p>
+  </section>
+
+  <!-- SCENE 7 — Better Every Week -->
+  <section class="scene dark" data-scene="7">
+    <div class="label">The Practice</div>
+    <h2 class="title">Better every week.</h2>
+    <p class="body">Every week, fifteen minutes, everyone answers three questions:</p>
+    <div class="three-questions">
+      <div class="q-row"><span class="q-num">1.</span><span class="q-text">What frustrated a customer this week?</span></div>
+      <div class="q-row"><span class="q-num">2.</span><span class="q-text">What frustrated us this week?</span></div>
+      <div class="q-row"><span class="q-num">3.</span><span class="q-text">What can we automate, improve, or eliminate?</span></div>
+    </div>
+    <p class="body" style="margin-top: 36px;">Small improvements compound. That's how we get <strong>better than Vantaca with a fraction of their resources.</strong></p>
+  </section>
+
+  <!-- SCENE 8 — The Bezos Standard: Think Bigger -->
+  <section class="scene dark" data-scene="8">
+    <div class="label">The Bezos Standard</div>
+    <blockquote class="quote">He always had a way of getting teams to think bigger.</blockquote>
+    <div class="quote-attrib">Andy Jassy on Jeff Bezos</div>
+    <p class="body" style="margin-top: 40px;">When you see a problem, don't just solve the instance.</p>
+    <p class="body" style="margin-top: 14px;">Ask: <em style="font-style: italic; color: var(--gold);">what's the system behind it?</em></p>
+    <div class="three-questions" style="margin-top: 24px;">
+      <div class="q-row"><span class="q-num">→</span><span class="q-text" style="font-style: normal; font-family: var(--font-sans); font-size: 17px;">Could AI detect this earlier?</span></div>
+      <div class="q-row"><span class="q-num">→</span><span class="q-text" style="font-style: normal; font-family: var(--font-sans); font-size: 17px;">Could trustEd prevent it?</span></div>
+      <div class="q-row"><span class="q-num">→</span><span class="q-text" style="font-style: normal; font-family: var(--font-sans); font-size: 17px;">Could this become self-service?</span></div>
+      <div class="q-row"><span class="q-num">→</span><span class="q-text" style="font-style: normal; font-family: var(--font-sans); font-size: 17px;">Could this be automated?</span></div>
+    </div>
+    <p class="subhead" style="margin-top: 32px;">One complaint → one improvement → one fewer problem forever.</p>
+  </section>
+
+  <!-- SCENE 9 — The Bezos Standard: Unreasonably High Standards -->
+  <section class="scene dark" data-scene="9">
+    <div class="label">The Bezos Standard</div>
+    <blockquote class="quote">I had reasonably high standards. It turned out I didn't.</blockquote>
+    <div class="quote-attrib">Andy Jassy</div>
+    <p class="body" style="margin-top: 40px;">We don't lower the bar when things are hard.</p>
+    <p class="body" style="margin-top: 14px;">We don't accept good enough because we're busy.</p>
+    <p class="body" style="margin-top: 32px;">The standard is:</p>
+    <blockquote class="quote" style="margin-top: 18px; font-size: clamp(22px, 2.6vw, 32px);">Would a homeowner who just had the worst week of their year feel genuinely helped?</blockquote>
+    <p class="subhead" style="margin-top: 28px;">If not, we're not done.</p>
+  </section>
+
+  <!-- SCENE 10 — Strategically Patient. Tactically Impatient. -->
+  <section class="scene cream" data-scene="10">
+    <div class="label">The Two Speeds</div>
+    <h1 class="headline" style="color: var(--navy);">Strategically <em>patient.</em><br>Tactically <em>impatient.</em></h1>
+    <p class="body" style="color: var(--ink-soft); margin-top: 36px;">We know where we're going. We're not changing that.</p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 14px;">But speed matters every single day.</p>
+    <p class="body" style="color: var(--ink-soft); margin-top: 28px;">A response that takes four hours instead of forty minutes is not a small difference. <strong style="color: var(--navy);">To the homeowner waiting, it's everything.</strong></p>
+    <p class="subhead" style="color: var(--navy-soft); margin-top: 28px;">Move fast on execution. Stay committed to the vision. Both at once.</p>
+  </section>
+
+  <!-- SCENE 11 — Keep Learning. Keep Adjusting. -->
+  <section class="scene dark" data-scene="11">
+    <div class="label">The Discipline</div>
+    <blockquote class="quote">Great leaders keep listening to additional inputs and keep adjusting their opinions as they learn more.</blockquote>
+    <div class="quote-attrib">Andy Jassy</div>
+    <p class="body" style="margin-top: 40px;">If you correct the system and we change how it works — <strong>that's not failure.</strong></p>
+    <p class="subhead">That's the model.</p>
+    <p class="body" style="margin-top: 36px;">Every email you approve, every correction you make, every question you flag — you are training Bedrock to be smarter.</p>
+    <p class="subhead" style="margin-top: 18px;">Your judgment is the product.</p>
+  </section>
+
+  <!-- SCENE 12 — Own the Outcome -->
+  <section class="scene navy" data-scene="12">
+    <div class="label">Own the Outcome</div>
+    <h1 class="headline">Problems don't belong<br>to <em>departments.</em></h1>
+    <p class="subhead" style="margin-top: 24px;">Problems belong to whoever sees them first.</p>
+    <p class="body" style="margin-top: 36px;">If a homeowner is frustrated, it doesn't matter whose job it is.</p>
+    <p class="body" style="margin-top: 14px;">If a process is broken, it doesn't matter who built it.</p>
+    <p class="body" style="margin-top: 28px;"><strong>We own outcomes, not tasks.</strong></p>
+  </section>
+
+  <!-- SCENE 13 — What We're Building Toward -->
+  <section class="scene dark" data-scene="13">
+    <div class="label">The Trajectory</div>
+    <h2 class="title">The highest compliment is not:</h2>
+    <blockquote class="quote" style="font-size: clamp(22px, 2.6vw, 32px); margin-top: 12px;">They answered the phone.</blockquote>
+    <h2 class="title" style="margin-top: 40px;">It's:</h2>
+    <blockquote class="quote" style="margin-top: 12px;">They solved problems before I even knew they existed.</blockquote>
+    <p class="body" style="margin-top: 40px;">That's where technology, AI, and customer obsession meet.</p>
+    <p class="subhead" style="margin-top: 14px;">That's Bedrock in two years.</p>
+    <p class="body" style="margin-top: 24px;">You're here at the beginning of that trajectory.</p>
+  </section>
+
+  <!-- SCENE 14 — The Culture Statement -->
+  <section class="scene cream" data-scene="14">
+    <div class="label">The Culture Statement</div>
+    <h2 class="title" style="color: var(--navy);">At Bedrock, we believe<br>every interaction is an opportunity to <em style="color: var(--navy); font-style: italic;">earn trust.</em></h2>
+    <div class="culture-statement">
+      <p>We listen carefully, respond quickly, and relentlessly improve our systems so communities become easier to live in and easier to manage.</p>
+      <p><em>We don't defend broken processes. We fix them.</em></p>
+    </div>
+  </section>
+
+  <!-- SCENE 15 — Closing -->
+  <section class="scene dark" data-scene="15">
+    <div class="closing-lines">
+      <div class="cl">You're not here to <em>maintain.</em></div>
+      <div class="cl">You're here to <em>improve.</em></div>
+      <div class="cl" style="font-size: clamp(28px, 3.6vw, 48px); margin-top: 28px; color: var(--gold); font-style: italic;">Every day.</div>
+      <div class="cl-small">How We Operate · Bedrock</div>
+    </div>
+  </section>
+
+</div>
+
+<div class="nav-chrome">
+  <button class="nav-btn" id="prevBtn" onclick="goPrev()">← Back</button>
+  <div class="scene-counter" id="counter">1 / 15</div>
+  <button class="nav-btn primary" id="nextBtn" onclick="goNext()">Continue →</button>
+</div>
+
+<script>
+  const scenes = document.querySelectorAll('.scene');
+  const total = scenes.length;
+  let current = 0;
+
+  function render() {
+    scenes.forEach((s, i) => s.classList.toggle('active', i === current));
+    document.getElementById('counter').textContent = current + 1 + ' / ' + total;
+    document.getElementById('prevBtn').disabled = current === 0;
+    const nextBtn = document.getElementById('nextBtn');
+    if (current === total - 1) {
+      nextBtn.textContent = '✓ Done';
+      nextBtn.onclick = () => { window.location.href = '/'; };
+    } else {
+      nextBtn.textContent = 'Continue →';
+      nextBtn.onclick = goNext;
+    }
+    document.getElementById('progress').style.width = ((current + 1) / total) * 100 + '%';
+    const active = scenes[current];
+    document.body.classList.toggle('cream-body', active && active.classList.contains('cream'));
+    if (active && active.classList.contains('cream')) {
+      document.body.style.background = 'var(--cream)';
+    } else {
+      document.body.style.background = 'var(--black)';
+    }
+  }
+  function goNext() { if (current < total - 1) { current++; render(); } }
+  function goPrev() { if (current > 0) { current--; render(); } }
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') {
+      e.preventDefault();
+      if (current === total - 1) { window.location.href = '/'; }
+      else { goNext(); }
+    } else if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
+    else if (e.key === 'Escape') { window.location.href = '/'; }
+  });
+
+  let touchStartX = 0;
+  document.addEventListener('touchstart', (e) => { touchStartX = e.touches[0].clientX; });
+  document.addEventListener('touchend', (e) => {
+    const dx = e.changedTouches[0].clientX - touchStartX;
+    if (Math.abs(dx) < 50) return;
+    if (dx < 0) goNext(); else goPrev();
+  });
+
+  render();
+</script>
+
+</body>
+</html>
