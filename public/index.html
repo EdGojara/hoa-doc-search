@@ -1771,7 +1771,10 @@
           <div style="font-family:Georgia,serif; font-size:22px; font-weight:500; margin-top:4px;" id="todayGreeting">Welcome back</div>
           <div style="font-size:12.5px; color:rgba(255,255,255,0.65); margin-top:2px;" id="todayGeneratedAt">—</div>
         </div>
-        <button onclick="todayLoad(true)" id="todayRefreshBtn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:8px 16px; font-size:13px; font-weight:500; cursor:pointer; transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.18)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">↻ Refresh</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button onclick="todayLoad(true)" id="todayRefreshBtn" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:8px 16px; font-size:13px; font-weight:500; cursor:pointer; transition:background 0.15s;" onmouseover="this.style.background='rgba(255,255,255,0.18)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">↻ Refresh</button>
+          <button onclick="todayToggle()" id="todayToggleBtn" title="Collapse" aria-label="Collapse Today panel" style="background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.2); border-radius:8px; padding:8px 12px; font-size:13px; font-weight:500; cursor:pointer; transition:background 0.15s; min-width:36px;" onmouseover="this.style.background='rgba(255,255,255,0.18)'" onmouseout="this.style.background='rgba(255,255,255,0.1)'">▾</button>
+        </div>
       </div>
       <div id="todayBody" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:14px;">
         <div style="color:rgba(255,255,255,0.65); font-size:13px; padding:24px; text-align:center; grid-column:1/-1;">Click Refresh to load today's view.</div>
@@ -27147,6 +27150,33 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // No polling. Session-cached so re-opening Home doesn't re-fetch.
   // ===========================================================================
   let _todayCache = null;
+
+  const TODAY_COLLAPSED_LS_KEY = 'bedrock.today_collapsed.v1';
+  function todayToggle() {
+    const body = document.getElementById('todayBody');
+    const btn  = document.getElementById('todayToggleBtn');
+    if (!body || !btn) return;
+    const willCollapse = body.style.display !== 'none';
+    body.style.display = willCollapse ? 'none' : 'grid';
+    btn.innerHTML = willCollapse ? '▸' : '▾';
+    btn.title = willCollapse ? 'Expand' : 'Collapse';
+    try { localStorage.setItem(TODAY_COLLAPSED_LS_KEY, willCollapse ? '1' : '0'); } catch (_) {}
+  }
+  function todayApplyCollapsedState() {
+    try {
+      if (localStorage.getItem(TODAY_COLLAPSED_LS_KEY) === '1') {
+        const body = document.getElementById('todayBody');
+        const btn  = document.getElementById('todayToggleBtn');
+        if (body) body.style.display = 'none';
+        if (btn) { btn.innerHTML = '▸'; btn.title = 'Expand'; }
+      }
+    } catch (_) {}
+  }
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', todayApplyCollapsedState);
+  } else {
+    todayApplyCollapsedState();
+  }
 
   async function todayLoad(force) {
     if (_todayCache && !force) {
