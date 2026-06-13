@@ -2677,6 +2677,7 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
       .select(`
         id, property_id, community_id, category_id, severity, ai_description,
         ai_recommended_action, ai_confidence, reviewer_status,
+        inspection_id, inspection_photo_id,
         properties ( id, street_address, unit, community_id ),
         enforcement_categories ( id, code, label )
       `)
@@ -2691,6 +2692,53 @@ router.post('/inspections/observations/:id/confirm', express.json(), async (req,
     }
     if (!obs.category_id) {
       return res.status(400).json({ error: 'observation has no category — set a category before confirming' });
+    }
+
+    // CONTINUATION CHECK — if there's already an OPEN violation at this
+    // (property, category) we do NOT open a new case or draft a new letter.
+    // We log a continuation row instead (audit-trail proof that the violation
+    // persists post-§209 cure period). See lib/enforcement/find_or_continue_violation.js
+    // for the full rationale + caller list. Added 2026-06-13 per Ed.
+    try {
+      const { findOrContinueViolation } = require('../lib/enforcement/find_or_continue_violation');
+      const cont = await findOrContinueViolation({
+        propertyId:        obs.property_id,
+        categoryId:        obs.category_id,
+        observationId:     obs.id,
+        inspectionPhotoId: obs.inspection_photo_id,
+        inspectionId:      obs.inspection_id,
+        userId:            reviewerUserId,
+        source:            'inspection',
+        notes:             reviewerNotes,
+      });
+      if (cont.type === 'continuation') {
+        // Mark observation confirmed-as-continuation. Skip letter draft.
+        await supabase
+          .from('property_observations')
+          .update({
+            reviewer_status:  'confirmed',
+            reviewer_notes:   reviewerNotes
+              ? `[Continuation of open violation] ${reviewerNotes}`
+              : '[Continuation of open violation — no new letter drafted]',
+            reviewer_user_id: reviewerUserId,
+            reviewed_at:      new Date().toISOString(),
+          })
+          .eq('id', obsId);
+        return res.json({
+          ok: true,
+          opened: false,
+          continuation: true,
+          violation_id: cont.violation_id,
+          continuation_id: cont.continuation_id,
+          continuation_count: cont.continuation_count_after,
+          reason: 'continuation_logged_existing_open_violation',
+        });
+      }
+    } catch (contErr) {
+      console.error('[confirm] continuation check failed:', contErr.message);
+      // Fall through to normal open-violation path — don't block the
+      // confirmation on a continuation-check failure. The duplicate-check
+      // surface in the drafts queue is a second safety net.
     }
 
     // Compute prior violations for the escalation engine

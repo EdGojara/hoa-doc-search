@@ -6766,6 +6766,72 @@ router.get('/mail/pieces', async (req, res) => {
   }
 });
 
+// ----------------------------------------------------------------------------
+// GET /api/enforcement/continued-non-compliance
+// ----------------------------------------------------------------------------
+// Board-packet surface. Returns every OPEN violation that has been
+// re-observed at least once (continuation_count > 0). Each row carries:
+//   - property address + owner
+//   - category label + current stage
+//   - days since opened + days since §209 mailed + cure period info
+//   - continuation_count (proof-of-continuity evidence count)
+//   - recommended_action (advance to §209 / await cure / authorize escalation)
+//
+// Query params:
+//   community_id      — required (community-scope per CLAUDE.md)
+//   stage             — optional filter ('certified_209' to focus on
+//                       post-cure cases, the highest-attention bucket)
+//   min_days_since_209 — optional, integer, default 0
+// Sort: continuation_count DESC, last_continued_at DESC.
+//
+// Added 2026-06-13 — pairs with migration 219 + violation_continuations
+// linker. See lib/enforcement/find_or_continue_violation.js.
+// ----------------------------------------------------------------------------
+router.get('/continued-non-compliance', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+
+    const stageFilter = req.query.stage || null;
+    const minDaysSince209 = Number.isFinite(parseInt(req.query.min_days_since_209, 10))
+      ? parseInt(req.query.min_days_since_209, 10)
+      : 0;
+
+    let q = supabase
+      .from('v_continued_non_compliance')
+      .select('*')
+      .eq('community_id', communityId)
+      .order('continuation_count', { ascending: false })
+      .order('last_continued_at',  { ascending: false })
+      .limit(500);
+
+    if (stageFilter) q = q.eq('current_stage', stageFilter);
+
+    const { data, error } = await q;
+    if (error) {
+      console.error('[continued-non-compliance] query failed:', error.message);
+      return res.status(500).json({ error: safeErrorMessage(error) });
+    }
+
+    // In-JS post-filter for min_days_since_209 (NULLs excluded when filter > 0).
+    const rows = minDaysSince209 > 0
+      ? (data || []).filter((r) => Number.isFinite(r.days_since_209) && r.days_since_209 >= minDaysSince209)
+      : (data || []);
+
+    const summary = {
+      total_continued:                rows.length,
+      at_certified_209:               rows.filter((r) => r.current_stage === 'certified_209').length,
+      post_cure_period:               rows.filter((r) => r.cure_period_ends_at && new Date(r.cure_period_ends_at) < new Date()).length,
+      ready_for_attorney_escalation:  rows.filter((r) => r.recommended_action === 'authorize_fine_or_attorney').length,
+    };
+
+    res.json({ summary, rows });
+  } catch (err) {
+    console.error('[continued-non-compliance]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // Helpers ---------------------------------------------------------------------
 function _mapInteractionTypeToStage(t) {
   return ({
