@@ -15747,13 +15747,26 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
-    <!-- DRAFTS QUEUE — letters drafted by AI after inspections, awaiting review.
-         Visible always (no active session needed). Click anywhere outside an
-         inspection to see this. Operator reviews each drafted letter PDF, picks
-         which to approve in bulk, rejects the wrong ones. -->
-    <div style="margin-top: 20px;">
+    <!-- COMMUNITY FILTER — drives both the Drafts queue and Mail queue below
+         so the operator can work one community at a time without scanning
+         a mixed list. Selection persists in localStorage. Added 2026-06-13
+         per Ed: "drafts/mail queues mixed across communities — can't pull up
+         by community". -->
+    <div style="margin-top: 20px; display: flex; align-items: center; gap: 12px; padding: 10px 14px; background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 10px; flex-wrap: wrap;">
+      <label for="inspQueueCommunityFilter" style="font-size: 11px; color: #475569; font-weight: 700; text-transform: uppercase; letter-spacing: 0.08em;">Filter both queues by community:</label>
+      <select id="inspQueueCommunityFilter" onchange="inspQueueFilterChange()" style="flex: 1; max-width: 360px; min-width: 200px; padding: 7px 10px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 13px; background: #fff;">
+        <option value="">All communities</option>
+      </select>
+      <button onclick="document.getElementById('inspQueueCommunityFilter').value=''; inspQueueFilterChange();" style="font-size: 11px; padding: 5px 10px; background: #fff; border: 1px solid #cbd5e1; color: #475569; border-radius: 5px; cursor: pointer; font-weight: 500;">Clear</button>
+    </div>
+
+    <!-- DRAFTS QUEUE — STEP 1 of the mailing flow. Letters drafted by AI after
+         inspections, awaiting review. Operator reviews each drafted letter
+         PDF, picks which to approve in bulk, rejects the wrong ones.
+         Approved drafts flow DOWN into the Mail Queue (step 2). -->
+    <div style="margin-top: 14px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">📄 Drafts queue <span style="color:#64748b; font-weight:500;">— awaiting review</span></h3>
+        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;"><span style="font-family: var(--font-mono, monospace); font-size: 9.5px; letter-spacing: 0.15em; background: #0B1D34; color: #D4AF37; padding: 2px 7px; border-radius: 4px; vertical-align: middle; margin-right: 6px;">STEP 1</span>📄 Drafts queue <span style="color:#64748b; font-weight:500;">— review · approve · reject</span></h3>
         <div style="display:flex; gap:6px;">
           <button class="secondary-btn" onclick="inspDraftsLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
           <button id="inspDraftsRejectAllBtn" onclick="inspDraftsRejectSelected()" style="font-size:12px; padding:5px 14px; background:#fff; color:#b91c1c; border:1px solid #fecaca; border-radius:6px; font-weight:600; cursor:pointer;" disabled>✕ Reject selected (0)</button>
@@ -15765,13 +15778,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
-    <!-- MAIL QUEUE — approved letters waiting to print. Two batches:
-         first-class mail (regular envelopes) and certified mail (post office trip).
-         Each Download button merges all pending letters of that method into one
-         multi-page PDF + marks them printed. -->
+    <!-- MAIL QUEUE — STEP 2 of the mailing flow. Approved letters waiting to
+         print. Two batches: first-class mail (regular envelopes) and certified
+         mail (post office trip). Each Download button merges all pending
+         letters of that method into one multi-page PDF + marks them printed.
+         Honors the community filter strip above. -->
     <div style="margin-top: 20px;">
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">📬 Mail Queue <span style="color:#64748b; font-weight:500;">— approved, ready to print</span></h3>
+        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;"><span style="font-family: var(--font-mono, monospace); font-size: 9.5px; letter-spacing: 0.15em; background: #0B1D34; color: #D4AF37; padding: 2px 7px; border-radius: 4px; vertical-align: middle; margin-right: 6px;">STEP 2</span>📬 Mail Queue <span style="color:#64748b; font-weight:500;">— approved, ready to print</span></h3>
         <button class="secondary-btn" onclick="inspMailQueueLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
       </div>
       <div id="inspMailQueuePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px;">
@@ -20977,6 +20991,54 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // Also load on first visibility — covers direct page load on inspections tab
   setTimeout(() => { letterFormatLoadCommunities(); }, 500);
 
+  // ---- Shared community filter for the Drafts queue + Mail queue.
+  // Selection persists in localStorage so the operator can leave/return
+  // and stay scoped to one community. Added 2026-06-13 per Ed.
+  const QUEUE_FILTER_LS_KEY = 'bedrock.queue_community_filter.v1';
+  function inspQueueGetFilter() {
+    try { return localStorage.getItem(QUEUE_FILTER_LS_KEY) || ''; } catch (_) { return ''; }
+  }
+  function inspQueueSetFilter(val) {
+    try { localStorage.setItem(QUEUE_FILTER_LS_KEY, val || ''); } catch (_) {}
+  }
+  function inspQueueFilterChange() {
+    const sel = document.getElementById('inspQueueCommunityFilter');
+    if (!sel) return;
+    inspQueueSetFilter(sel.value);
+    if (typeof inspDraftsLoad === 'function')   inspDraftsLoad();
+    if (typeof inspMailQueueLoad === 'function') inspMailQueueLoad();
+  }
+  window.inspQueueFilterChange = inspQueueFilterChange;
+  window.inspQueueGetFilter     = inspQueueGetFilter;
+
+  async function inspQueueLoadCommunityOptions() {
+    const sel = document.getElementById('inspQueueCommunityFilter');
+    if (!sel || sel.options.length > 1) {
+      // Already populated. Just re-sync the visible selection to the persisted value.
+      if (sel) {
+        const saved = inspQueueGetFilter();
+        if (saved && sel.value !== saved) sel.value = saved;
+      }
+      return;
+    }
+    try {
+      const r = await fetch('/api/communities');
+      if (!r.ok) return;
+      const j = await r.json();
+      const list = (j.communities || j || []).filter(Boolean);
+      list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+      for (const c of list) {
+        const opt = document.createElement('option');
+        opt.value = c.id;
+        opt.textContent = c.name;
+        sel.appendChild(opt);
+      }
+      const saved = inspQueueGetFilter();
+      if (saved) sel.value = saved;
+    } catch (_) { /* leave default */ }
+  }
+  window.inspQueueLoadCommunityOptions = inspQueueLoadCommunityOptions;
+
   async function inspDraftsLoad() {
     const wrap = document.getElementById('inspDraftsList');
     if (!wrap) return;
@@ -20987,7 +21049,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       // and safe to call repeatedly; bundles that already exist are skipped.
       try { await window._authFetch('/api/enforcement/drafts/auto-bundle', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }); } catch (_) {}
 
-      const r = await window._authFetch('/api/enforcement/drafts?limit=100');
+      const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+      const qs = filterCid ? `&community_id=${encodeURIComponent(filterCid)}` : '';
+      const r = await window._authFetch(`/api/enforcement/drafts?limit=100${qs}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       inspDraftsData = j.drafts || [];
@@ -21398,7 +21462,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (!wrap) return;
     wrap.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
     try {
-      const r = await window._authFetch('/api/enforcement/mail-queue/summary');
+      const filterCid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+      const qs = filterCid ? `?community_id=${encodeURIComponent(filterCid)}` : '';
+      const r = await window._authFetch(`/api/enforcement/mail-queue/summary${qs}`);
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
       inspMailQueueRender(j.summary);
@@ -23785,6 +23851,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       const result = orig.apply(this, arguments);
       if (tab === 'inspect') {
         try { inspLoadCommunities(); } catch (e) { console.warn('[inspect] load communities', e); }
+        try { inspQueueLoadCommunityOptions(); } catch (e) { console.warn('[inspect] load queue filter', e); }
         try { inspLoadRecent(); }      catch (e) { console.warn('[inspect] load recent', e); }
         try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
         try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
