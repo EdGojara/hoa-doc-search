@@ -106,9 +106,10 @@ SELECT
   v.community_id,
   c.name                                                  AS community_name,
   v.property_id,
-  p.street_address,
-  p.unit,
-  p.owner_name,
+  vcpo.street_address,
+  vcpo.unit,
+  vcpo.owner_name,
+  vcpo.owner_mailing_address,
   v.primary_category_id,
   ec.label                                                AS category_label,
   v.current_stage,
@@ -160,9 +161,9 @@ SELECT
     ELSE 'monitor'
   END                                                     AS recommended_action
 FROM violations v
-JOIN communities c             ON c.id = v.community_id
-JOIN properties  p             ON p.id = v.property_id
-JOIN enforcement_categories ec ON ec.id = v.primary_category_id
+JOIN communities c                  ON c.id = v.community_id
+JOIN v_current_property_owners vcpo ON vcpo.property_id = v.property_id
+JOIN enforcement_categories ec      ON ec.id = v.primary_category_id
 WHERE v.continuation_count > 0
   AND v.current_stage NOT IN ('cured','closed','voided');
 
