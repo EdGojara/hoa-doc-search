@@ -24026,6 +24026,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="font-size: 13px; font-weight: 600; color: #0B1D34; line-height: 1.3;">🏛️ Overview</div>
           <div style="font-size: 12px; color: #475569; margin-top: 2px; line-height: 1.35;">Role tracks &amp; badges</div>
         </a>
+        <a href="#training-day1-orientation" class="training-nav-link"
+           onclick="event.preventDefault(); trainingOpenModule('day1-orientation');"
+           style="text-decoration: none; color: inherit; padding: 10px 12px; border-radius: 8px; border: 1px solid transparent; cursor: pointer;">
+          <div style="font-size: 13px; font-weight: 600; color: #0B1D34; line-height: 1.3;">🌅 Day 1 Orientation</div>
+          <div style="font-size: 12px; color: #475569; margin-top: 2px; line-height: 1.35;">Every new hire, first day</div>
+          <div style="font-size: 10px; color: #94a3b8; margin-top: 4px;">Full day · All roles</div>
+        </a>
         <a href="#training-asked-foundations" class="training-nav-link active"
            onclick="event.preventDefault(); trainingOpenModule('asked-foundations');"
            style="text-decoration: none; color: inherit; padding: 10px 12px; border-radius: 8px; background: #f1f5fb; border: 1px solid #d8e2ed; cursor: pointer;">
@@ -24120,6 +24127,357 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
         <h2 style="font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 12px; letter-spacing: -0.01em;">A note on iteration</h2>
         <p>The platform is moving fast. If a module mentions a button that isn't where it says it is, or a workflow that's changed since the module was written — flag it to Ed. The modules update as the platform stabilizes; we're shipping training alongside the work rather than waiting for a "finished" state that would never arrive.</p>
+      </article>
+
+      <!-- Day 1 Orientation — facilitator + participant views, same agenda. -->
+      <style>
+        #module-day1-orientation.day1-mode-facilitator .day1-participant-only { display: none; }
+        #module-day1-orientation.day1-mode-participant .day1-facilitator-only { display: none; }
+        #module-day1-orientation .day1-time-block { display: flex; gap: 16px; align-items: flex-start; padding: 18px 20px; background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; margin-bottom: 14px; }
+        #module-day1-orientation .day1-time-pill { background: #0B1D34; color: #fafaf6; padding: 6px 12px; border-radius: 999px; font-family: ui-monospace, 'JetBrains Mono', monospace; font-size: 12px; font-weight: 500; letter-spacing: 0.02em; white-space: nowrap; flex-shrink: 0; }
+        #module-day1-orientation .day1-time-content { flex: 1; }
+        #module-day1-orientation .day1-time-content h3 { font-family: var(--font-serif, Georgia); font-size: 17px; color: #0B1D34; margin: 0 0 4px; font-weight: 500; }
+        #module-day1-orientation .day1-time-content .sub { font-size: 12.5px; color: #64748b; margin: 0; }
+        #module-day1-orientation .day1-section-card { background: #fff; border: 1px solid #e2e8f0; border-radius: 10px; padding: 22px 26px; margin: 22px 0; }
+        #module-day1-orientation .day1-section-header { display: flex; align-items: baseline; gap: 14px; flex-wrap: wrap; margin-bottom: 4px; }
+        #module-day1-orientation .day1-section-header .pill { background: #0B1D34; color: #fafaf6; padding: 4px 10px; border-radius: 999px; font-family: ui-monospace, monospace; font-size: 11px; letter-spacing: 0.04em; }
+        #module-day1-orientation .day1-section-header h2 { margin: 0; font-family: var(--font-serif, Georgia); font-size: 22px; font-weight: 500; color: #0B1D34; letter-spacing: -0.01em; }
+        #module-day1-orientation .day1-callout { padding: 14px 18px; border-radius: 8px; font-size: 13.5px; line-height: 1.6; margin: 14px 0; }
+        #module-day1-orientation .day1-callout.facilitator { background: #fffbeb; border-left: 3px solid #d4af37; }
+        #module-day1-orientation .day1-callout.participant { background: #f1f5fb; border-left: 3px solid #0B1D34; }
+        #module-day1-orientation .day1-callout.shared { background: #f0fdf4; border-left: 3px solid #16a34a; }
+        #module-day1-orientation .day1-callout strong { color: #0B1D34; }
+        #module-day1-orientation .day1-callout .lbl { display: inline-block; font-size: 10px; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; margin-bottom: 6px; }
+        #module-day1-orientation .day1-callout.facilitator .lbl { background: #d4af37; color: #ffffff; }
+        #module-day1-orientation .day1-callout.participant .lbl { background: #0B1D34; color: #ffffff; }
+        #module-day1-orientation .day1-callout.shared .lbl { background: #16a34a; color: #ffffff; }
+        #module-day1-orientation .day1-checklist { list-style: none; padding: 0; margin: 8px 0; }
+        #module-day1-orientation .day1-checklist li { padding: 8px 0 8px 28px; position: relative; font-size: 14px; line-height: 1.5; border-bottom: 1px solid #f3f4f6; }
+        #module-day1-orientation .day1-checklist li:last-child { border-bottom: none; }
+        #module-day1-orientation .day1-checklist li:before { content: "☐"; position: absolute; left: 4px; top: 8px; color: #94a3b8; font-size: 16px; }
+        #module-day1-orientation .day1-tour-stop { background: #fafbfc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px 18px; margin: 12px 0; }
+        #module-day1-orientation .day1-tour-stop .stop-num { display: inline-block; background: #d4af37; color: #ffffff; font-weight: 600; font-size: 11px; padding: 2px 10px; border-radius: 999px; letter-spacing: 0.04em; }
+        #module-day1-orientation .day1-tour-stop h4 { margin: 8px 0 6px; font-family: var(--font-serif, Georgia); font-size: 17px; color: #0B1D34; font-weight: 500; }
+        #module-day1-orientation .day1-tour-stop .timing { font-size: 11.5px; color: #94a3b8; }
+        #module-day1-orientation .day1-tour-stop p { margin: 6px 0; font-size: 13.5px; line-height: 1.55; }
+        #module-day1-orientation .day1-tour-stop p strong { color: #0B1D34; }
+        #module-day1-orientation .view-toggle { display: flex; gap: 8px; background: #f1f5f9; border-radius: 999px; padding: 4px; max-width: fit-content; margin: 18px 0 28px; }
+        #module-day1-orientation .view-toggle button { background: transparent; border: none; padding: 8px 18px; border-radius: 999px; font-family: inherit; font-size: 13px; font-weight: 500; color: #64748b; cursor: pointer; transition: all 0.15s; }
+        #module-day1-orientation .view-toggle button.active { background: #0B1D34; color: #fafaf6; }
+      </style>
+      <article id="module-day1-orientation" class="training-module day1-mode-facilitator" style="display: none;">
+        <div style="font-family: var(--font-mono, monospace); font-size: 10px; color: var(--grey, #8B8F97); letter-spacing: 0.18em; text-transform: uppercase; margin-bottom: 8px;">Bedrock University · Day 1 Orientation</div>
+        <h1 style="font-family: var(--font-serif, Georgia); font-size: 32px; font-weight: 500; color: var(--navy, #0B1D34); margin: 0 0 8px; letter-spacing: -0.02em; line-height: 1.1;">
+          Day 1 <em style="font-style: italic; color: var(--gold, #D4AF37); font-weight: 500;">Orientation</em>
+        </h1>
+        <p style="font-size: 14px; color: #64748b; margin: 0;">The full-day onboarding agenda. Same shape for every new hire. Same outcome: by the end of today, they know why we exist, who they're working with, what the platform does, and what their first week looks like.</p>
+
+        <div class="view-toggle">
+          <button id="day1ViewFac" class="active" onclick="day1SetView('facilitator')">Facilitator view (Ed)</button>
+          <button id="day1ViewPart" onclick="day1SetView('participant')">Participant view (new hire)</button>
+        </div>
+
+        <p class="day1-facilitator-only" style="background: #fffbeb; border-left: 3px solid #d4af37; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 0 0 22px; font-size: 13.5px; color: #78350f;">
+          <strong>Facilitator mode.</strong> This is what you see Monday morning. Each section has what to do, what to say, and what success looks like. Toggle to Participant view above to see what the new hires would see if you projected this on the screen.
+        </p>
+        <p class="day1-participant-only" style="background: #f1f5fb; border-left: 3px solid #0B1D34; padding: 12px 16px; border-radius: 0 6px 6px 0; margin: 0 0 22px; font-size: 13.5px; color: #0B1D34;">
+          <strong>Welcome.</strong> This is your Day 1 at Bedrock. Here's the full day at a glance, and what to expect from each section. Don't worry about absorbing everything today — the goal is orientation, not mastery. Questions are expected and welcomed throughout.
+        </p>
+
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #0B1D34); margin: 28px 0 16px;">The day at a glance</h2>
+
+        <div class="day1-time-block">
+          <span class="day1-time-pill">9:00 - 9:30</span>
+          <div class="day1-time-content"><h3>The Manifesto Presentation</h3><p class="sub">Why we exist. What we believe. What you're part of.</p></div>
+        </div>
+        <div class="day1-time-block">
+          <span class="day1-time-pill">9:30 - 10:00</span>
+          <div class="day1-time-content"><h3>Team Introductions</h3><p class="sub">Meet Martha, Lizette, Celina, Ed.</p></div>
+        </div>
+        <div class="day1-time-block">
+          <span class="day1-time-pill">10:00 - 11:00</span>
+          <div class="day1-time-content"><h3>Computer and Systems Setup</h3><p class="sub">Microsoft 365, OneDrive, trustEd bookmarks, email signature.</p></div>
+        </div>
+        <div class="day1-time-block">
+          <span class="day1-time-pill">11:00 - 12:00</span>
+          <div class="day1-time-content"><h3>trustEd Platform Tour</h3><p class="sub">Six stops: Ask Ed, DRV, ACC, Portal, Claire/Isabella, Dashboard.</p></div>
+        </div>
+        <div class="day1-time-block">
+          <span class="day1-time-pill">12:00 - 1:00</span>
+          <div class="day1-time-content"><h3>Lunch</h3><p class="sub">Phones down. Culture time, not work time.</p></div>
+        </div>
+        <div class="day1-time-block">
+          <span class="day1-time-pill">1:00 - 3:00</span>
+          <div class="day1-time-content"><h3>Shadow Real Work</h3><p class="sub">Watch real tasks. Ask questions. No production work today.</p></div>
+        </div>
+        <div class="day1-time-block">
+          <span class="day1-time-pill">3:00 - 4:00</span>
+          <div class="day1-time-content"><h3>Wrap and Q&amp;A</h3><p class="sub">What surprised you. What you're excited about. What's next.</p></div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 9:00 - 9:30 The Manifesto Presentation -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">9:00 - 9:30</span><h2>The Manifesto Presentation</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">This is not HR orientation. This is why we exist, what we believe, and what they're part of.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            Walk through the onboarding deck together. Don't rush it. Let the slides breathe. Set the tone for everything that follows — deliver it like you mean it, not like you're reading slides. No laptops open during this section. Just listen and ask questions. End the section on the last slide: <em>"You didn't join an HOA company, friend."</em> That phrase carries everything else.
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            The first 30 minutes are about why Bedrock exists, what makes it different, and what role you'll play. Listen, ask questions, don't take notes yet — we want you focused on the ideas, not the logistics. The logistics are easy and come later.
+          </div>
+          <div class="day1-callout shared">
+            <span class="lbl">By end of section</span>
+            <ul style="margin: 4px 0 0; padding-left: 20px;">
+              <li>We're building the operating system for community management</li>
+              <li>Your role is the judgment layer, not clerical work</li>
+              <li>Every correction you make trains the system</li>
+              <li>By week six, you'll own one specific thing deeply</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 9:30 - 10:00 Team Introductions -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">9:30 - 10:00</span><h2>Team Introductions</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">No hierarchy theater. Real conversation about how work actually flows.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            Bring everyone in who's around. Have each person say their name, what they do day to day, and one thing the new hires should ask them about in week one. Keep it conversational — this is a moment to set the tone that questions are welcome and people are reachable.
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            You'll meet the team and learn what each person does. Don't worry about remembering everything — these are the people you'll work with daily and you'll learn their styles by working together. Ask anything you're curious about.
+          </div>
+          <div class="day1-callout shared">
+            <span class="lbl">People you'll work with</span>
+            <ul style="margin: 4px 0 0; padding-left: 20px;">
+              <li><strong>Martha</strong> — community manager, day-to-day operations</li>
+              <li><strong>Lizette</strong> — field, clubhouse operations</li>
+              <li><strong>Celina</strong> — accounting</li>
+              <li><strong>Ed</strong> — platform, strategy, everything else</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 10:00 - 11:00 Computer and Systems Setup -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">10:00 - 11:00</span><h2>Computer and Systems Setup</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">Get fully operational before anything else. Don't skip steps — a half-configured computer creates friction all week.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            This takes longer than you think. Plan to use the full hour. Sit with each person as they go through the checklist below. Don't move on until every box is checked — if email doesn't send by 11:00, the next sections suffer.
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            Work through the checklist below. If anything is missing, malfunctioning, or unclear — say so right away. The point of this hour is to leave with a fully working setup.
+          </div>
+
+          <p style="margin: 18px 0 8px; font-weight: 600; color: #0B1D34;">Setup checklist:</p>
+          <ul class="day1-checklist">
+            <li>Microsoft 365 login confirmed</li>
+            <li>Email sending and receiving tested</li>
+            <li>OneDrive synced</li>
+            <li>Chrome profile set up</li>
+            <li>Bookmarks saved: trustEd, Vantaca, SharePoint</li>
+            <li>Phone number and extension confirmed</li>
+            <li>Email signature set up with Bedrock template</li>
+          </ul>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 11:00 - 12:00 trustEd Platform Tour -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">11:00 - 12:00</span><h2>trustEd Platform Tour</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">This is an overview, not training. Understand what exists and how the pieces connect. Deep training happens Days 2 through 5.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            Six stops below. The platform tour can run long — that's okay. Let them ask questions. The goal is curiosity, not speed. For each stop, show the actual surface in trustEd, not slides. Let them watch you (or Martha) do real work in it.
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            You'll see six parts of the platform. The point isn't to remember the buttons. The point is to feel what the platform does, where the data lives, and how the pieces talk to each other. Ask anything that's confusing — confusion is a system problem, not a you problem.
+          </div>
+
+          <div class="day1-tour-stop">
+            <span class="stop-num">STOP 1</span> <span class="timing">10 min</span>
+            <h4>Ask Ed</h4>
+            <p><strong>What it is:</strong> The AI knowledge layer. Answers homeowner questions using community-specific governing documents and playbooks.</p>
+            <p><strong>What to show:</strong> Type a real homeowner question. Watch it pull the answer. Show how the response gets reviewed before it goes out.</p>
+            <p><strong>Key concept:</strong> The AI drafts. You supervise. Every correction makes it smarter.</p>
+          </div>
+
+          <div class="day1-tour-stop">
+            <span class="stop-num">STOP 2</span> <span class="timing">15 min</span>
+            <h4>DRV Module</h4>
+            <p><strong>What it is:</strong> Drive-by inspection workflow. Photos, violation documentation, letter generation, certified mail tracking.</p>
+            <p><strong>What to show:</strong> Walk through a completed DRV case end to end. Photo upload, the violation assessment, the letter that gets generated, the audit trail.</p>
+            <p><strong>Key concept:</strong> The system does the paperwork. You make the judgment call on whether the violation is real and whether the letter is right.</p>
+          </div>
+
+          <div class="day1-tour-stop">
+            <span class="stop-num">STOP 3</span> <span class="timing">10 min</span>
+            <h4>ACC Module</h4>
+            <p><strong>What it is:</strong> Architectural Control Committee workflow. Homeowner submits an application, system checks completeness, routes for review.</p>
+            <p><strong>What to show:</strong> Show Martha using it. Show how fast she can process an application now versus before.</p>
+            <p><strong>Key concept:</strong> Martha said "this is so easy." That's the standard for every module we build.</p>
+          </div>
+
+          <div class="day1-tour-stop">
+            <span class="stop-num">STOP 4</span> <span class="timing">10 min</span>
+            <h4>Homeowner Portal</h4>
+            <p><strong>What it is:</strong> Self-service layer for homeowners. Key fob orders, ARC applications, violation status, community information.</p>
+            <p><strong>What to show:</strong> Walk through it as a homeowner would. Show what they see when they log in.</p>
+            <p><strong>Key concept:</strong> Every feature in the portal reduces inbound calls to the team.</p>
+          </div>
+
+          <div class="day1-tour-stop">
+            <span class="stop-num">STOP 5</span> <span class="timing">10 min</span>
+            <h4>Claire and Isabella</h4>
+            <p><strong>What it is:</strong> AI voice agents answering homeowner calls in English and Spanish.</p>
+            <p><strong>What to show:</strong> Play a real call or demo call. Show how Claire handles a routine question and escalates a complex one.</p>
+            <p><strong>Key concept:</strong> Claire handles the routine. You handle the human moments that require judgment and empathy.</p>
+          </div>
+
+          <div class="day1-tour-stop">
+            <span class="stop-num">STOP 6</span> <span class="timing">5 min</span>
+            <h4>The Dashboard</h4>
+            <p><strong>What it is:</strong> Portfolio-wide view of community health. AR aging, violation status, ARC activity, response times.</p>
+            <p><strong>What to show:</strong> Show what you see as the operator. Show how data from every module feeds into one place.</p>
+            <p><strong>Key concept:</strong> Nothing falls through the cracks because everything is visible.</p>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 12:00 - 1:00 Lunch -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">12:00 - 1:00</span><h2>Lunch</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">Culture is built in moments like this, not in training sessions.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            You're buying. Don't skip it. Don't cut it short. Put the phones down. Get to know each other as people. This is not a working lunch.
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            Lunch is on Ed. Put your phone away. Get to know the team. This is the easy part.
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 1:00 - 3:00 Shadow Real Work -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">1:00 - 3:00</span><h2>Shadow Real Work</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">No production work today. Watch and ask questions.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            Pair each new hire with the right shadow assignment based on their role. They watch you or Martha execute real tasks. Default assignments below — adjust based on the morning conversations.
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            You're watching. No production work today. Your only job is to ask every question that comes to mind. If something seems inefficient, say so — fresh eyes catch things we've stopped seeing. If something is confusing, that's a system problem, not a you problem.
+          </div>
+
+          <p style="margin: 18px 0 8px; font-weight: 600; color: #0B1D34;">Default shadow assignments:</p>
+          <ul class="day1-checklist">
+            <li><strong>Laurie</strong> shadows a homeowner communication workflow. Watch Ed or Martha take an inquiry from receipt to response using Ask Ed.</li>
+            <li><strong>Alisha</strong> shadows a DRV case from start to finish. Watch how photos get taken, uploaded, assessed, and turned into a letter.</li>
+            <li><strong>Your wife</strong> shadows whatever feels most natural based on morning conversations. Likely administrative workflow or homeowner communications.</li>
+          </ul>
+
+          <div class="day1-callout shared">
+            <span class="lbl">Rules for shadowing</span>
+            <ul style="margin: 4px 0 0; padding-left: 20px;">
+              <li>Ask every question that comes to mind. Curiosity gets rewarded here.</li>
+              <li>If something seems inefficient, say so. Fresh eyes catch things we've stopped seeing.</li>
+              <li>If something is confusing, that's a system problem, not a you problem.</li>
+            </ul>
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- 3:00 - 4:00 Wrap and Q&A -->
+        <!-- ============================================================ -->
+        <div class="day1-section-card">
+          <div class="day1-section-header"><span class="pill">3:00 - 4:00</span><h2>Wrap and Q&amp;A</h2></div>
+          <p style="color: #64748b; margin: 4px 0 0;">Open floor.</p>
+
+          <div class="day1-callout facilitator">
+            <span class="lbl">Facilitator</span><br>
+            Open floor. Ask: what surprised you, what are you excited about, what are you nervous about, what questions didn't get answered today? Then close with three things:
+            <ol style="margin: 8px 0 0; padding-left: 20px;">
+              <li>What success looks like in week one</li>
+              <li>How to ask for help (don't struggle silently)</li>
+              <li>What "by week six you own one specific thing" actually means for each of them specifically</li>
+            </ol>
+          </div>
+          <div class="day1-callout participant">
+            <span class="lbl">Participant</span><br>
+            The day ends with an open conversation. Bring whatever questions, observations, or worries came up. Nothing's off-limits.
+          </div>
+        </div>
+
+        <!-- ============================================================ -->
+        <!-- End-of-day outcomes -->
+        <!-- ============================================================ -->
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 14px;">What you should know by end of Day 1</h2>
+        <ul style="padding-left: 22px;">
+          <li style="margin-bottom: 6px;">Why Bedrock exists and what makes it different</li>
+          <li style="margin-bottom: 6px;">Who everyone is and how the team works</li>
+          <li style="margin-bottom: 6px;">Where to find everything you need</li>
+          <li style="margin-bottom: 6px;">What the platform does at a high level</li>
+          <li style="margin-bottom: 6px;">What your first week looks like</li>
+          <li style="margin-bottom: 6px;">That questions are expected and welcomed</li>
+        </ul>
+
+        <h2 style="font-family: var(--font-serif, Georgia); font-size: 24px; font-weight: 500; color: var(--navy, #0B1D34); margin: 36px 0 14px;">What you should NOT do on Day 1</h2>
+        <ul style="padding-left: 22px;">
+          <li style="margin-bottom: 6px;">Send any communication to a homeowner without review</li>
+          <li style="margin-bottom: 6px;">Make any changes in Vantaca without guidance</li>
+          <li style="margin-bottom: 6px;">Feel like you need to know everything already</li>
+        </ul>
+
+        <div class="day1-facilitator-only" style="background: #fafbfc; border: 1px dashed #cbd5e1; border-radius: 10px; padding: 22px 26px; margin: 36px 0 0;">
+          <h2 style="font-family: var(--font-serif, Georgia); font-size: 20px; font-weight: 500; color: #0B1D34; margin: 0 0 14px;">Facilitator notes (Ed)</h2>
+          <ul style="padding-left: 22px; margin: 0;">
+            <li style="margin-bottom: 8px;">Keep the energy high in the morning. The presentation sets the tone — deliver it like you mean it.</li>
+            <li style="margin-bottom: 8px;">Lunch is important. Don't skip it or cut it short.</li>
+            <li style="margin-bottom: 8px;">The platform tour can run long. That's okay. Let them ask questions. The goal is curiosity, not speed.</li>
+            <li style="margin-bottom: 8px;">End the day on the last slide of the presentation: <em>"You didn't join an HOA company, friend."</em> Remind them what they signed up for.</li>
+          </ul>
+        </div>
+
+        <script>
+          (function() {
+            window.day1SetView = function(view) {
+              const article = document.getElementById('module-day1-orientation');
+              if (!article) return;
+              article.classList.remove('day1-mode-facilitator', 'day1-mode-participant');
+              article.classList.add('day1-mode-' + view);
+              const fac = document.getElementById('day1ViewFac');
+              const part = document.getElementById('day1ViewPart');
+              if (fac && part) {
+                fac.classList.toggle('active', view === 'facilitator');
+                part.classList.toggle('active', view === 'participant');
+              }
+            };
+          })();
+        </script>
       </article>
 
       <!-- Module 1 — askEd Foundations. -->
