@@ -106,8 +106,8 @@ router.get('/', async (req, res) => {
 const HOME_TILE_CATALOG = new Set([
   'asked', 'inspect', 'drafts', 'mail_queue', 'manual_violation',
   'builder_arc', 'acc', 'owner_ar', 'docs', 'meetings', 'events',
-  'vendor', 'community_profile', 'forms_applications', 'financial',
-  'board_packets', 'calendar', 'performance', 'quick',
+  'vendor', 'community_profile', 'bedrock_office', 'forms_applications',
+  'financial', 'board_packets', 'calendar', 'performance', 'quick',
 ]);
 
 router.patch('/me/preferences', express.json({ limit: '8kb' }), async (req, res) => {

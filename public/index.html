@@ -27010,6 +27010,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     calendar:           { label: 'Calendar',            icon: '🗓️', group: 'Operations', note: 'Schedule · deadlines',                action: () => switchTab('calendar') },
     vendor:             { label: 'Vendors',             icon: '🏢', group: 'Operations', note: 'Renewals · invoices',                 action: () => { if (typeof openTabGroup === 'function') openTabGroup('vendor'); else switchTab('vendor'); } },
     community_profile:  { label: 'Community Profile',   icon: '🏘️', group: 'Reference',  note: 'Per-community config · contacts',     action: () => { if (typeof openTabGroup === 'function') openTabGroup('community'); else switchTab('community'); } },
+    bedrock_office:     { label: 'Bedrock Office',      icon: '💼', group: 'Office',     note: 'Billing · Presentations · Values',     action: () => { if (typeof openTabGroup === 'function') openTabGroup('office'); else switchTab('billing'); } },
     forms_applications: { label: 'Forms & Applications', icon: '📑', group: 'Reference',  note: 'Form responses · status',             action: () => switchTab('forms') },
     performance:        { label: 'Performance',         icon: '📊', group: 'Reference',  note: 'KPIs · metrics',                       action: () => switchTab('perf') },
     quick:              { label: 'Quick',               icon: '⚡', group: 'Reference',  note: 'One-off tools',                        action: () => switchTab('quick') },
