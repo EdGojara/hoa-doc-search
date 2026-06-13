@@ -498,7 +498,7 @@
     const nextBtn = document.getElementById('nextBtn');
     if (current === total - 1) {
       nextBtn.textContent = '✓ Done';
-      nextBtn.onclick = () => { window.location.href = '/'; };
+      nextBtn.onclick = () => { window.location.href = '/training-values.html'; };
     } else {
       nextBtn.textContent = 'Continue →';
       nextBtn.onclick = goNext;
@@ -518,10 +518,10 @@
   document.addEventListener('keydown', (e) => {
     if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'Enter') {
       e.preventDefault();
-      if (current === total - 1) { window.location.href = '/'; }
+      if (current === total - 1) { window.location.href = '/training-values.html'; }
       else { goNext(); }
     } else if (e.key === 'ArrowLeft') { e.preventDefault(); goPrev(); }
-    else if (e.key === 'Escape') { window.location.href = '/'; }
+    else if (e.key === 'Escape') { window.location.href = '/training-values.html'; }
   });
 
   let touchStartX = 0;

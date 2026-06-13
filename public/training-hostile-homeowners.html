@@ -470,7 +470,7 @@
     <span class="module-tag">Bedrock University · Module 1</span>
     <div class="brand" style="margin-top: 2px;">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
   </div>
-  <a href="/" class="back-link">← Back to platform</a>
+  <a href="/training-values.html" class="back-link">← Back to Values</a>
 </div>
 
 <div class="layout">
@@ -996,6 +996,10 @@
   }
   document.addEventListener('scroll', setActive, { passive: true });
   setActive();
+
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { window.location.href = '/training-values.html'; }
+  });
 </script>
 
 </body>
