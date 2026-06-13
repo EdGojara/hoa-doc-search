@@ -287,9 +287,17 @@
     font-family: var(--font-mono); font-size: 10px;
     letter-spacing: 0.16em; color: rgba(255,255,255,0.35);
     text-transform: uppercase;
-    pointer-events: none;
     z-index: 100;
+    display: flex; align-items: center; gap: 12px;
   }
+  .fs-btn {
+    background: transparent; border: 1px solid rgba(212,175,55,0.4);
+    color: var(--gold); font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    padding: 4px 10px; border-radius: 999px; cursor: pointer;
+    transition: background 0.15s, color 0.15s;
+  }
+  .fs-btn:hover { background: rgba(212,175,55,0.15); color: var(--gold-bright); }
 
   /* Keyboard hint */
   kbd {
@@ -354,7 +362,10 @@
 <body>
 
 <div class="progress" id="progress" style="width: 0%;"></div>
-<div class="skip-hint">Press <kbd>→</kbd> to advance · <kbd>esc</kbd> to exit</div>
+<div class="skip-hint">
+  <button class="fs-btn" onclick="toggleFullscreen()" title="Toggle fullscreen (F11)" aria-label="Toggle fullscreen">⛶ Fullscreen</button>
+  <span>Press <kbd>→</kbd> to advance · <kbd>esc</kbd> to exit</span>
+</div>
 
 <div class="deck" id="deck">
 
@@ -775,6 +786,19 @@ document.addEventListener('keydown', (e) => {
   } else if (e.key === 'Escape') {
     window.location.href = '/training-values.html';
   }
+});
+
+function toggleFullscreen() {
+  if (!document.fullscreenElement) {
+    document.documentElement.requestFullscreen?.();
+  } else {
+    document.exitFullscreen?.();
+  }
+}
+document.addEventListener('fullscreenchange', () => {
+  document.querySelectorAll('.fs-btn').forEach((b) => {
+    b.innerHTML = document.fullscreenElement ? '⛶ Exit fullscreen' : '⛶ Fullscreen';
+  });
 });
 
 // Touch swipe support (mobile)

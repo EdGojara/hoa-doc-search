@@ -58,6 +58,14 @@
     letter-spacing: 0.18em; text-transform: uppercase;
     color: var(--gold-bright); opacity: 0.75; font-weight: 500;
   }
+  .fs-btn {
+    background: transparent; border: 1px solid rgba(212,175,55,0.4);
+    color: var(--gold-bright); font-family: var(--font-mono); font-size: 10px;
+    letter-spacing: 0.16em; text-transform: uppercase;
+    padding: 5px 12px; border-radius: 999px; cursor: pointer; font-weight: 500;
+    transition: background 0.15s;
+  }
+  .fs-btn:hover { background: rgba(212,175,55,0.15); }
   .skip-hint kbd {
     font-family: var(--font-mono); font-size: 10px;
     background: rgba(212,175,55,0.15);
@@ -194,6 +202,7 @@
     <div class="brand" style="margin-top: 2px;">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
   </div>
   <div style="display: flex; align-items: center; gap: 18px;">
+    <button class="fs-btn" onclick="toggleFullscreen()" title="Toggle fullscreen (F11)" aria-label="Toggle fullscreen">⛶ Fullscreen</button>
     <div class="skip-hint">Press <kbd>esc</kbd> to exit</div>
     <a href="/" class="back-link">← Back to office</a>
   </div>
@@ -306,6 +315,18 @@
 <script>
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Escape') { window.location.href = '/'; }
+  });
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) {
+      document.documentElement.requestFullscreen?.();
+    } else {
+      document.exitFullscreen?.();
+    }
+  }
+  document.addEventListener('fullscreenchange', () => {
+    document.querySelectorAll('.fs-btn').forEach((b) => {
+      b.innerHTML = document.fullscreenElement ? '⛶ Exit fullscreen' : '⛶ Fullscreen';
+    });
   });
 </script>
 
