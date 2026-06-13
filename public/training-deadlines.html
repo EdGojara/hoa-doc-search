@@ -1,0 +1,681 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 5 — Meeting Deadlines and Delivering on Your Word — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Montserrat:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #0B1D34; --navy-soft: #2A4870; --navy-line: #D6DDE7;
+    --gold: #B8943A; --gold-bright: #D4AF37; --gold-soft: #F3EBD0;
+    --cream: #FAF8F4; --cream-soft: #F4F0E6;
+    --ink: #1F2937; --ink-soft: #4B5563; --ink-faint: #6B7280;
+    --rule: #E5DFD0;
+    --red: #B91C1C; --red-bg: #FFF5F5; --red-line: #F4C5C5;
+    --green: #047857; --green-bg: #F0FFF4; --green-line: #B7DDC1;
+    --amber: #B54A07; --amber-bg: #FEF3C7; --amber-line: #F0CC8A;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--font-sans); background: var(--cream); color: var(--ink); -webkit-font-smoothing: antialiased; line-height: 1.65; font-weight: 400; }
+  .topbar { position: sticky; top: 0; z-index: 50; background: var(--cream); border-bottom: 1px solid var(--rule); padding: 14px 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; backdrop-filter: blur(8px); }
+  .topbar .brand { font-family: var(--font-serif); font-size: 16px; color: var(--navy); letter-spacing: -0.01em; }
+  .topbar .brand em { color: var(--gold); font-style: italic; }
+  .topbar .module-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); font-weight: 500; }
+  .topbar .back-link { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--navy); text-decoration: none; padding: 8px 16px; border: 1px solid var(--navy-line); border-radius: 999px; font-weight: 500; background: #fff; }
+  .topbar .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .progress-strip { background: #fff; border-bottom: 1px solid var(--rule); padding: 14px 32px; }
+  .progress-strip .ps-inner { max-width: 1240px; margin: 0 auto; display: flex; align-items: center; gap: 18px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
+  .progress-strip .ps-current { color: var(--navy); font-weight: 600; }
+  .progress-strip .ps-dots { display: flex; gap: 6px; align-items: center; }
+  .progress-strip .ps-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--navy-line); }
+  .progress-strip .ps-dot.done { background: var(--gold); }
+  .progress-strip .ps-dot.current { background: var(--navy); }
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 880px); gap: 56px; max-width: 1240px; margin: 0 auto; padding: 56px 32px 60px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; gap: 24px; padding: 28px 18px 40px; } .sidenav { position: static; max-height: none; } }
+  .sidenav { position: sticky; top: 100px; max-height: calc(100vh - 130px); overflow-y: auto; padding-right: 8px; }
+  .sidenav .sn-head { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin-bottom: 14px; }
+  .sidenav a { display: block; font-family: var(--font-sans); font-size: 13px; color: var(--ink-soft); text-decoration: none; padding: 7px 0 7px 14px; border-left: 2px solid transparent; line-height: 1.4; font-weight: 400; }
+  .sidenav a:hover { color: var(--navy); border-left-color: var(--gold); }
+  .sidenav a.active { color: var(--navy); border-left-color: var(--gold); font-weight: 600; }
+  .sidenav .sn-group { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; margin: 22px 0 6px 0; }
+  .doc-title { margin-bottom: 40px; padding-bottom: 32px; border-bottom: 1px solid var(--rule); }
+  .doc-title .doc-eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); margin-bottom: 16px; font-weight: 600; }
+  .doc-title h1 { font-family: var(--font-serif); font-weight: 500; font-size: clamp(40px, 5.4vw, 60px); line-height: 1.02; letter-spacing: -0.02em; color: var(--navy); margin-bottom: 14px; }
+  .doc-title h1 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .doc-title .doc-subtitle { font-family: var(--font-serif); font-style: italic; font-size: clamp(20px, 2.2vw, 26px); color: var(--navy-soft); font-weight: 400; }
+  .section-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin-bottom: 14px; display: block; }
+  section.doc-section { margin-bottom: 64px; scroll-margin-top: 110px; }
+  section.doc-section h2 { font-family: var(--font-serif); font-weight: 500; font-size: clamp(28px, 3.2vw, 38px); line-height: 1.12; letter-spacing: -0.012em; color: var(--navy); margin-bottom: 22px; }
+  section.doc-section h2 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  section.doc-section p { font-size: 16px; line-height: 1.75; color: var(--ink); margin-bottom: 16px; font-weight: 400; }
+  section.doc-section p strong { color: var(--navy); font-weight: 600; }
+  section.doc-section p em.gold { color: var(--gold); font-style: italic; font-weight: 500; }
+  section.doc-section .lead { font-family: var(--font-serif); font-style: italic; font-size: clamp(22px, 2.4vw, 28px); color: var(--navy); margin-bottom: 22px; line-height: 1.4; font-weight: 500; }
+  section.doc-section ul.plain { padding-left: 0; list-style: none; margin: 0 0 18px; }
+  section.doc-section ul.plain li { font-size: 16px; line-height: 1.75; color: var(--ink); padding: 6px 0 6px 24px; position: relative; font-weight: 400; }
+  section.doc-section ul.plain li::before { content: '→'; position: absolute; left: 0; top: 6px; color: var(--gold); font-weight: 700; }
+  .promise-card { background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--gold); padding: 36px 40px; border-radius: 0 12px 12px 0; margin: 24px 0 0; box-shadow: 0 2px 16px rgba(11,29,52,0.04); }
+  .promise-card .promise-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold); margin-bottom: 18px; font-weight: 600; }
+  .promise-card p { font-family: var(--font-serif); font-size: clamp(19px, 2.1vw, 23px); line-height: 1.55; color: var(--navy); margin-bottom: 14px; font-weight: 400; }
+  .promise-card p:last-child { margin-bottom: 0; }
+  .promise-card p strong { color: var(--navy); font-weight: 600; font-style: italic; }
+  .promise-card p em.gold { color: var(--gold); font-style: italic; font-weight: 500; font-size: clamp(22px, 2.4vw, 26px); }
+  .callout { background: #fff; border: 1px solid var(--rule); border-left: 3px solid var(--navy); padding: 22px 28px; border-radius: 0 8px 8px 0; margin: 22px 0; }
+  .callout.gold { background: var(--gold-soft); border: 1px solid #E8D89A; border-left: 3px solid var(--gold); }
+  .callout .callout-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; font-weight: 600; }
+  .callout p { margin-bottom: 8px; font-size: 16px; line-height: 1.65; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .quote-script { font-family: var(--font-serif); font-style: italic; font-size: 17px; line-height: 1.55; color: var(--navy); }
+  table.doc-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--gold); border-radius: 0 8px 8px 0; overflow: hidden; margin: 18px 0 24px; box-shadow: 0 2px 12px rgba(11,29,52,0.05); }
+  table.doc-table thead { background: var(--navy); color: #fff; }
+  table.doc-table th { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; padding: 16px 22px; text-align: left; font-weight: 600; color: #fff; }
+  table.doc-table tbody tr { border-top: 1px solid var(--rule); background: #fff; }
+  table.doc-table tbody tr:nth-child(even) { background: var(--cream-soft); }
+  table.doc-table tbody tr:first-child { border-top: none; }
+  table.doc-table td { padding: 16px 22px; vertical-align: top; font-size: 15px; line-height: 1.6; color: var(--ink); }
+  table.doc-table td:first-child { font-family: var(--font-serif); font-weight: 500; color: var(--navy); font-size: 17.5px; }
+  .four-step { display: grid; gap: 18px; margin: 18px 0 24px; }
+  .step-card { background: #fff; border: 1px solid var(--navy-line); border-radius: 10px; padding: 26px 28px 26px 30px; display: grid; grid-template-columns: 56px 1fr; gap: 22px; align-items: flex-start; }
+  .step-card .step-circle { width: 56px; height: 56px; border-radius: 50%; background: var(--gold); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-serif); font-size: 28px; font-weight: 600; line-height: 1; }
+  .step-card .step-title { font-family: var(--font-serif); font-size: 26px; color: var(--navy); font-weight: 500; margin-bottom: 12px; letter-spacing: -0.012em; line-height: 1.15; }
+  .step-card .step-body { font-size: 15.5px; line-height: 1.7; color: var(--ink); }
+  .step-card .step-body p { margin-bottom: 8px; }
+  .step-card .step-body p:last-child { margin-bottom: 0; }
+  .step-card .step-body em.gold { color: var(--gold); font-style: italic; font-weight: 500; }
+  .step-card .step-body strong { color: var(--navy); font-weight: 600; }
+  .step-card .step-body .prevention { background: var(--green-bg); border-left: 3px solid var(--green); padding: 10px 14px; border-radius: 0 6px 6px 0; margin-top: 10px; font-size: 14.5px; }
+  .step-card .step-body .prevention strong { color: var(--green); text-transform: uppercase; letter-spacing: 0.08em; font-size: 11px; }
+  .never-say { background: var(--red-bg); border: 1px solid var(--red-line); border-radius: 10px; padding: 24px 28px; margin-bottom: 18px; }
+  .ns-head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 14px; font-weight: 600; color: var(--red); }
+  .never-say ul { list-style: none; padding: 0; margin: 0; }
+  .never-say ul li { padding: 7px 0 7px 28px; font-size: 16px; line-height: 1.55; color: var(--ink); position: relative; font-family: var(--font-serif); font-style: italic; }
+  .never-say ul li::before { content: '❌'; position: absolute; left: 0; top: 8px; font-size: 13px; font-style: normal; }
+  .roleplay { margin: 28px 0 32px; }
+  .rp-setup-card { background: var(--navy-soft); color: #fff; border-radius: 10px 10px 0 0; padding: 26px 30px; }
+  .rp-setup-card .rp-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 10px; font-weight: 600; }
+  .rp-setup-card .rp-title { font-family: var(--font-serif); font-size: clamp(26px, 2.8vw, 32px); color: #fff; font-weight: 500; line-height: 1.15; letter-spacing: -0.012em; margin-bottom: 14px; }
+  .rp-setup-card .rp-setup-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 8px; font-weight: 600; display: block; }
+  .rp-setup-card .rp-setup-text { font-family: var(--font-serif); font-style: italic; font-size: 17px; color: #fff; line-height: 1.55; opacity: 0.95; }
+  .rp-quote { background: #fff; border: 1px solid var(--navy-line); border-top: none; padding: 22px 28px; font-family: var(--font-serif); font-style: italic; font-size: 18px; line-height: 1.5; color: var(--navy); }
+  .rp-quote::before { content: '"'; color: var(--gold); font-family: var(--font-serif); font-size: 36px; line-height: 0; vertical-align: -10px; margin-right: 4px; }
+  .rp-quote::after { content: '"'; color: var(--gold); font-family: var(--font-serif); font-size: 36px; line-height: 0; vertical-align: -10px; margin-left: 2px; }
+  .rp-response { border-radius: 10px; padding: 22px 26px; margin: 14px 0; border-left: 4px solid; }
+  .rp-response.wrong { background: var(--red-bg); border: 1px solid var(--red-line); border-left: 4px solid var(--red); }
+  .rp-response.right { background: var(--green-bg); border: 1px solid var(--green-line); border-left: 4px solid var(--green); }
+  .rp-response .rp-resp-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; margin-bottom: 12px; display: inline-flex; align-items: center; gap: 8px; }
+  .rp-response .rp-resp-label .mark { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+  .rp-response.wrong .rp-resp-label { color: var(--red); }
+  .rp-response.wrong .rp-resp-label .mark { background: var(--red); color: #fff; }
+  .rp-response.right .rp-resp-label { color: var(--green); }
+  .rp-response.right .rp-resp-label .mark { background: var(--green); color: #fff; }
+  .rp-response .rp-resp-quote { font-family: var(--font-serif); font-style: italic; font-size: 17px; line-height: 1.55; color: var(--ink); margin-bottom: 14px; }
+  .rp-response .rp-resp-quote strong { font-style: normal; font-family: var(--font-sans); font-weight: 600; color: var(--navy); }
+  .rp-response .rp-why { font-family: var(--font-sans); font-size: 13.5px; color: var(--ink-soft); line-height: 1.6; padding-top: 12px; border-top: 1px solid rgba(0,0,0,0.08); }
+  .rp-response.wrong .rp-why { border-top-color: rgba(185,28,28,0.18); }
+  .rp-response.right .rp-why { border-top-color: rgba(4,120,87,0.18); }
+  .rp-response .rp-why strong { color: var(--navy); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+  .rp-debrief { margin-top: 18px; background: #fff; border: 1px solid #E8D89A; border-left: 4px solid var(--gold); border-radius: 0 10px 10px 0; padding: 22px 28px; }
+  .rp-debrief .rp-d-head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); margin-bottom: 14px; font-weight: 700; }
+  .rp-debrief ul { list-style: none; padding: 0; margin: 0; }
+  .rp-debrief ul li { font-family: var(--font-serif); font-style: italic; font-size: 16.5px; color: var(--navy); padding: 7px 0 7px 28px; line-height: 1.55; position: relative; font-weight: 400; }
+  .rp-debrief ul li::before { content: '?'; color: var(--gold); font-weight: 700; position: absolute; left: 0; top: 6px; font-family: var(--font-sans); font-style: normal; font-size: 18px; }
+  .values-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 22px 0; }
+  .value-card { background: #fff; border: 1px solid var(--rule); border-top: 3px solid var(--gold); border-radius: 0 0 10px 10px; padding: 24px 26px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .value-card .v-num { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.22em; color: var(--gold); font-weight: 600; margin-bottom: 4px; }
+  .value-card .v-name { font-family: var(--font-serif); font-size: 26px; font-weight: 500; color: var(--gold); margin-bottom: 6px; letter-spacing: -0.012em; line-height: 1.1; }
+  .value-card .v-detail { font-size: 14.5px; line-height: 1.6; color: var(--navy); font-weight: 400; }
+  .one-thing-wrap { background: var(--navy); margin: 64px -32px -60px; padding: 64px 32px 80px; }
+  @media (max-width: 900px) { .one-thing-wrap { margin: 40px -18px -40px; padding: 48px 24px 64px; } }
+  .one-thing { max-width: 880px; margin: 0 auto; text-align: center; }
+  .one-thing .ot-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 26px; font-weight: 600; }
+  .one-thing .ot-line { font-family: var(--font-serif); font-weight: 500; font-size: clamp(28px, 3.8vw, 42px); line-height: 1.18; letter-spacing: -0.012em; color: #fff; margin-bottom: 14px; }
+  .one-thing .ot-line em { color: var(--gold-bright); font-style: italic; font-weight: 500; }
+  .one-thing .ot-divider { width: 60px; height: 1px; background: var(--gold-bright); opacity: 0.5; margin: 28px auto; }
+  .one-thing .ot-final { font-family: var(--font-serif); font-style: italic; font-size: clamp(22px, 2.6vw, 30px); color: var(--gold-bright); margin-top: 8px; font-weight: 500; }
+  .module-nav { max-width: 1240px; margin: 0 auto; padding: 32px 32px 0; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .module-nav .mn-btn { display: inline-flex; align-items: center; gap: 12px; background: transparent; border: 1px solid var(--gold-bright); color: var(--gold-bright); padding: 14px 22px; border-radius: 999px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .module-nav .mn-btn:hover:not(:disabled):not(.disabled) { background: var(--gold-bright); color: var(--navy); }
+  .module-nav .mn-btn.disabled, .module-nav .mn-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .module-nav .mn-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.55); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <div class="module-tag">Bedrock University</div>
+    <div class="brand" style="margin-top: 2px;">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+  </div>
+  <a href="/training-values.html" class="back-link">← Back to Values</a>
+</div>
+
+<div class="progress-strip">
+  <div class="ps-inner">
+    <span class="ps-current">Module 5 of 5</span>
+    <div class="ps-dots">
+      <span class="ps-dot done"></span>
+      <span class="ps-dot done"></span>
+      <span class="ps-dot done"></span>
+      <span class="ps-dot done"></span>
+      <span class="ps-dot current"></span>
+    </div>
+    <span style="margin-left: auto;">Meeting Deadlines &amp; Delivering on Your Word</span>
+  </div>
+</div>
+
+<div class="layout">
+
+  <aside class="sidenav">
+    <div class="sn-head">In this module</div>
+    <a href="#promise">The Bedrock Promise</a>
+    <a href="#last">Why This Module Comes Last</a>
+    <a href="#powerful">The Most Powerful Thing You Can Do</a>
+    <a href="#hard">Why This Is So Hard</a>
+    <a href="#hierarchy">The Commitment Hierarchy</a>
+    <a href="#24hour">The 24-Hour Rule — Revisited</a>
+    <a href="#last5">The Last 5% — Revisited</a>
+    <a href="#failure-modes">The Four Failure Modes</a>
+    <a href="#miss">When You're Going to Miss a Deadline</a>
+    <a href="#log">The Commitment Log</a>
+    <a href="#daily">The Daily Habit</a>
+    <a href="#weekly-habit">The Weekly Habit</a>
+    <a href="#proactive">Proactive Communication</a>
+    <a href="#never-say">What To Never Say or Do</a>
+    <div class="sn-group">Role plays</div>
+    <a href="#rp-5a">5A — The Forgotten Commitment</a>
+    <a href="#rp-5b">5B — The Proactive Miss</a>
+    <a href="#rp-5c">5C — The Handoff That Didn't Happen</a>
+    <div class="sn-group">Reference</div>
+    <a href="#trustEd-loop">The trustEd Loop</a>
+    <a href="#values">The Five Bedrock Values</a>
+    <a href="#standards">Measurable Standards</a>
+    <a href="#weekly">The Weekly Practice</a>
+    <a href="#one-thing">The One Thing</a>
+  </aside>
+
+  <main>
+
+    <div class="doc-title">
+      <div class="doc-eyebrow">Training Module 5</div>
+      <h1>Meeting Deadlines and Delivering on Your <em>Word</em></h1>
+      <div class="doc-subtitle">The Foundation Everything Else Is Built On.</div>
+    </div>
+
+    <section class="doc-section" id="promise">
+      <span class="section-label">The Bedrock Promise</span>
+      <h2>The Bedrock <em>Promise</em></h2>
+      <div class="promise-card">
+        <div class="promise-label">Our Creed</div>
+        <p>At Bedrock, we treat every homeowner, board member, vendor, and coworker with dignity and respect. We enforce community standards fairly and consistently. We solve problems, communicate clearly, and continuously improve our systems.</p>
+        <p><em class="gold">None of that is possible if we don't do what we say we're going to do.</em></p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="last">
+      <span class="section-label">Why This Module Comes Last</span>
+      <h2>Why This Module Comes <em>Last</em></h2>
+      <p>We saved this for last intentionally.</p>
+      <p>Look back at the four modules before this one:</p>
+      <ul class="plain">
+        <li><strong>Hostile homeowners</strong> — most started because someone didn't follow up.</li>
+        <li><strong>Demanding board members</strong> — most frustrated because management didn't deliver.</li>
+        <li><strong>Compliance resistance</strong> — most entrenched because enforcement was inconsistent.</li>
+        <li><strong>Delinquent collections</strong> — many escalated because outreach was delayed.</li>
+      </ul>
+      <p>A significant percentage of every difficult interaction you will ever have traces back to one root cause:</p>
+      <div class="callout gold">
+        <p><em class="gold">Someone said they would do something and didn't.</em></p>
+      </div>
+      <p><strong>This module is the foundation everything else is built on.</strong></p>
+    </section>
+
+    <section class="doc-section" id="powerful">
+      <span class="section-label">Foundation</span>
+      <h2>The Most Powerful Thing You Can <em>Do</em></h2>
+      <div class="lead">Do what you said you would do. By when you said you would do it. Every time.</div>
+      <p>That's it.</p>
+      <p>It sounds simple.</p>
+      <p>It is the hardest thing to do consistently in a high-volume, high-interruption business.</p>
+      <p><strong>And it is the single biggest differentiator between Bedrock and every other HOA management company.</strong></p>
+    </section>
+
+    <section class="doc-section" id="hard">
+      <span class="section-label">Reality Check</span>
+      <h2>Why This Is So Hard in HOA <em>Management</em></h2>
+      <p>HOA management is an interruption-driven business.</p>
+      <p>You plan your day. Three urgent calls come in. A board member needs something immediately. A vendor has an emergency. A homeowner shows up at the office.</p>
+      <p>By end of day the things you committed to that morning haven't been done.</p>
+      <p><strong>This is the reality of the job.</strong></p>
+      <p>The answer is not to commit to less.</p>
+      <p>The answer is to <em class="gold">build systems that make follow-through inevitable.</em></p>
+      <p>That's exactly what trustEd is designed to do.</p>
+    </section>
+
+    <section class="doc-section" id="hierarchy">
+      <span class="section-label">Standard</span>
+      <h2>The Commitment <em>Hierarchy</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Commitment Type</th><th>Example</th><th>Standard</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Immediate</td><td><em>"I'll send that to you right now"</em></td><td>Do it before you hang up</td></tr>
+          <tr><td>Same day</td><td><em>"I'll get back to you today"</em></td><td>Before end of business</td></tr>
+          <tr><td>24-hour</td><td><em>"I'll have an answer for you tomorrow"</em></td><td>By same time next day</td></tr>
+          <tr><td>Specific date</td><td><em>"I'll have this to you by Friday"</em></td><td>By end of day Friday</td></tr>
+          <tr><td>Open-ended</td><td><em>"I'll look into it"</em></td><td>Never acceptable — always convert to specific</td></tr>
+        </tbody>
+      </table>
+      <p><strong>Never make open-ended commitments.</strong></p>
+      <p>Every <em class="gold">"I'll look into it"</em> must become <em class="gold">"I'll have an answer for you by [specific day and time]."</em></p>
+      <p>Open-ended commitments are where follow-through goes to die.</p>
+    </section>
+
+    <section class="doc-section" id="24hour">
+      <span class="section-label">Standard</span>
+      <h2>The 24-Hour Rule — <em>Revisited</em></h2>
+      <p>Every communication receives a response within one business day.</p>
+      <p>Even if you don't have the answer yet.</p>
+      <p>Even if the issue isn't resolved yet.</p>
+      <div class="callout">
+        <p><em class="gold">"I've received your message and I'm working on it. I'll have an update for you by [specific day]."</em></p>
+      </div>
+      <p>That one sentence prevents more hostile calls, demanding board emails, and escalations than almost anything else we do.</p>
+      <p><strong>Silence is never acceptable.</strong></p>
+      <p><strong>A brief acknowledgment is always better than nothing.</strong></p>
+    </section>
+
+    <section class="doc-section" id="last5">
+      <span class="section-label">Service Discipline</span>
+      <h2>The Last 5% — <em>Revisited</em></h2>
+      <p>Most companies solve problems.</p>
+      <p>Few companies close loops.</p>
+      <p><strong>Closing the loop means:</strong></p>
+      <ul class="plain">
+        <li>Calling when you promised to call</li>
+        <li>Sending the follow-up after the issue is resolved</li>
+        <li>Checking back to confirm the homeowner is satisfied</li>
+        <li>Telling someone <em class="gold">"We took care of what you raised"</em></li>
+      </ul>
+      <p>The last 5% is where trust is actually built.</p>
+      <p>Anyone can open a ticket.</p>
+      <p><em class="gold">We close them — and then we confirm they're closed.</em></p>
+    </section>
+
+    <section class="doc-section" id="failure-modes">
+      <span class="section-label">Diagnostic</span>
+      <h2>The Four Failure <em>Modes</em></h2>
+      <div class="four-step">
+        <div class="step-card">
+          <div class="step-circle">1</div>
+          <div>
+            <div class="step-title">The Forgotten Commitment</div>
+            <div class="step-body">
+              <p>You said you'd follow up. You got busy. You forgot.</p>
+              <div class="prevention"><strong>Prevention</strong> · Log every commitment in trustEd the moment you make it. Not later. The moment you make it.</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">2</div>
+          <div>
+            <div class="step-title">The Assumed Handoff</div>
+            <div class="step-body">
+              <p>You passed it to someone else and assumed they handled it. They didn't.</p>
+              <div class="prevention"><strong>Prevention</strong> · Ownership doesn't transfer until you confirm the other person has it. Never assume. Always confirm.</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">3</div>
+          <div>
+            <div class="step-title">The Partial Close</div>
+            <div class="step-body">
+              <p>You solved part of the problem but not all of it. You considered it done. The homeowner didn't.</p>
+              <div class="prevention"><strong>Prevention</strong> · Before closing any issue, confirm with the homeowner that it's resolved from their perspective.</div>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">4</div>
+          <div>
+            <div class="step-title">The Silent Miss</div>
+            <div class="step-body">
+              <p>You missed a deadline and said nothing. The homeowner found out when they followed up.</p>
+              <div class="prevention"><strong>Prevention</strong> · If you're going to miss a deadline, tell the person before the deadline passes. Not after.</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="miss">
+      <span class="section-label">Crisis Protocol</span>
+      <h2>When You're Going to Miss a <em>Deadline</em></h2>
+      <p><strong>The wrong response:</strong> Say nothing and hope they don't notice.</p>
+      <p><strong>The right response:</strong> Tell them before the deadline, reset expectations, and deliver on the new commitment.</p>
+      <div class="callout gold">
+        <p class="quote-script"><em>"I wanted to reach out before Friday because I told you I'd have an update today and I don't have it yet. Here's where we are and I expect to have a full answer for you by Monday. I'm sorry for the delay and I wanted you to hear from me rather than just not hearing anything."</em></p>
+      </div>
+      <p>That single call or email turns a trust-breaking moment into a trust-building one.</p>
+      <p>People understand delays.</p>
+      <p><em class="gold">What they cannot forgive is silence.</em></p>
+    </section>
+
+    <section class="doc-section" id="log">
+      <span class="section-label">Discipline</span>
+      <h2>The Commitment <em>Log</em></h2>
+      <p>Every commitment you make goes into trustEd immediately.</p>
+      <p><strong>What to log:</strong></p>
+      <ul class="plain">
+        <li>Who you made the commitment to</li>
+        <li>What you committed to do</li>
+        <li>By when</li>
+        <li>Current status</li>
+      </ul>
+      <p>This is not optional.</p>
+      <p>This is how we make follow-through systematic instead of dependent on memory.</p>
+      <p><strong>A commitment that isn't logged is a commitment that's at risk.</strong></p>
+    </section>
+
+    <section class="doc-section" id="daily">
+      <span class="section-label">Practice</span>
+      <h2>The Daily <em>Habit</em></h2>
+      <p>Every morning, before you do anything else:</p>
+      <p>Open your commitment log in trustEd.</p>
+      <ul class="plain">
+        <li>What is due today?</li>
+        <li>What is overdue?</li>
+      </ul>
+      <p>Address overdue items first.</p>
+      <p>Schedule due-today items before anything else.</p>
+      <p>Then handle the day's interruptions.</p>
+      <p><strong>This habit — five minutes every morning — prevents more problems than any other single practice we can teach you.</strong></p>
+    </section>
+
+    <section class="doc-section" id="weekly-habit">
+      <span class="section-label">Practice</span>
+      <h2>The Weekly <em>Habit</em></h2>
+      <p>Every Friday before you leave:</p>
+      <p>Review everything open in your name in trustEd.</p>
+      <ul class="plain">
+        <li>What needs a follow-up before the weekend?</li>
+        <li>What needs a status update to a homeowner or board member?</li>
+        <li>What can you close?</li>
+      </ul>
+      <p>Never let a homeowner or board member spend the weekend wondering where their issue stands if you can prevent it.</p>
+      <p><strong>A Friday afternoon update — even just <em class="gold">"still working on it, will have more Monday"</em> — goes further than you think.</strong></p>
+    </section>
+
+    <section class="doc-section" id="proactive">
+      <span class="section-label">Discipline</span>
+      <h2>Proactive <em>Communication</em></h2>
+      <p>The highest form of follow-through isn't responding when asked.</p>
+      <div class="lead">It's communicating before anyone has to ask.</div>
+      <p><strong>Examples:</strong></p>
+      <ul class="plain">
+        <li>A vendor is running behind on a repair. You tell the board before they ask.</li>
+        <li>An ARC application is taking longer than expected. You tell the homeowner before the deadline passes.</li>
+        <li>A collections account is approaching attorney referral. You update Ed before he has to check.</li>
+      </ul>
+      <p>Proactive communication is the difference between being managed and being a professional.</p>
+      <p>Boards that never have to chase us become our strongest advocates.</p>
+      <p>Boards that constantly have to follow up become our biggest headaches.</p>
+      <p><strong>The difference is almost always proactive communication.</strong></p>
+    </section>
+
+    <section class="doc-section" id="never-say">
+      <span class="section-label">Language</span>
+      <h2>What To Never Say or <em>Do</em></h2>
+      <div class="never-say">
+        <div class="ns-head">Never Say or Do</div>
+        <ul>
+          <li>"I'll look into it." (Without a specific follow-up commitment)</li>
+          <li>Letting a deadline pass without notifying the person</li>
+          <li>Assuming someone else handled it without confirming</li>
+          <li>Closing an issue without confirming it's resolved from the other person's perspective</li>
+          <li>Waiting for someone to follow up before you give them a status update</li>
+          <li>"I sent an email." (Without confirming it was received and understood)</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-5a">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 5A — The Forgotten <em>Commitment</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 5A</div>
+          <div class="rp-title">The Forgotten Commitment</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A board member calls. You promised them a vendor quote by Wednesday. It's Friday. You forgot.</div>
+        </div>
+        <div class="rp-quote">I'm still waiting on that vendor quote you said you'd have for me Wednesday. What happened?</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"I've been really busy this week. I'll get it to you Monday."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>No ownership. No apology. Extends the delay without acknowledging the miss.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"You're right and I owe you an apology. I committed to Wednesday and I didn't deliver. That's on me. I have the quote — I can send it to you within the hour. And going forward I'll make sure I reach out to you before a deadline if I'm running behind rather than letting it pass without communication."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Took full ownership without excuses. Apologized directly. Fixed it immediately. Committed to better behavior going forward.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if you don't actually have the quote yet?</li>
+            <li>How do you rebuild trust with a board member after missing a commitment?</li>
+            <li>What should you have done on Wednesday when you realized you weren't going to make it?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-5b">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 5B — The Proactive <em>Miss</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 5B</div>
+          <div class="rp-title">The Proactive Miss</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">You promised a homeowner you'd have their ARC application reviewed by the board within two weeks. It's been ten days and you realize the board meeting is delayed.</div>
+        </div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> The Wrong Approach</div>
+          <div class="rp-resp-quote">Wait until the two-week deadline passes. Then respond when they call.</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>The trust-breaking moment happens silently. The homeowner finds out by following up. You're already on defense before the conversation starts.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> The Right Approach</div>
+          <div class="rp-resp-quote"><strong>Call or email before the deadline:</strong> "I wanted to reach out before your two-week window closes because I have an update. Our board meeting has been rescheduled and your application will be reviewed at the following meeting on [date] instead. I know that's later than what I told you and I'm sorry for the change. The good news is your application is complete and ready for review. Is there anything you need from me in the meantime?"</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Got ahead of the miss before it happened. Acknowledged the impact on them. Gave a specific new date. Offered to help in the meantime.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if the homeowner is frustrated about the delay?</li>
+            <li>How do you handle a board meeting that keeps getting rescheduled?</li>
+            <li>What can you do to expedite an ARC review when a homeowner has time-sensitive plans?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-5c">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 5C — The Handoff That Didn't <em>Happen</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 5C</div>
+          <div class="rp-title">The Handoff That Didn't Happen</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner calls angry. They say they were told two weeks ago that someone would call them about their violation. Nobody ever called.</div>
+        </div>
+        <div class="rp-quote">I was told someone would follow up with me about my violation letter. That was two weeks ago. Nobody has called me. What kind of operation are you running?</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"I'm sorry, I don't see any notes about that in your file. Let me find out what happened."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>Puts the investigation burden on the homeowner. Sounds like you're doubting them. No ownership.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"I completely understand your frustration and I apologize — that follow-up should have happened and it didn't. Regardless of what happened internally, I'm here now and I want to make sure we take care of this today. Can you tell me what the violation was about and what questions you had? I'm going to own this from here."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Took immediate ownership without investigating who was at fault first. Apologized for the failure. Moved directly to solving the problem. Made a clear commitment going forward.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>After you resolve the issue with the homeowner, what do you do internally?</li>
+            <li>How do you document a handoff failure in trustEd?</li>
+            <li>What process change would prevent this from happening again?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="trustEd-loop">
+      <span class="section-label">Learning Loop</span>
+      <h2>The trustEd Loop — Commitment <em>Edition</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Category</th><th>Example</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Forgotten commitment</td><td>Logged item not acted on</td></tr>
+          <tr><td>Failed handoff</td><td>Transferred item not picked up</td></tr>
+          <tr><td>Partial close</td><td>Issue considered done but wasn't</td></tr>
+          <tr><td>Silent miss</td><td>Deadline passed without communication</td></tr>
+          <tr><td>Volume overload</td><td>Too many commitments, insufficient capacity</td></tr>
+        </tbody>
+      </table>
+      <p>Then ask: <em class="gold">"What did this failure teach Bedrock?"</em></p>
+      <p>If the same failure mode keeps appearing, it's a system problem not a people problem.</p>
+      <p><strong>Fix the system.</strong></p>
+    </section>
+
+    <section class="doc-section" id="values">
+      <span class="section-label">Reference</span>
+      <h2>The Five Bedrock Values — Applied to <em>Commitments</em></h2>
+      <div class="values-grid">
+        <div class="value-card">
+          <div class="v-num">No. 01</div>
+          <div class="v-name">Hospitality</div>
+          <div class="v-detail">Treat every commitment like a promise to a guest. You wouldn't invite someone to dinner and not tell them you had to cancel. Don't do it to homeowners and board members either.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 02</div>
+          <div class="v-name">Ownership</div>
+          <div class="v-detail">The commitment belongs to you until it's done or formally transferred. Not done means not done. No partial credit.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 03</div>
+          <div class="v-name">Consistency</div>
+          <div class="v-detail">Follow through every time. Not when it's convenient. Not when you remember. Every time. That's what trust is built on.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 04</div>
+          <div class="v-name">Communication</div>
+          <div class="v-detail">If you're going to miss something, say so before the deadline. Not after. Before.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 05</div>
+          <div class="v-name">Improvement</div>
+          <div class="v-detail">Every follow-through failure is a system signal. Log it. Learn from it. Fix the process so it doesn't happen again.</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="standards">
+      <span class="section-label">Scorecard</span>
+      <h2>Measurable <em>Standards</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Standard</th><th>Target</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Commitments logged in trustEd at time of making</td><td>100%</td></tr>
+          <tr><td>Commitments delivered on time</td><td>95% minimum</td></tr>
+          <tr><td>Missed deadlines communicated before they pass</td><td>100%</td></tr>
+          <tr><td>Open items reviewed daily</td><td>Every morning</td></tr>
+          <tr><td>Friday status updates on open items</td><td>100%</td></tr>
+          <tr><td>Handoffs confirmed with receiving party</td><td>100%</td></tr>
+          <tr><td>Issues closed without confirming resolution</td><td>Zero</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="doc-section" id="weekly">
+      <span class="section-label">Practice</span>
+      <h2>The Weekly <em>Practice</em></h2>
+      <p>Every Monday for the first month, five minutes:</p>
+      <p>One scenario. Rotate who plays the homeowner or board member.</p>
+      <p><strong>After each role play:</strong></p>
+      <ul class="plain">
+        <li>Did we take full ownership?</li>
+        <li>Did we communicate before the miss or after?</li>
+        <li>Did we set a specific new commitment?</li>
+        <li>What system change would prevent this?</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="one-thing" style="margin-bottom: 0;">
+      <div class="one-thing-wrap">
+        <div class="one-thing">
+          <div class="ot-label">The One Thing — If you remember nothing else</div>
+          <div class="ot-line">Do what you said you would do.</div>
+          <div class="ot-line">By when you said you would do it.</div>
+          <div class="ot-line">And if you can't — say so <em>before</em> the deadline, not after.</div>
+          <div class="ot-divider"></div>
+          <div class="ot-line">That single discipline — practiced consistently — will make you the most trusted person in every relationship you have at Bedrock.</div>
+          <div class="ot-divider"></div>
+          <div class="ot-line">The homeowner who trusts you doesn't become the hostile caller.</div>
+          <div class="ot-line">The board member who trusts you doesn't text at 9pm.</div>
+          <div class="ot-line">The colleague who trusts you doesn't have to check behind you.</div>
+          <div class="ot-divider"></div>
+          <div class="ot-line">Trust is built one <em>kept promise</em> at a time.</div>
+          <div class="ot-final">Build it deliberately. Every single day.</div>
+
+          <div class="module-nav" style="margin-top: 56px; padding: 0;">
+            <a class="mn-btn" href="/training-collections.html">← Previous Module</a>
+            <span class="mn-label">Module 5 of 5</span>
+            <a class="mn-btn" href="/training-values.html">Finish ✓</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  const sections = document.querySelectorAll('.doc-section[id]');
+  const navLinks = document.querySelectorAll('.sidenav a');
+  function setActive() {
+    let activeId = null;
+    const offset = 140;
+    sections.forEach((s) => { const top = s.getBoundingClientRect().top; if (top - offset <= 0) activeId = s.id; });
+    navLinks.forEach((a) => { a.classList.toggle('active', a.getAttribute('href') === '#' + activeId); });
+  }
+  document.addEventListener('scroll', setActive, { passive: true });
+  setActive();
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.location.href = '/training-values.html'; } });
+</script>
+
+</body>
+</html>

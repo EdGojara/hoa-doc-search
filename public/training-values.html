@@ -4,23 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Bedrock Values</title>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Montserrat:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   :root {
-    --navy: #0B1D34;
-    --navy-soft: #2A4870;
-    --gold: #D4AF37;
-    --gold-bright: #e8c96e;
-    --cream: #FAFAF6;
-    --cream-soft: #F5F4ED;
-    --ink: #1a1a1a;
-    --ink-soft: #4a4a4a;
-    --ink-faint: #7a7a7a;
-    --rule: #E5E3DA;
-    --black: #0a0e16;
+    --navy: #0B1D34; --navy-soft: #2A4870;
+    --gold: #B8943A; --gold-bright: #D4AF37;
+    --cream: #FAF8F4; --cream-soft: #F4F0E6;
+    --ink: #1F2937; --ink-soft: #4B5563; --ink-faint: #6B7280;
+    --rule: #E5DFD0;
     --font-serif: 'Cormorant Garamond', Georgia, serif;
-    --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, monospace;
   }
   body {
@@ -29,6 +23,7 @@
     color: var(--ink);
     -webkit-font-smoothing: antialiased;
     min-height: 100vh;
+    font-weight: 400;
   }
 
   /* ---- Top brand bar ---- */
@@ -44,43 +39,43 @@
     font-family: var(--font-serif); font-size: 16px;
     color: var(--cream); letter-spacing: -0.01em;
   }
-  .topbar .brand em { color: var(--gold); font-style: italic; }
+  .topbar .brand em { color: var(--gold-bright); font-style: italic; }
   .topbar .tag {
     font-family: var(--font-mono); font-size: 10.5px;
     letter-spacing: 0.2em; text-transform: uppercase;
-    color: var(--gold); opacity: 0.9;
+    color: var(--gold-bright); opacity: 0.9; font-weight: 500;
   }
   .topbar .back-link {
     font-family: var(--font-mono); font-size: 11px;
     letter-spacing: 0.16em; text-transform: uppercase;
-    color: var(--gold); text-decoration: none;
+    color: var(--gold-bright); text-decoration: none;
     padding: 6px 14px; border: 1px solid rgba(212,175,55,0.4);
-    border-radius: 999px;
+    border-radius: 999px; font-weight: 500;
   }
   .topbar .back-link:hover { background: rgba(212,175,55,0.1); }
   .skip-hint {
     font-family: var(--font-mono); font-size: 10px;
     letter-spacing: 0.18em; text-transform: uppercase;
-    color: var(--gold); opacity: 0.75;
+    color: var(--gold-bright); opacity: 0.75; font-weight: 500;
   }
   .skip-hint kbd {
     font-family: var(--font-mono); font-size: 10px;
     background: rgba(212,175,55,0.15);
     border: 1px solid rgba(212,175,55,0.4);
     padding: 1px 6px; border-radius: 4px; margin: 0 2px;
-    color: var(--gold);
+    color: var(--gold-bright); font-weight: 500;
   }
 
   /* ---- Hero ---- */
   .hero {
     max-width: 1100px; margin: 0 auto;
-    padding: 64px 32px 32px;
+    padding: 56px 32px 24px;
     text-align: center;
   }
   .hero .eyebrow {
     font-family: var(--font-mono); font-size: 11.5px;
     letter-spacing: 0.28em; text-transform: uppercase;
-    color: var(--gold); margin-bottom: 18px;
+    color: var(--gold); margin-bottom: 18px; font-weight: 600;
   }
   .hero h1 {
     font-family: var(--font-serif); font-weight: 500;
@@ -93,13 +88,37 @@
     font-family: var(--font-serif); font-style: italic;
     font-size: clamp(20px, 2.2vw, 26px);
     color: var(--navy-soft); max-width: 720px; margin: 0 auto;
-    line-height: 1.45;
+    line-height: 1.45; font-weight: 400;
+  }
+
+  /* ---- Section header ---- */
+  .section-head {
+    max-width: 1100px; margin: 64px auto 0;
+    padding: 0 32px;
+    border-bottom: 1px solid var(--rule);
+    padding-bottom: 14px; margin-bottom: 28px;
+  }
+  .section-head .sh-eyebrow {
+    font-family: var(--font-mono); font-size: 11px;
+    letter-spacing: 0.26em; text-transform: uppercase;
+    color: var(--gold); margin-bottom: 8px; font-weight: 600;
+  }
+  .section-head .sh-title {
+    font-family: var(--font-serif); font-weight: 500;
+    font-size: clamp(28px, 3.4vw, 38px);
+    color: var(--navy); letter-spacing: -0.015em; line-height: 1.1;
+    margin-bottom: 6px;
+  }
+  .section-head .sh-title em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .section-head .sh-desc {
+    font-family: var(--font-serif); font-style: italic;
+    font-size: 18px; color: var(--ink-soft); font-weight: 400;
   }
 
   /* ---- Module grid ---- */
   .grid {
     max-width: 1100px; margin: 0 auto;
-    padding: 32px 32px 80px;
+    padding: 0 32px;
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
     gap: 22px;
@@ -129,27 +148,27 @@
   .card .tag {
     font-family: var(--font-mono); font-size: 10.5px;
     letter-spacing: 0.18em; text-transform: uppercase;
-    color: var(--gold); margin-bottom: 12px;
+    color: var(--gold); margin-bottom: 12px; font-weight: 600;
   }
   .card .title {
     font-family: var(--font-serif); font-weight: 500;
-    font-size: clamp(26px, 2.6vw, 32px);
-    line-height: 1.1; letter-spacing: -0.01em;
+    font-size: clamp(24px, 2.4vw, 28px);
+    line-height: 1.15; letter-spacing: -0.01em;
     color: var(--navy); margin-bottom: 10px;
     padding-right: 60px;
   }
   .card .title em { color: var(--gold); font-style: italic; font-weight: 500; }
   .card .subtitle {
     font-family: var(--font-serif); font-style: italic;
-    font-size: 17px; color: var(--ink-soft);
-    line-height: 1.4; margin-bottom: 18px;
+    font-size: 16px; color: var(--ink-soft);
+    line-height: 1.45; margin-bottom: 18px;
   }
   .card .meta {
     display: flex; gap: 10px; align-items: center;
     font-family: var(--font-mono); font-size: 11px;
     letter-spacing: 0.14em; text-transform: uppercase;
     color: var(--ink-faint); padding-top: 14px;
-    border-top: 1px solid var(--rule);
+    border-top: 1px solid var(--rule); font-weight: 500;
   }
   .card .meta .dot { color: var(--gold); }
   .card .arrow {
@@ -159,11 +178,11 @@
 
   /* ---- Footer note ---- */
   .footnote {
-    max-width: 720px; margin: 0 auto;
+    max-width: 720px; margin: 56px auto 0;
     padding: 0 32px 64px;
     font-family: var(--font-serif); font-style: italic;
     font-size: 18px; line-height: 1.55;
-    color: var(--ink-faint); text-align: center;
+    color: var(--ink-faint); text-align: center; font-weight: 400;
   }
 </style>
 </head>
@@ -183,7 +202,65 @@
 <div class="hero">
   <div class="eyebrow">Operator Curriculum</div>
   <h1>Bedrock <em>Values</em></h1>
-  <div class="lede">The standards we hold ourselves to. How we operate, who we learn from, how we treat people, and the line we never cross.</div>
+  <div class="lede">The standards we hold ourselves to. The principles every Bedrock teammate works through before they touch a community.</div>
+</div>
+
+<!-- ============ TRAINING MODULES ============ -->
+<div class="section-head">
+  <div class="sh-eyebrow">Section One</div>
+  <div class="sh-title">Training <em>Modules</em></div>
+  <div class="sh-desc">Five operator playbooks. Difficult conversations, with frameworks and role plays.</div>
+</div>
+
+<div class="grid">
+
+  <a class="card" href="/training-hostile-homeowners.html">
+    <div class="num">01</div>
+    <div class="tag">Module 1</div>
+    <div class="title">Hostile &amp; Abusive <em>Homeowners</em></div>
+    <div class="subtitle">Enforce standards with hospitality. Framework, role plays, and the line that protects our team.</div>
+    <div class="meta"><span>Training Document</span><span class="dot">·</span><span>30 min</span><span class="arrow">→</span></div>
+  </a>
+
+  <a class="card" href="/training-board-members.html">
+    <div class="num">02</div>
+    <div class="tag">Module 2</div>
+    <div class="title">Rude &amp; Demanding <em>Board Members</em></div>
+    <div class="subtitle">Serve the Association. Protect the team. Respectfully firm, every time.</div>
+    <div class="meta"><span>Training Document</span><span class="dot">·</span><span>25 min</span><span class="arrow">→</span></div>
+  </a>
+
+  <a class="card" href="/training-compliance.html">
+    <div class="num">03</div>
+    <div class="tag">Module 3</div>
+    <div class="title">Getting People to <em>Comply</em></div>
+    <div class="subtitle">Consistency builds trust. Lead with why, acknowledge, give a path forward.</div>
+    <div class="meta"><span>Training Document</span><span class="dot">·</span><span>25 min</span><span class="arrow">→</span></div>
+  </a>
+
+  <a class="card" href="/training-collections.html">
+    <div class="num">04</div>
+    <div class="tag">Module 4</div>
+    <div class="title">Collecting Delinquent <em>Assessments</em></div>
+    <div class="subtitle">Dignity through the entire process. Separate the person from the debt.</div>
+    <div class="meta"><span>Training Document</span><span class="dot">·</span><span>30 min</span><span class="arrow">→</span></div>
+  </a>
+
+  <a class="card" href="/training-deadlines.html">
+    <div class="num">05</div>
+    <div class="tag">Module 5</div>
+    <div class="title">Meeting Deadlines &amp; Delivering on Your <em>Word</em></div>
+    <div class="subtitle">The foundation everything else is built on. Do what you said, by when you said.</div>
+    <div class="meta"><span>Training Document</span><span class="dot">·</span><span>25 min</span><span class="arrow">→</span></div>
+  </a>
+
+</div>
+
+<!-- ============ PRESENTATION DECKS ============ -->
+<div class="section-head">
+  <div class="sh-eyebrow">Section Two</div>
+  <div class="sh-title">Presentation <em>Decks</em></div>
+  <div class="sh-desc">The narrative arc. Why we exist, how we operate, who we learn from, how we treat people.</div>
 </div>
 
 <div class="grid">
@@ -208,7 +285,7 @@
     <div class="num">03</div>
     <div class="tag">External Models</div>
     <div class="title">Companies We <em>Learn From</em></div>
-    <div class="subtitle">Amazon, Apple, Toyota, Ritz-Carlton, Southwest, Disney, HubSpot — what we borrow and how it translates.</div>
+    <div class="subtitle">Amazon, Apple, Toyota, Ritz-Carlton, Southwest, Disney, HubSpot — what we borrow.</div>
     <div class="meta"><span>Presentation</span><span class="dot">·</span><span>12 min</span><span class="arrow">→</span></div>
   </a>
 
@@ -220,18 +297,10 @@
     <div class="meta"><span>Presentation</span><span class="dot">·</span><span>15 min</span><span class="arrow">→</span></div>
   </a>
 
-  <a class="card" href="/training-hostile-homeowners.html">
-    <div class="num">05</div>
-    <div class="tag">Module 1</div>
-    <div class="title">Hostile & Abusive <em>Homeowners</em></div>
-    <div class="subtitle">Enforce standards with hospitality. Framework, role plays, and the line that protects our team.</div>
-    <div class="meta"><span>Training Document</span><span class="dot">·</span><span>30 min</span><span class="arrow">→</span></div>
-  </a>
-
 </div>
 
 <div class="footnote">
-  More modules in development. Every Bedrock teammate works through Values before they touch a community.
+  Every Bedrock teammate works through Values before they touch a community.
 </div>
 
 <script>

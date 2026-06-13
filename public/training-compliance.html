@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 3 — Getting People to Comply with Rules — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Montserrat:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #0B1D34; --navy-soft: #2A4870; --navy-line: #D6DDE7;
+    --gold: #B8943A; --gold-bright: #D4AF37; --gold-soft: #F3EBD0;
+    --cream: #FAF8F4; --cream-soft: #F4F0E6;
+    --ink: #1F2937; --ink-soft: #4B5563; --ink-faint: #6B7280;
+    --rule: #E5DFD0;
+    --red: #B91C1C; --red-bg: #FFF5F5; --red-line: #F4C5C5;
+    --green: #047857; --green-bg: #F0FFF4; --green-line: #B7DDC1;
+    --amber: #B54A07; --amber-bg: #FEF3C7; --amber-line: #F0CC8A;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--font-sans); background: var(--cream); color: var(--ink); -webkit-font-smoothing: antialiased; line-height: 1.65; font-weight: 400; }
+  .topbar { position: sticky; top: 0; z-index: 50; background: var(--cream); border-bottom: 1px solid var(--rule); padding: 14px 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; backdrop-filter: blur(8px); }
+  .topbar .brand { font-family: var(--font-serif); font-size: 16px; color: var(--navy); letter-spacing: -0.01em; }
+  .topbar .brand em { color: var(--gold); font-style: italic; }
+  .topbar .module-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); font-weight: 500; }
+  .topbar .back-link { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--navy); text-decoration: none; padding: 8px 16px; border: 1px solid var(--navy-line); border-radius: 999px; font-weight: 500; background: #fff; }
+  .topbar .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .progress-strip { background: #fff; border-bottom: 1px solid var(--rule); padding: 14px 32px; }
+  .progress-strip .ps-inner { max-width: 1240px; margin: 0 auto; display: flex; align-items: center; gap: 18px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
+  .progress-strip .ps-current { color: var(--navy); font-weight: 600; }
+  .progress-strip .ps-dots { display: flex; gap: 6px; align-items: center; }
+  .progress-strip .ps-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--navy-line); }
+  .progress-strip .ps-dot.done { background: var(--gold); }
+  .progress-strip .ps-dot.current { background: var(--navy); }
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 880px); gap: 56px; max-width: 1240px; margin: 0 auto; padding: 56px 32px 60px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; gap: 24px; padding: 28px 18px 40px; } .sidenav { position: static; max-height: none; } }
+  .sidenav { position: sticky; top: 100px; max-height: calc(100vh - 130px); overflow-y: auto; padding-right: 8px; }
+  .sidenav .sn-head { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin-bottom: 14px; }
+  .sidenav a { display: block; font-family: var(--font-sans); font-size: 13px; color: var(--ink-soft); text-decoration: none; padding: 7px 0 7px 14px; border-left: 2px solid transparent; line-height: 1.4; font-weight: 400; }
+  .sidenav a:hover { color: var(--navy); border-left-color: var(--gold); }
+  .sidenav a.active { color: var(--navy); border-left-color: var(--gold); font-weight: 600; }
+  .sidenav .sn-group { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; margin: 22px 0 6px 0; }
+  .doc-title { margin-bottom: 40px; padding-bottom: 32px; border-bottom: 1px solid var(--rule); }
+  .doc-title .doc-eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); margin-bottom: 16px; font-weight: 600; }
+  .doc-title h1 { font-family: var(--font-serif); font-weight: 500; font-size: clamp(40px, 5.4vw, 60px); line-height: 1.02; letter-spacing: -0.02em; color: var(--navy); margin-bottom: 14px; }
+  .doc-title h1 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .doc-title .doc-subtitle { font-family: var(--font-serif); font-style: italic; font-size: clamp(20px, 2.2vw, 26px); color: var(--navy-soft); font-weight: 400; }
+  .section-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin-bottom: 14px; display: block; }
+  section.doc-section { margin-bottom: 64px; scroll-margin-top: 110px; }
+  section.doc-section h2 { font-family: var(--font-serif); font-weight: 500; font-size: clamp(28px, 3.2vw, 38px); line-height: 1.12; letter-spacing: -0.012em; color: var(--navy); margin-bottom: 22px; }
+  section.doc-section h2 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  section.doc-section p { font-size: 16px; line-height: 1.75; color: var(--ink); margin-bottom: 16px; font-weight: 400; }
+  section.doc-section p strong { color: var(--navy); font-weight: 600; }
+  section.doc-section p em.gold { color: var(--gold); font-style: italic; font-weight: 500; }
+  section.doc-section .lead { font-family: var(--font-serif); font-style: italic; font-size: clamp(22px, 2.4vw, 28px); color: var(--navy); margin-bottom: 22px; line-height: 1.4; font-weight: 500; }
+  section.doc-section ul.plain { padding-left: 0; list-style: none; margin: 0 0 18px; }
+  section.doc-section ul.plain li { font-size: 16px; line-height: 1.75; color: var(--ink); padding: 6px 0 6px 24px; position: relative; font-weight: 400; }
+  section.doc-section ul.plain li::before { content: '→'; position: absolute; left: 0; top: 6px; color: var(--gold); font-weight: 700; }
+  .promise-card { background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--gold); padding: 36px 40px; border-radius: 0 12px 12px 0; margin: 24px 0 0; box-shadow: 0 2px 16px rgba(11,29,52,0.04); }
+  .promise-card .promise-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold); margin-bottom: 18px; font-weight: 600; }
+  .promise-card p { font-family: var(--font-serif); font-size: clamp(19px, 2.1vw, 23px); line-height: 1.55; color: var(--navy); margin-bottom: 14px; font-weight: 400; }
+  .promise-card p:last-child { margin-bottom: 0; }
+  .promise-card p strong { color: var(--navy); font-weight: 600; font-style: italic; }
+  .promise-card p em.gold { color: var(--gold); font-style: italic; font-weight: 500; font-size: clamp(22px, 2.4vw, 26px); }
+  .callout { background: #fff; border: 1px solid var(--rule); border-left: 3px solid var(--navy); padding: 22px 28px; border-radius: 0 8px 8px 0; margin: 22px 0; }
+  .callout.gold { background: var(--gold-soft); border: 1px solid #E8D89A; border-left: 3px solid var(--gold); }
+  .callout .callout-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; font-weight: 600; }
+  .callout p { margin-bottom: 8px; font-size: 16px; line-height: 1.65; }
+  .callout p:last-child { margin-bottom: 0; }
+  table.doc-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--gold); border-radius: 0 8px 8px 0; overflow: hidden; margin: 18px 0 24px; box-shadow: 0 2px 12px rgba(11,29,52,0.05); }
+  table.doc-table thead { background: var(--navy); color: #fff; }
+  table.doc-table th { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; padding: 16px 22px; text-align: left; font-weight: 600; color: #fff; }
+  table.doc-table tbody tr { border-top: 1px solid var(--rule); background: #fff; }
+  table.doc-table tbody tr:nth-child(even) { background: var(--cream-soft); }
+  table.doc-table tbody tr:first-child { border-top: none; }
+  table.doc-table td { padding: 16px 22px; vertical-align: top; font-size: 15px; line-height: 1.6; color: var(--ink); }
+  table.doc-table td:first-child { font-family: var(--font-serif); font-weight: 500; color: var(--navy); font-size: 17.5px; }
+  .four-step { display: grid; gap: 18px; margin: 18px 0 24px; }
+  .step-card { background: #fff; border: 1px solid var(--navy-line); border-radius: 10px; padding: 26px 28px 26px 30px; display: grid; grid-template-columns: 56px 1fr; gap: 22px; align-items: flex-start; }
+  .step-card .step-circle { width: 56px; height: 56px; border-radius: 50%; background: var(--gold); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-serif); font-size: 28px; font-weight: 600; line-height: 1; }
+  .step-card .step-title { font-family: var(--font-serif); font-size: 26px; color: var(--navy); font-weight: 500; margin-bottom: 12px; letter-spacing: -0.012em; line-height: 1.15; }
+  .step-card .step-body { font-size: 15.5px; line-height: 1.7; color: var(--ink); }
+  .step-card .step-body p { margin-bottom: 8px; }
+  .step-card .step-body p:last-child { margin-bottom: 0; }
+  .step-card .step-body em.gold { color: var(--gold); font-style: italic; font-weight: 500; }
+  .step-card .step-body strong { color: var(--navy); font-weight: 600; }
+  .never-say { background: var(--red-bg); border: 1px solid var(--red-line); border-radius: 10px; padding: 24px 28px; margin-bottom: 18px; }
+  .ns-head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 14px; font-weight: 600; color: var(--red); }
+  .never-say ul { list-style: none; padding: 0; margin: 0; }
+  .never-say ul li { padding: 7px 0 7px 28px; font-size: 16px; line-height: 1.55; color: var(--ink); position: relative; font-family: var(--font-serif); font-style: italic; }
+  .never-say ul li::before { content: '❌'; position: absolute; left: 0; top: 8px; font-size: 13px; font-style: normal; }
+  .attorney-card { background: var(--amber-bg); border: 1px solid var(--amber-line); border-left: 4px solid var(--amber); border-radius: 0 10px 10px 0; padding: 22px 28px; margin: 18px 0; }
+  .attorney-card .ac-head { display: flex; gap: 10px; align-items: center; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); margin-bottom: 14px; font-weight: 700; }
+  .triggers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; }
+  @media (max-width: 600px) { .triggers-grid { grid-template-columns: 1fr; } }
+  .trigger-pill { background: #fff; border: 1px solid var(--amber-line); border-radius: 8px; padding: 12px 16px; font-family: var(--font-sans); font-size: 14.5px; color: var(--navy); font-weight: 500; display: flex; align-items: center; gap: 10px; }
+  .trigger-pill::before { content: '⚠'; color: var(--amber); font-size: 16px; }
+  .roleplay { margin: 28px 0 32px; }
+  .rp-setup-card { background: var(--navy-soft); color: #fff; border-radius: 10px 10px 0 0; padding: 26px 30px; }
+  .rp-setup-card .rp-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 10px; font-weight: 600; }
+  .rp-setup-card .rp-title { font-family: var(--font-serif); font-size: clamp(26px, 2.8vw, 32px); color: #fff; font-weight: 500; line-height: 1.15; letter-spacing: -0.012em; margin-bottom: 14px; }
+  .rp-setup-card .rp-setup-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 8px; font-weight: 600; display: block; }
+  .rp-setup-card .rp-setup-text { font-family: var(--font-serif); font-style: italic; font-size: 17px; color: #fff; line-height: 1.55; opacity: 0.95; }
+  .rp-quote { background: #fff; border: 1px solid var(--navy-line); border-top: none; padding: 22px 28px; font-family: var(--font-serif); font-style: italic; font-size: 18px; line-height: 1.5; color: var(--navy); }
+  .rp-quote::before { content: '"'; color: var(--gold); font-family: var(--font-serif); font-size: 36px; line-height: 0; vertical-align: -10px; margin-right: 4px; }
+  .rp-quote::after { content: '"'; color: var(--gold); font-family: var(--font-serif); font-size: 36px; line-height: 0; vertical-align: -10px; margin-left: 2px; }
+  .rp-response { border-radius: 10px; padding: 22px 26px; margin: 14px 0; border-left: 4px solid; }
+  .rp-response.wrong { background: var(--red-bg); border: 1px solid var(--red-line); border-left: 4px solid var(--red); }
+  .rp-response.right { background: var(--green-bg); border: 1px solid var(--green-line); border-left: 4px solid var(--green); }
+  .rp-response .rp-resp-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; margin-bottom: 12px; display: inline-flex; align-items: center; gap: 8px; }
+  .rp-response .rp-resp-label .mark { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+  .rp-response.wrong .rp-resp-label { color: var(--red); }
+  .rp-response.wrong .rp-resp-label .mark { background: var(--red); color: #fff; }
+  .rp-response.right .rp-resp-label { color: var(--green); }
+  .rp-response.right .rp-resp-label .mark { background: var(--green); color: #fff; }
+  .rp-response .rp-resp-quote { font-family: var(--font-serif); font-style: italic; font-size: 17px; line-height: 1.55; color: var(--ink); margin-bottom: 14px; }
+  .rp-response .rp-resp-quote strong { font-style: normal; font-family: var(--font-sans); font-weight: 600; color: var(--navy); }
+  .rp-response .rp-why { font-family: var(--font-sans); font-size: 13.5px; color: var(--ink-soft); line-height: 1.6; padding-top: 12px; border-top: 1px solid rgba(0,0,0,0.08); }
+  .rp-response.wrong .rp-why { border-top-color: rgba(185,28,28,0.18); }
+  .rp-response.right .rp-why { border-top-color: rgba(4,120,87,0.18); }
+  .rp-response .rp-why strong { color: var(--navy); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+  .rp-debrief { margin-top: 18px; background: #fff; border: 1px solid #E8D89A; border-left: 4px solid var(--gold); border-radius: 0 10px 10px 0; padding: 22px 28px; }
+  .rp-debrief .rp-d-head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); margin-bottom: 14px; font-weight: 700; }
+  .rp-debrief ul { list-style: none; padding: 0; margin: 0; }
+  .rp-debrief ul li { font-family: var(--font-serif); font-style: italic; font-size: 16.5px; color: var(--navy); padding: 7px 0 7px 28px; line-height: 1.55; position: relative; font-weight: 400; }
+  .rp-debrief ul li::before { content: '?'; color: var(--gold); font-weight: 700; position: absolute; left: 0; top: 6px; font-family: var(--font-sans); font-style: normal; font-size: 18px; }
+  .values-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 22px 0; }
+  .value-card { background: #fff; border: 1px solid var(--rule); border-top: 3px solid var(--gold); border-radius: 0 0 10px 10px; padding: 24px 26px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .value-card .v-num { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.22em; color: var(--gold); font-weight: 600; margin-bottom: 4px; }
+  .value-card .v-name { font-family: var(--font-serif); font-size: 26px; font-weight: 500; color: var(--gold); margin-bottom: 6px; letter-spacing: -0.012em; line-height: 1.1; }
+  .value-card .v-detail { font-size: 14.5px; line-height: 1.6; color: var(--navy); font-weight: 400; }
+  .one-thing-wrap { background: var(--navy); margin: 64px -32px -60px; padding: 64px 32px 80px; }
+  @media (max-width: 900px) { .one-thing-wrap { margin: 40px -18px -40px; padding: 48px 24px 64px; } }
+  .one-thing { max-width: 880px; margin: 0 auto; text-align: center; }
+  .one-thing .ot-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 26px; font-weight: 600; }
+  .one-thing .ot-line { font-family: var(--font-serif); font-weight: 500; font-size: clamp(28px, 3.8vw, 42px); line-height: 1.18; letter-spacing: -0.012em; color: #fff; margin-bottom: 14px; }
+  .one-thing .ot-line em { color: var(--gold-bright); font-style: italic; font-weight: 500; }
+  .one-thing .ot-divider { width: 60px; height: 1px; background: var(--gold-bright); opacity: 0.5; margin: 28px auto; }
+  .one-thing .ot-final { font-family: var(--font-serif); font-style: italic; font-size: clamp(22px, 2.6vw, 30px); color: var(--gold-bright); margin-top: 8px; font-weight: 500; }
+  .module-nav { max-width: 1240px; margin: 0 auto; padding: 32px 32px 0; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .module-nav .mn-btn { display: inline-flex; align-items: center; gap: 12px; background: transparent; border: 1px solid var(--gold-bright); color: var(--gold-bright); padding: 14px 22px; border-radius: 999px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .module-nav .mn-btn:hover:not(:disabled):not(.disabled) { background: var(--gold-bright); color: var(--navy); }
+  .module-nav .mn-btn.disabled, .module-nav .mn-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .module-nav .mn-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.55); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <div class="module-tag">Bedrock University</div>
+    <div class="brand" style="margin-top: 2px;">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+  </div>
+  <a href="/training-values.html" class="back-link">← Back to Values</a>
+</div>
+
+<div class="progress-strip">
+  <div class="ps-inner">
+    <span class="ps-current">Module 3 of 5</span>
+    <div class="ps-dots">
+      <span class="ps-dot done"></span>
+      <span class="ps-dot done"></span>
+      <span class="ps-dot current"></span>
+      <span class="ps-dot"></span>
+      <span class="ps-dot"></span>
+    </div>
+    <span style="margin-left: auto;">Getting People to Comply with Rules</span>
+  </div>
+</div>
+
+<div class="layout">
+
+  <aside class="sidenav">
+    <div class="sn-head">In this module</div>
+    <a href="#promise">The Bedrock Promise</a>
+    <a href="#reframe">The Most Important Reframe</a>
+    <a href="#why-resist">Why People Resist Rules</a>
+    <a href="#hardest">Violations People Fight Hardest</a>
+    <a href="#framework">The Compliance Framework</a>
+    <a href="#consistency">The Consistency Principle</a>
+    <a href="#didnt-know">"I Didn't Know" Response</a>
+    <a href="#neighbor">"My Neighbor Does It Too"</a>
+    <a href="#refuse">When They Refuse to Comply</a>
+    <a href="#attorney">Attorney Triggers — Compliance</a>
+    <a href="#never-say">What To Never Say</a>
+    <div class="sn-group">Role plays</div>
+    <a href="#rp-3a">3A — The Parking Violation</a>
+    <a href="#rp-3b">3B — The Landscaping Notice</a>
+    <a href="#rp-3c">3C — The Repeat Violator</a>
+    <div class="sn-group">Reference</div>
+    <a href="#trustEd-loop">The trustEd Loop</a>
+    <a href="#values">The Five Bedrock Values</a>
+    <a href="#standards">Measurable Standards</a>
+    <a href="#weekly">The Weekly Practice</a>
+    <a href="#one-thing">The One Thing</a>
+  </aside>
+
+  <main>
+
+    <div class="doc-title">
+      <div class="doc-eyebrow">Training Module 3</div>
+      <h1>Getting People to Comply with <em>Rules</em></h1>
+      <div class="doc-subtitle">Consistency Builds Trust.</div>
+    </div>
+
+    <section class="doc-section" id="promise">
+      <span class="section-label">The Bedrock Promise</span>
+      <h2>The Bedrock <em>Promise</em></h2>
+      <div class="promise-card">
+        <div class="promise-label">Our Creed</div>
+        <p>At Bedrock, we treat every homeowner, board member, vendor, and coworker with dignity and respect. We enforce community standards fairly and consistently. We solve problems, communicate clearly, and continuously improve our systems.</p>
+        <p><strong>Enforcement is not punishment.</strong></p>
+        <p><em class="gold">Enforcement is how we protect the community everyone chose to live in.</em></p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="reframe">
+      <span class="section-label">Foundation</span>
+      <h2>The Most Important <em>Reframe</em></h2>
+      <div class="lead">We are not trying to win arguments. We are trying to achieve compliance.</div>
+      <p>The goal is never: <em class="gold">"I proved I was right."</em></p>
+      <p>The goal is always: <strong>"The violation was corrected."</strong></p>
+      <p>Those are completely different objectives and they require completely different approaches.</p>
+    </section>
+
+    <section class="doc-section" id="why-resist">
+      <span class="section-label">Diagnostic</span>
+      <h2>Why People Resist <em>Rules</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>What They Say</th><th>What They're Really Asking</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>"Why me?"</td><td>Are you treating everyone the same?</td></tr>
+          <tr><td>"I've done this for years."</td><td>Why is this suddenly a problem?</td></tr>
+          <tr><td>"My neighbor does the same thing."</td><td>Are you being consistent?</td></tr>
+          <tr><td>"This rule is ridiculous."</td><td>Can you help me understand why it exists?</td></tr>
+          <tr><td>"I didn't know."</td><td>Why wasn't I told sooner?</td></tr>
+        </tbody>
+      </table>
+      <p>Almost every compliance resistance comes down to one of two things:</p>
+      <p><strong>Fairness</strong> — They want to know the rule applies to everyone equally.</p>
+      <p><strong>Understanding</strong> — They want to know why the rule exists.</p>
+      <p><em class="gold">Give them both and resistance drops dramatically.</em></p>
+    </section>
+
+    <section class="doc-section" id="hardest">
+      <span class="section-label">Pattern Recognition</span>
+      <h2>The Violations People Fight <em>Hardest</em></h2>
+      <ul class="plain">
+        <li><strong>Parking</strong> — Personal and immediate. Their car, their property, their convenience.</li>
+        <li><strong>Landscaping</strong> — Subjective. What looks maintained to them may not meet standards.</li>
+        <li><strong>Trash cans</strong> — Feels petty. Hard to understand why it matters.</li>
+        <li><strong>Architectural modifications</strong> — They spent money. Emotional and financial investment.</li>
+        <li><strong>Commercial vehicles and trailers</strong> — Livelihood. Their work truck feels personal.</li>
+      </ul>
+      <p>For each of these, the approach is the same:</p>
+      <p><em class="gold">Explain the rule. Explain why it exists. Explain how it protects the community. Tell them what needs to happen next.</em></p>
+    </section>
+
+    <section class="doc-section" id="framework">
+      <span class="section-label">The Framework</span>
+      <h2>The Compliance <em>Framework</em></h2>
+      <div class="four-step">
+        <div class="step-card">
+          <div class="step-circle">1</div>
+          <div>
+            <div class="step-title">Lead with why, not what</div>
+            <div class="step-body">
+              <p>Don't start with the violation. Start with the purpose of the standard.</p>
+              <p><strong>Bad:</strong> <em>"Your trash cans need to be stored out of sight per Section 6.2."</em></p>
+              <p><strong>Better:</strong> <em>"The community adopted a standard for trash can storage because visible cans affect how the neighborhood looks and impacts property values for everyone. I want to help you get this resolved quickly."</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">2</div>
+          <div>
+            <div class="step-title">Acknowledge their perspective</div>
+            <div class="step-body">
+              <p><em class="gold">"I understand this may feel like a small thing."</em></p>
+              <p><em class="gold">"I can see you weren't aware this was an issue."</em></p>
+              <p>You're not agreeing the rule is wrong.</p>
+              <p><strong>You're acknowledging their experience of it.</strong></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">3</div>
+          <div>
+            <div class="step-title">Be specific about what's needed</div>
+            <div class="step-body">
+              <p><strong>Bad:</strong> <em>"You'll need to address this."</em></p>
+              <p><strong>Better:</strong> <em>"Specifically, the trash cans need to be stored inside the garage or behind a fence screen when not on the curb for collection. That's what we need to see by [specific date]."</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">4</div>
+          <div>
+            <div class="step-title">Give them a path and a timeline</div>
+            <div class="step-body">
+              <p><em class="gold">"Here's what needs to happen and here's the timeline."</em></p>
+              <p><em class="gold">"If you have questions about what meets the standard, I'm happy to help you figure that out."</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">5</div>
+          <div>
+            <div class="step-title">Document and follow up</div>
+            <div class="step-body">
+              <p>Set a follow-up date in trustEd.</p>
+              <p>If the violation isn't resolved by the deadline, follow the enforcement sequence.</p>
+              <p><strong>Don't let it sit. Inconsistent follow-up is what creates the "Why me?" problem.</strong></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="consistency">
+      <span class="section-label">Principle</span>
+      <h2>The Consistency Principle in <em>Action</em></h2>
+      <p>When a homeowner says <em class="gold">"Why me?"</em> the honest answer must be:</p>
+      <div class="callout gold">
+        <p><em>"Because this standard applies to everyone and we enforce it consistently."</em></p>
+      </div>
+      <p>If you cannot say that honestly, there is a process problem that needs to be escalated.</p>
+      <p>Selective enforcement is not just unfair.</p>
+      <p><strong>In Texas HOA law, it creates legal exposure for the Association.</strong></p>
+      <p>If you are ever asked to enforce a rule against one homeowner while ignoring the same violation at another property, escalate to Ed immediately.</p>
+    </section>
+
+    <section class="doc-section" id="didnt-know">
+      <span class="section-label">Response</span>
+      <h2>The "I Didn't Know" <em>Response</em></h2>
+      <p>Don't argue about whether they should have known.</p>
+      <p>Don't quote the section of the governing documents they should have read.</p>
+      <p><strong>Instead:</strong></p>
+      <div class="callout">
+        <p><em class="gold">"I understand — these documents can be hard to navigate. Let me make sure you have what you need going forward. Here's what the standard requires and here's what we need to see resolved. I want to make this as easy as possible for you."</em></p>
+      </div>
+      <p>Then make a note in trustEd. If multiple homeowners are saying they didn't know about the same rule, that's an education gap we need to fix.</p>
+    </section>
+
+    <section class="doc-section" id="neighbor">
+      <span class="section-label">Response</span>
+      <h2>The "My Neighbor Does It Too" <em>Response</em></h2>
+      <p><strong>Never say:</strong> <em>"I can't discuss other properties."</em></p>
+      <p>That sounds evasive and damages trust.</p>
+      <p><strong>Instead say:</strong></p>
+      <div class="callout">
+        <p><em class="gold">"I hear you — consistency matters to us too. I can tell you that we apply these standards community-wide. If there's a specific property you're concerned about, you can submit a complaint through the portal and it will be reviewed the same way yours was."</em></p>
+      </div>
+      <p>Then follow through. If the neighbor is actually in violation, address it.</p>
+      <p><strong>Nothing destroys trust faster than enforcing rules selectively.</strong></p>
+    </section>
+
+    <section class="doc-section" id="refuse">
+      <span class="section-label">Crisis Protocol</span>
+      <h2>When They Refuse to <em>Comply</em></h2>
+      <p>Some homeowners will refuse regardless of how well you handle the interaction.</p>
+      <p>That's okay. Your job is not to make them happy about the rule.</p>
+      <p><strong>Your job is to enforce it consistently and professionally.</strong></p>
+      <p><strong>When they refuse:</strong></p>
+      <ul class="plain">
+        <li>Document the interaction in trustEd</li>
+        <li>Confirm the violation in writing</li>
+        <li>Move to the next step in the enforcement sequence</li>
+        <li>Escalate to Ed if you're unsure about the next step</li>
+      </ul>
+      <p>Never make threats you're not authorized to make.</p>
+      <p>Never promise outcomes you can't guarantee.</p>
+      <p><strong>Never skip steps in the enforcement sequence.</strong></p>
+    </section>
+
+    <section class="doc-section" id="attorney">
+      <span class="section-label">Escalation</span>
+      <h2>Attorney Triggers — Compliance <em>Edition</em></h2>
+      <p>Escalate to Ed immediately if a homeowner:</p>
+      <div class="attorney-card">
+        <div class="ac-head">⚠ Standing Caution Notice</div>
+        <div class="triggers-grid">
+          <div class="trigger-pill">Claims disability accommodation</div>
+          <div class="trigger-pill">Threatens legal action</div>
+          <div class="trigger-pill">Claims Fair Housing violation</div>
+          <div class="trigger-pill">Involves attorney or elected official</div>
+          <div class="trigger-pill">Disputes rule's validity in docs</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="never-say">
+      <span class="section-label">Language</span>
+      <h2>What To Never <em>Say</em></h2>
+      <div class="never-say">
+        <div class="ns-head">Never Say</div>
+        <ul>
+          <li>"The board told me to send this."</li>
+          <li>"I'm just doing my job."</li>
+          <li>"You signed the CC&amp;Rs when you bought the house."</li>
+          <li>"Other homeowners don't complain about this."</li>
+          <li>"If you don't fix it we'll fine you." (Before the proper notice sequence)</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-3a">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 3A — The Parking <em>Violation</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 3A</div>
+          <div class="rp-title">The Parking Violation</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner calls upset about a notice for parking a commercial van in the driveway overnight.</div>
+        </div>
+        <div class="rp-quote">This is my work van. I need it for my job. Where am I supposed to park it? I've been parking here for two years.</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"Section 8 of the CC&amp;Rs prohibits commercial vehicles in driveways. You need to find alternative parking."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>No acknowledgment. No explanation of why. No path forward. Feels punitive.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"I completely understand — your work van is how you make a living and this matters to you. Let me explain what the community standard is and why it exists, and then let's figure out what options you have. The community adopted this standard because commercial vehicles can affect the neighborhood's appearance and property values. What I need to understand is what the van looks like — does it have commercial lettering or markings on it? The answer may affect what options are available to you."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Acknowledged the livelihood concern. Explained the why behind the rule. Asked a clarifying question before making a judgment. Opened the door to finding a solution.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if the van has no commercial markings — does that change anything?</li>
+            <li>What if there's no alternative parking available to them?</li>
+            <li>How do you follow up if they say they'll think about it?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-3b">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 3B — The Landscaping <em>Notice</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 3B</div>
+          <div class="rp-title">The Landscaping Notice</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner calls angry about a violation notice for dead grass. They say they've been watering it and it's not dead, just dormant.</div>
+        </div>
+        <div class="rp-quote">This is insane. My grass is not dead, it's dormant. It's summer in Texas. Do you know how expensive water is? I'm not going to overwater my lawn just because someone thinks it looks brown.</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"The standard requires maintained landscaping. Dormant grass that appears dead is a violation."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>Argumentative. Dismissive. Creates a fight about facts.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"That's actually a fair point and I want to make sure we're applying this correctly. Dormant grass and dead grass can look similar and we want to make sure we're not citing you unfairly. Can you tell me what the grass looks like specifically — is it brown throughout or patchy? And what's your current watering schedule? I want to take a second look at this before we go any further."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Took their point seriously. Didn't double down on the violation before verifying. Asked questions to get the facts. Showed willingness to review rather than just enforce.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if after review the grass is actually dead?</li>
+            <li>How do you communicate a correction if we cited incorrectly?</li>
+            <li>When do you escalate a dispute about whether something is actually a violation?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-3c">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 3C — The Repeat <em>Violator</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 3C</div>
+          <div class="rp-title">The Repeat Violator</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner has received three notices for the same violation — trash cans left at the curb. They call dismissive and argumentative.</div>
+        </div>
+        <div class="rp-quote">I got another letter. I don't have time to deal with this. Just send me the fine and leave me alone.</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"We will be issuing a fine per the enforcement schedule."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>Transactional. Misses an opportunity to actually achieve compliance.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"I hear you — I know getting repeated letters on the same thing is frustrating. I want to understand what's making this difficult so we can actually solve it. Is it a timing issue with when collection happens versus when you're able to bring the cans in? Sometimes there's a simple fix that makes this easier for everyone."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Acknowledged their frustration without backing down. Looked for the root cause instead of just enforcing. Showed genuine interest in solving the problem. Still moves toward compliance without being punitive.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if they genuinely don't care and just want the fine?</li>
+            <li>At what point does this escalate to the attorney?</li>
+            <li>How do you document a pattern of repeat violations?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="trustEd-loop">
+      <span class="section-label">Learning Loop</span>
+      <h2>The trustEd Loop — Compliance <em>Edition</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Category</th><th>Example</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Education gap</td><td>Homeowner genuinely didn't know the rule</td></tr>
+          <tr><td>Fairness concern</td><td>Homeowner citing inconsistent enforcement</td></tr>
+          <tr><td>Hardship situation</td><td>Homeowner has legitimate practical barrier</td></tr>
+          <tr><td>Repeat violation</td><td>Same homeowner, same issue</td></tr>
+          <tr><td>Rule clarity issue</td><td>Rule is ambiguous or hard to understand</td></tr>
+          <tr><td>System improvement</td><td>Could this notice be clearer?</td></tr>
+        </tbody>
+      </table>
+      <p>Then ask: <em class="gold">"What did this interaction teach Bedrock?"</em></p>
+    </section>
+
+    <section class="doc-section" id="values">
+      <span class="section-label">Reference</span>
+      <h2>The Five Bedrock Values — Applied to <em>Compliance</em></h2>
+      <div class="values-grid">
+        <div class="value-card">
+          <div class="v-num">No. 01</div>
+          <div class="v-name">Hospitality</div>
+          <div class="v-detail">Enforce the rule with warmth. Explain why it exists. Treat the homeowner as a guest who deserves to understand the standards of the community they live in.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 02</div>
+          <div class="v-name">Ownership</div>
+          <div class="v-detail">Own the enforcement process from notice to resolution. Don't send a letter and forget it. Follow up.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 03</div>
+          <div class="v-name">Consistency</div>
+          <div class="v-detail">Apply every standard the same way to every homeowner. Every time. That's what fairness actually looks like.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 04</div>
+          <div class="v-name">Communication</div>
+          <div class="v-detail">Tell homeowners exactly what's needed, by when, and what happens next. No ambiguity. No surprises.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 05</div>
+          <div class="v-name">Improvement</div>
+          <div class="v-detail">When the same violation keeps coming up, ask why. Is the rule unclear? Is the notice confusing? Is there an education gap we could close proactively?</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="standards">
+      <span class="section-label">Scorecard</span>
+      <h2>Measurable <em>Standards</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Standard</th><th>Target</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>First violation notice response time</td><td>Within 24 hours of inspection</td></tr>
+          <tr><td>Follow-up on open violations</td><td>100% — no violation sits without a status</td></tr>
+          <tr><td>Repeat violations on same property</td><td>Track monthly — escalate at third notice</td></tr>
+          <tr><td>"My neighbor does it too" complaints investigated</td><td>100%</td></tr>
+          <tr><td>Violations resolved within compliance window</td><td>Track and report monthly</td></tr>
+          <tr><td>trustEd categorization of compliance interactions</td><td>100%</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="doc-section" id="weekly">
+      <span class="section-label">Practice</span>
+      <h2>The Weekly <em>Practice</em></h2>
+      <p>Every Monday for the first month, five minutes:</p>
+      <p>One compliance scenario. Rotate who plays the homeowner.</p>
+      <p><strong>After each role play:</strong></p>
+      <ul class="plain">
+        <li>Did we lead with why or with what?</li>
+        <li>Did we acknowledge their perspective?</li>
+        <li>Did we give a specific path forward?</li>
+        <li>What's the one thing to remember?</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="one-thing" style="margin-bottom: 0;">
+      <div class="one-thing-wrap">
+        <div class="one-thing">
+          <div class="ot-label">The One Thing — If you remember nothing else</div>
+          <div class="ot-line">Consistency builds <em>trust.</em></div>
+          <div class="ot-divider"></div>
+          <div class="ot-line">Every homeowner who feels they were treated fairly becomes a community asset.</div>
+          <div class="ot-line">Every homeowner who feels they were treated unfairly becomes a community problem.</div>
+          <div class="ot-divider"></div>
+          <div class="ot-line">Enforce the standard.</div>
+          <div class="ot-line">Explain the <em>why.</em></div>
+          <div class="ot-line">Apply it <em>consistently.</em></div>
+          <div class="ot-final">Every single time.</div>
+
+          <div class="module-nav" style="margin-top: 56px; padding: 0;">
+            <a class="mn-btn" href="/training-board-members.html">← Previous Module</a>
+            <span class="mn-label">Module 3 of 5</span>
+            <a class="mn-btn" href="/training-collections.html">Next Module →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  const sections = document.querySelectorAll('.doc-section[id]');
+  const navLinks = document.querySelectorAll('.sidenav a');
+  function setActive() {
+    let activeId = null;
+    const offset = 140;
+    sections.forEach((s) => { const top = s.getBoundingClientRect().top; if (top - offset <= 0) activeId = s.id; });
+    navLinks.forEach((a) => { a.classList.toggle('active', a.getAttribute('href') === '#' + activeId); });
+  }
+  document.addEventListener('scroll', setActive, { passive: true });
+  setActive();
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.location.href = '/training-values.html'; } });
+</script>
+
+</body>
+</html>

@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Module 4 — Collecting Delinquent Assessments — Bedrock</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Montserrat:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --navy: #0B1D34; --navy-soft: #2A4870; --navy-line: #D6DDE7;
+    --gold: #B8943A; --gold-bright: #D4AF37; --gold-soft: #F3EBD0;
+    --cream: #FAF8F4; --cream-soft: #F4F0E6;
+    --ink: #1F2937; --ink-soft: #4B5563; --ink-faint: #6B7280;
+    --rule: #E5DFD0;
+    --red: #B91C1C; --red-bg: #FFF5F5; --red-line: #F4C5C5;
+    --green: #047857; --green-bg: #F0FFF4; --green-line: #B7DDC1;
+    --amber: #B54A07; --amber-bg: #FEF3C7; --amber-line: #F0CC8A;
+    --font-serif: 'Cormorant Garamond', Georgia, serif;
+    --font-sans: 'Montserrat', -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, monospace;
+  }
+  html { scroll-behavior: smooth; }
+  body { font-family: var(--font-sans); background: var(--cream); color: var(--ink); -webkit-font-smoothing: antialiased; line-height: 1.65; font-weight: 400; }
+  .topbar { position: sticky; top: 0; z-index: 50; background: var(--cream); border-bottom: 1px solid var(--rule); padding: 14px 32px; display: flex; align-items: center; justify-content: space-between; gap: 16px; backdrop-filter: blur(8px); }
+  .topbar .brand { font-family: var(--font-serif); font-size: 16px; color: var(--navy); letter-spacing: -0.01em; }
+  .topbar .brand em { color: var(--gold); font-style: italic; }
+  .topbar .module-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold); font-weight: 500; }
+  .topbar .back-link { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--navy); text-decoration: none; padding: 8px 16px; border: 1px solid var(--navy-line); border-radius: 999px; font-weight: 500; background: #fff; }
+  .topbar .back-link:hover { border-color: var(--gold); color: var(--gold); }
+  .progress-strip { background: #fff; border-bottom: 1px solid var(--rule); padding: 14px 32px; }
+  .progress-strip .ps-inner { max-width: 1240px; margin: 0 auto; display: flex; align-items: center; gap: 18px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; }
+  .progress-strip .ps-current { color: var(--navy); font-weight: 600; }
+  .progress-strip .ps-dots { display: flex; gap: 6px; align-items: center; }
+  .progress-strip .ps-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--navy-line); }
+  .progress-strip .ps-dot.done { background: var(--gold); }
+  .progress-strip .ps-dot.current { background: var(--navy); }
+  .layout { display: grid; grid-template-columns: 240px minmax(0, 880px); gap: 56px; max-width: 1240px; margin: 0 auto; padding: 56px 32px 60px; }
+  @media (max-width: 900px) { .layout { grid-template-columns: 1fr; gap: 24px; padding: 28px 18px 40px; } .sidenav { position: static; max-height: none; } }
+  .sidenav { position: sticky; top: 100px; max-height: calc(100vh - 130px); overflow-y: auto; padding-right: 8px; }
+  .sidenav .sn-head { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin-bottom: 14px; }
+  .sidenav a { display: block; font-family: var(--font-sans); font-size: 13px; color: var(--ink-soft); text-decoration: none; padding: 7px 0 7px 14px; border-left: 2px solid transparent; line-height: 1.4; font-weight: 400; }
+  .sidenav a:hover { color: var(--navy); border-left-color: var(--gold); }
+  .sidenav a.active { color: var(--navy); border-left-color: var(--gold); font-weight: 600; }
+  .sidenav .sn-group { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--ink-faint); font-weight: 500; margin: 22px 0 6px 0; }
+  .doc-title { margin-bottom: 40px; padding-bottom: 32px; border-bottom: 1px solid var(--rule); }
+  .doc-title .doc-eyebrow { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); margin-bottom: 16px; font-weight: 600; }
+  .doc-title h1 { font-family: var(--font-serif); font-weight: 500; font-size: clamp(40px, 5.4vw, 60px); line-height: 1.02; letter-spacing: -0.02em; color: var(--navy); margin-bottom: 14px; }
+  .doc-title h1 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  .doc-title .doc-subtitle { font-family: var(--font-serif); font-style: italic; font-size: clamp(20px, 2.2vw, 26px); color: var(--navy-soft); font-weight: 400; }
+  .section-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.26em; text-transform: uppercase; color: var(--gold); font-weight: 600; margin-bottom: 14px; display: block; }
+  section.doc-section { margin-bottom: 64px; scroll-margin-top: 110px; }
+  section.doc-section h2 { font-family: var(--font-serif); font-weight: 500; font-size: clamp(28px, 3.2vw, 38px); line-height: 1.12; letter-spacing: -0.012em; color: var(--navy); margin-bottom: 22px; }
+  section.doc-section h2 em { color: var(--gold); font-style: italic; font-weight: 500; }
+  section.doc-section p { font-size: 16px; line-height: 1.75; color: var(--ink); margin-bottom: 16px; font-weight: 400; }
+  section.doc-section p strong { color: var(--navy); font-weight: 600; }
+  section.doc-section p em.gold { color: var(--gold); font-style: italic; font-weight: 500; }
+  section.doc-section .lead { font-family: var(--font-serif); font-style: italic; font-size: clamp(22px, 2.4vw, 28px); color: var(--navy); margin-bottom: 22px; line-height: 1.4; font-weight: 500; }
+  section.doc-section ul.plain { padding-left: 0; list-style: none; margin: 0 0 18px; }
+  section.doc-section ul.plain li { font-size: 16px; line-height: 1.75; color: var(--ink); padding: 6px 0 6px 24px; position: relative; font-weight: 400; }
+  section.doc-section ul.plain li::before { content: '→'; position: absolute; left: 0; top: 6px; color: var(--gold); font-weight: 700; }
+  .promise-card { background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--gold); padding: 36px 40px; border-radius: 0 12px 12px 0; margin: 24px 0 0; box-shadow: 0 2px 16px rgba(11,29,52,0.04); }
+  .promise-card .promise-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold); margin-bottom: 18px; font-weight: 600; }
+  .promise-card p { font-family: var(--font-serif); font-size: clamp(19px, 2.1vw, 23px); line-height: 1.55; color: var(--navy); margin-bottom: 14px; font-weight: 400; }
+  .promise-card p:last-child { margin-bottom: 0; }
+  .promise-card p strong { color: var(--navy); font-weight: 600; font-style: italic; }
+  .promise-card p em.gold { color: var(--gold); font-style: italic; font-weight: 500; font-size: clamp(22px, 2.4vw, 26px); }
+  .callout { background: #fff; border: 1px solid var(--rule); border-left: 3px solid var(--navy); padding: 22px 28px; border-radius: 0 8px 8px 0; margin: 22px 0; }
+  .callout.gold { background: var(--gold-soft); border: 1px solid #E8D89A; border-left: 3px solid var(--gold); }
+  .callout .callout-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; color: var(--gold); margin-bottom: 10px; font-weight: 600; }
+  .callout p { margin-bottom: 8px; font-size: 16px; line-height: 1.65; }
+  .callout p:last-child { margin-bottom: 0; }
+  .callout .quote-script { font-family: var(--font-serif); font-style: italic; font-size: 17px; line-height: 1.55; color: var(--navy); }
+  table.doc-table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--rule); border-left: 4px solid var(--gold); border-radius: 0 8px 8px 0; overflow: hidden; margin: 18px 0 24px; box-shadow: 0 2px 12px rgba(11,29,52,0.05); }
+  table.doc-table thead { background: var(--navy); color: #fff; }
+  table.doc-table th { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.18em; text-transform: uppercase; padding: 16px 22px; text-align: left; font-weight: 600; color: #fff; }
+  table.doc-table tbody tr { border-top: 1px solid var(--rule); background: #fff; }
+  table.doc-table tbody tr:nth-child(even) { background: var(--cream-soft); }
+  table.doc-table tbody tr:first-child { border-top: none; }
+  table.doc-table td { padding: 16px 22px; vertical-align: top; font-size: 15px; line-height: 1.6; color: var(--ink); }
+  table.doc-table td:first-child { font-family: var(--font-serif); font-weight: 500; color: var(--navy); font-size: 17.5px; }
+  .four-step { display: grid; gap: 18px; margin: 18px 0 24px; }
+  .step-card { background: #fff; border: 1px solid var(--navy-line); border-radius: 10px; padding: 26px 28px 26px 30px; display: grid; grid-template-columns: 56px 1fr; gap: 22px; align-items: flex-start; }
+  .step-card .step-circle { width: 56px; height: 56px; border-radius: 50%; background: var(--gold); color: #fff; display: flex; align-items: center; justify-content: center; font-family: var(--font-serif); font-size: 28px; font-weight: 600; line-height: 1; }
+  .step-card .step-title { font-family: var(--font-serif); font-size: 26px; color: var(--navy); font-weight: 500; margin-bottom: 12px; letter-spacing: -0.012em; line-height: 1.15; }
+  .step-card .step-body { font-size: 15.5px; line-height: 1.7; color: var(--ink); }
+  .step-card .step-body p { margin-bottom: 8px; }
+  .step-card .step-body p:last-child { margin-bottom: 0; }
+  .step-card .step-body em.gold { color: var(--gold); font-style: italic; font-weight: 500; }
+  .step-card .step-body strong { color: var(--navy); font-weight: 600; }
+  .step-card .step-body ul.plain { margin: 8px 0 0; }
+  .never-say { background: var(--red-bg); border: 1px solid var(--red-line); border-radius: 10px; padding: 24px 28px; margin-bottom: 18px; }
+  .ns-head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 14px; font-weight: 600; color: var(--red); }
+  .never-say ul { list-style: none; padding: 0; margin: 0; }
+  .never-say ul li { padding: 7px 0 7px 28px; font-size: 16px; line-height: 1.55; color: var(--ink); position: relative; font-family: var(--font-serif); font-style: italic; }
+  .never-say ul li::before { content: '❌'; position: absolute; left: 0; top: 8px; font-size: 13px; font-style: normal; }
+  .attorney-card { background: var(--amber-bg); border: 1px solid var(--amber-line); border-left: 4px solid var(--amber); border-radius: 0 10px 10px 0; padding: 22px 28px; margin: 18px 0; }
+  .attorney-card .ac-head { display: flex; gap: 10px; align-items: center; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--amber); margin-bottom: 14px; font-weight: 700; }
+  .triggers-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 0 0 16px; }
+  @media (max-width: 600px) { .triggers-grid { grid-template-columns: 1fr; } }
+  .trigger-pill { background: #fff; border: 1px solid var(--amber-line); border-radius: 8px; padding: 12px 16px; font-family: var(--font-sans); font-size: 14.5px; color: var(--navy); font-weight: 500; display: flex; align-items: center; gap: 10px; }
+  .trigger-pill::before { content: '⚠'; color: var(--amber); font-size: 16px; }
+  .roleplay { margin: 28px 0 32px; }
+  .rp-setup-card { background: var(--navy-soft); color: #fff; border-radius: 10px 10px 0 0; padding: 26px 30px; }
+  .rp-setup-card .rp-tag { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 10px; font-weight: 600; }
+  .rp-setup-card .rp-title { font-family: var(--font-serif); font-size: clamp(26px, 2.8vw, 32px); color: #fff; font-weight: 500; line-height: 1.15; letter-spacing: -0.012em; margin-bottom: 14px; }
+  .rp-setup-card .rp-setup-label { font-family: var(--font-mono); font-size: 10px; letter-spacing: 0.2em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 8px; font-weight: 600; display: block; }
+  .rp-setup-card .rp-setup-text { font-family: var(--font-serif); font-style: italic; font-size: 17px; color: #fff; line-height: 1.55; opacity: 0.95; }
+  .rp-quote { background: #fff; border: 1px solid var(--navy-line); border-top: none; padding: 22px 28px; font-family: var(--font-serif); font-style: italic; font-size: 18px; line-height: 1.5; color: var(--navy); }
+  .rp-quote::before { content: '"'; color: var(--gold); font-family: var(--font-serif); font-size: 36px; line-height: 0; vertical-align: -10px; margin-right: 4px; }
+  .rp-quote::after { content: '"'; color: var(--gold); font-family: var(--font-serif); font-size: 36px; line-height: 0; vertical-align: -10px; margin-left: 2px; }
+  .rp-response { border-radius: 10px; padding: 22px 26px; margin: 14px 0; border-left: 4px solid; }
+  .rp-response.wrong { background: var(--red-bg); border: 1px solid var(--red-line); border-left: 4px solid var(--red); }
+  .rp-response.right { background: var(--green-bg); border: 1px solid var(--green-line); border-left: 4px solid var(--green); }
+  .rp-response .rp-resp-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.2em; text-transform: uppercase; font-weight: 700; margin-bottom: 12px; display: inline-flex; align-items: center; gap: 8px; }
+  .rp-response .rp-resp-label .mark { width: 22px; height: 22px; border-radius: 50%; display: inline-flex; align-items: center; justify-content: center; font-size: 13px; font-weight: 700; }
+  .rp-response.wrong .rp-resp-label { color: var(--red); }
+  .rp-response.wrong .rp-resp-label .mark { background: var(--red); color: #fff; }
+  .rp-response.right .rp-resp-label { color: var(--green); }
+  .rp-response.right .rp-resp-label .mark { background: var(--green); color: #fff; }
+  .rp-response .rp-resp-quote { font-family: var(--font-serif); font-style: italic; font-size: 17px; line-height: 1.55; color: var(--ink); margin-bottom: 14px; }
+  .rp-response .rp-resp-quote strong { font-style: normal; font-family: var(--font-sans); font-weight: 600; color: var(--navy); }
+  .rp-response .rp-why { font-family: var(--font-sans); font-size: 13.5px; color: var(--ink-soft); line-height: 1.6; padding-top: 12px; border-top: 1px solid rgba(0,0,0,0.08); }
+  .rp-response.wrong .rp-why { border-top-color: rgba(185,28,28,0.18); }
+  .rp-response.right .rp-why { border-top-color: rgba(4,120,87,0.18); }
+  .rp-response .rp-why strong { color: var(--navy); font-weight: 600; text-transform: uppercase; letter-spacing: 0.06em; font-size: 12px; }
+  .rp-debrief { margin-top: 18px; background: #fff; border: 1px solid #E8D89A; border-left: 4px solid var(--gold); border-radius: 0 10px 10px 0; padding: 22px 28px; }
+  .rp-debrief .rp-d-head { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: var(--gold); margin-bottom: 14px; font-weight: 700; }
+  .rp-debrief ul { list-style: none; padding: 0; margin: 0; }
+  .rp-debrief ul li { font-family: var(--font-serif); font-style: italic; font-size: 16.5px; color: var(--navy); padding: 7px 0 7px 28px; line-height: 1.55; position: relative; font-weight: 400; }
+  .rp-debrief ul li::before { content: '?'; color: var(--gold); font-weight: 700; position: absolute; left: 0; top: 6px; font-family: var(--font-sans); font-style: normal; font-size: 18px; }
+  .values-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 16px; margin: 22px 0; }
+  .value-card { background: #fff; border: 1px solid var(--rule); border-top: 3px solid var(--gold); border-radius: 0 0 10px 10px; padding: 24px 26px 22px; display: flex; flex-direction: column; gap: 8px; }
+  .value-card .v-num { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.22em; color: var(--gold); font-weight: 600; margin-bottom: 4px; }
+  .value-card .v-name { font-family: var(--font-serif); font-size: 26px; font-weight: 500; color: var(--gold); margin-bottom: 6px; letter-spacing: -0.012em; line-height: 1.1; }
+  .value-card .v-detail { font-size: 14.5px; line-height: 1.6; color: var(--navy); font-weight: 400; }
+  .one-thing-wrap { background: var(--navy); margin: 64px -32px -60px; padding: 64px 32px 80px; }
+  @media (max-width: 900px) { .one-thing-wrap { margin: 40px -18px -40px; padding: 48px 24px 64px; } }
+  .one-thing { max-width: 880px; margin: 0 auto; text-align: center; }
+  .one-thing .ot-label { font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.24em; text-transform: uppercase; color: var(--gold-bright); margin-bottom: 26px; font-weight: 600; }
+  .one-thing .ot-line { font-family: var(--font-serif); font-weight: 500; font-size: clamp(28px, 3.8vw, 42px); line-height: 1.18; letter-spacing: -0.012em; color: #fff; margin-bottom: 14px; }
+  .one-thing .ot-line em { color: var(--gold-bright); font-style: italic; font-weight: 500; }
+  .one-thing .ot-divider { width: 60px; height: 1px; background: var(--gold-bright); opacity: 0.5; margin: 28px auto; }
+  .one-thing .ot-final { font-family: var(--font-serif); font-style: italic; font-size: clamp(22px, 2.6vw, 30px); color: var(--gold-bright); margin-top: 8px; font-weight: 500; }
+  .module-nav { max-width: 1240px; margin: 0 auto; padding: 32px 32px 0; display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+  .module-nav .mn-btn { display: inline-flex; align-items: center; gap: 12px; background: transparent; border: 1px solid var(--gold-bright); color: var(--gold-bright); padding: 14px 22px; border-radius: 999px; font-family: var(--font-mono); font-size: 11px; letter-spacing: 0.18em; text-transform: uppercase; font-weight: 600; cursor: pointer; text-decoration: none; }
+  .module-nav .mn-btn:hover:not(:disabled):not(.disabled) { background: var(--gold-bright); color: var(--navy); }
+  .module-nav .mn-btn.disabled, .module-nav .mn-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .module-nav .mn-label { font-family: var(--font-mono); font-size: 10.5px; letter-spacing: 0.22em; text-transform: uppercase; color: rgba(255,255,255,0.55); font-weight: 500; }
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <div>
+    <div class="module-tag">Bedrock University</div>
+    <div class="brand" style="margin-top: 2px;">BEDROCK <em>ASSOCIATION MANAGEMENT</em></div>
+  </div>
+  <a href="/training-values.html" class="back-link">← Back to Values</a>
+</div>
+
+<div class="progress-strip">
+  <div class="ps-inner">
+    <span class="ps-current">Module 4 of 5</span>
+    <div class="ps-dots">
+      <span class="ps-dot done"></span>
+      <span class="ps-dot done"></span>
+      <span class="ps-dot done"></span>
+      <span class="ps-dot current"></span>
+      <span class="ps-dot"></span>
+    </div>
+    <span style="margin-left: auto;">Collecting Delinquent Assessments</span>
+  </div>
+</div>
+
+<div class="layout">
+
+  <aside class="sidenav">
+    <div class="sn-head">In this module</div>
+    <a href="#promise">The Bedrock Promise</a>
+    <a href="#reframe">The Most Important Reframe</a>
+    <a href="#separate">Separate the Person from the Debt</a>
+    <a href="#why-difficult">Why Collections Get Difficult</a>
+    <a href="#process">The Bedrock Collections Process</a>
+    <a href="#payment-plan">The Payment Plan Conversation</a>
+    <a href="#framework">The Collections Framework</a>
+    <a href="#never-say">What To Never Say</a>
+    <a href="#dispute">When They Dispute the Balance</a>
+    <a href="#hardship">When They Claim Hardship</a>
+    <a href="#attorney">Attorney Triggers — Collections</a>
+    <a href="#texas">The Texas Property Code Reality</a>
+    <div class="sn-group">Role plays</div>
+    <a href="#rp-4a">4A — The Avoider</a>
+    <a href="#rp-4b">4B — The Dispute</a>
+    <a href="#rp-4c">4C — The Angry Non-Payer</a>
+    <div class="sn-group">Reference</div>
+    <a href="#trustEd-loop">The trustEd Loop</a>
+    <a href="#values">The Five Bedrock Values</a>
+    <a href="#standards">Measurable Standards</a>
+    <a href="#weekly">The Weekly Practice</a>
+    <a href="#one-thing">The One Thing</a>
+  </aside>
+
+  <main>
+
+    <div class="doc-title">
+      <div class="doc-eyebrow">Training Module 4</div>
+      <h1>Collecting Delinquent <em>Assessments</em></h1>
+      <div class="doc-subtitle">Dignity Through the Entire Process.</div>
+    </div>
+
+    <section class="doc-section" id="promise">
+      <span class="section-label">The Bedrock Promise</span>
+      <h2>The Bedrock <em>Promise</em></h2>
+      <div class="promise-card">
+        <div class="promise-label">Our Creed</div>
+        <p>At Bedrock, we treat every homeowner, board member, vendor, and coworker with dignity and respect. We enforce community standards fairly and consistently. We solve problems, communicate clearly, and continuously improve our systems.</p>
+        <p><em class="gold">This applies to collections too — even when the conversation is uncomfortable.</em></p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="reframe">
+      <span class="section-label">Foundation</span>
+      <h2>The Most Important <em>Reframe</em></h2>
+      <div class="lead">We are not collecting money for Bedrock. We are collecting money for the community.</div>
+      <p>Every unpaid assessment is a cost that other homeowners absorb.</p>
+      <p>The pool doesn't get maintained. The landscaping gets cut. The reserves get depleted.</p>
+      <p>When we collect assessments, we are protecting every homeowner who does pay — on time, every month, without complaint.</p>
+      <p><strong>That framing changes everything about how you approach a collections conversation.</strong></p>
+    </section>
+
+    <section class="doc-section" id="separate">
+      <span class="section-label">Principle</span>
+      <h2>Separate the Person from the <em>Debt</em></h2>
+      <p>The homeowner may be facing circumstances you know nothing about.</p>
+      <p>Job loss. Medical bills. Divorce. Death in the family.</p>
+      <p>That doesn't eliminate the debt.</p>
+      <p><strong>It does change how you talk about it.</strong></p>
+      <p>Think:</p>
+      <div class="callout">
+        <p><em class="gold">"This homeowner may be going through something difficult."</em></p>
+      </div>
+      <p>And simultaneously:</p>
+      <div class="callout">
+        <p><em class="gold">"The Association has an obligation to collect assessments fairly and consistently."</em></p>
+      </div>
+      <p>Both are true at the same time.</p>
+      <p><strong>Hold both.</strong></p>
+    </section>
+
+    <section class="doc-section" id="why-difficult">
+      <span class="section-label">Diagnostic</span>
+      <h2>Why Collections Get <em>Difficult</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Situation</th><th>What's Actually Happening</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Homeowner avoids communication</td><td>Shame. Fear. Hoping it goes away.</td></tr>
+          <tr><td>Homeowner disputes the balance</td><td>Confusion. Prior errors. Lack of records.</td></tr>
+          <tr><td>Homeowner claims hardship</td><td>May be genuine. May be a delay tactic.</td></tr>
+          <tr><td>Homeowner is angry</td><td>Embarrassment coming out as aggression.</td></tr>
+          <tr><td>Homeowner ignores everything</td><td>Overwhelmed. Disengaged. Or strategic.</td></tr>
+        </tbody>
+      </table>
+      <p>Understanding the situation changes your approach.</p>
+      <p><strong>A homeowner who is ashamed needs a different conversation than one who is strategic.</strong></p>
+    </section>
+
+    <section class="doc-section" id="process">
+      <span class="section-label">The Process</span>
+      <h2>The Bedrock Collections <em>Process</em></h2>
+      <div class="four-step">
+        <div class="step-card">
+          <div class="step-circle">1</div>
+          <div>
+            <div class="step-title">Reminder notice</div>
+            <div class="step-body"><p>Friendly, clear, specific balance and due date.</p></div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">2</div>
+          <div>
+            <div class="step-title">Late fee applied</div>
+            <div class="step-body"><p>Automatic, consistent, no exceptions without board approval.</p></div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">3</div>
+          <div>
+            <div class="step-title">Formal notice</div>
+            <div class="step-body"><p>Certified mail, specific language per Texas Property Code.</p></div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">4</div>
+          <div>
+            <div class="step-title">Payment plan opportunity</div>
+            <div class="step-body"><p>Offered before escalation, documented in trustEd.</p></div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">5</div>
+          <div>
+            <div class="step-title">Attorney referral</div>
+            <div class="step-body"><p>When all other options are exhausted.</p></div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">6</div>
+          <div>
+            <div class="step-title">Legal action</div>
+            <div class="step-body"><p>Only when necessary, always a last resort.</p></div>
+          </div>
+        </div>
+      </div>
+      <div class="callout gold">
+        <div class="callout-label">Your Authority</div>
+        <p><strong>You are responsible for steps 1 through 4.</strong></p>
+        <p><strong>Steps 5 and 6 go to Ed.</strong></p>
+        <p>Never skip steps. Never jump to threats of legal action before the process is followed. Never promise outcomes you cannot guarantee.</p>
+      </div>
+    </section>
+
+    <section class="doc-section" id="payment-plan">
+      <span class="section-label">Conversation</span>
+      <h2>The Payment Plan <em>Conversation</em></h2>
+      <div class="callout">
+        <p class="quote-script"><em>"I understand you're in a difficult spot right now. The Association does offer payment plans for homeowners who are working to get current. If that's something that would help, I can put together a proposal for Ed to review. What I need from you is a commitment to the plan and to stay current on your ongoing assessments while we work through the balance."</em></p>
+      </div>
+      <p><strong>Payment plans require Ed's approval.</strong></p>
+      <p><strong>Document everything in trustEd.</strong></p>
+      <p>If they miss a payment on the plan, escalate immediately.</p>
+    </section>
+
+    <section class="doc-section" id="framework">
+      <span class="section-label">The Framework</span>
+      <h2>The Collections <em>Framework</em></h2>
+      <div class="four-step">
+        <div class="step-card">
+          <div class="step-circle">1</div>
+          <div>
+            <div class="step-title">Establish contact</div>
+            <div class="step-body">
+              <p><em class="gold">"I'm reaching out because there's a balance on your account and I want to help you get this resolved before it moves further in the process."</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">2</div>
+          <div>
+            <div class="step-title">Understand the situation</div>
+            <div class="step-body">
+              <p><em class="gold">"Can you help me understand what's going on? I want to make sure we're working with the full picture."</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">3</div>
+          <div>
+            <div class="step-title">Clarify the balance</div>
+            <div class="step-body">
+              <p><em class="gold">"Let me walk you through exactly what makes up this balance so we're both looking at the same numbers."</em></p>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">4</div>
+          <div>
+            <div class="step-title">Present options</div>
+            <div class="step-body">
+              <ul class="plain">
+                <li>Pay in full</li>
+                <li>Payment plan (subject to approval)</li>
+                <li>Dispute a specific charge (document and escalate)</li>
+              </ul>
+            </div>
+          </div>
+        </div>
+        <div class="step-card">
+          <div class="step-circle">5</div>
+          <div>
+            <div class="step-title">Set a clear next step</div>
+            <div class="step-body">
+              <p><em class="gold">"So what I'm hearing is you can make a payment of $X by Friday. I'll note that in your account. Can I follow up with you Monday to confirm it went through?"</em></p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="never-say">
+      <span class="section-label">Language</span>
+      <h2>What To Never <em>Say</em></h2>
+      <div class="never-say">
+        <div class="ns-head">Never Say</div>
+        <ul>
+          <li>"If you don't pay we'll put a lien on your house." (Before the proper process)</li>
+          <li>"The attorney is going to contact you." (Before the referral is actually made)</li>
+          <li>"Everyone else pays on time."</li>
+          <li>"I don't know why you haven't paid."</li>
+          <li>"This isn't my problem."</li>
+        </ul>
+      </div>
+    </section>
+
+    <section class="doc-section" id="dispute">
+      <span class="section-label">Response</span>
+      <h2>When They Dispute the <em>Balance</em></h2>
+      <div class="callout">
+        <p><em class="gold">"I want to make sure we have this right. Let me pull up your account history and walk through it with you. If there's an error, we'll correct it."</em></p>
+      </div>
+      <p><strong>Then actually check.</strong></p>
+      <p>If there is an error, own it immediately and correct it.</p>
+      <p>If the balance is correct, walk them through it line by line until they understand.</p>
+    </section>
+
+    <section class="doc-section" id="hardship">
+      <span class="section-label">Response</span>
+      <h2>When They Claim <em>Hardship</em></h2>
+      <p>Take hardship claims at face value unless you have clear evidence otherwise.</p>
+      <div class="callout">
+        <p><em class="gold">"I hear you and I want to help find a path forward. Let me bring this to our management team and see what options we can put together. Can I follow up with you by Wednesday with a proposal?"</em></p>
+      </div>
+      <p><strong>Then follow up by Wednesday.</strong></p>
+    </section>
+
+    <section class="doc-section" id="attorney">
+      <span class="section-label">Escalation</span>
+      <h2>Attorney Triggers — Collections <em>Edition</em></h2>
+      <p>Escalate to Ed immediately if:</p>
+      <div class="attorney-card">
+        <div class="ac-head">⚠ Standing Caution Notice</div>
+        <div class="triggers-grid">
+          <div class="trigger-pill">Homeowner mentions bankruptcy</div>
+          <div class="trigger-pill">Disputes Association's right to collect</div>
+          <div class="trigger-pill">Threatens legal action</div>
+          <div class="trigger-pill">Claims Fair Housing connection</div>
+          <div class="trigger-pill">Balance exceeds board threshold</div>
+          <div class="trigger-pill">Homeowner is in foreclosure</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="texas">
+      <span class="section-label">Statutory Reality</span>
+      <h2>The Texas Property Code <em>Reality</em></h2>
+      <p>Texas Property Code Chapter 209 governs HOA collections.</p>
+      <p>There are specific notice requirements, timelines, and procedures that must be followed before a lien can be filed or legal action can be taken.</p>
+      <div class="callout gold">
+        <div class="callout-label">What you need to know</div>
+        <p>You do not need to know every detail of Chapter 209.</p>
+        <p><strong>You do need to know this:</strong> follow the process, document everything, and escalate before taking any action outside your authority.</p>
+      </div>
+      <p>If you're ever unsure whether an action is permitted, <strong>ask Ed before you act.</strong></p>
+    </section>
+
+    <section class="doc-section" id="rp-4a">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 4A — The <em>Avoider</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 4A</div>
+          <div class="rp-title">The Avoider</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner is three months behind on assessments. You've sent two notices with no response. You reach them by phone.</div>
+        </div>
+        <div class="rp-quote">Yeah I know I owe money. I've just been dealing with some stuff. I'll get to it.</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"Your account is 90 days past due and if we don't receive payment by Friday we'll be referring this to our attorney."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>Jumped to threats. No understanding of the situation. Pushes them back into avoidance.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"I appreciate you taking my call. I'm not calling to pressure you — I'm calling because I want to help you get this resolved before it moves further in the process. Can you tell me a little about what's been going on? I want to make sure we're working with the right options for your situation."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Took the pressure off immediately. Opened a real conversation. Positioned Bedrock as trying to help not trying to collect. Gathered information before presenting options.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if they say they just don't have the money right now?</li>
+            <li>When do you offer a payment plan versus escalate?</li>
+            <li>What do you document after this call?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-4b">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 4B — The <em>Dispute</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 4B</div>
+          <div class="rp-title">The Dispute</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner calls saying their balance is wrong and they're not paying until it's corrected.</div>
+        </div>
+        <div class="rp-quote">I've been charged late fees I shouldn't have. I paid on time and nobody applied it correctly. I'm not paying a dime until this is fixed.</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"Our records show the payment was received late. The late fee stands."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>Defensive. Didn't verify. Creates a fight.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"I want to make sure we have this right — if there's an error, I want to find it and fix it. Can you tell me when you made the payment and how? I'll pull up the account and we'll go through it together line by line."</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Took the dispute seriously. Committed to verifying before defending. Positioned as solving together not arguing. Created a path to resolution.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if after review the late fee is correct?</li>
+            <li>How do you communicate a correction if we made an error?</li>
+            <li>What if they paid by check and say it cleared their bank but wasn't applied?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="rp-4c">
+      <span class="section-label">Role Play</span>
+      <h2>Scenario 4C — The Angry <em>Non-Payer</em></h2>
+      <div class="roleplay">
+        <div class="rp-setup-card">
+          <div class="rp-tag">Role Play Scenario 4C</div>
+          <div class="rp-title">The Angry Non-Payer</div>
+          <span class="rp-setup-label">Setup</span>
+          <div class="rp-setup-text">A homeowner is six months behind. They call angry before you reach out to them.</div>
+        </div>
+        <div class="rp-quote">Don't send me another letter. I know I owe money. The HOA wastes money on things we don't need and I'm not paying for it.</div>
+
+        <div class="rp-response wrong">
+          <div class="rp-resp-label"><span class="mark">✗</span> Wrong Response</div>
+          <div class="rp-resp-quote">"Your assessments are required by your governing documents regardless of how you feel about how the money is spent."</div>
+          <div class="rp-why"><strong>Why it fails</strong><br>Technically correct. Completely ineffective. Escalates the anger.</div>
+        </div>
+
+        <div class="rp-response right">
+          <div class="rp-resp-label"><span class="mark">✓</span> Right Response</div>
+          <div class="rp-resp-quote">"I hear you — and I understand that frustration with how assessments are spent is real for a lot of homeowners. I want to address two things separately if that's okay. The first is your concerns about how the community's money is being managed — that's something the board needs to hear and I can tell you how to raise that formally. The second is the balance on your account, because regardless of those concerns, the Association does depend on assessments to operate and other homeowners are affected when accounts are past due. Can we talk about both?"</div>
+          <div class="rp-why"><strong>Why it works</strong><br>Validated their concern without agreeing. Separated the governance issue from the collections issue. Gave them a legitimate path for their complaint. Kept the collections conversation on track.</div>
+        </div>
+
+        <div class="rp-debrief">
+          <div class="rp-d-head">Debrief Questions</div>
+          <ul>
+            <li>What if they refuse to separate the two issues?</li>
+            <li>How do you escalate a homeowner who raises legitimate governance concerns?</li>
+            <li>At what point does this go to the attorney regardless of the conversation?</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="trustEd-loop">
+      <span class="section-label">Learning Loop</span>
+      <h2>The trustEd Loop — Collections <em>Edition</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Category</th><th>Example</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Communication gap</td><td>Homeowner didn't receive notices</td></tr>
+          <tr><td>Balance dispute</td><td>Homeowner claims error in account</td></tr>
+          <tr><td>Hardship situation</td><td>Homeowner facing genuine financial difficulty</td></tr>
+          <tr><td>Avoidance pattern</td><td>Multiple attempts with no response</td></tr>
+          <tr><td>Payment plan in progress</td><td>Documented terms and follow-up date</td></tr>
+          <tr><td>Escalation required</td><td>Bankruptcy, legal threat, threshold exceeded</td></tr>
+        </tbody>
+      </table>
+      <p>Then ask: <em class="gold">"What did this interaction teach Bedrock?"</em></p>
+    </section>
+
+    <section class="doc-section" id="values">
+      <span class="section-label">Reference</span>
+      <h2>The Five Bedrock Values — Applied to <em>Collections</em></h2>
+      <div class="values-grid">
+        <div class="value-card">
+          <div class="v-num">No. 01</div>
+          <div class="v-name">Hospitality</div>
+          <div class="v-detail">Treat every homeowner in collections with dignity. They may be going through something difficult. How we treat them in their worst moment defines our character.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 02</div>
+          <div class="v-name">Ownership</div>
+          <div class="v-detail">Own every delinquent account through the process. Don't send a notice and forget it. Follow the sequence and follow up.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 03</div>
+          <div class="v-name">Consistency</div>
+          <div class="v-detail">Apply the same process to every delinquent account. No exceptions without board approval. Selective collection creates legal exposure.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 04</div>
+          <div class="v-name">Communication</div>
+          <div class="v-detail">Keep homeowners informed at every step. No surprises. No sudden attorney referrals without proper notice.</div>
+        </div>
+        <div class="value-card">
+          <div class="v-num">No. 05</div>
+          <div class="v-name">Improvement</div>
+          <div class="v-detail">When collections problems cluster, ask why. Is there a billing clarity issue? A payment portal problem? A community economic trend the board needs to know about?</div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="standards">
+      <span class="section-label">Scorecard</span>
+      <h2>Measurable <em>Standards</em></h2>
+      <table class="doc-table">
+        <thead>
+          <tr><th>Standard</th><th>Target</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>First outreach on delinquent account</td><td>Within 30 days of missed payment</td></tr>
+          <tr><td>Response to homeowner contact on collections</td><td>Within 24 hours</td></tr>
+          <tr><td>Payment plan proposals reviewed by Ed</td><td>Within 48 hours of request</td></tr>
+          <tr><td>Accounts at 90+ days without escalation decision</td><td>Zero</td></tr>
+          <tr><td>Balance disputes investigated</td><td>100% within 5 business days</td></tr>
+          <tr><td>trustEd documentation of collections interactions</td><td>100%</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section class="doc-section" id="weekly">
+      <span class="section-label">Practice</span>
+      <h2>The Weekly <em>Practice</em></h2>
+      <p>Every Monday for the first month, five minutes:</p>
+      <p>One collections scenario. Rotate who plays the homeowner.</p>
+      <p><strong>After each role play:</strong></p>
+      <ul class="plain">
+        <li>Did we separate the person from the debt?</li>
+        <li>Did we understand the situation before presenting options?</li>
+        <li>Did we set a specific next step?</li>
+        <li>What's the one thing to remember?</li>
+      </ul>
+    </section>
+
+    <section class="doc-section" id="one-thing" style="margin-bottom: 0;">
+      <div class="one-thing-wrap">
+        <div class="one-thing">
+          <div class="ot-label">The One Thing — If you remember nothing else</div>
+          <div class="ot-line">We collect assessments because communities <em>depend</em> on them.</div>
+          <div class="ot-line">We do it with <em>dignity</em> because people deserve it.</div>
+          <div class="ot-divider"></div>
+          <div class="ot-line">Both are true.</div>
+          <div class="ot-line">Neither cancels the other.</div>
+          <div class="ot-final">Hold both. Every single time.</div>
+
+          <div class="module-nav" style="margin-top: 56px; padding: 0;">
+            <a class="mn-btn" href="/training-compliance.html">← Previous Module</a>
+            <span class="mn-label">Module 4 of 5</span>
+            <a class="mn-btn" href="/training-deadlines.html">Next Module →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+  const sections = document.querySelectorAll('.doc-section[id]');
+  const navLinks = document.querySelectorAll('.sidenav a');
+  function setActive() {
+    let activeId = null;
+    const offset = 140;
+    sections.forEach((s) => { const top = s.getBoundingClientRect().top; if (top - offset <= 0) activeId = s.id; });
+    navLinks.forEach((a) => { a.classList.toggle('active', a.getAttribute('href') === '#' + activeId); });
+  }
+  document.addEventListener('scroll', setActive, { passive: true });
+  setActive();
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') { window.location.href = '/training-values.html'; } });
+</script>
+
+</body>
+</html>
