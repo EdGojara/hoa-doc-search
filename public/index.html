@@ -21980,10 +21980,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   }
   window.inspDraftsReclassifyOpen = inspDraftsReclassifyOpen;
 
-  // Fires when operator picks a different category. If the description
-  // textarea still matches the baseline (operator hasn't manually edited),
-  // swap it to the new category's observation_template. If operator has
-  // typed their own description, leave it — their work is preserved.
+  // Fires when operator picks a different category. Behavior:
+  //   - If the new category HAS a template AND the operator hasn't manually
+  //     edited the description, swap to the new template.
+  //   - If the new category HAS a template but the operator HAS edited,
+  //     show a "Use it" hint without clobbering their work.
+  //   - If the new category has NO template (NULL/empty), KEEP the current
+  //     description so the operator at least has something to edit. Show
+  //     an info hint that no starter exists for this category.
   function inspReclassifyCategoryChanged() {
     const sel = document.getElementById('inspReclassifyCategory');
     const desc = document.getElementById('inspReclassifyDesc');
@@ -21991,29 +21995,37 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const cat = _inspReclassifyCategoryById.get(sel.value);
     if (!cat) return;
 
+    const template = (cat.observation_template || '').trim();
     const currentText = (desc.value || '').trim();
     const baselineText = (_inspReclassifyDescBaseline || '').trim();
     const operatorEdited = currentText !== '' && currentText !== baselineText;
+    const hint = document.getElementById('inspReclassifyError');
 
-    if (operatorEdited) {
-      // Don't clobber their typed content. Surface a one-line hint that a
-      // template exists for this category in case they want to reset.
-      const hint = document.getElementById('inspReclassifyError');
-      if (hint && cat.observation_template) {
-        hint.style.color = '#854d0e';
-        hint.innerHTML = `Suggested starter for <strong>${escapeHtml(cat.label)}</strong>: <em>${escapeHtml(cat.observation_template)}</em> <button type="button" onclick="inspReclassifyApplyTemplate()" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:4px;">Use it</button>`;
+    // Case: new category has no template — KEEP current text, show info hint.
+    if (!template) {
+      if (hint) {
+        hint.style.color = '#475569';
+        hint.innerHTML = `No starter template for <strong>${escapeHtml(cat.label)}</strong> — keeping the current description so you can edit it. (Templates get seeded in migration 220 for the 21 standard categories; this category needs one added via the Categories editor.)`;
         hint.style.display = 'block';
       }
       return;
     }
 
-    // Swap to the new category's template + update baseline so future
-    // category changes still swap.
-    const newText = cat.observation_template || '';
-    desc.value = newText;
-    _inspReclassifyDescBaseline = newText;
+    if (operatorEdited) {
+      // New category has a template + operator has typed their own content.
+      // Don't clobber. Surface a "Use it" hint.
+      if (hint) {
+        hint.style.color = '#854d0e';
+        hint.innerHTML = `Suggested starter for <strong>${escapeHtml(cat.label)}</strong>: <em>${escapeHtml(template)}</em> <button type="button" onclick="inspReclassifyApplyTemplate()" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:4px;">Use it</button>`;
+        hint.style.display = 'block';
+      }
+      return;
+    }
 
-    const hint = document.getElementById('inspReclassifyError');
+    // Standard auto-swap path: new category has a template + operator
+    // hasn't edited yet. Replace the textarea + reset baseline.
+    desc.value = template;
+    _inspReclassifyDescBaseline = template;
     if (hint) hint.style.display = 'none';
   }
   window.inspReclassifyCategoryChanged = inspReclassifyCategoryChanged;
