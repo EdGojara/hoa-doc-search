@@ -6860,15 +6860,19 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
     let duplicatePropertyRows = [];
     if (property && property.street_address) {
       const sa = String(property.street_address).trim();
-      // Strip the directional + suffix so "6234 Clear Canyon Dr" matches
-      // "6234 Clear Canyon Drive" — use the first ~16 chars as a fuzzy
-      // prefix match.
-      const prefix = sa.slice(0, Math.min(18, sa.length)).replace(/[%_]/g, '');
+      // Match by leading HOUSE NUMBER only — most robust against
+      // normalization drift ("Dr" vs "Drive", extra spaces, capitalization,
+      // city suffix). Numbers before the first space are the house number;
+      // grab them and match street_address ILIKE '6234 %' (trailing space
+      // prevents matching 62340).
+      const houseNumMatch = sa.match(/^\s*(\d+)\s/);
+      const houseNum = houseNumMatch ? houseNumMatch[1] : null;
+      const pattern = houseNum ? `${houseNum} %` : sa.slice(0, 12).replace(/[%_]/g, '') + '%';
       const { data: dupProps } = await supabase
         .from('properties')
         .select('id, street_address, unit')
         .eq('community_id', violation.community_id)
-        .ilike('street_address', `${prefix}%`)
+        .ilike('street_address', pattern)
         .neq('id', violation.property_id);
       if (dupProps && dupProps.length > 0) {
         for (const dp of dupProps) {
@@ -6960,6 +6964,27 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
         category_label: p.enforcement_categories?.label,
       })),
       duplicate_property_rows: duplicatePropertyRows,
+      // Sanity check — every open violation linked to THIS property_id,
+      // regardless of category. If the side panel shows certified_209
+      // priors that don't appear here, the side panel was actually for
+      // a different property_id (duplicate not caught above).
+      all_open_violations_at_property_id: await (async () => {
+        const { data } = await supabase
+          .from('violations')
+          .select('id, current_stage, opened_at, source, primary_category_id, enforcement_categories(slug, label)')
+          .eq('property_id', violation.property_id)
+          .not('current_stage', 'in', '(cured,closed,voided)')
+          .order('opened_at', { ascending: false })
+          .limit(30);
+        return (data || []).map((v) => ({
+          id: v.id,
+          stage: v.current_stage,
+          opened_at: v.opened_at,
+          source: v.source,
+          category_label: v.enforcement_categories?.label,
+          category_slug: v.enforcement_categories?.slug,
+        }));
+      })(),
       engine_decision: {
         stage: decision.stage,
         cure_days: decision.cure_days,

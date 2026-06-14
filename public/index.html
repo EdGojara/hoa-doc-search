@@ -21734,6 +21734,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <td style="padding:8px 10px; font-size:12px;">${p.resolved_at ? 'cured ' + escapeHtml(fmtDate(p.resolved_at)) : '<span style="color:#15803d; font-weight:600;">open</span>'}</td>
             </tr>`).join('');
 
+      const allAtProp = j.all_open_violations_at_property_id || [];
+      const allAtPropBlock = `
+        <div style="margin-top:18px; padding:12px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+          <div style="font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">All open violations linked to this property_id (sanity check)</div>
+          ${allAtProp.length === 0
+            ? '<div style="font-size:12px; color:#94a3b8;">No open violations at this property_id (other than this draft\'s own).</div>'
+            : allAtProp.map((v) => `<div style="font-size:11.5px; color:#0B1D34; padding:3px 0;">→ ${escapeHtml(v.category_label || v.category_slug || '—')} · <strong>${escapeHtml(v.stage)}</strong> · opened ${escapeHtml(fmtDate(v.opened_at))} · source=${escapeHtml(v.source || '—')}</div>`).join('')
+          }
+          <div style="font-size:10.5px; color:#94a3b8; margin-top:6px; font-style:italic;">If the community-map side panel showed certified_209 priors NOT in this list, the side panel was for a different property_id.</div>
+        </div>`;
       const dupRows = j.duplicate_property_rows || [];
       const dupBlock = dupRows.length === 0 ? '' : `
         <div style="margin-top:18px; padding:14px 16px; background:#fef2f2; border:1px solid #fecaca; border-left:4px solid #b91c1c; border-radius:8px;">
@@ -21798,6 +21808,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <tbody>${priorsRows}</tbody>
           </table>
         </div>
+
+        ${allAtPropBlock}
 
         ${dupBlock}
 
