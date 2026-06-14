@@ -3001,7 +3001,7 @@ router.get('/categories', async (req, res) => {
 // ---------------------------------------------------------------------------
 router.patch('/categories/:id', express.json(), async (req, res) => {
   try {
-    const allowedFields = ['description', 'label', 'default_priority_weight', 'display_order'];
+    const allowedFields = ['description', 'label', 'observation_template', 'default_priority_weight', 'display_order'];
     const patch = {};
     for (const k of allowedFields) {
       if (req.body && Object.prototype.hasOwnProperty.call(req.body, k)) {
@@ -3037,7 +3037,7 @@ router.get('/category-priorities', async (req, res) => {
     if (!communityId) return res.status(400).json({ error: 'community_id_required' });
     const [catRes, prioRes] = await Promise.all([
       supabase.from('enforcement_categories')
-        .select('id, slug, label, description, default_priority_weight, display_order')
+        .select('id, slug, label, description, observation_template, default_priority_weight, display_order')
         .order('display_order', { ascending: true }),
       supabase.from('community_enforcement_priorities')
         .select('category_id, priority_weight, set_by_board_vote_date, board_meeting_minutes_ref, notes, governing_doc_reference, governing_doc_section_title, governing_doc_quote, governing_doc_page')
