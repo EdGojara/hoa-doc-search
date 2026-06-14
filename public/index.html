@@ -16041,6 +16041,71 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     </div>
   </div>
 
+  <!-- Reclassify draft modal — opens from ✏️ Fix button on each draft row.
+       Operator picks the correct category + edits the description; on Save
+       the observation + violation update + the letter PDF regenerates.
+       Ed 2026-06-13: highest-frequency operator task, must be intuitive. -->
+  <div id="inspReclassifyModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center; overflow-y:auto;">
+    <div style="background:#fff; border-radius:14px; max-width:680px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
+      <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div>
+          <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">✏️ Fix AI assessment</div>
+          <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">Pick the right violation. Describe what's actually in the photo.</div>
+        </div>
+        <button type="button" onclick="inspDraftsReclassifyClose()"
+                style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✕ Close</button>
+      </div>
+
+      <div style="padding:18px; overflow-y:auto;">
+        <!-- Big photo + property context -->
+        <div style="display:flex; gap:14px; align-items:flex-start; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid #e2e8f0;">
+          <img id="inspReclassifyPhoto" src="" style="width:200px; height:200px; object-fit:cover; border-radius:8px; flex-shrink:0; background:#f1f5f9;" />
+          <div style="flex:1; min-width:0;">
+            <div id="inspReclassifyAddress" style="font-weight:700; color:#0B1D34; font-size:15px; margin-bottom:4px;">—</div>
+            <div id="inspReclassifyOwner" style="font-size:12.5px; color:#475569; margin-bottom:10px;">—</div>
+            <div style="background:#fef3c7; border:1px solid #fde68a; border-left:3px solid #ca8a04; border-radius:6px; padding:10px 12px;">
+              <div style="font-size:10.5px; font-weight:700; color:#854d0e; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px;">⚠ AI's original assessment</div>
+              <div id="inspReclassifyOriginalCategory" style="font-size:13px; font-weight:600; color:#0B1D34; margin-bottom:3px;">—</div>
+              <div id="inspReclassifyOriginalDesc" style="font-size:12px; color:#475569; font-style:italic; line-height:1.45;">—</div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Correct category -->
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12.5px; font-weight:700; color:#0B1D34; margin-bottom:6px;">What's the actual violation? <span style="color:#b91c1c;">*</span></label>
+          <select id="inspReclassifyCategory" style="width:100%; padding:11px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+            <option value="">— pick the correct category —</option>
+          </select>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">If the right category isn't listed, the community may not have it enabled. Cancel + add it under Categories editor.</div>
+        </div>
+
+        <!-- Description -->
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:12.5px; font-weight:700; color:#0B1D34; margin-bottom:6px;">Describe what's in the photo <span style="color:#b91c1c;">*</span></label>
+          <textarea id="inspReclassifyDesc" rows="4" placeholder="One short sentence in plain language — what would Ed write?"
+                    style="width:100%; padding:10px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:13.5px; line-height:1.5; font-family:inherit; resize:vertical;"></textarea>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">This sentence prints inside the letter body. Keep it conversational — what the homeowner sees, not legalese.</div>
+        </div>
+
+        <!-- What happens info -->
+        <div style="background:#f0f9ff; border:1px solid #93c5fd; border-radius:6px; padding:10px 12px; font-size:12px; color:#1e40af; margin-bottom:14px;">
+          On Save: the violation reclassifies, the observation updates with an audit-trail note ("Reclassified by operator on [date]"), and the letter PDF regenerates with the new category + description. Cure period stays the same — only the category and copy change.
+        </div>
+
+        <div id="inspReclassifyError" style="display:none; color:#b91c1c; font-size:12.5px; margin-bottom:10px;"></div>
+
+        <!-- Actions -->
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button type="button" onclick="inspDraftsReclassifyClose()"
+                  style="background:#fff; border:1px solid #d0d7de; color:#0B1D34; padding:10px 18px; border-radius:8px; font-size:13.5px; font-weight:600; cursor:pointer;">Cancel</button>
+          <button type="button" id="inspReclassifySaveBtn" onclick="inspDraftsReclassifySave()"
+                  style="background:var(--navy, #0B1D34); color:#fff; border:none; padding:10px 22px; border-radius:8px; font-size:13.5px; font-weight:700; cursor:pointer;">✓ Save &amp; regenerate letter</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
   <!-- Property detail modal — opens from list-row tap or map-marker tap.
        Shows full enforcement + ownership context for one property. -->
   <div id="inspPropertyDetailModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center;">
@@ -21334,6 +21399,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
           ${confidence ? `<span style="color:${confColor}; font-weight:600;">Confidence: ${escapeHtml(confidence)}</span>` : ''}
           ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#0B1D34; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
+          <button onclick="inspDraftsReclassifyOpen('${d.interaction_id}')" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="AI got it wrong? Pick the right category + fix the description. Letter regenerates automatically.">✏️ Fix</button>
           <button onclick="inspDraftsRegenerateLetter('${d.violation_id || ''}', this)" style="background:none; border:1px solid #d0d7de; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
           <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
         </div>
@@ -21527,6 +21593,158 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (btn) { btn.disabled = false; btn.innerHTML = originalLabel; }
     }
   }
+
+  // ============================================================
+  // ✏️ FIX (RECLASSIFY) — AI got the violation wrong; operator
+  // picks the correct category + edits the description; the letter
+  // PDF regenerates. Ed 2026-06-13: highest-frequency operator task.
+  // ============================================================
+  let _inspReclassifyInteractionId = null;
+  let _inspReclassifyCategoriesLoaded = false;
+
+  async function inspDraftsReclassifyOpen(interactionId) {
+    const draft = (inspDraftsData || []).find((d) => d.interaction_id === interactionId);
+    if (!draft) {
+      alert('Could not find that draft — try refreshing the queue.');
+      return;
+    }
+    _inspReclassifyInteractionId = interactionId;
+
+    // Populate the photo, address, owner, original AI verdict
+    const photoEl = document.getElementById('inspReclassifyPhoto');
+    photoEl.src = (draft.observation && draft.observation.photo_url) || '';
+    photoEl.style.display = photoEl.src ? 'block' : 'none';
+
+    const addr = (draft.property && draft.property.street_address) || '—';
+    const unit = (draft.property && draft.property.unit) ? ' #' + draft.property.unit : '';
+    document.getElementById('inspReclassifyAddress').textContent = addr + unit;
+
+    const ownerName = (draft.owner && draft.owner.full_name) || '—';
+    const community = (draft.violation && draft.violation.community_name) || draft.community_name || '';
+    document.getElementById('inspReclassifyOwner').textContent = community
+      ? `${ownerName} · ${community}`
+      : ownerName;
+
+    document.getElementById('inspReclassifyOriginalCategory').textContent =
+      (draft.violation && draft.violation.category_label) || '—';
+    document.getElementById('inspReclassifyOriginalDesc').textContent =
+      '"' + ((draft.observation && draft.observation.ai_description) || '(no description)') + '"';
+
+    // Pre-fill the description textarea with the current AI description so
+    // operator edits in place rather than re-typing from scratch.
+    document.getElementById('inspReclassifyDesc').value =
+      (draft.observation && draft.observation.ai_description) || '';
+
+    // Load enforcement categories — global list, ordered for the dropdown.
+    // Cached after first load since categories rarely change mid-session.
+    if (!_inspReclassifyCategoriesLoaded) {
+      const sel = document.getElementById('inspReclassifyCategory');
+      sel.innerHTML = '<option value="">— loading categories —</option>';
+      try {
+        const r = await window._authFetch('/api/enforcement/categories');
+        const j = await r.json();
+        const categories = (j.categories || j || []).sort((a, b) =>
+          (a.label || '').localeCompare(b.label || '')
+        );
+        sel.innerHTML = '<option value="">— pick the correct category —</option>';
+        for (const c of categories) {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.label;
+          sel.appendChild(opt);
+        }
+        _inspReclassifyCategoriesLoaded = true;
+      } catch (e) {
+        sel.innerHTML = `<option value="">Failed to load: ${escapeHtml(e.message)}</option>`;
+      }
+    }
+
+    // Pre-select the current category so operator only changes it if needed
+    const currentCatId = (draft.violation && draft.violation.primary_category_id) || '';
+    document.getElementById('inspReclassifyCategory').value = currentCatId;
+
+    document.getElementById('inspReclassifyError').style.display = 'none';
+    document.getElementById('inspReclassifyError').textContent = '';
+    document.getElementById('inspReclassifyModal').style.display = 'flex';
+  }
+  window.inspDraftsReclassifyOpen = inspDraftsReclassifyOpen;
+
+  function inspDraftsReclassifyClose() {
+    document.getElementById('inspReclassifyModal').style.display = 'none';
+    _inspReclassifyInteractionId = null;
+  }
+  window.inspDraftsReclassifyClose = inspDraftsReclassifyClose;
+
+  async function inspDraftsReclassifySave() {
+    const interactionId = _inspReclassifyInteractionId;
+    if (!interactionId) return;
+
+    const categoryId = document.getElementById('inspReclassifyCategory').value;
+    const description = (document.getElementById('inspReclassifyDesc').value || '').trim();
+    const errEl = document.getElementById('inspReclassifyError');
+    const btn = document.getElementById('inspReclassifySaveBtn');
+
+    errEl.style.display = 'none';
+    if (!categoryId) {
+      errEl.textContent = 'Pick the correct violation category before saving.';
+      errEl.style.display = 'block';
+      return;
+    }
+    if (!description || description.length < 8) {
+      errEl.textContent = 'Description is too short — describe what\'s actually in the photo in one sentence.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const draft = (inspDraftsData || []).find((d) => d.interaction_id === interactionId);
+    const violationId = draft && draft.violation_id;
+    if (!violationId) {
+      errEl.textContent = 'No violation linked to this draft — cannot save.';
+      errEl.style.display = 'block';
+      return;
+    }
+
+    const originalLabel = btn.innerHTML;
+    btn.disabled = true;
+    btn.innerHTML = '⏳ Saving…';
+    try {
+      // 1. Reclassify the observation + violation
+      const r1 = await window._authFetch(`/api/enforcement/drafts/${encodeURIComponent(interactionId)}/reclassify`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ category_id: categoryId, description }),
+      });
+      const j1 = await r1.json();
+      if (!r1.ok) throw new Error(j1.error || `reclassify HTTP ${r1.status}`);
+
+      // 2. Regenerate the letter PDF with the corrected category + description
+      btn.innerHTML = '⏳ Regenerating letter…';
+      const r2 = await window._authFetch('/api/enforcement/generate-letter', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ violation_id: violationId, force_regenerate: true }),
+      });
+      const j2 = await r2.json();
+      if (!r2.ok) throw new Error(j2.error || `regenerate HTTP ${r2.status}`);
+
+      // 3. Refresh the drafts queue + close the modal
+      await inspDraftsLoad();
+      inspDraftsReclassifyClose();
+
+      // Brief confirmation — operator sees the row already updated in the queue
+      // so the alert is just a "yes that worked" beat.
+      setTimeout(() => {
+        alert(`✓ Reclassified to "${j1.new_category_label}" and letter regenerated. Review the updated draft in the queue.`);
+      }, 50);
+    } catch (e) {
+      errEl.textContent = e.message || 'Save failed';
+      errEl.style.display = 'block';
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = originalLabel;
+    }
+  }
+  window.inspDraftsReclassifySave = inspDraftsReclassifySave;
 
   // ============================================================
   // MAIL QUEUE (Phase 6e)

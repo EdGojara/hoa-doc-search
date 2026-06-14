@@ -6767,6 +6767,104 @@ router.get('/mail/pieces', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/enforcement/drafts/:interactionId/reclassify
+// ----------------------------------------------------------------------------
+// Ed 2026-06-13: "AI assessment is incorrect — I saw trash can, AI said
+// damaged car. Need to fix, must be easy for the person doing it."
+//
+// Operator clicks ✏️ Fix on a draft row, picks the correct category, edits
+// the description to match the actual photo, clicks Save. Single endpoint
+// rewrites the observation + violation + (downstream caller regenerates
+// the letter PDF). Audit trail preserved in property_observations.reviewer_notes.
+//
+// Body: { category_id (required), description (required) }
+// Returns: { ok, violation_id, observation_id, prior_category_label }
+//
+// The client's next step is POST /generate-letter with force_regenerate=true
+// to rebuild the PDF with the corrected category + description.
+// ----------------------------------------------------------------------------
+router.post('/drafts/:interactionId/reclassify', express.json(), async (req, res) => {
+  try {
+    const { interactionId } = req.params;
+    const newCategoryId = req.body && req.body.category_id;
+    const newDescription = req.body && req.body.description;
+    if (!newCategoryId || !newDescription) {
+      return res.status(400).json({ error: 'category_id and description required' });
+    }
+
+    // 1. Get the interaction → violation_id
+    const { data: interaction, error: iErr } = await supabase
+      .from('interactions')
+      .select('id, violation_id, observation_id, status')
+      .eq('id', interactionId)
+      .maybeSingle();
+    if (iErr || !interaction) return res.status(404).json({ error: 'interaction not found' });
+    if (!interaction.violation_id) return res.status(400).json({ error: 'interaction has no linked violation — cannot reclassify' });
+    if (interaction.status === 'sent') return res.status(409).json({ error: 'cannot reclassify — letter already mailed' });
+
+    // 2. Get the violation → primary_category_id, observation_id
+    const { data: violation, error: vErr } = await supabase
+      .from('violations')
+      .select('id, primary_category_id, opened_from_observation_id, enforcement_categories(label)')
+      .eq('id', interaction.violation_id)
+      .maybeSingle();
+    if (vErr || !violation) return res.status(404).json({ error: 'violation not found' });
+
+    const obsId = violation.opened_from_observation_id || interaction.observation_id;
+    if (!obsId) return res.status(400).json({ error: 'no observation linked to this draft — cannot reclassify' });
+
+    // 3. Validate the new category exists and capture its label for audit trail
+    const { data: newCategory, error: ncErr } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug, label')
+      .eq('id', newCategoryId)
+      .maybeSingle();
+    if (ncErr || !newCategory) return res.status(400).json({ error: 'invalid category_id' });
+
+    const priorCategoryLabel = (violation.enforcement_categories && violation.enforcement_categories.label) || '(unknown)';
+
+    // 4. Update the observation — category, description, audit-trail note
+    const auditNote = `[Reclassified ${new Date().toISOString().slice(0, 10)}: ${priorCategoryLabel} → ${newCategory.label} by operator]`;
+    const { data: existingObs } = await supabase
+      .from('property_observations')
+      .select('reviewer_notes')
+      .eq('id', obsId)
+      .maybeSingle();
+    const newReviewerNotes = existingObs && existingObs.reviewer_notes
+      ? `${auditNote}\n${existingObs.reviewer_notes}`
+      : auditNote;
+
+    const { error: oUpErr } = await supabase
+      .from('property_observations')
+      .update({
+        category_id:    newCategory.id,
+        ai_description: newDescription,
+        reviewer_notes: newReviewerNotes,
+      })
+      .eq('id', obsId);
+    if (oUpErr) return res.status(500).json({ error: 'observation update failed: ' + oUpErr.message });
+
+    // 5. Update the violation's primary category
+    const { error: vUpErr } = await supabase
+      .from('violations')
+      .update({ primary_category_id: newCategory.id })
+      .eq('id', violation.id);
+    if (vUpErr) return res.status(500).json({ error: 'violation update failed: ' + vUpErr.message });
+
+    res.json({
+      ok: true,
+      violation_id: violation.id,
+      observation_id: obsId,
+      prior_category_label: priorCategoryLabel,
+      new_category_label: newCategory.label,
+    });
+  } catch (err) {
+    console.error('[drafts.reclassify]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // GET /api/enforcement/continued-non-compliance
 // ----------------------------------------------------------------------------
 // Board-packet surface. Returns every OPEN violation that has been
