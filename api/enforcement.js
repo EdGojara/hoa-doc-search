@@ -6860,14 +6860,25 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
     let duplicatePropertyRows = [];
     if (property && property.street_address) {
       const sa = String(property.street_address).trim();
-      // Match by leading HOUSE NUMBER only — most robust against
-      // normalization drift ("Dr" vs "Drive", extra spaces, capitalization,
-      // city suffix). Numbers before the first space are the house number;
-      // grab them and match street_address ILIKE '6234 %' (trailing space
-      // prevents matching 62340).
-      const houseNumMatch = sa.match(/^\s*(\d+)\s/);
-      const houseNum = houseNumMatch ? houseNumMatch[1] : null;
-      const pattern = houseNum ? `${houseNum} %` : sa.slice(0, 12).replace(/[%_]/g, '') + '%';
+      // Match house number + first 1-2 street name words. e.g.
+      // "6234 Clear Canyon Drive" → '6234 Clear Canyon%' (catches "6234
+      // Clear Canyon Dr" too, but NOT "6234 Pebble Canyon Court" — that
+      // was the false-positive in the prior attempt that just used
+      // '6234 %' which matched every street with house number 6234).
+      const tokens = sa.split(/\s+/);
+      const houseNum = (tokens[0] && /^\d+$/.test(tokens[0])) ? tokens[0] : null;
+      const street1  = tokens[1] || '';
+      const street2  = tokens[2] || '';
+      let pattern;
+      if (houseNum && street2) {
+        pattern = `${houseNum} ${street1} ${street2}%`.replace(/[%_]/g, (m) => m === '%' ? '%' : '\\' + m);
+        // (only the trailing % stays as wildcard; intermediate % in the
+        // actual address is escaped — unlikely but defensive)
+      } else if (houseNum && street1) {
+        pattern = `${houseNum} ${street1}%`;
+      } else {
+        pattern = sa.slice(0, 12).replace(/[%_]/g, '') + '%';
+      }
       const { data: dupProps } = await supabase
         .from('properties')
         .select('id, street_address, unit')
