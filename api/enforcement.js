@@ -30,6 +30,7 @@ const express = require('express');
 const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
+const { defaultWeightForSource } = require('../lib/enforcement/source_weights');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
@@ -3298,24 +3299,14 @@ router.post('/violations/manual', express.json(), async (req, res) => {
       .maybeSingle();
     if (!prop) return res.status(404).json({ error: 'property not found' });
 
+    // Source weight defaults live in lib/enforcement/source_weights.js —
+    // single source of truth across every import path. NEVER hardcode a
+    // weight here; the helper enforces consistency so the next "Vantaca
+    // was actually full-trust" realization only needs ONE file changed.
     const source = body.source || 'manual_entry';
-    const sourceDefaults = {
-      manual_entry:        0.8,
-      // Vantaca-import: 1.0 (Ed 2026-06-13). Earlier default was 0.5 on the
-      // assumption that Vantaca data was low-trust legacy from a predecessor
-      // management firm. That's wrong for Bedrock — Bedrock did its own
-      // inspections in Vantaca before trustEd existed, so Vantaca-imported
-      // violations are legitimate Bedrock-own data and should weight the
-      // same as trustEd-native. Predecessor_import (data from a different
-      // firm we took over from) stays at 0.3.
-      vantaca_import:      1.0,
-      predecessor_import:  0.3,
-      legacy_unknown:      0.4,
-      trustEd_native:      1.0,
-    };
     const weight = (typeof body.confidence_weight === 'number')
       ? Math.max(0, Math.min(1, body.confidence_weight))
-      : sourceDefaults[source] || 0.8;
+      : defaultWeightForSource(source);
 
     const { data, error } = await supabase
       .from('violations')
@@ -5857,10 +5848,10 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
         resolved_via: r.resolved_via || (r.resolved_at ? 'cured' : null),
         resolved_notes: r.notes || null,
         source: 'vantaca_import',
-        // Weight 1.0 (Ed 2026-06-13): Vantaca-imported violations are
-        // Bedrock's own inspection history from before trustEd existed.
-        // Same trust level as trustEd-native rows.
-        confidence_weight: 1.0,
+        // Weight comes from lib/enforcement/source_weights.js — single
+        // source of truth so this default can never silently drift again.
+        // See helper file for the per-source rationale.
+        confidence_weight: defaultWeightForSource('vantaca_import'),
         quality_status: 'unreviewed',
         review_notes: 'Imported from Vantaca violations export.',
       });
