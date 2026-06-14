@@ -3301,7 +3301,14 @@ router.post('/violations/manual', express.json(), async (req, res) => {
     const source = body.source || 'manual_entry';
     const sourceDefaults = {
       manual_entry:        0.8,
-      vantaca_import:      0.5,
+      // Vantaca-import: 1.0 (Ed 2026-06-13). Earlier default was 0.5 on the
+      // assumption that Vantaca data was low-trust legacy from a predecessor
+      // management firm. That's wrong for Bedrock — Bedrock did its own
+      // inspections in Vantaca before trustEd existed, so Vantaca-imported
+      // violations are legitimate Bedrock-own data and should weight the
+      // same as trustEd-native. Predecessor_import (data from a different
+      // firm we took over from) stays at 0.3.
+      vantaca_import:      1.0,
       predecessor_import:  0.3,
       legacy_unknown:      0.4,
       trustEd_native:      1.0,
@@ -4356,9 +4363,11 @@ router.post('/cure-lapse/process', express.json(), async (req, res) => {
 // POST /api/enforcement/vantaca-violations/apply
 //   JSON body: { community_id, rows: [...] }
 //   Imports the resolved rows as violations with source='vantaca_import',
-//   confidence_weight=0.5, quality_status='unreviewed'. Cured rows get
+//   confidence_weight=1.0, quality_status='unreviewed'. Cured rows get
 //   resolved_at + resolved_via set. Skips rows already imported (dedup on
 //   (property_id, primary_category_id, opened_at)).
+//   (Weight=1.0 since Ed 2026-06-13 — Bedrock did its own Vantaca-era
+//   inspections, so the data is full-trust same as trustEd-native.)
 // ===========================================================================
 // Persisted job store backed by Postgres (table vantaca_preview_jobs,
 // migration 125). Previously this was an in-memory Map which got wiped on
@@ -5848,9 +5857,12 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
         resolved_via: r.resolved_via || (r.resolved_at ? 'cured' : null),
         resolved_notes: r.notes || null,
         source: 'vantaca_import',
-        confidence_weight: 0.5,
+        // Weight 1.0 (Ed 2026-06-13): Vantaca-imported violations are
+        // Bedrock's own inspection history from before trustEd existed.
+        // Same trust level as trustEd-native rows.
+        confidence_weight: 1.0,
         quality_status: 'unreviewed',
-        review_notes: 'Imported from Vantaca violations export. Needs verification.',
+        review_notes: 'Imported from Vantaca violations export.',
       });
       originals.push(r);
     }
