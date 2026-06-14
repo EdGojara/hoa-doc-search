@@ -439,15 +439,36 @@ router.get('/property/:propertyId', async (req, res) => {
     // sent to a homeowner; the AI classification is workpaper). For the
     // staff view we expose everything; the board projection will strip
     // workpaper fields.
+    //
+    // Column-name alignment fix (Ed 2026-06-13): prior version selected
+    // 'kind', 'body_excerpt', 'occurred_at' which don't exist on the
+    // interactions table — PostgREST returned 400, the try/catch silently
+    // swallowed the error, and the side panel showed empty even when
+    // Vantaca-imported letters were in the row. The actual columns are
+    // 'type', 'content', 'sent_at'. Mapping back to the frontend's
+    // expected field names (kind, body_excerpt, occurred_at) so the panel
+    // renders without touching the frontend.
     let interactions = [];
     try {
-      const { data: ix } = await supabase
+      const { data: ix, error: ixErr } = await supabase
         .from('interactions')
-        .select('id, kind, direction, subject, body_excerpt, occurred_at, created_at')
+        .select('id, type, direction, subject, content, sent_at, received_at, created_at')
         .eq('property_id', propertyId)
-        .order('occurred_at', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false })
         .limit(10);
-      interactions = ix || [];
+      if (ixErr) {
+        console.warn('[community-map] interactions query error:', ixErr.message);
+      } else {
+        interactions = (ix || []).map((row) => ({
+          id: row.id,
+          kind: row.type,
+          direction: row.direction,
+          subject: row.subject,
+          body_excerpt: row.content ? String(row.content).slice(0, 200) : null,
+          occurred_at: row.sent_at || row.received_at || row.created_at,
+          created_at: row.created_at,
+        }));
+      }
     } catch (e) {
       console.warn('[community-map] interactions fetch failed:', e.message);
     }
@@ -469,16 +490,44 @@ router.get('/property/:propertyId', async (req, res) => {
 
     // Recent open violations — surface what's open and where it is in the
     // escalation flow. Closed/cured/voided suppressed.
+    //
+    // Column-name alignment fix (Ed 2026-06-13): prior version selected
+    // 'violation_type', 'last_action_at', 'summary' which don't exist on
+    // the violations table. PostgREST returned 400, the try/catch silently
+    // swallowed the error, and the side panel showed "No open violations"
+    // even when the map dot was colored from v_property_summary. The
+    // actual surface uses the enforcement_categories JOIN for the label,
+    // current_stage_started_at for the last action timestamp, and observation
+    // text for any summary. Mapping back to violation_type / last_action_at /
+    // summary so the frontend renders without changes.
     let openViolations = [];
     try {
-      const { data: vs } = await supabase
+      const { data: vs, error: vsErr } = await supabase
         .from('violations')
-        .select('id, violation_type, current_stage, opened_at, last_action_at, summary')
+        .select(`
+          id, current_stage, opened_at, current_stage_started_at,
+          cure_period_ends_at, continuation_count, source,
+          enforcement_categories ( slug, label )
+        `)
         .eq('property_id', propertyId)
         .not('current_stage', 'in', '(cured,closed,voided)')
         .order('opened_at', { ascending: false })
         .limit(20);
-      openViolations = vs || [];
+      if (vsErr) {
+        console.warn('[community-map] violations query error:', vsErr.message);
+      } else {
+        openViolations = (vs || []).map((row) => ({
+          id: row.id,
+          violation_type: (row.enforcement_categories && row.enforcement_categories.label) || 'Violation',
+          current_stage: row.current_stage,
+          opened_at: row.opened_at,
+          last_action_at: row.current_stage_started_at,
+          cure_period_ends_at: row.cure_period_ends_at,
+          continuation_count: row.continuation_count || 0,
+          source: row.source,
+          summary: null,  // observation description fetched in a v2 if needed
+        }));
+      }
     } catch (e) {
       console.warn('[community-map] violations fetch failed:', e.message);
     }
