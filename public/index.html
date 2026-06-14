@@ -16041,6 +16041,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     </div>
   </div>
 
+  <!-- Reusable image lightbox — any operator-facing photo (drafts queue
+       thumbnail, reclassify modal photo, etc.) gets a click-to-zoom
+       behavior by being marked with class="zoomable-photo" or by direct
+       call to openImageLightbox(). ESC + backdrop click close.
+       Ed 2026-06-13. -->
+  <div id="imageLightbox" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.88); z-index:2000; align-items:center; justify-content:center; padding:24px; cursor:zoom-out;" onclick="closeImageLightbox(event)">
+    <button type="button" onclick="closeImageLightbox(event, true)" aria-label="Close zoomed image"
+            style="position:absolute; top:16px; right:18px; background:rgba(255,255,255,0.1); color:#fff; border:1px solid rgba(255,255,255,0.25); width:36px; height:36px; border-radius:50%; font-size:18px; font-weight:700; cursor:pointer; display:flex; align-items:center; justify-content:center;">✕</button>
+    <img id="imageLightboxImg" src="" alt="" style="max-width:96vw; max-height:88vh; object-fit:contain; border-radius:6px; box-shadow:0 8px 40px rgba(0,0,0,0.4); cursor:default;" onclick="event.stopPropagation();" />
+    <div id="imageLightboxCaption" style="position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:#fff; padding:8px 16px; border-radius:999px; font-size:13px; max-width:80vw; text-align:center; pointer-events:none;"></div>
+  </div>
+
   <!-- Reclassify draft modal — opens from ✏️ Fix button on each draft row.
        Operator picks the correct category + edits the description; on Save
        the observation + violation update + the letter PDF regenerates.
@@ -16059,7 +16071,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="padding:18px; overflow-y:auto;">
         <!-- Big photo + property context -->
         <div style="display:flex; gap:14px; align-items:flex-start; margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid #e2e8f0;">
-          <img id="inspReclassifyPhoto" src="" style="width:200px; height:200px; object-fit:cover; border-radius:8px; flex-shrink:0; background:#f1f5f9;" />
+          <div style="flex-shrink:0;">
+            <img id="inspReclassifyPhoto" src="" alt="Violation photo — click to zoom"
+                 title="Click to zoom"
+                 onclick="openImageLightbox(this.src, document.getElementById('inspReclassifyAddress').textContent)"
+                 style="width:200px; height:200px; object-fit:cover; border-radius:8px; background:#f1f5f9; cursor:zoom-in; display:block;" />
+            <div style="font-size:10px; color:#94a3b8; text-align:center; margin-top:4px;">🔍 Click photo to zoom</div>
+          </div>
           <div style="flex:1; min-width:0;">
             <div id="inspReclassifyAddress" style="font-weight:700; color:#0B1D34; font-size:15px; margin-bottom:4px;">—</div>
             <div id="inspReclassifyOwner" style="font-size:12.5px; color:#475569; margin-bottom:10px;">—</div>
@@ -21360,8 +21378,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       ? new Date(d.violation.cure_period_ends_at).toLocaleDateString() : '—';
     const confidence = d.observation && d.observation.ai_confidence;
     const confColor = confidence === 'low' ? '#b91c1c' : confidence === 'medium' ? '#b45309' : '#15803d';
+    const photoCaption = ((d.property && d.property.street_address) || '') + ((d.property && d.property.unit) ? ' #' + d.property.unit : '');
     const photoCol = d.observation && d.observation.photo_url
-      ? `<img src="${escapeHtml(d.observation.photo_url)}" style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; object-fit:cover; border-radius:6px; flex-shrink:0;" />`
+      ? `<img src="${escapeHtml(d.observation.photo_url)}" title="Click to zoom"
+              onclick="openImageLightbox('${escapeHtml(d.observation.photo_url)}', ${JSON.stringify(photoCaption)})"
+              style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; object-fit:cover; border-radius:6px; flex-shrink:0; cursor:zoom-in;" />`
       : `<div style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; background:#f1f5f9; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:11px;">no photo</div>`;
     const ownerLine = d.owner ? `${escapeHtml(d.owner.full_name || '—')}${d.owner.mailing_address ? ` · mail: ${escapeHtml(d.owner.mailing_address)}` : ''}` : '—';
 
@@ -21593,6 +21614,48 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       if (btn) { btn.disabled = false; btn.innerHTML = originalLabel; }
     }
   }
+
+  // ============================================================
+  // 🔍 IMAGE LIGHTBOX — click any operator-facing photo to zoom.
+  // Reused by the reclassify modal + drafts queue thumbnails so the
+  // operator can actually study what's in the photo before classifying.
+  // Ed 2026-06-13.
+  // ============================================================
+  function openImageLightbox(src, caption) {
+    if (!src) return;
+    const box = document.getElementById('imageLightbox');
+    const img = document.getElementById('imageLightboxImg');
+    const cap = document.getElementById('imageLightboxCaption');
+    if (!box || !img) return;
+    img.src = src;
+    if (cap) {
+      cap.textContent = caption || '';
+      cap.style.display = caption ? 'block' : 'none';
+    }
+    box.style.display = 'flex';
+  }
+  window.openImageLightbox = openImageLightbox;
+
+  function closeImageLightbox(ev, force) {
+    // Backdrop click handler — close unless the click was on the image itself.
+    // The button passes force=true to bypass the event check.
+    if (!force && ev && ev.target && ev.target.id !== 'imageLightbox') return;
+    const box = document.getElementById('imageLightbox');
+    const img = document.getElementById('imageLightboxImg');
+    if (box) box.style.display = 'none';
+    if (img) img.src = '';
+  }
+  window.closeImageLightbox = closeImageLightbox;
+
+  // ESC closes the lightbox without affecting any underlying modal
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    const box = document.getElementById('imageLightbox');
+    if (box && box.style.display === 'flex') {
+      closeImageLightbox(null, true);
+      e.stopPropagation();
+    }
+  }, true);
 
   // ============================================================
   // ✏️ FIX (RECLASSIFY) — AI got the violation wrong; operator
