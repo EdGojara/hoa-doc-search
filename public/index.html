@@ -16092,10 +16092,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <!-- Correct category -->
         <div style="margin-bottom:14px;">
           <label style="display:block; font-size:12.5px; font-weight:700; color:#0B1D34; margin-bottom:6px;">What's the actual violation? <span style="color:#b91c1c;">*</span></label>
-          <select id="inspReclassifyCategory" style="width:100%; padding:11px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
+          <select id="inspReclassifyCategory" onchange="inspReclassifyCategoryChanged()"
+                  style="width:100%; padding:11px 12px; border:1px solid #d0d7de; border-radius:8px; font-size:14px; background:#fff;">
             <option value="">— pick the correct category —</option>
           </select>
-          <div style="font-size:11px; color:#64748b; margin-top:4px;">If the right category isn't listed, the community may not have it enabled. Cancel + add it under Categories editor.</div>
+          <div style="font-size:11px; color:#64748b; margin-top:4px;">Picking a new category auto-fills the description below with starter language for that category. Edit it to match what's specifically in the photo.</div>
         </div>
 
         <!-- Description -->
@@ -21666,6 +21667,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // ============================================================
   let _inspReclassifyInteractionId = null;
   let _inspReclassifyCategoriesLoaded = false;
+  let _inspReclassifyCategoryById = new Map();   // id -> { label, observation_template }
+  // Baseline tracking: when operator manually edits the description, the
+  // textarea content diverges from this. On category change, if textarea ===
+  // baseline we swap; if it differs (operator typed) we leave their work.
+  let _inspReclassifyDescBaseline = '';
 
   async function inspDraftsReclassifyOpen(interactionId) {
     const draft = (inspDraftsData || []).find((d) => d.interaction_id === interactionId);
@@ -21697,11 +21703,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
 
     // Pre-fill the description textarea with the current AI description so
     // operator edits in place rather than re-typing from scratch.
-    document.getElementById('inspReclassifyDesc').value =
-      (draft.observation && draft.observation.ai_description) || '';
+    const aiDesc = (draft.observation && draft.observation.ai_description) || '';
+    document.getElementById('inspReclassifyDesc').value = aiDesc;
+    // Track this as the baseline — if operator manually edits, the textarea
+    // content will diverge from baseline. On category change we only swap
+    // the description if textarea still equals baseline (operator hasn't
+    // typed their own); their edits are preserved otherwise.
+    _inspReclassifyDescBaseline = aiDesc;
 
     // Load enforcement categories — global list, ordered for the dropdown.
     // Cached after first load since categories rarely change mid-session.
+    // Also caches each category's observation_template into a Map so we can
+    // auto-fill the description textarea when the operator picks a new
+    // category (per Ed 2026-06-13: stop forcing operator to retype after
+    // category change — auto-suggest the matching language).
     if (!_inspReclassifyCategoriesLoaded) {
       const sel = document.getElementById('inspReclassifyCategory');
       sel.innerHTML = '<option value="">— loading categories —</option>';
@@ -21712,11 +21727,16 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           (a.label || '').localeCompare(b.label || '')
         );
         sel.innerHTML = '<option value="">— pick the correct category —</option>';
+        _inspReclassifyCategoryById = new Map();
         for (const c of categories) {
           const opt = document.createElement('option');
           opt.value = c.id;
           opt.textContent = c.label;
           sel.appendChild(opt);
+          _inspReclassifyCategoryById.set(c.id, {
+            label: c.label,
+            observation_template: c.observation_template || '',
+          });
         }
         _inspReclassifyCategoriesLoaded = true;
       } catch (e) {
@@ -21733,6 +21753,60 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     document.getElementById('inspReclassifyModal').style.display = 'flex';
   }
   window.inspDraftsReclassifyOpen = inspDraftsReclassifyOpen;
+
+  // Fires when operator picks a different category. If the description
+  // textarea still matches the baseline (operator hasn't manually edited),
+  // swap it to the new category's observation_template. If operator has
+  // typed their own description, leave it — their work is preserved.
+  function inspReclassifyCategoryChanged() {
+    const sel = document.getElementById('inspReclassifyCategory');
+    const desc = document.getElementById('inspReclassifyDesc');
+    if (!sel || !desc) return;
+    const cat = _inspReclassifyCategoryById.get(sel.value);
+    if (!cat) return;
+
+    const currentText = (desc.value || '').trim();
+    const baselineText = (_inspReclassifyDescBaseline || '').trim();
+    const operatorEdited = currentText !== '' && currentText !== baselineText;
+
+    if (operatorEdited) {
+      // Don't clobber their typed content. Surface a one-line hint that a
+      // template exists for this category in case they want to reset.
+      const hint = document.getElementById('inspReclassifyError');
+      if (hint && cat.observation_template) {
+        hint.style.color = '#854d0e';
+        hint.innerHTML = `Suggested starter for <strong>${escapeHtml(cat.label)}</strong>: <em>${escapeHtml(cat.observation_template)}</em> <button type="button" onclick="inspReclassifyApplyTemplate()" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:2px 8px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:4px;">Use it</button>`;
+        hint.style.display = 'block';
+      }
+      return;
+    }
+
+    // Swap to the new category's template + update baseline so future
+    // category changes still swap.
+    const newText = cat.observation_template || '';
+    desc.value = newText;
+    _inspReclassifyDescBaseline = newText;
+
+    const hint = document.getElementById('inspReclassifyError');
+    if (hint) hint.style.display = 'none';
+  }
+  window.inspReclassifyCategoryChanged = inspReclassifyCategoryChanged;
+
+  // Operator confirmation: replace their typed description with the
+  // current category's template. Only reachable via the inline "Use it"
+  // button shown when their edit blocked an auto-swap.
+  function inspReclassifyApplyTemplate() {
+    const sel = document.getElementById('inspReclassifyCategory');
+    const desc = document.getElementById('inspReclassifyDesc');
+    if (!sel || !desc) return;
+    const cat = _inspReclassifyCategoryById.get(sel.value);
+    if (!cat) return;
+    desc.value = cat.observation_template || '';
+    _inspReclassifyDescBaseline = desc.value;
+    const hint = document.getElementById('inspReclassifyError');
+    if (hint) hint.style.display = 'none';
+  }
+  window.inspReclassifyApplyTemplate = inspReclassifyApplyTemplate;
 
   function inspDraftsReclassifyClose() {
     document.getElementById('inspReclassifyModal').style.display = 'none';

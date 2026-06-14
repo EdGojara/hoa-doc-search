@@ -2962,7 +2962,7 @@ router.get('/categories', async (req, res) => {
   try {
     const { data, error } = await supabase
       .from('enforcement_categories')
-      .select('id, slug, label, description, default_priority_weight, display_order')
+      .select('id, slug, label, description, observation_template, default_priority_weight, display_order')
       .order('display_order', { ascending: true });
     if (error) return res.status(500).json({ error: error.message });
     res.json({ categories: data || [] });
