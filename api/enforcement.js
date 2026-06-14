@@ -31,6 +31,7 @@ const multer = require('multer');
 const { createClient } = require('@supabase/supabase-js');
 const { decideEscalation, filterRecentSameCategory } = require('../lib/enforcement/escalation');
 const { defaultWeightForSource } = require('../lib/enforcement/source_weights');
+const { expandCategoryToAliases } = require('../lib/enforcement/category_aliases');
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
@@ -6787,6 +6788,242 @@ router.get('/mail/pieces', async (req, res) => {
   }
 });
 
+// ============================================================================
+// CATEGORY ALIASES — Vantaca-vs-trustEd category equivalence
+// ============================================================================
+
+// GET /api/enforcement/category-aliases?status=
+// Returns alias rows hydrated with category labels (server-side joined to
+// avoid PostgREST embed-by-FK-constraint syntax which varies by version).
+// Used by the admin UI.
+router.get('/category-aliases', async (req, res) => {
+  try {
+    const statusFilter = req.query.status || null;
+    let q = supabase
+      .from('enforcement_category_aliases')
+      .select('id, status, reasoning, ai_confidence, ai_model, created_at, reviewed_at, alias_category_id, canonical_category_id')
+      .order('created_at', { ascending: false });
+    if (statusFilter) q = q.eq('status', statusFilter);
+    const { data: rows, error } = await q;
+    if (error) return res.status(500).json({ error: error.message });
+
+    const catIds = [...new Set((rows || []).flatMap((r) => [r.alias_category_id, r.canonical_category_id]).filter(Boolean))];
+    let catById = new Map();
+    if (catIds.length > 0) {
+      const { data: cats } = await supabase
+        .from('enforcement_categories')
+        .select('id, slug, label, description')
+        .in('id', catIds);
+      catById = new Map((cats || []).map((c) => [c.id, c]));
+    }
+    const hydrated = (rows || []).map((r) => ({
+      ...r,
+      alias_category:     catById.get(r.alias_category_id) || null,
+      canonical_category: catById.get(r.canonical_category_id) || null,
+    }));
+    res.json({ aliases: hydrated });
+  } catch (err) {
+    console.error('[category-aliases.get]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/enforcement/category-aliases/ai-suggest
+// Body: { force?: bool }  — when force=true, re-suggest even for categories
+// that already have a pending or confirmed mapping. Default false (only
+// suggest for categories with no mapping at all).
+//
+// Strategy: pull every enforcement_categories row. For each non-canonical
+// category (slug not in the 21 standard seed), ask Claude to map it to one
+// of the standard 21 or mark as truly distinct. Insert ai_suggested rows
+// for any non-null mapping. Operator confirms each via /:id/confirm.
+router.post('/category-aliases/ai-suggest', express.json(), async (req, res) => {
+  try {
+    const force = !!(req.body && req.body.force);
+
+    // The 21 standard categories from migration 050 — these are the
+    // canonical destinations the AI can map TO.
+    const STANDARD_SLUGS = new Set([
+      'tree_overgrowth','tree_dead_dying','mildew_mold_visible','lawn_height',
+      'lawn_dead_patches','weeds','landscaping_overgrown','paint_peeling',
+      'siding_damage','roof_damage','fence_damage','fence_unauthorized',
+      'vehicle_inoperable','vehicle_commercial','vehicle_rv','trash_visible',
+      'holiday_decorations_late','mailbox_damage','unauthorized_modification',
+      'parking_violation','pet_violation',
+    ]);
+
+    const { data: allCats } = await supabase
+      .from('enforcement_categories')
+      .select('id, slug, label, description')
+      .order('display_order');
+    if (!allCats || allCats.length === 0) {
+      return res.json({ suggested: 0, skipped: 0, message: 'No categories found.' });
+    }
+
+    const canonicalCats = allCats.filter((c) => STANDARD_SLUGS.has(c.slug));
+    const nonCanonicalCats = allCats.filter((c) => !STANDARD_SLUGS.has(c.slug));
+    if (nonCanonicalCats.length === 0) {
+      return res.json({ suggested: 0, skipped: 0, message: 'No non-standard categories to map.' });
+    }
+
+    // Skip categories that already have a mapping unless force=true
+    let toMap = nonCanonicalCats;
+    if (!force) {
+      const { data: existing } = await supabase
+        .from('enforcement_category_aliases')
+        .select('alias_category_id')
+        .in('status', ['ai_suggested', 'confirmed']);
+      const existingSet = new Set((existing || []).map((r) => r.alias_category_id));
+      toMap = nonCanonicalCats.filter((c) => !existingSet.has(c.id));
+    }
+
+    if (toMap.length === 0) {
+      return res.json({ suggested: 0, skipped: nonCanonicalCats.length, message: 'All non-standard categories already have mappings. Use force=true to re-suggest.' });
+    }
+
+    // Build the prompt for Claude — batch all categories in one call
+    const canonicalDescriptions = canonicalCats
+      .map((c) => `- ${c.slug}: ${c.label} — ${c.description || '(no description)'}`)
+      .join('\n');
+    const toMapJson = toMap.map((c) => ({
+      id: c.id,
+      slug: c.slug,
+      label: c.label,
+      description: c.description || null,
+    }));
+
+    const prompt = `You are mapping non-standard HOA violation categories to their semantic equivalents from a canonical list of 21 standard categories.
+
+CANONICAL STANDARD CATEGORIES:
+${canonicalDescriptions}
+
+NON-STANDARD CATEGORIES TO MAP (likely imported from Vantaca or operator-added):
+${JSON.stringify(toMapJson, null, 2)}
+
+For each non-standard category, decide if it is semantically equivalent to one of the canonical categories. Consider:
+- "Sod yard" → lawn_dead_patches (same real-world thing, just different label)
+- "Failure to maintain flowerbeds" → landscaping_overgrown
+- "Trim trees front yard" → tree_overgrowth
+- "Mildew on right side" → mildew_mold_visible
+- "Storage Of Unapproved Items" → likely distinct (storage isn't covered by the 21)
+- "Portable Basketball Goal" → likely distinct (or could map to unauthorized_modification)
+
+Return a JSON array, one entry per non-standard category. Each entry:
+{
+  "id": "<the input id>",
+  "canonical_slug": "<the slug from CANONICAL list>" OR null if truly distinct,
+  "confidence": <number between 0 and 1>,
+  "reasoning": "<one short sentence explaining the mapping or why it is distinct>"
+}
+
+Return ONLY the JSON array, no preamble.`;
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic.default({ apiKey: process.env.ANTHROPIC_API_KEY });
+    const completion = await client.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 4000,
+      messages: [{ role: 'user', content: prompt }],
+    });
+
+    const text = (completion.content && completion.content[0] && completion.content[0].text) || '';
+    // Extract JSON array — Claude usually returns just the array, but be defensive
+    const match = text.match(/\[[\s\S]*\]/);
+    if (!match) {
+      console.error('[category-aliases.ai-suggest] could not extract JSON from model response:', text.slice(0, 500));
+      return res.status(500).json({ error: 'AI returned unparseable response. Check logs.' });
+    }
+    let suggestions;
+    try {
+      suggestions = JSON.parse(match[0]);
+    } catch (e) {
+      return res.status(500).json({ error: 'AI JSON parse failed: ' + e.message });
+    }
+
+    const slugToId = new Map(canonicalCats.map((c) => [c.slug, c.id]));
+    let inserted = 0;
+    const written = [];
+    for (const s of (suggestions || [])) {
+      if (!s.canonical_slug) continue;
+      const canonicalId = slugToId.get(s.canonical_slug);
+      if (!canonicalId) {
+        console.warn('[category-aliases.ai-suggest] AI returned unknown canonical slug:', s.canonical_slug);
+        continue;
+      }
+      const { error: insErr } = await supabase
+        .from('enforcement_category_aliases')
+        .insert({
+          alias_category_id:     s.id,
+          canonical_category_id: canonicalId,
+          status:                'ai_suggested',
+          reasoning:             s.reasoning || null,
+          ai_confidence:         (typeof s.confidence === 'number') ? Math.max(0, Math.min(1, s.confidence)) : null,
+          ai_model:              'claude-sonnet-4-5',
+        });
+      if (insErr) {
+        // Probably the uq_active_alias constraint — already has a pending or
+        // confirmed alias. Skip silently unless force=true (in which case we
+        // could update; for now we skip and surface the count).
+        console.warn('[category-aliases.ai-suggest] insert skipped for alias', s.id, ':', insErr.message);
+        continue;
+      }
+      inserted++;
+      written.push({
+        alias_id: s.id,
+        canonical_id: canonicalId,
+        canonical_slug: s.canonical_slug,
+        confidence: s.confidence,
+        reasoning: s.reasoning,
+      });
+    }
+
+    res.json({
+      suggested: inserted,
+      considered: toMap.length,
+      distinct_categories_returned_null: suggestions.filter((s) => !s.canonical_slug).length,
+      written,
+    });
+  } catch (err) {
+    console.error('[category-aliases.ai-suggest]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/enforcement/category-aliases/:id/confirm
+// Confirms an ai_suggested mapping. Engine queries pick it up immediately.
+router.post('/category-aliases/:id/confirm', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('enforcement_category_aliases')
+      .update({ status: 'confirmed', reviewed_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, alias_category_id, canonical_category_id, status')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ alias: data });
+  } catch (err) {
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /api/enforcement/category-aliases/:id/reject
+router.post('/category-aliases/:id/reject', express.json(), async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { data, error } = await supabase
+      .from('enforcement_category_aliases')
+      .update({ status: 'rejected', reviewed_at: new Date().toISOString() })
+      .eq('id', id)
+      .select('id, status')
+      .single();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ alias: data });
+  } catch (err) {
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 // ----------------------------------------------------------------------------
 // GET /api/enforcement/drafts/:interactionId/trace
 // ----------------------------------------------------------------------------
@@ -6832,21 +7069,29 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
 
     const yearAgoIso = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
 
-    // Same-category priors (the exact input the engine sees)
+    // Expand category to include confirmed aliases so Vantaca-imported
+    // categories ("Sod yard") count as priors when the new violation is at
+    // the canonical equivalent ("lawn_dead_patches"). Per category_aliases
+    // helper — only confirmed aliases apply, ai_suggested ones don't yet.
+    const expandedCategoryIds = await expandCategoryToAliases(violation.primary_category_id);
+
+    // Same-category-OR-alias priors (the input the engine sees)
     const { data: priorsSame } = await supabase
       .from('violations')
       .select('id, primary_category_id, opened_at, current_stage, quality_status, confidence_weight, source, resolved_at, enforcement_categories(slug, label)')
       .eq('property_id', violation.property_id)
-      .eq('primary_category_id', violation.primary_category_id)
+      .in('primary_category_id', expandedCategoryIds.length > 0 ? expandedCategoryIds : [violation.primary_category_id])
       .gte('opened_at', yearAgoIso)
       .neq('id', violation.id);
 
     // Cross-check — other-category priors at same property at certified+
+    // (excludes the expanded set so we don't double-count what we already
+    // pulled into priorsSame).
     const { data: priorsCross } = await supabase
       .from('violations')
       .select('id, primary_category_id, current_stage, opened_at, source, resolved_at, enforcement_categories(slug, label)')
       .eq('property_id', violation.property_id)
-      .neq('primary_category_id', violation.primary_category_id)
+      .not('primary_category_id', 'in', `(${expandedCategoryIds.map((id) => `"${id}"`).join(',')})`)
       .gte('opened_at', yearAgoIso)
       .neq('id', violation.id)
       .in('current_stage', ['certified_209', 'fine_assessed']);
@@ -7078,12 +7323,16 @@ router.post('/drafts/re-evaluate', express.json(), async (req, res) => {
       const violation = vioById.get(draft.violation_id);
       if (!violation) continue;
 
-      // Priors at same property + same category, excluding this violation itself.
+      // Priors at same property + same OR aliased category, excluding self.
+      // expandCategoryToAliases pulls in confirmed Vantaca-vs-trustEd
+      // category equivalents so "Sod yard" certified_209s count for new
+      // "lawn_dead_patches" drafts.
+      const expandedIds = await expandCategoryToAliases(violation.primary_category_id);
       const { data: priors } = await supabase
         .from('violations')
         .select('id, primary_category_id, opened_at, current_stage, quality_status, confidence_weight, source, resolved_at')
         .eq('property_id', violation.property_id)
-        .eq('primary_category_id', violation.primary_category_id)
+        .in('primary_category_id', expandedIds.length > 0 ? expandedIds : [violation.primary_category_id])
         .gte('opened_at', yearAgoIso)
         .neq('id', violation.id);
 

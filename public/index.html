@@ -15450,6 +15450,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
       <div id="catEditorPanel" style="display:none; background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
         <div id="catEditorStatus" style="font-size:11px; color:#64748b; margin-bottom:6px; min-height:14px;">Loading…</div>
+
+        <!-- Category aliasing surface — AI-suggested mappings of non-standard
+             categories (Vantaca-imported, operator-added) to the canonical 21.
+             Operator confirms each before the escalation engine uses it. -->
+        <div style="margin-bottom:14px; padding:10px 12px; background:#fffbeb; border:1px solid #fde68a; border-radius:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:8px; margin-bottom:6px;">
+            <div>
+              <strong style="font-size:12.5px; color:#854d0e;">🔗 Category equivalence</strong>
+              <span style="font-size:11px; color:#92400e;">— map non-standard categories ("Sod yard", "Storage Of Unapproved Items") to canonical equivalents so prior-violation history transfers correctly.</span>
+            </div>
+            <button onclick="catAliasesAiSuggest()" id="catAliasesAiSuggestBtn" style="background:#0B1D34; color:#fff; border:none; padding:6px 12px; border-radius:6px; font-size:11.5px; font-weight:600; cursor:pointer; white-space:nowrap;">🤖 AI-suggest mappings</button>
+          </div>
+          <div id="catAliasesPending" style="font-size:12px; color:#64748b;">Click ↻ Refresh aliases to load.</div>
+          <div style="margin-top:6px;">
+            <button onclick="catAliasesLoad()" style="background:#fff; border:1px solid #e2e8f0; color:#475569; padding:3px 10px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">↻ Refresh aliases</button>
+          </div>
+        </div>
+
         <div id="catEditorList"></div>
       </div>
     </div>
@@ -20650,6 +20668,98 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     if (btn) btn.textContent = shown ? 'Show editor' : 'Hide editor';
     if (!shown) catEditorLoad();
   }
+  // ============================================================
+  // 🔗 CATEGORY ALIASES — AI-suggest + confirm/reject the
+  // canonical mapping for non-standard categories (Vantaca-imported
+  // or operator-added) so the escalation engine treats them as
+  // equivalent for prior-violation lookup. Ed 2026-06-13.
+  // ============================================================
+  async function catAliasesLoad() {
+    const wrap = document.getElementById('catAliasesPending');
+    if (!wrap) return;
+    wrap.innerHTML = '<span style="color:#94a3b8;">Loading…</span>';
+    try {
+      const r = await window._authFetch('/api/enforcement/category-aliases?status=ai_suggested');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      const list = j.aliases || [];
+      if (list.length === 0) {
+        wrap.innerHTML = '<span style="color:#92400e; font-size:11.5px;">No pending suggestions. Click 🤖 AI-suggest to scan for new non-standard categories.</span>';
+        return;
+      }
+      wrap.innerHTML = '<div style="font-size:11px; color:#854d0e; font-weight:600; margin-bottom:6px;">' + list.length + ' suggestion' + (list.length === 1 ? '' : 's') + ' awaiting your review:</div>' +
+        list.map((a) => {
+          const conf = (a.ai_confidence != null) ? (Math.round(a.ai_confidence * 100) + '%') : '—';
+          const aliasLabel  = (a.alias_category     && a.alias_category.label)     || a.alias_category_id;
+          const canonLabel  = (a.canonical_category && a.canonical_category.label) || a.canonical_category_id;
+          return `<div style="background:#fff; border:1px solid #fde68a; border-radius:6px; padding:8px 10px; margin-bottom:6px; display:flex; gap:10px; align-items:flex-start; flex-wrap:wrap;">
+            <div style="flex:1; min-width:260px;">
+              <div style="font-size:12.5px; color:#0B1D34;">
+                <strong>${escapeHtml(aliasLabel)}</strong> → <strong style="color:#15803d;">${escapeHtml(canonLabel)}</strong>
+                <span style="font-size:11px; color:#64748b; margin-left:4px;">(confidence ${conf})</span>
+              </div>
+              ${a.reasoning ? '<div style="font-size:11.5px; color:#475569; margin-top:3px; font-style:italic;">' + escapeHtml(a.reasoning) + '</div>' : ''}
+            </div>
+            <div style="display:flex; gap:6px; flex-shrink:0;">
+              <button onclick="catAliasesConfirm('${a.id}')" style="background:#16a34a; color:#fff; border:none; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;">✓ Confirm</button>
+              <button onclick="catAliasesReject('${a.id}')" style="background:#fff; color:#b91c1c; border:1px solid #fecaca; padding:4px 10px; border-radius:4px; font-size:11px; font-weight:600; cursor:pointer;">✕ Reject</button>
+            </div>
+          </div>`;
+        }).join('');
+    } catch (e) {
+      wrap.innerHTML = '<span style="color:#b91c1c; font-size:11.5px;">Load failed: ' + escapeHtml(e.message) + '</span>';
+    }
+  }
+  window.catAliasesLoad = catAliasesLoad;
+
+  async function catAliasesAiSuggest() {
+    if (!confirm('Run AI to suggest canonical mappings for every non-standard category?\n\nThe AI proposes — YOU confirm before any mapping affects the escalation engine.')) return;
+    const btn = document.getElementById('catAliasesAiSuggestBtn');
+    const wrap = document.getElementById('catAliasesPending');
+    if (btn) { btn.disabled = true; btn.textContent = '⏳ Asking AI…'; }
+    if (wrap) wrap.innerHTML = '<span style="color:#94a3b8;">Calling Claude — this can take 10-20s for the full category set…</span>';
+    try {
+      const r = await window._authFetch('/api/enforcement/category-aliases/ai-suggest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ force: false }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await catAliasesLoad();
+      alert((j.suggested || 0) + ' suggestion' + ((j.suggested || 0) === 1 ? '' : 's') + ' added. ' + (j.distinct_categories_returned_null || 0) + ' marked truly distinct (no mapping). Review below.');
+    } catch (e) {
+      alert('AI-suggest failed: ' + e.message);
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '🤖 AI-suggest mappings'; }
+    }
+  }
+  window.catAliasesAiSuggest = catAliasesAiSuggest;
+
+  async function catAliasesConfirm(aliasId) {
+    try {
+      const r = await window._authFetch('/api/enforcement/category-aliases/' + encodeURIComponent(aliasId) + '/confirm', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await catAliasesLoad();
+    } catch (e) {
+      alert('Confirm failed: ' + e.message);
+    }
+  }
+  window.catAliasesConfirm = catAliasesConfirm;
+
+  async function catAliasesReject(aliasId) {
+    try {
+      const r = await window._authFetch('/api/enforcement/category-aliases/' + encodeURIComponent(aliasId) + '/reject', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      await catAliasesLoad();
+    } catch (e) {
+      alert('Reject failed: ' + e.message);
+    }
+  }
+  window.catAliasesReject = catAliasesReject;
+
   async function catEditorLoad() {
     const list = document.getElementById('catEditorList');
     const status = document.getElementById('catEditorStatus');
