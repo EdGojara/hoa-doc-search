@@ -21725,6 +21725,28 @@ If you have questions or want to discuss alternatives, just reply or give us a c
               <td style="padding:8px 10px; font-size:12px;">${p.resolved_at ? 'cured ' + escapeHtml(fmtDate(p.resolved_at)) : '<span style="color:#15803d; font-weight:600;">open</span>'}</td>
             </tr>`).join('');
 
+      const dupRows = j.duplicate_property_rows || [];
+      const dupBlock = dupRows.length === 0 ? '' : `
+        <div style="margin-top:18px; padding:14px 16px; background:#fef2f2; border:1px solid #fecaca; border-left:4px solid #b91c1c; border-radius:8px;">
+          <div style="font-size:11px; font-weight:700; color:#7f1d1d; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">⚠ Duplicate property row(s) found for this address</div>
+          <div style="font-size:12px; color:#7f1d1d; margin-bottom:10px; line-height:1.5;">
+            Same physical address has more than one row in the <code style="background:#fee2e2; padding:1px 4px; border-radius:3px;">properties</code> table. Vantaca import created its own property row when address normalization differed from trustEd's — so the same house has two property_ids and violations get split. THE PRIORS SHOWN BELOW ARE WHY THE TRACE COULDN'T FIND THE CERTIFIED HISTORY.
+          </div>
+          ${dupRows.map((d) => `
+            <div style="margin-top:8px; padding:10px 12px; background:#fff; border:1px solid #fecaca; border-radius:6px;">
+              <div style="font-size:12.5px; font-weight:600; color:#0B1D34;">${escapeHtml(d.street_address || '')}${d.unit ? ' #' + escapeHtml(d.unit) : ''}</div>
+              <div style="font-size:11px; color:#94a3b8; margin-top:2px;">property_id: ${escapeHtml(d.property_id || '')}</div>
+              ${(d.open_violations || []).length === 0
+                ? '<div style="font-size:11.5px; color:#94a3b8; margin-top:6px;">No open violations linked to this property row.</div>'
+                : '<div style="margin-top:6px;">' + (d.open_violations).map((v) => `
+                    <div style="font-size:11.5px; color:#0B1D34; padding:3px 0;">→ ${escapeHtml(v.category_label || v.category_slug || '—')} · <strong>${escapeHtml(v.stage)}</strong> · opened ${escapeHtml(fmtDate(v.opened_at))} · source=${escapeHtml(v.source || '—')}</div>`).join('') + '</div>'
+              }
+            </div>`).join('')}
+          <div style="font-size:11px; color:#7f1d1d; margin-top:10px; line-height:1.5;">
+            Fix: merge these property rows so all violations point to one canonical id. Until then, this draft can't see the prior certified history and the engine will keep recommending courtesy_1.
+          </div>
+        </div>`;
+
       const crossBlock = cross.length === 0 ? '' : `
         <div style="margin-top:18px; padding:12px 14px; background:#fff7ed; border:1px solid #fed7aa; border-radius:8px;">
           <div style="font-size:11px; font-weight:700; color:#9a3412; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">⚠ Cross-category certified history at this property</div>
@@ -21767,6 +21789,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <tbody>${priorsRows}</tbody>
           </table>
         </div>
+
+        ${dupBlock}
 
         ${crossBlock}
 

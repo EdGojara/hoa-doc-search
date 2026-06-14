@@ -6851,6 +6851,51 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
       .neq('id', violation.id)
       .in('current_stage', ['certified_209', 'fine_assessed']);
 
+    // Duplicate-property detection — same community, similar street_address,
+    // different property_id. Vantaca import historically created its own
+    // property rows when the address normalization differed from trustEd's,
+    // so the same physical house has two property_ids and violations get
+    // split across them. This is the scar that explains why side-panel
+    // priors exist but the trace can't find them.
+    let duplicatePropertyRows = [];
+    if (property && property.street_address) {
+      const sa = String(property.street_address).trim();
+      // Strip the directional + suffix so "6234 Clear Canyon Dr" matches
+      // "6234 Clear Canyon Drive" — use the first ~16 chars as a fuzzy
+      // prefix match.
+      const prefix = sa.slice(0, Math.min(18, sa.length)).replace(/[%_]/g, '');
+      const { data: dupProps } = await supabase
+        .from('properties')
+        .select('id, street_address, unit')
+        .eq('community_id', violation.community_id)
+        .ilike('street_address', `${prefix}%`)
+        .neq('id', violation.property_id);
+      if (dupProps && dupProps.length > 0) {
+        for (const dp of dupProps) {
+          const { data: dpVios } = await supabase
+            .from('violations')
+            .select('id, current_stage, opened_at, source, enforcement_categories(slug, label)')
+            .eq('property_id', dp.id)
+            .not('current_stage', 'in', '(cured,closed,voided)')
+            .order('opened_at', { ascending: false })
+            .limit(10);
+          duplicatePropertyRows.push({
+            property_id: dp.id,
+            street_address: dp.street_address,
+            unit: dp.unit,
+            open_violations: (dpVios || []).map((v) => ({
+              id: v.id,
+              stage: v.current_stage,
+              opened_at: v.opened_at,
+              source: v.source,
+              category_label: v.enforcement_categories?.label,
+              category_slug: v.enforcement_categories?.slug,
+            })),
+          });
+        }
+      }
+    }
+
     // Run the engine + replicate the re-evaluate decision
     const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
     const weightFor = (v) => {
@@ -6914,6 +6959,7 @@ router.get('/drafts/:interactionId/trace', async (req, res) => {
         category_slug: p.enforcement_categories?.slug,
         category_label: p.enforcement_categories?.label,
       })),
+      duplicate_property_rows: duplicatePropertyRows,
       engine_decision: {
         stage: decision.stage,
         cure_days: decision.cure_days,
