@@ -6788,6 +6788,211 @@ router.get('/mail/pieces', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// POST /api/enforcement/drafts/re-evaluate
+// ----------------------------------------------------------------------------
+// Ed 2026-06-13: after the Vantaca weight fix (0.5 → 1.0), drafts already
+// in the queue may be at the wrong stage. This endpoint re-runs the
+// escalation engine against EVERY current draft using the post-migration
+// weights and applies the right action per draft.
+//
+// Decisions:
+//   KEEP            — current stage matches engine recommendation. No-op.
+//   UPGRADE         — engine recommends higher stage. Reject the draft +
+//                     void its violation + reset the observation to
+//                     'unreviewed'. When operator re-confirms, the engine
+//                     creates a new violation at the correct stage.
+//   BOARD_REVIEW    — at least one prior at certified_209+ exists. The
+//                     June draft is functionally a continuation of the
+//                     Vantaca-imported certified case. We log a
+//                     continuation row pointing the observation at the
+//                     prior, bump the prior's continuation_count, void
+//                     the June violation, and reject the draft. The
+//                     prior surfaces in v_continued_non_compliance for
+//                     board review at the next meeting.
+//
+// Body: { community_id (optional), apply (default false) }
+// apply=false returns dry-run analysis. apply=true applies all changes.
+// ----------------------------------------------------------------------------
+router.post('/drafts/re-evaluate', express.json(), async (req, res) => {
+  try {
+    const communityId = req.body && req.body.community_id;
+    const apply = req.body && req.body.apply === true;
+
+    const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
+    const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+
+    let q = supabase
+      .from('interactions')
+      .select('id, violation_id, observation_id, type, community_id, content')
+      .eq('status', 'draft')
+      .in('type', letterTypes);
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: drafts, error: dErr } = await q;
+    if (dErr) return res.status(500).json({ error: dErr.message });
+    if (!drafts || drafts.length === 0) {
+      return res.json({ summary: { evaluated: 0, keep: 0, upgrade: 0, board_review: 0 }, details: [] });
+    }
+
+    const violationIds = drafts.map((d) => d.violation_id).filter(Boolean);
+    const { data: violations } = await supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, board_priority_at_open, enforcement_categories(label)')
+      .in('id', violationIds);
+    const vioById = new Map((violations || []).map((v) => [v.id, v]));
+
+    const yearAgoIso = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+    const details = [];
+    let keep = 0, upgrade = 0, board = 0;
+
+    for (const draft of drafts) {
+      const violation = vioById.get(draft.violation_id);
+      if (!violation) continue;
+
+      // Priors at same property + same category, excluding this violation itself.
+      const { data: priors } = await supabase
+        .from('violations')
+        .select('id, primary_category_id, opened_at, current_stage, quality_status, confidence_weight, source, resolved_at')
+        .eq('property_id', violation.property_id)
+        .eq('primary_category_id', violation.primary_category_id)
+        .gte('opened_at', yearAgoIso)
+        .neq('id', violation.id);
+
+      // Did ANY prior reach certified_209 / fine_assessed (with non-zero weight)?
+      const certifiedPriors = (priors || []).filter((p) => {
+        if (!['certified_209', 'fine_assessed'].includes(p.current_stage)) return false;
+        const w = p.quality_status === 'superseded' ? 0
+                : typeof p.confidence_weight === 'number' ? p.confidence_weight
+                : 1.0;
+        return w > 0;
+      });
+      const certifiedPrior = certifiedPriors.sort((a, b) => new Date(b.opened_at) - new Date(a.opened_at))[0] || null;
+
+      let action;
+      let newStage = null;
+      if (certifiedPrior) {
+        action = 'board_review';
+        board++;
+      } else {
+        const decision = decideEscalation({
+          prior_violations: priors || [],
+          priority_weight: violation.board_priority_at_open || 'standard',
+        });
+        if ((stageRank[decision.stage] || 0) > (stageRank[violation.current_stage] || 0)) {
+          action = 'upgrade';
+          newStage = decision.stage;
+          upgrade++;
+        } else {
+          action = 'keep';
+          keep++;
+        }
+      }
+
+      const detail = {
+        interaction_id: draft.id,
+        violation_id: violation.id,
+        observation_id: draft.observation_id,
+        property_id: violation.property_id,
+        category_label: violation.enforcement_categories && violation.enforcement_categories.label,
+        current_stage: violation.current_stage,
+        action,
+        new_stage: newStage,
+        prior_count: (priors || []).length,
+        certified_prior_id: certifiedPrior && certifiedPrior.id,
+        certified_prior_opened_at: certifiedPrior && certifiedPrior.opened_at,
+      };
+      details.push(detail);
+
+      if (!apply) continue;
+
+      // Apply path
+      try {
+        // Best-effort: remove the PDF for any rejected draft.
+        if ((action === 'upgrade' || action === 'board_review')
+            && draft.content && /\.pdf$/i.test(String(draft.content))) {
+          try { await supabase.storage.from('violation-letters').remove([draft.content]); } catch (_) {}
+        }
+
+        if (action === 'upgrade') {
+          // Void the violation so re-confirm creates fresh at correct stage.
+          await supabase.from('violations').update({
+            current_stage: 'voided',
+            resolved_via: 'voided',
+            resolved_at: new Date().toISOString(),
+            resolved_notes: `Re-evaluation 2026-06-13: stage was ${violation.current_stage}, engine now recommends ${newStage} post-Vantaca-weight-fix. Voiding so re-confirm creates fresh.`,
+          }).eq('id', violation.id);
+          // Reset the observation so operator can re-confirm at the right stage.
+          if (draft.observation_id) {
+            await supabase.from('property_observations').update({
+              reviewer_status: 'unreviewed',
+              reviewer_notes: `[Re-evaluated 2026-06-13: stage upgrade pending — re-confirm to create at ${newStage}]`,
+              reviewed_at: null,
+            }).eq('id', draft.observation_id);
+          }
+          // Reject the draft.
+          await supabase.from('interactions').update({
+            status: 'rejected',
+            notes: `[Auto-rejected 2026-06-13: stage ${violation.current_stage} outdated post-Vantaca-weight-fix; re-confirm observation to redraft at ${newStage}]`,
+          }).eq('id', draft.id);
+
+        } else if (action === 'board_review') {
+          // Log this observation as a continuation of the existing
+          // certified_209 prior so the prior accumulates evidence.
+          if (draft.observation_id && certifiedPrior) {
+            try {
+              await supabase.from('violation_continuations').insert({
+                violation_id:     certifiedPrior.id,
+                observation_id:   draft.observation_id,
+                source:           'inspection',
+                notes:            `Auto-logged 2026-06-13 by drafts/re-evaluate. June trustEd draft superseded by prior certified §209 from ${(certifiedPrior.opened_at || '').slice(0,10)}.`,
+              });
+              // Bump the prior's counters (best-effort; not fatal if it fails).
+              const { data: priorFresh } = await supabase.from('violations')
+                .select('continuation_count').eq('id', certifiedPrior.id).maybeSingle();
+              const newCount = ((priorFresh && priorFresh.continuation_count) || 0) + 1;
+              await supabase.from('violations').update({
+                continuation_count: newCount,
+                last_continued_at:  new Date().toISOString(),
+              }).eq('id', certifiedPrior.id);
+            } catch (e) {
+              // Unique-index conflict on observation_id is fine — already logged.
+              if (!(e.code === '23505')) console.warn('[re-evaluate] continuation insert failed:', e.message);
+            }
+          }
+          // Void the June violation (it was a duplicate of the open §209 case).
+          await supabase.from('violations').update({
+            current_stage: 'voided',
+            resolved_via: 'voided',
+            resolved_at: new Date().toISOString(),
+            resolved_notes: `Re-evaluation 2026-06-13: prior certified §209 exists at this property+category (violation ${certifiedPrior && certifiedPrior.id}). This June violation logged as continuation evidence on the prior; voiding to avoid duplicate enforcement. Board to review at next meeting.`,
+          }).eq('id', violation.id);
+          // Reject the draft.
+          await supabase.from('interactions').update({
+            status: 'rejected',
+            notes: `[Auto-rejected 2026-06-13: prior certified §209 exists at this property+category. Do not auto-mail. Continuation logged on the prior violation. Board review required at next meeting.]`,
+          }).eq('id', draft.id);
+        }
+        // KEEP: no change
+      } catch (e) {
+        console.error('[drafts.re-evaluate] apply failed for draft', draft.id, e);
+        detail.apply_error = e.message;
+      }
+    }
+
+    res.json({
+      summary: {
+        evaluated: drafts.length,
+        keep, upgrade, board_review: board,
+        apply,
+      },
+      details,
+    });
+  } catch (err) {
+    console.error('[drafts.re-evaluate]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/enforcement/drafts/:interactionId/reclassify
 // ----------------------------------------------------------------------------
 // Ed 2026-06-13: "AI assessment is incorrect — I saw trash can, AI said
