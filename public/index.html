@@ -15400,28 +15400,22 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       <div style="display:flex; justify-content:space-between; align-items:center; padding:10px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:10px; cursor:pointer;" onclick="inspToggleOfficeTools()">
         <div>
           <strong style="color:#0B1D34; font-size:13px;">🧰 Office tools</strong>
-          <span style="color:#64748b; font-size:11.5px; margin-left:6px;">Cure pipeline, drafts queue, letter format, categories editor, Vantaca history</span>
+          <span style="color:#64748b; font-size:11.5px; margin-left:6px;">Drafts queue, mail queue, letter format, categories editor, Vantaca history</span>
         </div>
         <span id="inspOfficeToolsCaret" style="color:#0B1D34; font-size:13px; font-weight:700; transform:rotate(-90deg); transition: transform 0.15s;">▼</span>
       </div>
     </div>
     <div id="inspOfficeToolsBody" style="display:none;">
 
-    <!-- CURE-LAPSE PANEL — violations whose cure period has passed without
-         resolution. Process button bumps stage + drafts the new letter.
-         Also auto-fires daily at 06:00 Central via the scheduler. -->
-    <div style="margin-top: 20px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">⏰ Cure-lapse processor <span style="color:#64748b; font-weight:500;">— violations past their cure date</span></h3>
-        <div>
-          <button class="secondary-btn" onclick="inspCureLapsePreview()" style="font-size:11px; padding:4px 10px; margin-right:4px;">🔍 Preview</button>
-          <button class="action-btn" id="inspCureLapseProcessBtn" onclick="inspCureLapseProcess()" style="font-size:12px; padding:5px 14px;" disabled>⚙ Process all</button>
-        </div>
+    <!-- Cure-lapse processor + Cure pipeline moved to the 🌱 Cures tab
+         2026-06-13 (portfolio case-management lives there, Inspect stays
+         focused on capture+review+mail). This slim link keeps the
+         workflow discoverable for operators who land in Inspect first. -->
+    <div style="margin-top: 20px; padding: 12px 16px; background: #f8fafc; border: 1px dashed #cbd5e1; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+      <div style="font-size: 12.5px; color:#475569;">
+        <strong style="color:#0B1D34;">🌱 Cure pipeline + Cure-lapse processor</strong> moved to the dedicated Cures tab. Manage what's coming due, what's already lapsed, and what's ready to escalate from one place.
       </div>
-      <div id="inspCureLapseAutoStatus" style="font-size:11px; color:#64748b; margin-bottom:6px; min-height:14px;">Auto-run schedule: daily at 06:00 Central. Loading last run…</div>
-      <div id="inspCureLapsePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
-        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Click Preview to see violations with expired cure periods. Process bumps each one to the next stage + auto-drafts the new letter.</div>
-      </div>
+      <button type="button" onclick="switchTab('cures')" style="background:#0B1D34; color:#fff; border:none; padding:7px 14px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer; white-space:nowrap;">Open Cures tab →</button>
     </div>
 
     <!-- VANTACA HISTORY COVERAGE — collapsed by default. Transitional
@@ -15460,33 +15454,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
 
-    <!-- CURE PIPELINE — active violations sorted by days until cure lapses
-         so the operator can see what's coming due, not just what's already
-         expired. Complements the cure-lapse processor (which only acts on
-         already-expired). Refresh button + bucket counts at the top, list
-         below sorted by cure_period_ends_at ascending. -->
-    <div style="margin-top: 20px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
-        <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">🌱 Cure pipeline <span style="color:#64748b; font-weight:500;">— what's coming due in the next 30 days</span></h3>
-        <div style="display:flex; gap:6px; align-items:center;">
-          <label style="font-size:11px; color:#64748b;">Horizon:</label>
-          <select id="curePipelineHorizon" onchange="curePipelineLoad()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
-            <option value="14">14 days</option>
-            <option value="30" selected>30 days</option>
-            <option value="60">60 days</option>
-            <option value="90">90 days</option>
-          </select>
-          <button class="secondary-btn" onclick="curePipelineLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
-        </div>
-      </div>
-      <div id="curePipelineMailSummary"></div>
-      <div id="curePipelineBuckets" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-bottom:10px;">
-        <!-- Bucket counters render here -->
-      </div>
-      <div id="curePipelineList" style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:10px;">
-        <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>
-      </div>
-    </div>
+    <!-- Cure pipeline moved to the 🌱 Cures tab 2026-06-13. -->
+
 
     <!-- LETTER FORMAT — sample renders of each of the 4 stage variants so
          the operator can see what a letter looks like before any real
@@ -16092,6 +16061,72 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
     </div>
   </div>
+</div>
+
+<!-- =================================================================
+     🌱 Cures tab — portfolio enforcement case-management.
+     Moved out of Inspect tab 2026-06-13 per Ed: "Cure pipeline clutters
+     the inspection process — should be linked from another tab."
+     Inspect tab stays focused on the field-capture + review + mail flow.
+     Cures tab is for portfolio-level case management: what's coming due,
+     what's already lapsed, escalation prep for the board.
+     Honors the shared community filter from inspQueueGetFilter().
+     ================================================================= -->
+<div class="tab-content" id="tab-cures" style="overflow-y: auto; padding: 20px; background: #f4f5f7;">
+
+  <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:14px 18px; margin-bottom:14px; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap;">
+    <div>
+      <h2 style="font-family: var(--font-serif, Georgia); font-size:22px; font-weight:500; color:var(--navy, #0B1D34); margin:0 0 4px;">🌱 Cures</h2>
+      <div style="font-size:12.5px; color:#64748b;">Portfolio case-management — what's coming due, what's already lapsed, what's ready to escalate.</div>
+    </div>
+    <div style="display:flex; align-items:center; gap:10px;">
+      <label for="curesCommunityFilter" style="font-size:11px; color:#475569; font-weight:600; text-transform:uppercase; letter-spacing:0.06em;">Community:</label>
+      <select id="curesCommunityFilter" onchange="curesQueueFilterChange()" style="min-width:200px; padding:7px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; background:#fff;">
+        <option value="">All communities</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- CURE-LAPSE PROCESSOR — moved from Inspect tab 2026-06-13.
+       Auto-runs daily at 06:00 Central; manual Preview + Process here. -->
+  <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px; margin-bottom:14px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <h3 style="font-size: 14px; color: var(--navy, #0B1D34); margin: 0;">⏰ Cure-lapse processor <span style="color:#64748b; font-weight:500;">— violations past their cure date</span></h3>
+      <div>
+        <button class="secondary-btn" onclick="inspCureLapsePreview()" style="font-size:11px; padding:4px 10px; margin-right:4px;">🔍 Preview</button>
+        <button class="action-btn" id="inspCureLapseProcessBtn" onclick="inspCureLapseProcess()" style="font-size:12px; padding:5px 14px;" disabled>⚙ Process all</button>
+      </div>
+    </div>
+    <div id="inspCureLapseAutoStatus" style="font-size:11px; color:#64748b; margin-bottom:6px; min-height:14px;">Auto-run schedule: daily at 06:00 Central. Loading last run…</div>
+    <div id="inspCureLapsePanel" style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:10px;">
+      <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Click Preview to see violations with expired cure periods. Process bumps each one to the next stage + auto-drafts the new letter.</div>
+    </div>
+  </div>
+
+  <!-- CURE PIPELINE — moved from Inspect tab 2026-06-13.
+       Forward-looking dashboard of violations approaching cure deadline,
+       with mail-status banner showing the unmailed backlog. -->
+  <div style="background:#fff; border:1px solid #e2e8f0; border-radius:12px; padding:14px 16px;">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; flex-wrap:wrap; gap:8px;">
+      <h3 style="font-size:14px; color:var(--navy, #0B1D34); margin:0;">🌱 Cure pipeline <span style="color:#64748b; font-weight:500;">— what's coming due in the next 30 days</span></h3>
+      <div style="display:flex; gap:6px; align-items:center;">
+        <label style="font-size:11px; color:#64748b;">Horizon:</label>
+        <select id="curePipelineHorizon" onchange="curePipelineLoad()" style="font-size:11px; padding:3px 6px; border:1px solid #cbd5e1; border-radius:4px;">
+          <option value="14">14 days</option>
+          <option value="30" selected>30 days</option>
+          <option value="60">60 days</option>
+          <option value="90">90 days</option>
+        </select>
+        <button class="secondary-btn" onclick="curePipelineLoad()" style="font-size:11px; padding:4px 10px;">↻ Refresh</button>
+      </div>
+    </div>
+    <div id="curePipelineMailSummary"></div>
+    <div id="curePipelineBuckets" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:8px; margin-bottom:10px;"></div>
+    <div id="curePipelineList" style="background:#fff; border:1px solid #e2e8f0; border-radius:8px; padding:10px;">
+      <div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>
+    </div>
+  </div>
+
 </div>
 
 <!-- =================================================================
@@ -20791,10 +20826,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     list.innerHTML = '<div style="color:#94a3b8; font-size:12px; text-align:center; padding:14px 0;">Loading…</div>';
     const horizonSel = document.getElementById('curePipelineHorizon');
     const horizon = (horizonSel && horizonSel.value) || '30';
-    // Use the same community filter as the letter format card if set
-    const commSel = document.getElementById('letterFormatCommunity');
+    // Honor the shared queue community filter — same localStorage value used
+    // by Drafts queue + Mail queue + Cures dropdown. Pick one community
+    // once, every portfolio view respects it.
     const params = new URLSearchParams({ horizon_days: horizon });
-    if (commSel && commSel.value) params.set('community_id', commSel.value);
+    const cid = (typeof inspQueueGetFilter === 'function') ? inspQueueGetFilter() : '';
+    if (cid) params.set('community_id', cid);
     try {
       const r = await fetch(`/api/enforcement/cure-pipeline?${params.toString()}`);
       const j = await r.json();
@@ -21038,6 +21075,45 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     } catch (_) { /* leave default */ }
   }
   window.inspQueueLoadCommunityOptions = inspQueueLoadCommunityOptions;
+
+  // ---- Cures tab community dropdown — shares the same localStorage key
+  // as the Inspect queue filter, so picking a community in one place
+  // updates both views. Lives in the Cures tab header.
+  function curesQueueFilterChange() {
+    const sel = document.getElementById('curesCommunityFilter');
+    if (!sel) return;
+    inspQueueSetFilter(sel.value);
+    // Re-sync the Inspect-tab dropdown if it's mounted
+    const otherSel = document.getElementById('inspQueueCommunityFilter');
+    if (otherSel) otherSel.value = sel.value;
+    if (typeof curePipelineLoad === 'function') curePipelineLoad();
+    if (typeof inspCureLapsePreview === 'function') inspCureLapsePreview();
+  }
+  window.curesQueueFilterChange = curesQueueFilterChange;
+
+  async function curesLoadCommunityOptions() {
+    const sel = document.getElementById('curesCommunityFilter');
+    if (!sel) return;
+    if (sel.options.length <= 1) {
+      try {
+        const r = await fetch('/api/communities');
+        if (r.ok) {
+          const j = await r.json();
+          const list = (j.communities || j || []).filter(Boolean);
+          list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          for (const c of list) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name;
+            sel.appendChild(opt);
+          }
+        }
+      } catch (_) { /* leave default */ }
+    }
+    const saved = inspQueueGetFilter();
+    if (saved && sel.value !== saved) sel.value = saved;
+  }
+  window.curesLoadCommunityOptions = curesLoadCommunityOptions;
 
   async function inspDraftsLoad() {
     const wrap = document.getElementById('inspDraftsList');
@@ -23856,8 +23932,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         try { inspDraftsLoad(); }      catch (e) { console.warn('[inspect] load drafts', e); }
         try { inspMailQueueLoad(); }   catch (e) { console.warn('[inspect] load mail queue', e); }
         try { inspFineQueueLoad(); }   catch (e) { console.warn('[inspect] load fine queue', e); }
-        try { inspCureLapsePreview(); } catch (e) { console.warn('[inspect] load cure-lapse', e); }
-        try { inspCureLapseAutoStatusLoad(); } catch (e) { console.warn('[inspect] load cure-lapse status', e); }
+        // Cure pipeline + cure-lapse moved to the Cures tab 2026-06-13.
+      }
+      if (tab === 'cures') {
+        try { curesLoadCommunityOptions(); } catch (e) { console.warn('[cures] load filter', e); }
+        try { curePipelineLoad(); } catch (e) { console.warn('[cures] load pipeline', e); }
+        try { inspCureLapsePreview(); } catch (e) { console.warn('[cures] load cure-lapse', e); }
+        try { inspCureLapseAutoStatusLoad(); } catch (e) { console.warn('[cures] load cure-lapse status', e); }
       }
       return result;
     };
@@ -38516,6 +38597,7 @@ ${questionsPage}
       children: [
         { id: 'acc',             label: '🏗️ ACC',                  section: 'Enforcement' },
         { id: 'inspect',         label: '🚗 Inspect',               section: 'Enforcement' },
+        { id: 'cures',           label: '🌱 Cures',                 section: 'Enforcement' },
         { id: 'communitymap',    label: '🗺️ Community Map',         section: 'Reference' },
         { id: 'calls',           label: '📞 Calls',                 section: 'Comms' },
         { id: 'events',          label: '🎉 Events',                section: 'Comms' },
