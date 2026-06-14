@@ -1724,12 +1724,19 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
     const communityId = req.body && req.body.community_id;
     const letterTypes = ['letter_courtesy_1', 'letter_courtesy_2', 'letter_209'];
 
+    // Pull ALL draft-status letters at the courtesy / §209 levels regardless
+    // of current bundle_id. Ed 2026-06-13 caught the bug: the old query
+    // filtered to bundle_id IS NULL, which means once a draft got a
+    // singleton bundle_id assigned, it never re-bundled with NEW drafts
+    // arriving later at the same property. Each new photo at the same
+    // address created its own loose envelope. Now we re-evaluate every draft
+    // every run and only regenerate when the grouping is actually wrong
+    // (idempotency check below skips groups already correctly bundled).
     let q = supabase
       .from('interactions')
       .select('id, type, community_id, property_id, violation_id, observation_id, inspection_id, content, bundle_id, letter_fee_cents')
       .eq('status', 'draft')
-      .in('type', letterTypes)
-      .is('bundle_id', null);
+      .in('type', letterTypes);
     if (communityId) q = q.eq('community_id', communityId);
     const { data: drafts, error } = await q;
     if (error) return res.status(500).json({ error: error.message });
@@ -1794,7 +1801,9 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
     for (const [, group] of groups) {
       try {
         if (group.length === 1) {
-          // Singleton — just assign a bundle_id for uniformity
+          // Singleton — assign a bundle_id ONLY if missing. Already-bundled
+          // singletons are left alone (idempotent re-run).
+          if (group[0].bundle_id) continue;
           const bundleId = cryptoMod.randomUUID();
           await supabase.from('interactions')
             .update({ bundle_id: bundleId })
@@ -1802,6 +1811,15 @@ router.post('/drafts/auto-bundle', express.json(), async (req, res) => {
           singletons += 1;
           continue;
         }
+
+        // Multi-draft group — check if already correctly bundled. If every
+        // member shares the same bundle_id, the auto-bundle already happened
+        // and we skip. Otherwise (mixed bundle_ids OR some NULL OR all
+        // different singletons), we re-bundle with one shared bundle_id and
+        // regenerate the consolidated PDF.
+        const distinctBundleIds = new Set(group.map((g) => g.bundle_id).filter(Boolean));
+        const allShareOne = distinctBundleIds.size === 1 && group.every((g) => g.bundle_id);
+        if (allShareOne) continue;
 
         // Multi-violation bundle: regenerate one consolidated PDF
         const first = group[0];
