@@ -6788,6 +6788,154 @@ router.get('/mail/pieces', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/enforcement/drafts/:interactionId/trace
+// ----------------------------------------------------------------------------
+// Ed 2026-06-13: in-app version of scripts/trace_re_evaluate_decisions.js.
+// Per-draft "why is this draft at this stage?" trace. Returns everything
+// the operator + engineer need to diagnose:
+//   - This draft's violation, property, category
+//   - All priors at same property + same category in last 365 days
+//     (with weight, stage, source — the exact data feed for the engine)
+//   - Cross-check: certified+ priors at SAME property but DIFFERENT
+//     category (catches Vantaca-vs-trustEd category_id mismatches)
+//   - Engine decision + rationale
+//   - What re-evaluate would do (KEEP / UPGRADE / BOARD_REVIEW)
+// ----------------------------------------------------------------------------
+router.get('/drafts/:interactionId/trace', async (req, res) => {
+  try {
+    const { interactionId } = req.params;
+    const { data: draft } = await supabase
+      .from('interactions')
+      .select('id, violation_id, observation_id, type, status, community_id')
+      .eq('id', interactionId)
+      .maybeSingle();
+    if (!draft) return res.status(404).json({ error: 'draft not found' });
+    if (!draft.violation_id) {
+      return res.json({
+        draft_id: draft.id,
+        error: 'draft has no linked violation — cannot trace',
+      });
+    }
+
+    const { data: violation } = await supabase
+      .from('violations')
+      .select('id, property_id, community_id, primary_category_id, current_stage, opened_at, board_priority_at_open, enforcement_categories(slug, label)')
+      .eq('id', draft.violation_id)
+      .maybeSingle();
+    if (!violation) return res.status(404).json({ error: 'linked violation not found' });
+
+    const { data: property } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, street_address, owner_name')
+      .eq('property_id', violation.property_id)
+      .maybeSingle();
+
+    const yearAgoIso = new Date(Date.now() - 365 * 24 * 60 * 60 * 1000).toISOString();
+
+    // Same-category priors (the exact input the engine sees)
+    const { data: priorsSame } = await supabase
+      .from('violations')
+      .select('id, primary_category_id, opened_at, current_stage, quality_status, confidence_weight, source, resolved_at, enforcement_categories(slug, label)')
+      .eq('property_id', violation.property_id)
+      .eq('primary_category_id', violation.primary_category_id)
+      .gte('opened_at', yearAgoIso)
+      .neq('id', violation.id);
+
+    // Cross-check — other-category priors at same property at certified+
+    const { data: priorsCross } = await supabase
+      .from('violations')
+      .select('id, primary_category_id, current_stage, opened_at, source, resolved_at, enforcement_categories(slug, label)')
+      .eq('property_id', violation.property_id)
+      .neq('primary_category_id', violation.primary_category_id)
+      .gte('opened_at', yearAgoIso)
+      .neq('id', violation.id)
+      .in('current_stage', ['certified_209', 'fine_assessed']);
+
+    // Run the engine + replicate the re-evaluate decision
+    const stageRank = { courtesy_1: 0, courtesy_2: 1, certified_209: 2, fine_assessed: 3 };
+    const weightFor = (v) => {
+      if (v.quality_status === 'superseded') return 0;
+      if (typeof v.confidence_weight === 'number') return Math.max(0, Math.min(1, v.confidence_weight));
+      return 1.0;
+    };
+    const certifiedPriors = (priorsSame || []).filter((p) =>
+      ['certified_209', 'fine_assessed'].includes(p.current_stage) && weightFor(p) > 0
+    );
+    const decision = decideEscalation({
+      prior_violations: priorsSame || [],
+      priority_weight: violation.board_priority_at_open || 'standard',
+    });
+
+    let reEvalAction, reEvalNewStage = null;
+    if (certifiedPriors.length > 0) {
+      reEvalAction = 'BOARD_REVIEW';
+    } else if ((stageRank[decision.stage] || 0) > (stageRank[violation.current_stage] || 0)) {
+      reEvalAction = 'UPGRADE';
+      reEvalNewStage = decision.stage;
+    } else {
+      reEvalAction = 'KEEP';
+    }
+
+    res.json({
+      draft: {
+        id: draft.id,
+        type: draft.type,
+        status: draft.status,
+      },
+      violation: {
+        id: violation.id,
+        category_slug: violation.enforcement_categories?.slug,
+        category_label: violation.enforcement_categories?.label,
+        current_stage: violation.current_stage,
+        opened_at: violation.opened_at,
+        primary_category_id: violation.primary_category_id,
+      },
+      property: {
+        id: violation.property_id,
+        address: property?.street_address,
+        owner: property?.owner_name,
+      },
+      priors_same_category: (priorsSame || []).map((p) => ({
+        id: p.id,
+        stage: p.current_stage,
+        opened_at: p.opened_at,
+        resolved_at: p.resolved_at,
+        source: p.source,
+        weight: weightFor(p),
+        quality_status: p.quality_status,
+        category_label: p.enforcement_categories?.label,
+      })),
+      priors_cross_category_certified: (priorsCross || []).map((p) => ({
+        id: p.id,
+        stage: p.current_stage,
+        opened_at: p.opened_at,
+        resolved_at: p.resolved_at,
+        source: p.source,
+        category_slug: p.enforcement_categories?.slug,
+        category_label: p.enforcement_categories?.label,
+      })),
+      engine_decision: {
+        stage: decision.stage,
+        cure_days: decision.cure_days,
+        rationale: decision.rationale,
+      },
+      re_evaluate: {
+        action: reEvalAction,
+        new_stage: reEvalNewStage,
+        certified_priors_triggering_board_review: certifiedPriors.map((cp) => ({
+          id: cp.id,
+          stage: cp.current_stage,
+          opened_at: cp.opened_at,
+        })),
+      },
+    });
+  } catch (err) {
+    console.error('[drafts.trace]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/enforcement/drafts/re-evaluate
 // ----------------------------------------------------------------------------
 // Ed 2026-06-13: after the Vantaca weight fix (0.5 → 1.0), drafts already

@@ -16054,6 +16054,23 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     <div id="imageLightboxCaption" style="position:absolute; bottom:18px; left:50%; transform:translateX(-50%); background:rgba(0,0,0,0.6); color:#fff; padding:8px 16px; border-radius:999px; font-size:13px; max-width:80vw; text-align:center; pointer-events:none;"></div>
   </div>
 
+  <!-- Trace draft modal — opens from 🔍 Trace button on each draft row.
+       Shows the engine's input data + decision for ONE draft. Ed 2026-06-13. -->
+  <div id="inspTraceModal" style="display:none; position:fixed; inset:0; background:rgba(15,23,42,0.55); z-index:1000; padding:20px; align-items:center; justify-content:center; overflow-y:auto;">
+    <div style="background:#fff; border-radius:14px; max-width:780px; width:100%; max-height:92vh; overflow:hidden; display:flex; flex-direction:column;">
+      <div style="background: var(--navy, #0B1D34); color:#fff; padding:14px 18px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+        <div>
+          <div style="font-family: var(--font-serif, Georgia); font-size:17px; font-weight:600;">🔍 Why this draft is at this stage</div>
+          <div style="font-size:11.5px; color: var(--gold, #D4AF37); margin-top:2px; letter-spacing:0.04em;">Engine inputs, decision, and what re-evaluate would do.</div>
+        </div>
+        <button type="button" onclick="inspDraftsTraceClose()" style="background:rgba(255,255,255,0.1); border:1px solid rgba(255,255,255,0.3); color:#fff; padding:6px 12px; border-radius:6px; font-size:12px; font-weight:600; cursor:pointer;">✕ Close</button>
+      </div>
+      <div id="inspTraceBody" style="padding:18px; overflow-y:auto; font-size:13px; line-height:1.55;">
+        <div style="color:#94a3b8; text-align:center; padding:30px;">Loading trace…</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Reclassify draft modal — opens from ✏️ Fix button on each draft row.
        Operator picks the correct category + edits the description; on Save
        the observation + violation update + the letter PDF regenerates.
@@ -21402,6 +21419,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="font-size:11.5px; color:#78350f; margin-bottom:3px;">Cure by ${cureDate}${confidence ? ` · <span style="color:${confColor};">Confidence: ${escapeHtml(confidence)}</span>` : ''}</div>
           ${d.observation && d.observation.ai_description ? `<div style="font-size:11.5px; color:#64748b; font-style:italic; margin-bottom:5px;">"${escapeHtml(d.observation.ai_description)}"</div>` : ''}
           <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
+            <button onclick="inspDraftsTraceOpen('${d.interaction_id}')" style="background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="Why is this item at this stage? Shows prior history + engine decision.">🔍 Trace</button>
             <button onclick="inspDraftsReclassifyOpen('${d.interaction_id}')" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;" title="AI got it wrong? Pick the right category + fix the description. Letter regenerates automatically.">✏️ Fix</button>
             <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:2px 8px; border-radius:5px; font-size:10.5px; font-weight:600; cursor:pointer;">✕ Drop this item from the bundle</button>
           </div>
@@ -21425,6 +21443,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <div style="display:flex; gap:6px; align-items:center; font-size:11px;">
           ${confidence ? `<span style="color:${confColor}; font-weight:600;">Confidence: ${escapeHtml(confidence)}</span>` : ''}
           ${d.letter_url ? `<a href="${escapeHtml(d.letter_url)}" target="_blank" style="color:#0B1D34; font-weight:600; text-decoration:none;">📄 Preview letter</a>` : '<span style="color:#94a3b8;">letter not ready</span>'}
+          <button onclick="inspDraftsTraceOpen('${d.interaction_id}')" style="background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Why is this draft at this stage? Shows prior history + engine decision.">🔍 Trace</button>
           <button onclick="inspDraftsReclassifyOpen('${d.interaction_id}')" style="background:#fef3c7; border:1px solid #fde68a; color:#854d0e; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="AI got it wrong? Pick the right category + fix the description. Letter regenerates automatically.">✏️ Fix</button>
           <button onclick="inspDraftsRegenerateLetter('${d.violation_id || ''}', this)" style="background:none; border:1px solid #d0d7de; color:#0B1D34; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer;" title="Re-render the PDF with the latest template (use after letter template updates)">↻ Regenerate</button>
           <button onclick="inspDraftsReject('${d.interaction_id}')" style="background:none; border:1px solid #fecaca; color:#b91c1c; padding:3px 9px; border-radius:5px; font-size:11px; font-weight:600; cursor:pointer; margin-left:auto;">✕ Reject</button>
@@ -21661,6 +21680,119 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       e.stopPropagation();
     }
   }, true);
+
+  // ============================================================
+  // 🔍 TRACE — per-draft explainer modal. Shows the engine's exact
+  // inputs (every prior + weight + source) and decision for ONE draft.
+  // Replaces the CLI script with an in-app surface so Laurie can
+  // diagnose without leaving the queue. Ed 2026-06-13.
+  // ============================================================
+  async function inspDraftsTraceOpen(interactionId) {
+    const modal = document.getElementById('inspTraceModal');
+    const body  = document.getElementById('inspTraceBody');
+    if (!modal || !body) return;
+    body.innerHTML = '<div style="color:#94a3b8; text-align:center; padding:30px;">Loading trace…</div>';
+    modal.style.display = 'flex';
+    try {
+      const r = await window._authFetch(`/api/enforcement/drafts/${encodeURIComponent(interactionId)}/trace`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+
+      const v = j.violation || {};
+      const p = j.property || {};
+      const priors = j.priors_same_category || [];
+      const cross  = j.priors_cross_category_certified || [];
+      const dec    = j.engine_decision || {};
+      const re     = j.re_evaluate || {};
+      const actionColor = re.action === 'BOARD_REVIEW' ? '#b91c1c'
+                       : re.action === 'UPGRADE' ? '#b45309'
+                       : '#15803d';
+      const actionLabel = re.action === 'BOARD_REVIEW' ? '⚠ Board review needed'
+                       : re.action === 'UPGRADE' ? '↑ Should upgrade stage'
+                       : '✓ Stage is correct';
+
+      const fmtDate = (v) => v ? new Date(v).toLocaleDateString('en-US') : '—';
+      const fmtWeight = (w) => (w === 0) ? '0.0' : (w || 1.0).toFixed(2);
+
+      const priorsRows = priors.length === 0
+        ? '<tr><td colspan="5" style="padding:10px; color:#94a3b8; text-align:center; font-size:12px;">No priors at this property + this category in the last 12 months.</td></tr>'
+        : priors.map((p) => `
+            <tr style="border-top:1px solid #e2e8f0;">
+              <td style="padding:8px 10px; font-size:12px;">${escapeHtml(fmtDate(p.opened_at))}</td>
+              <td style="padding:8px 10px; font-size:12px; font-weight:600;">${escapeHtml(p.stage || '')}</td>
+              <td style="padding:8px 10px; font-size:12px;">${escapeHtml(p.source || '—')}</td>
+              <td style="padding:8px 10px; font-size:12px; ${p.weight > 0 ? '' : 'color:#94a3b8;'}">${fmtWeight(p.weight)}</td>
+              <td style="padding:8px 10px; font-size:12px;">${p.resolved_at ? 'cured ' + escapeHtml(fmtDate(p.resolved_at)) : '<span style="color:#15803d; font-weight:600;">open</span>'}</td>
+            </tr>`).join('');
+
+      const crossBlock = cross.length === 0 ? '' : `
+        <div style="margin-top:18px; padding:12px 14px; background:#fff7ed; border:1px solid #fed7aa; border-radius:8px;">
+          <div style="font-size:11px; font-weight:700; color:#9a3412; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">⚠ Cross-category certified history at this property</div>
+          <div style="font-size:11.5px; color:#7c2d12; margin-bottom:8px;">
+            These priors are at the SAME property but a DIFFERENT category — they don't trigger the per-category board_review filter today. Surfacing here in case it's a Vantaca-vs-trustEd category mismatch (same real-world violation, different category_id).
+          </div>
+          ${cross.map((c) => `<div style="font-size:11.5px; color:#0B1D34; padding:3px 0;">→ ${escapeHtml(c.category_label || c.category_slug || '—')} · ${escapeHtml(c.stage)} · opened ${escapeHtml(fmtDate(c.opened_at))} · source=${escapeHtml(c.source || '—')}</div>`).join('')}
+        </div>`;
+
+      const triggerNote = (re.certified_priors_triggering_board_review || []).length > 0
+        ? `<div style="font-size:12px; color:#7f1d1d; margin-top:6px;">Triggered by ${re.certified_priors_triggering_board_review.length} certified prior(s) shown above.</div>`
+        : '';
+
+      body.innerHTML = `
+        <div style="margin-bottom:14px; padding-bottom:14px; border-bottom:1px solid #e2e8f0;">
+          <div style="font-size:15px; font-weight:700; color:#0B1D34;">${escapeHtml(p.address || '—')}</div>
+          <div style="font-size:12.5px; color:#475569;">${escapeHtml(p.owner || '')}</div>
+          <div style="font-size:12px; color:#94a3b8; margin-top:4px;">property_id: ${escapeHtml(p.id || '')}</div>
+        </div>
+
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">This draft</div>
+          <div style="font-size:13px; color:#0B1D34;">${escapeHtml(v.category_label || '—')} <span style="color:#94a3b8;">(${escapeHtml(v.category_slug || '')})</span></div>
+          <div style="font-size:12px; color:#475569; margin-top:2px;">Current stage: <strong>${escapeHtml(v.current_stage || '—')}</strong> · opened ${escapeHtml(fmtDate(v.opened_at))}</div>
+          <div style="font-size:11px; color:#94a3b8; margin-top:2px;">primary_category_id: ${escapeHtml(v.primary_category_id || '')}</div>
+        </div>
+
+        <div style="margin-bottom:14px;">
+          <div style="font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Priors at this property + this category (last 12 months)</div>
+          <table style="width:100%; border-collapse:collapse; border:1px solid #e2e8f0; border-radius:6px; overflow:hidden;">
+            <thead style="background:#f8fafc;">
+              <tr style="text-align:left;">
+                <th style="padding:8px 10px; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em;">Opened</th>
+                <th style="padding:8px 10px; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em;">Stage</th>
+                <th style="padding:8px 10px; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em;">Source</th>
+                <th style="padding:8px 10px; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em;">Weight</th>
+                <th style="padding:8px 10px; font-size:10.5px; color:#475569; text-transform:uppercase; letter-spacing:0.06em;">Status</th>
+              </tr>
+            </thead>
+            <tbody>${priorsRows}</tbody>
+          </table>
+        </div>
+
+        ${crossBlock}
+
+        <div style="margin-top:18px; padding:12px 14px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px;">
+          <div style="font-size:11px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:6px;">Engine decision</div>
+          <div style="font-size:13px; color:#0B1D34; margin-bottom:4px;">Recommended stage: <strong>${escapeHtml(dec.stage || '—')}</strong></div>
+          <div style="font-size:12px; color:#475569; font-style:italic;">${escapeHtml(dec.rationale || '')}</div>
+        </div>
+
+        <div style="margin-top:14px; padding:14px 16px; background:${actionColor === '#15803d' ? '#f0fdf4' : actionColor === '#b45309' ? '#fffbeb' : '#fef2f2'}; border:1px solid ${actionColor}33; border-left:4px solid ${actionColor}; border-radius:8px;">
+          <div style="font-size:13.5px; font-weight:700; color:${actionColor};">${escapeHtml(actionLabel)}</div>
+          ${re.new_stage ? `<div style="font-size:12.5px; color:#0B1D34; margin-top:4px;">Should be at: <strong>${escapeHtml(re.new_stage)}</strong></div>` : ''}
+          ${triggerNote}
+        </div>
+      `;
+    } catch (e) {
+      body.innerHTML = `<div style="color:#b91c1c; padding:20px; font-size:13px;">Trace failed: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+  window.inspDraftsTraceOpen = inspDraftsTraceOpen;
+
+  function inspDraftsTraceClose() {
+    const m = document.getElementById('inspTraceModal');
+    if (m) m.style.display = 'none';
+  }
+  window.inspDraftsTraceClose = inspDraftsTraceClose;
 
   // ============================================================
   // 🔄 RE-EVALUATE — re-run the escalation engine on every current
