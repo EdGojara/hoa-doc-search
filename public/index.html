@@ -21380,8 +21380,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const confColor = confidence === 'low' ? '#b91c1c' : confidence === 'medium' ? '#b45309' : '#15803d';
     const photoCaption = ((d.property && d.property.street_address) || '') + ((d.property && d.property.unit) ? ' #' + d.property.unit : '');
     const photoCol = d.observation && d.observation.photo_url
-      ? `<img src="${escapeHtml(d.observation.photo_url)}" title="Click to zoom"
-              onclick="openImageLightbox('${escapeHtml(d.observation.photo_url)}', ${JSON.stringify(photoCaption)})"
+      ? `<img src="${escapeHtml(d.observation.photo_url)}"
+              data-caption="${escapeHtml(photoCaption)}"
+              title="Click to zoom"
+              onclick="openImageLightbox(this.src, this.dataset.caption)"
               style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; object-fit:cover; border-radius:6px; flex-shrink:0; cursor:zoom-in;" />`
       : `<div style="width:${isBundle ? '70' : '90'}px; height:${isBundle ? '70' : '90'}px; background:#f1f5f9; border-radius:6px; flex-shrink:0; display:flex; align-items:center; justify-content:center; color:#94a3b8; font-size:11px;">no photo</div>`;
     const ownerLine = d.owner ? `${escapeHtml(d.owner.full_name || '—')}${d.owner.mailing_address ? ` · mail: ${escapeHtml(d.owner.mailing_address)}` : ''}` : '—';
