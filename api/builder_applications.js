@@ -41,7 +41,16 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 const BEDROCK_MGMT_CO_ID = '00000000-0000-0000-0000-000000000001';
 const EMBEDDING_MODEL = 'text-embedding-ada-002';
-const SERVICE_TYPE = 'arc_builder_new_construction';
+// SERVICE_TYPE was 'arc_builder_new_construction' until 2026-06-16. Migration
+// 218 added a CHECK constraint on application_reference_counters.service_type
+// limiting allowed values to: builder_arc, master_plan_submission, resident_acc,
+// estoppel, other. The first INSERT for a never-seen-before (community, service,
+// year) tuple hit the constraint and crashed at AM 8114 Graces Gamble Way.
+// Switched to 'builder_arc'. Drift protection in next_application_counter reads
+// MAX suffix from builder_applications.reference_number directly, so any prior
+// counter rows under the old service_type become harmless orphans -- new INSERTs
+// pick up at max_existing+1 with no duplicate-ref risk.
+const SERVICE_TYPE = 'builder_arc';
 const STORAGE_BUCKET = 'documents';
 const ARCHIVE_BCC = process.env.ARCHIVE_BCC_EMAIL || 'Archive1Emails@bedrocktx.com';
 
