@@ -1759,7 +1759,18 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
     const fd = new FormData();
     fd.append('submission_pdf', file);
     fd.append('community_id', communityId);
-    const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', body: fd });
+    // Attach the operator's Supabase JWT so the server's requireStaff /
+    // requireAdmin guard can resolve the user_profiles role. Without this
+    // header the request is "unknown" role and the gate rejects everyone,
+    // regardless of how they're signed in.
+    const uploadHeaders = {};
+    try {
+      if (window.supa) {
+        const { data: { session } } = await window.supa.auth.getSession();
+        if (session?.access_token) uploadHeaders.Authorization = 'Bearer ' + session.access_token;
+      }
+    } catch (_) { /* tolerate */ }
+    const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', headers: uploadHeaders, body: fd });
     const j = await r.json();
     if (!r.ok) {
       // Surface the raw model output so staff can see what was misread per
