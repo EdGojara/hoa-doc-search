@@ -1109,11 +1109,27 @@ router.get('/:id', async (req, res, next) => {
     if (appResp.error) throw appResp.error;
     if (!appResp.data) return res.status(404).json({ error: 'application not found' });
 
+    // Ed 2026-06-16: stamp a short-lived signed URL on each attachment so
+    // the detail panel can embed the submission packet PDF inline. Before
+    // this, the panel rendered only the filename text and Ed had no way
+    // to see what the builder actually submitted without downloading.
+    const attsWithUrls = await Promise.all((attResp.data || []).map(async (a) => {
+      if (!a.storage_path) return a;
+      try {
+        const { data: sd } = await supabase.storage
+          .from(a.storage_bucket || 'documents')
+          .createSignedUrl(a.storage_path, 60 * 60);  // 1 hour
+        return { ...a, signed_url: sd?.signedUrl || null };
+      } catch (_) {
+        return a;
+      }
+    }));
+
     res.json({
       application: appResp.data,
       assessments: assessResp.data || [],
       responses: respResp.data || [],
-      attachments: attResp.data || [],
+      attachments: attsWithUrls,
     });
   } catch (err) {
     console.error('[builder_applications] detail failed:', err.message);
@@ -2983,20 +2999,37 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
     for (let attempt = 0; attempt < 3 && !app; attempt++) {
       referenceNumber = await nextBuilderReferenceNumber(community);
 
-      // Compose application_data JSONB. Materials table (10 rows) +
-      // masonry/repetition compliance + visible sides + attachments.
+      // Compose application_data JSONB. Both shapes:
+      //   - Flat fields (brick_color, siding_material, etc.) that the
+      //     existing detail-panel renderer reads — so materials display
+      //     immediately without renderer changes.
+      //   - Nested .materials map preserving the richer DRB form shape
+      //     ({type, color, other} per row) for downstream callers that
+      //     want the full structure (AI recommend, letter renderer, etc.).
+      const mat = (k) => extracted[k] || null;
       const applicationData = {
+        // Flat fields read by renderMaterialsRows in builder-arc-review.html
+        brick_color:        mat('brick')?.color  || null,
+        stone_color:        mat('rock')?.color   || null,
+        stone_type:         mat('rock')?.type    || null,
+        siding_material:    mat('siding')?.type  || mat('siding')?.other || null,
+        siding_color:       mat('siding')?.color || null,
+        trim_color:         mat('trim_paint')?.color || null,
+        garage_door_color:  mat('garage_door')?.color || null,
+        roof_color:         mat('shingles')?.color || null,
+        roof_material:      mat('shingles')?.type  || null,
+        // Nested original — preserved for richer DRB-specific access
         materials: {
-          shingles:     extracted.shingles     || null,
-          brick:        extracted.brick        || null,
-          rock:         extracted.rock         || null,
-          siding:       extracted.siding       || null,
-          mortar:       extracted.mortar       || null,
-          stucco_paint: extracted.stucco_paint || null,
-          chimney:      extracted.chimney      || null,
-          windows:      extracted.windows      || null,
-          trim_paint:   extracted.trim_paint   || null,
-          garage_door:  extracted.garage_door  || null,
+          shingles:     mat('shingles'),
+          brick:        mat('brick'),
+          rock:         mat('rock'),
+          siding:       mat('siding'),
+          mortar:       mat('mortar'),
+          stucco_paint: mat('stucco_paint'),
+          chimney:      mat('chimney'),
+          windows:      mat('windows'),
+          trim_paint:   mat('trim_paint'),
+          garage_door:  mat('garage_door'),
         },
         compliance: {
           met_repetition_requirement:   extracted.met_repetition_requirement,

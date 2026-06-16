@@ -1328,10 +1328,32 @@ function renderDetail(data) {
       ${atts.length ? `
         <ul class="att-list">${atts.map((f) => `
           <li>
-            <span><span class="kind">${escapeHtml(f.kind.replace(/_/g, ' '))}</span> · ${escapeHtml(f.original_filename || '')}</span>
+            <span>
+              <span class="kind">${escapeHtml(f.kind.replace(/_/g, ' '))}</span> ·
+              ${f.signed_url
+                ? `<a href="${escapeHtml(f.signed_url)}" target="_blank" rel="noopener" style="color: var(--navy, #0B1D34); font-weight: 600; text-decoration: none;">${escapeHtml(f.original_filename || '')} ↗</a>`
+                : escapeHtml(f.original_filename || '')}
+            </span>
             <span style="color: var(--ink-faint); font-size: 11px;">${f.size_bytes ? Math.round(f.size_bytes / 1024) + 'kb' : ''}</span>
           </li>`).join('')}
-        </ul>` : `<div style="color: var(--ink-faint); font-size: 12.5px;">No attachments uploaded.</div>`}
+        </ul>
+        ${
+          // Inline PDF viewer for the submission packet — Ed 2026-06-16
+          // "I can't see the submission." Embed the actual PDF so staff
+          // can review what the builder sent without downloading.
+          (() => {
+            const pdf = atts.find((f) => f.signed_url && (f.mime_type === 'application/pdf' || /\.pdf$/i.test(f.original_filename || '')));
+            return pdf
+              ? `<div style="margin-top: 14px; border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background: #f8fafc;">
+                   <div style="background: #fff; padding: 8px 12px; border-bottom: 1px solid #e2e8f0; display: flex; align-items: center; justify-content: space-between; gap: 10px;">
+                     <span style="font-size: 12px; font-weight: 600; color: var(--ink-soft); letter-spacing: 0.04em; text-transform: uppercase;">📄 Inline preview</span>
+                     <span style="font-size: 11px; color: var(--ink-faint);">scroll inside to flip pages · click ↗ above to open in a new tab</span>
+                   </div>
+                   <iframe src="${escapeHtml(pdf.signed_url)}#view=FitH&toolbar=1" style="width: 100%; height: 70vh; border: 0; background: #fff; display: block;" title="Submission packet PDF"></iframe>
+                 </div>`
+              : '';
+          })()
+        }` : `<div style="color: var(--ink-faint); font-size: 12.5px;">No attachments uploaded.</div>`}
     </section>
 
     ${postDecisionHtml}
