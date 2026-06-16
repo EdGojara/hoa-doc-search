@@ -403,30 +403,23 @@ async function nextBuilderReferenceNumber(community) {
   const year = new Date().getFullYear();
   const prefix = communityReferencePrefix(community);
 
-  // Read-then-write — race-resistant under sequential staff usage. Multi-writer
-  // races covered by reference_number UNIQUE constraint at the table level
-  // (caller can retry on conflict; rare under expected volume).
-  const { data: row } = await supabase
-    .from('application_reference_counters')
-    .select('counter')
-    .eq('community_id', community.id)
-    .eq('service_type', SERVICE_TYPE)
-    .eq('year', year)
-    .maybeSingle();
+  // Atomic counter via Postgres function — no read-then-write race,
+  // drift-protected against actual reference_number values that may exceed
+  // the counter (test data, manual inserts, etc.).
+  // Migration 224 / Ed 2026-06-13 after DRB Group hit the original race.
+  const { data: nextCounter, error } = await supabase
+    .rpc('next_builder_application_counter', {
+      p_community_id: community.id,
+      p_service_type: SERVICE_TYPE,
+      p_year: year,
+      p_prefix: prefix,
+    });
+  if (error) throw new Error(`reference number allocation failed: ${error.message}`);
+  if (typeof nextCounter !== 'number' || nextCounter < 1) {
+    throw new Error(`reference number allocation returned invalid value: ${nextCounter}`);
+  }
 
-  const next = (row?.counter || 0) + 1;
-
-  await supabase
-    .from('application_reference_counters')
-    .upsert({
-      community_id: community.id,
-      service_type: SERVICE_TYPE,
-      year,
-      counter: next,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'community_id,service_type,year' });
-
-  return `${prefix}-BLD-${year}-${String(next).padStart(4, '0')}`;
+  return `${prefix}-BLD-${year}-${String(nextCounter).padStart(4, '0')}`;
 }
 
 // Lazy puppeteer (HTML → PDF) — same pattern as server.js:renderLetterPdfBuffer
@@ -679,11 +672,17 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       }
     }
 
-    // Reference number (atomic per community/year)
-    const referenceNumber = await nextBuilderReferenceNumber(community);
-
-    // Insert the application
-    const insertRow = {
+    // Reference number (atomic per community/year via Postgres function;
+    // see migration 224). Retry loop is defense-in-depth — should never
+    // fire now that the counter increment is atomic + drift-protected,
+    // but guards against any future divergence so the BUILDER never
+    // sees a raw "duplicate key value violates unique constraint" error.
+    let referenceNumber = null;
+    let app = null;
+    let aErr = null;
+    for (let attempt = 0; attempt < 3 && !app; attempt++) {
+      referenceNumber = await nextBuilderReferenceNumber(community);
+      const tryInsertRow = {
       community_id: community.id,
       builder_company_id: builderCompanyId,
       master_plan_id: body.master_plan_id || null,
@@ -711,12 +710,32 @@ router.post('/', express.json({ limit: '2mb' }), async (req, res) => {
       status: 'received',
     };
 
-    const { data: app, error: aErr } = await supabase
-      .from('builder_applications')
-      .insert(insertRow)
-      .select('*')
-      .single();
-    if (aErr) throw aErr;
+      const insertResult = await supabase
+        .from('builder_applications')
+        .insert(tryInsertRow)
+        .select('*')
+        .single();
+      app = insertResult.data;
+      aErr = insertResult.error;
+      if (aErr) {
+        // Postgres unique-constraint violation = 23505. Retry with a fresh
+        // reference number (drift may have grown between counter alloc and
+        // insert). Anything else = throw.
+        if (aErr.code === '23505' && /reference_number/.test(String(aErr.message || ''))) {
+          console.warn('[builder_applications] reference_number collision on attempt', attempt + 1, '— retrying with fresh counter:', referenceNumber, aErr.message);
+          app = null;
+          continue;
+        }
+        throw aErr;
+      }
+    }
+    if (!app) {
+      // 3 collisions in a row = something is structurally wrong (counter
+      // function broken, drift corruption, etc.). Surface a friendly error
+      // to the builder + a loud one to the logs so we investigate.
+      console.error('[builder_applications] reference number allocation failed after 3 retries; counter may be corrupted for community', community.id);
+      throw new Error('Submission temporarily unavailable. Please refresh the page and try again — if it keeps happening, email builders@bedrocktx.com.');
+    }
 
     // Auto-match against the master plan library. If this builder + plan + elevation
     // is already approved at this community, flip the fast-track flag immediately
