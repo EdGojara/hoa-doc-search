@@ -987,6 +987,15 @@ async function loadCommunities() {
 function rowHtml(item) {
   const fastTrack = item.fast_track
     ? `<span class="badge fast-track">⚡ Fast-track</span>` : '';
+  // Inline next-action button — Ed 2026-06-16: "it says received but now
+  // what? not intuitive." Make the next action obvious right on the row
+  // so staff doesn't have to click around guessing.
+  const needsAction = ['received', 'under_review', 'info_requested'].includes(item.status);
+  const actionBtn = needsAction
+    ? `<button class="row-action-btn" data-id="${item.application_id}" title="Open the detail panel to review extracted data and approve / approve with conditions / deny / request more info"
+              style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 700; cursor: pointer; white-space: nowrap; letter-spacing: 0.02em;">Review &amp; decide →</button>`
+    : `<button class="row-action-btn" data-id="${item.application_id}" title="View the decision letter + history"
+              style="background: #fff; color: #475569; border: 1px solid #cbd5e1; padding: 6px 12px; border-radius: 6px; font-size: 11px; font-weight: 600; cursor: pointer; white-space: nowrap;">View</button>`;
   return `
     <tr data-id="${item.application_id}" class="${state.selectedId === item.application_id ? 'active' : ''}">
       <td class="num">${escapeHtml(item.reference_number || '—')}</td>
@@ -1007,7 +1016,8 @@ function rowHtml(item) {
         <span class="badge ${item.status}">${escapeHtml((item.status || '').replace(/_/g, ' '))}</span>
         ${fastTrack}
       </td>
-      <td class="action-cell">
+      <td class="action-cell" style="white-space:nowrap;">
+        ${actionBtn}
         <button class="row-delete-btn" data-id="${item.application_id}" data-ref="${escapeHtml(item.reference_number || item.application_id)}" title="Admin: delete this submission (cascades to assessments, responses, attachments)">🗑️</button>
       </td>
     </tr>
@@ -1113,14 +1123,23 @@ async function loadQueue() {
     const ctaBtn = body.querySelector('#ctaUploadSubmissionBtn');
     if (ctaBtn) ctaBtn.addEventListener('click', openUploadSubmissionModal);
 
-    // Wire the per-row delete buttons FIRST (before the row-click handler)
-    // so a button click doesn't also fire the row's "open detail" handler.
+    // Wire per-row buttons FIRST (before the row-click handler) so button
+    // clicks don't also fire the row's "open detail" handler.
     body.querySelectorAll('.row-delete-btn').forEach((btn) => {
       btn.addEventListener('click', (e) => {
         e.stopPropagation();
         const id = btn.dataset.id;
         const ref = btn.dataset.ref;
         confirmAndDeleteSubmission(id, ref);
+      });
+    });
+    // Inline "Review & decide →" / "View" — opens the detail panel and
+    // stops propagation. Same destination as clicking the row, but the
+    // explicit button makes the next action obvious (Ed 2026-06-16).
+    body.querySelectorAll('.row-action-btn').forEach((btn) => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        loadDetail(btn.dataset.id);
       });
     });
 
