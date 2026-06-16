@@ -6240,6 +6240,7 @@
         <div id="hpEnforcementSlot"></div>
         <div id="hpBalanceCompositionSlot"></div>
         ${currentResHtml}
+        <div id="hpInteractionsSlot"></div>
         <h4 style="margin:0 0 6px 0; font-size:13px; color:#1E2761;">Ownership history</h4>
         ${rendRel(j.ownerships, 'Owner', false)}
         <h4 style="margin:18px 0 6px 0; font-size:13px; color:#1E2761;">Residency history</h4>
@@ -6252,6 +6253,10 @@
       // Load balance composition + amenity decision (composition drives whether
       // pool/clubhouse access can be denied — fines-only ≠ assessment-class).
       hpLoadBalanceComposition(j.property.id);
+      // Load interactions timeline + log/drop affordances. The "history from
+      // homeowner" view staff asked for sits right where they're already
+      // looking — same place as ownership and enforcement state.
+      hpLoadInteractions(j.property.id);
     } catch (e) {
       body.innerHTML = `<div style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</div>`;
     }
@@ -6420,6 +6425,267 @@
     { v: 'prior_balance', l: 'Prior balance' },
     { v: 'other',         l: 'Other' },
   ];
+
+  // ===== Interactions timeline on the Homeowner Profile =====================
+  // Ed 2026-06-16. Mirrors the affordance on the inspector property modal.
+  // Same backend, same write paths. Staff who land here looking up a
+  // homeowner immediately see the email/call history and can drop a new
+  // record onto it without leaving the page.
+  async function hpLoadInteractions(propertyId) {
+    const slot = document.getElementById('hpInteractionsSlot');
+    if (!slot) return;
+    slot.innerHTML = `
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+        <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:6px;">Recent contact</div>
+        <div style="color:#94a3b8; font-size:12.5px;">Loading…</div>
+      </div>`;
+    try {
+      // Reuse the existing property-detail endpoint — it already pulls
+      // interactions filtered by property_id with pre-signed attachment URLs.
+      // (Specialized /api/properties/:id/interactions can wait until the
+      // hp page actually needs to skip the rest of the payload.)
+      const r = await fetch(`/api/inspections/property-detail/${encodeURIComponent(propertyId)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      hpRenderInteractions(slot, propertyId, j.interactions || []);
+    } catch (e) {
+      slot.innerHTML = `
+        <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+          <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:6px;">Recent contact</div>
+          <div style="color:#b91c1c; font-size:12.5px;">Couldn't load: ${escapeHtml(e.message)}</div>
+        </div>`;
+    }
+  }
+
+  function hpRenderInteractions(slot, propertyId, interactions) {
+    const todayIso = new Date().toISOString();
+    const followUpBadge = (i) => {
+      if (!i.follow_up_due_at) return '';
+      const overdue = i.follow_up_due_at < todayIso;
+      const due = new Date(i.follow_up_due_at).toLocaleDateString();
+      return `<span style="background:${overdue ? '#fee2e2' : '#fef3c7'}; color:${overdue ? '#991b1b' : '#92400e'}; padding:1px 7px; border-radius:99px; font-size:10.5px; font-weight:700; letter-spacing:0.03em; margin-left:6px;">${overdue ? '⚠ FOLLOW UP OVERDUE' : '📅 FOLLOW UP'} ${escapeHtml(due)}</span>`;
+    };
+    const sourceTag = (s) => s === 'manual'
+      ? '<span style="background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em; margin-left:4px;">LOGGED</span>'
+      : '';
+    const chips = (i) => {
+      const atts = Array.isArray(i.attachments) ? i.attachments : [];
+      if (!atts.length) return '';
+      return '<div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">' +
+        atts.map((a) => `<a href="${escapeHtml(a.signed_url || '#')}" target="_blank" rel="noopener" style="background:#f1f5f9; color:#0B1D34; padding:2px 8px; border-radius:6px; font-size:11px; text-decoration:none; border:1px solid #e2e8f0;">📎 ${escapeHtml(a.label || 'file')}</a>`).join('') +
+        '</div>';
+    };
+    const rowsHtml = interactions.length === 0
+      ? '<div style="color:#94a3b8; font-size:12.5px; padding:10px 4px;">No contact on record yet — log a call or drop an email below.</div>'
+      : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
+           <thead><tr style="background:#f8fafc; color:#64748b;">
+             <th style="text-align:left; padding:6px 8px;">When</th>
+             <th style="text-align:left; padding:6px 8px;">Type</th>
+             <th style="text-align:left; padding:6px 8px;">Subject / notes</th>
+             <th style="text-align:left; padding:6px 8px;">Method</th>
+           </tr></thead>
+           <tbody>
+             ${interactions.slice(0, 24).map((i) => `
+               <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top;">
+                 <td style="padding:8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
+                 <td style="padding:8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}${sourceTag(i.source)}</td>
+                 <td style="padding:8px; color:#475569;">
+                   <div>${escapeHtml(i.subject || '—')}${followUpBadge(i)}</div>
+                   ${i.preview ? `<div style="color:#64748b; font-size:11.5px; margin-top:3px; white-space:pre-wrap;">${escapeHtml(i.preview)}</div>` : ''}
+                   ${chips(i)}
+                 </td>
+                 <td style="padding:8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
+               </tr>`).join('')}
+           </tbody>
+         </table>`;
+
+    slot.innerHTML = `
+      <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
+          <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase;">Recent contact (${interactions.length})</div>
+        </div>
+        ${rowsHtml}
+        <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+          <button type="button" onclick="hpOpenLogInteraction('${propertyId}')" style="background:#0B1D34; color:#fff; border:none; padding:10px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">📞 Log call / note / follow-up</button>
+          <div id="hpIntDropZone-${propertyId}" data-property-id="${propertyId}"
+               style="border:2px dashed #d4af37; background:rgba(212,175,55,0.06); border-radius:8px; padding:10px 12px; text-align:center; cursor:pointer; font-size:12.5px; color:#78350f;">
+            📥 <strong>Drop an email</strong> here (.msg / .eml / .pdf / screenshot)
+          </div>
+          <input type="file" id="hpIntFileInput-${propertyId}" accept=".msg,.eml,application/pdf,image/*" style="display:none;">
+        </div>
+        <div id="hpIntStatus-${propertyId}" style="display:none; margin-top:8px; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>
+      </div>`;
+
+    hpIntWireDropZone(propertyId);
+  }
+
+  function hpIntSetStatus(propertyId, message, tone) {
+    const el = document.getElementById(`hpIntStatus-${propertyId}`);
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.background = tone === 'error' ? '#fee2e2' : tone === 'ok' ? '#dcfce7' : '#f1f5f9';
+    el.style.color = tone === 'error' ? '#991b1b' : tone === 'ok' ? '#166534' : '#475569';
+    el.textContent = message;
+  }
+
+  async function hpIntUploadFile(propertyId, file) {
+    if (!file) return;
+    hpIntSetStatus(propertyId, `Uploading ${file.name}…`, 'info');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('property_id', propertyId);
+      const r = await fetch('/api/interactions/email-drop', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      hpIntSetStatus(propertyId, `✓ Attached "${file.name}".`, 'ok');
+      await hpLoadInteractions(propertyId);
+    } catch (e) {
+      hpIntSetStatus(propertyId, '✗ ' + e.message, 'error');
+    }
+  }
+
+  function hpIntWireDropZone(propertyId) {
+    const dz = document.getElementById(`hpIntDropZone-${propertyId}`);
+    const input = document.getElementById(`hpIntFileInput-${propertyId}`);
+    if (!dz || !input || dz.dataset.wired === '1') return;
+    dz.dataset.wired = '1';
+    dz.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      if (input.files && input.files[0]) hpIntUploadFile(propertyId, input.files[0]);
+    });
+    const setHover = (on) => {
+      dz.style.background = on ? 'rgba(212,175,55,0.18)' : 'rgba(212,175,55,0.06)';
+      dz.style.borderColor = on ? '#92400e' : '#d4af37';
+    };
+    dz.addEventListener('dragenter', (e) => { e.preventDefault(); setHover(true); });
+    dz.addEventListener('dragover',  (e) => { e.preventDefault(); setHover(true); });
+    dz.addEventListener('dragleave', (e) => { if (e.target === dz) setHover(false); });
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      setHover(false);
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) hpIntUploadFile(propertyId, file);
+    });
+  }
+
+  // Same inline form as the inspector modal — different refresh target.
+  function hpOpenLogInteraction(propertyId) {
+    if (!propertyId) return;
+    let overlay = document.getElementById('hpLogIntOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'hpLogIntOverlay';
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; display:flex; align-items:flex-start; justify-content:center; padding:60px 16px; overflow-y:auto;';
+    overlay.innerHTML = `
+      <div style="background:#fff; max-width:520px; width:100%; border-radius:12px; padding:22px 24px; font-family:Inter,system-ui;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="margin:0; font-family:Cormorant Garamond,Georgia,serif; font-size:22px; color:#0B1D34;">📞 Log interaction</h3>
+          <button id="hpLogIntClose" style="background:none; border:none; font-size:22px; cursor:pointer; color:#64748b;">×</button>
+        </div>
+        <form id="hpLogIntForm" style="display:flex; flex-direction:column; gap:12px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">What happened</label>
+              <select id="hpLiType" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                <option value="phone">Phone call</option>
+                <option value="in_person">In person</option>
+                <option value="email_inbound">Email from homeowner</option>
+                <option value="email_outbound">Email to homeowner</option>
+                <option value="sms">Text message</option>
+                <option value="internal_note">Internal note (no homeowner)</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">When</label>
+              <input type="datetime-local" id="hpLiOccurredAt" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Subject (one-line headline)</label>
+            <input type="text" id="hpLiSubject" placeholder="e.g. Called about pool gate code reset" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Notes</label>
+            <textarea id="hpLiContent" rows="4" placeholder="What was discussed, what was promised, what's next…" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; resize:vertical;"></textarea>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Follow up by (optional)</label>
+              <input type="date" id="hpLiFollowUp" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Logged by</label>
+              <input type="text" id="hpLiLoggedBy" placeholder="Your name" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+          <div id="hpLiStatus" style="display:none; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:4px;">
+            <button type="button" id="hpLogIntCancel" style="padding:9px 16px; background:#fff; border:1px solid #d0d7de; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; color:#475569;">Cancel</button>
+            <button type="submit" id="hpLogIntSubmit" style="padding:9px 18px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Save to timeline</button>
+          </div>
+        </form>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.getElementById('hpLogIntClose').addEventListener('click', close);
+    document.getElementById('hpLogIntCancel').addEventListener('click', close);
+
+    const now = new Date();
+    const tz = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    document.getElementById('hpLiOccurredAt').value = tz.toISOString().slice(0, 16);
+
+    document.getElementById('hpLogIntForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const type = document.getElementById('hpLiType').value;
+      const subject = document.getElementById('hpLiSubject').value.trim();
+      const content = document.getElementById('hpLiContent').value.trim();
+      const occurredLocal = document.getElementById('hpLiOccurredAt').value;
+      const followUp = document.getElementById('hpLiFollowUp').value;
+      const loggedBy = document.getElementById('hpLiLoggedBy').value.trim();
+      const status = document.getElementById('hpLiStatus');
+      const btn = document.getElementById('hpLogIntSubmit');
+
+      if (!subject && !content) {
+        status.style.display = 'block';
+        status.style.background = '#fee2e2'; status.style.color = '#991b1b';
+        status.textContent = 'Add a subject or notes so the timeline has something to show.';
+        return;
+      }
+
+      btn.disabled = true; btn.textContent = 'Saving…';
+      status.style.display = 'block';
+      status.style.background = '#f1f5f9'; status.style.color = '#475569';
+      status.textContent = 'Writing to the timeline…';
+
+      try {
+        const body = {
+          property_id: propertyId,
+          type,
+          subject: subject || null,
+          content: content || null,
+          occurred_at: occurredLocal ? new Date(occurredLocal).toISOString() : null,
+          follow_up_due_at: followUp ? new Date(followUp + 'T17:00:00').toISOString() : null,
+          logged_by: loggedBy || null,
+        };
+        const r = await fetch('/api/interactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        close();
+        await hpLoadInteractions(propertyId);
+      } catch (err) {
+        status.style.background = '#fee2e2'; status.style.color = '#991b1b';
+        status.textContent = '✗ ' + err.message;
+        btn.disabled = false; btn.textContent = 'Save to timeline';
+      }
+    });
+  }
 
   window.hpOpenLedgerModal = async function (propertyId) {
     // Build modal scaffolding first so user sees instant feedback
