@@ -1306,8 +1306,12 @@ function renderDetail(data) {
           <a href="${escapeHtml(latestResp.letter_signed_url)}" target="_blank" rel="noopener">📄 Preview ${escapeHtml(a.reference_number)}.pdf →</a>
         </div>` : ''}
       ${!latestResp.email_sent_at && latestResp.letter_pdf_path ? `
-        <div class="button-row">
+        <div class="button-row" style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
           <button class="primary-btn" id="sendBtn">Send to builder</button>
+          <a class="secondary-btn" id="emlExportBtn" href="/api/builder-applications/${escapeHtml(a.id)}/eml-export" style="text-decoration:none; padding:10px 16px; background:#fff; border:1px solid var(--rule-strong); color:var(--ink-soft); border-radius:4px; font-family:var(--font-sans); font-size:13px; font-weight:500; cursor:pointer;">📧 Open in Outlook (review before send)</a>
+        </div>
+        <div style="font-size:11.5px; color:var(--ink-faint); margin-top:6px;">
+          <strong>Send to builder</strong> emails directly via Bedrock. <strong>Open in Outlook</strong> downloads a draft you can review (and tweak) before clicking Send yourself in Outlook.
         </div>` : ''}
     </section>
     ${canPromote ? `

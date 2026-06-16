@@ -1534,6 +1534,148 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
 });
 
 // ============================================================================
+// Build the email envelope (to, subject, html, text, pdf buffer + filename) for
+// a given builder_application + response. Shared by both POST /:id/send (Resend
+// auto-send) and GET /:id/eml-export (download as .eml for Outlook review).
+// Single source of truth so the email Ed previews in Outlook is byte-identical
+// to what Resend would have sent.
+async function buildBuilderEmailEnvelope(applicationId, responseId) {
+  const { data: app, error: aErr } = await supabase
+    .from('builder_applications')
+    .select(`
+      *,
+      community:communities(id, name, slug),
+      builder_company:builder_companies(id, company_name, primary_contact_email, primary_contact_name, mailing_address)
+    `)
+    .eq('id', applicationId)
+    .single();
+  if (aErr) throw new Error(aErr.message);
+  if (!app) throw new Error('application not found');
+
+  let response;
+  if (responseId) {
+    const { data } = await supabase
+      .from('builder_application_responses')
+      .select('*')
+      .eq('id', responseId)
+      .eq('application_id', app.id)
+      .single();
+    response = data;
+  } else {
+    const { data } = await supabase
+      .from('builder_application_responses')
+      .select('*')
+      .eq('application_id', app.id)
+      .order('decided_at', { ascending: false })
+      .limit(1)
+      .maybeSingle();
+    response = data;
+  }
+  if (!response) { const e = new Error('no response found for this application'); e.statusCode = 404; throw e; }
+  if (!response.letter_pdf_path) { const e = new Error('no letter PDF on record (request_more_info responses do not generate a letter)'); e.statusCode = 400; throw e; }
+
+  const { data: dl, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(response.letter_pdf_path);
+  if (dlErr) throw new Error(`failed to read letter PDF: ${dlErr.message}`);
+  const pdfBuffer = Buffer.from(await dl.arrayBuffer());
+
+  const toEmail = app.builder_company.primary_contact_email || app.submitter_email || '';
+  const { sanitizeNameForLetter } = require('../lib/builder_letter');
+  const greetingName = sanitizeNameForLetter(app.builder_company.primary_contact_name)
+                     || sanitizeNameForLetter(app.submitter_name)
+                     || 'Team';
+  const propertyShort = (app.street_address || '').split(',')[0];
+  const decisionLine = response.response_type === 'denied'
+    ? `Please find attached the management team's response to the new construction submission for ${propertyShort} (${app.reference_number}).`
+    : response.response_type === 'approved_with_conditions'
+    ? `Please find attached the conditional approval letter for ${propertyShort} (${app.reference_number}). Conditions are listed in the letter.`
+    : `Please find attached the approval letter for ${propertyShort} (${app.reference_number}).`;
+
+  const html = `
+      <p>${greetingName},</p>
+      <p>${decisionLine}</p>
+      ${response.message_to_builder ? `<p>${response.message_to_builder.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : ''}
+      <p>Reference: <strong>${app.reference_number}</strong></p>
+      <p>Questions or revised submissions: reply to this email or use <a href="https://builders.bedrocktxai.com">builders.bedrocktxai.com</a>.</p>
+      <p style="color:#555; font-size:11px; margin-top:24px;">
+        Sent on behalf of the ${app.community.name} Architectural Control Committee by Bedrock Association Management.
+      </p>
+    `;
+  const subject = response.email_subject || emailSubjectFor(app, response.response_type);
+  const filename = `${app.reference_number}.pdf`;
+
+  return { app, response, toEmail, subject, html, text: plaintextFromHtml(html), pdfBuffer, filename };
+}
+
+// Compose an RFC 5322 .eml file with the letter PDF attached. The X-Unsent: 1
+// header tells Outlook to open this as a NEW message in compose mode (Ed sees
+// the editable draft) rather than as a received-mail viewer. Works on Outlook
+// desktop on Windows — staff machine default.
+function buildEmlFile({ from, to, subject, html, pdfBuffer, pdfFilename }) {
+  const boundary = '----=_BedrockARC_' + Math.random().toString(36).slice(2, 14);
+  const rfc2822Date = new Date().toUTCString();
+  // Base64-wrap to 76 chars per RFC 2045
+  const b64 = pdfBuffer.toString('base64').replace(/(.{76})/g, '$1\r\n');
+  const safeSubject = subject.replace(/[\r\n]+/g, ' ');
+  const parts = [
+    `From: ${from}`,
+    `To: ${to}`,
+    `Subject: ${safeSubject}`,
+    `Date: ${rfc2822Date}`,
+    `MIME-Version: 1.0`,
+    `X-Unsent: 1`,           // <-- Outlook opens in compose mode
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    ``,
+    `This is a multi-part message in MIME format.`,
+    ``,
+    `--${boundary}`,
+    `Content-Type: text/html; charset=UTF-8`,
+    `Content-Transfer-Encoding: 7bit`,
+    ``,
+    html,
+    ``,
+    `--${boundary}`,
+    `Content-Type: application/pdf; name="${pdfFilename}"`,
+    `Content-Disposition: attachment; filename="${pdfFilename}"`,
+    `Content-Transfer-Encoding: base64`,
+    ``,
+    b64,
+    `--${boundary}--`,
+    ``,
+  ];
+  return parts.join('\r\n');
+}
+
+// ============================================================================
+// GET /api/builder-applications/:id/eml-export
+// Downloads the staged email as a .eml file. Double-clicking the file in
+// Windows opens it in Outlook as an editable draft (X-Unsent:1 header). Staff
+// can review the recipient + body + attached PDF, tweak if needed, then click
+// Send from Outlook. Nothing leaves Bedrock until staff hits send.
+// Ed 2026-06-16: "export to email with outlook so we can look at before sending."
+// ============================================================================
+router.get('/:id/eml-export', async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
+  try {
+    const env = await buildBuilderEmailEnvelope(req.params.id, req.query.response_id || null);
+    const eml = buildEmlFile({
+      from: '"Bedrock ARC" <builders@bedrocktx.com>',
+      to: env.toEmail,
+      subject: env.subject,
+      html: env.html,
+      pdfBuffer: env.pdfBuffer,
+      pdfFilename: env.filename,
+    });
+    const filenameSafe = (env.app.reference_number || 'arc-letter').replace(/[^A-Za-z0-9._-]/g, '_');
+    res.setHeader('Content-Type', 'message/rfc822');
+    res.setHeader('Content-Disposition', `attachment; filename="${filenameSafe}.eml"`);
+    res.send(eml);
+  } catch (err) {
+    console.error('[builder_applications.eml-export]', err);
+    const status = err.statusCode || 500;
+    res.status(status).json({ error: err.message || 'eml export failed' });
+  }
+});
+
 // POST /api/builder-applications/:id/send
 // Body: { response_id? — defaults to latest response for this application,
 //         to? — override recipient (defaults to builder primary contact email),
@@ -1545,94 +1687,36 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
 // ============================================================================
 router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
   try {
-    const { data: app, error: aErr } = await supabase
-      .from('builder_applications')
-      .select(`
-        *,
-        community:communities(id, name, slug),
-        builder_company:builder_companies(id, company_name, primary_contact_email, primary_contact_name, mailing_address)
-      `)
-      .eq('id', req.params.id)
-      .single();
-    if (aErr) throw aErr;
-    if (!app) return res.status(404).json({ error: 'application not found' });
-
-    // Load the response row
-    let response;
-    if (req.body.response_id) {
-      const { data } = await supabase
-        .from('builder_application_responses')
-        .select('*')
-        .eq('id', req.body.response_id)
-        .eq('application_id', app.id)
-        .single();
-      response = data;
-    } else {
-      const { data } = await supabase
-        .from('builder_application_responses')
-        .select('*')
-        .eq('application_id', app.id)
-        .order('decided_at', { ascending: false })
-        .limit(1)
-        .maybeSingle();
-      response = data;
+    // Build the envelope through the shared helper so the email body, subject,
+    // attachment, and sanitized greeting are byte-identical to what
+    // /eml-export produces. One source of truth -- if Ed reviews a draft in
+    // Outlook, Send-to-builder sends the same thing.
+    let env;
+    try {
+      env = await buildBuilderEmailEnvelope(req.params.id, req.body.response_id || null);
+    } catch (e) {
+      return res.status(e.statusCode || 500).json({ error: e.message });
     }
-    if (!response) return res.status(404).json({ error: 'no response found for this application' });
+    const app = env.app;
+    const response = env.response;
     if (response.email_sent_at) return res.status(400).json({ error: 'already sent', email_sent_at: response.email_sent_at });
-    if (!response.letter_pdf_path) return res.status(400).json({ error: 'no letter PDF on record (request_more_info responses do not generate a letter)' });
 
-    // Download the PDF from storage and re-encode for Resend
-    const { data: dl, error: dlErr } = await supabase.storage
-      .from(STORAGE_BUCKET)
-      .download(response.letter_pdf_path);
-    if (dlErr) throw new Error(`failed to read letter PDF: ${dlErr.message}`);
-    const buf = Buffer.from(await dl.arrayBuffer());
-    const b64 = buf.toString('base64');
-
-    const toEmail = req.body.to || app.builder_company.primary_contact_email || app.submitter_email;
+    const toEmail = req.body.to || env.toEmail;
     const bcc = [ARCHIVE_BCC];
-
-    // Render a minimal HTML email body that points to the attached PDF — actual
-    // detail is in the letter. Voice matches the letter (warm on approval,
-    // matter-of-fact on conditions, respectful on denial).
-    // Strip "[last name]"-style placeholder leaks before greeting the builder.
-    // The renderer applies the same sanitizer to the letter recipient block;
-    // they share the helper so the letter and the email greeting always agree.
-    const { sanitizeNameForLetter } = require('../lib/builder_letter');
-    const greetingName = sanitizeNameForLetter(app.builder_company.primary_contact_name)
-                       || sanitizeNameForLetter(app.submitter_name)
-                       || 'Team';
-    const propertyShort = (app.street_address || '').split(',')[0];
-    const decisionLine = response.response_type === 'denied'
-      ? `Please find attached the management team's response to the new construction submission for ${propertyShort} (${app.reference_number}).`
-      : response.response_type === 'approved_with_conditions'
-      ? `Please find attached the conditional approval letter for ${propertyShort} (${app.reference_number}). Conditions are listed in the letter.`
-      : `Please find attached the approval letter for ${propertyShort} (${app.reference_number}).`;
-
-    const html = `
-      <p>${greetingName},</p>
-      <p>${decisionLine}</p>
-      ${response.message_to_builder ? `<p>${response.message_to_builder.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : ''}
-      <p>Reference: <strong>${app.reference_number}</strong></p>
-      <p>Questions or revised submissions: reply to this email or use <a href="https://builders.bedrocktxai.com">builders.bedrocktxai.com</a>.</p>
-      <p style="color:#555; font-size:11px; margin-top:24px;">
-        Sent on behalf of the ${app.community.name} Architectural Control Committee by Bedrock Association Management.
-      </p>
-    `;
 
     const send = await sendEmail({
       to: toEmail,
-      subject: response.email_subject || emailSubjectFor(app, response.response_type),
-      html,
-      text: plaintextFromHtml(html),
+      subject: env.subject,
+      html: env.html,
+      text: env.text,
       attachments: [{
-        filename: `${app.reference_number}.pdf`,
-        content: b64,
+        filename: env.filename,
+        content: env.pdfBuffer.toString('base64'),
       }],
       replyTo: 'builders@bedrocktx.com',
       tags: [
         { name: 'module', value: 'arc_builder' },
-        { name: 'community', value: app.community.slug || 'unknown' },
+        { name: 'community', value: env.app.community.slug || 'unknown' },
         { name: 'decision', value: response.response_type },
       ],
     });
