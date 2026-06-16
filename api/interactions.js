@@ -291,88 +291,17 @@ router.get('/interactions/attachment-url', async (req, res) => {
 router.post('/interactions/summarize', express.json(), async (req, res) => {
   const property_id = (req.body || {}).property_id;
   if (!property_id) return res.status(400).json({ error: 'property_id is required' });
-  const apiKey = process.env.ANTHROPIC_API_KEY;
-  if (!apiKey) return res.status(500).json({ error: 'AI not configured' });
-
   try {
-    // Property context for the prompt
-    const { data: prop } = await supabase
-      .from('v_current_property_owners')
-      .select('street_address, owner_name, community_id')
-      .eq('property_id', property_id)
-      .maybeSingle();
-
-    const { data: rows, error } = await supabase
-      .from('interactions')
-      .select('type, direction, subject, content, sent_at, follow_up_due_at, source, notes')
-      .eq('property_id', property_id)
-      .order('sent_at', { ascending: false })
-      .limit(50);
-    if (error) return res.status(500).json({ error: error.message });
-
-    if (!rows || rows.length === 0) {
-      return res.json({
-        headline: 'No contact on record yet.',
-        summary: 'Nothing logged for this property. The first call, note, or dropped email will populate the timeline.',
-        followups: [],
-        generated_at: new Date().toISOString(),
-      });
-    }
-
-    // Build a compact transcript ordered oldest-first so the AI reads the
-    // story chronologically.
-    const lines = rows.slice().reverse().map((r) => {
-      const when = r.sent_at ? new Date(r.sent_at).toLocaleDateString() : '?';
-      const kind = (r.type || 'note').replace(/_/g, ' ');
-      const dir = r.direction === 'inbound' ? '← homeowner'
-                : r.direction === 'outbound' ? '→ homeowner'
-                : 'internal';
-      const subj = r.subject ? ` "${r.subject}"` : '';
-      const body = r.content ? ` — ${r.content.toString().slice(0, 500)}` : '';
-      const fu = r.follow_up_due_at ? ` [follow up by ${new Date(r.follow_up_due_at).toLocaleDateString()}]` : '';
-      return `${when} · ${kind} ${dir}${subj}${body}${fu}`;
-    }).join('\n');
-
-    const system = `You are summarizing a homeowner's contact history at an HOA management firm. Write for a staff member who is about to pick up the phone — they have 10 seconds to read this before they speak.
-
-Voice: clear, factual, short. No "the homeowner appears to" hedging. State what happened. If a promise was made and isn't closed out, name it.
-
-Return ONLY this JSON (no preamble, no fences):
-{
-  "headline":  "One short line — who they are, what's open. Under 90 chars.",
-  "summary":   "2-4 sentences of the story arc, in chronological order. What was the issue, what did Bedrock do, what's the current state. Plain English. No bullet points.",
-  "followups": ["Specific open commitments by date if any — empty array if none. Each item under 100 chars."]
-}`;
-
-    const user = `Property: ${prop?.street_address || '(address unknown)'}
-Owner: ${prop?.owner_name || '(unknown)'}
-Total logged interactions: ${rows.length}
-
-Timeline (oldest first):
-${lines}`;
-
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey });
-    const resp = await client.messages.create({
-      model: 'claude-sonnet-4-5',
-      max_tokens: 600,
-      system,
-      messages: [{ role: 'user', content: user }],
-    });
-    const block = (resp.content || []).find((b) => b.type === 'text');
-    const raw = (block && block.text) || '';
-    const jsonMatch = raw.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return res.status(500).json({ error: 'AI returned no JSON', raw });
-    let parsed;
-    try { parsed = JSON.parse(jsonMatch[0]); }
-    catch (e) { return res.status(500).json({ error: 'JSON parse failed: ' + e.message, raw }); }
-
+    const { getInteractionHistoryBundle } = require('../lib/interactions/history');
+    const bundle = await getInteractionHistoryBundle({ property_id, caller_facing: false, include_recent: false });
+    if (bundle.ok === false) return res.status(404).json(bundle);
+    // Keep the response shape stable for the existing frontend renderer.
     res.json({
-      headline:  (parsed.headline || '').toString().slice(0, 200),
-      summary:   (parsed.summary || '').toString(),
-      followups: Array.isArray(parsed.followups) ? parsed.followups.slice(0, 8) : [],
-      row_count: rows.length,
-      generated_at: new Date().toISOString(),
+      headline:  bundle.headline,
+      summary:   bundle.summary,
+      followups: bundle.open_followups || [],
+      row_count: bundle.row_count,
+      generated_at: bundle.generated_at,
     });
   } catch (err) {
     console.error('[interactions.summarize]', err);
