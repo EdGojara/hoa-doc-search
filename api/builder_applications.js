@@ -3221,6 +3221,7 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
     // of silently creating a duplicate row. Ed 2026-06-16 "match if close."
     let builderCompanyId = null;
     let builderMatch = null;  // returned to UI so staff sees what happened
+    let matchedCompany = null;  // when matched, the full row from builder_companies
     if (extracted.builder_company_name) {
       const { resolveBuilderCompany } = require('../lib/builder_applications/resolve_builder_company');
       const resolved = await resolveBuilderCompany(supabase, {
@@ -3234,6 +3235,7 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
 
       if (resolved.id) {
         builderCompanyId = resolved.id;
+        matchedCompany = resolved.matched_company || null;
         builderMatch = {
           match_type:     resolved.match_type,        // 'exact' | 'normalized' | 'domain'
           matched_name:   resolved.matched_name,
@@ -3348,13 +3350,35 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
         ai_notes:      extracted.ai_notes || null,
       };
 
+      // Prefer the matched builder's on-file contact info over the AI's
+      // partial page-1 extraction when the emails confirm the same person.
+      // Ed 2026-06-16: "you have Karla's full name, why did you use the
+      // partial one." DRB Group already had Karla Rutan + krutan@drbgroup.com
+      // on file; the upload extracted "Karla [last name]" from a handwritten
+      // form. With this check, the application stores "Karla Rutan" and the
+      // letter renders correctly. If the extracted email is DIFFERENT (a new
+      // person at the same builder), fall back to the AI extraction.
+      const { sanitizeNameForLetter: _sanitize } = require('../lib/builder_letter');
+      const extractedEmail = (extracted.contact_email || '').toLowerCase().trim();
+      const matchedEmail = (matchedCompany?.primary_contact_email || '').toLowerCase().trim();
+      const useMatchedContact = !!matchedCompany
+        && matchedEmail
+        && extractedEmail
+        && matchedEmail === extractedEmail;
+      const authoritativeName  = useMatchedContact && _sanitize(matchedCompany.primary_contact_name)
+                              || _sanitize(extracted.contact_person)
+                              || null;
+      const authoritativePhone = useMatchedContact && matchedCompany.primary_contact_phone
+                              || extracted.contact_phone
+                              || null;
+
       const tryInsertRow = {
         community_id: community.id,
         builder_company_id: builderCompanyId,
         reference_number: referenceNumber,
         submitter_email: (extracted.contact_email || 'unknown@unspecified').toLowerCase().trim(),
-        submitter_name:  extracted.contact_person || null,
-        submitter_phone: extracted.contact_phone || null,
+        submitter_name:  authoritativeName,
+        submitter_phone: authoritativePhone,
         source: 'manual_entry',
         lot_number:     extracted.lot_number     ? String(extracted.lot_number).trim() : 'UNKNOWN',
         block_number:   extracted.block_number   ? String(extracted.block_number).trim() : null,
