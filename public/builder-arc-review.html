@@ -451,7 +451,7 @@
   <div class="util">
     <a href="/">← Platform</a>
     <a href="#" id="autoCreateFromPdfBtn" style="color:#D4AF37;">🧠 Auto-create from PDFs</a>
-    <a href="#" id="uploadSubmissionPdfBtn" style="color:#D4AF37;" title="Karla / DRB / any builder emails you a multi-page ARC packet — upload it here. Claude reads page 1 (builder, contact, address, plan, materials, masonry), creates the application + attaches the PDF. Use this when the builder hasn't filed via the online portal.">📥 Upload submission PDF</a>
+    <a href="#" id="uploadSubmissionPdfBtn" style="color:#D4AF37;" title="Karla / DRB / any builder emails you a multi-page ARC packet — upload it here. The system reads page 1 (builder, contact, address, plan, materials, masonry), creates the application + attaches the PDF. Use this when the builder hasn't filed via the online portal.">📥 Upload submission PDF</a>
     <a href="#" id="uploadMasterPlanBtn">📐 Upload master plan</a>
     <a href="#" id="bulkUploadMasterPlansBtn">📚 Bulk upload plans</a>
     <a href="#" id="masterPlanLibraryBtn">📒 Plan library</a>
@@ -545,7 +545,7 @@
 <!-- Upload submission PDF on behalf of builder — Ed 2026-06-16.
      For the Karla/DRB workflow where a builder emails Bedrock a multi-page
      ARC submission packet (page 1 = form, pages 2+ = drawings). Staff
-     uploads via this modal; Claude reads page 1 + materials table; system
+     uploads via this modal; system reads page 1 + materials table,
      creates the application + attaches the PDF; row appears in the queue
      ready for click-to-approve. -->
 <div id="uploadSubmissionModal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:1000; align-items:flex-start; justify-content:center; padding:32px 16px; overflow-y:auto;">
@@ -555,7 +555,7 @@
       <button onclick="closeUploadSubmissionModal()" style="background:none; border:none; font-size:24px; color:#6b7280; cursor:pointer; padding:0 4px;">×</button>
     </div>
     <p style="margin:0 0 18px; font-size:13px; color:#475569; line-height:1.5;">
-      The builder emailed you a multi-page ARC submission packet. Upload it here. Claude reads page 1 (builder, contact, address, plan, materials table, masonry + repetition compliance), creates the application row, and attaches the full PDF. The application lands in the queue below ready for review + click-to-approve.
+      The builder emailed you a multi-page ARC submission packet. Drop it below — the system reads page 1 (builder, contact, address, plan, materials table, masonry + repetition compliance), creates the application row, and attaches the full PDF. The application lands in the queue below ready for review + click-to-approve.
     </p>
     <form id="uploadSubmissionForm" style="display:flex; flex-direction:column; gap:14px;">
       <div>
@@ -566,9 +566,12 @@
       </div>
       <div>
         <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Submission PDF *</label>
-        <input type="file" id="usFile" accept="application/pdf" required
-               style="width:100%; padding:9px 11px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; background:#fff;">
-        <div style="font-size:11px; color:#94a3b8; margin-top:4px;">Up to 25 MB. The multi-page packet — page 1 should be the structured form.</div>
+        <div id="usDropZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:28px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.15s;">
+          <div style="font-size:32px; margin-bottom:6px;">📄</div>
+          <div id="usDropLabel" style="font-size:13.5px; color:#475569; font-weight:600;">Drop the submission PDF here, or click to select</div>
+          <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 25 MB · page 1 should be the structured form</div>
+        </div>
+        <input type="file" id="usFile" accept="application/pdf" style="display:none;">
       </div>
       <div id="usStatus" style="display:none; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:12.5px; color:#475569; min-height:18px;"></div>
       <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:6px;">
@@ -1138,12 +1141,12 @@ async function loadQueue() {
     // moved out of the header into the queue body so it's the first thing
     // staff sees when work is light AND it's hard to miss when work is heavy.
     const ctaBanner = `
-      <div style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 1px solid #d97706; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap;">
-        <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+      <div id="ctaUploadBanner" style="background: linear-gradient(135deg, #fef3c7 0%, #fde68a 100%); border: 2px dashed #d97706; border-radius: 10px; padding: 14px 18px; margin-bottom: 18px; display: flex; align-items: center; justify-content: space-between; gap: 14px; flex-wrap: wrap; cursor: pointer; transition: all 0.15s;">
+        <div style="display: flex; align-items: center; gap: 12px; min-width: 0; pointer-events: none;">
           <div style="font-size: 28px; line-height: 1;">📥</div>
           <div>
             <div style="font-family: var(--font-serif, Georgia); font-size: 16px; font-weight: 600; color: #78350f; line-height: 1.3;">Got a submission via email?</div>
-            <div style="font-size: 12.5px; color: #92400e; margin-top: 2px;">Upload the PDF and Claude reads page 1 — builder, contact, address, plan, materials. Lands in the queue ready to approve.</div>
+            <div style="font-size: 12.5px; color: #92400e; margin-top: 2px;">Drag the PDF here (or click) — page 1 gets read, the application lands in the queue ready to approve.</div>
           </div>
         </div>
         <button id="ctaUploadSubmissionBtn" style="background: var(--navy, #0B1D34); color: #fff; border: none; padding: 10px 20px; border-radius: 8px; font-size: 13px; font-weight: 700; cursor: pointer; white-space: nowrap; flex-shrink: 0;">📥 Upload submission PDF</button>
@@ -1176,9 +1179,10 @@ async function loadQueue() {
         <div style="padding: 6px 8px 10px;">${decidedHtml}</div>
       </details>`;
 
-    // Wire CTA banner button to the existing upload submission flow.
+    // Wire CTA banner button + drag-drop on the banner itself.
     const ctaBtn = body.querySelector('#ctaUploadSubmissionBtn');
-    if (ctaBtn) ctaBtn.addEventListener('click', openUploadSubmissionModal);
+    if (ctaBtn) ctaBtn.addEventListener('click', (e) => { e.stopPropagation(); openUploadSubmissionModal(); });
+    wireBannerDropZone();
 
     // Wire per-row buttons FIRST (before the row-click handler) so button
     // clicks don't also fire the row's "open detail" handler.
@@ -1700,12 +1704,13 @@ function closeMasterPlanModal() {
 // ----------------------------------------------------------------------------
 // Upload submission PDF on behalf of builder (Ed 2026-06-16)
 // ----------------------------------------------------------------------------
-async function openUploadSubmissionModal() {
+async function openUploadSubmissionModal(prefillFile) {
   document.getElementById('uploadSubmissionModal').style.display = 'flex';
   document.getElementById('uploadSubmissionForm').reset();
   const status = document.getElementById('usStatus');
   status.style.display = 'none';
   status.textContent = '';
+  if (prefillFile) attachFileToUploadModal(prefillFile);
   // Populate communities dropdown — same source as the queue filter so
   // staff sees exactly the active builder-ARC communities.
   const sel = document.getElementById('usCommunity');
@@ -1748,7 +1753,7 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
   btn.textContent = 'Uploading + extracting…';
   status.style.display = 'block';
   status.style.color = '#475569';
-  status.textContent = 'Sending PDF to Claude for page-1 extraction. Usually 15-25 seconds for a multi-page packet.';
+  status.textContent = 'Reading page 1 of the PDF. Usually 15-25 seconds for a multi-page packet.';
 
   try {
     const fd = new FormData();
@@ -1757,9 +1762,9 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
     const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', body: fd });
     const j = await r.json();
     if (!r.ok) {
-      // Surface Claude's raw output so staff can see what was misread per
+      // Surface the raw model output so staff can see what was misread per
       // CLAUDE.md self-diagnosing rule.
-      const rawSnippet = j.raw_extracted ? '\n\nClaude saw:\n' + String(j.raw_extracted).slice(0, 400) : '';
+      const rawSnippet = j.raw_extracted ? '\n\nExtracted text:\n' + String(j.raw_extracted).slice(0, 400) : '';
       throw new Error((j.error || 'Upload failed') + rawSnippet);
     }
     status.style.color = '#15803d';
@@ -1783,6 +1788,86 @@ document.getElementById('uploadSubmissionPdfBtn').addEventListener('click', (e) 
   e.preventDefault();
   openUploadSubmissionModal();
 });
+
+// ---- Drag-and-drop: banner + modal drop zone ----
+// Ed 2026-06-16: "everything should be click and drag."
+// The CTA banner accepts a PDF drop directly (zero clicks before the
+// modal opens) and the modal's own drop zone catches drops that miss
+// the banner (e.g. dropped after the modal is already open).
+function attachFileToUploadModal(file) {
+  const input = document.getElementById('usFile');
+  const label = document.getElementById('usDropLabel');
+  if (!file || file.type !== 'application/pdf') {
+    if (label) label.textContent = 'That wasn\'t a PDF — drop a PDF file.';
+    return;
+  }
+  const dt = new DataTransfer();
+  dt.items.add(file);
+  input.files = dt.files;
+  if (label) label.innerHTML = `✓ <strong>${escapeHtml(file.name)}</strong> · ${(file.size / 1024 / 1024).toFixed(1)} MB ready`;
+}
+
+function wireBannerDropZone() {
+  const banner = document.getElementById('ctaUploadBanner');
+  if (!banner || banner.dataset.wired === '1') return;
+  banner.dataset.wired = '1';
+  const baseBg = banner.style.background;
+  const setHover = (on) => {
+    banner.style.background = on
+      ? 'linear-gradient(135deg, #fde68a 0%, #fcd34d 100%)'
+      : baseBg;
+    banner.style.borderColor = on ? '#92400e' : '#d97706';
+  };
+  banner.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return; // let the button open the modal itself
+    openUploadSubmissionModal();
+  });
+  banner.addEventListener('dragenter', (e) => { e.preventDefault(); setHover(true); });
+  banner.addEventListener('dragover',  (e) => { e.preventDefault(); setHover(true); });
+  banner.addEventListener('dragleave', (e) => { if (e.target === banner) setHover(false); });
+  banner.addEventListener('drop', (e) => {
+    e.preventDefault();
+    setHover(false);
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    openUploadSubmissionModal(file || undefined);
+  });
+}
+
+function wireModalDropZone() {
+  const dz = document.getElementById('usDropZone');
+  const input = document.getElementById('usFile');
+  if (!dz || !input || dz.dataset.wired === '1') return;
+  dz.dataset.wired = '1';
+  dz.addEventListener('click', () => input.click());
+  input.addEventListener('change', () => {
+    if (input.files && input.files[0]) attachFileToUploadModal(input.files[0]);
+  });
+  const setHover = (on) => {
+    dz.style.background = on ? '#fef3c7' : '#f8fafc';
+    dz.style.borderColor = on ? '#d97706' : '#cbd5e1';
+  };
+  dz.addEventListener('dragenter', (e) => { e.preventDefault(); setHover(true); });
+  dz.addEventListener('dragover',  (e) => { e.preventDefault(); setHover(true); });
+  dz.addEventListener('dragleave', (e) => { if (e.target === dz) setHover(false); });
+  dz.addEventListener('drop', (e) => {
+    e.preventDefault();
+    setHover(false);
+    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+    if (file) attachFileToUploadModal(file);
+  });
+}
+
+// Prevent the browser from navigating away if a stray drop lands outside
+// either drop zone. Keeps PDFs from accidentally opening in the tab.
+['dragover', 'drop'].forEach((ev) => {
+  window.addEventListener(ev, (e) => {
+    if (e.target.closest('#ctaUploadBanner, #usDropZone')) return;
+    e.preventDefault();
+  });
+});
+
+// Modal drop zone exists at page load; wire once.
+wireModalDropZone();
 
 async function loadMasterPlanFormPickers() {
   // Active communities — render unchecked; checkboxes auto-fill when a
