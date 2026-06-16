@@ -309,30 +309,29 @@ function normalizeAddress(s) {
   return (s || '').toString().toLowerCase().replace(/\s+/g, ' ').replace(/[^a-z0-9 ]/g, '').trim();
 }
 
-// Reference number generator (uses application_reference_counters from migration 021)
+// Reference number generator — atomic per migration 225.
+// Replaces a non-atomic read-then-write pattern that bit the builder
+// portal at DRB Group (race + drift). The RPC reads MAX existing across
+// builder_applications + community_applications + amenity_rentals +
+// master_plan_submissions so the counter can never start behind reality.
 async function nextReferenceNumber(communityId, serviceType, prefix) {
   const year = new Date().getFullYear();
-  // Atomic upsert via SQL (simple pattern: select, +1, update — race-resistant under sequential staff usage)
-  const { data: row } = await supabase
-    .from('application_reference_counters')
-    .select('counter')
-    .eq('community_id', communityId)
-    .eq('service_type', serviceType)
-    .eq('year', year)
-    .maybeSingle();
-
-  const next = (row?.counter || 0) + 1;
-  await supabase
-    .from('application_reference_counters')
-    .upsert({
-      community_id: communityId,
-      service_type: serviceType,
-      year,
-      counter: next,
-      updated_at: new Date().toISOString()
-    }, { onConflict: 'community_id,service_type,year' });
-
-  return `${prefix || 'APP'}-${year}-${String(next).padStart(4, '0')}`;
+  const safePrefix = prefix || 'APP';
+  // The legacy convention here is to bake the service infix INTO prefix
+  // (e.g., "LPF-ARC", "LPF-FOB"). Pass infix='-' so the SQL pattern
+  // becomes "LPF-ARC-2026-%" for drift protection.
+  const { data: counter, error } = await supabase.rpc('next_application_counter', {
+    p_community_id: communityId,
+    p_service_type: serviceType,
+    p_year:         year,
+    p_prefix:       safePrefix,
+    p_infix:        '-',
+  });
+  if (error) throw new Error(`reference number allocation failed: ${error.message}`);
+  if (typeof counter !== 'number' || counter < 1) {
+    throw new Error(`reference number allocation returned invalid value: ${counter}`);
+  }
+  return `${safePrefix}-${year}-${String(counter).padStart(4, '0')}`;
 }
 
 // ----------------------------------------------------------------------------

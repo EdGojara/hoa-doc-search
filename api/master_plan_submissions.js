@@ -49,27 +49,20 @@ async function nextReferenceNumber(community) {
   const prefix = (community.builder_arc_reference_prefix
     || (community.slug || community.name || '').split(/[\s_-]+/).filter(Boolean).map((w) => w[0]).join('').toUpperCase().slice(0, 4)
     || 'BLD').trim().toUpperCase();
-
-  const { data: row } = await supabase
-    .from('application_reference_counters')
-    .select('counter')
-    .eq('community_id', community.id)
-    .eq('service_type', 'master_plan_submission')
-    .eq('year', year)
-    .maybeSingle();
-  const next = (row?.counter || 0) + 1;
-
-  await supabase
-    .from('application_reference_counters')
-    .upsert({
-      community_id: community.id,
-      service_type: 'master_plan_submission',
-      year,
-      counter: next,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'community_id,service_type,year' });
-
-  return `${prefix}-MPS-${year}-${String(next).padStart(4, '0')}`;
+  // Atomic counter via migration 225 RPC. Drift-protected across all four
+  // tables that share application_reference_counters.
+  const { data: counter, error } = await supabase.rpc('next_application_counter', {
+    p_community_id: community.id,
+    p_service_type: 'master_plan_submission',
+    p_year:         year,
+    p_prefix:       prefix,
+    p_infix:        '-MPS-',
+  });
+  if (error) throw new Error(`reference number allocation failed: ${error.message}`);
+  if (typeof counter !== 'number' || counter < 1) {
+    throw new Error(`reference number allocation returned invalid value: ${counter}`);
+  }
+  return `${prefix}-MPS-${year}-${String(counter).padStart(4, '0')}`;
 }
 
 // ----------------------------------------------------------------------------

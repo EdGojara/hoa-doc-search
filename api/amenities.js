@@ -56,28 +56,23 @@ function amenityRefPrefix(community, amenityType) {
 async function nextAmenityReference(community, amenityType) {
   const year = new Date().getFullYear();
   const prefix = amenityRefPrefix(community, amenityType);
-
-  const { data: row } = await supabase
-    .from('application_reference_counters')
-    .select('counter')
-    .eq('community_id', community.id)
-    .eq('service_type', SERVICE_TYPE)
-    .eq('year', year)
-    .maybeSingle();
-
-  const next = (row?.counter || 0) + 1;
-
-  await supabase
-    .from('application_reference_counters')
-    .upsert({
-      community_id: community.id,
-      service_type: SERVICE_TYPE,
-      year,
-      counter: next,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'community_id,service_type,year' });
-
-  return `${prefix}-${year}-${String(next).padStart(4, '0')}`;
+  // Atomic counter via migration 225 RPC — eliminates the read-then-write
+  // race that crashed builders at DRB Group with a duplicate-key error.
+  // The prefix here already includes the amenity short-code (e.g.
+  // "WVE-CLB"); we pass infix='-' so the LIKE pattern becomes
+  // "WVE-CLB-2026-%" for drift protection.
+  const { data: counter, error } = await supabase.rpc('next_application_counter', {
+    p_community_id: community.id,
+    p_service_type: SERVICE_TYPE,
+    p_year:         year,
+    p_prefix:       prefix,
+    p_infix:        '-',
+  });
+  if (error) throw new Error(`reference number allocation failed: ${error.message}`);
+  if (typeof counter !== 'number' || counter < 1) {
+    throw new Error(`reference number allocation returned invalid value: ${counter}`);
+  }
+  return `${prefix}-${year}-${String(counter).padStart(4, '0')}`;
 }
 
 async function fetchCommunityBySlug(slug) {

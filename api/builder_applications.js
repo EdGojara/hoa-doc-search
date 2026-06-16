@@ -403,16 +403,20 @@ async function nextBuilderReferenceNumber(community) {
   const year = new Date().getFullYear();
   const prefix = communityReferencePrefix(community);
 
-  // Atomic counter via Postgres function — no read-then-write race,
-  // drift-protected against actual reference_number values that may exceed
-  // the counter (test data, manual inserts, etc.).
-  // Migration 224 / Ed 2026-06-13 after DRB Group hit the original race.
+  // Atomic counter via migration 225 generalized RPC — eliminates the
+  // read-then-write race that crashed DRB Group's submission, drift-
+  // protected across all four tables that share
+  // application_reference_counters (builder_applications,
+  // community_applications, amenity_rentals, master_plan_submissions).
+  // The audit after the DRB incident found 3 other public-facing
+  // endpoints with the same bug; all four now converge on this RPC.
   const { data: nextCounter, error } = await supabase
-    .rpc('next_builder_application_counter', {
+    .rpc('next_application_counter', {
       p_community_id: community.id,
       p_service_type: SERVICE_TYPE,
-      p_year: year,
-      p_prefix: prefix,
+      p_year:         year,
+      p_prefix:       prefix,
+      p_infix:        '-BLD-',
     });
   if (error) throw new Error(`reference number allocation failed: ${error.message}`);
   if (typeof nextCounter !== 'number' || nextCounter < 1) {
@@ -2800,29 +2804,28 @@ router.post('/auto-create-from-extraction', express.json({ limit: '512kb' }), as
     if (!plan.plan_number) return res.status(400).json({ error: 'plan.plan_number required' });
     if (!plan.elevation) return res.status(400).json({ error: 'plan.elevation required' });
 
-    // Generate reference number using the existing counter pattern
+    // Generate reference number — atomic RPC (migration 225). This used to
+    // be a hand-rolled read-then-write referencing a column called
+    // `next_number` that doesn't even exist on the schema (the real column
+    // is `counter`), so this path was silently failing forever and falling
+    // through the catch block. Both bugs fixed by converging on the shared
+    // generator. Caught during the post-DRB audit.
     let referenceNumber = null;
     try {
       const { data: comm } = await supabase.from('communities')
         .select('builder_arc_reference_prefix, slug').eq('id', body.community_id).maybeSingle();
       const prefix = comm?.builder_arc_reference_prefix || (comm?.slug || 'BLD').slice(0, 3).toUpperCase();
       const year = new Date().getFullYear();
-      const { data: counterRow } = await supabase
-        .from('application_reference_counters')
-        .select('next_number')
-        .eq('community_id', body.community_id)
-        .eq('service_type', SERVICE_TYPE)
-        .eq('year', year)
-        .maybeSingle();
-      let n = counterRow?.next_number || 1;
-      referenceNumber = `${prefix}-BLD-${year}-${String(n).padStart(4, '0')}`;
-      // Bump counter (upsert)
-      await supabase.from('application_reference_counters').upsert({
-        community_id: body.community_id,
-        service_type: SERVICE_TYPE,
-        year,
-        next_number: n + 1,
-      }, { onConflict: 'community_id,service_type,year' });
+      const { data: counter, error: refErr } = await supabase.rpc('next_application_counter', {
+        p_community_id: body.community_id,
+        p_service_type: SERVICE_TYPE,
+        p_year:         year,
+        p_prefix:       prefix,
+        p_infix:        '-BLD-',
+      });
+      if (refErr) throw refErr;
+      if (typeof counter !== 'number' || counter < 1) throw new Error('invalid counter value');
+      referenceNumber = `${prefix}-BLD-${year}-${String(counter).padStart(4, '0')}`;
     } catch (refErr) {
       console.warn('[auto-create] reference number generation failed, proceeding without:', refErr.message);
     }
