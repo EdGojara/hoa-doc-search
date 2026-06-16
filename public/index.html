@@ -6506,7 +6506,9 @@
       <div style="background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:12px 14px; margin-bottom:14px;">
         <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:8px;">
           <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase;">Recent contact (${interactions.length})</div>
+          ${interactions.length > 0 ? `<button type="button" onclick="hpSummarizeHistory('${propertyId}')" style="background:#fff; color:#0B1D34; border:1px solid #0B1D34; padding:6px 12px; border-radius:7px; font-size:11.5px; font-weight:600; cursor:pointer;">✨ Summarize</button>` : ''}
         </div>
+        <div id="hpIntSummary-${propertyId}" style="display:none; margin-bottom:10px;"></div>
         ${rowsHtml}
         <div style="margin-top:12px; display:grid; grid-template-columns:1fr 1fr; gap:10px;">
           <button type="button" onclick="hpOpenLogInteraction('${propertyId}')" style="background:#0B1D34; color:#fff; border:none; padding:10px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">📞 Log call / note / follow-up</button>
@@ -6521,6 +6523,11 @@
 
     hpIntWireDropZone(propertyId);
   }
+
+  window.hpSummarizeHistory = function (propertyId) {
+    const container = document.getElementById(`hpIntSummary-${propertyId}`);
+    fetchInteractionSummary(propertyId, container);
+  };
 
   function hpIntSetStatus(propertyId, message, tone) {
     const el = document.getElementById(`hpIntStatus-${propertyId}`);
@@ -6726,6 +6733,8 @@
         <div id="lcsStep2" style="display:none;">
           <div id="lcsPickedChip" style="background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:8px 12px; font-size:13px; color:#1e3a8a; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;"></div>
 
+          <div id="lcsSummary" style="display:none; margin-bottom:14px;"></div>
+
           <form id="lcsForm" style="display:flex; flex-direction:column; gap:11px;">
             <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
               <div>
@@ -6838,6 +6847,10 @@
       document.getElementById('lcsOccurredAt').value = tz.toISOString().slice(0, 16);
       document.getElementById('lcsSubject').focus();
       wireLcsDropZone();
+      // Auto-fetch the AI summary so staff sees "what's the story" before
+      // they pick up the phone. The fetcher hides the container until it
+      // has something to render.
+      fetchInteractionSummary(propertyId, document.getElementById('lcsSummary'));
     }
 
     document.getElementById('lcsBack').addEventListener('click', () => {
@@ -17444,7 +17457,14 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // Log form + drag-drop zone. The whole block is INSIDE the Interactions
     // <details>, so it shows when staff expands the section.
     const propIdForLog = p.id || inspPDCurrentPropertyId || '';
+    const hasInteractions = (d.interactions || []).length > 0;
     const interactionsActionsHtml = `
+      ${hasInteractions ? `
+        <div style="margin-top:10px;">
+          <button type="button" onclick="inspSummarizeHistory('${propIdForLog}')" style="background:#fff; color:#0B1D34; border:1px solid #0B1D34; padding:8px 14px; border-radius:8px; font-size:12.5px; font-weight:600; cursor:pointer;">✨ Summarize this history</button>
+        </div>
+        <div id="inspIntSummary-${propIdForLog}" style="display:none; margin-top:10px;"></div>
+      ` : ''}
       <div style="margin-top:14px; display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
         <button type="button" onclick="inspOpenLogInteraction('${propIdForLog}')" style="background:#0B1D34; color:#fff; border:none; padding:10px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">📞 Log call / note / follow-up</button>
         <div id="inspIntDropZone-${propIdForLog}" data-property-id="${propIdForLog}"
@@ -17832,6 +17852,60 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // of the property detail modal. Both refresh the modal on success so the
   // new row shows up immediately.
   // =========================================================================
+  // Shared summary renderer + fetcher. Used by the inspector modal, the
+  // hp Recent contact card, and the top-bar 📞 Log contact shortcut after
+  // a property is picked. One AI call, three placements.
+  function renderInteractionSummary(container, summary) {
+    if (!container) return;
+    const fus = Array.isArray(summary.followups) ? summary.followups : [];
+    const fuHtml = fus.length
+      ? `<div style="margin-top:8px; padding-top:8px; border-top:1px dashed rgba(212,175,55,0.4);">
+           <div style="font-size:10.5px; font-weight:700; color:#92400e; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:4px;">Open follow-ups</div>
+           <ul style="margin:0; padding-left:18px; font-size:12.5px; color:#475569;">${fus.map((f) => `<li>${escapeHtml(f)}</li>`).join('')}</ul>
+         </div>`
+      : '';
+    const stamp = summary.generated_at ? new Date(summary.generated_at).toLocaleString() : '';
+    container.innerHTML = `
+      <div style="background:linear-gradient(135deg, #fffbeb 0%, #fef3c7 100%); border:1px solid #d4af37; border-radius:10px; padding:12px 14px;">
+        <div style="display:flex; align-items:center; justify-content:space-between; gap:10px; margin-bottom:6px;">
+          <div style="font-size:10.5px; font-weight:700; color:#78350f; letter-spacing:0.08em; text-transform:uppercase;">✨ Summary${summary.row_count ? ' · ' + summary.row_count + ' interactions' : ''}</div>
+          <div style="font-size:10.5px; color:#92400e; opacity:0.7;">${escapeHtml(stamp)}</div>
+        </div>
+        ${summary.headline ? `<div style="font-size:14px; font-weight:600; color:#1c1917; margin-bottom:4px;">${escapeHtml(summary.headline)}</div>` : ''}
+        ${summary.summary ? `<div style="font-size:13px; color:#475569; line-height:1.55; white-space:pre-wrap;">${escapeHtml(summary.summary)}</div>` : ''}
+        ${fuHtml}
+      </div>`;
+  }
+
+  async function fetchInteractionSummary(propertyId, container) {
+    if (!container || !propertyId) return;
+    container.style.display = 'block';
+    container.innerHTML = `
+      <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:10px; padding:12px 14px; font-size:12.5px; color:#92400e;">
+        ✨ Reading the timeline… (usually 4-6 seconds)
+      </div>`;
+    try {
+      const r = await fetch('/api/interactions/summarize', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ property_id: propertyId }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      renderInteractionSummary(container, j);
+    } catch (e) {
+      container.innerHTML = `
+        <div style="background:#fee2e2; border:1px solid #fca5a5; border-radius:10px; padding:10px 12px; font-size:12.5px; color:#991b1b;">
+          ✗ Couldn't generate summary: ${escapeHtml(e.message)}
+        </div>`;
+    }
+  }
+
+  window.inspSummarizeHistory = function (propertyId) {
+    const container = document.getElementById(`inspIntSummary-${propertyId}`);
+    fetchInteractionSummary(propertyId, container);
+  };
+
   function inspIntSetStatus(propertyId, message, tone) {
     const el = document.getElementById(`inspIntStatus-${propertyId}`);
     if (!el) return;
