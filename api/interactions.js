@@ -277,4 +277,30 @@ router.get('/interactions/attachment-url', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// GET /api/interactions/property-search?q=<query>
+// Backs the top-bar "📞 Log contact" shortcut. Cross-community by design —
+// staff types an address or owner name from anywhere in the app, picks one
+// result, and logs against it. 25-row cap to keep the dropdown snappy.
+// ---------------------------------------------------------------------------
+router.get('/interactions/property-search', async (req, res) => {
+  const q = (req.query.q || '').toString().trim();
+  if (q.length < 2) return res.json({ results: [] });
+  try {
+    // Escape PostgREST .or() reserved characters that would split the filter.
+    const safe = q.replace(/[(),%]/g, ' ');
+    const pattern = `%${safe}%`;
+    const { data, error } = await supabase
+      .from('v_current_property_owners')
+      .select('property_id, community_id, street_address, city, owner_name, owner_email')
+      .or(`street_address.ilike.${pattern},owner_name.ilike.${pattern},owner_email.ilike.${pattern}`)
+      .order('street_address')
+      .limit(25);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ results: data || [] });
+  } catch (err) {
+    res.status(500).json({ error: err.message || 'search failed' });
+  }
+});
+
 module.exports = { router };

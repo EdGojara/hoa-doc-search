@@ -441,6 +441,9 @@
   <a class="header-voice-link" href="javascript:void(0)" onclick="switchTab('home')" title="Jump back to the Home tab from anywhere in the app">
     🏠 Home
   </a>
+  <a class="header-voice-link" href="javascript:void(0)" onclick="openLogContactShortcut()" title="Log a call, note, or follow-up against any property — or drop an email file onto the timeline. Works from anywhere in the app.">
+    📞 Log contact
+  </a>
   <a class="header-voice-link" href="/meeting-checkin.html" title="Annual meeting in-person sign-in + live quorum tracker">
     🗳️ Meeting Check-in
   </a>
@@ -6686,6 +6689,257 @@
       }
     });
   }
+
+  // ===== Top-bar shortcut: 📞 Log contact ==================================
+  // Ed 2026-06-16: "having to navigate to find it is the failure mode."
+  // One click from anywhere in the app -> type address or name -> pick
+  // result -> form + drop zone appears inline with property context set ->
+  // submit. The hp/inspector affordances stay for the workflows where
+  // staff is already looking at a property; this is for the cold-start
+  // "I need to log this NOW" case.
+  let _logShortcutSearchTimer = null;
+  let _logShortcutPicked = null;
+
+  window.openLogContactShortcut = function () {
+    let overlay = document.getElementById('logContactShortcutOverlay');
+    if (overlay) overlay.remove();
+    _logShortcutPicked = null;
+
+    overlay = document.createElement('div');
+    overlay.id = 'logContactShortcutOverlay';
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:3000; display:flex; align-items:flex-start; justify-content:center; padding:60px 16px; overflow-y:auto;';
+    overlay.innerHTML = `
+      <div style="background:#fff; max-width:560px; width:100%; border-radius:14px; padding:22px 24px; font-family:Inter,system-ui; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="margin:0; font-family:Cormorant Garamond,Georgia,serif; font-size:23px; color:#0B1D34;">📞 Log contact</h3>
+          <button id="lcsClose" style="background:none; border:none; font-size:22px; cursor:pointer; color:#64748b;">×</button>
+        </div>
+
+        <div id="lcsStep1">
+          <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:5px;">Who / where</div>
+          <input type="text" id="lcsSearchInput" autocomplete="off" placeholder="Type address or homeowner name…"
+                 style="width:100%; padding:11px 13px; border:1px solid #d0d7de; border-radius:8px; font-size:14px;">
+          <div id="lcsResults" style="margin-top:8px; max-height:280px; overflow-y:auto;"></div>
+          <div id="lcsHint" style="font-size:11.5px; color:#94a3b8; margin-top:6px;">Search runs across every community in the portfolio.</div>
+        </div>
+
+        <div id="lcsStep2" style="display:none;">
+          <div id="lcsPickedChip" style="background:#eef2ff; border:1px solid #c7d2fe; border-radius:8px; padding:8px 12px; font-size:13px; color:#1e3a8a; margin-bottom:12px; display:flex; align-items:center; justify-content:space-between; gap:10px;"></div>
+
+          <form id="lcsForm" style="display:flex; flex-direction:column; gap:11px;">
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">What happened</label>
+                <select id="lcsType" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                  <option value="phone">Phone call</option>
+                  <option value="in_person">In person</option>
+                  <option value="email_inbound">Email from homeowner</option>
+                  <option value="email_outbound">Email to homeowner</option>
+                  <option value="sms">Text message</option>
+                  <option value="internal_note">Internal note (no homeowner)</option>
+                </select>
+              </div>
+              <div>
+                <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">When</label>
+                <input type="datetime-local" id="lcsOccurredAt" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Subject (one-line headline)</label>
+              <input type="text" id="lcsSubject" placeholder="e.g. Called about pool gate code reset" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Notes</label>
+              <textarea id="lcsContent" rows="3" placeholder="What was discussed, what was promised, what's next…" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; resize:vertical;"></textarea>
+            </div>
+            <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+              <div>
+                <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Follow up by (optional)</label>
+                <input type="date" id="lcsFollowUp" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+              <div>
+                <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Logged by</label>
+                <input type="text" id="lcsLoggedBy" placeholder="Your name" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+              </div>
+            </div>
+
+            <div id="lcsDropZone" style="border:2px dashed #d4af37; background:rgba(212,175,55,0.06); border-radius:8px; padding:14px 12px; text-align:center; cursor:pointer; font-size:12.5px; color:#78350f;">
+              📥 <strong>Drop an email</strong> on the way out — .msg / .eml / .pdf / screenshot
+            </div>
+            <input type="file" id="lcsFileInput" accept=".msg,.eml,application/pdf,image/*" style="display:none;">
+
+            <div id="lcsStatus" style="display:none; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>
+
+            <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:2px;">
+              <button type="button" id="lcsBack" style="padding:9px 16px; background:#fff; border:1px solid #d0d7de; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; color:#475569;">← Different property</button>
+              <button type="submit" id="lcsSubmit" style="padding:9px 22px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Save to timeline</button>
+            </div>
+          </form>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => {
+      overlay.remove();
+      _logShortcutPicked = null;
+    };
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.getElementById('lcsClose').addEventListener('click', close);
+    document.addEventListener('keydown', function escClose(e) {
+      if (e.key === 'Escape' && document.getElementById('logContactShortcutOverlay')) {
+        close();
+        document.removeEventListener('keydown', escClose);
+      }
+    });
+
+    const search = document.getElementById('lcsSearchInput');
+    const results = document.getElementById('lcsResults');
+
+    search.focus();
+    search.addEventListener('input', () => {
+      clearTimeout(_logShortcutSearchTimer);
+      const q = search.value.trim();
+      if (q.length < 2) { results.innerHTML = ''; return; }
+      _logShortcutSearchTimer = setTimeout(async () => {
+        results.innerHTML = '<div style="padding:10px; color:#94a3b8; font-size:12.5px;">Searching…</div>';
+        try {
+          const r = await fetch(`/api/interactions/property-search?q=${encodeURIComponent(q)}`);
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+          const list = j.results || [];
+          if (!list.length) {
+            results.innerHTML = '<div style="padding:10px; color:#94a3b8; font-size:12.5px;">No matches — try a different fragment of the address or name.</div>';
+            return;
+          }
+          results.innerHTML = list.map((p) => `
+            <button type="button" data-property-id="${p.property_id}" data-label="${escapeHtml((p.street_address || '') + (p.owner_name ? ' · ' + p.owner_name : ''))}"
+                    style="display:block; width:100%; text-align:left; background:#fff; border:1px solid #e2e8f0; border-radius:7px; padding:9px 12px; margin-bottom:5px; cursor:pointer; font-family:inherit; font-size:13px; color:#0B1D34;">
+              <div style="font-weight:600;">${escapeHtml(p.street_address || '—')}</div>
+              <div style="font-size:11.5px; color:#64748b; margin-top:1px;">${escapeHtml(p.owner_name || 'No owner on file')}${p.city ? ' · ' + escapeHtml(p.city) : ''}</div>
+            </button>`).join('');
+          results.querySelectorAll('button[data-property-id]').forEach((btn) => {
+            btn.addEventListener('click', () => pickProperty(btn.dataset.propertyId, btn.dataset.label));
+          });
+        } catch (e) {
+          results.innerHTML = `<div style="padding:10px; color:#b91c1c; font-size:12.5px;">${escapeHtml(e.message)}</div>`;
+        }
+      }, 180);
+    });
+
+    function pickProperty(propertyId, label) {
+      _logShortcutPicked = { id: propertyId, label };
+      document.getElementById('lcsStep1').style.display = 'none';
+      document.getElementById('lcsStep2').style.display = 'block';
+      document.getElementById('lcsPickedChip').innerHTML = `
+        <span><strong>${escapeHtml(label)}</strong></span>
+        <span style="color:#64748b; font-size:11.5px;">picked</span>`;
+      const now = new Date();
+      const tz = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+      document.getElementById('lcsOccurredAt').value = tz.toISOString().slice(0, 16);
+      document.getElementById('lcsSubject').focus();
+      wireLcsDropZone();
+    }
+
+    document.getElementById('lcsBack').addEventListener('click', () => {
+      _logShortcutPicked = null;
+      document.getElementById('lcsStep2').style.display = 'none';
+      document.getElementById('lcsStep1').style.display = 'block';
+      document.getElementById('lcsSearchInput').focus();
+    });
+
+    function setStatus(message, tone) {
+      const el = document.getElementById('lcsStatus');
+      el.style.display = 'block';
+      el.style.background = tone === 'error' ? '#fee2e2' : tone === 'ok' ? '#dcfce7' : '#f1f5f9';
+      el.style.color = tone === 'error' ? '#991b1b' : tone === 'ok' ? '#166534' : '#475569';
+      el.textContent = message;
+    }
+
+    function wireLcsDropZone() {
+      const dz = document.getElementById('lcsDropZone');
+      const input = document.getElementById('lcsFileInput');
+      if (!dz || !input || dz.dataset.wired === '1') return;
+      dz.dataset.wired = '1';
+      dz.addEventListener('click', () => input.click());
+      input.addEventListener('change', () => {
+        if (input.files && input.files[0]) uploadDropped(input.files[0]);
+      });
+      const setHover = (on) => {
+        dz.style.background = on ? 'rgba(212,175,55,0.18)' : 'rgba(212,175,55,0.06)';
+        dz.style.borderColor = on ? '#92400e' : '#d4af37';
+      };
+      dz.addEventListener('dragenter', (e) => { e.preventDefault(); setHover(true); });
+      dz.addEventListener('dragover',  (e) => { e.preventDefault(); setHover(true); });
+      dz.addEventListener('dragleave', (e) => { if (e.target === dz) setHover(false); });
+      dz.addEventListener('drop', (e) => {
+        e.preventDefault();
+        setHover(false);
+        const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+        if (file) uploadDropped(file);
+      });
+    }
+
+    async function uploadDropped(file) {
+      if (!_logShortcutPicked) return;
+      setStatus(`Uploading ${file.name}…`, 'info');
+      try {
+        const fd = new FormData();
+        fd.append('file', file);
+        fd.append('property_id', _logShortcutPicked.id);
+        const r = await fetch('/api/interactions/email-drop', { method: 'POST', body: fd });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        setStatus(`✓ "${file.name}" attached to ${_logShortcutPicked.label}.`, 'ok');
+      } catch (err) {
+        setStatus('✗ ' + err.message, 'error');
+      }
+    }
+
+    document.getElementById('lcsForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!_logShortcutPicked) return;
+      const type = document.getElementById('lcsType').value;
+      const subject = document.getElementById('lcsSubject').value.trim();
+      const content = document.getElementById('lcsContent').value.trim();
+      const occurredLocal = document.getElementById('lcsOccurredAt').value;
+      const followUp = document.getElementById('lcsFollowUp').value;
+      const loggedBy = document.getElementById('lcsLoggedBy').value.trim();
+      const btn = document.getElementById('lcsSubmit');
+
+      if (!subject && !content) {
+        setStatus('Add a subject or notes so the timeline has something to show.', 'error');
+        return;
+      }
+
+      btn.disabled = true; btn.textContent = 'Saving…';
+      setStatus('Writing to the timeline…', 'info');
+
+      try {
+        const body = {
+          property_id: _logShortcutPicked.id,
+          type,
+          subject: subject || null,
+          content: content || null,
+          occurred_at: occurredLocal ? new Date(occurredLocal).toISOString() : null,
+          follow_up_due_at: followUp ? new Date(followUp + 'T17:00:00').toISOString() : null,
+          logged_by: loggedBy || null,
+        };
+        const r = await fetch('/api/interactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        setStatus(`✓ Saved to ${_logShortcutPicked.label}.`, 'ok');
+        // Give the user a beat to see the confirmation, then close.
+        setTimeout(close, 900);
+      } catch (err) {
+        setStatus('✗ ' + err.message, 'error');
+        btn.disabled = false; btn.textContent = 'Save to timeline';
+      }
+    });
+  };
 
   window.hpOpenLedgerModal = async function (propertyId) {
     // Build modal scaffolding first so user sees instant feedback
