@@ -1595,7 +1595,13 @@ router.post('/:id/send', express.json({ limit: '256kb' }), async (req, res) => {
     // Render a minimal HTML email body that points to the attached PDF — actual
     // detail is in the letter. Voice matches the letter (warm on approval,
     // matter-of-fact on conditions, respectful on denial).
-    const greetingName = app.builder_company.primary_contact_name || app.submitter_name || 'Team';
+    // Strip "[last name]"-style placeholder leaks before greeting the builder.
+    // The renderer applies the same sanitizer to the letter recipient block;
+    // they share the helper so the letter and the email greeting always agree.
+    const { sanitizeNameForLetter } = require('../lib/builder_letter');
+    const greetingName = sanitizeNameForLetter(app.builder_company.primary_contact_name)
+                       || sanitizeNameForLetter(app.submitter_name)
+                       || 'Team';
     const propertyShort = (app.street_address || '').split(',')[0];
     const decisionLine = response.response_type === 'denied'
       ? `Please find attached the management team's response to the new construction submission for ${propertyShort} (${app.reference_number}).`
