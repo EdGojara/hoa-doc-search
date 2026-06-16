@@ -278,6 +278,115 @@ async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
 const extractPlotPlanFromPdfBuffer  = (buf) => extractFromPdfBuffer(buf, PLOT_PLAN_EXTRACT_PROMPT, 5);
 const extractColorSheetFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, COLOR_SHEET_EXTRACT_PROMPT, 5);
 
+// ============================================================================
+// FULL-SUBMISSION FORM EXTRACTION — for DRB-style "Plan Submission" packets
+// ----------------------------------------------------------------------------
+// Karla / DRB Group send Bedrock a single multi-page PDF that begins with a
+// structured "PLAN SUBMISSION" form (date, builder + contact info, address,
+// plan/elevation, materials table, masonry + repetition compliance, lot
+// type) followed by 60+ pages of architectural drawings. Page 1 carries
+// everything we need to create the application row; the rest is reference.
+//
+// Ed 2026-06-16: built so staff can upload these PDFs on behalf of builders
+// and have them land in the same review queue + approval flow as portal
+// submissions. Closes the gap where DRB couldn't use the online portal yet
+// but needed approvals to keep building.
+// ============================================================================
+const SUBMISSION_FORM_EXTRACT_PROMPT = `You are extracting structured data from page 1 of a builder's ARC PLAN SUBMISSION packet for an HOA architectural review.
+
+The form has these sections: builder + contact info, property address, plan/elevation, visible sides, attachments confirmation, a materials table (10 rows × Type/Color/Other), masonry + repetition compliance, and a free-text "Other Information" line.
+
+Extract the following fields. Return null for any field you cannot find — do NOT invent.
+
+SUBMISSION METADATA:
+- date_submitted: date on the form (YYYY-MM-DD)
+- is_new_plan_approval_request: true | false | null
+
+BUILDER + CONTACT:
+- builder_company_name: e.g., "DRB Group Texas LLC"
+- contact_person: name of the purchasing coordinator / point of contact
+- contact_phone
+- contact_email
+- contact_fax
+
+PROPERTY:
+- street_address: street address only (e.g., "14219 Sloan Street")
+- section_number, block_number, lot_number
+
+PLAN:
+- plan_name: e.g., "Palm"
+- plan_number: e.g., "1970"  (when the form shows "Palm/1970", plan_name="Palm" and plan_number="1970")
+- elevation: e.g., "O"
+- square_footage_heated: heated/cooled square footage as integer
+- lot_type: "interior" | "corner" | "cul_de_sac" | "backs_to_common_area" | "backs_to_thoroughfare" | "flag_lot" | null
+  (parse from the "Other Information" line — e.g., "Interior Lot" → "interior")
+
+VISIBLE SIDES (checkboxes):
+- visible_sides_front: true | false
+- visible_sides_left: true | false
+- visible_sides_back: true | false
+- visible_sides_right: true | false
+
+ATTACHMENTS CONFIRMATION (checkboxes):
+- site_plan_attached: true | false
+- floor_plan_attached: true | false
+
+COMPLIANCE:
+- met_repetition_requirement: true | false | null
+- repetition_exceptions: free-text if "No"
+- met_front_masonry_minimum: true | false | null
+- front_masonry_exceptions: free-text if "No"
+
+MATERIALS TABLE — each row: {type, color, other}. Return null for absent rows. Keys are EXACTLY these snake_case identifiers:
+- shingles: {type, color, other}
+- brick: {type, color, other}
+- rock: {type, color, other}                       (or "stone" / "stonework")
+- siding: {type, color, other}                     (or "cementious fiber board" / "hardie")
+- mortar: {type, color, other}
+- stucco_paint: {type, color, other}
+- chimney: {type, color, other}                    (often "NA")
+- windows: {type, color, other}
+- trim_paint: {type, color, other}
+- garage_door: {type, color, other}
+
+QUALITY:
+- ai_confidence: "high" | "medium" | "low"
+- ai_notes: caveats — anything illegible, ambiguous, or surprising
+
+Return ONLY valid JSON, no preamble. Empty material rows = null (not {}). Example:
+{
+  "date_submitted": "2026-06-15",
+  "is_new_plan_approval_request": true,
+  "builder_company_name": "DRB Group Texas LLC",
+  "contact_person": "Karla Rutan",
+  "contact_phone": "713-243-3556",
+  "contact_email": "drbghoustonpurchasing@drbgroup.com",
+  "contact_fax": null,
+  "street_address": "14219 Sloan Street",
+  "section_number": "1", "block_number": "2", "lot_number": "22",
+  "plan_name": "Palm", "plan_number": "1970", "elevation": "O",
+  "square_footage_heated": 1968,
+  "lot_type": "interior",
+  "visible_sides_front": true, "visible_sides_left": true, "visible_sides_back": true, "visible_sides_right": true,
+  "site_plan_attached": true, "floor_plan_attached": true,
+  "met_repetition_requirement": true, "repetition_exceptions": null,
+  "met_front_masonry_minimum": true, "front_masonry_exceptions": null,
+  "shingles":     { "type": "3 Tab",                "color": "Weathered Wood",    "other": null },
+  "brick":        { "type": "Red River",            "color": "Winter Lake",       "other": null },
+  "rock":         { "type": "Legends Arch Stone",   "color": "Blanco Fieldstone", "other": null },
+  "siding":       { "type": "SW",                   "color": "Mega Greige",       "other": "cementious fiber board" },
+  "mortar":       { "type": "ACME Masonry",         "color": "White",             "other": null },
+  "stucco_paint": { "type": "SW",                   "color": "Mega Greige",       "other": null },
+  "chimney":      null,
+  "windows":      { "type": "Builders First Source","color": "White",             "other": null },
+  "trim_paint":   { "type": "SW",                   "color": "Gossamer Veil",     "other": null },
+  "garage_door":  { "type": "SW",                   "color": "Gossamer Veil",     "other": null },
+  "ai_confidence": "high",
+  "ai_notes": null
+}`;
+
+const extractSubmissionFormFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, SUBMISSION_FORM_EXTRACT_PROMPT, 2);
+
 // Resolve community_id from extracted subdivision_name + plat_number. ILIKE
 // match on name with plat as tiebreaker if the subdivision name is ambiguous.
 async function resolveCommunityFromExtraction(extracted) {
@@ -2757,6 +2866,264 @@ router.post('/color-sheet-extract', upload.single('color_sheet_pdf'), async (req
     });
   } catch (err) {
     console.error('[builder_applications] color-sheet-extract failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
+// POST /api/builder-applications/upload-on-behalf
+// ----------------------------------------------------------------------------
+// Staff-side single-shot intake. Karla / DRB / any other builder emails a
+// multi-page ARC submission packet to Bedrock. Staff uploads it via the
+// review queue and the system:
+//   1. Stores the PDF in Supabase storage.
+//   2. Extracts page-1 form data via Claude (builder, contact, address,
+//      lot/block/section, plan/elevation, materials table, masonry +
+//      repetition compliance, lot type).
+//   3. Resolves or auto-creates the builder_companies row from the
+//      extracted builder name + submitter email.
+//   4. Generates an atomic reference_number (migration 225 RPC).
+//   5. Inserts a builder_applications row in status='received',
+//      source='manual_entry'. The full materials map lands in
+//      application_data JSONB along with masonry/repetition flags.
+//   6. Tries the master_plans auto-match for fast-track.
+//   7. Returns { application_id, reference_number, extracted, fast_track }.
+//
+// Multipart form:
+//   submission_pdf  (required PDF, up to 25MB)
+//   community_id    (required UUID)
+//
+// On extraction failure the endpoint returns 422 with the raw Claude
+// response so staff sees what was misread (per CLAUDE.md self-diagnosing
+// UI rule).
+//
+// Ed 2026-06-16: built for the DRB / August Meadows interim email-then-
+// approve workflow agreed with Paul Grover at Ventana. Replaces the
+// previous "Karla emails 14 PDFs to Ed, Ed eyeballs each one" loop.
+// ============================================================================
+router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, res) => {
+  try {
+    const { requireAdmin } = require('./users');
+    const ctx = await requireAdmin(req, res);
+    if (!ctx) return;
+
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: 'submission_pdf required' });
+    if (file.mimetype !== 'application/pdf') return res.status(400).json({ error: 'submission_pdf must be a PDF' });
+    const communityId = req.body && req.body.community_id;
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+
+    // 1. Verify community exists + pull the slug for storage path.
+    const { data: community, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name, slug, builder_arc_reference_prefix')
+      .eq('id', communityId)
+      .maybeSingle();
+    if (cErr || !community) return res.status(404).json({ error: 'community not found' });
+
+    // 2. Extract page-1 form data BEFORE storage upload — if Claude
+    //    returns nothing usable we want to bail before littering storage.
+    let extracted = null, raw = null;
+    try {
+      const result = await extractSubmissionFormFromPdfBuffer(file.buffer);
+      extracted = result.extracted;
+      raw = result.raw;
+    } catch (extractErr) {
+      console.error('[builder_applications.upload-on-behalf] extraction threw:', extractErr.message);
+      return res.status(500).json({
+        error: 'AI extraction failed: ' + extractErr.message,
+        raw_extracted: null,
+      });
+    }
+    if (!extracted) {
+      return res.status(422).json({
+        error: 'AI returned no structured data — page 1 may be a scanned image, not a form. Operator can still create the application manually via the existing auto-create modal.',
+        raw_extracted: raw,
+      });
+    }
+
+    // 3. Resolve / auto-create builder_companies row from extracted name.
+    let builderCompanyId = null;
+    if (extracted.builder_company_name) {
+      const { data: existingBc } = await supabase
+        .from('builder_companies')
+        .select('id')
+        .ilike('company_name', extracted.builder_company_name.trim())
+        .maybeSingle();
+      if (existingBc) {
+        builderCompanyId = existingBc.id;
+      } else {
+        const { data: newBc, error: bErr } = await supabase
+          .from('builder_companies')
+          .insert({
+            management_company_id: BEDROCK_MGMT_CO_ID,
+            company_name: extracted.builder_company_name.trim(),
+            primary_contact_email: extracted.contact_email || null,
+            primary_contact_name:  extracted.contact_person || null,
+            primary_contact_phone: extracted.contact_phone || null,
+            primary_email_domain: (extracted.contact_email || '').split('@')[1] || null,
+            notes: 'Auto-created from upload-on-behalf intake (Ed 2026-06-16). Edit details in admin if needed.',
+          })
+          .select('id')
+          .single();
+        if (bErr) {
+          console.error('[builder_applications.upload-on-behalf] builder company auto-create failed:', bErr.message);
+          return res.status(500).json({ error: 'builder company create failed: ' + bErr.message, extracted });
+        }
+        builderCompanyId = newBc.id;
+      }
+    }
+
+    // 4. Atomic reference_number via migration 225 RPC. Retry loop is
+    //    belt-and-suspenders — RPC is atomic so a collision shouldn't
+    //    occur, but if it does we re-allocate and retry up to 3×.
+    let referenceNumber = null;
+    let app = null;
+    let aErr = null;
+    for (let attempt = 0; attempt < 3 && !app; attempt++) {
+      referenceNumber = await nextBuilderReferenceNumber(community);
+
+      // Compose application_data JSONB. Materials table (10 rows) +
+      // masonry/repetition compliance + visible sides + attachments.
+      const applicationData = {
+        materials: {
+          shingles:     extracted.shingles     || null,
+          brick:        extracted.brick        || null,
+          rock:         extracted.rock         || null,
+          siding:       extracted.siding       || null,
+          mortar:       extracted.mortar       || null,
+          stucco_paint: extracted.stucco_paint || null,
+          chimney:      extracted.chimney      || null,
+          windows:      extracted.windows      || null,
+          trim_paint:   extracted.trim_paint   || null,
+          garage_door:  extracted.garage_door  || null,
+        },
+        compliance: {
+          met_repetition_requirement:   extracted.met_repetition_requirement,
+          repetition_exceptions:        extracted.repetition_exceptions,
+          met_front_masonry_minimum:    extracted.met_front_masonry_minimum,
+          front_masonry_exceptions:     extracted.front_masonry_exceptions,
+        },
+        visible_sides: {
+          front: !!extracted.visible_sides_front,
+          left:  !!extracted.visible_sides_left,
+          back:  !!extracted.visible_sides_back,
+          right: !!extracted.visible_sides_right,
+        },
+        attachments: {
+          site_plan_attached:  !!extracted.site_plan_attached,
+          floor_plan_attached: !!extracted.floor_plan_attached,
+        },
+        is_new_plan_approval_request: extracted.is_new_plan_approval_request,
+        date_submitted_on_form: extracted.date_submitted,
+        contact_fax: extracted.contact_fax || null,
+        ai_extraction_pending: false,
+        ai_confidence: extracted.ai_confidence || null,
+        ai_notes:      extracted.ai_notes || null,
+      };
+
+      const tryInsertRow = {
+        community_id: community.id,
+        builder_company_id: builderCompanyId,
+        reference_number: referenceNumber,
+        submitter_email: (extracted.contact_email || 'unknown@unspecified').toLowerCase().trim(),
+        submitter_name:  extracted.contact_person || null,
+        submitter_phone: extracted.contact_phone || null,
+        source: 'manual_entry',
+        lot_number:     extracted.lot_number     ? String(extracted.lot_number).trim() : 'UNKNOWN',
+        block_number:   extracted.block_number   ? String(extracted.block_number).trim() : null,
+        section_number: extracted.section_number ? String(extracted.section_number).trim() : null,
+        street_address: extracted.street_address ? String(extracted.street_address).trim() : '(address unspecified)',
+        lot_type:       extracted.lot_type || null,
+        plan_number:    extracted.plan_number ? String(extracted.plan_number).trim() : 'UNKNOWN',
+        plan_name:      extracted.plan_name || null,
+        elevation:      extracted.elevation ? String(extracted.elevation).trim() : 'UNKNOWN',
+        square_footage: extracted.square_footage_heated ? parseInt(extracted.square_footage_heated, 10) : null,
+        application_data: applicationData,
+        status: 'received',
+      };
+
+      const insertResult = await supabase
+        .from('builder_applications')
+        .insert(tryInsertRow)
+        .select('*')
+        .single();
+      app = insertResult.data;
+      aErr = insertResult.error;
+      if (aErr) {
+        if (aErr.code === '23505' && /reference_number/.test(String(aErr.message || ''))) {
+          console.warn('[builder_applications.upload-on-behalf] reference_number collision on attempt', attempt + 1, '— retrying:', referenceNumber, aErr.message);
+          app = null;
+          continue;
+        }
+        throw aErr;
+      }
+    }
+    if (!app) {
+      console.error('[builder_applications.upload-on-behalf] reference number allocation failed after 3 retries');
+      return res.status(500).json({
+        error: 'Submission upload could not complete — reference number allocation kept colliding. Refresh and try once more; if it keeps happening, email support@bedrocktx.com.',
+        extracted,
+      });
+    }
+
+    // 5. Now that the row exists, upload the PDF to storage under the
+    //    reference number so it's reachable via the existing attachments
+    //    UI. Storage failure is non-fatal — the application row stays
+    //    and staff can re-upload via /:id/attachments.
+    try {
+      const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const safeName = (file.originalname || 'submission.pdf').replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80);
+      const path = `builders/${community.slug || community.id}/${new Date().getFullYear()}/${app.reference_number}/submission/${stamp}_${safeName}`;
+      const { error: upErr } = await supabase.storage.from(STORAGE_BUCKET)
+        .upload(path, file.buffer, { contentType: 'application/pdf', upsert: false });
+      if (!upErr) {
+        await supabase.from('builder_application_attachments').insert({
+          application_id: app.id,
+          kind: 'submission_packet',
+          original_filename: file.originalname || 'submission.pdf',
+          storage_bucket: STORAGE_BUCKET,
+          storage_path: path,
+          mime_type: 'application/pdf',
+          size_bytes: file.size,
+          uploaded_by: ctx.user?.email || 'staff_upload_on_behalf',
+        });
+      } else {
+        console.warn('[builder_applications.upload-on-behalf] storage upload failed (non-fatal):', upErr.message);
+      }
+    } catch (storErr) {
+      console.warn('[builder_applications.upload-on-behalf] storage block threw (non-fatal):', storErr.message);
+    }
+
+    // 6. Try master plan auto-match for fast-track.
+    let matchedMasterPlanId = null;
+    try {
+      matchedMasterPlanId = await tryMatchMasterPlan({
+        communityId: community.id,
+        builderCompanyId,
+        planNumber: app.plan_number,
+        elevation:  app.elevation,
+      });
+      if (matchedMasterPlanId) {
+        await supabase.from('builder_applications').update({
+          master_plan_id: matchedMasterPlanId,
+          fast_track: true,
+          fast_track_reason: 'Matched approved master plan for this community',
+        }).eq('id', app.id);
+      }
+    } catch (_) { /* non-fatal */ }
+
+    res.json({
+      ok: true,
+      application_id: app.id,
+      reference_number: app.reference_number,
+      status: app.status,
+      fast_track: !!matchedMasterPlanId,
+      extracted,
+      ai_confidence: extracted.ai_confidence || null,
+    });
+  } catch (err) {
+    console.error('[builder_applications.upload-on-behalf]', err);
     res.status(500).json({ error: safeErrorMessage(err) });
   }
 });
