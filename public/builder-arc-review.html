@@ -283,6 +283,63 @@
   }
   .finalize-form .actions button.selected .label { color: var(--gold); }
 
+  /* ---- AI recommendation block ---- */
+  .ai-rec-block {
+    border: 1px solid var(--rule-strong);
+    border-left: 3px solid var(--gold);
+    background: rgba(212,175,55,0.04);
+    border-radius: 4px;
+    padding: 12px 14px;
+    margin: 4px 0 14px;
+  }
+  .ai-rec-block.ai-rec-loading { opacity: 0.6; }
+  .ai-rec-label {
+    font-size: 11px; color: var(--gold);
+    letter-spacing: 0.08em; text-transform: uppercase;
+    font-weight: 600;
+    margin-bottom: 6px;
+    display: flex; align-items: center; gap: 8px; justify-content: space-between;
+  }
+  .ai-rec-confidence {
+    font-size: 10px; color: var(--ink-faint);
+    letter-spacing: 0.04em; text-transform: none;
+    font-weight: 400;
+  }
+  .ai-rec-headline {
+    font-size: 14px; font-weight: 600; color: var(--ink);
+    margin-bottom: 4px;
+  }
+  .ai-rec-body {
+    font-size: 12.5px; color: var(--ink-soft); line-height: 1.5;
+  }
+  .ai-rec-signals {
+    margin-top: 8px;
+    font-size: 11.5px; color: var(--ink-faint);
+    display: flex; flex-wrap: wrap; gap: 6px;
+  }
+  .ai-rec-signals .sig {
+    background: var(--navy-deep);
+    border: 1px solid var(--rule-strong);
+    padding: 2px 8px; border-radius: 999px;
+  }
+  .ai-rec-signals .sig.ok { color: #6ee7b7; border-color: rgba(110,231,183,0.25); }
+  .ai-rec-signals .sig.warn { color: #fbbf24; border-color: rgba(251,191,36,0.25); }
+  .ai-rec-signals .sig.bad { color: #fca5a5; border-color: rgba(252,165,165,0.25); }
+  .ai-rec-conditions {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed var(--rule-strong);
+    font-size: 11.5px; color: var(--ink-soft);
+  }
+  .ai-rec-conditions strong {
+    display: block;
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 4px; font-weight: 500;
+  }
+  .ai-rec-conditions ul { margin: 0; padding-left: 16px; }
+  .ai-rec-conditions li { margin: 2px 0; }
+
   .finalize-form input,
   .finalize-form textarea {
     width: 100%;
@@ -1283,6 +1340,10 @@ function renderDetail(data) {
     <section>
       <h3>Finalize</h3>
       <div class="finalize-form">
+        <div id="aiRecBlock" class="ai-rec-block ai-rec-loading">
+          <div class="ai-rec-label">Recommendation</div>
+          <div class="ai-rec-body">Reviewing submission…</div>
+        </div>
         <div class="actions">
           <button data-action="approve"><span class="label">✓ Approve</span><span class="desc">Clean approval, no conditions</span></button>
           <button data-action="approve_with_conditions"><span class="label">⚠ Conditional</span><span class="desc">Approved subject to listed conditions</span></button>
@@ -1366,6 +1427,7 @@ function renderDetail(data) {
     });
     $('finalizeBtn').addEventListener('click', () => doFinalize(a.id));
     $('closeBtn').addEventListener('click', closeDetail);
+    loadRecommendation(a.id, panel);
   } else if (!latestResp.email_sent_at && latestResp.letter_pdf_path) {
     const sb = $('sendBtn');
     if (sb) sb.addEventListener('click', () => doSend(a.id));
@@ -1381,6 +1443,106 @@ function renderDetail(data) {
   });
 }
 window.__closeDetail = closeDetail;  // expose for inline onclick
+
+function signalsToChips(signals) {
+  if (!signals || typeof signals !== 'object') return [];
+  if (Array.isArray(signals)) return signals;
+  const chips = [];
+  if (signals.fast_track === true) chips.push({ label: 'Fast-track match', tone: 'positive' });
+  if (signals.master_plan_matched === true) chips.push({ label: 'Master plan matched', tone: 'positive' });
+  else if (signals.master_plan_matched === false) chips.push({ label: 'No master plan yet', tone: 'caution' });
+  if (signals.masonry_minimum_met === true) chips.push({ label: 'Masonry OK', tone: 'positive' });
+  else if (signals.masonry_minimum_met === false) chips.push({ label: 'Masonry below min', tone: 'negative' });
+  if (signals.repetition_rule_met === true) chips.push({ label: 'Repetition OK', tone: 'positive' });
+  else if (signals.repetition_rule_met === false) chips.push({ label: 'Repetition rule failed', tone: 'negative' });
+  if (signals.materials_captured === true) chips.push({ label: 'Materials captured', tone: 'positive' });
+  else if (signals.materials_captured === false) chips.push({ label: 'Materials missing', tone: 'caution' });
+  return chips;
+}
+
+async function loadRecommendation(applicationId, panel) {
+  const block = $('aiRecBlock');
+  if (!block) return;
+  try {
+    const r = await fetch(`/api/builder-applications/${applicationId}/recommendation`);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const data = await r.json();
+    const rec = data.recommendation || {};
+    renderRecommendation(block, rec);
+    autoSelectFromRecommendation(rec, panel);
+  } catch (err) {
+    block.classList.remove('ai-rec-loading');
+    block.innerHTML = `
+      <div class="ai-rec-label">Recommendation</div>
+      <div class="ai-rec-body" style="color: var(--ink-faint);">
+        Unable to generate a recommendation right now — use your judgment below.
+      </div>`;
+  }
+}
+
+function renderRecommendation(block, rec) {
+  const actionLabels = {
+    approve: '✓ Approve',
+    approve_with_conditions: '⚠ Approve with conditions',
+    deny: '✗ Deny',
+    request_more_info: '? Request more info',
+  };
+  const headline = actionLabels[rec.recommended_action] || 'Review needed';
+  const confidence = rec.confidence ? `${rec.confidence} confidence` : '';
+  const signals = signalsToChips(rec.signals);
+  const conds = Array.isArray(rec.conditions) ? rec.conditions : [];
+  const denials = Array.isArray(rec.denial_reasons) ? rec.denial_reasons : [];
+
+  const sigClass = (tone) => tone === 'positive' ? 'ok' : tone === 'negative' ? 'bad' : tone === 'caution' ? 'warn' : '';
+
+  block.classList.remove('ai-rec-loading');
+  block.innerHTML = `
+    <div class="ai-rec-label">
+      <span>Recommendation</span>
+      <span class="ai-rec-confidence">${escapeHtml(confidence)}</span>
+    </div>
+    <div class="ai-rec-headline">${escapeHtml(headline)}</div>
+    <div class="ai-rec-body">${escapeHtml(rec.reasoning || '')}</div>
+    ${signals.length ? `
+      <div class="ai-rec-signals">
+        ${signals.map((s) => `<span class="sig ${sigClass(s.tone)}">${escapeHtml(s.label || '')}</span>`).join('')}
+      </div>
+    ` : ''}
+    ${conds.length ? `
+      <div class="ai-rec-conditions">
+        <strong>Suggested conditions (editable below)</strong>
+        <ul>${conds.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
+      </div>
+    ` : ''}
+    ${denials.length ? `
+      <div class="ai-rec-conditions">
+        <strong>Suggested revision items (editable below)</strong>
+        <ul>${denials.map((c) => `<li>${escapeHtml(c)}</li>`).join('')}</ul>
+      </div>
+    ` : ''}
+  `;
+}
+
+function autoSelectFromRecommendation(rec, panel) {
+  const action = rec && rec.recommended_action;
+  if (!action) return;
+  const btn = panel.querySelector(`.actions button[data-action="${action}"]`);
+  if (!btn) return;
+  selectAction(action, panel);
+
+  if (action === 'approve_with_conditions' && Array.isArray(rec.conditions) && rec.conditions.length) {
+    const ta = $('conditions');
+    if (ta && !ta.value.trim()) ta.value = rec.conditions.join('\n');
+  }
+  if (action === 'deny' && Array.isArray(rec.denial_reasons) && rec.denial_reasons.length) {
+    const ta = $('denialReasons');
+    if (ta && !ta.value.trim()) ta.value = rec.denial_reasons.join('\n');
+  }
+  if (action === 'request_more_info' && rec.reasoning) {
+    const ta = $('messageToBuilder');
+    if (ta && !ta.value.trim()) ta.value = rec.reasoning;
+  }
+}
 
 function selectAction(action, panel) {
   state.selectedAction = action;

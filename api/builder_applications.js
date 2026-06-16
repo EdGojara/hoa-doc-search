@@ -1138,6 +1138,161 @@ router.get('/:id', async (req, res, next) => {
 });
 
 // ============================================================================
+// GET /api/builder-applications/:id/recommendation
+// ----------------------------------------------------------------------------
+// Ed 2026-06-16: "Shouldn't the AI decide?" Per CLAUDE.md catastrophic-
+// output discipline, the AI doesn't decide autonomously — operator
+// confirms. But the system can encode the rule-based judgment Ed would
+// apply mentally on every submission and surface a strong recommendation
+// so the operator clicks once instead of evaluating from scratch.
+//
+// Rule set, in priority order:
+//   1. Master-plan fast-track match + compliance flags clear → APPROVE
+//   2. Master-plan fast-track match + at least one compliance flag failed
+//      → APPROVE_WITH_CONDITIONS (conditions list pre-populated from flags)
+//   3. No master-plan match + materials present → APPROVE_WITH_CONDITIONS
+//      (catch the next submission of this plan, build precedent)
+//   4. Missing materials or address → REQUEST_MORE_INFO
+//   5. Explicit non-conformity in extracted form (e.g., masonry minimum
+//      explicitly marked No with no acceptable exception) → DENY
+//
+// Returns: {
+//   recommended_action, confidence, reasoning,
+//   conditions: [], denial_reasons: [],
+//   signals: { ... }   // for transparency
+// }
+// ============================================================================
+function computeBuilderRecommendation(app) {
+  const data = (app && app.application_data) || {};
+  const compliance = data.compliance || {};
+  const materials = data.materials || {};
+  const flatHasMaterials = !!(data.brick_color || data.stone_color || data.siding_color || data.trim_color || data.roof_color);
+  const nestedHasMaterials = !!(materials.brick || materials.rock || materials.siding || materials.trim_paint || materials.shingles);
+  const anyMaterials = flatHasMaterials || nestedHasMaterials;
+  const fastTrack = !!app.fast_track;
+  const masterMatched = !!app.master_plan_id;
+  const masonryOk = compliance.met_front_masonry_minimum;       // true | false | null
+  const repetitionOk = compliance.met_repetition_requirement;
+  const masonryNote = (compliance.front_masonry_exceptions || '').trim();
+  const repetitionNote = (compliance.repetition_exceptions || '').trim();
+
+  const planRef = `Plan ${app.plan_number || '—'} / ${app.elevation || '—'}`;
+  const signals = {
+    fast_track: fastTrack,
+    master_plan_matched: masterMatched,
+    masonry_minimum_met: masonryOk,
+    repetition_rule_met: repetitionOk,
+    materials_captured: anyMaterials,
+  };
+
+  // 4. No materials → can't safely recommend; ask for more info
+  if (!anyMaterials && !app.street_address) {
+    return {
+      recommended_action: 'request_more_info',
+      confidence: 'low',
+      reasoning: 'Extraction came back missing both the materials table and the property address. Need the form re-sent or the operator to fill in by hand before a decision is safe.',
+      conditions: [],
+      denial_reasons: [],
+      signals,
+    };
+  }
+
+  // 5. Explicit non-conformity with no acceptable exception → DENY
+  // (only fire when the form literally says "No" and the operator hasn't
+  //  noted an acceptable exception)
+  if (masonryOk === false && masonryNote.length === 0 && repetitionOk === false && repetitionNote.length === 0) {
+    return {
+      recommended_action: 'deny',
+      confidence: 'high',
+      reasoning: `${planRef} flags BOTH masonry-minimum failure AND repetition-rule failure with no exceptions noted. Denial is the procedurally clean response — builder can resubmit with corrected plans or a board variance request.`,
+      conditions: [],
+      denial_reasons: [
+        'Front masonry coverage below the community minimum with no acceptable exception noted.',
+        'Elevation repetition rule not met with no acceptable exception noted.',
+      ],
+      signals,
+    };
+  }
+
+  // 1. Fast-track + everything clean → APPROVE
+  if (fastTrack && (masonryOk !== false) && (repetitionOk !== false) && anyMaterials) {
+    return {
+      recommended_action: 'approve',
+      confidence: 'high',
+      reasoning: `${planRef} matches an approved master plan in the library, masonry and repetition compliance both check out per the submitted form, and materials are populated. Clean approval — no conditions, ready for the standard decision letter.`,
+      conditions: [],
+      denial_reasons: [],
+      signals,
+    };
+  }
+
+  // 2. Fast-track + at least one compliance flag failed → CONDITIONS
+  if (fastTrack && (masonryOk === false || repetitionOk === false)) {
+    const conditions = [];
+    if (masonryOk === false) {
+      conditions.push(masonryNote
+        ? `Front masonry below community minimum (builder noted: "${masonryNote}"). Confirm the noted exception meets community standards before construction begins.`
+        : 'Front masonry below community minimum. Confirm corrected coverage before construction begins, or submit a board variance request.');
+    }
+    if (repetitionOk === false) {
+      conditions.push(repetitionNote
+        ? `Elevation repetition rule not met (builder noted: "${repetitionNote}"). Confirm the noted exception meets community standards.`
+        : 'Elevation repetition rule not met. Confirm spacing meets the community minimum before construction.');
+    }
+    return {
+      recommended_action: 'approve_with_conditions',
+      confidence: 'high',
+      reasoning: `${planRef} matches an approved master plan, but the submission form flags ${conditions.length} compliance item${conditions.length === 1 ? '' : 's'}. Approve subject to the condition${conditions.length === 1 ? '' : 's'} below.`,
+      conditions,
+      denial_reasons: [],
+      signals,
+    };
+  }
+
+  // 3. No master plan match → review materials, build precedent
+  if (!fastTrack) {
+    return {
+      recommended_action: 'approve_with_conditions',
+      confidence: 'medium',
+      reasoning: `${planRef} doesn't match any approved master plan in the library yet. Recommend approving on the condition that materials match the community palette — this submission then becomes precedent and future ${planRef} submissions will fast-track.`,
+      conditions: [
+        'Confirm materials (brick, stone, siding, trim, garage door, roof) match the community approved palette. Operator: spot-check the inline PDF preview against the palette guide before issuing the letter.',
+      ],
+      denial_reasons: [],
+      signals,
+    };
+  }
+
+  // Safety net — should be unreachable, but never silently drop
+  return {
+    recommended_action: 'request_more_info',
+    confidence: 'low',
+    reasoning: 'Recommendation rules did not match cleanly. Operator review needed.',
+    conditions: [],
+    denial_reasons: [],
+    signals,
+  };
+}
+
+router.get('/:id/recommendation', async (req, res, next) => {
+  if (!UUID_RE.test(req.params.id)) return next();
+  try {
+    const { data: app, error } = await supabase
+      .from('builder_applications')
+      .select('id, fast_track, master_plan_id, plan_number, elevation, street_address, application_data')
+      .eq('id', req.params.id)
+      .maybeSingle();
+    if (error) throw error;
+    if (!app) return res.status(404).json({ error: 'application not found' });
+    const recommendation = computeBuilderRecommendation(app);
+    res.json({ application_id: app.id, recommendation });
+  } catch (err) {
+    console.error('[builder_applications] recommendation failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// ============================================================================
 // POST /api/builder-applications/:id/finalize
 // Body: {
 //   action: 'approve' | 'approve_with_conditions' | 'deny' | 'request_more_info',
