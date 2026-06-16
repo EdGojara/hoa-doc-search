@@ -813,6 +813,12 @@ app.use('/api', rosterImportRouter);
 const { router: inspectionsRouter } = require('./api/inspections');
 app.use('/api', inspectionsRouter);
 
+// Interactions — manual log + drag-drop email/attachment files on the
+// property detail panel. Writes into the existing interactions table from
+// migration 050. Reads stay on /api/inspections/property-detail/:id.
+const { router: interactionsRouter } = require('./api/interactions');
+app.use('/api', interactionsRouter);
+
 // Enforcement engine — Phase 4 (escalation decisions + observation→violation
 // promotion). Backs the DRV workflow; consumed by the property detail panel
 // (preview decision) and the violation-open action (writes the violation row).

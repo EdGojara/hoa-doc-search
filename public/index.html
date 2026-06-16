@@ -16862,30 +16862,52 @@ If you have questions or want to discuss alternatives, just reply or give us a c
              </div>`).join('')}
          </div>`;
 
-    // Interactions — each letter row gets an "Evidence" expander that
-    // lazy-loads the multi-channel delivery trail. This is the "I never
-    // got the letter" defense: a homeowner sees email + SMS + certified
-    // mail all logged with timestamps, and the conversation reframes
-    // from "did this arrive?" to "let's discuss what's needed now."
+    // Interactions — letters get an "Evidence" expander (multi-channel
+    // delivery trail). Manually-logged rows (calls, notes, follow-ups) and
+    // drag-dropped email files render with clickable attachment chips and
+    // a follow-up indicator. Ed 2026-06-16.
     const isLetterType = (t) => t && (t.startsWith('letter_') || t === 'ai_draft');
+    const todayIso = new Date().toISOString();
+    const followUpBadge = (i) => {
+      if (!i.follow_up_due_at) return '';
+      const overdue = i.follow_up_due_at < todayIso;
+      const due = new Date(i.follow_up_due_at).toLocaleDateString();
+      return `<span style="background:${overdue ? '#fee2e2' : '#fef3c7'}; color:${overdue ? '#991b1b' : '#92400e'}; padding:1px 7px; border-radius:99px; font-size:10.5px; font-weight:700; letter-spacing:0.03em; margin-left:6px;">${overdue ? '⚠ FOLLOW UP OVERDUE' : '📅 FOLLOW UP'} ${escapeHtml(due)}</span>`;
+    };
+    const sourceBadgeI = (s) => {
+      if (s === 'manual') return '<span style="background:#dbeafe; color:#1e40af; padding:1px 6px; border-radius:99px; font-size:10px; font-weight:700; letter-spacing:0.03em; margin-left:4px;">LOGGED</span>';
+      return '';
+    };
+    const attachmentChips = (i) => {
+      const atts = Array.isArray(i.attachments) ? i.attachments : [];
+      if (!atts.length) return '';
+      return '<div style="margin-top:4px; display:flex; flex-wrap:wrap; gap:4px;">' +
+        atts.map((a) => `<a href="${escapeHtml(a.signed_url || '#')}" target="_blank" rel="noopener" style="background:#f1f5f9; color:#0B1D34; padding:2px 8px; border-radius:6px; font-size:11px; text-decoration:none; border:1px solid #e2e8f0;">📎 ${escapeHtml(a.label || 'file')}</a>`).join('') +
+        '</div>';
+    };
+
     const interactionsHtml = (d.interactions || []).length === 0
-      ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No interactions on record.</div>'
+      ? '<div style="color:#94a3b8; font-size:12.5px; padding:8px;">No interactions on record yet — log a call or drop an email below.</div>'
       : `<table style="width:100%; border-collapse:collapse; font-size:12px;">
            <thead><tr style="background:#f8fafc; color:#64748b;">
              <th style="text-align:left; padding:6px 8px;">When</th>
              <th style="text-align:left; padding:6px 8px;">Type</th>
-             <th style="text-align:left; padding:6px 8px;">Subject</th>
+             <th style="text-align:left; padding:6px 8px;">Subject / notes</th>
              <th style="text-align:left; padding:6px 8px;">Method</th>
-             <th style="text-align:left; padding:6px 8px;">Evidence</th>
+             <th style="text-align:left; padding:6px 8px;">Actions</th>
            </tr></thead>
            <tbody>
-             ${d.interactions.slice(0, 12).map((i) => `
-               <tr style="border-bottom:1px solid #f1f5f9;" data-interaction-id="${i.id}">
-                 <td style="padding:6px 8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
-                 <td style="padding:6px 8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}</td>
-                 <td style="padding:6px 8px; color:#475569;">${escapeHtml(i.subject || '—')}</td>
-                 <td style="padding:6px 8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
-                 <td style="padding:6px 8px;">
+             ${d.interactions.slice(0, 24).map((i) => `
+               <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top;" data-interaction-id="${i.id}">
+                 <td style="padding:8px;">${i.sent_at ? new Date(i.sent_at).toLocaleDateString() : '—'}</td>
+                 <td style="padding:8px;">${escapeHtml((i.type || '').replace(/_/g, ' '))}${sourceBadgeI(i.source)}</td>
+                 <td style="padding:8px; color:#475569;">
+                   <div>${escapeHtml(i.subject || '—')}${followUpBadge(i)}</div>
+                   ${i.preview ? `<div style="color:#64748b; font-size:11.5px; margin-top:3px; white-space:pre-wrap;">${escapeHtml(i.preview)}</div>` : ''}
+                   ${attachmentChips(i)}
+                 </td>
+                 <td style="padding:8px; color:#64748b;">${escapeHtml((i.delivery_method || '').replace(/_/g, ' '))}</td>
+                 <td style="padding:8px;">
                    ${isLetterType(i.type)
                      ? `<a href="#" onclick="event.preventDefault(); inspEvidenceToggle('${i.id}')" style="color:#0B1D34; font-size:11px; font-weight:600; text-decoration:none;">📡 Show trail</a>`
                      : '<span style="color:#cbd5e1; font-size:11px;">—</span>'}
@@ -16898,6 +16920,20 @@ If you have questions or want to discuss alternatives, just reply or give us a c
                </tr>`).join('')}
            </tbody>
          </table>`;
+
+    // Log form + drag-drop zone. The whole block is INSIDE the Interactions
+    // <details>, so it shows when staff expands the section.
+    const propIdForLog = p.id || inspPDCurrentPropertyId || '';
+    const interactionsActionsHtml = `
+      <div style="margin-top:14px; display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+        <button type="button" onclick="inspOpenLogInteraction('${propIdForLog}')" style="background:#0B1D34; color:#fff; border:none; padding:10px 12px; border-radius:8px; font-size:13px; font-weight:600; cursor:pointer;">📞 Log call / note / follow-up</button>
+        <div id="inspIntDropZone-${propIdForLog}" data-property-id="${propIdForLog}"
+             style="border:2px dashed #d4af37; background:rgba(212,175,55,0.06); border-radius:8px; padding:10px 12px; text-align:center; cursor:pointer; font-size:12.5px; color:#78350f;">
+          📥 <strong>Drop an email</strong> here (.msg / .eml / .pdf / screenshot)
+        </div>
+        <input type="file" id="inspIntFileInput-${propIdForLog}" accept=".msg,.eml,application/pdf,image/*" style="display:none;">
+      </div>
+      <div id="inspIntStatus-${propIdForLog}" style="display:none; margin-top:8px; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>`;
 
     document.getElementById('inspPDBody').innerHTML = `
       <!-- Owner + residency block -->
@@ -16949,9 +16985,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </details>
 
       <!-- Interactions -->
-      <details style="margin-bottom:10px;">
+      <details open style="margin-bottom:10px;">
         <summary style="cursor:pointer; font-weight:700; color:#0B1D34; font-size:13px; padding:6px 0;">Interactions (${(d.interactions || []).length})</summary>
         <div style="margin-top:6px;">${interactionsHtml}</div>
+        ${interactionsActionsHtml}
       </details>
 
       <!-- Inspections -->
@@ -16981,6 +17018,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         </div>
       </details>
     `;
+
+    // Wire the Interactions drop zone after the modal DOM is in place. The
+    // drop zone is injected fresh on every render, so guard via dataset.wired
+    // inside inspIntWireDropZone to avoid double-binding handlers.
+    if (typeof inspIntWireDropZone === 'function' && (p.id || inspPDCurrentPropertyId)) {
+      inspIntWireDropZone(p.id || inspPDCurrentPropertyId);
+    }
   }
 
   function inspClosePropertyDetail() {
@@ -17261,6 +17305,186 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       });
     }
   });
+
+  // =========================================================================
+  // INTERACTIONS — manual log + drag-drop email files. Ed 2026-06-16.
+  // Wires the Log button and the drop zone inside the Interactions section
+  // of the property detail modal. Both refresh the modal on success so the
+  // new row shows up immediately.
+  // =========================================================================
+  function inspIntSetStatus(propertyId, message, tone) {
+    const el = document.getElementById(`inspIntStatus-${propertyId}`);
+    if (!el) return;
+    el.style.display = 'block';
+    el.style.background = tone === 'error' ? '#fee2e2' : tone === 'ok' ? '#dcfce7' : '#f1f5f9';
+    el.style.color = tone === 'error' ? '#991b1b' : tone === 'ok' ? '#166534' : '#475569';
+    el.textContent = message;
+  }
+
+  async function inspIntUploadFile(propertyId, file) {
+    if (!file) return;
+    inspIntSetStatus(propertyId, `Uploading ${file.name}…`, 'info');
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      fd.append('property_id', propertyId);
+      const r = await fetch('/api/interactions/email-drop', { method: 'POST', body: fd });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+      inspIntSetStatus(propertyId, `✓ Attached "${file.name}" to the timeline.`, 'ok');
+      // Refresh the modal so the new row appears.
+      await inspOpenPropertyDetail(propertyId);
+    } catch (e) {
+      inspIntSetStatus(propertyId, '✗ ' + e.message, 'error');
+    }
+  }
+
+  // Called after each modal render so the drop zone (newly injected DOM)
+  // gets its drag handlers. Also wires the file-picker fallback (click).
+  function inspIntWireDropZone(propertyId) {
+    const dz = document.getElementById(`inspIntDropZone-${propertyId}`);
+    const input = document.getElementById(`inspIntFileInput-${propertyId}`);
+    if (!dz || !input || dz.dataset.wired === '1') return;
+    dz.dataset.wired = '1';
+    dz.addEventListener('click', () => input.click());
+    input.addEventListener('change', () => {
+      if (input.files && input.files[0]) inspIntUploadFile(propertyId, input.files[0]);
+    });
+    const setHover = (on) => {
+      dz.style.background = on ? 'rgba(212,175,55,0.18)' : 'rgba(212,175,55,0.06)';
+      dz.style.borderColor = on ? '#92400e' : '#d4af37';
+    };
+    dz.addEventListener('dragenter', (e) => { e.preventDefault(); setHover(true); });
+    dz.addEventListener('dragover',  (e) => { e.preventDefault(); setHover(true); });
+    dz.addEventListener('dragleave', (e) => { if (e.target === dz) setHover(false); });
+    dz.addEventListener('drop', (e) => {
+      e.preventDefault();
+      setHover(false);
+      const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
+      if (file) inspIntUploadFile(propertyId, file);
+    });
+  }
+
+  // Lightweight inline form for logging a call / note / follow-up. Renders
+  // into a small modal overlay; no separate HTML scaffolding needed so this
+  // ships as one self-contained block.
+  function inspOpenLogInteraction(propertyId) {
+    if (!propertyId) return;
+    let overlay = document.getElementById('inspLogIntOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'inspLogIntOverlay';
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:2000; display:flex; align-items:flex-start; justify-content:center; padding:60px 16px; overflow-y:auto;';
+    overlay.innerHTML = `
+      <div style="background:#fff; max-width:520px; width:100%; border-radius:12px; padding:22px 24px; font-family:Inter,system-ui;">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="margin:0; font-family:Cormorant Garamond,Georgia,serif; font-size:22px; color:#0B1D34;">📞 Log interaction</h3>
+          <button id="inspLogIntClose" style="background:none; border:none; font-size:22px; cursor:pointer; color:#64748b;">×</button>
+        </div>
+        <form id="inspLogIntForm" style="display:flex; flex-direction:column; gap:12px;">
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">What happened</label>
+              <select id="liType" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+                <option value="phone">Phone call</option>
+                <option value="in_person">In person</option>
+                <option value="email_inbound">Email from homeowner</option>
+                <option value="email_outbound">Email to homeowner</option>
+                <option value="sms">Text message</option>
+                <option value="internal_note">Internal note (no homeowner)</option>
+              </select>
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">When</label>
+              <input type="datetime-local" id="liOccurredAt" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Subject (one-line headline)</label>
+            <input type="text" id="liSubject" placeholder="e.g. Called about pool gate code reset" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+          </div>
+          <div>
+            <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Notes</label>
+            <textarea id="liContent" rows="4" placeholder="What was discussed, what was promised, what's next…" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px; resize:vertical;"></textarea>
+          </div>
+          <div style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Follow up by (optional)</label>
+              <input type="date" id="liFollowUp" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+            <div>
+              <label style="display:block; font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.05em; text-transform:uppercase; margin-bottom:4px;">Logged by</label>
+              <input type="text" id="liLoggedBy" placeholder="Your name" style="width:100%; padding:8px 10px; border:1px solid #d0d7de; border-radius:6px; font-size:13px;">
+            </div>
+          </div>
+          <div id="liStatus" style="display:none; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>
+          <div style="display:flex; justify-content:flex-end; gap:8px; margin-top:4px;">
+            <button type="button" id="inspLogIntCancel" style="padding:9px 16px; background:#fff; border:1px solid #d0d7de; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; color:#475569;">Cancel</button>
+            <button type="submit" id="inspLogIntSubmit" style="padding:9px 18px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Save to timeline</button>
+          </div>
+        </form>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.getElementById('inspLogIntClose').addEventListener('click', close);
+    document.getElementById('inspLogIntCancel').addEventListener('click', close);
+
+    // Default occurred_at to now (datetime-local format YYYY-MM-DDTHH:MM)
+    const now = new Date();
+    const tz = new Date(now.getTime() - now.getTimezoneOffset() * 60000);
+    document.getElementById('liOccurredAt').value = tz.toISOString().slice(0, 16);
+
+    document.getElementById('inspLogIntForm').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const type = document.getElementById('liType').value;
+      const subject = document.getElementById('liSubject').value.trim();
+      const content = document.getElementById('liContent').value.trim();
+      const occurredLocal = document.getElementById('liOccurredAt').value;
+      const followUp = document.getElementById('liFollowUp').value;
+      const loggedBy = document.getElementById('liLoggedBy').value.trim();
+      const status = document.getElementById('liStatus');
+      const btn = document.getElementById('inspLogIntSubmit');
+
+      if (!subject && !content) {
+        status.style.display = 'block';
+        status.style.background = '#fee2e2'; status.style.color = '#991b1b';
+        status.textContent = 'Add a subject or notes so the timeline has something to show.';
+        return;
+      }
+
+      btn.disabled = true; btn.textContent = 'Saving…';
+      status.style.display = 'block';
+      status.style.background = '#f1f5f9'; status.style.color = '#475569';
+      status.textContent = 'Writing to the timeline…';
+
+      try {
+        const body = {
+          property_id: propertyId,
+          type,
+          subject: subject || null,
+          content: content || null,
+          occurred_at: occurredLocal ? new Date(occurredLocal).toISOString() : null,
+          follow_up_due_at: followUp ? new Date(followUp + 'T17:00:00').toISOString() : null,
+          logged_by: loggedBy || null,
+        };
+        const r = await fetch('/api/interactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        close();
+        await inspOpenPropertyDetail(propertyId);
+      } catch (err) {
+        status.style.background = '#fee2e2'; status.style.color = '#991b1b';
+        status.textContent = '✗ ' + err.message;
+        btn.disabled = false; btn.textContent = 'Save to timeline';
+      }
+    });
+  }
 
   async function inspMapInit() {
     const statusEl = document.getElementById('inspMapStatus');

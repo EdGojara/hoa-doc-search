@@ -1872,9 +1872,11 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         .select('id, opened_at, resolved_at, current_stage, current_stage_started_at, cure_period_ends_at, board_priority_at_open, resolved_via, primary_category_id, quality_status, confidence_weight, source, reviewed_at, review_notes, enforcement_categories(id, slug, label)')
         .eq('property_id', propertyId)
         .order('opened_at', { ascending: false }),
-      // Interactions
+      // Interactions — extended 2026-06-16 to include attachments JSONB and
+      // follow_up_due_at so the staff timeline can render dropped email
+      // files and overdue follow-up indicators.
       supabase.from('interactions')
-        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content')
+        .select('id, type, direction, subject, sent_at, delivery_method, violation_id, content, attachments, follow_up_due_at, source, notes')
         .eq('property_id', propertyId)
         .order('sent_at', { ascending: false })
         .limit(50),
@@ -2001,15 +2003,36 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         reviewed_at:       v.reviewed_at,
         review_notes:      v.review_notes,
       })),
-      interactions: interactions.map((i) => ({
-        id:              i.id,
-        type:            i.type,
-        direction:       i.direction,
-        subject:         i.subject,
-        sent_at:     i.sent_at,
-        delivery_method: i.delivery_method,
-        violation_id:    i.violation_id,
-        preview:         i.content ? String(i.content).slice(0, 240) : null,
+      interactions: await Promise.all(interactions.map(async (i) => {
+        // Pre-sign any attachment storage paths so the timeline can render
+        // clickable links without a second round-trip per file. 1hr matches
+        // builder_applications + observation thumbnails.
+        const atts = Array.isArray(i.attachments) ? i.attachments : [];
+        const signedAtts = await Promise.all(atts.map(async (a) => {
+          if (!a || !a.storage_path) return a;
+          try {
+            const { data: sd } = await supabase.storage
+              .from('homeowner-interactions')
+              .createSignedUrl(a.storage_path, 60 * 60);
+            return { ...a, signed_url: sd?.signedUrl || null };
+          } catch (_) {
+            return { ...a, signed_url: null };
+          }
+        }));
+        return {
+          id:              i.id,
+          type:            i.type,
+          direction:       i.direction,
+          subject:         i.subject,
+          sent_at:         i.sent_at,
+          delivery_method: i.delivery_method,
+          violation_id:    i.violation_id,
+          preview:         i.content ? String(i.content).slice(0, 240) : null,
+          attachments:     signedAtts,
+          follow_up_due_at: i.follow_up_due_at,
+          source:          i.source,
+          logged_by_note:  i.notes,
+        };
       })),
       inspections,
       observations_recent: observationsRecent,
