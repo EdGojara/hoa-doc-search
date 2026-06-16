@@ -1768,14 +1768,38 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
       throw new Error((j.error || 'Upload failed') + rawSnippet);
     }
     status.style.color = '#15803d';
-    status.textContent = `✓ Created ${j.reference_number}${j.fast_track ? ' (fast-track matched)' : ''}. Confidence: ${j.ai_confidence || '—'}. Opening detail panel…`;
+    // Builder match chip — tells staff INSTANTLY whether the system matched
+    // an existing builder, fuzzy-matched a close one, created a new row, or
+    // hit ambiguity that needs manual resolution. Ed 2026-06-16 "match if
+    // close, and SHOW that it did."
+    const bm = j.builder_match;
+    let builderLine = '';
+    if (bm) {
+      if (bm.match_type === 'exact') {
+        builderLine = `\n🏢 Matched existing builder: ${bm.matched_name}`;
+      } else if (bm.match_type === 'normalized') {
+        builderLine = `\n🏢 Close match: "${bm.extracted_name}" → existing ${bm.matched_name}`;
+      } else if (bm.match_type === 'domain') {
+        builderLine = `\n🏢 Matched by email domain @${bm.matched_domain}: ${bm.matched_name}`;
+      } else if (bm.match_type === 'created') {
+        builderLine = `\n🆕 New builder created: ${bm.extracted_name} — review the row before approving.`;
+      } else if (bm.match_type === 'ambiguous') {
+        const names = (bm.candidates || []).map((c) => c.company_name).join(', ');
+        builderLine = `\n⚠ Ambiguous — multiple builders match "${bm.extracted_name}" (${names}). Pick the right one on the detail panel.`;
+      }
+    }
+    status.textContent = `✓ Created ${j.reference_number}${j.fast_track ? ' (fast-track matched)' : ''}. Confidence: ${j.ai_confidence || '—'}.${builderLine}\nOpening detail panel…`;
+    status.style.whiteSpace = 'pre-wrap';
+    // Give the operator a beat to read the builder-match line. New / ambiguous
+    // cases hold longer so they don't miss it.
+    const delay = (bm && (bm.match_type === 'created' || bm.match_type === 'ambiguous')) ? 2200 : 1100;
     // Refresh queue + auto-open the new application so staff can verify
     // extraction + click Approve in one motion.
     setTimeout(async () => {
       closeUploadSubmissionModal();
       try { await loadQueue(); } catch (_) {}
       try { await loadDetail(j.application_id); } catch (_) {}
-    }, 800);
+    }, delay);
   } catch (err) {
     status.style.color = '#b91c1c';
     status.textContent = '✗ ' + err.message;

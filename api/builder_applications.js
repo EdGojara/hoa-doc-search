@@ -3117,16 +3117,47 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
     }
 
     // 3. Resolve / auto-create builder_companies row from extracted name.
+    // Uses the three-tier dedup ladder (exact -> normalized name -> email
+    // domain) so "DRB Group, Inc." matches an existing "DRB Group" instead
+    // of silently creating a duplicate row. Ed 2026-06-16 "match if close."
     let builderCompanyId = null;
+    let builderMatch = null;  // returned to UI so staff sees what happened
     if (extracted.builder_company_name) {
-      const { data: existingBc } = await supabase
-        .from('builder_companies')
-        .select('id')
-        .ilike('company_name', extracted.builder_company_name.trim())
-        .maybeSingle();
-      if (existingBc) {
-        builderCompanyId = existingBc.id;
+      const { resolveBuilderCompany } = require('../lib/builder_applications/resolve_builder_company');
+      const resolved = await resolveBuilderCompany(supabase, {
+        company_name:  extracted.builder_company_name,
+        contact_email: extracted.contact_email,
+        mgmt_co_id:    BEDROCK_MGMT_CO_ID,
+      });
+      if (!resolved.ok) {
+        return res.status(500).json({ error: 'builder resolution failed: ' + resolved.error, extracted });
+      }
+
+      if (resolved.id) {
+        builderCompanyId = resolved.id;
+        builderMatch = {
+          match_type:     resolved.match_type,        // 'exact' | 'normalized' | 'domain'
+          matched_name:   resolved.matched_name,
+          extracted_name: extracted.builder_company_name.trim(),
+          matched_domain: resolved.matched_domain || null,
+          notes: resolved.match_type === 'normalized'
+            ? `Matched by close name (extracted "${extracted.builder_company_name.trim()}" → existing "${resolved.matched_name}")`
+            : resolved.match_type === 'domain'
+            ? `Matched by email domain @${resolved.matched_domain} → existing "${resolved.matched_name}"`
+            : null,
+        };
+      } else if (resolved.match_type === 'ambiguous') {
+        // Multiple plausible matches. Don't pick silently — staff resolves.
+        builderMatch = {
+          match_type: 'ambiguous',
+          extracted_name: extracted.builder_company_name.trim(),
+          candidates: resolved.candidates || [],
+        };
+        // For v1 we'll still let the application land WITHOUT a builder_company_id;
+        // staff can pick the right one from the candidates list on the detail panel.
+        // This is the safer failure mode than auto-picking the wrong DRB.
       } else {
+        // match_type === 'created' — new builder
         const { data: newBc, error: bErr } = await supabase
           .from('builder_companies')
           .insert({
@@ -3145,6 +3176,11 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
           return res.status(500).json({ error: 'builder company create failed: ' + bErr.message, extracted });
         }
         builderCompanyId = newBc.id;
+        builderMatch = {
+          match_type: 'created',
+          extracted_name: extracted.builder_company_name.trim(),
+          new_builder_id: newBc.id,
+        };
       }
     }
 
@@ -3312,6 +3348,7 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
       fast_track: !!matchedMasterPlanId,
       extracted,
       ai_confidence: extracted.ai_confidence || null,
+      builder_match: builderMatch,   // exact | normalized | domain | created | ambiguous
     });
   } catch (err) {
     console.error('[builder_applications.upload-on-behalf]', err);
