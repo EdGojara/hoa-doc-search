@@ -57,6 +57,27 @@ async function requireAdmin(req, res) {
 }
 
 // ----------------------------------------------------------------------------
+// requireStaff — for endpoints staff (Karla, Laurie, anyone authenticated)
+// can use as part of their normal workflow. Use this when the endpoint
+// represents day-to-day work, NOT a setup / configuration / destructive
+// action. Allows role='admin' OR role='staff'. Blocks role='assistant'
+// (read-only tier) and unauthenticated.
+//
+// Ed 2026-06-16 audit class: previously misused requireAdmin on workflow
+// endpoints like /api/builder-applications/upload-on-behalf, which is
+// literally how Karla submits builder packets that came via email. The
+// admin gate blocked the people the endpoint was designed for.
+// ----------------------------------------------------------------------------
+async function requireStaff(req, res) {
+  const ctx = await resolveUserRole(req);
+  if (ctx.role !== 'admin' && ctx.role !== 'staff') {
+    res.status(403).json({ error: 'staff role required' });
+    return null;
+  }
+  return ctx;
+}
+
+// ----------------------------------------------------------------------------
 // GET /api/users  — list all team members
 // ----------------------------------------------------------------------------
 router.get('/', async (req, res) => {
@@ -246,4 +267,4 @@ router.patch('/:id', express.json({ limit: '32kb' }), async (req, res) => {
   }
 });
 
-module.exports = { router, resolveUserRole, requireAdmin };
+module.exports = { router, resolveUserRole, requireAdmin, requireStaff };

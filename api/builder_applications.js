@@ -3074,8 +3074,11 @@ router.post('/color-sheet-extract', upload.single('color_sheet_pdf'), async (req
 // ============================================================================
 router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, res) => {
   try {
-    const { requireAdmin } = require('./users');
-    const ctx = await requireAdmin(req, res);
+    // Staff workflow — admin OR staff role can use. Was previously gated to
+    // admin-only by mistake, which blocked Karla / Laurie / anyone non-Ed
+    // from running the very workflow this endpoint exists for.
+    const { requireStaff } = require('./users');
+    const ctx = await requireStaff(req, res);
     if (!ctx) return;
 
     const file = req.file;
