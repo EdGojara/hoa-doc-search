@@ -34317,7 +34317,31 @@ ${questionsPage}
         : `<td style="text-align:center; padding:8px; background:${tone}; font-weight:700; color:#1f2937;">${n}</td>`;
 
       const hasZeroChunks = totals.zero_chunks > 0;
+      // Missing-foundation detection: a community with zero Declaration AND
+      // zero Bylaws is structurally exposed -- every askEd query against it
+      // either falls through to other communities' docs (cross-community
+      // pollution) or hedges. Declaration alone is the bare minimum; Bylaws
+      // is a strong second. Flag communities missing one or both.
+      const missingFoundation = rows
+        .map((r) => {
+          const missing = [];
+          if (r.categories.declaration_ccrs.total === 0) missing.push('Declaration');
+          if (r.categories.bylaws.total === 0) missing.push('Bylaws');
+          return missing.length > 0 ? { name: r.community_name, missing } : null;
+        })
+        .filter(Boolean);
       list.innerHTML = `
+        ${missingFoundation.length > 0 ? `
+          <div style="display:flex; gap:10px; align-items:flex-start; padding:10px 12px; background:#fef2f2; border:2px solid #dc2626; border-radius:6px; margin-bottom:10px; font-size:12.5px; color:#7f1d1d;">
+            <span style="font-size:14px;">🚨</span>
+            <div style="flex:1;">
+              <strong>${missingFoundation.length} communit${missingFoundation.length === 1 ? 'y' : 'ies'} missing foundational governing docs.</strong> Without these, askEd queries against the community fall back to whatever ranks closest across the portfolio -- the cross-community pollution scar from CLAUDE.md. Highest-priority ingestion gap.
+              <ul style="margin:6px 0 0 18px; padding:0; font-size:12px;">
+                ${missingFoundation.map((m) => `<li><strong>${escapeHtml(m.name)}</strong> — missing: ${escapeHtml(m.missing.join(', '))}</li>`).join('')}
+              </ul>
+            </div>
+          </div>
+        ` : ''}
         ${hasZeroChunks ? `
           <div style="display:flex; gap:10px; align-items:center; padding:10px 12px; background:#fef2f2; border:1px solid #f87171; border-radius:6px; margin-bottom:10px; font-size:12.5px; color:#991b1b;">
             <span style="font-size:14px;">🔗</span>
