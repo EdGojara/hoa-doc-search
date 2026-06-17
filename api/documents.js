@@ -1444,6 +1444,49 @@ router.get('/governing-health', async (req, res) => {
       }
     }
 
+    // Pending amendment suggestions for this community's library docs so
+    // the panel can cross-link a "PROBABLY STALE" row to its own pending
+    // review when one exists. Single batched query instead of per-row.
+    const pendingAmendmentsByDocId = new Map();
+    if (libIds.length > 0) {
+      const { data: pendingLogs } = await supabase
+        .from('library_document_amendment_log')
+        .select('id, amendment_library_document_id, superseded_library_document_id, recorded_at')
+        .in('amendment_library_document_id', libIds)
+        .eq('action', 'ai_suggested')
+        .order('recorded_at', { ascending: false });
+      // Latest pending suggestion per amendment doc. Then filter out any
+      // already confirmed -- if supersession_recorded_at IS NOT NULL on the
+      // amendment doc, the operator already linked it.
+      const confirmedSet = new Set((libDocs || [])
+        .filter((d) => d.supersession_recorded_at)
+        .map((d) => d.id));
+      const seen = new Set();
+      for (const row of (pendingLogs || [])) {
+        if (confirmedSet.has(row.amendment_library_document_id)) continue;
+        if (seen.has(row.amendment_library_document_id)) continue;
+        seen.add(row.amendment_library_document_id);
+        // Index by BOTH the amendment doc AND the proposed parent doc, so
+        // the UI can light up either row.
+        pendingAmendmentsByDocId.set(row.amendment_library_document_id, {
+          log_id: row.id,
+          role: 'amendment',
+          partner_doc_id: row.superseded_library_document_id,
+        });
+        if (row.superseded_library_document_id) {
+          // Don't overwrite if this parent already has an entry from a
+          // different (closer / more confident) amendment.
+          if (!pendingAmendmentsByDocId.has(row.superseded_library_document_id)) {
+            pendingAmendmentsByDocId.set(row.superseded_library_document_id, {
+              log_id: row.id,
+              role: 'parent',
+              partner_doc_id: row.amendment_library_document_id,
+            });
+          }
+        }
+      }
+    }
+
     res.json({
       community: { id: comm.id, name: comm.name },
       library_docs: (libDocs || []).map((d) => ({
@@ -1462,6 +1505,7 @@ router.get('/governing-health', async (req, res) => {
         amendments_count: (supersededByMap.get(d.id) || []).length,
         superseded_at: d.superseded_at,
         superseded_by_id: d.superseded_by_id,
+        pending_amendment: pendingAmendmentsByDocId.get(d.id) || null,
       })),
       legacy_docs: legacyDocs,
       duplicate_groups: duplicateGroups,
