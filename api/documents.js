@@ -1366,6 +1366,156 @@ router.post('/amendment-backfill', express.json(), async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/documents/relink-zero-chunk-docs
+// ----------------------------------------------------------------------------
+// Closes the loop on the zero-chunk legacy-link bug the portfolio matrix
+// surfaces. For every library_document whose chunk_count (across both link
+// paths) is zero, attempts to match against rows in the legacy documents
+// table by file_name_original or title containing significant filename
+// keywords, then stamps migrated_to_library_id on the matched chunks.
+//
+// Scoping: governing-doc categories only (the matrix's scope). Conservative
+// match threshold to avoid mislinking. Returns per-doc results so operator
+// sees exactly what got linked.
+// ============================================================================
+router.post('/relink-zero-chunk-docs', express.json(), async (req, res) => {
+  try {
+    const communityId = req.body?.community_id || null;
+
+    let lq = supabase
+      .from('library_documents')
+      .select('id, title, file_name_original, category, community_id, communities:community_id(name)')
+      .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation']);
+    if (communityId) lq = lq.eq('community_id', communityId);
+    const { data: libDocs } = await lq;
+    if (!libDocs || libDocs.length === 0) {
+      return res.json({ checked: 0, relinked: 0, results: [] });
+    }
+
+    // Identify which docs are zero-chunks (both link paths)
+    const docIds = libDocs.map((d) => d.id);
+    const [{ data: byMeta }, { data: byCol }] = await Promise.all([
+      supabase.from('documents').select('metadata').in('metadata->>library_document_id', docIds),
+      supabase.from('documents').select('migrated_to_library_id').in('migrated_to_library_id', docIds),
+    ]);
+    const haveChunks = new Set();
+    for (const row of (byMeta || [])) {
+      const id = row.metadata?.library_document_id;
+      if (id) haveChunks.add(id);
+    }
+    for (const row of (byCol || [])) {
+      if (row.migrated_to_library_id) haveChunks.add(row.migrated_to_library_id);
+    }
+    const zeroChunkDocs = libDocs.filter((d) => !haveChunks.has(d.id));
+    if (zeroChunkDocs.length === 0) {
+      return res.json({ checked: libDocs.length, relinked: 0, results: [], message: 'No zero-chunk docs in scope.' });
+    }
+
+    // Try to match each zero-chunk doc against legacy documents by filename
+    // similarity. We pull a small candidate set per doc using the community
+    // tag + a filename fragment.
+    const results = [];
+    let totalRelinked = 0;
+
+    for (const d of zeroChunkDocs) {
+      const fname = (d.file_name_original || '').toLowerCase();
+      const title = (d.title || '').toLowerCase();
+      const community = (d.communities?.name || '').toLowerCase();
+
+      // Build search fragments: significant tokens from filename + title.
+      // Strip stopwords + community name tokens (low signal).
+      const STOP = new Set(['the','and','of','for','with','to','in','on','a','an','is','it','at','by','this','that']);
+      const commToks = new Set(community.split(/\s+/).filter(Boolean));
+      const tokenize = (s) => s.replace(/[._-]/g, ' ').replace(/[^a-z0-9\s]/g, ' ')
+        .split(/\s+/).filter((t) => t.length >= 4 && !STOP.has(t) && !commToks.has(t));
+      const tokens = Array.from(new Set([...tokenize(fname), ...tokenize(title)])).slice(0, 5);
+
+      if (tokens.length === 0) {
+        results.push({ id: d.id, title: d.title, status: 'no_match_tokens' });
+        continue;
+      }
+
+      // Find legacy candidates whose metadata.filename contains the first
+      // token AND whose community matches.
+      const firstToken = tokens[0];
+      const { data: candidates } = await supabase
+        .from('documents')
+        .select('id, metadata')
+        .ilike('metadata->>filename', `%${firstToken}%`)
+        .ilike('metadata->>community', `%${community}%`)
+        .is('migrated_to_library_id', null)
+        .limit(500);
+
+      if (!candidates || candidates.length === 0) {
+        results.push({ id: d.id, title: d.title, status: 'no_legacy_match', tokens });
+        continue;
+      }
+
+      // Score candidates by token overlap. Group by filename so a doc with
+      // 100 chunks under one filename counts as one match.
+      const filenameScore = new Map();
+      const filenameIds = new Map();
+      for (const c of candidates) {
+        const candFname = (c.metadata?.filename || '').toLowerCase();
+        if (!candFname) continue;
+        if (!filenameScore.has(candFname)) {
+          const candToks = new Set([...tokenize(candFname)]);
+          let score = 0;
+          for (const t of tokens) if (candToks.has(t)) score += 1;
+          filenameScore.set(candFname, score);
+          filenameIds.set(candFname, []);
+        }
+        filenameIds.get(candFname).push(c.id);
+      }
+
+      // Best match needs at least half the tokens to overlap.
+      const ranked = Array.from(filenameScore.entries())
+        .sort((a, b) => b[1] - a[1]);
+      const minScore = Math.max(2, Math.ceil(tokens.length / 2));
+      const best = ranked.find(([, score]) => score >= minScore);
+
+      if (!best) {
+        results.push({
+          id: d.id, title: d.title, status: 'no_confident_match', tokens,
+          best_candidate: ranked[0] ? { filename: ranked[0][0], score: ranked[0][1] } : null,
+        });
+        continue;
+      }
+
+      const [matchedFilename] = best;
+      const matchedIds = filenameIds.get(matchedFilename);
+
+      // Stamp migrated_to_library_id on every matched chunk.
+      const { error: updErr } = await supabase
+        .from('documents')
+        .update({ migrated_to_library_id: d.id })
+        .in('id', matchedIds);
+      if (updErr) {
+        results.push({ id: d.id, title: d.title, status: 'update_failed', error: updErr.message });
+        continue;
+      }
+      totalRelinked += matchedIds.length;
+      results.push({
+        id: d.id, title: d.title, status: 'relinked',
+        matched_filename: matchedFilename, chunks_linked: matchedIds.length, score: best[1],
+      });
+    }
+
+    res.json({
+      checked: libDocs.length,
+      zero_chunk_count: zeroChunkDocs.length,
+      relinked_docs: results.filter((r) => r.status === 'relinked').length,
+      total_chunks_relinked: totalRelinked,
+      message: `Checked ${libDocs.length} governing docs in scope. ${zeroChunkDocs.length} had zero chunks; ${results.filter((r) => r.status === 'relinked').length} successfully re-linked to ${totalRelinked} chunks.`,
+      results,
+    });
+  } catch (err) {
+    console.error('[documents/relink-zero-chunk-docs]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 // Governing Doc Health Portfolio Overview — aggregate matrix across every
 // community. One bird's-eye query so operators see at a glance which
 // communities have a complete + current library and which have gaps.

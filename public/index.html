@@ -34203,7 +34203,16 @@ ${questionsPage}
         ? '<td style="text-align:center; padding:8px; color:#cbd5e1;">—</td>'
         : `<td style="text-align:center; padding:8px; background:${tone}; font-weight:700; color:#1f2937;">${n}</td>`;
 
+      const hasZeroChunks = totals.zero_chunks > 0;
       list.innerHTML = `
+        ${hasZeroChunks ? `
+          <div style="display:flex; gap:10px; align-items:center; padding:10px 12px; background:#fef2f2; border:1px solid #f87171; border-radius:6px; margin-bottom:10px; font-size:12.5px; color:#991b1b;">
+            <span style="font-size:14px;">🔗</span>
+            <div style="flex:1;"><strong>${totals.zero_chunks} governing doc${totals.zero_chunks === 1 ? '' : 's'} ha${totals.zero_chunks === 1 ? 's' : 've'} zero chunks linked.</strong> This is the legacy-link bug -- the library row exists but no chunks point at it via either link path. Re-link attempts a fuzzy filename match against the legacy documents table and stamps migrated_to_library_id on hits.</div>
+            <button class="action-btn" onclick="docsRelinkZeroChunkDocs(this)" id="docsRelinkBtn" style="font-size:12px; padding:7px 14px; white-space:nowrap;">🔁 Re-link zero-chunk docs</button>
+          </div>
+          <div id="docsRelinkProgress" style="display:none; margin-bottom:10px;"></div>
+        ` : ''}
         <div style="overflow-x:auto;">
           <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
             <thead>
@@ -34269,6 +34278,66 @@ ${questionsPage}
     const sel = document.getElementById('govHealthCommunity');
     if (sel) sel.value = communityId;
     docsLoadGoverningHealth();
+  }
+
+  // Re-link zero-chunk governing docs across the portfolio (or current
+  // community if drilled in). Scans library rows with no chunks via either
+  // link path, attempts a fuzzy filename match against the legacy documents
+  // table, stamps migrated_to_library_id on hits.
+  async function docsRelinkZeroChunkDocs(btn) {
+    const sel = document.getElementById('govHealthCommunity');
+    const communityId = sel?.value || null;
+    const scope = communityId ? 'this community' : 'every community';
+    if (!confirm(`Re-link zero-chunk governing docs across ${scope}?\n\nFor each library doc with no chunks attached, the system tries to find matching legacy chunks by filename token overlap. Conservative match threshold so wrong-links should be rare; results are reported per-doc.\n\nThis can take 30-60 seconds depending on the legacy table size.`)) return;
+    const progress = document.getElementById('docsRelinkProgress');
+    if (progress) {
+      progress.style.display = 'block';
+      progress.innerHTML = '<div style="padding:10px 12px; background:#dbeafe; border:1px solid #93c5fd; color:#1e3a8a; border-radius:6px; font-size:12.5px;">Scanning zero-chunk docs and matching against legacy table…</div>';
+    }
+    const originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳ Re-linking…';
+    try {
+      const body = communityId ? { community_id: communityId } : {};
+      const r = await fetch('/api/documents/relink-zero-chunk-docs', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'relink failed');
+      btn.textContent = `✓ ${j.relinked_docs} re-linked`;
+      setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+      if (progress) {
+        const resultRows = (j.results || []).map((r) => {
+          const statusColor = r.status === 'relinked' ? '#166534' : '#92400e';
+          const statusBg = r.status === 'relinked' ? '#dcfce7' : '#fef3c7';
+          const detail = r.status === 'relinked'
+            ? `matched "${r.matched_filename || ''}" (${r.chunks_linked || 0} chunks, score ${r.score || 0})`
+            : r.status === 'no_legacy_match' ? 'no legacy doc found with overlapping filename tokens'
+            : r.status === 'no_confident_match' ? `best candidate "${r.best_candidate?.filename || '?'}" only ${r.best_candidate?.score || 0} token(s) matched (need 2+)`
+            : r.status === 'no_match_tokens' ? 'filename + title had no significant tokens'
+            : r.status === 'update_failed' ? `update SQL failed: ${r.error}`
+            : r.status;
+          return `<li style="margin:3px 0;"><span style="background:${statusBg}; color:${statusColor}; padding:1px 6px; border-radius:99px; font-size:10.5px; font-weight:700;">${r.status}</span> <strong>${escapeHtml(r.title || '(untitled)')}</strong>: <span style="opacity:0.85;">${escapeHtml(detail)}</span></li>`;
+        }).join('');
+        progress.innerHTML = `<div style="padding:10px 12px; background:${j.relinked_docs > 0 ? '#dcfce7' : '#fef3c7'}; border:1px solid ${j.relinked_docs > 0 ? '#86efac' : '#fde68a'}; color:${j.relinked_docs > 0 ? '#166534' : '#92400e'}; border-radius:8px; font-size:12.5px;">
+          <strong>${escapeHtml(j.message || '')}</strong>
+          ${resultRows ? `<details style="margin-top:8px;"><summary style="cursor:pointer; font-size:11.5px;">Per-doc results (${(j.results || []).length})</summary><ul style="margin:6px 0 0 18px; padding:0; font-size:11.5px;">${resultRows}</ul></details>` : ''}
+        </div>`;
+      }
+      // Refresh whichever view is current so the operator sees the updated
+      // chunk counts immediately.
+      if (communityId) {
+        docsLoadGoverningHealth();
+      } else {
+        docsLoadGovHealthPortfolio();
+      }
+    } catch (e) {
+      btn.disabled = false; btn.textContent = originalText;
+      if (progress) {
+        progress.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border:1px solid #f87171; color:#991b1b; border-radius:6px; font-size:12.5px;">Re-link failed: ${escapeHtml(e.message)}</div>`;
+      }
+    }
   }
 
   // ===== Governing Doc Health (Ed 2026-06-18, post amendment management) =====
