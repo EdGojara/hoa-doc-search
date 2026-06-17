@@ -1366,6 +1366,125 @@ router.post('/amendment-backfill', express.json(), async (req, res) => {
 });
 
 // ============================================================================
+// Governing Doc Health Portfolio Overview — aggregate matrix across every
+// community. One bird's-eye query so operators see at a glance which
+// communities have a complete + current library and which have gaps.
+// Returns one row per community with per-category counts + total flags.
+// ============================================================================
+router.get('/governing-health/portfolio', async (req, res) => {
+  try {
+    // BEDROCK_MGMT_CO_ID already defined at top of this file
+    // All Bedrock-managed communities
+    const { data: communities, error: cErr } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('active', true)
+      .order('name');
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!communities || communities.length === 0) {
+      return res.json({ communities: [] });
+    }
+
+    const communityIds = communities.map((c) => c.id);
+
+    // All governing-doc library rows across the portfolio
+    const { data: libDocs } = await supabase
+      .from('library_documents')
+      .select('id, title, category, status, community_id, effective_date, supersedes_library_document_id, amended_sections, supersession_recorded_at')
+      .in('community_id', communityIds)
+      .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation']);
+    const docs = libDocs || [];
+    const allDocIds = docs.map((d) => d.id);
+
+    // Chunk counts per doc (both link paths) so we can flag zero-chunk docs.
+    const chunkCountById = new Map();
+    if (allDocIds.length > 0) {
+      const [byMeta, byCol] = await Promise.all([
+        supabase.from('documents').select('metadata').in('metadata->>library_document_id', allDocIds),
+        supabase.from('documents').select('migrated_to_library_id').in('migrated_to_library_id', allDocIds),
+      ]);
+      for (const row of (byMeta.data || [])) {
+        const id = row.metadata?.library_document_id;
+        if (id) chunkCountById.set(id, (chunkCountById.get(id) || 0) + 1);
+      }
+      for (const row of (byCol.data || [])) {
+        const id = row.migrated_to_library_id;
+        if (id) chunkCountById.set(id, (chunkCountById.get(id) || 0) + 1);
+      }
+    }
+
+    // Pending amendment suggestions across the portfolio (count per community)
+    const pendingByCommunity = new Map();
+    if (allDocIds.length > 0) {
+      const { data: pendingLogs } = await supabase
+        .from('library_document_amendment_log')
+        .select('amendment_library_document_id')
+        .in('amendment_library_document_id', allDocIds)
+        .eq('action', 'ai_suggested');
+      const confirmedSet = new Set(docs.filter((d) => d.supersession_recorded_at).map((d) => d.id));
+      const seen = new Set();
+      const docToCommunityId = new Map(docs.map((d) => [d.id, d.community_id]));
+      for (const row of (pendingLogs || [])) {
+        const docId = row.amendment_library_document_id;
+        if (confirmedSet.has(docId) || seen.has(docId)) continue;
+        seen.add(docId);
+        const cid = docToCommunityId.get(docId);
+        if (cid) pendingByCommunity.set(cid, (pendingByCommunity.get(cid) || 0) + 1);
+      }
+    }
+
+    // Build the per-community summary
+    const summary = communities.map((c) => {
+      const myDocs = docs.filter((d) => d.community_id === c.id);
+      const categoryStats = {};
+      for (const cat of ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation']) {
+        const list = myDocs.filter((d) => d.category === cat);
+        categoryStats[cat] = {
+          total: list.length,
+          current: list.filter((d) => d.status === 'current' || (!d.status && d.status !== 'superseded')).length,
+          superseded: list.filter((d) => d.status === 'superseded').length,
+          amendments: list.filter((d) => d.supersedes_library_document_id && d.supersession_recorded_at).length,
+          zero_chunks: list.filter((d) => (chunkCountById.get(d.id) || 0) === 0).length,
+          missing_effective_date: list.filter((d) => !d.effective_date).length,
+        };
+      }
+      // Probably-stale count: per category, count docs older than the newest
+      // that have no amendment link in either direction (matches the per-
+      // community panel's heuristic).
+      let probablyStale = 0;
+      for (const cat of ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation']) {
+        const list = myDocs.filter((d) => d.category === cat);
+        if (list.length < 2) continue;
+        const datedList = list.filter((d) => d.effective_date && d.status !== 'superseded');
+        if (datedList.length < 2) continue;
+        const newest = datedList.reduce((a, b) => a.effective_date > b.effective_date ? a : b);
+        for (const d of datedList) {
+          if (d.id === newest.id) continue;
+          if (d.supersedes_library_document_id && d.supersession_recorded_at) continue;
+          if (d.effective_date < newest.effective_date) probablyStale += 1;
+        }
+      }
+      return {
+        community_id: c.id,
+        community_name: c.name,
+        categories: categoryStats,
+        pending_amendments: pendingByCommunity.get(c.id) || 0,
+        probably_stale: probablyStale,
+        total_governing_docs: myDocs.length,
+        total_zero_chunks: Object.values(categoryStats).reduce((s, x) => s + x.zero_chunks, 0),
+        total_missing_dates: Object.values(categoryStats).reduce((s, x) => s + x.missing_effective_date, 0),
+      };
+    });
+
+    res.json({ communities: summary });
+  } catch (err) {
+    console.error('[documents/governing-health/portfolio]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 // Governing Doc Health — per-community diagnostic of declaration/bylaws/rules
 // Ed 2026-06-18, follow-up to amendment management. Surfaces every governing
 // doc with chunk counts, supersession state, and duplicate flags so the

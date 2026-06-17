@@ -9847,15 +9847,16 @@
       <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px;">
         <h3 style="margin:0;">⚖️ Governing Doc Health</h3>
         <div style="display:flex; gap:8px; align-items:center;">
+          <button class="secondary-btn" onclick="docsLoadGovHealthPortfolio()" style="font-size:12px; padding:6px 10px;">🌐 Portfolio overview</button>
           <select id="govHealthCommunity" onchange="docsLoadGoverningHealth()" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px;">
-            <option value="">— pick a community —</option>
+            <option value="">— or pick a community —</option>
           </select>
           <button class="secondary-btn" onclick="docsLoadGoverningHealth()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
-          <button class="secondary-btn" onclick="docsRunAmendmentBackfill(this)" id="docsAmendBackfillBtn" style="font-size:12px; padding:6px 14px; background:#ede9fe; border:1px solid #7c3aed; color:#5b21b6;" title="Scans the library for governing docs whose titles look like amendments and runs the AI detection retroactively. Results land in the Pending amendment reviews panel below.">🔍 Detect amendments in existing library</button>
+          <button class="secondary-btn" onclick="docsRunAmendmentBackfill(this)" id="docsAmendBackfillBtn" style="font-size:12px; padding:6px 14px; background:#ede9fe; border:1px solid #7c3aed; color:#5b21b6;" title="Scans this community's library for governing docs whose titles look like amendments and runs the AI detection retroactively. For portfolio-wide, use the Pending amendment reviews panel below.">🔍 Detect amendments in this community</button>
         </div>
       </div>
-      <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">Every Declaration, Bylaws, Rules &amp; Regs, and Articles doc for the picked community. Chunks across both link paths (metadata + legacy migrated). Duplicate groups (≥70% title similarity) highlighted; mark one canonical and supersede the rest. Legacy docs not yet promoted show at the bottom — promote those via the Legacy Library panel.</p>
-      <div id="govHealthList"><em style="color:#94A3B8;">Pick a community.</em></div>
+      <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">Portfolio overview surfaces every community's Declaration / Bylaws / Rules / Articles state at a glance — counts per category, pending amendments, probably-stale, missing dates, zero-chunk docs. Click a community in the matrix to drill into its detail panel.</p>
+      <div id="govHealthList"><em style="color:#94A3B8;">Click <strong>🌐 Portfolio overview</strong> or pick a community to start.</em></div>
     </div>
 
     <!-- Pending amendment reviews. When the upload extractor flags a doc as
@@ -34125,6 +34126,122 @@ ${questionsPage}
     } catch (e) {
       status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Save failed:</strong> ${escapeHtml(e.message)}</div>`;
     }
+  }
+
+  // ===== Governing Doc Health Portfolio Overview (Ed 2026-06-18) =====
+  // Bird's-eye matrix: one row per community, columns per governing-doc
+  // category, plus aggregate flag columns (pending amendments, probably-
+  // stale, zero-chunks, missing-dates). Operator default landing -- click
+  // a community to drill into its detail panel.
+  async function docsLoadGovHealthPortfolio() {
+    const list = document.getElementById('govHealthList');
+    if (!list) return;
+    list.innerHTML = '<em style="color:#94A3B8;">Loading portfolio overview…</em>';
+    try {
+      const r = await fetch('/api/documents/governing-health/portfolio');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      const rows = j.communities || [];
+      if (rows.length === 0) {
+        list.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8;">No active communities found.</div>';
+        return;
+      }
+
+      // Totals row across the portfolio
+      const totals = {
+        declaration_ccrs: 0, bylaws: 0, rules_and_regulations: 0, articles_of_incorporation: 0,
+        pending: 0, stale: 0, zero_chunks: 0, missing_dates: 0,
+      };
+      for (const c of rows) {
+        totals.declaration_ccrs += c.categories.declaration_ccrs.total;
+        totals.bylaws += c.categories.bylaws.total;
+        totals.rules_and_regulations += c.categories.rules_and_regulations.total;
+        totals.articles_of_incorporation += c.categories.articles_of_incorporation.total;
+        totals.pending += c.pending_amendments;
+        totals.stale += c.probably_stale;
+        totals.zero_chunks += c.total_zero_chunks;
+        totals.missing_dates += c.total_missing_dates;
+      }
+
+      const cellCat = (s) => {
+        if (s.total === 0) return '<td style="text-align:center; padding:8px; color:#cbd5e1;">—</td>';
+        const tone = s.zero_chunks > 0 ? 'background:#fef2f2; color:#991b1b;' : 'color:#1f2937;';
+        const subline = [];
+        if (s.amendments > 0) subline.push(`${s.amendments}A`);
+        if (s.superseded > 0) subline.push(`${s.superseded}S`);
+        if (s.zero_chunks > 0) subline.push(`<span style="color:#991b1b;">${s.zero_chunks}⚠</span>`);
+        return `<td style="text-align:center; padding:8px; ${tone}"><strong>${s.total}</strong>${subline.length ? `<div style="font-size:10px; opacity:0.8; margin-top:1px;">${subline.join(' · ')}</div>` : ''}</td>`;
+      };
+      const flagCell = (n, tone) => n === 0
+        ? '<td style="text-align:center; padding:8px; color:#cbd5e1;">—</td>'
+        : `<td style="text-align:center; padding:8px; background:${tone}; font-weight:700; color:#1f2937;">${n}</td>`;
+
+      list.innerHTML = `
+        <div style="overflow-x:auto;">
+          <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+            <thead>
+              <tr style="background:#1e3a8a; color:#fff;">
+                <th style="padding:8px 10px; text-align:left; position:sticky; left:0; background:#1e3a8a;">Community</th>
+                <th style="padding:8px; text-align:center;" title="Declaration / CC&Rs">Decl.</th>
+                <th style="padding:8px; text-align:center;">Bylaws</th>
+                <th style="padding:8px; text-align:center;">Rules</th>
+                <th style="padding:8px; text-align:center;" title="Articles of Incorporation">Articles</th>
+                <th style="padding:8px; text-align:center;" title="Pending amendment reviews">📜 Pending</th>
+                <th style="padding:8px; text-align:center;" title="Probably-stale rows -- older docs with no amendment link">⚠ Stale</th>
+                <th style="padding:8px; text-align:center;" title="Library docs with zero chunks attached -- legacy link bug indicator">🔗 0 chunks</th>
+                <th style="padding:8px; text-align:center;" title="Docs with no effective_date populated">📅 No date</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows.map((c) => `
+                <tr style="border-bottom:1px solid #e5e7eb; cursor:pointer; transition:background 0.1s;"
+                    onmouseover="this.style.background='#f8fafc'" onmouseout="this.style.background=''"
+                    onclick="docsGovHealthDrillInto('${c.community_id}', ${JSON.stringify(c.community_name).replace(/"/g, '&quot;')})">
+                  <td style="padding:8px 10px; font-weight:600; color:#1e40af; position:sticky; left:0; background:inherit;">${escapeHtml(c.community_name)}</td>
+                  ${cellCat(c.categories.declaration_ccrs)}
+                  ${cellCat(c.categories.bylaws)}
+                  ${cellCat(c.categories.rules_and_regulations)}
+                  ${cellCat(c.categories.articles_of_incorporation)}
+                  ${flagCell(c.pending_amendments, '#ede9fe')}
+                  ${flagCell(c.probably_stale, '#fee2e2')}
+                  ${flagCell(c.total_zero_chunks, '#fef2f2')}
+                  ${flagCell(c.total_missing_dates, '#fef3c7')}
+                </tr>
+              `).join('')}
+              <tr style="border-top:2px solid #1e3a8a; background:#f8fafc; font-weight:700;">
+                <td style="padding:8px 10px; position:sticky; left:0; background:#f8fafc;">TOTALS</td>
+                <td style="text-align:center; padding:8px;">${totals.declaration_ccrs}</td>
+                <td style="text-align:center; padding:8px;">${totals.bylaws}</td>
+                <td style="text-align:center; padding:8px;">${totals.rules_and_regulations}</td>
+                <td style="text-align:center; padding:8px;">${totals.articles_of_incorporation}</td>
+                <td style="text-align:center; padding:8px; color:${totals.pending > 0 ? '#5b21b6' : '#cbd5e1'};">${totals.pending || '—'}</td>
+                <td style="text-align:center; padding:8px; color:${totals.stale > 0 ? '#991b1b' : '#cbd5e1'};">${totals.stale || '—'}</td>
+                <td style="text-align:center; padding:8px; color:${totals.zero_chunks > 0 ? '#991b1b' : '#cbd5e1'};">${totals.zero_chunks || '—'}</td>
+                <td style="text-align:center; padding:8px; color:${totals.missing_dates > 0 ? '#92400e' : '#cbd5e1'};">${totals.missing_dates || '—'}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:10px; font-size:11.5px; color:#6b7280; line-height:1.6;">
+          <strong>Cell legend:</strong> <code style="background:#eff6ff; padding:1px 4px; border-radius:3px;">N</code> total docs ·
+          <code style="background:#eff6ff; padding:1px 4px; border-radius:3px;">NA</code> N confirmed amendments ·
+          <code style="background:#eff6ff; padding:1px 4px; border-radius:3px;">NS</code> N superseded ·
+          <code style="background:#fef2f2; padding:1px 4px; border-radius:3px; color:#991b1b;">N⚠</code> N with zero chunks (link bug)
+          <br>
+          <strong>Click any community row</strong> to drill into its detail panel with per-doc actions.
+        </div>
+      `;
+    } catch (e) {
+      list.innerHTML = `<div style="color:#b91c1c; padding:8px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function docsGovHealthDrillInto(communityId, communityName) {
+    // Set the dropdown to the picked community and trigger the existing
+    // per-community loader. Smooth-scroll to top of the panel after.
+    const sel = document.getElementById('govHealthCommunity');
+    if (sel) sel.value = communityId;
+    docsLoadGoverningHealth();
   }
 
   // ===== Governing Doc Health (Ed 2026-06-18, post amendment management) =====
