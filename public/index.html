@@ -9874,6 +9874,33 @@
         </div>
       </div>
       <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">The AI flagged these uploads as amendments to an existing doc. Confirm the parent doc + sections so retrieval treats the amendment as current and the original as superseded for those sections.</p>
+      <!-- Filter + bulk action controls. Hidden until there are >3 suggestions
+           (no point in filtering a list of 2). Lets staff knock out the
+           high-confidence-easy cases in one click and focus on ambiguous. -->
+      <div id="docsAmendmentReviewsControls" style="display:none; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:10px; gap:10px; flex-wrap:wrap; align-items:center;">
+        <span style="font-size:11.5px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.4px;">Filter:</span>
+        <label style="font-size:12px; color:#475569; display:inline-flex; align-items:center; gap:4px;">
+          Min confidence
+          <select id="docsAmendmentMinConf" onchange="docsRenderAmendmentList()" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:4px;">
+            <option value="0">any</option>
+            <option value="0.35">≥35%</option>
+            <option value="0.5">≥50%</option>
+            <option value="0.7" selected>≥70%</option>
+            <option value="0.85">≥85%</option>
+          </select>
+        </label>
+        <label style="font-size:12px; color:#475569; display:inline-flex; align-items:center; gap:4px;">
+          Community
+          <select id="docsAmendmentCommunityFilter" onchange="docsRenderAmendmentList()" style="font-size:12px; padding:3px 6px; border:1px solid #d0d7de; border-radius:4px;">
+            <option value="">all</option>
+          </select>
+        </label>
+        <label style="font-size:12px; color:#475569; display:inline-flex; align-items:center; gap:4px;">
+          <input type="checkbox" id="docsAmendmentHasParentOnly" onchange="docsRenderAmendmentList()" checked> only with a proposed parent
+        </label>
+        <span id="docsAmendmentFilterCount" style="font-size:11.5px; color:#6b7280; margin-left:8px;"></span>
+        <button class="action-btn" onclick="docsBulkConfirmAmendments(this)" id="docsBulkConfirmBtn" style="font-size:12px; padding:6px 14px; margin-left:auto;" title="Confirm every visible suggestion (after applying the filters above) in one click.">✓ Bulk confirm visible</button>
+      </div>
       <div id="docsPortfolioBackfillProgress" style="display:none; margin-bottom:10px;"></div>
       <div id="docsAmendmentReviewsList"></div>
     </div>
@@ -34499,27 +34526,117 @@ ${questionsPage}
   }
 
   // ===== Pending amendment reviews (migration 228, Ed 2026-06-18) =====
+  let _docsAmendmentSuggestionsCache = [];
   async function docsLoadAmendmentReviews() {
     const panel = document.getElementById('docsAmendmentReviewsPanel');
     const list  = document.getElementById('docsAmendmentReviewsList');
     const count = document.getElementById('docsAmendmentReviewsCount');
+    const controls = document.getElementById('docsAmendmentReviewsControls');
     if (!list || !panel) return;
     list.innerHTML = '<em style="color:#94A3B8;">Loading…</em>';
     try {
-      const r = await fetch('/api/documents/amendment-suggestions');
+      const r = await fetch('/api/documents/amendment-suggestions?limit=200');
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || 'load failed');
       const suggestions = j.suggestions || [];
+      _docsAmendmentSuggestionsCache = suggestions;
       if (suggestions.length === 0) {
         count.textContent = '';
+        if (controls) controls.style.display = 'none';
         list.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:12.5px;">No pending suggestions. Click <strong>🌐 Scan whole portfolio</strong> above to run amendment detection across every community\'s governing docs.</div>';
         return;
       }
       count.textContent = `(${suggestions.length})`;
-      list.innerHTML = suggestions.map(_renderAmendmentSuggestion).join('');
+      // Show controls only when filtering would actually help.
+      if (controls) controls.style.display = suggestions.length > 3 ? 'flex' : 'none';
+      // Populate community filter dropdown from the suggestions themselves.
+      const commSel = document.getElementById('docsAmendmentCommunityFilter');
+      if (commSel) {
+        const communities = new Set();
+        for (const s of suggestions) {
+          if (s.amendment?.community_name) communities.add(s.amendment.community_name);
+        }
+        // Preserve current selection if still in the set.
+        const current = commSel.value;
+        commSel.innerHTML = '<option value="">all</option>' + Array.from(communities).sort().map((c) =>
+          `<option value="${escapeHtml(c)}"${c === current ? ' selected' : ''}>${escapeHtml(c)}</option>`).join('');
+      }
+      docsRenderAmendmentList();
     } catch (e) {
       list.innerHTML = `<div style="color:#b91c1c; padding:8px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
     }
+  }
+
+  // Client-side filter over the cached suggestion list. Runs on every
+  // dropdown / checkbox change without re-fetching the backend.
+  function docsRenderAmendmentList() {
+    const list = document.getElementById('docsAmendmentReviewsList');
+    const filterCount = document.getElementById('docsAmendmentFilterCount');
+    const minConf = parseFloat(document.getElementById('docsAmendmentMinConf')?.value || '0');
+    const commFilter = document.getElementById('docsAmendmentCommunityFilter')?.value || '';
+    const parentOnly = document.getElementById('docsAmendmentHasParentOnly')?.checked;
+    const all = _docsAmendmentSuggestionsCache;
+    const visible = all.filter((s) => {
+      if ((s.ai_confidence || 0) < minConf) return false;
+      if (commFilter && s.amendment?.community_name !== commFilter) return false;
+      if (parentOnly && !s.proposed_parent) return false;
+      return true;
+    });
+    if (filterCount) {
+      filterCount.textContent = visible.length === all.length
+        ? `${all.length} total`
+        : `${visible.length} of ${all.length} visible`;
+    }
+    if (visible.length === 0) {
+      list.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:12.5px;">No suggestions match the current filters.</div>';
+    } else {
+      list.innerHTML = visible.map(_renderAmendmentSuggestion).join('');
+    }
+    // Enable/disable bulk button based on what's visible.
+    const bulkBtn = document.getElementById('docsBulkConfirmBtn');
+    if (bulkBtn) {
+      const bulkEligible = visible.filter((s) => s.proposed_parent).length;
+      bulkBtn.disabled = bulkEligible === 0;
+      bulkBtn.textContent = bulkEligible > 0 ? `✓ Bulk confirm ${bulkEligible} visible` : '✓ Bulk confirm visible';
+      bulkBtn.style.opacity = bulkEligible === 0 ? '0.5' : '1';
+    }
+  }
+
+  async function docsBulkConfirmAmendments(btn) {
+    const minConf = parseFloat(document.getElementById('docsAmendmentMinConf')?.value || '0');
+    const commFilter = document.getElementById('docsAmendmentCommunityFilter')?.value || '';
+    const parentOnly = document.getElementById('docsAmendmentHasParentOnly')?.checked;
+    const all = _docsAmendmentSuggestionsCache;
+    const targets = all.filter((s) => {
+      if (!s.proposed_parent) return false;
+      if ((s.ai_confidence || 0) < minConf) return false;
+      if (commFilter && s.amendment?.community_name !== commFilter) return false;
+      if (parentOnly && !s.proposed_parent) return false;
+      return true;
+    });
+    if (targets.length === 0) return;
+    if (!confirm(`Bulk-confirm ${targets.length} amendment suggestion${targets.length === 1 ? '' : 's'}?\n\nEach will get the supersession link written, parent doc marked as having an amendment, and retrieval starts deprioritizing the original sections. Wrong picks can be undone via the per-doc detail panel.\n\nFilters applied: min confidence ${Math.round(minConf * 100)}%${commFilter ? ', community = ' + commFilter : ''}.`)) return;
+    const originalText = btn.textContent;
+    btn.disabled = true;
+    let succeeded = 0, failed = 0;
+    for (let i = 0; i < targets.length; i++) {
+      btn.textContent = `⏳ ${i + 1}/${targets.length}…`;
+      try {
+        const r = await fetch(`/api/documents/amendment/${encodeURIComponent(targets[i].log_id)}/confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ actor: 'documents-ui-bulk' }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'confirm failed');
+        succeeded += 1;
+      } catch (_) {
+        failed += 1;
+      }
+    }
+    btn.textContent = `✓ ${succeeded} confirmed${failed > 0 ? ` · ${failed} failed` : ''}`;
+    setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 3000);
+    docsLoadAmendmentReviews();
   }
 
   // Loop the amendment backfill across every community in the portfolio.
