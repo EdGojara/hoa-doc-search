@@ -294,11 +294,16 @@ router.get('/:id', async (req, res) => {
       .maybeSingle();
     if (error) return res.status(500).json({ error: safeErrorMessage(error) });
     if (!data) return res.status(404).json({ error: 'not_found' });
-    // Chunk count — useful for the operator to see retrieval is ready.
-    const { count: chunkCount } = await supabase
-      .from('documents')
-      .select('id', { count: 'exact', head: true })
-      .eq('metadata->>library_document_id', data.library_document_id);
+    // Chunk count — useful for the operator to see retrieval is ready. Two
+    // link paths (metadata blob for new ingestions, migrated_to_library_id
+    // column for legacy promotions); count both. Ed 2026-06-16 class audit.
+    const [{ count: byMetaCount }, { count: byColCount }] = await Promise.all([
+      supabase.from('documents').select('id', { count: 'exact', head: true })
+        .eq('metadata->>library_document_id', data.library_document_id),
+      supabase.from('documents').select('id', { count: 'exact', head: true })
+        .eq('migrated_to_library_id', data.library_document_id),
+    ]);
+    const chunkCount = (byMetaCount || 0) + (byColCount || 0);
     // Supersedes chain — find any rows we supersede AND any that
     // supersede us (the latter only happens after we've been superseded).
     const supersedes = data.supersedes_id

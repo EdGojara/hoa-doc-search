@@ -776,12 +776,16 @@ router.get('/general-orphans', async (req, res) => {
     // operator can identify what doc it actually is. Cheap join — one
     // .select per orphan, capped at 200 chars of content.
     const enriched = await Promise.all(orphans.map(async (d) => {
-      const { data: ch } = await supabase
-        .from('documents')
-        .select('content')
-        .eq('metadata->>library_document_id', d.id)
-        .limit(1);
-      const preview = ch && ch[0] ? String(ch[0].content || '').slice(0, 200).replace(/\s+/g, ' ').trim() : '(no chunks)';
+      // Chunks link to library_documents via TWO paths -- metadata blob (new
+      // ingestions) or the migrated_to_library_id SQL column (legacy promotions).
+      // Check both so the preview shows the actual first chunk for legacy-
+      // promoted docs instead of "(no chunks)". Ed 2026-06-16 class audit.
+      const [byMeta, byCol] = await Promise.all([
+        supabase.from('documents').select('content').eq('metadata->>library_document_id', d.id).limit(1),
+        supabase.from('documents').select('content').eq('migrated_to_library_id', d.id).limit(1),
+      ]);
+      const firstChunk = (byMeta.data && byMeta.data[0]) || (byCol.data && byCol.data[0]);
+      const preview = firstChunk ? String(firstChunk.content || '').slice(0, 200).replace(/\s+/g, ' ').trim() : '(no chunks)';
       return {
         id: d.id,
         filename: d.file_name_original || d.file_name_normalized || '(no filename)',
@@ -829,22 +833,33 @@ router.post('/assign-community/:id', async (req, res) => {
       .maybeSingle();
     if (!c) return res.status(400).json({ error: 'community_not_found' });
     // The community metadata is a JSONB key on documents.metadata — update
-    // every chunk whose library_document_id matches this doc.
+    // every chunk linked to this library doc. TWO link paths:
+    //   - metadata->>library_document_id (new ingestions)
+    //   - migrated_to_library_id SQL column (legacy promotions)
+    // Both updated here so the community tag lands on chunks regardless of
+    // which ingestion era they came from. Ed 2026-06-16 class audit.
     const { error: chunkErr } = await supabase.rpc('exec_sql', {
       sql: `UPDATE documents SET metadata = jsonb_set(metadata, '{community}', to_jsonb($1::text))
-            WHERE metadata->>'library_document_id' = $2`,
+            WHERE metadata->>'library_document_id' = $2
+               OR migrated_to_library_id = $2::uuid`,
       params: [c.name, docId],
     }).then(() => ({ error: null })).catch((e) => ({ error: e }));
     // If exec_sql RPC isn't available (it isn't by default), fall back to
     // fetching the affected chunks and updating each metadata JSONB. Slower
-    // but works without a custom RPC.
+    // but works without a custom RPC. Same two-path lookup.
     if (chunkErr) {
-      const { data: chunks } = await supabase
-        .from('documents')
-        .select('id, metadata')
-        .eq('metadata->>library_document_id', docId);
+      const [byMeta, byCol] = await Promise.all([
+        supabase.from('documents').select('id, metadata').eq('metadata->>library_document_id', docId),
+        supabase.from('documents').select('id, metadata').eq('migrated_to_library_id', docId),
+      ]);
+      const seen = new Set();
+      const chunks = [...(byMeta.data || []), ...(byCol.data || [])].filter((c) => {
+        if (seen.has(c.id)) return false;
+        seen.add(c.id);
+        return true;
+      });
       let updated = 0;
-      for (const ch of (chunks || [])) {
+      for (const ch of chunks) {
         const newMeta = { ...(ch.metadata || {}), community: c.name };
         const { error: ue } = await supabase.from('documents').update({ metadata: newMeta }).eq('id', ch.id);
         if (!ue) updated += 1;
