@@ -416,9 +416,44 @@
     document.getElementById('noAccess').style.display = (which === 'noaccess') ? 'block' : 'none';
   }
 
+  // Manager preview banner — fixed bar at the very top of the viewport so
+  // staff always knows they're looking at the builder's view through their
+  // own audit-logged session. Same visual treatment as the homeowner-side
+  // manager banner.
+  function renderManagerBanner(data) {
+    if (document.getElementById('mgrBanner')) return; // already rendered
+    const builderName = (data.builder_companies && data.builder_companies[0] && data.builder_companies[0].name) || 'Unknown builder';
+    const banner = document.createElement('div');
+    banner.id = 'mgrBanner';
+    banner.style.cssText = 'position:fixed; top:0; left:0; right:0; z-index:100; background:#0B1D34; color:#fff; padding:10px 20px; display:flex; align-items:center; justify-content:space-between; gap:14px; flex-wrap:wrap; border-bottom:3px solid #D4AF37; font-size:13px;';
+    banner.innerHTML = `
+      <div style="display:flex; align-items:center; gap:14px; flex-wrap:wrap;">
+        <span style="background:#D4AF37; color:#0B1D34; padding:3px 10px; border-radius:99px; font-weight:700; font-size:10.5px; letter-spacing:0.08em;">🏢 MANAGER VIEW</span>
+        <span>Previewing as <strong>${escapeHtml(builderName)}</strong></span>
+        <span style="color:#cbd5e1; font-size:11.5px;">staff: ${escapeHtml(data.staff_email || 'bedrock')}</span>
+        <span style="color:#cbd5e1; font-size:11.5px;">read-only · audit-logged</span>
+      </div>
+      <a href="/portal-staff-enter-builder.html" style="background:transparent; color:#fff; border:1px solid #D4AF37; padding:5px 12px; border-radius:6px; font-size:12px; text-decoration:none;">← Switch builder</a>
+    `;
+    document.body.insertBefore(banner, document.body.firstChild);
+    // Push the rest of the page down so the banner doesn't cover the
+    // existing app header. ~48px = banner height.
+    document.body.style.paddingTop = '48px';
+  }
+
   async function load() {
     try {
-      const r = await fetch('/api/builder-applications/portal/my-submissions');
+      // Manager preview mode: when ?as_builder_id is in the URL, forward it
+      // to the API so the dashboard returns that one builder's submissions
+      // scoped via portal_manager_builder_scope. Bedrock staff sees the
+      // builder's view exactly as the builder sees it. Audit-logged on the
+      // server side per migration 227.
+      const urlParams = new URLSearchParams(window.location.search);
+      const asBuilderId = urlParams.get('as_builder_id');
+      const apiUrl = asBuilderId
+        ? '/api/builder-applications/portal/my-submissions?as_builder_id=' + encodeURIComponent(asBuilderId)
+        : '/api/builder-applications/portal/my-submissions';
+      const r = await fetch(apiUrl);
       if (r.status === 401) {
         showGate('signin');
         return;
@@ -433,6 +468,19 @@
       if (data.empty_reason === 'no_builder_access') {
         showGate('noaccess');
         return;
+      }
+      if (data.empty_reason === 'manager_picker_required') {
+        // Staff hit the dashboard without picking a builder. Send them to
+        // the picker page.
+        window.location.href = '/portal-staff-enter-builder.html';
+        return;
+      }
+
+      // Manager view banner — fixed at the top of the page so the staff
+      // member always knows they're in preview mode. Mirrors the homeowner
+      // portal's manager banner.
+      if (data.manager_view) {
+        renderManagerBanner(data);
       }
 
       // Header chip — list builder companies on the account

@@ -831,6 +831,31 @@ router.post('/staff-enter', async (req, res) => {
       }
     }
 
+    // Mirror the same portfolio-wide grant on the BUILDER side (migration
+    // 227). Idempotent; staff who go through staff-enter get both scopes so
+    // they can preview both the homeowner portal AND the builder portal.
+    const { data: existingBuilderScope } = await supabase
+      .from('portal_manager_builder_scope')
+      .select('portal_user_id')
+      .eq('portal_user_id', portalUser.id)
+      .is('builder_company_id', null)
+      .is('revoked_at', null)
+      .maybeSingle();
+    if (!existingBuilderScope) {
+      const { error: bScopeErr } = await supabase
+        .from('portal_manager_builder_scope')
+        .insert({
+          portal_user_id: portalUser.id,
+          builder_company_id: null,
+          granted_by: 'staff_sso_bridge',
+        });
+      if (bScopeErr) {
+        // Don't fail the whole staff-enter on a missing builder-scope table
+        // (migration 227 may not have run yet on this deploy). Log and move on.
+        console.warn('[portal] staff-enter builder-scope insert skipped:', bScopeErr.message);
+      }
+    }
+
     // Set the portal cookie
     setPortalCookie(res, signCookie(portalUser.id));
 

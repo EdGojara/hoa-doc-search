@@ -3990,36 +3990,191 @@ router.get('/public/status/:reference', async (req, res) => {
 // the cached letter_signed_url (which may have expired). Single source of
 // truth = letter_pdf_path.
 // ============================================================================
+// ============================================================================
+// GET /api/builder-applications/manager/builders
+// Returns the list of builders a manager can preview. Powers the picker page
+// at /portal-staff-enter-builder.html. Mirrors the homeowner-side
+// /api/portal/manager/properties endpoint shape.
+//
+// Scope rules:
+//   - Portfolio-wide scope (NULL row in portal_manager_builder_scope) →
+//     return all builders under the management company.
+//   - Specific scope → return only those builder_company_ids.
+//
+// Each row includes a submission count + last activity timestamp so the
+// picker can show "DRB Group · 14 submissions · last 6/16" at a glance.
+// ============================================================================
+router.get('/manager/builders', async (req, res) => {
+  try {
+    const { resolvePortalUser } = require('./portal');
+    const { portalUserId } = resolvePortalUser(req);
+    if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
+
+    const { data: portalUser } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    if (!portalUser || portalUser.role !== 'manager' || portalUser.status !== 'active') {
+      return res.status(403).json({ error: 'not_manager' });
+    }
+
+    const { data: scopeRows } = await supabase
+      .from('portal_manager_builder_scope')
+      .select('builder_company_id')
+      .eq('portal_user_id', portalUserId)
+      .is('revoked_at', null);
+    const scope = scopeRows || [];
+    const portfolioWide = scope.some((s) => s.builder_company_id === null);
+    const scopedIds = scope.map((s) => s.builder_company_id).filter(Boolean);
+
+    let bq = supabase
+      .from('builder_companies')
+      .select('id, company_name, primary_contact_name, primary_contact_email, status')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .order('company_name');
+    if (!portfolioWide) {
+      if (scopedIds.length === 0) return res.json({ builders: [], portfolio_wide: false });
+      bq = bq.in('id', scopedIds);
+    }
+    const { data: builders, error: bErr } = await bq;
+    if (bErr) return res.status(500).json({ error: bErr.message });
+
+    // Submission counts + last activity per builder. One query per builder
+    // would be O(N) round-trips; instead pull all in one IN-list and group.
+    const ids = (builders || []).map((b) => b.id);
+    let countsByBuilder = new Map();
+    if (ids.length) {
+      const { data: apps } = await supabase
+        .from('builder_applications')
+        .select('builder_company_id, submitted_at')
+        .in('builder_company_id', ids);
+      for (const a of (apps || [])) {
+        const cur = countsByBuilder.get(a.builder_company_id) || { count: 0, last_at: null };
+        cur.count++;
+        if (!cur.last_at || (a.submitted_at && a.submitted_at > cur.last_at)) {
+          cur.last_at = a.submitted_at;
+        }
+        countsByBuilder.set(a.builder_company_id, cur);
+      }
+    }
+
+    res.json({
+      builders: (builders || []).map((b) => {
+        const stats = countsByBuilder.get(b.id) || { count: 0, last_at: null };
+        return {
+          id: b.id,
+          company_name: b.company_name,
+          primary_contact_name: b.primary_contact_name,
+          primary_contact_email: b.primary_contact_email,
+          status: b.status,
+          submission_count: stats.count,
+          last_submission_at: stats.last_at,
+        };
+      }),
+      portfolio_wide: portfolioWide,
+      staff_email: portalUser.email,
+    });
+  } catch (err) {
+    console.error('[builder_applications.manager/builders]', err);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/portal/my-submissions', async (req, res) => {
   try {
     const { resolvePortalUser } = require('./portal');
     const { portalUserId } = resolvePortalUser(req);
     if (!portalUserId) return res.status(401).json({ error: 'not_signed_in' });
 
-    // Look up which builder companies this portal user can act on
-    const { data: links, error: linkErr } = await supabase
-      .from('portal_user_builders')
-      .select('builder_company_id, builder_companies(id, company_name)')
-      .eq('portal_user_id', portalUserId)
-      .is('revoked_at', null);
-    if (linkErr) {
-      console.error('[builder_applications] portal link lookup failed:', linkErr.message);
-      return res.status(500).json({ error: safeErrorMessage(linkErr) });
-    }
-    const builderIds = (links || []).map((l) => l.builder_company_id).filter(Boolean);
-    if (builderIds.length === 0) {
-      // No builder access — return empty rather than erroring so the UI can
-      // show a "no access yet, contact bedrock" message gracefully.
+    // Resolve role + manager-mode context. Bedrock staff sign in as
+    // role='manager' via /api/portal/staff-enter; they can preview ANY
+    // builder via ?as_builder_id within their portal_manager_builder_scope.
+    const { data: portalUser } = await supabase
+      .from('portal_users')
+      .select('id, email, role, status')
+      .eq('id', portalUserId)
+      .maybeSingle();
+    const isManager = portalUser && portalUser.role === 'manager' && portalUser.status === 'active';
+    const asBuilderId = (req.query.as_builder_id || '').toString().trim() || null;
+
+    let builderIds = [];
+    let builderCompanies = [];
+    let managerView = false;
+
+    if (isManager && asBuilderId) {
+      // Manager mode: verify scope (portfolio-wide OR specific builder),
+      // log the view, scope query to ONE builder. Mirrors the homeowner-side
+      // portal_manager_view_log audit pattern from migration 201.
+      const { data: scopeRows } = await supabase
+        .from('portal_manager_builder_scope')
+        .select('builder_company_id')
+        .eq('portal_user_id', portalUserId)
+        .is('revoked_at', null);
+      const scope = scopeRows || [];
+      const portfolioWide = scope.some((s) => s.builder_company_id === null);
+      const inScope = portfolioWide || scope.some((s) => s.builder_company_id === asBuilderId);
+      if (!inScope) {
+        return res.status(403).json({ error: 'builder_not_in_manager_scope', builder_id: asBuilderId });
+      }
+      const { data: bc } = await supabase
+        .from('builder_companies')
+        .select('id, company_name')
+        .eq('id', asBuilderId)
+        .maybeSingle();
+      if (!bc) return res.status(404).json({ error: 'builder_not_found', builder_id: asBuilderId });
+      builderIds = [bc.id];
+      builderCompanies = [{ id: bc.id, name: bc.company_name }];
+      managerView = true;
+      // Best-effort audit log; don't fail the request if the table isn't
+      // populated yet (migration 227 timing safety).
+      try {
+        await supabase.from('portal_manager_builder_view_log').insert({
+          portal_user_id: portalUserId,
+          staff_email: portalUser.email,
+          viewed_builder_id: bc.id,
+          ip_address: req.ip,
+          user_agent: req.headers['user-agent'] || null,
+        });
+      } catch (logErr) {
+        console.warn('[builder_applications] manager builder view log skipped:', logErr.message);
+      }
+    } else if (isManager && !asBuilderId) {
+      // Manager landed on the dashboard without picking a builder. Tell the
+      // UI to send them to the picker page.
       return res.json({
         builder_companies: [],
         pending: [],
         decided: [],
-        empty_reason: 'no_builder_access',
+        empty_reason: 'manager_picker_required',
+        manager_view: true,
+        staff_email: portalUser.email,
       });
+    } else {
+      // Regular builder portal user -- look up which builder companies they
+      // can act on via the link table (existing behavior, unchanged).
+      const { data: links, error: linkErr } = await supabase
+        .from('portal_user_builders')
+        .select('builder_company_id, builder_companies(id, company_name)')
+        .eq('portal_user_id', portalUserId)
+        .is('revoked_at', null);
+      if (linkErr) {
+        console.error('[builder_applications] portal link lookup failed:', linkErr.message);
+        return res.status(500).json({ error: safeErrorMessage(linkErr) });
+      }
+      builderIds = (links || []).map((l) => l.builder_company_id).filter(Boolean);
+      if (builderIds.length === 0) {
+        return res.json({
+          builder_companies: [],
+          pending: [],
+          decided: [],
+          empty_reason: 'no_builder_access',
+        });
+      }
+      builderCompanies = (links || [])
+        .filter((l) => l.builder_companies)
+        .map((l) => ({ id: l.builder_companies.id, name: l.builder_companies.company_name }));
     }
-    const builderCompanies = (links || [])
-      .filter((l) => l.builder_companies)
-      .map((l) => ({ id: l.builder_companies.id, name: l.builder_companies.company_name }));
 
     // Fetch submissions for those builders, scoped to Bedrock-managed
     // communities. Hard cap at 500 to avoid runaway responses if a builder
@@ -4128,6 +4283,8 @@ router.get('/portal/my-submissions', async (req, res) => {
         decided: decided.length,
         total: pending.length + decided.length,
       },
+      manager_view: managerView,
+      staff_email: managerView ? (portalUser && portalUser.email) : null,
     });
   } catch (err) {
     console.error('[builder_applications] portal dashboard failed:', err.message);
