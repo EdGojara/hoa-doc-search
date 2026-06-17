@@ -34410,13 +34410,34 @@ ${questionsPage}
       : '(whole document)';
     const conf = typeof s.ai_confidence === 'number' ? `${Math.round(s.ai_confidence * 100)}%` : '—';
     const noParent = !parent;
+    const amendChunks = typeof amend.chunk_count === 'number' ? amend.chunk_count : null;
+    const parentChunks = parent && typeof parent.chunk_count === 'number' ? parent.chunk_count : null;
+    // Sanity check: amendments are usually 1-15 pages; parents usually 30-100+.
+    // If the amendment has MORE chunks than the parent, flag it -- the operator
+    // might be looking at a relationship that's reversed.
+    const sizeFlag = amendChunks != null && parentChunks != null && amendChunks > parentChunks
+      ? ' <span style="background:#fee2e2; color:#991b1b; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700; margin-left:6px;" title="Amendment has more chunks than parent -- the relationship may be reversed.">⚠ SIZE INVERTED</span>'
+      : '';
+    const existingChain = Array.isArray(s.existing_confirmed_amendments) ? s.existing_confirmed_amendments : [];
+    const chainBlock = existingChain.length > 0
+      ? `<div style="margin-bottom:10px; padding:8px 10px; background:#eff6ff; border-left:3px solid #3b82f6; border-radius:0 4px 4px 0; font-size:11.5px; color:#1e3a8a;">
+          <strong>${existingChain.length} amendment${existingChain.length === 1 ? '' : 's'} already confirmed on this parent:</strong>
+          <ul style="margin:4px 0 0 18px; padding:0;">
+            ${existingChain.map((c) => {
+              const secs = Array.isArray(c.amended_sections) && c.amended_sections.length ? c.amended_sections.join(', ') : 'whole doc';
+              return `<li>${escapeHtml(c.title || 'Untitled')} — sections: ${escapeHtml(secs)}</li>`;
+            }).join('')}
+          </ul>
+          <div style="margin-top:4px; font-size:11px; opacity:0.85;">Confirming this suggestion adds a new amendment to the chain. If two amendments touch the same section, the one with the newer effective_date wins at retrieval.</div>
+        </div>`
+      : '';
     return `
       <div style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:10px; background:#fffbeb;">
         <div style="display:flex; justify-content:space-between; align-items:start; gap:14px; margin-bottom:8px;">
           <div style="flex:1;">
-            <div style="font-size:11px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Amendment uploaded</div>
+            <div style="font-size:11px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Amendment uploaded${sizeFlag}</div>
             <div style="font-size:14px; font-weight:600; color:#1f2937;">${escapeHtml(amend.title || amend.file_name || 'Untitled')}</div>
-            <div style="font-size:12px; color:#6b7280;">${escapeHtml(amend.community_name || '(community unset)')} · ${escapeHtml(amend.category || '—')}</div>
+            <div style="font-size:12px; color:#6b7280;">${escapeHtml(amend.community_name || '(community unset)')} · ${escapeHtml(amend.category || '—')}${amendChunks != null ? ' · <strong>' + amendChunks + ' chunks</strong>' : ''}${amend.effective_date ? ' · effective ' + escapeHtml(amend.effective_date) : ''}</div>
           </div>
           <div style="font-size:11px; color:#92400e; font-weight:600; white-space:nowrap;">AI confidence: ${conf}</div>
         </div>
@@ -34428,11 +34449,13 @@ ${questionsPage}
             ${noParent
               ? '<div style="font-size:13px; color:#b91c1c;">No confident match. Pick a parent manually before confirming.</div>'
               : `<div style="font-size:13px; font-weight:600; color:#1f2937;">${escapeHtml(parent.title || parent.file_name || 'Untitled')}</div>
-                 <div style="font-size:11.5px; color:#6b7280;">${escapeHtml(parent.category || '—')}${parent.effective_date ? ' · effective ' + escapeHtml(parent.effective_date) : ''}</div>`
+                 <div style="font-size:11.5px; color:#6b7280;">${escapeHtml(parent.category || '—')}${parent.effective_date ? ' · effective ' + escapeHtml(parent.effective_date) : ''}${parentChunks != null ? ' · <strong>' + parentChunks + ' chunks</strong>' : ''}</div>`
             }
           </div>
           <div style="font-size:11.5px; color:#475569;">Sections: <strong>${escapeHtml(sections)}</strong></div>
         </div>
+
+        ${chainBlock}
 
         ${s.ai_reasoning ? `<div style="font-size:12px; color:#475569; padding:8px 10px; background:#f8fafc; border-left:3px solid #cbd5e1; border-radius:0 4px 4px 0; margin-bottom:10px; white-space:pre-wrap;">${escapeHtml(s.ai_reasoning)}</div>` : ''}
 

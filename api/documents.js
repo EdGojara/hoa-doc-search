@@ -1010,6 +1010,55 @@ router.get('/amendment-suggestions', async (req, res) => {
       .in('id', [...allDocIds]);
     const docById = new Map((docs || []).map((d) => [d.id, d]));
 
+    // Enrich each doc with chunk count (both link paths) so the operator sees
+    // a doc's size at a glance. A 3-chunk "Second Amendment" with 109-chunk
+    // parent makes sense; a 109-chunk amendment with a 3-chunk parent should
+    // raise an eyebrow about which is which.
+    const chunkCountById = new Map();
+    if (allDocIds.size > 0) {
+      const ids = [...allDocIds];
+      const [byMeta, byCol] = await Promise.all([
+        supabase.from('documents').select('metadata').in('metadata->>library_document_id', ids),
+        supabase.from('documents').select('migrated_to_library_id').in('migrated_to_library_id', ids),
+      ]);
+      for (const row of (byMeta.data || [])) {
+        const id = row.metadata?.library_document_id;
+        if (id) chunkCountById.set(id, (chunkCountById.get(id) || 0) + 1);
+      }
+      for (const row of (byCol.data || [])) {
+        const id = row.migrated_to_library_id;
+        if (id) chunkCountById.set(id, (chunkCountById.get(id) || 0) + 1);
+      }
+    }
+
+    // For each proposed parent, look up other CONFIRMED amendments already
+    // recorded against it. Pattern: amendment doc rows whose
+    // supersedes_library_document_id == parent_id AND supersession_recorded_at
+    // IS NOT NULL. Operator confirming this suggestion will see "this parent
+    // already has 2 confirmed amendments; we're adding a third."
+    const parentIds = [...new Set(pending.map((p) => p.superseded_library_document_id).filter(Boolean))];
+    const confirmedAmendmentsByParent = new Map();
+    if (parentIds.length > 0) {
+      const { data: confirmedRows } = await supabase
+        .from('library_documents')
+        .select('id, title, supersedes_library_document_id, supersession_recorded_at, amended_sections')
+        .in('supersedes_library_document_id', parentIds)
+        .not('supersession_recorded_at', 'is', null);
+      for (const r of (confirmedRows || [])) {
+        const arr = confirmedAmendmentsByParent.get(r.supersedes_library_document_id) || [];
+        arr.push({ id: r.id, title: r.title, amended_sections: r.amended_sections });
+        confirmedAmendmentsByParent.set(r.supersedes_library_document_id, arr);
+      }
+    }
+
+    const enrichDoc = (d) => d ? {
+      id: d.id, title: d.title, category: d.category,
+      community_name: d.communities?.name || null,
+      file_name: d.file_name_original,
+      effective_date: d.effective_date,
+      chunk_count: chunkCountById.get(d.id) || 0,
+    } : null;
+
     const suggestions = pending
       .filter((p) => {
         if (!communityId) return true;
@@ -1023,24 +1072,13 @@ router.get('/amendment-suggestions', async (req, res) => {
         ai_reasoning: p.ai_reasoning,
         suggested_at: p.recorded_at,
         amended_sections: p.amended_sections,
-        amendment: (() => {
-          const d = docById.get(p.amendment_library_document_id);
-          return d ? {
-            id: d.id, title: d.title, category: d.category,
-            community_name: d.communities?.name || null,
-            file_name: d.file_name_original,
-            effective_date: d.effective_date,
-          } : null;
-        })(),
-        proposed_parent: p.superseded_library_document_id ? (() => {
-          const d = docById.get(p.superseded_library_document_id);
-          return d ? {
-            id: d.id, title: d.title, category: d.category,
-            community_name: d.communities?.name || null,
-            file_name: d.file_name_original,
-            effective_date: d.effective_date,
-          } : null;
-        })() : null,
+        amendment: enrichDoc(docById.get(p.amendment_library_document_id)),
+        proposed_parent: p.superseded_library_document_id ? enrichDoc(docById.get(p.superseded_library_document_id)) : null,
+        // Other confirmed amendments already on this same parent, so the
+        // operator sees the full chain context before deciding.
+        existing_confirmed_amendments: p.superseded_library_document_id
+          ? (confirmedAmendmentsByParent.get(p.superseded_library_document_id) || [])
+          : [],
       }));
 
     res.json({ suggestions });
