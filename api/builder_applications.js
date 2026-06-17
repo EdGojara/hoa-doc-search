@@ -262,8 +262,16 @@ async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
   if (!process.env.ANTHROPIC_API_KEY) throw new Error('ANTHROPIC_API_KEY not configured');
   const Anthropic = require('@anthropic-ai/sdk');
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  const t0 = Date.now();
   const { buffer: claudeBuffer, total_pages, trimmed } = await trimPdfToFirstPages(pdfBuffer, maxPagesToSend);
-  const resp = await anthropic.messages.create({
+  const t1 = Date.now();
+  console.log(`[extractFromPdfBuffer] trim ${t1 - t0}ms · input ${(pdfBuffer.length / 1024 / 1024).toFixed(1)}MB → claude ${(claudeBuffer.length / 1024 / 1024).toFixed(1)}MB · pages ${total_pages || '?'} → ${trimmed ? maxPagesToSend : (total_pages || '?')}`);
+
+  // 70-second hard timeout. Render's request timeout is ~100s; if Claude
+  // hasn't responded in 70s the request would die at Render anyway with no
+  // useful error. Failing fast here lets the handler return a clear "AI
+  // extraction timed out -- try the regular upload flow" message.
+  const apiPromise = anthropic.messages.create({
     model: 'claude-sonnet-4-5',
     max_tokens: 1200,
     messages: [{
@@ -274,6 +282,12 @@ async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
       ],
     }],
   });
+  const timeoutPromise = new Promise((_, reject) =>
+    setTimeout(() => reject(new Error('AI extraction timed out after 70 seconds (likely a very large or image-heavy PDF — try uploading again with a smaller file, or use the regular submit flow)')), 70_000),
+  );
+  const resp = await Promise.race([apiPromise, timeoutPromise]);
+  const t2 = Date.now();
+  console.log(`[extractFromPdfBuffer] claude ${t2 - t1}ms · total ${t2 - t0}ms`);
   const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
   const jsonMatch = txt.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return { extracted: null, raw: txt };
@@ -394,7 +408,11 @@ Return ONLY valid JSON, no preamble. Empty material rows = null (not {}). Exampl
   "ai_notes": null
 }`;
 
-const extractSubmissionFormFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, SUBMISSION_FORM_EXTRACT_PROMPT, 2);
+// Page 1 only -- DRB-style submission packets fit the entire form on page 1;
+// pages 2+ are drawings / site plans the AI doesn't need to see for extraction.
+// Sending more pages = more bytes to base64-encode + larger Anthropic call =
+// closer to Render's request timeout. Ed 2026-06-16: 8MB packet hung at 5min.
+const extractSubmissionFormFromPdfBuffer = (buf) => extractFromPdfBuffer(buf, SUBMISSION_FORM_EXTRACT_PROMPT, 1);
 
 // Resolve community_id from extracted subdivision_name + plat_number. ILIKE
 // match on name with plat as tiebreaker if the subdivision name is ambiguous.
