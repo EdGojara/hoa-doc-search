@@ -9839,6 +9839,21 @@
       <div id="legal-updates-panel" style="margin-top:14px;"></div>
     </div>
 
+    <!-- Pending amendment reviews. When the upload extractor flags a doc as
+         an amendment to an existing governing doc, it logs a pending
+         suggestion. This panel lists them so the operator can confirm or
+         reject. Confirmation writes the supersession link on
+         library_documents; retrieval then deprioritizes the parent doc
+         and boosts the amendment. Build: Ed 2026-06-18 phase 4. -->
+    <div class="panel" id="docsAmendmentReviewsPanel" style="margin-bottom: 16px; border-left: 3px solid #92400e; display:none;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+        <h3 style="margin:0;">📜 Pending amendment reviews <span id="docsAmendmentReviewsCount" style="color:#92400e; font-weight:600; font-size:13px; margin-left:6px;"></span></h3>
+        <button class="secondary-btn" onclick="docsLoadAmendmentReviews()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+      </div>
+      <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">The AI flagged these uploads as amendments to an existing doc. Confirm the parent doc + sections so retrieval treats the amendment as current and the original as superseded for those sections.</p>
+      <div id="docsAmendmentReviewsList"></div>
+    </div>
+
     <!-- One-shot admin: connect historical knowledge silos to property/contact spine.
          Runs the entity-resolution backfill against arc_historical_decisions
          and email_intake. Idempotent — safe to re-run after Vantaca sync
@@ -34089,6 +34104,107 @@ ${questionsPage}
     }
   }
 
+  // ===== Pending amendment reviews (migration 228, Ed 2026-06-18) =====
+  async function docsLoadAmendmentReviews() {
+    const panel = document.getElementById('docsAmendmentReviewsPanel');
+    const list  = document.getElementById('docsAmendmentReviewsList');
+    const count = document.getElementById('docsAmendmentReviewsCount');
+    if (!list || !panel) return;
+    list.innerHTML = '<em style="color:#94A3B8;">Loading…</em>';
+    try {
+      const r = await fetch('/api/documents/amendment-suggestions');
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      const suggestions = j.suggestions || [];
+      if (suggestions.length === 0) {
+        panel.style.display = 'none';
+        return;
+      }
+      panel.style.display = '';
+      count.textContent = `(${suggestions.length})`;
+      list.innerHTML = suggestions.map(_renderAmendmentSuggestion).join('');
+    } catch (e) {
+      panel.style.display = '';
+      list.innerHTML = `<div style="color:#b91c1c; padding:8px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function _renderAmendmentSuggestion(s) {
+    const amend = s.amendment || {};
+    const parent = s.proposed_parent;
+    const sections = Array.isArray(s.amended_sections) && s.amended_sections.length
+      ? s.amended_sections.join(', ')
+      : '(whole document)';
+    const conf = typeof s.ai_confidence === 'number' ? `${Math.round(s.ai_confidence * 100)}%` : '—';
+    const noParent = !parent;
+    return `
+      <div style="border:1px solid #e5e7eb; border-radius:8px; padding:14px; margin-bottom:10px; background:#fffbeb;">
+        <div style="display:flex; justify-content:space-between; align-items:start; gap:14px; margin-bottom:8px;">
+          <div style="flex:1;">
+            <div style="font-size:11px; font-weight:700; color:#92400e; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:4px;">Amendment uploaded</div>
+            <div style="font-size:14px; font-weight:600; color:#1f2937;">${escapeHtml(amend.title || amend.file_name || 'Untitled')}</div>
+            <div style="font-size:12px; color:#6b7280;">${escapeHtml(amend.community_name || '(community unset)')} · ${escapeHtml(amend.category || '—')}</div>
+          </div>
+          <div style="font-size:11px; color:#92400e; font-weight:600; white-space:nowrap;">AI confidence: ${conf}</div>
+        </div>
+
+        <div style="display:flex; align-items:center; gap:10px; padding:10px 12px; background:#fff; border:1px solid #e5e7eb; border-radius:6px; margin-bottom:10px;">
+          <span style="font-size:18px;">⇒</span>
+          <div style="flex:1;">
+            <div style="font-size:10.5px; font-weight:700; color:#475569; text-transform:uppercase; letter-spacing:0.4px; margin-bottom:3px;">Proposed parent</div>
+            ${noParent
+              ? '<div style="font-size:13px; color:#b91c1c;">No confident match. Pick a parent manually before confirming.</div>'
+              : `<div style="font-size:13px; font-weight:600; color:#1f2937;">${escapeHtml(parent.title || parent.file_name || 'Untitled')}</div>
+                 <div style="font-size:11.5px; color:#6b7280;">${escapeHtml(parent.category || '—')}${parent.effective_date ? ' · effective ' + escapeHtml(parent.effective_date) : ''}</div>`
+            }
+          </div>
+          <div style="font-size:11.5px; color:#475569;">Sections: <strong>${escapeHtml(sections)}</strong></div>
+        </div>
+
+        ${s.ai_reasoning ? `<div style="font-size:12px; color:#475569; padding:8px 10px; background:#f8fafc; border-left:3px solid #cbd5e1; border-radius:0 4px 4px 0; margin-bottom:10px; white-space:pre-wrap;">${escapeHtml(s.ai_reasoning)}</div>` : ''}
+
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button class="secondary-btn" onclick="docsRejectAmendment('${s.log_id}', this)" style="font-size:12px; padding:7px 14px; background:#fff; color:#b91c1c; border:1px solid #fca5a5;">✗ Not an amendment</button>
+          <button class="action-btn" ${noParent ? 'disabled title="Pick a parent first via the link-manual API or fix in admin"' : ''} onclick="docsConfirmAmendment('${s.log_id}', this)" style="font-size:12px; padding:7px 18px; ${noParent ? 'opacity:0.5; cursor:not-allowed;' : ''}">✓ Confirm link</button>
+        </div>
+      </div>`;
+  }
+
+  async function docsConfirmAmendment(logId, btn) {
+    if (btn) { btn.disabled = true; btn.textContent = 'Confirming…'; }
+    try {
+      const r = await fetch(`/api/documents/amendment/${encodeURIComponent(logId)}/confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor: 'documents-ui' }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'confirm failed');
+      await docsLoadAmendmentReviews();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '✓ Confirm link'; }
+      alert('Confirm failed: ' + e.message);
+    }
+  }
+
+  async function docsRejectAmendment(logId, btn) {
+    const reason = prompt('Why is this not an amendment? (optional — helps train future detection)') || '';
+    if (btn) { btn.disabled = true; btn.textContent = 'Rejecting…'; }
+    try {
+      const r = await fetch(`/api/documents/amendment/${encodeURIComponent(logId)}/reject`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ actor: 'documents-ui', reason }),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'reject failed');
+      await docsLoadAmendmentReviews();
+    } catch (e) {
+      if (btn) { btn.disabled = false; btn.textContent = '✗ Not an amendment'; }
+      alert('Reject failed: ' + e.message);
+    }
+  }
+
   async function docsLoadCoverage() {
     // Proactive pending-migrations check fires every time the panel
     // loads. Running in parallel with the coverage fetch so it doesn't
@@ -35056,6 +35172,7 @@ ${questionsPage}
             docsLoadMatrix();
             docsLoadDups();
             docsLoadLegacy();
+            docsLoadAmendmentReviews();  // hides itself if no pending suggestions
           }
         });
       }
