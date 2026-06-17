@@ -1595,7 +1595,7 @@ async function buildBuilderEmailEnvelope(applicationId, responseId) {
       <p>${decisionLine}</p>
       ${response.message_to_builder ? `<p>${response.message_to_builder.replace(/</g, '&lt;').replace(/\n/g, '<br>')}</p>` : ''}
       <p>Reference: <strong>${app.reference_number}</strong></p>
-      <p>Questions or revised submissions: reply to this email or use <a href="https://builders.bedrocktxai.com">builders.bedrocktxai.com</a>.</p>
+      <p>Questions or revised submissions: reply to this email, write to <a href="mailto:builders@bedrocktx.com">builders@bedrocktx.com</a>, or use the portal at <a href="https://builders.bedrocktxai.com">builders.bedrocktxai.com</a>.</p>
       <p style="color:#555; font-size:11px; margin-top:24px;">
         Sent on behalf of the ${app.community.name} Architectural Control Committee by Bedrock Association Management.
       </p>
