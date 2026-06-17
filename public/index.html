@@ -9851,6 +9851,7 @@
             <option value="">— pick a community —</option>
           </select>
           <button class="secondary-btn" onclick="docsLoadGoverningHealth()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+          <button class="secondary-btn" onclick="docsRunAmendmentBackfill(this)" id="docsAmendBackfillBtn" style="font-size:12px; padding:6px 14px; background:#ede9fe; border:1px solid #7c3aed; color:#5b21b6;" title="Scans the library for governing docs whose titles look like amendments and runs the AI detection retroactively. Results land in the Pending amendment reviews panel below.">🔍 Detect amendments in existing library</button>
         </div>
       </div>
       <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">Every Declaration, Bylaws, Rules &amp; Regs, and Articles doc for the picked community. Chunks across both link paths (metadata + legacy migrated). Duplicate groups (≥70% title similarity) highlighted; mark one canonical and supersede the rest. Legacy docs not yet promoted show at the bottom — promote those via the Legacy Library panel.</p>
@@ -34268,6 +34269,43 @@ ${questionsPage}
     }
 
     return out.join('');
+  }
+
+  async function docsRunAmendmentBackfill(btn) {
+    const sel = document.getElementById('govHealthCommunity');
+    const communityId = sel ? sel.value : null;
+    const scope = communityId ? 'this community' : 'every community';
+    if (!confirm(`Run amendment detection across ${scope}?\n\nThis scans library docs whose titles include amend / supersede / restate, runs AI detection on a chunk sample, and writes pending suggestions to the review panel below. Up to 10 docs per click; safe to re-run.`)) return;
+    const original = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳ Scanning…';
+    try {
+      const body = communityId ? { community_id: communityId, limit: 10 } : { limit: 10 };
+      const r = await fetch('/api/documents/amendment-backfill', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'backfill failed');
+      btn.textContent = `✓ ${j.suggested} suggested`;
+      setTimeout(() => { btn.textContent = original; btn.disabled = false; }, 2500);
+      // Refresh both panels so the operator sees the new suggestions immediately.
+      docsLoadAmendmentReviews();
+      if (communityId) docsLoadGoverningHealth();
+      // Brief summary banner above the gov health list
+      const list = document.getElementById('govHealthList');
+      if (list) {
+        const banner = document.createElement('div');
+        banner.style.cssText = 'background:#ede9fe; border:1px solid #7c3aed; color:#5b21b6; padding:10px 12px; border-radius:8px; margin-bottom:12px; font-size:12.5px;';
+        banner.innerHTML = `<strong>Scan complete.</strong> ${escapeHtml(j.message || '')}` +
+          (j.results && j.results.length ? `<details style="margin-top:6px;"><summary style="cursor:pointer; font-size:11.5px;">Per-doc results (${j.results.length})</summary><ul style="margin:6px 0 0 18px; padding:0; font-size:11.5px;">${j.results.map((r) => `<li><strong>${escapeHtml(r.title || '(untitled)')}</strong>: ${escapeHtml(r.status)}${r.parent ? ' → ' + escapeHtml(r.parent) : ''}${r.confidence ? ' (conf ' + escapeHtml(r.confidence) + ')' : ''}</li>`).join('')}</ul></details>` : '');
+        list.prepend(banner);
+        setTimeout(() => banner.remove(), 30000);
+      }
+    } catch (e) {
+      btn.disabled = false; btn.textContent = original;
+      alert('Amendment backfill failed: ' + e.message);
+    }
   }
 
   async function docsGovHealthMarkSuperseded(supersededId, supersededTitle, communityId) {

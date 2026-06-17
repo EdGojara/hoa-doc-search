@@ -1131,6 +1131,178 @@ router.post('/amendment/:logId/reject', express.json(), async (req, res) => {
 });
 
 // ============================================================================
+// Amendment backfill — for governing docs already in the library, run AI
+// detection retroactively on the candidate set (title contains amendment-ish
+// keywords) and write pending suggestions to the amendment log. Lets existing
+// content benefit from migration 228 without re-uploading.
+// Ed 2026-06-18 follow-up to the amendment management ship.
+// ============================================================================
+const BACKFILL_AMENDMENT_PROMPT = `You are detecting whether the following document chunks are from an AMENDMENT to an HOA governing document.
+
+Look for amendment cues:
+  - Title or opening text contains "Amendment", "Amend", "Supersede", "Restate"
+  - Explicit cross-references to a parent document ("Declaration of CC&Rs", "Bylaws")
+  - "Hereby amends Section X" or "replaces Section Y" phrasing
+  - Restatement of specific section numbers with new language
+
+Return ONLY this JSON (no preamble, no code fence):
+{
+  "is_amendment": true | false,
+  "amends_document_title_guess": "string or null — your best guess at the original document this amends (e.g., 'Declaration of Covenants, Conditions and Restrictions'). null if not an amendment.",
+  "amended_sections": ["3.3", "5.1(a)"] /* array of section identifiers this amendment touches; empty array means whole-document supersession */,
+  "amendment_effective_date": "YYYY-MM-DD or null",
+  "amendment_reasoning": "Brief explanation of the conclusion, or null if not an amendment."
+}`;
+
+router.post('/amendment-backfill', express.json(), async (req, res) => {
+  try {
+    const limit = Math.min(20, Math.max(1, parseInt(req.body?.limit, 10) || 10));
+    const communityId = req.body?.community_id || null;
+
+    // Find governing-doc rows in library that LOOK like amendments by name +
+    // don't already have any amendment log row (so we don't re-suggest).
+    let q = supabase
+      .from('library_documents')
+      .select('id, title, category, file_name_original, community_id, communities:community_id(name)')
+      .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'])
+      .or('title.ilike.%amend%,title.ilike.%supersed%,title.ilike.%restate%,file_name_original.ilike.%amend%')
+      .limit(200);
+    if (communityId) q = q.eq('community_id', communityId);
+    const { data: candidates, error: cErr } = await q;
+    if (cErr) return res.status(500).json({ error: cErr.message });
+    if (!candidates || candidates.length === 0) {
+      return res.json({ processed: 0, suggested: 0, skipped: 0, candidates: [] });
+    }
+
+    // Filter out those that already have a log row (ai_suggested OR confirmed).
+    const candIds = candidates.map((c) => c.id);
+    const { data: existingLogs } = await supabase
+      .from('library_document_amendment_log')
+      .select('amendment_library_document_id')
+      .in('amendment_library_document_id', candIds);
+    const alreadyLogged = new Set((existingLogs || []).map((r) => r.amendment_library_document_id));
+    const fresh = candidates.filter((c) => !alreadyLogged.has(c.id)).slice(0, limit);
+
+    if (fresh.length === 0) {
+      return res.json({
+        processed: 0,
+        suggested: 0,
+        skipped: candidates.length,
+        message: `All ${candidates.length} title-matching candidates already have amendment log entries. Nothing to backfill.`,
+      });
+    }
+
+    let suggestedCount = 0;
+    const results = [];
+
+    for (const c of fresh) {
+      try {
+        // Get a representative sample of chunks (first 5) for this doc.
+        // Both link paths -- same dual-path pattern as the rest of the audit.
+        const [byMeta, byCol] = await Promise.all([
+          supabase.from('documents').select('content').eq('metadata->>library_document_id', c.id).limit(5),
+          supabase.from('documents').select('content').eq('migrated_to_library_id', c.id).limit(5),
+        ]);
+        const chunks = [...(byMeta.data || []), ...(byCol.data || [])];
+        if (chunks.length === 0) {
+          results.push({ id: c.id, title: c.title, status: 'no_chunks' });
+          continue;
+        }
+        // Take first ~6000 chars across chunks -- enough for amendment cues,
+        // small enough to keep AI cost bounded.
+        let combined = '';
+        for (const ch of chunks) {
+          if (!ch.content) continue;
+          combined += '\n\n--- chunk ---\n' + ch.content;
+          if (combined.length > 6000) break;
+        }
+        combined = combined.slice(0, 6000);
+
+        // AI detection
+        const resp = await anthropic.messages.create({
+          model: 'claude-sonnet-4-5',
+          max_tokens: 600,
+          messages: [{
+            role: 'user',
+            content: [{
+              type: 'text',
+              text: `${BACKFILL_AMENDMENT_PROMPT}\n\nDocument title: ${c.title || '(untitled)'}\nDocument file name: ${c.file_name_original || '(unknown)'}\nDocument category: ${c.category}\nCommunity: ${c.communities?.name || '(unknown)'}\n\nChunks:\n${combined}`,
+            }],
+          }],
+        });
+        const txt = (resp.content || []).map((b) => b.text || '').join('').trim();
+        const jsonMatch = txt.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          results.push({ id: c.id, title: c.title, status: 'no_json', raw: txt.slice(0, 200) });
+          continue;
+        }
+        let parsed;
+        try { parsed = JSON.parse(jsonMatch[0]); }
+        catch (e) { results.push({ id: c.id, title: c.title, status: 'parse_failed', raw: txt.slice(0, 200) }); continue; }
+
+        if (!parsed.is_amendment) {
+          results.push({ id: c.id, title: c.title, status: 'not_amendment' });
+          continue;
+        }
+
+        // Find best parent match in same community
+        const { data: parentCandidates } = await supabase
+          .from('library_documents')
+          .select('id, title, category')
+          .eq('community_id', c.community_id)
+          .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'])
+          .neq('id', c.id);
+        const guessTitle = parsed.amends_document_title_guess || '';
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const pc of (parentCandidates || [])) {
+          const titleScore = nameJaccard(pc.title || '', guessTitle);
+          const categoryBonus = pc.category === c.category ? 0.2 : 0;
+          const score = titleScore + categoryBonus;
+          if (score > bestScore) { bestScore = score; bestMatch = pc; }
+        }
+        const confidentMatch = bestMatch && bestScore >= 0.35;
+
+        await supabase.from('library_document_amendment_log').insert({
+          amendment_library_document_id: c.id,
+          superseded_library_document_id: confidentMatch ? bestMatch.id : null,
+          amended_sections: Array.isArray(parsed.amended_sections) ? parsed.amended_sections : null,
+          action: 'ai_suggested',
+          source: 'ai',
+          actor: 'backfill',
+          ai_confidence: Math.min(0.99, Math.max(0, bestScore)),
+          ai_reasoning: (parsed.amendment_reasoning || '').slice(0, 800)
+            + (confidentMatch
+                ? `\nProposed parent: ${bestMatch.title} (score=${bestScore.toFixed(2)})`
+                : '\nNo confident parent match -- operator must pick.'),
+        });
+        suggestedCount += 1;
+        results.push({
+          id: c.id, title: c.title, status: 'suggested',
+          parent: confidentMatch ? bestMatch.title : null,
+          confidence: bestScore.toFixed(2),
+        });
+      } catch (perDocErr) {
+        console.warn('[amendment-backfill] per-doc failed:', perDocErr.message);
+        results.push({ id: c.id, title: c.title, status: 'error', error: perDocErr.message });
+      }
+    }
+
+    res.json({
+      processed: fresh.length,
+      suggested: suggestedCount,
+      skipped: candidates.length - fresh.length,
+      total_title_matches: candidates.length,
+      message: `Processed ${fresh.length} of ${candidates.length} title-matching candidates. ${suggestedCount} new amendment suggestions logged. View them in the Pending amendment reviews panel.`,
+      results,
+    });
+  } catch (err) {
+    console.error('[documents/amendment-backfill]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
 // Governing Doc Health — per-community diagnostic of declaration/bylaws/rules
 // Ed 2026-06-18, follow-up to amendment management. Surfaces every governing
 // doc with chunk counts, supersession state, and duplicate flags so the
