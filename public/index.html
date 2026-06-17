@@ -34604,7 +34604,8 @@ ${questionsPage}
                   <td style="padding:8px; text-align:center; color:#475569;">${d.page_count != null ? d.page_count : '—'}</td>
                   <td style="padding:8px; text-align:center; ${noChunks ? 'color:#b91c1c; font-weight:600;' : 'color:#475569;'}">${d.chunk_count}${noChunks ? ' ⚠' : ''}</td>
                   <td style="padding:8px; color:#475569;">${d.effective_date ? escapeHtml(d.effective_date) : '<em style="color:#94a3b8;">unknown</em>'}</td>
-                  <td style="padding:8px; text-align:right;">
+                  <td style="padding:8px; text-align:right; white-space:nowrap;">
+                    <a href="/api/documents/${escapeHtml(d.id)}/preview" target="_blank" rel="noopener" style="font-size:11px; color:#475569; text-decoration:none; padding:4px 8px; border:1px solid #cbd5e1; border-radius:4px; background:#fff; margin-right:4px;" title="Open the PDF in a new tab.">📄</a>
                     <button class="secondary-btn" onclick="docsGovHealthMarkSuperseded('${d.id}', ${JSON.stringify(d.title || '').replace(/"/g, '&quot;')}, '${j.community.id}')" style="font-size:11px; padding:4px 10px;" ${d.status === 'superseded' ? 'disabled' : ''}>Mark superseded…</button>
                   </td>
                 </tr>`;
