@@ -1949,6 +1949,7 @@
              external — and it runs the body through customer-tier transform
              on the server before the .eml drops. One button, one safe path. -->
         <button class="secondary-btn" id="exportEdEmailBtn" onclick="exportToEmail()" style="display:none">📧 Export to Email</button>
+        <button class="secondary-btn" id="logToHomeownerBtn" onclick="askEdLogToHomeowner()" style="display:none; background:#fffbeb; border:1px solid #d97706; color:#92400e;" title="Log this question + the AI's response to a homeowner property's interaction timeline. Next time Karla / Claire looks up the property, this exchange is part of the contact history.">📥 Log to homeowner timeline</button>
         <button class="action-btn" id="askEdNewQuestionBtn" onclick="askEdNewQuestion()" style="display:none; background:#16a34a; border-color:#15803d;">＋ New Question</button>
       </div>
     </div>
@@ -30096,6 +30097,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       // time, not now — see exportToEmail().
       const showEmailButton = edCurrentMode === 'advisor' || edCurrentMode === 'draft';
       document.getElementById('exportEdEmailBtn').style.display = showEmailButton ? 'block' : 'none';
+      // Log to homeowner timeline -- same visibility as Export to Email since
+      // both treat the answer as something you'd actually deliver. Logging
+      // makes sense even when the operator doesn't email (phone callback,
+      // in-person delivery, etc.) so it's always available when the answer is.
+      const logBtn = document.getElementById('logToHomeownerBtn');
+      if (logBtn) logBtn.style.display = showEmailButton ? 'block' : 'none';
       // ＋ New Question — always visible once an answer renders, regardless
       // of mode. One-click reset so staff can ask the next question without
       // manually clearing textarea + attachments + scrolling back up.
@@ -30116,6 +30123,110 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   // view on mobile/tablet where the answer can push the form below the fold.
   // Mode + community context + casual-tone toggle are PRESERVED — those are
   // operator preferences, not per-question state.
+  // Log the current ask-ed question + AI guidance to a homeowner property's
+  // interaction timeline. Encode-Ed: next time Karla / Claire looks up the
+  // homeowner, this exchange is part of the contact history without anyone
+  // doing manual data entry. The property picker mirrors the top-bar Log
+  // contact shortcut so the search behavior matches.
+  window.askEdLogToHomeowner = function () {
+    const guidance = window._lastEdGuidance || '';
+    const situation = (document.getElementById('edSituation') || {}).value || '';
+    if (!guidance) { alert('No guidance to log -- run Get Guidance first.'); return; }
+
+    let overlay = document.getElementById('askEdLogOverlay');
+    if (overlay) overlay.remove();
+    overlay = document.createElement('div');
+    overlay.id = 'askEdLogOverlay';
+    overlay.style.cssText = 'position:fixed; inset:0; background:rgba(0,0,0,0.55); z-index:3000; display:flex; align-items:flex-start; justify-content:center; padding:60px 16px; overflow-y:auto;';
+    overlay.innerHTML = `
+      <div style="background:#fff; max-width:560px; width:100%; border-radius:14px; padding:22px 24px; font-family:Inter,system-ui; box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="margin:0; font-family:Cormorant Garamond,Georgia,serif; font-size:22px; color:#0B1D34;">📥 Log to homeowner timeline</h3>
+          <button id="askEdLogClose" style="background:none; border:none; font-size:22px; cursor:pointer; color:#64748b;">×</button>
+        </div>
+        <div style="font-size:12.5px; color:#6b7280; margin-bottom:14px;">
+          The question + AI guidance get logged as an outbound interaction on the picked property. Next time anyone looks up the homeowner -- Karla, Claire, askEd itself -- this exchange shows up in the contact history with full context.
+        </div>
+        <div style="font-size:11px; font-weight:700; color:#64748b; letter-spacing:0.06em; text-transform:uppercase; margin-bottom:5px;">Find the homeowner</div>
+        <input type="text" id="askEdLogSearch" autocomplete="off" placeholder="Type address or owner name…"
+               style="width:100%; padding:11px 13px; border:1px solid #d0d7de; border-radius:8px; font-size:14px;">
+        <div id="askEdLogResults" style="margin-top:8px; max-height:280px; overflow-y:auto;"></div>
+        <div id="askEdLogStatus" style="display:none; margin-top:10px; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+
+    const close = () => overlay.remove();
+    overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+    document.getElementById('askEdLogClose').addEventListener('click', close);
+
+    const search = document.getElementById('askEdLogSearch');
+    const results = document.getElementById('askEdLogResults');
+    search.focus();
+    let searchTimer = null;
+    search.addEventListener('input', () => {
+      clearTimeout(searchTimer);
+      const q = search.value.trim();
+      if (q.length < 2) { results.innerHTML = ''; return; }
+      searchTimer = setTimeout(async () => {
+        results.innerHTML = '<div style="padding:10px; color:#94a3b8; font-size:12.5px;">Searching…</div>';
+        try {
+          const r = await fetch(`/api/interactions/property-search?q=${encodeURIComponent(q)}`);
+          const j = await r.json();
+          if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+          const list = j.results || [];
+          if (!list.length) {
+            results.innerHTML = '<div style="padding:10px; color:#94a3b8; font-size:12.5px;">No matches.</div>';
+            return;
+          }
+          results.innerHTML = list.map((p) => `
+            <button type="button" data-property-id="${p.property_id}" data-label="${escapeHtml((p.street_address || '') + (p.owner_name ? ' · ' + p.owner_name : ''))}"
+                    style="display:block; width:100%; text-align:left; background:#fff; border:1px solid #e2e8f0; border-radius:7px; padding:9px 12px; margin-bottom:5px; cursor:pointer; font-family:inherit; font-size:13px; color:#0B1D34;">
+              <div style="font-weight:600;">${escapeHtml(p.street_address || '—')}</div>
+              <div style="font-size:11.5px; color:#64748b; margin-top:1px;">${escapeHtml(p.owner_name || 'No owner on file')}${p.city ? ' · ' + escapeHtml(p.city) : ''}</div>
+            </button>`).join('');
+          results.querySelectorAll('button[data-property-id]').forEach((btn) => {
+            btn.addEventListener('click', () => commitLog(btn.dataset.propertyId, btn.dataset.label));
+          });
+        } catch (e) {
+          results.innerHTML = `<div style="padding:10px; color:#b91c1c; font-size:12.5px;">${escapeHtml(e.message)}</div>`;
+        }
+      }, 180);
+    });
+
+    async function commitLog(propertyId, label) {
+      const status = document.getElementById('askEdLogStatus');
+      status.style.display = 'block';
+      status.style.background = '#f1f5f9'; status.style.color = '#475569';
+      status.textContent = `Logging to ${label}…`;
+      try {
+        // Compose the content: question first, then a short separator, then
+        // the AI guidance. Trim aggressively so we don't bloat the timeline.
+        const subject = (situation.split('\n')[0] || '').slice(0, 140) || 'AskEd response';
+        const body = `Question:\n${situation.slice(0, 1500)}\n\n---\n\nAI guidance (askEd):\n${guidance.slice(0, 4000)}`;
+        const r = await fetch('/api/interactions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            property_id: propertyId,
+            type: 'email_outbound',
+            subject: subject,
+            content: body,
+            occurred_at: new Date().toISOString(),
+            logged_by: 'askEd export',
+          }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
+        status.style.background = '#dcfce7'; status.style.color = '#166534';
+        status.textContent = `✓ Logged to ${label}.`;
+        setTimeout(close, 1200);
+      } catch (err) {
+        status.style.background = '#fee2e2'; status.style.color = '#991b1b';
+        status.textContent = '✗ ' + err.message;
+      }
+    }
+  };
+
   window.askEdNewQuestion = function () {
     const ta = document.getElementById('edSituation');
     if (ta) ta.value = '';
@@ -30129,6 +30240,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     }
     const emailBtn = document.getElementById('exportEdEmailBtn');
     if (emailBtn) emailBtn.style.display = 'none';
+    const logBtn = document.getElementById('logToHomeownerBtn');
+    if (logBtn) logBtn.style.display = 'none';
     const newBtn = document.getElementById('askEdNewQuestionBtn');
     if (newBtn) newBtn.style.display = 'none';
     // Scroll left pane to top so the input is visible, then focus the textarea
