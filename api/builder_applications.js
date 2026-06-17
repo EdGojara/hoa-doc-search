@@ -1539,12 +1539,13 @@ router.post('/:id/finalize', express.json({ limit: '1mb' }), async (req, res) =>
 // auto-send) and GET /:id/eml-export (download as .eml for Outlook review).
 // Single source of truth so the email Ed previews in Outlook is byte-identical
 // to what Resend would have sent.
-async function buildBuilderEmailEnvelope(applicationId, responseId) {
+async function buildBuilderEmailEnvelope(applicationId, responseId, opts = {}) {
+  const { forceRegenerate = false } = opts;
   const { data: app, error: aErr } = await supabase
     .from('builder_applications')
     .select(`
       *,
-      community:communities(id, name, slug),
+      community:communities(id, name, slug, builder_arc_fee_cents),
       builder_company:builder_companies(id, company_name, primary_contact_email, primary_contact_name, mailing_address)
     `)
     .eq('id', applicationId)
@@ -1572,11 +1573,67 @@ async function buildBuilderEmailEnvelope(applicationId, responseId) {
     response = data;
   }
   if (!response) { const e = new Error('no response found for this application'); e.statusCode = 404; throw e; }
-  if (!response.letter_pdf_path) { const e = new Error('no letter PDF on record (request_more_info responses do not generate a letter)'); e.statusCode = 400; throw e; }
+  if (!response.letter_pdf_path && !forceRegenerate) { const e = new Error('no letter PDF on record (request_more_info responses do not generate a letter)'); e.statusCode = 400; throw e; }
+  if (response.response_type === 'request_more_info' && forceRegenerate) {
+    const e = new Error('request_more_info responses do not generate a letter'); e.statusCode = 400; throw e;
+  }
 
-  const { data: dl, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(response.letter_pdf_path);
-  if (dlErr) throw new Error(`failed to read letter PDF: ${dlErr.message}`);
-  const pdfBuffer = Buffer.from(await dl.arrayBuffer());
+  // forceRegenerate (set by /eml-export) renders the PDF fresh from the
+  // current database state -- so contact-info edits (e.g. fixing Karla's
+  // last name) flow into the next preview without requiring staff to click
+  // "Render letter" again. Cached path is kept for already-sent letters and
+  // for /:id/send (the record of what went out should be stable).
+  let pdfBuffer;
+  if (forceRegenerate && !response.email_sent_at) {
+    const conditionsList = (response.conditions || '').split('\n').filter(Boolean);
+    const denialReasonsList = (response.denial_reasons || '').split('\n').filter(Boolean);
+    const letterArgs = {
+      community: app.community.name,
+      builder_company_name: app.builder_company.company_name,
+      builder_contact_name: app.builder_company.primary_contact_name || app.submitter_name || '',
+      builder_mailing_address: app.builder_company.mailing_address || '',
+      property_address: app.street_address,
+      lot_number: app.lot_number,
+      block_number: app.block_number,
+      section_number: app.section_number,
+      plan_number: app.plan_number,
+      plan_name: app.plan_name,
+      elevation: app.elevation,
+      elevation_orientation: app.elevation_orientation,
+      materials: app.application_data || {},
+      reference_number: app.reference_number,
+      decision_type: response.response_type,
+      conditions: conditionsList.length ? conditionsList : (response.conditions || null),
+      denial_reasons: denialReasonsList.length ? denialReasonsList : (response.denial_reasons || null),
+      signer_name: response.decided_by,
+      review_fee_cents: app.community?.builder_arc_fee_cents ?? null,
+    };
+    pdfBuffer = await renderBuilderLetterPdfBuffer(letterArgs);
+    // Replace the cached storage copy too so the builder portal's download
+    // link reflects the same fresh content.
+    try {
+      const fresh = await uploadLetterPdf({
+        pdfBuffer,
+        communitySlug: app.community.slug,
+        referenceNumber: app.reference_number,
+      });
+      await supabase
+        .from('builder_application_responses')
+        .update({
+          letter_pdf_path: fresh.path,
+          letter_signed_url: fresh.signed_url,
+          letter_signed_url_expires_at: fresh.signed_url_expires_at,
+        })
+        .eq('id', response.id);
+      response.letter_pdf_path = fresh.path;
+    } catch (e) {
+      console.warn('[builder_applications.buildBuilderEmailEnvelope] storage refresh skipped:', e.message);
+    }
+  } else {
+    const { data: dl, error: dlErr } = await supabase.storage.from(STORAGE_BUCKET).download(response.letter_pdf_path);
+    if (dlErr) throw new Error(`failed to read letter PDF: ${dlErr.message}`);
+    pdfBuffer = Buffer.from(await dl.arrayBuffer());
+  }
 
   const toEmail = app.builder_company.primary_contact_email || app.submitter_email || '';
   const { sanitizeNameForLetter } = require('../lib/builder_letter');
@@ -1656,7 +1713,9 @@ function buildEmlFile({ from, to, subject, html, pdfBuffer, pdfFilename }) {
 router.get('/:id/eml-export', async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next();
   try {
-    const env = await buildBuilderEmailEnvelope(req.params.id, req.query.response_id || null);
+    // forceRegenerate so the EML always reflects current contact info /
+    // material spec / community name. Cached PDF skipped for unsent letters.
+    const env = await buildBuilderEmailEnvelope(req.params.id, req.query.response_id || null, { forceRegenerate: true });
     const eml = buildEmlFile({
       from: '"Bedrock ARC" <builders@bedrocktx.com>',
       to: env.toEmail,
