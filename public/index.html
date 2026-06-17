@@ -9849,6 +9849,7 @@
         <h3 style="margin:0;">⚖️ Governing Doc Health</h3>
         <div style="display:flex; gap:8px; align-items:center;">
           <button class="secondary-btn" onclick="docsLoadGovHealthPortfolio()" style="font-size:12px; padding:6px 10px;">🌐 Portfolio overview</button>
+          <button class="secondary-btn" onclick="docsSendHealthDigest(this)" id="docsSendDigestBtn" style="font-size:12px; padding:6px 10px;" title="Generate this week's governing-doc health digest and send it via email. Recipient defaults to RESEND_DIGEST_TO env var; can be overridden inline.">📧 Send digest now</button>
           <select id="govHealthCommunity" onchange="docsLoadGoverningHealth()" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px;">
             <option value="">— or pick a community —</option>
           </select>
@@ -34406,6 +34407,37 @@ ${questionsPage}
       `;
     } catch (e) {
       list.innerHTML = `<div style="color:#b91c1c; padding:8px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // Fire the digest endpoint and prompt for a recipient override. Default
+  // is whatever's in RESEND_DIGEST_TO env on the server; the prompt lets
+  // the operator send it to a different address ad-hoc (e.g. board member
+  // wants to see the week's state).
+  async function docsSendHealthDigest(btn) {
+    const to = prompt('Send digest to which email?\n\nLeave blank to use the configured default (RESEND_DIGEST_TO env).');
+    if (to === null) return; // operator canceled
+    const originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳ Sending…';
+    try {
+      const body = to.trim() ? { to: to.trim() } : {};
+      const r = await fetch('/api/documents/governing-health/digest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) {
+        const hint = j.hint ? `\n\nHint: ${j.hint}` : '';
+        throw new Error((j.error || j.send?.error || 'send failed') + hint);
+      }
+      const t = j.totals || {};
+      btn.textContent = '✓ Sent';
+      alert(`Digest sent.\n\nThis week: ${t.uploadedSince || 0} new uploads · ${t.confirmedSince || 0} amendments confirmed.\nQueue: ${t.pendingCount || 0} pending reviews · ${t.zeroChunkCount || 0} zero-chunk docs.\nStructural exposures: ${t.missingFoundation || 0}.`);
+      setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 2500);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = originalText;
+      alert('Digest send failed: ' + e.message);
     }
   }
 
