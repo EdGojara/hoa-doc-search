@@ -1801,13 +1801,16 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
       } else if (bm.match_type === 'ambiguous') {
         const names = (bm.candidates || []).map((c) => c.company_name).join(', ');
         builderLine = `\n⚠ Ambiguous — multiple builders match "${bm.extracted_name}" (${names}). Pick the right one on the detail panel.`;
+      } else if (bm.match_type === 'ambiguous_autopicked') {
+        const others = (bm.candidates || []).filter((c) => c.id !== bm.picked_id).map((c) => c.company_name).join(', ');
+        builderLine = `\n⚠ Multiple builders matched "${bm.extracted_name}" — auto-picked ${bm.picked_name}. Other candidates: ${others}. Review the link on the detail panel if wrong.`;
       }
     }
     status.textContent = `✓ Created ${j.reference_number}${j.fast_track ? ' (fast-track matched)' : ''}. Confidence: ${j.ai_confidence || '—'}.${builderLine}\nOpening detail panel…`;
     status.style.whiteSpace = 'pre-wrap';
     // Give the operator a beat to read the builder-match line. New / ambiguous
     // cases hold longer so they don't miss it.
-    const delay = (bm && (bm.match_type === 'created' || bm.match_type === 'ambiguous')) ? 2200 : 1100;
+    const delay = (bm && (bm.match_type === 'created' || bm.match_type === 'ambiguous' || bm.match_type === 'ambiguous_autopicked')) ? 2200 : 1100;
     // Refresh queue + auto-open the new application so staff can verify
     // extraction + click Approve in one motion.
     setTimeout(async () => {

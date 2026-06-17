@@ -3325,15 +3325,49 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
             : null,
         };
       } else if (resolved.match_type === 'ambiguous') {
-        // Multiple plausible matches. Don't pick silently — staff resolves.
-        builderMatch = {
-          match_type: 'ambiguous',
-          extracted_name: extracted.builder_company_name.trim(),
-          candidates: resolved.candidates || [],
-        };
-        // For v1 we'll still let the application land WITHOUT a builder_company_id;
-        // staff can pick the right one from the candidates list on the detail panel.
-        // This is the safer failure mode than auto-picking the wrong DRB.
+        // Multiple plausible matches. builder_company_id is NOT NULL on
+        // builder_applications, so we cannot let this insert with no builder.
+        // Pick a tie-breaker default and tag the application for review so
+        // staff sees the chip and can re-link if the auto-pick was wrong.
+        // Default = oldest candidate with a clean primary_contact_name (no
+        // brackets, has a space), matching the consolidation-script heuristic.
+        // Falls through to oldest candidate overall if none look clean.
+        const candidatesFull = resolved.candidates || [];
+        // candidates from resolveBuilderCompany are {id, company_name}; we need
+        // the full rows to score. Pull them now.
+        const candIds = candidatesFull.map((c) => c.id);
+        const { data: candRows } = await supabase
+          .from('builder_companies')
+          .select('id, company_name, primary_contact_name, primary_contact_email, primary_contact_phone, primary_email_domain, created_at')
+          .in('id', candIds);
+        const cleanRows = (candRows || [])
+          .filter((r) => r.primary_contact_name
+            && !r.primary_contact_name.includes('[')
+            && r.primary_contact_name.includes(' ')
+            && r.primary_contact_name.length >= 5);
+        const pickFrom = cleanRows.length > 0 ? cleanRows : (candRows || []);
+        const picked = pickFrom.sort((a, b) =>
+          new Date(a.created_at || 0) - new Date(b.created_at || 0))[0];
+        if (picked) {
+          builderCompanyId = picked.id;
+          matchedCompany = picked;
+          builderMatch = {
+            match_type: 'ambiguous_autopicked',
+            picked_id: picked.id,
+            picked_name: picked.company_name,
+            extracted_name: extracted.builder_company_name.trim(),
+            candidates: candidatesFull,
+            notes: `Multiple builders matched "${extracted.builder_company_name.trim()}" -- auto-picked ${picked.company_name} (oldest clean row). Review the link on the detail panel if this is wrong.`,
+          };
+        } else {
+          // Should never happen (ambiguous means >=2 matched) but defend.
+          return res.status(409).json({
+            error: 'builder_match_ambiguous_no_pick',
+            extracted_name: extracted.builder_company_name.trim(),
+            candidates: candidatesFull,
+            hint: 'Multiple builder rows matched and none could be auto-selected. Resolve duplicates in builder_companies before retrying.',
+          });
+        }
       } else {
         // match_type === 'created' — new builder
         const { data: newBc, error: bErr } = await supabase
