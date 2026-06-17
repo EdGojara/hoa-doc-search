@@ -116,7 +116,14 @@ const DOC_EXTRACTION_PROMPT = `You are extracting metadata from a community asso
     */
   },
   "extraction_confidence": "high | medium | low",
-  "extraction_notes": "Free text. Anything unusual you noticed about this document: ambiguous category, unclear period, multiple possible interpretations, scan quality issues."
+  "extraction_notes": "Free text. Anything unusual you noticed about this document: ambiguous category, unclear period, multiple possible interpretations, scan quality issues.",
+  "amendment": {
+    "is_amendment": true | false,
+    "amends_document_title_guess": "string or null — your best guess at the title of the original document this amends (e.g., 'Declaration of Covenants, Conditions and Restrictions'). null if not an amendment.",
+    "amended_sections": ["3.3", "5.1(a)"] /* array of section identifiers this amendment touches; empty array means whole-document supersession */,
+    "amendment_effective_date": "YYYY-MM-DD or null",
+    "amendment_reasoning": "Brief explanation of how you concluded this is an amendment, or null if not an amendment. Look for cues like: 'Amendment to', 'First Amendment', 'Supersedes', 'Hereby amends Section X', 'replaces Section Y', explicit cross-references to a parent document, restatement of specific section numbers with new language."
+  }
 }
 
 Rules:
@@ -545,6 +552,71 @@ router.post('/upload', upload.single('pdf'), async (req, res) => {
         .eq('management_company_id', BEDROCK_MGMT_CO_ID);
     }
 
+    // 9b) Governing-doc amendment supersession (Ed 2026-06-18, migration 228).
+    // If the AI extractor flagged this upload as an amendment to an existing
+    // doc, find the most likely parent in the same community by fuzzy title
+    // similarity and write the suggestion to the amendment log. We do NOT
+    // auto-confirm the link -- it shows up in the operator UI as a pending
+    // suggestion until a human clicks Confirm. That's the catastrophic-output
+    // discipline: a wrong supersession link could cause Bedrock to send a
+    // homeowner the wrong version of a deed restriction.
+    try {
+      const amend = parsed.amendment || {};
+      const isAmendment = amend.is_amendment === true;
+      const isGoverning = ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'].includes(parsed.category);
+      if (isAmendment && isGoverning && community?.id) {
+        // Find candidate parent docs -- same community, same OR related
+        // category, not this document itself. Restrict to governing-doc
+        // categories so we don't accidentally suggest an "Amendment to
+        // Bylaws" amends a budget.
+        const { data: candidates } = await supabase
+          .from('library_documents')
+          .select('id, title, category')
+          .eq('community_id', community.id)
+          .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'])
+          .neq('id', doc.id);
+
+        const guessTitle = amend.amends_document_title_guess || '';
+        let bestMatch = null;
+        let bestScore = 0;
+        for (const c of (candidates || [])) {
+          // Score = title similarity + category match bonus. Category match
+          // (an "Amendment to Bylaws" should prefer a Bylaws parent over a
+          // Declaration parent of equal title similarity).
+          const titleScore = nameJaccard(c.title || '', guessTitle);
+          const categoryBonus = c.category === parsed.category ? 0.2 : 0;
+          const score = titleScore + categoryBonus;
+          if (score > bestScore) {
+            bestScore = score;
+            bestMatch = c;
+          }
+        }
+
+        // Threshold: 0.35 of combined score. Below that, we don't have a
+        // confident pick -- the suggestion still gets logged but with no
+        // parent, so the operator can pick the right one manually.
+        const confidentMatch = bestMatch && bestScore >= 0.35;
+        await supabase
+          .from('library_document_amendment_log')
+          .insert({
+            amendment_library_document_id: doc.id,
+            superseded_library_document_id: confidentMatch ? bestMatch.id : null,
+            amended_sections: Array.isArray(amend.amended_sections) ? amend.amended_sections : null,
+            action: 'ai_suggested',
+            source: 'ai',
+            actor: 'extractor',
+            ai_confidence: Math.min(0.99, Math.max(0, bestScore)),
+            ai_reasoning: (amend.amendment_reasoning || '').slice(0, 1000)
+              + (confidentMatch ? `\nProposed parent: ${bestMatch.title} (score=${bestScore.toFixed(2)})` : '\nNo confident parent match found -- operator must pick.'),
+          });
+        console.log(`[documents] amendment suggested for ${doc.id} -> parent ${confidentMatch ? bestMatch.id : '(unknown)'} score=${bestScore.toFixed(2)}`);
+      }
+    } catch (amendErr) {
+      // Non-fatal: amendment suggestion failures should never block an
+      // upload. Operator can manually link via the UI later.
+      console.warn('[documents] amendment suggestion failed:', amendErr.message);
+    }
+
     // 10) If there's a semantic duplicate, create a duplicate group for user resolution
     if (semanticDup) {
       const { data: dupGroup } = await supabase
@@ -869,6 +941,191 @@ router.post('/assign-community/:id', async (req, res) => {
     res.json({ ok: true, community: c.name });
   } catch (err) {
     console.error('[documents/assign-community]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ============================================================================
+// Amendment supersession endpoints (migration 228, Ed 2026-06-18)
+// ----------------------------------------------------------------------------
+// GET  /api/documents/amendment-suggestions  — pending AI-suggested links
+// POST /api/documents/amendment/:logId/confirm — operator accepts the link
+// POST /api/documents/amendment/:logId/reject  — operator rejects (audit only)
+// POST /api/documents/amendment/manual-link    — operator links without AI
+// ============================================================================
+
+// List every AI-suggested supersession link that hasn't been confirmed,
+// rejected, or unlinked yet. Used by the Documents tab "Pending amendment
+// reviews" panel. Returns each suggestion with both docs' titles + community
+// + section list so the operator can decide in one screen.
+router.get('/amendment-suggestions', async (req, res) => {
+  try {
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 50));
+    const communityId = req.query.community_id || null;
+
+    // Latest log row per amendment_library_document_id where action='ai_suggested'
+    // and there's no later operator_confirmed / unlinked row.
+    const { data: logs, error } = await supabase
+      .from('library_document_amendment_log')
+      .select('id, amendment_library_document_id, superseded_library_document_id, amended_sections, action, source, ai_confidence, ai_reasoning, recorded_at')
+      .eq('action', 'ai_suggested')
+      .eq('source', 'ai')
+      .order('recorded_at', { ascending: false })
+      .limit(500);
+    if (error) return res.status(500).json({ error: error.message });
+
+    // For each amendment doc, only keep the most recent suggestion.
+    const latestByAmendment = new Map();
+    for (const row of (logs || [])) {
+      if (!latestByAmendment.has(row.amendment_library_document_id)) {
+        latestByAmendment.set(row.amendment_library_document_id, row);
+      }
+    }
+    const candidates = Array.from(latestByAmendment.values());
+
+    // Drop any whose amendment doc already has a confirmed supersession link.
+    const amendmentDocIds = candidates.map((r) => r.amendment_library_document_id);
+    let confirmedSet = new Set();
+    if (amendmentDocIds.length > 0) {
+      const { data: docs } = await supabase
+        .from('library_documents')
+        .select('id, supersedes_library_document_id, supersession_recorded_at')
+        .in('id', amendmentDocIds);
+      for (const d of (docs || [])) {
+        if (d.supersedes_library_document_id && d.supersession_recorded_at) confirmedSet.add(d.id);
+      }
+    }
+    const pending = candidates.filter((r) => !confirmedSet.has(r.amendment_library_document_id));
+
+    if (pending.length === 0) return res.json({ suggestions: [] });
+
+    const allDocIds = new Set();
+    for (const p of pending) {
+      allDocIds.add(p.amendment_library_document_id);
+      if (p.superseded_library_document_id) allDocIds.add(p.superseded_library_document_id);
+    }
+    const { data: docs } = await supabase
+      .from('library_documents')
+      .select('id, title, category, file_name_original, community_id, communities:community_id(name), effective_date')
+      .in('id', [...allDocIds]);
+    const docById = new Map((docs || []).map((d) => [d.id, d]));
+
+    const suggestions = pending
+      .filter((p) => {
+        if (!communityId) return true;
+        const amendDoc = docById.get(p.amendment_library_document_id);
+        return amendDoc && amendDoc.community_id === communityId;
+      })
+      .slice(0, limit)
+      .map((p) => ({
+        log_id: p.id,
+        ai_confidence: p.ai_confidence,
+        ai_reasoning: p.ai_reasoning,
+        suggested_at: p.recorded_at,
+        amended_sections: p.amended_sections,
+        amendment: (() => {
+          const d = docById.get(p.amendment_library_document_id);
+          return d ? {
+            id: d.id, title: d.title, category: d.category,
+            community_name: d.communities?.name || null,
+            file_name: d.file_name_original,
+            effective_date: d.effective_date,
+          } : null;
+        })(),
+        proposed_parent: p.superseded_library_document_id ? (() => {
+          const d = docById.get(p.superseded_library_document_id);
+          return d ? {
+            id: d.id, title: d.title, category: d.category,
+            community_name: d.communities?.name || null,
+            file_name: d.file_name_original,
+            effective_date: d.effective_date,
+          } : null;
+        })() : null,
+      }));
+
+    res.json({ suggestions });
+  } catch (err) {
+    console.error('[documents/amendment-suggestions]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Operator confirms an amendment suggestion. Writes the supersession link
+// on the amendment doc + an 'operator_confirmed' log row. Optional body
+// fields allow overriding the proposed parent / amended_sections.
+router.post('/amendment/:logId/confirm', express.json(), async (req, res) => {
+  try {
+    const logId = req.params.logId;
+    const body = req.body || {};
+    const actor = (body.actor || '').toString().slice(0, 200) || 'operator';
+
+    const { data: log } = await supabase
+      .from('library_document_amendment_log')
+      .select('amendment_library_document_id, superseded_library_document_id, amended_sections')
+      .eq('id', logId)
+      .maybeSingle();
+    if (!log) return res.status(404).json({ error: 'log_not_found' });
+
+    // Operator can override the parent doc and section list before confirming.
+    const parentId = body.superseded_library_document_id || log.superseded_library_document_id;
+    if (!parentId) return res.status(400).json({ error: 'parent_required', detail: 'No parent doc specified -- AI suggestion had no confident match; supply superseded_library_document_id in body.' });
+    const sections = Array.isArray(body.amended_sections) ? body.amended_sections : (log.amended_sections || null);
+
+    // Write the supersession link on the amendment doc.
+    const { error: upErr } = await supabase
+      .from('library_documents')
+      .update({
+        supersedes_library_document_id: parentId,
+        amended_sections: sections,
+        supersession_recorded_at: new Date().toISOString(),
+        supersession_recorded_by: actor,
+      })
+      .eq('id', log.amendment_library_document_id);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+
+    await supabase.from('library_document_amendment_log').insert({
+      amendment_library_document_id: log.amendment_library_document_id,
+      superseded_library_document_id: parentId,
+      amended_sections: sections,
+      action: 'operator_confirmed',
+      source: 'operator',
+      actor,
+    });
+
+    res.json({ ok: true, amendment_library_document_id: log.amendment_library_document_id, superseded_library_document_id: parentId, amended_sections: sections });
+  } catch (err) {
+    console.error('[documents/amendment/confirm]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Operator rejects an AI suggestion (the doc is not actually an amendment,
+// or amends something else). Logs the rejection but doesn't link anything.
+router.post('/amendment/:logId/reject', express.json(), async (req, res) => {
+  try {
+    const logId = req.params.logId;
+    const body = req.body || {};
+    const actor = (body.actor || '').toString().slice(0, 200) || 'operator';
+
+    const { data: log } = await supabase
+      .from('library_document_amendment_log')
+      .select('amendment_library_document_id')
+      .eq('id', logId)
+      .maybeSingle();
+    if (!log) return res.status(404).json({ error: 'log_not_found' });
+
+    await supabase.from('library_document_amendment_log').insert({
+      amendment_library_document_id: log.amendment_library_document_id,
+      superseded_library_document_id: null,
+      action: 'unlinked',
+      source: 'operator',
+      actor,
+      ai_reasoning: (body.reason || 'Operator rejected AI suggestion').slice(0, 1000),
+    });
+
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[documents/amendment/reject]', err);
     res.status(500).json({ error: err.message });
   }
 });
