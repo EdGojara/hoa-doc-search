@@ -34935,7 +34935,10 @@ ${questionsPage}
 
         ${s.ai_reasoning ? `<div style="font-size:12px; color:#475569; padding:8px 10px; background:#f8fafc; border-left:3px solid #cbd5e1; border-radius:0 4px 4px 0; margin-bottom:10px; white-space:pre-wrap;">${escapeHtml(s.ai_reasoning)}</div>` : ''}
 
-        <div style="display:flex; gap:8px; justify-content:flex-end;">
+        <div style="display:flex; gap:8px; justify-content:flex-end; align-items:center; flex-wrap:wrap;">
+          <a href="/api/documents/${escapeHtml(amend.id || '')}/preview" target="_blank" rel="noopener" style="font-size:11.5px; color:#475569; text-decoration:none; padding:6px 10px; border:1px solid #cbd5e1; border-radius:5px; background:#fff;" title="Open the amendment PDF in a new tab so you can verify the AI's read.">📄 Preview amendment</a>
+          ${parent ? `<a href="/api/documents/${escapeHtml(parent.id)}/preview" target="_blank" rel="noopener" style="font-size:11.5px; color:#475569; text-decoration:none; padding:6px 10px; border:1px solid #cbd5e1; border-radius:5px; background:#fff;" title="Open the proposed parent PDF in a new tab.">📄 Preview parent</a>` : ''}
+          <div style="flex:1;"></div>
           <button class="secondary-btn" onclick="docsRejectAmendment('${s.log_id}', this)" style="font-size:12px; padding:7px 14px; background:#fff; color:#b91c1c; border:1px solid #fca5a5;">✗ Not an amendment</button>
           <button class="action-btn" ${noParent ? 'disabled title="Pick a parent first via the link-manual API or fix in admin"' : ''} onclick="docsConfirmAmendment('${s.log_id}', this)" style="font-size:12px; padding:7px 18px; ${noParent ? 'opacity:0.5; cursor:not-allowed;' : ''}">✓ Confirm link</button>
         </div>

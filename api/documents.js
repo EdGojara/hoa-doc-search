@@ -2255,6 +2255,33 @@ router.get('/:id/download', async (req, res) => {
 });
 
 // ----------------------------------------------------------------------------
+// GET /api/documents/:id/preview  — same PDF, but Content-Disposition: inline
+// so the browser opens it in a new tab instead of downloading. Operator UI
+// uses this for the Pending amendment reviews preview button.
+// ----------------------------------------------------------------------------
+router.get('/:id/preview', async (req, res) => {
+  try {
+    const { data: doc } = await supabase
+      .from('library_documents')
+      .select('file_path, file_name_normalized')
+      .eq('id', req.params.id)
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .maybeSingle();
+    if (!doc || !doc.file_path) return res.status(404).json({ error: 'File not available' });
+
+    const { data, error } = await supabase.storage.from(STORAGE_BUCKET).download(doc.file_path);
+    if (error) throw error;
+    const buf = Buffer.from(await data.arrayBuffer());
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `inline; filename="${doc.file_name_normalized}"`);
+    res.send(buf);
+  } catch (err) {
+    console.error('[documents] preview failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// ----------------------------------------------------------------------------
 // POST /api/documents/query  — natural-language retrieval
 // Body: { question: "give me 2026 LPF approved budget" }
 // ----------------------------------------------------------------------------
