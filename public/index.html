@@ -9864,12 +9864,16 @@
          reject. Confirmation writes the supersession link on
          library_documents; retrieval then deprioritizes the parent doc
          and boosts the amendment. Build: Ed 2026-06-18 phase 4. -->
-    <div class="panel" id="docsAmendmentReviewsPanel" style="margin-bottom: 16px; border-left: 3px solid #92400e; display:none;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+    <div class="panel" id="docsAmendmentReviewsPanel" style="margin-bottom: 16px; border-left: 3px solid #92400e;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:8px;">
         <h3 style="margin:0;">📜 Pending amendment reviews <span id="docsAmendmentReviewsCount" style="color:#92400e; font-weight:600; font-size:13px; margin-left:6px;"></span></h3>
-        <button class="secondary-btn" onclick="docsLoadAmendmentReviews()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <button class="secondary-btn" onclick="docsLoadAmendmentReviews()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+          <button class="secondary-btn" onclick="docsRunPortfolioAmendmentBackfill(this)" id="docsPortfolioAmendBtn" style="font-size:12px; padding:6px 14px; background:#ede9fe; border:1px solid #7c3aed; color:#5b21b6;" title="Scan governing docs across EVERY community in the portfolio for amendments. Loops through the backfill endpoint in batches of 8 until done. Takes 1-5 minutes depending on library size; safe to leave running.">🌐 Scan whole portfolio</button>
+        </div>
       </div>
       <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">The AI flagged these uploads as amendments to an existing doc. Confirm the parent doc + sections so retrieval treats the amendment as current and the original as superseded for those sections.</p>
+      <div id="docsPortfolioBackfillProgress" style="display:none; margin-bottom:10px;"></div>
       <div id="docsAmendmentReviewsList"></div>
     </div>
 
@@ -34390,15 +34394,71 @@ ${questionsPage}
       if (!r.ok) throw new Error(j.error || 'load failed');
       const suggestions = j.suggestions || [];
       if (suggestions.length === 0) {
-        panel.style.display = 'none';
+        count.textContent = '';
+        list.innerHTML = '<div style="padding:14px; text-align:center; color:#94a3b8; font-size:12.5px;">No pending suggestions. Click <strong>🌐 Scan whole portfolio</strong> above to run amendment detection across every community\'s governing docs.</div>';
         return;
       }
-      panel.style.display = '';
       count.textContent = `(${suggestions.length})`;
       list.innerHTML = suggestions.map(_renderAmendmentSuggestion).join('');
     } catch (e) {
-      panel.style.display = '';
       list.innerHTML = `<div style="color:#b91c1c; padding:8px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // Loop the amendment backfill across every community in the portfolio.
+  // Endpoint accepts a per-batch limit; we call it repeatedly until a batch
+  // returns 0 processed (meaning everything title-matching is already logged).
+  // Total runtime depends on library size -- typically 1-5 min for a
+  // 7-community portfolio. Progress is rendered above the list so the
+  // operator sees the loop's status without watching the network tab.
+  async function docsRunPortfolioAmendmentBackfill(btn) {
+    if (!confirm('Run amendment detection across EVERY community in the portfolio?\n\nThis loops the backfill endpoint in batches of 8 until done. Typically takes 1-5 minutes. Pending suggestions will appear in this panel as batches complete; safe to leave running while you do other things.')) return;
+    const progress = document.getElementById('docsPortfolioBackfillProgress');
+    if (!progress) return;
+    const originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳ Running…';
+    progress.style.display = 'block';
+    progress.innerHTML = '<div style="padding:10px 12px; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; border-radius:8px; font-size:12.5px;">Starting portfolio scan…</div>';
+    let totalProcessed = 0, totalSuggested = 0, batchCount = 0;
+    const startedAt = Date.now();
+    try {
+      while (true) {
+        batchCount += 1;
+        const r = await fetch('/api/documents/amendment-backfill', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ limit: 8 }),
+        });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'batch failed');
+        totalProcessed += j.processed || 0;
+        totalSuggested += j.suggested || 0;
+        const elapsedS = Math.round((Date.now() - startedAt) / 1000);
+        progress.innerHTML = `<div style="padding:10px 12px; background:#ede9fe; border:1px solid #c4b5fd; color:#5b21b6; border-radius:8px; font-size:12.5px;">
+          <strong>Batch ${batchCount}:</strong> processed ${j.processed || 0}, suggested ${j.suggested || 0}.
+          Running totals — processed: <strong>${totalProcessed}</strong>, suggested: <strong>${totalSuggested}</strong> · elapsed ${elapsedS}s.
+        </div>`;
+        // Update the pending suggestions list inline as batches land so the
+        // operator can start reviewing while later batches keep running.
+        docsLoadAmendmentReviews();
+        // Stop conditions: zero processed (nothing left), OR very high batch
+        // count (safety stop at 30 batches = 240 docs).
+        if ((j.processed || 0) === 0) break;
+        if (batchCount >= 30) {
+          progress.innerHTML += '<div style="margin-top:6px; padding:8px 10px; background:#fef3c7; border:1px solid #f59e0b; color:#92400e; border-radius:6px; font-size:11.5px;">Safety stop at 30 batches. Click Scan again if more candidates remain.</div>';
+          break;
+        }
+      }
+      const totalS = Math.round((Date.now() - startedAt) / 1000);
+      progress.innerHTML = `<div style="padding:10px 12px; background:#dcfce7; border:1px solid #86efac; color:#166534; border-radius:8px; font-size:12.5px;">
+        <strong>✓ Portfolio scan complete.</strong> ${batchCount} batches · ${totalProcessed} docs processed · <strong>${totalSuggested} new amendment suggestions logged</strong> · ${totalS}s total.
+        ${totalSuggested > 0 ? '<br><span style="font-size:11.5px;">Review them below.</span>' : '<br><span style="font-size:11.5px; opacity:0.8;">Nothing matched the title heuristics; nothing to suggest.</span>'}
+      </div>`;
+      btn.textContent = `✓ ${totalSuggested} suggested`;
+      setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 3000);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = originalText;
+      progress.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border:1px solid #f87171; color:#991b1b; border-radius:8px; font-size:12.5px;">Scan failed mid-loop: ${escapeHtml(e.message)}. ${totalSuggested > 0 ? `Already logged ${totalSuggested} suggestions; review them below.` : ''}</div>`;
     }
   }
 
