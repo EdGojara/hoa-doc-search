@@ -34210,8 +34210,34 @@ ${questionsPage}
 
     const catOrder = ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'];
     for (const cat of catOrder) {
-      const list = byCat[cat] || [];
-      if (list.length === 0) continue;
+      const rawList = byCat[cat] || [];
+      if (rawList.length === 0) continue;
+      // Sort by effective_date DESC so the newest is at the top; null dates
+      // fall to the bottom. Newest gets a "Most recent" badge and we infer
+      // probable supersession when there's >1 doc and no amendment links.
+      const list = rawList.slice().sort((a, b) => {
+        const da = a.effective_date || '';
+        const db = b.effective_date || '';
+        if (!da && !db) return 0;
+        if (!da) return 1;
+        if (!db) return -1;
+        return db.localeCompare(da);
+      });
+      // Most-recent badge: the first doc whose effective_date is set and
+      // whose status is 'current' (not already superseded).
+      const mostRecent = list.find((d) => d.effective_date && d.status !== 'superseded');
+      // Possible-stale chips: any non-superseded doc with an effective_date
+      // OLDER than mostRecent.effective_date AND with no amendment link from
+      // a newer doc. The operator can confirm supersession via the action.
+      const mostRecentDate = mostRecent?.effective_date || null;
+      const probablyStale = (d) =>
+        mostRecentDate
+        && d.id !== mostRecent.id
+        && d.effective_date
+        && d.effective_date < mostRecentDate
+        && d.status !== 'superseded'
+        && !d.is_amendment
+        && d.amendments_count === 0;
       out.push(`<div style="margin-bottom:14px;">
         <h4 style="margin:0 0 8px; font-size:13px; color:#1e40af;">${_govHealthCategoryLabel(cat)} · ${list.length}</h4>
         <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
@@ -34226,18 +34252,22 @@ ${questionsPage}
           <tbody>
             ${list.map((d) => {
               const isDup = dupIds.has(d.id);
+              const isStale = probablyStale(d);
               const noChunks = d.chunk_count === 0;
-              const rowStyle = isDup ? 'background:#fff7ed;' : '';
+              const rowStyle = isStale ? 'background:#fef2f2;' : (isDup ? 'background:#fff7ed;' : '');
+              const isMostRecent = mostRecent && d.id === mostRecent.id;
+              const recentBadge = isMostRecent ? ' <span style="background:#dcfce7; color:#166534; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700; margin-left:6px;">✨ NEWEST</span>' : '';
+              const staleBadge = isStale ? ' <span style="background:#fee2e2; color:#991b1b; padding:1px 7px; border-radius:99px; font-size:10px; font-weight:700; margin-left:6px;" title="Probably superseded by the newest doc -- confirm via Mark superseded">⚠ PROBABLY STALE</span>' : '';
               return `
                 <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top; ${rowStyle}">
                   <td style="padding:8px;">
-                    <div style="font-weight:600; color:#1f2937;">${escapeHtml(d.title || '(untitled)')}</div>
+                    <div style="font-weight:600; color:#1f2937;">${escapeHtml(d.title || '(untitled)')}${recentBadge}${staleBadge}</div>
                     <div style="font-size:11px; color:#6b7280;">${escapeHtml(d.file_name || '')}</div>
                   </td>
                   <td style="padding:8px;">${_govHealthStatusChip(d)}</td>
                   <td style="padding:8px; text-align:center; color:#475569;">${d.page_count != null ? d.page_count : '—'}</td>
                   <td style="padding:8px; text-align:center; ${noChunks ? 'color:#b91c1c; font-weight:600;' : 'color:#475569;'}">${d.chunk_count}${noChunks ? ' ⚠' : ''}</td>
-                  <td style="padding:8px; color:#475569;">${d.effective_date ? escapeHtml(d.effective_date) : '—'}</td>
+                  <td style="padding:8px; color:#475569;">${d.effective_date ? escapeHtml(d.effective_date) : '<em style="color:#94a3b8;">unknown</em>'}</td>
                   <td style="padding:8px; text-align:right;">
                     <button class="secondary-btn" onclick="docsGovHealthMarkSuperseded('${d.id}', ${JSON.stringify(d.title || '').replace(/"/g, '&quot;')}, '${j.community.id}')" style="font-size:11px; padding:4px 10px;" ${d.status === 'superseded' ? 'disabled' : ''}>Mark superseded…</button>
                   </td>
