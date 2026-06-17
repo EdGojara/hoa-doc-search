@@ -9849,6 +9849,7 @@
         <h3 style="margin:0;">⚖️ Governing Doc Health</h3>
         <div style="display:flex; gap:8px; align-items:center;">
           <button class="secondary-btn" onclick="docsLoadGovHealthPortfolio()" style="font-size:12px; padding:6px 10px;">🌐 Portfolio overview</button>
+          <button class="secondary-btn" onclick="docsPreviewHealthDigest(this)" id="docsPreviewDigestBtn" style="font-size:12px; padding:6px 10px;" title="Render this week's governing-doc health digest inline so you can read it before deciding whether to send.">👁 Preview digest</button>
           <button class="secondary-btn" onclick="docsSendHealthDigest(this)" id="docsSendDigestBtn" style="font-size:12px; padding:6px 10px;" title="Generate this week's governing-doc health digest and send it via email. Recipient defaults to RESEND_DIGEST_TO env var; can be overridden inline.">📧 Send digest now</button>
           <select id="govHealthCommunity" onchange="docsLoadGoverningHealth()" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px;">
             <option value="">— or pick a community —</option>
@@ -34407,6 +34408,50 @@ ${questionsPage}
       `;
     } catch (e) {
       list.innerHTML = `<div style="color:#b91c1c; padding:8px;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // Render the digest HTML inline above the governing health list so the
+  // operator can eyeball it before deciding whether to send via email.
+  // Tighter feedback loop than the success-alert-with-numbers from Send.
+  async function docsPreviewHealthDigest(btn) {
+    const list = document.getElementById('govHealthList');
+    if (!list) return;
+    const originalText = btn.textContent;
+    btn.disabled = true; btn.textContent = '⏳ Building…';
+    try {
+      const r = await fetch('/api/documents/governing-health/digest', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ preview_only: true }),
+      });
+      const j = await r.json();
+      if (!r.ok || !j.ok) throw new Error(j.error || 'preview failed');
+      // Prepend the preview ABOVE the current matrix content so the operator
+      // can still see and interact with the table below. Brief auto-dismiss
+      // header lets them remove the preview without reloading.
+      const wrap = document.createElement('div');
+      wrap.id = 'govHealthDigestPreview';
+      wrap.style.cssText = 'border:1px solid #1e3a8a; border-radius:8px; padding:14px; margin-bottom:14px; background:#fff;';
+      wrap.innerHTML = `
+        <div style="display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; padding-bottom:8px; border-bottom:1px solid #e5e7eb;">
+          <div>
+            <div style="font-size:10.5px; font-weight:700; color:#1e3a8a; text-transform:uppercase; letter-spacing:0.4px;">Digest preview · same content that would email</div>
+            <div style="font-size:12px; color:#1f2937; margin-top:2px;">Subject: <strong>${escapeHtml(j.subject || '')}</strong></div>
+          </div>
+          <button class="secondary-btn" onclick="document.getElementById('govHealthDigestPreview')?.remove()" style="font-size:11px; padding:5px 10px;">× Close preview</button>
+        </div>
+        ${j.html || ''}
+      `;
+      // Remove any existing preview first to avoid stacking
+      const existing = document.getElementById('govHealthDigestPreview');
+      if (existing) existing.remove();
+      list.insertBefore(wrap, list.firstChild);
+      btn.textContent = '✓ Preview ready';
+      setTimeout(() => { btn.textContent = originalText; btn.disabled = false; }, 1800);
+    } catch (e) {
+      btn.disabled = false; btn.textContent = originalText;
+      alert('Preview failed: ' + e.message);
     }
   }
 

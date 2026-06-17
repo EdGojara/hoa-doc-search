@@ -1533,16 +1533,21 @@ router.post('/governing-health/digest', express.json(), async (req, res) => {
     const { buildDigest } = require('../lib/governing_doc_health_digest');
     const sinceIso = req.body?.since || null;
     const to = req.body?.to || process.env.RESEND_DIGEST_TO || process.env.RESEND_FROM_EMAIL || null;
+    const previewOnly = !!req.body?.preview_only;
 
     const { totals, html, subject } = await buildDigest({ supabase, sinceIso });
     if (totals.error === 'no_communities') {
       return res.json({ ok: false, error: 'no_active_communities' });
     }
+    // Preview mode: return HTML for inline rendering without firing an email.
+    if (previewOnly) {
+      return res.json({ ok: true, preview: true, html, subject, totals });
+    }
     if (!to) {
-      return res.json({ ok: false, error: 'no_recipient', hint: 'set RESEND_DIGEST_TO or pass body.to', totals });
+      return res.json({ ok: false, error: 'no_recipient', hint: 'set RESEND_DIGEST_TO or pass body.to', totals, html, subject });
     }
     const send = await sendEmail({ to, subject, html });
-    res.json({ ok: send.ok, send, totals });
+    res.json({ ok: send.ok, send, totals, html, subject });
   } catch (err) {
     console.error('[documents/governing-health/digest]', err);
     res.status(500).json({ error: err.message });
