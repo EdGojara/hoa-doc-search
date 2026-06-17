@@ -271,21 +271,43 @@ async function extractFromPdfBuffer(pdfBuffer, prompt, maxPagesToSend) {
   // hasn't responded in 70s the request would die at Render anyway with no
   // useful error. Failing fast here lets the handler return a clear "AI
   // extraction timed out -- try the regular upload flow" message.
-  const apiPromise = anthropic.messages.create({
-    model: 'claude-sonnet-4-5',
-    max_tokens: 1200,
-    messages: [{
-      role: 'user',
-      content: [
-        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: claudeBuffer.toString('base64') } },
-        { type: 'text', text: prompt + (trimmed ? `\n\nNote: this is the first ${maxPagesToSend} pages of a ${total_pages}-page document — the title block + tables should be in this slice.` : '') },
-      ],
-    }],
-  });
-  const timeoutPromise = new Promise((_, reject) =>
-    setTimeout(() => reject(new Error('AI extraction timed out after 70 seconds (likely a very large or image-heavy PDF — try uploading again with a smaller file, or use the regular submit flow)')), 70_000),
-  );
-  const resp = await Promise.race([apiPromise, timeoutPromise]);
+  //
+  // Retry on 429 (rate limit) / 529 (overload) -- Karla's 14-PDF Friday
+  // run uploads back-to-back. Without retry, requests 4+ start failing on
+  // Anthropic's 30K-tokens-per-minute tier cap. Backoff matches the
+  // documents.js extractDocumentMetadata wrapper.
+  const RETRY_DELAYS_MS = [30000, 60000, 90000];
+  let resp = null;
+  let lastApiErr = null;
+  for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
+    const apiPromise = anthropic.messages.create({
+      model: 'claude-sonnet-4-5',
+      max_tokens: 1200,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: claudeBuffer.toString('base64') } },
+          { type: 'text', text: prompt + (trimmed ? `\n\nNote: this is the first ${maxPagesToSend} pages of a ${total_pages}-page document — the title block + tables should be in this slice.` : '') },
+        ],
+      }],
+    });
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('AI extraction timed out after 70 seconds (likely a very large or image-heavy PDF — try uploading again with a smaller file, or use the regular submit flow)')), 70_000),
+    );
+    try {
+      resp = await Promise.race([apiPromise, timeoutPromise]);
+      break;
+    } catch (err) {
+      lastApiErr = err;
+      const isRetryable = err.status === 429 || err.status === 529
+                       || /rate_limit|overloaded/i.test(err.message || '');
+      if (!isRetryable || attempt >= RETRY_DELAYS_MS.length) throw err;
+      const delay = RETRY_DELAYS_MS[attempt];
+      console.warn(`[extractFromPdfBuffer] rate-limited, retry ${attempt + 1}/${RETRY_DELAYS_MS.length} in ${delay/1000}s`);
+      await new Promise((r) => setTimeout(r, delay));
+    }
+  }
+  if (!resp) throw lastApiErr || new Error('extraction failed after retries');
   const t2 = Date.now();
   console.log(`[extractFromPdfBuffer] claude ${t2 - t1}ms · total ${t2 - t0}ms`);
   const txt = (resp.content || []).map((c) => c.text || '').join('').trim();
