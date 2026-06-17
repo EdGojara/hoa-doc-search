@@ -3299,6 +3299,18 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
     let builderCompanyId = null;
     let builderMatch = null;  // returned to UI so staff sees what happened
     let matchedCompany = null;  // when matched, the full row from builder_companies
+    if (!extracted.builder_company_name) {
+      // Defense: builder_company_id is NOT NULL on builder_applications.
+      // If extraction missed the builder name, the insert would die with a
+      // generic 500 downstream. Return a clear 422 with the raw text so
+      // staff can see what the AI saw and either re-upload a cleaner PDF
+      // or use the manual auto-create modal.
+      return res.status(422).json({
+        error: 'AI could not identify the builder company name on page 1 of the PDF. The form may be scanned, rotated, or use a non-standard layout. Try re-uploading a cleaner scan, or create the application manually via the existing auto-create modal.',
+        extracted,
+        raw_extracted: (raw || '').slice(0, 800),
+      });
+    }
     if (extracted.builder_company_name) {
       const { resolveBuilderCompany } = require('../lib/builder_applications/resolve_builder_company');
       const resolved = await resolveBuilderCompany(supabase, {
