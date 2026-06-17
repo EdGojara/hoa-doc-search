@@ -1130,6 +1130,179 @@ router.post('/amendment/:logId/reject', express.json(), async (req, res) => {
   }
 });
 
+// ============================================================================
+// Governing Doc Health — per-community diagnostic of declaration/bylaws/rules
+// Ed 2026-06-18, follow-up to amendment management. Surfaces every governing
+// doc with chunk counts, supersession state, and duplicate flags so the
+// operator can pick canonicals manually. Automated consolidation is unsafe
+// for governing docs -- a wrong call sends homeowners stale language.
+// ============================================================================
+router.get('/governing-health', async (req, res) => {
+  try {
+    const communityId = req.query.community_id || null;
+    if (!communityId) {
+      return res.status(400).json({ error: 'community_id required' });
+    }
+
+    const { data: comm } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('id', communityId)
+      .maybeSingle();
+    if (!comm) return res.status(404).json({ error: 'community_not_found' });
+
+    // Library docs (governing categories only) for this community.
+    const { data: libDocs, error: libErr } = await supabase
+      .from('library_documents')
+      .select('id, title, category, status, page_count, file_name_original, effective_date, supersedes_library_document_id, amended_sections, supersession_recorded_at, superseded_at, superseded_by_id, created_at')
+      .eq('community_id', communityId)
+      .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'])
+      .order('category')
+      .order('created_at', { ascending: true });
+    if (libErr) return res.status(500).json({ error: libErr.message });
+
+    // Chunk counts per library doc (both link paths)
+    const libIds = (libDocs || []).map((d) => d.id);
+    const chunkCountById = new Map();
+    if (libIds.length > 0) {
+      // Two parallel count queries, one per link path.
+      const [byMeta, byCol] = await Promise.all([
+        supabase.from('documents')
+          .select('metadata', { count: 'exact', head: false })
+          .in('metadata->>library_document_id', libIds),
+        supabase.from('documents')
+          .select('migrated_to_library_id', { count: 'exact', head: false })
+          .in('migrated_to_library_id', libIds),
+      ]);
+      // Aggregate in JS since PostgREST doesn't do group-by counts inline.
+      for (const row of (byMeta.data || [])) {
+        const id = row.metadata?.library_document_id;
+        if (id) chunkCountById.set(id, (chunkCountById.get(id) || 0) + 1);
+      }
+      for (const row of (byCol.data || [])) {
+        const id = row.migrated_to_library_id;
+        if (id) chunkCountById.set(id, (chunkCountById.get(id) || 0) + 1);
+      }
+    }
+
+    // Amendment relationships: who supersedes whom (confirmed only)
+    const supersededByMap = new Map();   // parent_id -> [amendment_id, ...]
+    for (const d of (libDocs || [])) {
+      if (d.supersedes_library_document_id && d.supersession_recorded_at) {
+        const arr = supersededByMap.get(d.supersedes_library_document_id) || [];
+        arr.push(d.id);
+        supersededByMap.set(d.supersedes_library_document_id, arr);
+      }
+    }
+
+    // Legacy docs in the legacy documents table not yet promoted to library
+    // (metadata->>community matches and filename mentions a governing-doc
+    // keyword). Group by filename + return chunk counts so operator sees
+    // pre-library-era docs that should be promoted.
+    const lcName = (comm.name || '').toLowerCase();
+    const { data: legacyRaw } = await supabase
+      .from('documents')
+      .select('metadata, migrated_to_library_id')
+      .ilike('metadata->>community', `%${lcName}%`)
+      .is('migrated_to_library_id', null)
+      .limit(5000);
+    const legacyCountByFile = new Map();
+    for (const row of (legacyRaw || [])) {
+      const fn = row.metadata?.filename;
+      if (!fn) continue;
+      if (!/declaration|bylaw|ccr|rules|amend|articles/i.test(fn)) continue;
+      legacyCountByFile.set(fn, (legacyCountByFile.get(fn) || 0) + 1);
+    }
+    const legacyDocs = Array.from(legacyCountByFile.entries())
+      .map(([filename, chunk_count]) => ({ filename, chunk_count }))
+      .sort((a, b) => b.chunk_count - a.chunk_count);
+
+    // Detect probable duplicates among library docs within the same category
+    // by Jaccard title similarity (>= 0.7).
+    const duplicateGroups = [];
+    const seenDupIds = new Set();
+    const byCategory = {};
+    for (const d of (libDocs || [])) {
+      if (!byCategory[d.category]) byCategory[d.category] = [];
+      byCategory[d.category].push(d);
+    }
+    for (const cat of Object.keys(byCategory)) {
+      const list = byCategory[cat];
+      for (let i = 0; i < list.length; i++) {
+        if (seenDupIds.has(list[i].id)) continue;
+        const group = [list[i]];
+        for (let j = i + 1; j < list.length; j++) {
+          if (seenDupIds.has(list[j].id)) continue;
+          if (nameJaccard(list[i].title || '', list[j].title || '') >= 0.7) {
+            group.push(list[j]);
+          }
+        }
+        if (group.length > 1) {
+          duplicateGroups.push({
+            category: cat,
+            docs: group.map((d) => ({ id: d.id, title: d.title, page_count: d.page_count, chunks: chunkCountById.get(d.id) || 0, status: d.status })),
+          });
+          group.forEach((d) => seenDupIds.add(d.id));
+        }
+      }
+    }
+
+    res.json({
+      community: { id: comm.id, name: comm.name },
+      library_docs: (libDocs || []).map((d) => ({
+        id: d.id,
+        title: d.title,
+        category: d.category,
+        status: d.status,
+        page_count: d.page_count,
+        chunk_count: chunkCountById.get(d.id) || 0,
+        file_name: d.file_name_original,
+        effective_date: d.effective_date,
+        created_at: d.created_at,
+        is_amendment: !!d.supersedes_library_document_id && !!d.supersession_recorded_at,
+        amends_id: d.supersedes_library_document_id || null,
+        amended_sections: d.amended_sections || null,
+        amendments_count: (supersededByMap.get(d.id) || []).length,
+        superseded_at: d.superseded_at,
+        superseded_by_id: d.superseded_by_id,
+      })),
+      legacy_docs: legacyDocs,
+      duplicate_groups: duplicateGroups,
+    });
+  } catch (err) {
+    console.error('[documents/governing-health]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Operator manually marks a library doc as superseded (status='superseded'
+// with link to the new canonical). Used when the operator decides one
+// duplicate is THE canonical and the others are stale copies.
+router.post('/governing-health/mark-superseded', express.json(), async (req, res) => {
+  try {
+    const { superseded_id, superseded_by_id, actor } = req.body || {};
+    if (!superseded_id || !superseded_by_id) {
+      return res.status(400).json({ error: 'superseded_id + superseded_by_id required' });
+    }
+    if (superseded_id === superseded_by_id) {
+      return res.status(400).json({ error: 'a doc cannot supersede itself' });
+    }
+    const { error } = await supabase
+      .from('library_documents')
+      .update({
+        status: 'superseded',
+        superseded_at: new Date().toISOString(),
+        superseded_by_id,
+      })
+      .eq('id', superseded_id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('[documents/governing-health/mark-superseded]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // askEd coverage diagnostic — per-community count of library docs vs. how
 // many are actually indexed in the chunks table the askEd retrieval reads.
 // MUST be defined before /:id (otherwise the catch-all UUID route shadows it).

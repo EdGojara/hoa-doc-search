@@ -9839,6 +9839,24 @@
       <div id="legal-updates-panel" style="margin-top:14px;"></div>
     </div>
 
+    <!-- Governing Doc Health — per-community diagnostic of declaration / bylaws
+         / rules with chunk counts, supersession state, duplicate detection,
+         and legacy docs not yet promoted to library. Operator-driven; pick a
+         community to see the full picture. Ed 2026-06-18. -->
+    <div class="panel" style="margin-bottom: 16px; border-left: 3px solid #1e40af;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px; gap:10px;">
+        <h3 style="margin:0;">⚖️ Governing Doc Health</h3>
+        <div style="display:flex; gap:8px; align-items:center;">
+          <select id="govHealthCommunity" onchange="docsLoadGoverningHealth()" style="font-size:12.5px; padding:6px 10px; border:1px solid #d0d7de; border-radius:6px;">
+            <option value="">— pick a community —</option>
+          </select>
+          <button class="secondary-btn" onclick="docsLoadGoverningHealth()" style="font-size:12px; padding:6px 10px;">↻ Refresh</button>
+        </div>
+      </div>
+      <p style="font-size:12.5px; color:#666; margin:0 0 10px 0;">Every Declaration, Bylaws, Rules &amp; Regs, and Articles doc for the picked community. Chunks across both link paths (metadata + legacy migrated). Duplicate groups (≥70% title similarity) highlighted; mark one canonical and supersede the rest. Legacy docs not yet promoted show at the bottom — promote those via the Legacy Library panel.</p>
+      <div id="govHealthList"><em style="color:#94A3B8;">Pick a community.</em></div>
+    </div>
+
     <!-- Pending amendment reviews. When the upload extractor flags a doc as
          an amendment to an existing governing doc, it logs a pending
          suggestion. This panel lists them so the operator can confirm or
@@ -34101,6 +34119,187 @@ ${questionsPage}
       setTimeout(() => legalUpdatesOpenPanel(), 800);
     } catch (e) {
       status.innerHTML = `<div style="padding:10px 12px; background:#fee2e2; border-left:3px solid #b91c1c; border-radius:0 6px 6px 0; font-size:13px; color:#7f1d1d;"><strong>Save failed:</strong> ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  // ===== Governing Doc Health (Ed 2026-06-18, post amendment management) =====
+  let _govHealthCommunitiesLoaded = false;
+  async function _govHealthLoadCommunities() {
+    if (_govHealthCommunitiesLoaded) return;
+    try {
+      const r = await fetch('/api/communities');
+      const data = await r.json();
+      const list = Array.isArray(data) ? data : (data.communities || data.items || []);
+      const sel = document.getElementById('govHealthCommunity');
+      if (!sel) return;
+      list
+        .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+        .forEach((c) => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name;
+          sel.appendChild(opt);
+        });
+      _govHealthCommunitiesLoaded = true;
+    } catch (_) { /* tolerate */ }
+  }
+
+  async function docsLoadGoverningHealth() {
+    await _govHealthLoadCommunities();
+    const sel = document.getElementById('govHealthCommunity');
+    const list = document.getElementById('govHealthList');
+    if (!sel || !list) return;
+    const communityId = sel.value;
+    if (!communityId) {
+      list.innerHTML = '<em style="color:#94A3B8;">Pick a community.</em>';
+      return;
+    }
+    list.innerHTML = '<em style="color:#94A3B8;">Loading…</em>';
+    try {
+      const r = await fetch(`/api/documents/governing-health?community_id=${encodeURIComponent(communityId)}`);
+      const j = await r.json();
+      if (!r.ok) throw new Error(j.error || 'load failed');
+      list.innerHTML = _renderGovHealth(j);
+    } catch (e) {
+      list.innerHTML = `<div style="color:#b91c1c;">Couldn't load: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+
+  function _govHealthCategoryLabel(cat) {
+    return ({
+      declaration_ccrs: 'Declaration / CC&Rs',
+      bylaws: 'Bylaws',
+      rules_and_regulations: 'Rules & Regulations',
+      articles_of_incorporation: 'Articles of Incorporation',
+    })[cat] || cat;
+  }
+
+  function _govHealthStatusChip(d) {
+    if (d.is_amendment) return '<span style="background:#fef3c7; color:#92400e; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">AMENDMENT</span>';
+    if (d.status === 'superseded') return '<span style="background:#e5e7eb; color:#475569; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">SUPERSEDED</span>';
+    if (d.amendments_count > 0) return `<span style="background:#dbeafe; color:#1e40af; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">PARENT · ${d.amendments_count} AMENDMENT${d.amendments_count === 1 ? '' : 'S'}</span>`;
+    if (d.status === 'current') return '<span style="background:#dcfce7; color:#166534; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">CURRENT</span>';
+    return `<span style="background:#f3f4f6; color:#6b7280; padding:2px 8px; border-radius:99px; font-size:10.5px; font-weight:700;">${escapeHtml((d.status || 'unknown').toUpperCase())}</span>`;
+  }
+
+  function _renderGovHealth(j) {
+    const docs = j.library_docs || [];
+    const dups = j.duplicate_groups || [];
+    const legacy = j.legacy_docs || [];
+
+    // Group library docs by category
+    const byCat = {};
+    for (const d of docs) {
+      if (!byCat[d.category]) byCat[d.category] = [];
+      byCat[d.category].push(d);
+    }
+    const dupIds = new Set();
+    for (const g of dups) for (const d of g.docs) dupIds.add(d.id);
+
+    const out = [];
+    if (docs.length === 0 && legacy.length === 0) {
+      return '<div style="padding:14px; text-align:center; color:#94a3b8;">No governing docs ingested for this community yet.</div>';
+    }
+
+    if (dups.length > 0) {
+      out.push(`<div style="background:#fee2e2; border:1px solid #f87171; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12.5px; color:#991b1b;">
+        <strong>⚠ ${dups.length} duplicate group${dups.length === 1 ? '' : 's'} detected.</strong> Same category + ≥70% title similarity. Pick a canonical for each group and mark the others superseded.
+      </div>`);
+    }
+
+    const catOrder = ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation'];
+    for (const cat of catOrder) {
+      const list = byCat[cat] || [];
+      if (list.length === 0) continue;
+      out.push(`<div style="margin-bottom:14px;">
+        <h4 style="margin:0 0 8px; font-size:13px; color:#1e40af;">${_govHealthCategoryLabel(cat)} · ${list.length}</h4>
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead><tr style="background:#f8fafc; color:#475569; text-align:left;">
+            <th style="padding:6px 8px;">Title</th>
+            <th style="padding:6px 8px;">Status</th>
+            <th style="padding:6px 8px; text-align:center;">Pages</th>
+            <th style="padding:6px 8px; text-align:center;">Chunks</th>
+            <th style="padding:6px 8px;">Effective</th>
+            <th style="padding:6px 8px; text-align:right;">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${list.map((d) => {
+              const isDup = dupIds.has(d.id);
+              const noChunks = d.chunk_count === 0;
+              const rowStyle = isDup ? 'background:#fff7ed;' : '';
+              return `
+                <tr style="border-bottom:1px solid #f1f5f9; vertical-align:top; ${rowStyle}">
+                  <td style="padding:8px;">
+                    <div style="font-weight:600; color:#1f2937;">${escapeHtml(d.title || '(untitled)')}</div>
+                    <div style="font-size:11px; color:#6b7280;">${escapeHtml(d.file_name || '')}</div>
+                  </td>
+                  <td style="padding:8px;">${_govHealthStatusChip(d)}</td>
+                  <td style="padding:8px; text-align:center; color:#475569;">${d.page_count != null ? d.page_count : '—'}</td>
+                  <td style="padding:8px; text-align:center; ${noChunks ? 'color:#b91c1c; font-weight:600;' : 'color:#475569;'}">${d.chunk_count}${noChunks ? ' ⚠' : ''}</td>
+                  <td style="padding:8px; color:#475569;">${d.effective_date ? escapeHtml(d.effective_date) : '—'}</td>
+                  <td style="padding:8px; text-align:right;">
+                    <button class="secondary-btn" onclick="docsGovHealthMarkSuperseded('${d.id}', ${JSON.stringify(d.title || '').replace(/"/g, '&quot;')}, '${j.community.id}')" style="font-size:11px; padding:4px 10px;" ${d.status === 'superseded' ? 'disabled' : ''}>Mark superseded…</button>
+                  </td>
+                </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    if (legacy.length > 0) {
+      out.push(`<div style="margin-top:18px; padding-top:14px; border-top:1px dashed #cbd5e1;">
+        <h4 style="margin:0 0 8px; font-size:13px; color:#92400e;">📜 Legacy docs not yet promoted · ${legacy.length}</h4>
+        <p style="font-size:12px; color:#6b7280; margin:0 0 8px;">Pre-library-era files with governing-doc keywords in their filename. Promote each via the Legacy Library panel below; they'll then appear in the table above and become eligible for amendment linking.</p>
+        <table style="width:100%; border-collapse:collapse; font-size:12.5px;">
+          <thead><tr style="background:#f8fafc; color:#475569; text-align:left;">
+            <th style="padding:6px 8px;">Filename</th>
+            <th style="padding:6px 8px; text-align:center;">Chunks</th>
+          </tr></thead>
+          <tbody>
+            ${legacy.map((l) => `
+              <tr style="border-bottom:1px solid #f1f5f9;">
+                <td style="padding:6px 8px; color:#1f2937;">${escapeHtml(l.filename)}</td>
+                <td style="padding:6px 8px; text-align:center; color:#475569;">${l.chunk_count}</td>
+              </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>`);
+    }
+
+    return out.join('');
+  }
+
+  async function docsGovHealthMarkSuperseded(supersededId, supersededTitle, communityId) {
+    // Picker: show every OTHER governing doc in the same community as candidates.
+    const r = await fetch(`/api/documents/governing-health?community_id=${encodeURIComponent(communityId)}`);
+    const j = await r.json();
+    const candidates = (j.library_docs || []).filter((d) => d.id !== supersededId && d.status !== 'superseded');
+    if (candidates.length === 0) {
+      alert('No other governing docs to supersede with.');
+      return;
+    }
+    const options = candidates.map((d, i) => `${i + 1}. ${d.title || '(untitled)'} [${d.category}, ${d.chunk_count} chunks]`).join('\n');
+    const pickStr = prompt(`Pick the canonical that supersedes "${supersededTitle}":\n\n${options}\n\nEnter the number (1-${candidates.length}):`);
+    const pickIdx = parseInt(pickStr, 10) - 1;
+    if (isNaN(pickIdx) || pickIdx < 0 || pickIdx >= candidates.length) return;
+    const picked = candidates[pickIdx];
+    if (!confirm(`Mark "${supersededTitle}" as superseded by "${picked.title}"?`)) return;
+    try {
+      const resp = await fetch('/api/documents/governing-health/mark-superseded', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          superseded_id: supersededId,
+          superseded_by_id: picked.id,
+          actor: 'documents-ui',
+        }),
+      });
+      const out = await resp.json();
+      if (!resp.ok) throw new Error(out.error || 'mark failed');
+      await docsLoadGoverningHealth();
+    } catch (e) {
+      alert('Mark superseded failed: ' + e.message);
     }
   }
 
