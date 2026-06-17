@@ -1137,9 +1137,12 @@ router.post('/amendment/:logId/reject', express.json(), async (req, res) => {
 // content benefit from migration 228 without re-uploading.
 // Ed 2026-06-18 follow-up to the amendment management ship.
 // ============================================================================
-const BACKFILL_AMENDMENT_PROMPT = `You are detecting whether the following document chunks are from an AMENDMENT to an HOA governing document.
+const BACKFILL_AMENDMENT_PROMPT = `You are extracting two things from the following HOA governing document chunks:
 
-Look for amendment cues:
+1. Whether this document is an AMENDMENT to another doc, and if so, which one + which sections.
+2. The document's effective date (when it was adopted / signed / became effective). Look for "effective", "adopted", "signed", "executed", "dated", or visible date stamps.
+
+Amendment cues:
   - Title or opening text contains "Amendment", "Amend", "Supersede", "Restate"
   - Explicit cross-references to a parent document ("Declaration of CC&Rs", "Bylaws")
   - "Hereby amends Section X" or "replaces Section Y" phrasing
@@ -1148,10 +1151,12 @@ Look for amendment cues:
 Return ONLY this JSON (no preamble, no code fence):
 {
   "is_amendment": true | false,
-  "amends_document_title_guess": "string or null — your best guess at the original document this amends (e.g., 'Declaration of Covenants, Conditions and Restrictions'). null if not an amendment.",
+  "amends_document_title_guess": "string or null — your best guess at the original document this amends. null if not an amendment.",
   "amended_sections": ["3.3", "5.1(a)"] /* array of section identifiers this amendment touches; empty array means whole-document supersession */,
-  "amendment_effective_date": "YYYY-MM-DD or null",
-  "amendment_reasoning": "Brief explanation of the conclusion, or null if not an amendment."
+  "amendment_effective_date": "YYYY-MM-DD or null — the date the amendment was adopted, NOT the date of the parent doc",
+  "amendment_reasoning": "Brief explanation of the amendment conclusion, or null if not an amendment.",
+  "document_effective_date": "YYYY-MM-DD or null — the date THIS doc became effective. Same as amendment_effective_date if this is an amendment. For non-amendments, look for the doc's own adoption/signing date.",
+  "effective_date_confidence": "high | medium | low — high if explicit 'effective on YYYY-MM-DD' wording, medium if inferred from signature blocks or county recording stamps, low if guessed from contextual cues."
 }`;
 
 router.post('/amendment-backfill', express.json(), async (req, res) => {
@@ -1240,8 +1245,28 @@ router.post('/amendment-backfill', express.json(), async (req, res) => {
         try { parsed = JSON.parse(jsonMatch[0]); }
         catch (e) { results.push({ id: c.id, title: c.title, status: 'parse_failed', raw: txt.slice(0, 200) }); continue; }
 
+        // Backfill effective_date if missing -- runs on EVERY processed doc,
+        // amendment or not, since the AI already read the chunks. Cheap win.
+        if (parsed.document_effective_date) {
+          const { data: existing } = await supabase
+            .from('library_documents')
+            .select('effective_date')
+            .eq('id', c.id)
+            .maybeSingle();
+          if (existing && !existing.effective_date) {
+            await supabase
+              .from('library_documents')
+              .update({ effective_date: parsed.document_effective_date })
+              .eq('id', c.id);
+            console.log(`[amendment-backfill] filled effective_date for ${c.title}: ${parsed.document_effective_date}`);
+          }
+        }
+
         if (!parsed.is_amendment) {
-          results.push({ id: c.id, title: c.title, status: 'not_amendment' });
+          results.push({
+            id: c.id, title: c.title, status: 'not_amendment',
+            effective_date_filled: parsed.document_effective_date || null,
+          });
           continue;
         }
 
