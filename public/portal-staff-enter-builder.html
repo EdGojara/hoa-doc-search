@@ -92,8 +92,13 @@
 <!-- Step 2: builder picker -->
 <div id="pickerWrap" class="picker-wrap" style="display:none;">
   <div class="picker-hero">
-    <h1>Pick a <em>builder</em></h1>
-    <p>You'll see the dashboard exactly as that builder sees it. Every view is logged with your email + timestamp for audit. Read-only — actions are not available in preview.</p>
+    <h1>Bedrock <em>staff QA tool</em></h1>
+    <p style="margin-bottom: 8px;">
+      <strong>This page is Bedrock staff only.</strong> When DRB Group signs in, they only see DRB. When Lennar signs in, they only see Lennar. <strong>Their portals never show another builder.</strong>
+    </p>
+    <p style="margin: 0; opacity: 0.85; font-size: 13px;">
+      You're here because you can preview ANY builder's portal to QA what they see. Pick one below to enter their view (read-only, audit-logged with your email + timestamp).
+    </p>
   </div>
   <div class="picker-body">
     <div class="picker-search">
@@ -178,6 +183,15 @@ async function enterAndLoad() {
   }
 }
 
+// Defense-in-depth: strip "[last name]" / "[contact]" placeholder leaks at
+// render time so even if the consolidation script hasn't run yet, the
+// picker never displays broken contact data to staff.
+function cleanContactName(raw) {
+  if (!raw) return '';
+  const stripped = String(raw).replace(/\s*\[[^\]]*\]\s*/g, ' ').replace(/\s+/g, ' ').trim();
+  return stripped.length >= 2 ? stripped : '';
+}
+
 function renderList(builders) {
   const container = document.getElementById('builderList');
   document.getElementById('countLabel').textContent = builders.length + ' builder' + (builders.length === 1 ? '' : 's');
@@ -185,11 +199,13 @@ function renderList(builders) {
     container.innerHTML = '<div class="empty-msg">No matches.</div>';
     return;
   }
-  container.innerHTML = builders.map((b) => `
+  container.innerHTML = builders.map((b) => {
+    const cleanName = cleanContactName(b.primary_contact_name);
+    return `
     <div class="builder-row">
       <div>
         <div class="builder-name">${escapeHtml(b.company_name || 'Unnamed builder')}</div>
-        <div class="builder-sub">${escapeHtml(b.primary_contact_name || '')}${b.primary_contact_email ? ' · ' + escapeHtml(b.primary_contact_email) : ''}</div>
+        <div class="builder-sub">${escapeHtml(cleanName)}${cleanName && b.primary_contact_email ? ' · ' : ''}${escapeHtml(b.primary_contact_email || '')}</div>
       </div>
       <div class="builder-stats">
         <strong>${b.submission_count}</strong> submission${b.submission_count === 1 ? '' : 's'}
@@ -199,7 +215,8 @@ function renderList(builders) {
       </div>
       <button class="open-btn" data-id="${escapeHtml(b.id)}">Open →</button>
     </div>
-  `).join('');
+  `;
+  }).join('');
   container.querySelectorAll('.open-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       window.location.href = '/builder-dashboard.html?as_builder_id=' + encodeURIComponent(btn.dataset.id);
