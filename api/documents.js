@@ -1516,6 +1516,147 @@ router.post('/relink-zero-chunk-docs', express.json(), async (req, res) => {
 });
 
 // ============================================================================
+// POST /api/documents/governing-health/digest
+// ----------------------------------------------------------------------------
+// Weekly governing-doc health digest. Runs the same aggregation as the
+// portfolio matrix, plus week-over-week deltas (new uploads, confirmed
+// amendments, etc.), formats as an HTML email, and sends via Resend.
+//
+// Body: { to?, since? } -- defaults: to = RESEND_DIGEST_TO env (admin email),
+// since = 7 days ago. Idempotent -- digest is generated fresh each call.
+// Designed to be triggered by a Render cron job; can also be fired on demand
+// via curl/Postman or a button in the Documents tab.
+// ============================================================================
+router.post('/governing-health/digest', express.json(), async (req, res) => {
+  try {
+    const { sendEmail } = require('../lib/notifications/email');
+    const sinceIso = req.body?.since || new Date(Date.now() - 7 * 86400 * 1000).toISOString();
+    const to = req.body?.to || process.env.RESEND_DIGEST_TO || process.env.RESEND_FROM_EMAIL || null;
+
+    // Active communities
+    const { data: communities } = await supabase
+      .from('communities')
+      .select('id, name')
+      .eq('management_company_id', BEDROCK_MGMT_CO_ID)
+      .eq('active', true);
+    if (!communities || communities.length === 0) {
+      return res.json({ ok: false, error: 'no_active_communities' });
+    }
+    const communityIds = communities.map((c) => c.id);
+
+    // All governing-doc library rows
+    const { data: libDocs } = await supabase
+      .from('library_documents')
+      .select('id, title, category, status, community_id, effective_date, supersedes_library_document_id, supersession_recorded_at, created_at')
+      .in('community_id', communityIds)
+      .in('category', ['declaration_ccrs', 'bylaws', 'rules_and_regulations', 'articles_of_incorporation']);
+    const docs = libDocs || [];
+
+    // Week-over-week deltas
+    const uploadedSince = docs.filter((d) => d.created_at && d.created_at >= sinceIso);
+    const confirmedSince = docs.filter((d) =>
+      d.supersedes_library_document_id && d.supersession_recorded_at && d.supersession_recorded_at >= sinceIso);
+
+    // Structural exposures (missing Declaration or Bylaws)
+    const missingFoundation = communities
+      .map((c) => {
+        const myDocs = docs.filter((d) => d.community_id === c.id);
+        const missing = [];
+        if (myDocs.filter((d) => d.category === 'declaration_ccrs').length === 0) missing.push('Declaration');
+        if (myDocs.filter((d) => d.category === 'bylaws').length === 0) missing.push('Bylaws');
+        return missing.length > 0 ? { community_name: c.name, missing } : null;
+      })
+      .filter(Boolean);
+
+    // Pending amendment suggestion count
+    let pendingCount = 0;
+    if (docs.length > 0) {
+      const { data: pendingLogs } = await supabase
+        .from('library_document_amendment_log')
+        .select('amendment_library_document_id')
+        .in('amendment_library_document_id', docs.map((d) => d.id))
+        .eq('action', 'ai_suggested');
+      const confirmedSet = new Set(docs.filter((d) => d.supersession_recorded_at).map((d) => d.id));
+      const seen = new Set();
+      for (const row of (pendingLogs || [])) {
+        if (confirmedSet.has(row.amendment_library_document_id)) continue;
+        if (seen.has(row.amendment_library_document_id)) continue;
+        seen.add(row.amendment_library_document_id);
+        pendingCount += 1;
+      }
+    }
+
+    // Zero-chunk count (potential link bug)
+    const docIds = docs.map((d) => d.id);
+    let zeroChunkCount = 0;
+    if (docIds.length > 0) {
+      const [{ data: byMeta }, { data: byCol }] = await Promise.all([
+        supabase.from('documents').select('metadata').in('metadata->>library_document_id', docIds),
+        supabase.from('documents').select('migrated_to_library_id').in('migrated_to_library_id', docIds),
+      ]);
+      const haveChunks = new Set();
+      for (const r of (byMeta || [])) if (r.metadata?.library_document_id) haveChunks.add(r.metadata.library_document_id);
+      for (const r of (byCol || [])) if (r.migrated_to_library_id) haveChunks.add(r.migrated_to_library_id);
+      zeroChunkCount = docs.filter((d) => !haveChunks.has(d.id)).length;
+    }
+
+    // Format the HTML email
+    const sinceLabel = new Date(sinceIso).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+    const html = `
+      <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; max-width: 600px; margin: 0 auto; color: #1f2937;">
+        <h2 style="margin: 0 0 6px; color: #1e3a8a;">⚖️ Governing Doc Health — Weekly Digest</h2>
+        <div style="font-size: 12px; color: #6b7280; margin-bottom: 18px;">Portfolio state as of ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'long', day: 'numeric', year: 'numeric' })} · since ${sinceLabel}</div>
+
+        <h3 style="margin: 18px 0 6px; color: #1e40af; font-size: 14px;">This week</h3>
+        <ul style="margin: 0 0 12px; padding-left: 18px; font-size: 13px;">
+          <li><strong>${uploadedSince.length}</strong> new governing doc${uploadedSince.length === 1 ? '' : 's'} uploaded</li>
+          <li><strong>${confirmedSince.length}</strong> amendment link${confirmedSince.length === 1 ? '' : 's'} confirmed</li>
+        </ul>
+
+        <h3 style="margin: 18px 0 6px; color: ${missingFoundation.length > 0 ? '#dc2626' : '#1e40af'}; font-size: 14px;">Structural exposures</h3>
+        ${missingFoundation.length > 0
+          ? `<div style="background:#fef2f2; border:2px solid #dc2626; padding:10px 12px; border-radius:6px; font-size:12.5px; color:#7f1d1d;">
+              <strong>${missingFoundation.length} communit${missingFoundation.length === 1 ? 'y' : 'ies'} missing Declaration or Bylaws.</strong>
+              <ul style="margin:6px 0 0 18px; padding:0;">${missingFoundation.map((m) => `<li>${escapeHtml(m.community_name)} — missing: ${escapeHtml(m.missing.join(', '))}</li>`).join('')}</ul>
+            </div>`
+          : `<div style="background:#dcfce7; padding:8px 12px; border-radius:6px; font-size:12.5px; color:#166534;">All ${communities.length} communities have both Declaration and Bylaws ingested. ✓</div>`}
+
+        <h3 style="margin: 18px 0 6px; color: #1e40af; font-size: 14px;">Operator queue</h3>
+        <ul style="margin: 0 0 12px; padding-left: 18px; font-size: 13px;">
+          <li><strong>${pendingCount}</strong> pending amendment review${pendingCount === 1 ? '' : 's'}${pendingCount > 10 ? ' — consider the bulk confirm workflow' : ''}</li>
+          <li><strong>${zeroChunkCount}</strong> doc${zeroChunkCount === 1 ? '' : 's'} with zero chunks linked${zeroChunkCount > 0 ? ' — run the re-link button on the portfolio matrix' : ''}</li>
+        </ul>
+
+        <div style="margin-top: 24px; padding-top: 14px; border-top: 1px solid #e5e7eb; font-size: 11px; color: #9ca3af;">
+          Bedrock Intelligence · Generated automatically · Reply to this email to flag anything that looks off.
+        </div>
+      </div>
+    `;
+    const subject = missingFoundation.length > 0
+      ? `[Bedrock Doc Health] ${missingFoundation.length} structural gap${missingFoundation.length === 1 ? '' : 's'} · ${pendingCount} pending review${pendingCount === 1 ? '' : 's'}`
+      : `[Bedrock Doc Health] All ${communities.length} communities clear · ${pendingCount} pending review${pendingCount === 1 ? '' : 's'}`;
+
+    if (!to) {
+      return res.json({ ok: false, error: 'no_recipient', hint: 'set RESEND_DIGEST_TO or pass body.to' });
+    }
+    const send = await sendEmail({ to, subject, html });
+    res.json({ ok: send.ok, send, totals: { uploadedSince: uploadedSince.length, confirmedSince: confirmedSince.length, missingFoundation: missingFoundation.length, pendingCount, zeroChunkCount } });
+  } catch (err) {
+    console.error('[documents/governing-health/digest]', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// ============================================================================
 // Governing Doc Health Portfolio Overview — aggregate matrix across every
 // community. One bird's-eye query so operators see at a glance which
 // communities have a complete + current library and which have gaps.
