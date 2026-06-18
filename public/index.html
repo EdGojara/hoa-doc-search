@@ -24442,6 +24442,40 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       `<tr><td style="padding:3px 6px;">${r._source_row}</td><td style="padding:3px 6px;">${escapeHtml(r.vantaca_account_id || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.street_address || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.category_label || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.opened_at || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.stage || '—')}</td></tr>`
     ).join('');
 
+    // ----- Reconciliation panel: the "don't first-notice anyone with a live
+    // cert" safety surface. Red banner so it's impossible to skim past. -----
+    const block = j.reconcile_blocklist || [];
+    const review = j.reconcile_needs_review || [];
+    const blockRows = block.map((b) =>
+      `<tr>
+        <td style="padding:4px 8px;">${escapeHtml(b.street_address || '—')}</td>
+        <td style="padding:4px 8px;">${escapeHtml(b.category_label || '—')}</td>
+        <td style="padding:4px 8px; color:#991b1b;">${escapeHtml(b.incoming_stage || '—')}</td>
+        <td style="padding:4px 8px;">${escapeHtml(b.cert_issued_at || '—')}</td>
+        <td style="padding:4px 8px;">${escapeHtml(b.cert_expires_at || '—')}</td>
+      </tr>`
+    ).join('');
+    const reconcilePanel = `
+      ${block.length > 0 ? `
+      <div style="background:#fef2f2; border:1.5px solid #fca5a5; border-radius:8px; padding:12px 14px; margin-bottom:12px;">
+        <div style="font-size:13px; font-weight:800; color:#991b1b; margin-bottom:4px;">⛔ Do NOT send a first notice — ${block.length} ${block.length === 1 ? 'case has' : 'cases have'} a live certified letter</div>
+        <div style="font-size:11.5px; color:#7f1d1d; margin-bottom:8px; line-height:1.5;">
+          These property + violation pairs already have a §209 certified letter that is still inside its 180-day window. Sending a first or second notice would reset a homeowner who is mid-enforcement. trustEd will keep these at <strong>certified</strong> and skip the courtesy notice automatically when you apply.
+        </div>
+        <table style="width:100%; border-collapse:collapse; font-size:11.5px; background:#fff; border-radius:6px; overflow:hidden;">
+          <thead><tr style="color:#991b1b; background:#fee2e2;"><th style="text-align:left; padding:4px 8px;">Address</th><th style="text-align:left; padding:4px 8px;">Violation</th><th style="text-align:left; padding:4px 8px;">Vantaca wanted</th><th style="text-align:left; padding:4px 8px;">Cert issued</th><th style="text-align:left; padding:4px 8px;">Cert valid through</th></tr></thead>
+          <tbody>${blockRows}</tbody>
+        </table>
+      </div>` : `
+      <div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:#166534;">
+        ✓ No first-notice conflicts — nothing in this report would land a courtesy notice on a live certified case.
+      </div>`}
+      ${review.length > 0 ? `
+      <details style="margin-bottom:12px;"><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">⚠ ${review.length} row${review.length === 1 ? '' : 's'} with an unrecognized stage (e.g. "Owner Response") — held for review, NOT opened as a first notice</summary>
+        <div style="font-size:11.5px; color:#475569; padding:8px;">${review.slice(0, 30).map((r) => `<div>${escapeHtml(r.street_address || '—')} · ${escapeHtml(r.category_label || '—')} · stage="${escapeHtml(r.raw_stage || '')}"</div>`).join('')}${review.length > 30 ? `<div style="color:#94a3b8;">…and ${review.length - 30} more</div>` : ''}</div>
+      </details>` : ''}
+    `;
+
     wrap.innerHTML = `
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:10px 12px; margin-bottom:12px;">
         <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:6px;">Column mapping</div>
@@ -24473,6 +24507,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="font-size:10.5px; color:#475569; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;">Already imported</div>
         </div>
       </div>
+      ${reconcilePanel}
       ${j.unresolved_property_count > 0 ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved properties (${j.unresolved_property_count}) — accounts or addresses we couldn't match</summary><div style="font-size:11.5px; color:#475569; padding:8px;">${j.unresolved_property.slice(0,20).map((r) => `<div>Row ${r._source_row}: account=${escapeHtml(r.vantaca_account_id || '—')}, addr=${escapeHtml(r.street_address || '—')}</div>`).join('')}${j.unresolved_property_count > 20 ? `<div style="color:#94a3b8;">…and ${j.unresolved_property_count - 20} more</div>` : ''}</div></details>` : ''}
       ${j.unresolved_category_count > 0 ? `<details style="margin-bottom:10px;" open><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved categories (${j.unresolved_category_count}) — category labels we couldn't match to canonical slugs</summary>
         <div style="padding:10px 12px; background:#fef9e7; border:1px solid #fde68a; border-radius:6px; margin-top:6px;">
@@ -24583,6 +24618,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function inspVViRenderImportSummary(j) {
     const inserted = j.inserted || 0;
     const skipped = j.skipped || 0;
+    const advanced = j.advanced || 0;
+    const continued = j.continued || 0;
+    const blocked = j.blocked || [];
+    const needsReview = j.needs_review || [];
     const errors = j.errors || [];
     const wrap = document.getElementById('inspVViDiff');
     // Suggested action labels — match the suggested_action field the API
@@ -24626,12 +24665,29 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           future inspections will pick up correctly — a property with a recent Courtesy 2
           in Vantaca will jump to Certified §209 next, not reset to Courtesy 1.
         </div>
+        ${(advanced || continued) ? `<div style="font-size:12px; color:#14532d; margin-top:8px;">
+          <span style="font-weight:600;">Reconciled:</span> ${advanced} existing case${advanced === 1 ? '' : 's'} advanced up the ladder · ${continued} already at or past Vantaca's stage (no duplicate created).
+        </div>` : ''}
         <div style="font-size:12px; color:#14532d; margin-top:6px;">
           <span style="font-weight:600;">Optional next step:</span> open any property's detail panel and click <strong>✓ Verify</strong>
           on individual rows to promote them to full weight. You don't need to verify all —
           half-weight is fine for context; full-weight is for hearings + disputes.
         </div>
       </div>
+      ${blocked.length > 0 ? `
+        <div style="background:#fef2f2; border:1.5px solid #fca5a5; border-radius:10px; padding:14px; margin-bottom:14px;">
+          <div style="font-size:13.5px; font-weight:800; color:#991b1b; margin-bottom:4px;">⛔ ${blocked.length} first/second notice${blocked.length === 1 ? '' : 's'} blocked — live certified letter on file</div>
+          <div style="font-size:11.5px; color:#7f1d1d; margin-bottom:10px; line-height:1.5;">
+            These were NOT sent a courtesy notice. Each has a §209 certified letter still inside its 180-day window, so the case stays at certified rather than resetting the homeowner.
+          </div>
+          <div>${blocked.map((b) => `<div style="border-bottom:1px solid #fecaca; padding:6px 0; font-size:11.5px; color:#7f1d1d;"><strong>${escapeHtml(b.street_address || '—')}</strong> · ${escapeHtml(b.category_label || '—')} · cert valid through ${escapeHtml(b.cert_expires_at || '—')}</div>`).join('')}</div>
+        </div>` : ''}
+      ${needsReview.length > 0 ? `
+        <div style="background:#fffbeb; border:1px solid #f59e0b; border-radius:10px; padding:14px; margin-bottom:14px;">
+          <div style="font-size:13px; font-weight:700; color:#92400e; margin-bottom:4px;">⚠ ${needsReview.length} row${needsReview.length === 1 ? '' : 's'} held for review — stage not recognized</div>
+          <div style="font-size:11.5px; color:#78350f; margin-bottom:8px;">Not opened as a notice. Likely a Vantaca "Owner Response" or other status with no trustEd ladder stage.</div>
+          <div>${needsReview.slice(0, 30).map((b) => `<div style="font-size:11.5px; color:#78350f;">${escapeHtml(b.street_address || '—')} · ${escapeHtml(b.category_label || '—')} · stage="${escapeHtml(b.raw_stage || '')}"</div>`).join('')}</div>
+        </div>` : ''}
       ${errors.length === 0 ? '' : `
         <div style="background:#fffbeb; border:1px solid #f59e0b; border-radius:10px; padding:14px;">
           <div style="font-size:13.5px; font-weight:700; color:#92400e; margin-bottom:4px;">⚠ ${errors.length} row${errors.length === 1 ? ' was' : 's were'} skipped or failed</div>

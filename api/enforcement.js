@@ -36,6 +36,7 @@ const { renderViolationLetterPdf } = require('../lib/enforcement/violation_lette
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations, parseVantacaViolationsPdf } = require('../lib/enforcement/vantaca_violation_import');
+const { reconcileResolvedRows, planApply } = require('../lib/enforcement/vantaca_reconcile');
 const { buildReport: buildViolationsReport, buildReportData: buildViolationsReportData } = require('../lib/enforcement/violation_report');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
 const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
@@ -79,6 +80,32 @@ async function _fetchAllPropertiesForCommunity(communityId, selectCols = 'id, st
     if (page.length < PAGE) break;
     offset += PAGE;
     if (out.length > 50000) break; // safety cap — no community has 50k properties
+  }
+  return out;
+}
+
+// Fetch ALL violations for a community (paginated — Waterview can exceed the
+// 1000-row PostgREST cap; CLAUDE.md scar). Returns the fields the
+// reconciliation engine needs to decide stage + the 180-day cert window.
+async function _fetchAllViolationsForCommunity(communityId) {
+  const out = [];
+  let offset = 0;
+  const PAGE = 1000;
+  while (true) {
+    const { data, error } = await supabase
+      .from('violations')
+      .select('id, property_id, primary_category_id, current_stage, current_stage_started_at, opened_at, resolved_at')
+      .eq('community_id', communityId)
+      .range(offset, offset + PAGE - 1);
+    if (error) {
+      console.warn('[enforcement._fetchAllViolationsForCommunity] page failed at offset', offset, ':', error.message);
+      break;
+    }
+    const page = data || [];
+    out.push(...page);
+    if (page.length < PAGE) break;
+    offset += PAGE;
+    if (out.length > 200000) break; // safety cap
   }
   return out;
 }
@@ -4606,6 +4633,40 @@ Return ONLY the JSON object.`;
       }
     }
 
+    // ----- RECONCILE (dry-run preview) -----
+    // Show Ed, BEFORE he applies, exactly which Vantaca rows would land a
+    // courtesy notice on a property+violation that already has a live §209
+    // cert (the 180-day window). These must NOT be first-noticed. Same engine
+    // the /apply writer uses, so the preview can't disagree with the result.
+    let reconcileSummary = null;
+    let reconcileBlocklist = [];
+    let reconcileNeedsReview = [];
+    try {
+      await _vvJobUpdate(jobId, { progress: `reconciling ${resolved.length} rows against current violations` });
+      const existingV = await _fetchAllViolationsForCommunity(communityId);
+      const { rows: reconciledRows, summary } = reconcileResolvedRows(resolved, existingV);
+      reconcileSummary = summary;
+      reconcileBlocklist = reconciledRows
+        .filter((r) => r.reconciliation.action === 'block_regression')
+        .map((r) => ({
+          street_address: r.property_street || r.street_address || null,
+          category_label: r.category_resolved_label || r.category_label || null,
+          incoming_stage: r.reconciliation.incoming_stage,
+          cert_issued_at: r.reconciliation.cert_issued_at,
+          cert_expires_at: r.reconciliation.cert_expires_at,
+          reason: r.reconciliation.reason,
+        }));
+      reconcileNeedsReview = reconciledRows
+        .filter((r) => r.reconciliation.action === 'needs_review')
+        .map((r) => ({
+          street_address: r.property_street || r.street_address || null,
+          category_label: r.category_resolved_label || r.category_label || null,
+          raw_stage: r.notes || null,
+        }));
+    } catch (recErr) {
+      console.warn(`[vantaca-violations.preview job ${jobId}] reconcile failed (non-fatal):`, recErr.message);
+    }
+
     const finalResult = {
       total_rows: rows.length,
       mapping,
@@ -4621,6 +4682,12 @@ Return ONLY the JSON object.`;
       duplicates: duplicates.slice(0, 20),
       ai_category_mapping: aiMappingApplied,
       raw_extracted: rawExtracted,
+      // Reconciliation preview — the "don't first-notice anyone with a live
+      // cert" surface Ed asked for. Full blocklist (not capped — it's the
+      // safety list and a board may need to see every entry).
+      reconcile_summary: reconcileSummary,
+      reconcile_blocklist: reconcileBlocklist,
+      reconcile_needs_review: reconcileNeedsReview.slice(0, 100),
     };
     await _vvJobUpdate(jobId, {
       status: 'complete',
@@ -5802,25 +5869,14 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
     if (rows.length === 0) return res.json({ inserted: 0, skipped: 0 });
 
-    // Batch the inserts — one round trip to Supabase per chunk of 100 rows
-    // instead of one per row. Drops apply time from ~60s for 92 rows to
-    // ~2-3 seconds. Critical when importing communities like Waterview
-    // that have hundreds of historical violations.
     let inserted = 0;
-    let skipped = 0;
     const errors = [];
 
-    // Track the original source row alongside the insert payload so error
-    // messages can surface street_address + category_label, not just the
-    // abstract property_id UUID. Ed 2026-06-10: staff sees the human
-    // address in error messages, not "Property xyz-abc-123 failed."
-    const valid = [];
-    const originals = [];
+    // Rows that can't be written at all (no property/category/date match).
+    // Separated from the reconciliation step so the human reasons stay clear.
+    const writable = [];
     for (const r of rows) {
       if (!r.property_id || !r.category_id || !r.opened_at) {
-        skipped += 1;
-        // Capture skipped-row context so the UI can explain WHY each was
-        // skipped (no property match, missing category, missing date).
         errors.push({
           source_row: r._source_row,
           street_address: r.street_address || r.address || null,
@@ -5838,64 +5894,133 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
         });
         continue;
       }
-      valid.push({
+      writable.push(r);
+    }
+
+    // ----- RECONCILE against trustEd's current violations -----
+    // The 180-day certified-letter guard lives here: a courtesy notice that
+    // would land on a property+violation with a live §209 cert is BLOCKED, not
+    // written. Stage advances UPDATE the existing case instead of inserting a
+    // duplicate. Unmapped stages (e.g. Vantaca "Owner Response") are held for
+    // review, never silently opened as a first notice.
+    const existing = await _fetchAllViolationsForCommunity(communityId);
+    const { rows: reconciled, summary } = reconcileResolvedRows(writable, existing);
+    const plan = planApply(reconciled);
+
+    // Helper to shape an insert row from a reconciled Vantaca row + the
+    // reconciliation's decided stage. Terminal records carry resolved fields.
+    const toInsertRow = (item, isTerminal) => {
+      const r = item.row;
+      const stage = item.current_stage;
+      const terminal = isTerminal || ['cured', 'closed', 'voided'].includes(stage);
+      return {
         property_id: r.property_id,
         community_id: communityId,
         primary_category_id: r.category_id,
         board_priority_at_open: 'standard',
-        current_stage: r.stage || 'courtesy_1',
+        // Open cases store the live stage; terminal records are historical.
+        current_stage: stage,
         current_stage_started_at: r.opened_at,
         opened_at: r.opened_at,
-        resolved_at: r.resolved_at || null,
-        resolved_via: r.resolved_via || (r.resolved_at ? 'cured' : null),
+        resolved_at: terminal ? (r.resolved_at || r.opened_at) : (r.resolved_at || null),
+        resolved_via: terminal ? (r.resolved_via || (stage === 'voided' ? 'voided' : 'cured')) : (r.resolved_via || null),
         resolved_notes: r.notes || null,
         source: 'vantaca_import',
-        // Weight comes from lib/enforcement/source_weights.js — single
-        // source of truth so this default can never silently drift again.
-        // See helper file for the per-source rationale.
         confidence_weight: defaultWeightForSource('vantaca_import'),
         quality_status: 'unreviewed',
-        review_notes: 'Imported from Vantaca violations export.',
-      });
-      originals.push(r);
-    }
+        review_notes: 'Imported from Vantaca violations export (reconciled).',
+        _origR: r,
+      };
+    };
 
+    const insertPayloads = [
+      ...plan.inserts.map((i) => toInsertRow(i, false)),
+      ...plan.terminal.map((i) => toInsertRow(i, true)),
+    ];
+
+    // Batch inserts (100/round-trip) with per-row fallback to pinpoint a bad row.
     const BATCH_SIZE = 100;
-    for (let i = 0; i < valid.length; i += BATCH_SIZE) {
-      const batch = valid.slice(i, i + BATCH_SIZE);
-      const batchOrigs = originals.slice(i, i + BATCH_SIZE);
-      const { data, error } = await supabase
-        .from('violations')
-        .insert(batch)
-        .select('id');
+    for (let i = 0; i < insertPayloads.length; i += BATCH_SIZE) {
+      const batch = insertPayloads.slice(i, i + BATCH_SIZE).map((p) => { const { _origR, ...row } = p; return row; });
+      const origs = insertPayloads.slice(i, i + BATCH_SIZE).map((p) => p._origR);
+      const { data, error } = await supabase.from('violations').insert(batch).select('id');
       if (error) {
-        // On batch failure, fall back to row-by-row to identify which row(s)
-        // are bad (constraint violation, etc.) without losing the rest.
         console.warn('[vantaca-violations.apply] batch insert failed, falling back to per-row:', error.message);
         for (let j = 0; j < batch.length; j++) {
-          const single = batch[j];
-          const origR = batchOrigs[j];
-          const { error: singleErr } = await supabase.from('violations').insert(single);
+          const { error: singleErr } = await supabase.from('violations').insert(batch[j]);
           if (singleErr) {
             errors.push({
-              source_row: origR._source_row,
-              street_address: origR.street_address || null,
-              category_label: origR.category_label || null,
-              vantaca_account_id: origR.vantaca_account_id || null,
-              opened_at: single.opened_at,
+              source_row: origs[j]._source_row,
+              street_address: origs[j].street_address || null,
+              category_label: origs[j].category_label || null,
+              vantaca_account_id: origs[j].vantaca_account_id || null,
+              opened_at: batch[j].opened_at,
               error: singleErr.message,
               suggested_action: 'review_db_constraint',
             });
-          } else {
-            inserted += 1;
-          }
+          } else { inserted += 1; }
         }
       } else {
         inserted += (data && data.length) || batch.length;
       }
     }
 
-    res.json({ inserted, skipped: errors.length, errors });
+    // Advances: UPDATE the existing open case up the ladder. One round-trip each
+    // (advances are a small fraction of any import; not worth a bulk RPC yet).
+    let advanced = 0;
+    for (const u of plan.updates) {
+      if (!u.violation_id) continue;
+      const { error: upErr } = await supabase
+        .from('violations')
+        .update({
+          current_stage: u.current_stage,
+          current_stage_started_at: u.current_stage_started_at,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', u.violation_id);
+      if (upErr) {
+        errors.push({
+          source_row: u.row._source_row,
+          street_address: u.row.street_address || null,
+          category_label: u.row.category_label || null,
+          error: `advance failed: ${upErr.message}`,
+          suggested_action: 'review_db_constraint',
+        });
+      } else { advanced += 1; }
+    }
+
+    // The "do NOT first-notice" list — what Ed asked to see. Each entry is a
+    // courtesy notice Vantaca would have us send that a live cert protects.
+    const blocked = plan.blocked.map((r) => ({
+      source_row: r._source_row,
+      street_address: r.street_address || null,
+      category_label: r.category_label || null,
+      vantaca_account_id: r.vantaca_account_id || null,
+      incoming_stage: r.reconciliation.incoming_stage,
+      cert_issued_at: r.reconciliation.cert_issued_at,
+      cert_expires_at: r.reconciliation.cert_expires_at,
+      reason: r.reconciliation.reason,
+    }));
+    const needsReview = plan.needs_review.map((r) => ({
+      source_row: r._source_row,
+      street_address: r.street_address || null,
+      category_label: r.category_label || null,
+      raw_stage: r.notes || null,
+      reason: r.reconciliation.reason,
+    }));
+
+    res.json({
+      inserted,
+      advanced,
+      continued: plan.continued.length,
+      blocked_count: blocked.length,
+      needs_review_count: needsReview.length,
+      skipped: errors.length,
+      errors,
+      blocked,            // live-cert protections — surfaced in the preview UI
+      needs_review: needsReview,
+      reconcile_summary: summary,
+    });
   } catch (err) {
     console.error('[vantaca-violations.apply]', err);
     res.status(500).json({ error: err.message });
