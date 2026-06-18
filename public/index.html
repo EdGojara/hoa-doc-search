@@ -15659,10 +15659,11 @@ If you have questions or want to discuss alternatives, just reply or give us a c
          style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; margin-left: 8px; padding: 4px 10px; background: #f5f0e1; border: 1px solid var(--gold, #D4AF37); border-radius: 16px; font-size: 11.5px; color: #0B1D34; text-decoration: none; font-weight: 600;">
         🗺️ View this community on the Community Map
       </a>
-      <!-- Month-end report — visible at the top of the Inspect tab so
-           operators don't have to scroll past the queues to find it. Same
-           handler as the deeper-page button. -->
-      <a href="#" onclick="event.preventDefault(); vrOpenModal();"
+      <!-- Month-end report — direct link to a standalone page so script
+           scope, modal DOM, or a JS error elsewhere on the Inspect tab
+           cannot break this entry point. The standalone page has its own
+           community picker + date and opens the printable on submit. -->
+      <a href="/violations-report.html" target="_blank" rel="noopener"
          style="display: inline-flex; align-items: center; gap: 5px; margin-top: 8px; margin-left: 8px; padding: 4px 10px; background: #0B1D34; border: 1px solid #0B1D34; border-radius: 16px; font-size: 11.5px; color: #D4AF37; text-decoration: none; font-weight: 700;"
          title="Bedrock-branded violations report for a board packet — pick community + month-end date, get a printable.">
         📋 Month-end violations report
