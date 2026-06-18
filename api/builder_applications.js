@@ -2309,14 +2309,27 @@ router.post('/master-plans', upload.single('plan_pdf'), async (req, res) => {
       }
     }
 
-    // Verify builder_company exists + belongs to Bedrock
+    // Verify builder_company exists + belongs to Bedrock.
+    // Pull active_community_ids too -- used as the default for pre-approval
+    // when the operator didn't explicitly pick communities. Ed 2026-06-18:
+    // uploading a master plan with no community selection silently left
+    // the plan unmatchable from any future submission (the Plan 1800 / A
+    // case). Default-to-builder's-active-communities closes that footgun.
     const { data: company } = await supabase
       .from('builder_companies')
-      .select('id, company_name')
+      .select('id, company_name, active_community_ids')
       .eq('id', body.builder_company_id)
       .eq('management_company_id', BEDROCK_MGMT_CO_ID)
       .maybeSingle();
     if (!company) return res.status(404).json({ error: 'builder_company not found' });
+
+    // Default: if operator didn't pick communities AND the builder has
+    // active_community_ids set, use those. Far safer than uploading a plan
+    // that won't match anything.
+    if (communityIds.length === 0 && Array.isArray(company.active_community_ids) && company.active_community_ids.length > 0) {
+      communityIds = [...company.active_community_ids];
+      console.log(`[master-plans POST] defaulted community_ids to builder.active_community_ids (${communityIds.length} communities)`);
+    }
 
     // ---- 1) Upload PDF to storage --------------------------------------
     const safePlanNumber = String(body.plan_number).replace(/[^a-zA-Z0-9._-]/g, '_');
@@ -2406,6 +2419,7 @@ router.post('/master-plans', upload.single('plan_pdf'), async (req, res) => {
 
     // ---- 4) Pre-approve for selected communities ---------------------
     const approvalRows = [];
+    const approvalFailures = [];
     for (const cid of communityIds) {
       if (!cid) continue;
       const { data: appr, error: apprErr } = await supabase
@@ -2419,14 +2433,24 @@ router.post('/master-plans', upload.single('plan_pdf'), async (req, res) => {
         .single();
       if (apprErr) {
         console.warn('[master-plans POST] community approval insert failed for', cid, apprErr.message);
+        approvalFailures.push({ community_id: cid, error: apprErr.message });
       } else {
         approvalRows.push(appr);
       }
+    }
+    // Belt + suspenders: warn loudly if a plan ended up with ZERO approvals.
+    // The default-from-builder fallback above should prevent this, but if the
+    // builder has no active_community_ids set, this is still possible.
+    if (approvalRows.length === 0) {
+      console.warn(`[master-plans POST] PLAN ${plan.id} CREATED WITH ZERO COMMUNITY APPROVALS -- it will not match any future submission until approvals are added.`);
     }
 
     res.json({
       ok: true,
       master_plan: plan,
+      community_approvals_created: approvalRows.length,
+      community_approvals_failed: approvalFailures.length,
+      warning: approvalRows.length === 0 ? 'Plan was created with NO community approvals. It will not match any submission until approvals are added.' : null,
       community_approvals: approvalRows,
       library_document_id: libDoc.id,
       pdf_storage_path: storagePath,
