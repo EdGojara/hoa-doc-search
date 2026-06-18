@@ -35,7 +35,7 @@ const { expandCategoryToAliases } = require('../lib/enforcement/category_aliases
 const { renderViolationLetterPdf } = require('../lib/enforcement/violation_letter');
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
-const { parseVantacaViolations, parseVantacaViolationsPdf } = require('../lib/enforcement/vantaca_violation_import');
+const { parseVantacaViolations, parseVantacaViolationsPdf, extractVantacaSummaryTotals } = require('../lib/enforcement/vantaca_violation_import');
 const { reconcileResolvedRows, planApply } = require('../lib/enforcement/vantaca_reconcile');
 const { buildReport: buildViolationsReport, buildReportData: buildViolationsReportData } = require('../lib/enforcement/violation_report');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
@@ -4451,8 +4451,12 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
     const isPdf = (mimetype === 'application/pdf') || (filename || '').toLowerCase().endsWith('.pdf');
 
     let rows, mapping, headers, errors, rawExtracted = null;
+    let reportSummaryTotals = null;   // authoritative per-stage counts off the PDF's SUMMARY page
     if (isPdf) {
       await _vvJobUpdate(jobId, { progress: 'extracting from PDF — this can take 30-120 seconds depending on size' });
+      // Read the printed SUMMARY totals first (cheap, synchronous-ish) so the
+      // coverage cross-check can flag a detail-row under-extraction.
+      reportSummaryTotals = await extractVantacaSummaryTotals(fileBuffer);
       const result = await parseVantacaViolationsPdf(fileBuffer, filename);
       rows = result.rows; mapping = result.mapping; headers = result.headers;
       errors = result.errors; rawExtracted = result.raw_extracted;
@@ -4692,6 +4696,7 @@ Return ONLY the JSON object.`;
       courtesy_1: 'First Notice', courtesy_2: 'Second Notice',
       certified_209: 'Certified / Hearing', fine_assessed: 'Fine Assessed',
       cured: 'Closed / Resolved', voided: 'Void', unmapped: 'Unrecognized stage',
+      owner_response: 'Owner Response (review)',
     };
     const _tallyStage = (arr) => {
       const m = {};
@@ -4706,14 +4711,25 @@ Return ONLY the JSON object.`;
     const STAGE_DISPLAY_ORDER = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed', 'cured', 'voided', 'unmapped'];
     const _allStageKeys = [...new Set([...STAGE_DISPLAY_ORDER, ...Object.keys(_parsedByStage)])]
       .filter((s) => (_parsedByStage[s] || 0) > 0);
+    const _reportByStage = (reportSummaryTotals && reportSummaryTotals.by_stage) || null;
+    // Include any stage the printed summary mentions even if the parser produced
+    // zero rows for it — that's exactly the under-extraction we want to expose.
+    if (_reportByStage) {
+      for (const s of Object.keys(_reportByStage)) {
+        if (!_allStageKeys.includes(s) && (_reportByStage[s] || 0) > 0) _allStageKeys.push(s);
+      }
+    }
     const stageCoverage = _allStageKeys.map((s) => {
       const parsed = _parsedByStage[s] || 0;
       const resolvedC = _resolvedByStage[s] || 0;
       const dup = _dupByStage[s] || 0;
       const accounted = resolvedC + dup + (_unpByStage[s] || 0) + (_uncByStage[s] || 0);
+      const reportTotal = _reportByStage ? (_reportByStage[s] ?? null) : null;
       return {
         stage: s,
         label: STAGE_HUMAN[s] || s.replace(/_/g, ' '),
+        // Authoritative count from the report's printed SUMMARY (PDF only).
+        report_total: reportTotal,
         parsed,
         resolved: resolvedC,
         duplicate: dup,
@@ -4721,6 +4737,9 @@ Return ONLY the JSON object.`;
         unmatched_category: _uncByStage[s] || 0,
         // Rows the parser produced but that won't land anywhere (no date, etc.)
         unaccounted: Math.max(0, parsed - accounted),
+        // Detail rows the parser FAILED to extract vs the printed summary — the
+        // 11-vs-34 case. Only meaningful when we have a report total.
+        under_extracted: reportTotal != null ? Math.max(0, reportTotal - parsed) : null,
       };
     });
 
@@ -4730,6 +4749,7 @@ Return ONLY the JSON object.`;
       headers,
       sample_rows: rows.slice(0, 5),
       stage_coverage: stageCoverage,
+      report_summary_totals: reportSummaryTotals,   // printed SUMMARY (PDF only); null otherwise
       resolved_count: resolved.length,
       unresolved_property_count: unresolved_property.length,
       unresolved_category_count: unresolved_category.length,

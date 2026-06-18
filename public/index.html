@@ -24529,13 +24529,24 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     // matched. Flags any stage where rows didn't land, so a partial import is
     // caught here instead of downstream. -----
     const coverage = j.stage_coverage || [];
-    const coverageHasGap = coverage.some((c) => (c.unmatched_property + c.unmatched_category + c.unaccounted) > 0);
+    const hasReportTotals = coverage.some((c) => c.report_total != null);
+    const coverageHasGap = coverage.some((c) =>
+      (c.unmatched_property + c.unmatched_category + c.unaccounted) > 0 || (c.under_extracted || 0) > 0);
     const coverageRows = coverage.map((c) => {
       const missed = c.unmatched_property + c.unmatched_category + c.unaccounted;
-      const rowBg = missed > 0 ? 'background:#fffbeb;' : '';
+      const under = c.under_extracted || 0;
+      const rowBg = (missed > 0 || under > 0) ? 'background:#fffbeb;' : '';
+      const reportCell = hasReportTotals
+        ? `<td style="padding:4px 8px; text-align:right; font-weight:700; color:#0B1D34;">${c.report_total != null ? c.report_total : '—'}</td>`
+        : '';
+      const underCell = hasReportTotals
+        ? `<td style="padding:4px 8px; text-align:right; color:${under > 0 ? '#b91c1c' : '#94a3b8'}; font-weight:${under > 0 ? '700' : '400'};">${under > 0 ? under : '—'}</td>`
+        : '';
       return `<tr style="${rowBg}">
         <td style="padding:4px 8px; font-weight:600; color:#0B1D34;">${escapeHtml(c.label)}</td>
+        ${reportCell}
         <td style="padding:4px 8px; text-align:right;">${c.parsed}</td>
+        ${underCell}
         <td style="padding:4px 8px; text-align:right; color:#166534; font-weight:600;">${c.resolved}</td>
         <td style="padding:4px 8px; text-align:right; color:#475569;">${c.duplicate}</td>
         <td style="padding:4px 8px; text-align:right; color:${missed > 0 ? '#b45309' : '#94a3b8'}; font-weight:${missed > 0 ? '700' : '400'};">${missed || '—'}</td>
@@ -24544,11 +24555,13 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     const coveragePanel = coverage.length === 0 ? '' : `
       <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:11px 13px; margin-bottom:12px;">
         <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:6px;">📊 Coverage by stage — does the import account for the whole report?</div>
-        ${coverageHasGap ? `<div style="font-size:11.5px; color:#92400e; margin-bottom:8px; line-height:1.5;">⚠ Some rows didn't land in trustEd (highlighted). The "Not matched" column = addresses not in the roster + category labels not mapped + rows missing a date. Resolve those (add property / add category) so the import matches the report's totals.</div>` : `<div style="font-size:11.5px; color:#166534; margin-bottom:8px;">✓ Every parsed row is accounted for — will import, already present, or flagged below.</div>`}
+        ${coverageHasGap ? `<div style="font-size:11.5px; color:#92400e; margin-bottom:8px; line-height:1.5;">⚠ Gaps highlighted below. ${hasReportTotals ? '<strong>"Not parsed"</strong> = rows in the report\'s printed totals the extractor didn\'t pull (re-run if large). ' : ''}<strong>"Not matched"</strong> = addresses not in the roster + category labels not mapped + rows missing a date. Resolve those so the import matches the report.</div>` : `<div style="font-size:11.5px; color:#166534; margin-bottom:8px;">✓ Everything accounts for ${hasReportTotals ? 'the report\'s printed totals' : 'the parsed rows'} — will import, already present, or flagged below.</div>`}
         <table style="width:100%; border-collapse:collapse; font-size:11.5px; background:#fff; border-radius:6px; overflow:hidden;">
           <thead><tr style="color:#64748b; background:#f1f5f9;">
             <th style="text-align:left; padding:4px 8px;">Stage</th>
-            <th style="text-align:right; padding:4px 8px;">In report</th>
+            ${hasReportTotals ? '<th style="text-align:right; padding:4px 8px;">Report says</th>' : ''}
+            <th style="text-align:right; padding:4px 8px;">Parsed</th>
+            ${hasReportTotals ? '<th style="text-align:right; padding:4px 8px;">Not parsed</th>' : ''}
             <th style="text-align:right; padding:4px 8px;">Will import</th>
             <th style="text-align:right; padding:4px 8px;">Already in</th>
             <th style="text-align:right; padding:4px 8px;">Not matched</th>
