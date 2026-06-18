@@ -24529,6 +24529,12 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       `<tr><td style="padding:3px 6px;">${r._source_row}</td><td style="padding:3px 6px;">${escapeHtml(r.vantaca_account_id || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.street_address || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.category_label || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.opened_at || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.stage || '—')}</td></tr>`
     ).join('');
 
+    // ----- Staleness closure banner -----
+    const stalePanel = (j.stale_closed_count > 0) ? `
+      <div style="background:#eff6ff; border:1px solid #bfdbfe; border-radius:8px; padding:10px 12px; margin-bottom:12px; font-size:12px; color:#1e40af; line-height:1.5;">
+        🕓 <strong>${j.stale_closed_count}</strong> first/second notice${j.stale_closed_count === 1 ? '' : 's'} with no activity since before <strong>${escapeHtml(j.stale_cutoff || '')}</strong> ${j.stale_closed_count === 1 ? 'is' : 'are'} being recorded as <strong>closed</strong> (stale — Vantaca never closed them). Certified letters are never auto-closed. These import as cured history, not active enforcement.
+      </div>` : '';
+
     // ----- Coverage cross-check: the report's per-stage totals vs what trustEd
     // matched. Flags any stage where rows didn't land, so a partial import is
     // caught here instead of downstream. -----
@@ -24639,6 +24645,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="font-size:10.5px; color:#475569; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;">Already imported</div>
         </div>
       </div>
+      ${stalePanel}
       ${coveragePanel}
       ${reconcilePanel}
       ${j.unresolved_property_count > 0 ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved properties (${j.unresolved_property_count}) — accounts or addresses we couldn't match</summary><div style="font-size:11.5px; color:#475569; padding:8px;">${j.unresolved_property.slice(0,20).map((r) => `<div>Row ${r._source_row}: account=${escapeHtml(r.vantaca_account_id || '—')}, addr=${escapeHtml(r.street_address || '—')}</div>`).join('')}${j.unresolved_property_count > 20 ? `<div style="color:#94a3b8;">…and ${j.unresolved_property_count - 20} more</div>` : ''}</div></details>` : ''}

@@ -21,6 +21,7 @@ const assert = require('assert');
 const {
   reconcileResolvedRows,
   planApply,
+  markStaleCourtesyClosed,
   CERT_VALID_DAYS,
 } = require('../lib/enforcement/vantaca_reconcile');
 
@@ -263,6 +264,35 @@ const byCat = (rows, cat) => rows.find((r) => r.category_label === cat);
   check('re-import creates ZERO new inserts', plan.inserts.length === 0);
   check('re-import creates ZERO advances (stages already match)', plan.updates.length === 0);
   check('re-import marks both as continued', plan.continued.length === 2);
+}
+
+// ----------------------------------------------------------------------------
+// Case 13: staleness closure — a first/second notice with no recent activity is
+// recorded as closed; certified (and beyond) is NEVER auto-closed. Cutoff is the
+// first day of the month before the latest activity in the data.
+// ----------------------------------------------------------------------------
+{
+  const rows = [
+    { property_id: 'p1', category_id: 'c1', stage: 'courtesy_1', opened_at: '2026-01-15', category_label: 'old first' },
+    { property_id: 'p2', category_id: 'c2', stage: 'courtesy_2', opened_at: '2026-02-10', category_label: 'old second' },
+    { property_id: 'p3', category_id: 'c3', stage: 'courtesy_1', opened_at: '2026-05-06', category_label: 'recent first' },
+    { property_id: 'p4', category_id: 'c4', stage: 'certified_209', opened_at: '2026-01-20', category_label: 'old certified' },
+    { property_id: 'p5', category_id: 'c5', stage: 'fine_assessed', opened_at: '2026-01-05', category_label: 'old fine' },
+  ];
+  const { rows: out, stale_closed, cutoff } = markStaleCourtesyClosed(rows);
+  const by = Object.fromEntries(out.map((r) => [r.category_label, r]));
+  check('staleness cutoff is April 1 (latest data in May)', cutoff === '2026-04-01');
+  check('stale-closed count = 2', stale_closed === 2);
+  check('old first notice → cured', by['old first'].stage === 'cured' && by['old first']._stale_closed === true);
+  check('old second notice → cured', by['old second'].stage === 'cured');
+  check('recent first notice stays open', by['recent first'].stage === 'courtesy_1');
+  check('OLD CERTIFIED is never auto-closed', by['old certified'].stage === 'certified_209');
+  check('old fine_assessed (beyond certified) never auto-closed', by['old fine'].stage === 'fine_assessed');
+  check('auto-closed rows carry a resolved date', by['old first'].resolved_at === '2026-01-15');
+
+  // Explicit cutoff override is honored.
+  const forced = markStaleCourtesyClosed(rows, { cutoff: '2026-06-01' });
+  check('explicit cutoff closes the recent one too', forced.stale_closed === 3);
 }
 
 // Sanity on the constant so a future edit to the window is loud.

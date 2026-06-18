@@ -36,7 +36,7 @@ const { renderViolationLetterPdf } = require('../lib/enforcement/violation_lette
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations, parseVantacaViolationsPdf, extractVantacaSummaryTotals } = require('../lib/enforcement/vantaca_violation_import');
-const { reconcileResolvedRows, planApply } = require('../lib/enforcement/vantaca_reconcile');
+const { reconcileResolvedRows, planApply, markStaleCourtesyClosed } = require('../lib/enforcement/vantaca_reconcile');
 const { buildReport: buildViolationsReport, buildReportData: buildViolationsReportData } = require('../lib/enforcement/violation_report');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
 const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
@@ -4743,6 +4743,16 @@ Return ONLY the JSON object.`;
       };
     });
 
+    // ----- STALENESS CLOSURE (Ed 2026-06-18) -----
+    // A first/second notice with no activity in the recent window is almost
+    // certainly resolved — Vantaca just never closed it. Record it as closed so
+    // it doesn't ride into the new period as active enforcement. Certified §209
+    // (and beyond) is exempt. Applied AFTER the coverage cross-check so coverage
+    // still matches the report's printed totals; the reclassified rows are what
+    // actually get imported. Surfaced as its own stat, not a coverage "gap".
+    const staleResult = markStaleCourtesyClosed(resolved);
+    const resolvedForImport = staleResult.rows;
+
     const finalResult = {
       total_rows: rows.length,
       mapping,
@@ -4750,11 +4760,13 @@ Return ONLY the JSON object.`;
       sample_rows: rows.slice(0, 5),
       stage_coverage: stageCoverage,
       report_summary_totals: reportSummaryTotals,   // printed SUMMARY (PDF only); null otherwise
+      stale_closed_count: staleResult.stale_closed,
+      stale_cutoff: staleResult.cutoff,
       resolved_count: resolved.length,
       unresolved_property_count: unresolved_property.length,
       unresolved_category_count: unresolved_category.length,
       duplicate_count: duplicates.length,
-      resolved,
+      resolved: resolvedForImport,
       unresolved_property: unresolved_property.slice(0, 50),
       unresolved_category: unresolved_category.slice(0, 50),
       duplicates: duplicates.slice(0, 20),
