@@ -629,13 +629,14 @@
         </select>
       </div>
       <div>
-        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Submission PDF *</label>
+        <label style="display:block; font-size:12px; font-weight:600; color:#475569; margin-bottom:5px;">Submission PDF(s) *</label>
         <div id="usDropZone" style="border:2px dashed #cbd5e1; border-radius:10px; padding:28px 20px; text-align:center; background:#f8fafc; cursor:pointer; transition:all 0.15s;">
           <div style="font-size:32px; margin-bottom:6px;">📄</div>
-          <div id="usDropLabel" style="font-size:13.5px; color:#475569; font-weight:600;">Drop the submission PDF here, or click to select</div>
-          <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 25 MB · page 1 should be the structured form</div>
+          <div id="usDropLabel" style="font-size:13.5px; color:#475569; font-weight:600;">Drop one or many submission PDFs here, or click to select</div>
+          <div style="font-size:11.5px; color:#94a3b8; margin-top:4px;">Up to 25 MB each · page 1 should be the structured form · processed sequentially</div>
         </div>
-        <input type="file" id="usFile" accept="application/pdf" style="display:none;">
+        <input type="file" id="usFile" accept="application/pdf" multiple style="display:none;">
+        <div id="usFileList" style="margin-top:8px;"></div>
       </div>
       <div id="usStatus" style="display:none; padding:10px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; font-size:12.5px; color:#475569; min-height:18px;"></div>
       <div style="display:flex; gap:10px; justify-content:flex-end; margin-top:6px;">
@@ -1923,13 +1924,24 @@ function closeMasterPlanModal() {
 // ----------------------------------------------------------------------------
 // Upload submission PDF on behalf of builder (Ed 2026-06-16)
 // ----------------------------------------------------------------------------
-async function openUploadSubmissionModal(prefillFile) {
+async function openUploadSubmissionModal(prefill) {
   document.getElementById('uploadSubmissionModal').style.display = 'flex';
   document.getElementById('uploadSubmissionForm').reset();
   const status = document.getElementById('usStatus');
   status.style.display = 'none';
   status.textContent = '';
-  if (prefillFile) attachFileToUploadModal(prefillFile);
+  const listDiv = document.getElementById('usFileList');
+  if (listDiv) listDiv.innerHTML = '';
+  const submitBtn = document.getElementById('usSubmitBtn');
+  if (submitBtn) { submitBtn.disabled = false; submitBtn.textContent = 'Upload + extract'; }
+  const label = document.getElementById('usDropLabel');
+  if (label) label.textContent = 'Drop one or many submission PDFs here, or click to select';
+  // Accept FileList (multi-file drop), Array<File>, or a single File for
+  // back-compat with banner-drop callers.
+  if (prefill) {
+    if (prefill instanceof File) attachFilesToUploadModal([prefill]);
+    else if (prefill.length) attachFilesToUploadModal(prefill);
+  }
   // Populate communities dropdown — same source as the queue filter so
   // staff sees exactly the active builder-ARC communities.
   const sel = document.getElementById('usCommunity');
@@ -1960,85 +1972,153 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
   e.preventDefault();
   const communityId = document.getElementById('usCommunity').value;
   const fileInput   = document.getElementById('usFile');
-  const file = fileInput.files && fileInput.files[0];
+  const files = Array.from(fileInput.files || []);
   const btn    = document.getElementById('usSubmitBtn');
   const status = document.getElementById('usStatus');
   if (!communityId) { status.style.display = 'block'; status.textContent = 'Pick a community.'; return; }
-  if (!file)        { status.style.display = 'block'; status.textContent = 'Choose a PDF.'; return; }
-  if (file.type !== 'application/pdf') { status.style.display = 'block'; status.textContent = 'File must be a PDF.'; return; }
-  if (file.size > 25 * 1024 * 1024) { status.style.display = 'block'; status.textContent = 'PDF too large (25 MB max).'; return; }
+  if (!files.length) { status.style.display = 'block'; status.textContent = 'Choose at least one PDF.'; return; }
+  for (const f of files) {
+    if (f.type !== 'application/pdf') { status.style.display = 'block'; status.textContent = `${f.name}: file must be a PDF.`; return; }
+    if (f.size > 25 * 1024 * 1024) { status.style.display = 'block'; status.textContent = `${f.name}: PDF too large (25 MB max).`; return; }
+  }
+
+  // Pull the operator JWT once so we don't re-fetch the session per file.
+  const uploadHeaders = {};
+  try {
+    if (window.supa) {
+      const { data: { session } } = await window.supa.auth.getSession();
+      if (session?.access_token) uploadHeaders.Authorization = 'Bearer ' + session.access_token;
+    }
+  } catch (_) { /* tolerate */ }
 
   btn.disabled = true;
-  btn.textContent = 'Uploading + extracting…';
   status.style.display = 'block';
-  status.style.color = '#475569';
-  status.textContent = 'Reading page 1 of the PDF. Usually 15-25 seconds for a multi-page packet.';
+  status.style.whiteSpace = 'pre-wrap';
 
-  try {
-    const fd = new FormData();
-    fd.append('submission_pdf', file);
-    fd.append('community_id', communityId);
-    // Attach the operator's Supabase JWT so the server's requireStaff /
-    // requireAdmin guard can resolve the user_profiles role. Without this
-    // header the request is "unknown" role and the gate rejects everyone,
-    // regardless of how they're signed in.
-    const uploadHeaders = {};
+  // Per-file row marker — updated in place so the operator sees progress
+  // without scrolling. Encode-Ed: surface what the system is doing right now.
+  const setRow = (i, text, color) => {
+    const cell = document.getElementById(`usFileStatus_${i}`);
+    if (cell) { cell.textContent = text; if (color) cell.style.color = color; }
+  };
+
+  const results = []; // {file, ok, ref?, applicationId?, builderMatch?, error?}
+  const single = files.length === 1;
+
+  for (let i = 0; i < files.length; i++) {
+    const f = files[i];
+    btn.textContent = single ? 'Uploading + extracting…' : `Processing ${i + 1} of ${files.length}…`;
+    status.style.color = '#475569';
+    status.textContent = single
+      ? 'Reading page 1 of the PDF. Usually 15-25 seconds for a multi-page packet.'
+      : `Processing ${i + 1} of ${files.length}: ${f.name} — extracting…`;
+    setRow(i, 'extracting…', '#2563eb');
+
     try {
-      if (window.supa) {
-        const { data: { session } } = await window.supa.auth.getSession();
-        if (session?.access_token) uploadHeaders.Authorization = 'Bearer ' + session.access_token;
+      const fd = new FormData();
+      fd.append('submission_pdf', f);
+      fd.append('community_id', communityId);
+      const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', headers: uploadHeaders, body: fd });
+      const j = await r.json();
+      if (!r.ok) {
+        const rawSnippet = j.raw_extracted ? ' · extracted: ' + String(j.raw_extracted).slice(0, 120).replace(/\s+/g, ' ') : '';
+        throw new Error((j.error || 'Upload failed') + rawSnippet);
       }
-    } catch (_) { /* tolerate */ }
-    const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', headers: uploadHeaders, body: fd });
-    const j = await r.json();
-    if (!r.ok) {
-      // Surface the raw model output so staff can see what was misread per
-      // CLAUDE.md self-diagnosing rule.
-      const rawSnippet = j.raw_extracted ? '\n\nExtracted text:\n' + String(j.raw_extracted).slice(0, 400) : '';
-      throw new Error((j.error || 'Upload failed') + rawSnippet);
+      results.push({
+        file: f,
+        ok: true,
+        ref: j.reference_number,
+        applicationId: j.application_id,
+        builderMatch: j.builder_match,
+        fastTrack: !!j.fast_track,
+      });
+      const bm = j.builder_match;
+      const matchTag = (bm && (bm.match_type === 'created' || bm.match_type === 'ambiguous' || bm.match_type === 'ambiguous_autopicked'))
+        ? ' ⚠'
+        : '';
+      setRow(i, `✓ ${j.reference_number}${matchTag}`, '#15803d');
+    } catch (err) {
+      results.push({ file: f, ok: false, error: err.message });
+      setRow(i, '✗ failed', '#b91c1c');
     }
-    status.style.color = '#15803d';
-    // Builder match chip — tells staff INSTANTLY whether the system matched
-    // an existing builder, fuzzy-matched a close one, created a new row, or
-    // hit ambiguity that needs manual resolution. Ed 2026-06-16 "match if
-    // close, and SHOW that it did."
-    const bm = j.builder_match;
-    let builderLine = '';
-    if (bm) {
-      if (bm.match_type === 'exact') {
-        builderLine = `\n🏢 Matched existing builder: ${bm.matched_name}`;
-      } else if (bm.match_type === 'normalized') {
-        builderLine = `\n🏢 Close match: "${bm.extracted_name}" → existing ${bm.matched_name}`;
-      } else if (bm.match_type === 'domain') {
-        builderLine = `\n🏢 Matched by email domain @${bm.matched_domain}: ${bm.matched_name}`;
-      } else if (bm.match_type === 'created') {
-        builderLine = `\n🆕 New builder created: ${bm.extracted_name} — review the row before approving.`;
-      } else if (bm.match_type === 'ambiguous') {
-        const names = (bm.candidates || []).map((c) => c.company_name).join(', ');
-        builderLine = `\n⚠ Ambiguous — multiple builders match "${bm.extracted_name}" (${names}). Pick the right one on the detail panel.`;
-      } else if (bm.match_type === 'ambiguous_autopicked') {
-        const others = (bm.candidates || []).filter((c) => c.id !== bm.picked_id).map((c) => c.company_name).join(', ');
-        builderLine = `\n⚠ Multiple builders matched "${bm.extracted_name}" — auto-picked ${bm.picked_name}. Other candidates: ${others}. Review the link on the detail panel if wrong.`;
-      }
-    }
-    status.textContent = `✓ Created ${j.reference_number}${j.fast_track ? ' (fast-track matched)' : ''}. Confidence: ${j.ai_confidence || '—'}.${builderLine}\nOpening detail panel…`;
-    status.style.whiteSpace = 'pre-wrap';
-    // Give the operator a beat to read the builder-match line. New / ambiguous
-    // cases hold longer so they don't miss it.
-    const delay = (bm && (bm.match_type === 'created' || bm.match_type === 'ambiguous' || bm.match_type === 'ambiguous_autopicked')) ? 2200 : 1100;
-    // Refresh queue + auto-open the new application so staff can verify
-    // extraction + click Approve in one motion.
-    setTimeout(async () => {
-      closeUploadSubmissionModal();
-      try { await loadQueue(); } catch (_) {}
-      try { await loadDetail(j.application_id); } catch (_) {}
-    }, delay);
-  } catch (err) {
-    status.style.color = '#b91c1c';
-    status.textContent = '✗ ' + err.message;
-    btn.disabled = false;
-    btn.textContent = 'Upload + extract';
   }
+
+  // Final summary — single-file path keeps the legacy verbose message + auto
+  // detail open. Multi-file path shows a punch-list summary and only auto-opens
+  // when ALL succeeded with no flags worth eyeballing.
+  if (single) {
+    const result = results[0];
+    if (result.ok) {
+      status.style.color = '#15803d';
+      const bm = result.builderMatch;
+      let builderLine = '';
+      if (bm) {
+        if (bm.match_type === 'exact') builderLine = `\n🏢 Matched existing builder: ${bm.matched_name}`;
+        else if (bm.match_type === 'normalized') builderLine = `\n🏢 Close match: "${bm.extracted_name}" → existing ${bm.matched_name}`;
+        else if (bm.match_type === 'domain') builderLine = `\n🏢 Matched by email domain @${bm.matched_domain}: ${bm.matched_name}`;
+        else if (bm.match_type === 'created') builderLine = `\n🆕 New builder created: ${bm.extracted_name} — review the row before approving.`;
+        else if (bm.match_type === 'ambiguous') {
+          const names = (bm.candidates || []).map((c) => c.company_name).join(', ');
+          builderLine = `\n⚠ Ambiguous — multiple builders match "${bm.extracted_name}" (${names}). Pick the right one on the detail panel.`;
+        } else if (bm.match_type === 'ambiguous_autopicked') {
+          const others = (bm.candidates || []).filter((c) => c.id !== bm.picked_id).map((c) => c.company_name).join(', ');
+          builderLine = `\n⚠ Multiple builders matched "${bm.extracted_name}" — auto-picked ${bm.picked_name}. Other candidates: ${others}. Review the link on the detail panel if wrong.`;
+        }
+      }
+      status.textContent = `✓ Created ${result.ref}${result.fastTrack ? ' (fast-track matched)' : ''}.${builderLine}\nOpening detail panel…`;
+      const delay = (bm && (bm.match_type === 'created' || bm.match_type === 'ambiguous' || bm.match_type === 'ambiguous_autopicked')) ? 2200 : 1100;
+      setTimeout(async () => {
+        closeUploadSubmissionModal();
+        try { await loadQueue(); } catch (_) {}
+        try { await loadDetail(result.applicationId); } catch (_) {}
+      }, delay);
+    } else {
+      status.style.color = '#b91c1c';
+      status.textContent = '✗ ' + result.error;
+      btn.disabled = false;
+      btn.textContent = 'Upload + extract';
+    }
+    return;
+  }
+
+  // Multi-file summary.
+  const okRows = results.filter((r) => r.ok);
+  const failRows = results.filter((r) => !r.ok);
+  const flagged = okRows.filter((r) => {
+    const t = r.builderMatch && r.builderMatch.match_type;
+    return t === 'created' || t === 'ambiguous' || t === 'ambiguous_autopicked';
+  });
+  status.style.color = failRows.length ? '#b45309' : '#15803d';
+  const lines = [
+    `${okRows.length} of ${results.length} created${failRows.length ? ` · ${failRows.length} failed` : ''}${flagged.length ? ` · ${flagged.length} flagged for review` : ''}`,
+  ];
+  if (failRows.length) {
+    lines.push('');
+    lines.push('Failed:');
+    failRows.forEach((r) => lines.push(`  ✗ ${r.file.name} — ${r.error}`));
+  }
+  if (flagged.length) {
+    lines.push('');
+    lines.push('Needs review (open detail panel):');
+    flagged.forEach((r) => {
+      const bm = r.builderMatch;
+      let why = '';
+      if (bm.match_type === 'created') why = `new builder created: ${bm.extracted_name}`;
+      else if (bm.match_type === 'ambiguous') why = `ambiguous builder match: ${bm.extracted_name}`;
+      else if (bm.match_type === 'ambiguous_autopicked') why = `auto-picked ${bm.picked_name} from multiple matches`;
+      lines.push(`  ⚠ ${r.ref} — ${why}`);
+    });
+  }
+  lines.push('');
+  lines.push('Refresh the queue to see the new submissions.');
+  status.textContent = lines.join('\n');
+  btn.disabled = false;
+  btn.textContent = 'Upload more';
+
+  // Refresh the queue in the background so it's ready when the operator closes
+  // the modal. Don't auto-close on multi-file — the operator likely wants to
+  // read the summary and click the flagged rows.
+  try { await loadQueue(); } catch (_) {}
 });
 
 document.getElementById('uploadSubmissionPdfBtn').addEventListener('click', (e) => {
@@ -2051,18 +2131,39 @@ document.getElementById('uploadSubmissionPdfBtn').addEventListener('click', (e) 
 // The CTA banner accepts a PDF drop directly (zero clicks before the
 // modal opens) and the modal's own drop zone catches drops that miss
 // the banner (e.g. dropped after the modal is already open).
-function attachFileToUploadModal(file) {
+function attachFilesToUploadModal(files) {
   const input = document.getElementById('usFile');
   const label = document.getElementById('usDropLabel');
-  if (!file || file.type !== 'application/pdf') {
-    if (label) label.textContent = 'That wasn\'t a PDF — drop a PDF file.';
+  const listDiv = document.getElementById('usFileList');
+  const arr = Array.from(files || []).filter((f) => f && f.type === 'application/pdf');
+  if (!arr.length) {
+    if (label) label.textContent = 'No PDFs found in that drop — try again with PDF files.';
+    if (listDiv) listDiv.innerHTML = '';
     return;
   }
   const dt = new DataTransfer();
-  dt.items.add(file);
+  arr.forEach((f) => dt.items.add(f));
   input.files = dt.files;
-  if (label) label.innerHTML = `✓ <strong>${escapeHtml(file.name)}</strong> · ${(file.size / 1024 / 1024).toFixed(1)} MB ready`;
+  if (label) {
+    if (arr.length === 1) {
+      label.innerHTML = `✓ <strong>${escapeHtml(arr[0].name)}</strong> · ${(arr[0].size / 1024 / 1024).toFixed(1)} MB ready`;
+    } else {
+      label.innerHTML = `✓ <strong>${arr.length} PDFs queued</strong> · click Upload to process sequentially`;
+    }
+  }
+  if (listDiv) {
+    listDiv.innerHTML = arr.map((f, i) => `
+      <div id="usFileRow_${i}" style="display:flex; align-items:center; gap:8px; padding:6px 10px; background:#f1f5f9; border-radius:6px; margin-top:4px; font-size:12px;">
+        <span style="color:#64748b; min-width:18px;">${i + 1}.</span>
+        <span style="flex:1; color:#0B1D34; font-weight:500; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${escapeHtml(f.name)}</span>
+        <span style="color:#94a3b8;">${(f.size / 1024 / 1024).toFixed(1)} MB</span>
+        <span id="usFileStatus_${i}" style="color:#94a3b8; min-width:90px; text-align:right;">queued</span>
+      </div>
+    `).join('');
+  }
 }
+// Back-compat shim — older call sites pass a single file.
+function attachFileToUploadModal(file) { attachFilesToUploadModal(file ? [file] : []); }
 
 function wireBannerDropZone() {
   const banner = document.getElementById('ctaUploadBanner');
@@ -2085,8 +2186,8 @@ function wireBannerDropZone() {
   banner.addEventListener('drop', (e) => {
     e.preventDefault();
     setHover(false);
-    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    openUploadSubmissionModal(file || undefined);
+    const files = e.dataTransfer && e.dataTransfer.files;
+    openUploadSubmissionModal(files && files.length ? files : undefined);
   });
 }
 
@@ -2097,7 +2198,7 @@ function wireModalDropZone() {
   dz.dataset.wired = '1';
   dz.addEventListener('click', () => input.click());
   input.addEventListener('change', () => {
-    if (input.files && input.files[0]) attachFileToUploadModal(input.files[0]);
+    if (input.files && input.files.length) attachFilesToUploadModal(input.files);
   });
   const setHover = (on) => {
     dz.style.background = on ? '#fef3c7' : '#f8fafc';
@@ -2109,8 +2210,8 @@ function wireModalDropZone() {
   dz.addEventListener('drop', (e) => {
     e.preventDefault();
     setHover(false);
-    const file = e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files[0];
-    if (file) attachFileToUploadModal(file);
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files && files.length) attachFilesToUploadModal(files);
   });
 }
 
