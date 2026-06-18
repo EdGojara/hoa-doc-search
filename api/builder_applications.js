@@ -3704,11 +3704,17 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
     //    multi-PDF-drop case where the same file appeared twice in the folder
     //    selection and both got processed. 24h window lets a real revision
     //    re-upload later without being blocked.
+    //
+    //    Defense: if migration 229 hasn't been applied yet, the column is
+    //    missing -- PostgREST returns a schema-cache error. Dedup degrades
+    //    to "no dedup" rather than blocking the upload entirely. Upload
+    //    still succeeds; operator just doesn't get the duplicate skip.
     const crypto = require('crypto');
     const pdfHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+    let pdfHashColumnAvailable = true;
     {
       const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-      const { data: dup } = await supabase
+      const { data: dup, error: dupErr } = await supabase
         .from('builder_applications')
         .select('id, reference_number, street_address, created_at')
         .eq('community_id', communityId)
@@ -3717,6 +3723,15 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
         .order('created_at', { ascending: false })
         .limit(1)
         .maybeSingle();
+      if (dupErr) {
+        const msg = String(dupErr.message || '');
+        if (/source_pdf_sha256/.test(msg) && /schema cache|does not exist/i.test(msg)) {
+          console.warn('[builder_applications.upload-on-behalf] dedup disabled -- migration 229 not applied yet. Upload proceeding without duplicate check.');
+          pdfHashColumnAvailable = false;
+        } else {
+          console.warn('[builder_applications.upload-on-behalf] dedup query failed (non-fatal):', dupErr.message);
+        }
+      }
       if (dup) {
         return res.status(409).json({
           error: `Duplicate of ${dup.reference_number}${dup.street_address ? ' (' + dup.street_address + ')' : ''} — same PDF was uploaded ${new Date(dup.created_at).toLocaleString()}. Skipped to avoid a double entry.`,
@@ -3981,8 +3996,13 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
         square_footage: extracted.square_footage_heated ? parseInt(extracted.square_footage_heated, 10) : null,
         application_data: applicationData,
         status: 'received',
-        source_pdf_sha256: pdfHash,
       };
+      // Only include the hash column if migration 229 has landed. Same
+      // defensive pattern as the dedup query above -- the insert can't
+      // succeed against a missing column either.
+      if (pdfHashColumnAvailable) {
+        tryInsertRow.source_pdf_sha256 = pdfHash;
+      }
 
       const insertResult = await supabase
         .from('builder_applications')
