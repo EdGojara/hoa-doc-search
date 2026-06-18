@@ -373,6 +373,22 @@
     font-weight: 600;
     margin-right: 4px;
   }
+  .ai-rec-fix-btn {
+    display: inline-block;
+    margin-top: 4px;
+    padding: 4px 10px;
+    background: #facc15;
+    color: #1f2937;
+    border: 1px solid #ca8a04;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    font-family: var(--font-sans);
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .ai-rec-fix-btn:hover { background: #eab308; }
+  .ai-rec-fix-btn:disabled { opacity: 0.6; cursor: not-allowed; }
 
   .finalize-form input,
   .finalize-form textarea {
@@ -1561,14 +1577,24 @@ function renderRecommendation(block, rec, masterPlanDiagnostic) {
           ${near.length > 0 ? `
             <div class="ai-rec-diag-subhead">Close matches in the library (under this builder):</div>
             <ul class="ai-rec-diag-list">
-              ${near.map((m) => `
+              ${near.map((m) => {
+                const onlyElevationMismatch = m.mismatches.length === 1 && m.mismatches[0].field === 'elevation'
+                  && String(m.mismatches[0].expected || '').toLowerCase() === String(m.mismatches[0].got || '').toLowerCase();
+                const onlyCommunityApproval = m.mismatches.length === 1 && m.mismatches[0].field === 'community_approval';
+                return `
                 <li>
                   <strong>Plan ${escapeHtml(m.plan_number)} / ${escapeHtml(m.elevation)}</strong> ${escapeHtml(m.builder_name ? '— ' + m.builder_name : '')}
                   <ul class="ai-rec-diag-mismatches">
                     ${m.mismatches.map((mm) => `<li><span class="ai-rec-diag-field">${escapeHtml(fieldLabel(mm.field))}:</span> need <strong>${escapeHtml(String(mm.expected))}</strong> but found <strong>${escapeHtml(String(mm.got))}</strong></li>`).join('')}
                   </ul>
-                </li>
-              `).join('')}
+                  ${onlyElevationMismatch ? `
+                    <button class="ai-rec-fix-btn" onclick="docsFixMasterPlanElevation('${escapeHtml(m.id)}', this)">🔧 Fix: normalize elevation to "${escapeHtml(d.submitted.elevation || '')}"</button>
+                  ` : ''}
+                  ${onlyCommunityApproval ? `
+                    <button class="ai-rec-fix-btn" onclick="docsFixMasterPlanCommunityApproval('${escapeHtml(m.id)}', this)">🔧 Fix: approve this plan at this community</button>
+                  ` : ''}
+                </li>`;
+              }).join('')}
             </ul>
           ` : ''}
           ${cross.length > 0 ? `
@@ -1578,6 +1604,7 @@ function renderRecommendation(block, rec, masterPlanDiagnostic) {
                 <li>
                   <strong>Plan ${escapeHtml(m.plan_number)} / ${escapeHtml(m.elevation)}</strong> — currently linked to <strong>${escapeHtml(m.builder_name || '(unknown)')}</strong>${m.builder_status === 'inactive' ? ' <span style="color:#991b1b;">(inactive / merged duplicate)</span>' : ''}
                   <div style="font-size:11px; color:#475569; margin-top:2px;">${escapeHtml(m.note || '')}</div>
+                  <button class="ai-rec-fix-btn" onclick="docsRepointMasterPlanBuilder('${escapeHtml(m.id)}', this)">🔧 Fix: re-point this plan to this application's builder</button>
                 </li>
               `).join('')}
             </ul>
@@ -1614,6 +1641,61 @@ function renderRecommendation(block, rec, masterPlanDiagnostic) {
     ` : ''}
   `;
 }
+
+// Inline master-plan fixes triggered from the diagnostic block. Each calls
+// the application's id from the URL panel state, hits the matching endpoint,
+// and reloads the recommendation so the operator sees the fix landed.
+async function _docsRunInlineFix(url, btn, successLabel) {
+  // The selected detail panel is the only one that renders the AI rec block;
+  // state.selectedId tracks it.
+  const appId = state.selectedId;
+  if (!appId) { alert('No application selected.'); return; }
+  const originalLabel = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Working…';
+  try {
+    const r = await fetch(url.replace(':applicationId', encodeURIComponent(appId)), {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+    });
+    const data = await r.json();
+    if (!r.ok || data.error) throw new Error(data.error || `HTTP ${r.status}`);
+    btn.textContent = data.no_change ? '✓ Already correct' : `✓ ${successLabel}`;
+    // Reload the recommendation block so the diagnostic refreshes with the
+    // new state. Find the panel root (.detail) and re-trigger the loader.
+    const panel = btn.closest('.detail') || btn.closest('main') || document;
+    setTimeout(() => loadRecommendation(appId, panel), 600);
+  } catch (err) {
+    btn.disabled = false;
+    btn.textContent = originalLabel;
+    alert('Fix failed: ' + err.message);
+  }
+}
+
+window.docsFixMasterPlanElevation = function (masterPlanId, btn) {
+  _docsRunInlineFix(
+    `/api/builder-applications/:applicationId/master-plan/${encodeURIComponent(masterPlanId)}/normalize-elevation`,
+    btn,
+    'Elevation normalized',
+  );
+};
+
+window.docsFixMasterPlanCommunityApproval = function (masterPlanId, btn) {
+  _docsRunInlineFix(
+    `/api/builder-applications/:applicationId/master-plan/${encodeURIComponent(masterPlanId)}/approve-at-community`,
+    btn,
+    'Approved at community',
+  );
+};
+
+window.docsRepointMasterPlanBuilder = function (masterPlanId, btn) {
+  if (!confirm('Re-point this master plan to the current application\'s builder?\n\nUse this when yesterday\'s DRB consolidation left the plan attached to a merged-duplicate (inactive) builder row.')) return;
+  _docsRunInlineFix(
+    `/api/builder-applications/:applicationId/master-plan/${encodeURIComponent(masterPlanId)}/repoint-to-application-builder`,
+    btn,
+    'Re-pointed to canonical builder',
+  );
+};
 
 function autoSelectFromRecommendation(rec, panel) {
   const action = rec && rec.recommended_action;

@@ -1323,6 +1323,160 @@ function computeBuilderRecommendation(app) {
   };
 }
 
+// ============================================================================
+// Master plan inline-fix endpoints — operator clicks a button on the AI rec
+// diagnostic to resolve a specific mismatch reason. Each is conservative,
+// targeted, and idempotent. Ed 2026-06-18 encode-Ed: stop using staff as
+// the manual SQL diagnostician AND stop using them as the manual SQL
+// repair surgeon.
+// ============================================================================
+
+// POST /:applicationId/master-plan/:masterPlanId/repoint-to-application-builder
+// Re-points a master_plan.builder_company_id to the application's builder_id.
+// Use case: yesterday's DRB consolidation left a master plan attached to a
+// merged-duplicate (inactive) builder row; the application is correctly
+// linked to the canonical, but the plan isn't.
+router.post('/:applicationId/master-plan/:masterPlanId/repoint-to-application-builder', express.json(), async (req, res, next) => {
+  if (!UUID_RE.test(req.params.applicationId) || !UUID_RE.test(req.params.masterPlanId)) return next();
+  try {
+    const { data: app } = await supabase
+      .from('builder_applications')
+      .select('id, builder_company_id')
+      .eq('id', req.params.applicationId)
+      .maybeSingle();
+    if (!app || !app.builder_company_id) return res.status(404).json({ error: 'application_or_builder_not_found' });
+
+    const { data: mp } = await supabase
+      .from('master_plans')
+      .select('id, builder_company_id, plan_number, elevation')
+      .eq('id', req.params.masterPlanId)
+      .maybeSingle();
+    if (!mp) return res.status(404).json({ error: 'master_plan_not_found' });
+    if (mp.builder_company_id === app.builder_company_id) {
+      return res.json({ ok: true, no_change: true, message: 'Master plan already linked to the application builder.' });
+    }
+
+    const oldBuilderId = mp.builder_company_id;
+    const { error: upErr } = await supabase
+      .from('master_plans')
+      .update({ builder_company_id: app.builder_company_id, updated_at: new Date().toISOString() })
+      .eq('id', mp.id);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+
+    console.log(`[builder_applications] master plan ${mp.id} (Plan ${mp.plan_number}/${mp.elevation}) repointed: ${oldBuilderId} -> ${app.builder_company_id}`);
+    res.json({ ok: true, master_plan_id: mp.id, old_builder_id: oldBuilderId, new_builder_id: app.builder_company_id });
+  } catch (err) {
+    console.error('[builder_applications] repoint-to-application-builder failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:applicationId/master-plan/:masterPlanId/normalize-elevation
+// Updates master_plan.elevation to match the application's elevation
+// (case-correct). Use case: master plan was uploaded with elevation='a' or
+// 'A ' and the application has 'A', so the byte-exact match fails.
+router.post('/:applicationId/master-plan/:masterPlanId/normalize-elevation', express.json(), async (req, res, next) => {
+  if (!UUID_RE.test(req.params.applicationId) || !UUID_RE.test(req.params.masterPlanId)) return next();
+  try {
+    const { data: app } = await supabase
+      .from('builder_applications')
+      .select('id, elevation, plan_number')
+      .eq('id', req.params.applicationId)
+      .maybeSingle();
+    if (!app || !app.elevation) return res.status(404).json({ error: 'application_or_elevation_not_found' });
+
+    const { data: mp } = await supabase
+      .from('master_plans')
+      .select('id, elevation, plan_number')
+      .eq('id', req.params.masterPlanId)
+      .maybeSingle();
+    if (!mp) return res.status(404).json({ error: 'master_plan_not_found' });
+
+    const submittedElevation = String(app.elevation).trim();
+    const currentElevation = String(mp.elevation || '').trim();
+    if (currentElevation === submittedElevation) {
+      return res.json({ ok: true, no_change: true });
+    }
+    // Safety: only fix when the trim/case-normalized values agree. Avoids
+    // overwriting a legitimately different elevation (e.g. 'B' on the plan
+    // vs 'A' on the application -- that's not a normalization, that's a
+    // real mismatch and should bounce to the operator).
+    if (currentElevation.toLowerCase() !== submittedElevation.toLowerCase()) {
+      return res.status(400).json({
+        error: 'not_a_case_or_whitespace_mismatch',
+        detail: `Application elevation is "${submittedElevation}" but master plan elevation is "${currentElevation}". These are genuinely different values; refusing to overwrite.`,
+      });
+    }
+    const { error: upErr } = await supabase
+      .from('master_plans')
+      .update({ elevation: submittedElevation, updated_at: new Date().toISOString() })
+      .eq('id', mp.id);
+    if (upErr) return res.status(500).json({ error: upErr.message });
+
+    console.log(`[builder_applications] master plan ${mp.id} (Plan ${mp.plan_number}) elevation normalized: "${currentElevation}" -> "${submittedElevation}"`);
+    res.json({ ok: true, master_plan_id: mp.id, old_elevation: currentElevation, new_elevation: submittedElevation });
+  } catch (err) {
+    console.error('[builder_applications] normalize-elevation failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
+// POST /:applicationId/master-plan/:masterPlanId/approve-at-community
+// Creates a master_plan_community_approvals row linking the plan to the
+// application's community, OR un-retires an existing retired approval.
+// Use case: master plan was uploaded but the operator forgot to approve
+// it at this specific community; or it was retired previously and we want
+// to bring it back.
+router.post('/:applicationId/master-plan/:masterPlanId/approve-at-community', express.json(), async (req, res, next) => {
+  if (!UUID_RE.test(req.params.applicationId) || !UUID_RE.test(req.params.masterPlanId)) return next();
+  try {
+    const { data: app } = await supabase
+      .from('builder_applications')
+      .select('id, community_id')
+      .eq('id', req.params.applicationId)
+      .maybeSingle();
+    if (!app || !app.community_id) return res.status(404).json({ error: 'application_or_community_not_found' });
+
+    // Look for existing approval row (including retired).
+    const { data: existing } = await supabase
+      .from('master_plan_community_approvals')
+      .select('id, retired_at')
+      .eq('master_plan_id', req.params.masterPlanId)
+      .eq('community_id', app.community_id)
+      .maybeSingle();
+
+    if (existing && !existing.retired_at) {
+      return res.json({ ok: true, no_change: true, message: 'Already approved at this community.' });
+    }
+    if (existing && existing.retired_at) {
+      // Un-retire
+      const { error: upErr } = await supabase
+        .from('master_plan_community_approvals')
+        .update({ retired_at: null, updated_at: new Date().toISOString() })
+        .eq('id', existing.id);
+      if (upErr) return res.status(500).json({ error: upErr.message });
+      console.log(`[builder_applications] master plan ${req.params.masterPlanId} un-retired at community ${app.community_id}`);
+      return res.json({ ok: true, action: 'unretired', approval_id: existing.id });
+    }
+    // Create new approval
+    const { data: created, error: insErr } = await supabase
+      .from('master_plan_community_approvals')
+      .insert({
+        master_plan_id: req.params.masterPlanId,
+        community_id: app.community_id,
+        approved_at: new Date().toISOString(),
+      })
+      .select('id')
+      .single();
+    if (insErr) return res.status(500).json({ error: insErr.message });
+    console.log(`[builder_applications] master plan ${req.params.masterPlanId} approved at community ${app.community_id} (approval_id=${created.id})`);
+    res.json({ ok: true, action: 'created', approval_id: created.id });
+  } catch (err) {
+    console.error('[builder_applications] approve-at-community failed:', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
+
 router.get('/:id/recommendation', async (req, res, next) => {
   if (!UUID_RE.test(req.params.id)) return next();
   try {
