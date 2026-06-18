@@ -36,6 +36,7 @@ const { renderViolationLetterPdf } = require('../lib/enforcement/violation_lette
 const { renderForceMowLetterPdf } = require('../lib/lawn_force_mow_renderer');
 const { renderPostcardReminderPdf } = require('../lib/enforcement/postcard_reminder');
 const { parseVantacaViolations, parseVantacaViolationsPdf } = require('../lib/enforcement/vantaca_violation_import');
+const { buildReport: buildViolationsReport, buildReportData: buildViolationsReportData } = require('../lib/enforcement/violation_report');
 const { sendEmail, isConfigured: isEmailConfigured } = require('../lib/notifications/email');
 const { sendSms,   isConfigured: isSmsConfigured }   = require('../lib/notifications/sms');
 const { safeErrorMessage } = require('./_safe_error');
@@ -7661,5 +7662,46 @@ function _parseMailingAddress(addressString) {
   }
   return null;
 }
+
+// ============================================================================
+// GET /api/enforcement/violations/report
+// ----------------------------------------------------------------------------
+// Point-in-time violations report. Standard month-end deliverable.
+// Query params:
+//   community_id  (required)  UUID of the community
+//   as_of         (required)  YYYY-MM-DD -- show violations open AS OF this date
+//   format        (optional)  'html' (default) prints the Bedrock-branded
+//                             printable page. 'json' returns the dataset for
+//                             a modal preview.
+// ============================================================================
+router.get('/violations/report', async (req, res) => {
+  try {
+    const communityId = req.query.community_id;
+    const asOfRaw = req.query.as_of;
+    const format = (req.query.format || 'html').toLowerCase();
+    if (!communityId) return res.status(400).json({ error: 'community_id required' });
+    if (!asOfRaw || !/^\d{4}-\d{2}-\d{2}$/.test(String(asOfRaw))) {
+      return res.status(400).json({ error: 'as_of required as YYYY-MM-DD' });
+    }
+
+    if (format === 'json') {
+      const data = await buildViolationsReportData({ supabase, communityId, asOfDate: asOfRaw });
+      return res.json({
+        community: data.community,
+        as_of: data.asOfDate,
+        generated_at: data.generatedAt,
+        totals: data.totals,
+        rows: data.rows,
+      });
+    }
+
+    const report = await buildViolationsReport({ supabase, communityId, asOfDate: asOfRaw });
+    res.set('Content-Type', 'text/html; charset=utf-8');
+    res.send(report.html);
+  } catch (err) {
+    console.error('[enforcement.violations/report]', err.message);
+    res.status(500).json({ error: safeErrorMessage(err) });
+  }
+});
 
 module.exports = { router, processCureLapses, processPostcardReminders };

@@ -16350,6 +16350,37 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         <option value="">All communities</option>
       </select>
       <button onclick="document.getElementById('inspQueueCommunityFilter').value=''; inspQueueFilterChange();" style="font-size: 11px; padding: 5px 10px; background: #fff; border: 1px solid #cbd5e1; color: #475569; border-radius: 5px; cursor: pointer; font-weight: 500;">Clear</button>
+      <span style="border-left:1px solid #cbd5e1; height:22px;"></span>
+      <button onclick="vrOpenModal()" style="font-size: 12px; padding: 6px 14px; background: #0B1D34; color: #D4AF37; border: 1px solid #0B1D34; border-radius: 6px; cursor: pointer; font-weight: 600;" title="Point-in-time violations report for a board packet. Pick a community + date; the system reconstructs which stage each violation was in on that day from the letter history.">📋 Month-end violations report</button>
+    </div>
+
+    <!-- Month-end violations report modal. Reconstructs each violation's
+         stage as of the chosen date by reading the latest letter sent on or
+         before that date. Standard board-packet deliverable. -->
+    <div id="vrModal" style="display:none; position:fixed; inset:0; background:rgba(11,29,52,0.55); z-index:10000; justify-content:center; align-items:flex-start; padding-top:60px;">
+      <div style="background:#fff; width:520px; max-width:92vw; border-radius:12px; padding:22px; box-shadow:0 12px 40px rgba(0,0,0,0.18);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:14px;">
+          <h3 style="font-size:17px; color:#0B1D34; margin:0; font-weight:700;">📋 Month-end violations report</h3>
+          <button onclick="vrCloseModal()" style="background:none; border:none; font-size:22px; cursor:pointer; color:#94a3b8;">×</button>
+        </div>
+        <p style="font-size:13px; color:#475569; margin:0 0 16px 0; line-height:1.5;">Bedrock-branded printable report. Shows every violation that was OPEN on the chosen date, sorted by street and house number, with the stage they were in on that day (reconstructed from letter history). Designed to drop straight into the board packet.</p>
+        <div style="margin-bottom:14px;">
+          <label style="display:block; font-size:11px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px;">Community *</label>
+          <select id="vrCommunity" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; background:#fff;">
+            <option value="">Select a community…</option>
+          </select>
+        </div>
+        <div style="margin-bottom:18px;">
+          <label style="display:block; font-size:11px; color:#475569; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; margin-bottom:4px;">As-of date *</label>
+          <input type="date" id="vrAsOf" style="width:100%; padding:8px 10px; border:1px solid #cbd5e1; border-radius:6px; font-size:13px;">
+          <div style="font-size:11px; color:#94a3b8; margin-top:4px;">Defaults to the last day of last month — the usual board-packet cutoff.</div>
+        </div>
+        <div id="vrStatus" style="display:none; padding:8px 12px; background:#fef3c7; border:1px solid #fde68a; border-radius:6px; font-size:12px; color:#854d0e; margin-bottom:12px;"></div>
+        <div style="display:flex; gap:8px; justify-content:flex-end;">
+          <button onclick="vrCloseModal()" style="padding:8px 16px; background:#fff; color:#475569; border:1px solid #cbd5e1; border-radius:6px; font-size:13px; cursor:pointer;">Cancel</button>
+          <button id="vrOpenReportBtn" onclick="vrOpenReport()" style="padding:8px 18px; background:#0B1D34; color:#fff; border:none; border-radius:6px; font-size:13px; font-weight:700; cursor:pointer;">Open report →</button>
+        </div>
+      </div>
     </div>
 
     <!-- DRAFTS QUEUE — STEP 1 of the mailing flow. Letters drafted by AI after
@@ -22186,6 +22217,72 @@ If you have questions or want to discuss alternatives, just reply or give us a c
     } catch (_) { /* leave default */ }
   }
   window.inspQueueLoadCommunityOptions = inspQueueLoadCommunityOptions;
+
+  // ---- Month-end violations report modal handlers.
+  // Default date = last day of previous month (the standard board-packet cutoff).
+  // Community defaults to whatever the operator already has selected in the
+  // queue filter so they don't have to re-pick context.
+  function _vrLastDayOfPrevMonth() {
+    const now = new Date();
+    // Day 0 of current month = last day of previous month, in local time.
+    const d = new Date(now.getFullYear(), now.getMonth(), 0);
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, '0');
+    const dd = String(d.getDate()).padStart(2, '0');
+    return `${yyyy}-${mm}-${dd}`;
+  }
+  async function vrOpenModal() {
+    const modal = document.getElementById('vrModal');
+    const sel = document.getElementById('vrCommunity');
+    const asOf = document.getElementById('vrAsOf');
+    const status = document.getElementById('vrStatus');
+    if (status) { status.style.display = 'none'; status.textContent = ''; }
+    if (asOf && !asOf.value) asOf.value = _vrLastDayOfPrevMonth();
+    // Populate communities once.
+    if (sel && sel.options.length <= 1) {
+      try {
+        const r = await fetch('/api/communities');
+        if (r.ok) {
+          const j = await r.json();
+          const list = (j.communities || j || []).filter(Boolean);
+          list.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+          for (const c of list) {
+            const opt = document.createElement('option');
+            opt.value = c.id;
+            opt.textContent = c.name;
+            sel.appendChild(opt);
+          }
+        }
+      } catch (_) { /* leave default */ }
+    }
+    // Pre-pick whatever the queue filter has selected (common case: operator
+    // is already working one community, hit the report button, both communities
+    // align without re-clicking).
+    if (sel && (!sel.value || sel.value === '')) {
+      const saved = typeof inspQueueGetFilter === 'function' ? inspQueueGetFilter() : null;
+      if (saved) sel.value = saved;
+    }
+    if (modal) modal.style.display = 'flex';
+  }
+  function vrCloseModal() {
+    const modal = document.getElementById('vrModal');
+    if (modal) modal.style.display = 'none';
+  }
+  function vrOpenReport() {
+    const cid = document.getElementById('vrCommunity').value;
+    const asOf = document.getElementById('vrAsOf').value;
+    const status = document.getElementById('vrStatus');
+    const show = (msg) => { if (status) { status.style.display = 'block'; status.textContent = msg; } };
+    if (!cid) { show('Pick a community first.'); return; }
+    if (!asOf || !/^\d{4}-\d{2}-\d{2}$/.test(asOf)) { show('Pick a valid as-of date.'); return; }
+    const url = `/api/enforcement/violations/report?community_id=${encodeURIComponent(cid)}&as_of=${encodeURIComponent(asOf)}&format=html`;
+    // Open in a new tab so the operator can keep the queue context open.
+    window.open(url, '_blank', 'noopener');
+    vrCloseModal();
+  }
+  window.vrOpenModal = vrOpenModal;
+  window.vrCloseModal = vrCloseModal;
+  window.vrOpenReport = vrOpenReport;
 
   // ---- Cures tab community dropdown — shares the same localStorage key
   // as the Inspect queue filter, so picking a community in one place
