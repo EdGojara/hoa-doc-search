@@ -243,6 +243,28 @@ const byCat = (rows, cat) => rows.find((r) => r.category_label === cat);
   check('hearing_notice case is cert-protected from a courtesy', hear.reconciliation.action === 'block_regression');
 }
 
+// ----------------------------------------------------------------------------
+// Case 12: re-import idempotency — importing the SAME report again must not
+// create duplicate open cases. Every incoming row matches an existing open case
+// at the same stage → all 'continue', zero inserts.
+// ----------------------------------------------------------------------------
+{
+  const P = 'prop-7';
+  const existing = [
+    { id: 'e1', property_id: P, primary_category_id: 'cat-a', current_stage: 'courtesy_1', current_stage_started_at: '2026-05-17', opened_at: '2026-05-17' },
+    { id: 'e2', property_id: P, primary_category_id: 'cat-b', current_stage: 'certified_209', current_stage_started_at: '2026-04-01', opened_at: '2026-02-01' },
+  ];
+  const incoming = [
+    { property_id: P, category_id: 'cat-a', stage: 'courtesy_1', opened_at: '2026-05-17', category_label: 'A' },
+    { property_id: P, category_id: 'cat-b', stage: 'certified_209', opened_at: '2026-04-01', category_label: 'B' },
+  ];
+  const { rows } = reconcileResolvedRows(incoming, existing, { asOf: ASOF });
+  const plan = planApply(rows);
+  check('re-import creates ZERO new inserts', plan.inserts.length === 0);
+  check('re-import creates ZERO advances (stages already match)', plan.updates.length === 0);
+  check('re-import marks both as continued', plan.continued.length === 2);
+}
+
 // Sanity on the constant so a future edit to the window is loud.
 check('cert window is 180 days', CERT_VALID_DAYS === 180);
 

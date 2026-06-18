@@ -24525,6 +24525,38 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       `<tr><td style="padding:3px 6px;">${r._source_row}</td><td style="padding:3px 6px;">${escapeHtml(r.vantaca_account_id || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.street_address || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.category_label || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.opened_at || '—')}</td><td style="padding:3px 6px;">${escapeHtml(r.stage || '—')}</td></tr>`
     ).join('');
 
+    // ----- Coverage cross-check: the report's per-stage totals vs what trustEd
+    // matched. Flags any stage where rows didn't land, so a partial import is
+    // caught here instead of downstream. -----
+    const coverage = j.stage_coverage || [];
+    const coverageHasGap = coverage.some((c) => (c.unmatched_property + c.unmatched_category + c.unaccounted) > 0);
+    const coverageRows = coverage.map((c) => {
+      const missed = c.unmatched_property + c.unmatched_category + c.unaccounted;
+      const rowBg = missed > 0 ? 'background:#fffbeb;' : '';
+      return `<tr style="${rowBg}">
+        <td style="padding:4px 8px; font-weight:600; color:#0B1D34;">${escapeHtml(c.label)}</td>
+        <td style="padding:4px 8px; text-align:right;">${c.parsed}</td>
+        <td style="padding:4px 8px; text-align:right; color:#166534; font-weight:600;">${c.resolved}</td>
+        <td style="padding:4px 8px; text-align:right; color:#475569;">${c.duplicate}</td>
+        <td style="padding:4px 8px; text-align:right; color:${missed > 0 ? '#b45309' : '#94a3b8'}; font-weight:${missed > 0 ? '700' : '400'};">${missed || '—'}</td>
+      </tr>`;
+    }).join('');
+    const coveragePanel = coverage.length === 0 ? '' : `
+      <div style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:11px 13px; margin-bottom:12px;">
+        <div style="font-size:12px; font-weight:700; color:#0B1D34; margin-bottom:6px;">📊 Coverage by stage — does the import account for the whole report?</div>
+        ${coverageHasGap ? `<div style="font-size:11.5px; color:#92400e; margin-bottom:8px; line-height:1.5;">⚠ Some rows didn't land in trustEd (highlighted). The "Not matched" column = addresses not in the roster + category labels not mapped + rows missing a date. Resolve those (add property / add category) so the import matches the report's totals.</div>` : `<div style="font-size:11.5px; color:#166534; margin-bottom:8px;">✓ Every parsed row is accounted for — will import, already present, or flagged below.</div>`}
+        <table style="width:100%; border-collapse:collapse; font-size:11.5px; background:#fff; border-radius:6px; overflow:hidden;">
+          <thead><tr style="color:#64748b; background:#f1f5f9;">
+            <th style="text-align:left; padding:4px 8px;">Stage</th>
+            <th style="text-align:right; padding:4px 8px;">In report</th>
+            <th style="text-align:right; padding:4px 8px;">Will import</th>
+            <th style="text-align:right; padding:4px 8px;">Already in</th>
+            <th style="text-align:right; padding:4px 8px;">Not matched</th>
+          </tr></thead>
+          <tbody>${coverageRows}</tbody>
+        </table>
+      </div>`;
+
     // ----- Reconciliation panel: the "don't first-notice anyone with a live
     // cert" safety surface. Red banner so it's impossible to skim past. -----
     const block = j.reconcile_blocklist || [];
@@ -24590,6 +24622,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="font-size:10.5px; color:#475569; font-weight:600; text-transform:uppercase; letter-spacing:0.04em;">Already imported</div>
         </div>
       </div>
+      ${coveragePanel}
       ${reconcilePanel}
       ${j.unresolved_property_count > 0 ? `<details style="margin-bottom:10px;"><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved properties (${j.unresolved_property_count}) — accounts or addresses we couldn't match</summary><div style="font-size:11.5px; color:#475569; padding:8px;">${j.unresolved_property.slice(0,20).map((r) => `<div>Row ${r._source_row}: account=${escapeHtml(r.vantaca_account_id || '—')}, addr=${escapeHtml(r.street_address || '—')}</div>`).join('')}${j.unresolved_property_count > 20 ? `<div style="color:#94a3b8;">…and ${j.unresolved_property_count - 20} more</div>` : ''}</div></details>` : ''}
       ${j.unresolved_category_count > 0 ? `<details style="margin-bottom:10px;" open><summary style="cursor:pointer; font-size:12px; color:#92400e; font-weight:600;">Unresolved categories (${j.unresolved_category_count}) — category labels we couldn't match to canonical slugs</summary>

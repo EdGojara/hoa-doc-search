@@ -4508,12 +4508,26 @@ async function _runPreviewJob(jobId, fileBuffer, filename, mimetype, communityId
       return null;
     };
 
-    const { data: existingV } = await supabase
-      .from('violations')
-      .select('property_id, primary_category_id, opened_at')
-      .eq('community_id', communityId)
-      .eq('source', 'vantaca_import');
-    const existingKeys = new Set((existingV || []).map((v) =>
+    // Existing imported violations — the dedup baseline. Paginated: a community
+    // with >1000 prior imports would silently lose dedup keys past row 1000 and
+    // let duplicates through on re-import (CLAUDE.md 1000-row scar).
+    const existingV = [];
+    {
+      let off = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('violations')
+          .select('property_id, primary_category_id, opened_at')
+          .eq('community_id', communityId)
+          .eq('source', 'vantaca_import')
+          .range(off, off + 999);
+        if (error) { console.warn('[vantaca-violations.preview] existingV page failed:', error.message); break; }
+        existingV.push(...(data || []));
+        if (!data || data.length < 1000) break;
+        off += 1000;
+      }
+    }
+    const existingKeys = new Set(existingV.map((v) =>
       `${v.property_id}::${v.primary_category_id}::${(v.opened_at || '').slice(0, 10)}`
     ));
 
@@ -4667,11 +4681,55 @@ Return ONLY the JSON object.`;
       console.warn(`[vantaca-violations.preview job ${jobId}] reconcile failed (non-fatal):`, recErr.message);
     }
 
+    // ----- COVERAGE CROSS-CHECK (Ed 2026-06-18) -----
+    // The report's own per-stage totals (counted from the parsed detail rows)
+    // vs how many trustEd actually matched. Surfaces "the report shows 34
+    // certified, we matched 11 — 23 unaccounted" so the gap is caught by the
+    // system, not by Ed eyeballing it (encode-Ed: the Preview must know what he
+    // knows). Buckets a row can land in: resolved (will import), duplicate
+    // (already in trustEd), unmatched property, unmatched category.
+    const STAGE_HUMAN = {
+      courtesy_1: 'First Notice', courtesy_2: 'Second Notice',
+      certified_209: 'Certified / Hearing', fine_assessed: 'Fine Assessed',
+      cured: 'Closed / Resolved', voided: 'Void', unmapped: 'Unrecognized stage',
+    };
+    const _tallyStage = (arr) => {
+      const m = {};
+      for (const r of (arr || [])) { const s = r.stage || 'unmapped'; m[s] = (m[s] || 0) + 1; }
+      return m;
+    };
+    const _parsedByStage = _tallyStage(rows);
+    const _resolvedByStage = _tallyStage(resolved);
+    const _dupByStage = _tallyStage(duplicates);
+    const _unpByStage = _tallyStage(unresolved_property);
+    const _uncByStage = _tallyStage(unresolved_category);
+    const STAGE_DISPLAY_ORDER = ['courtesy_1', 'courtesy_2', 'certified_209', 'fine_assessed', 'cured', 'voided', 'unmapped'];
+    const _allStageKeys = [...new Set([...STAGE_DISPLAY_ORDER, ...Object.keys(_parsedByStage)])]
+      .filter((s) => (_parsedByStage[s] || 0) > 0);
+    const stageCoverage = _allStageKeys.map((s) => {
+      const parsed = _parsedByStage[s] || 0;
+      const resolvedC = _resolvedByStage[s] || 0;
+      const dup = _dupByStage[s] || 0;
+      const accounted = resolvedC + dup + (_unpByStage[s] || 0) + (_uncByStage[s] || 0);
+      return {
+        stage: s,
+        label: STAGE_HUMAN[s] || s.replace(/_/g, ' '),
+        parsed,
+        resolved: resolvedC,
+        duplicate: dup,
+        unmatched_property: _unpByStage[s] || 0,
+        unmatched_category: _uncByStage[s] || 0,
+        // Rows the parser produced but that won't land anywhere (no date, etc.)
+        unaccounted: Math.max(0, parsed - accounted),
+      };
+    });
+
     const finalResult = {
       total_rows: rows.length,
       mapping,
       headers,
       sample_rows: rows.slice(0, 5),
+      stage_coverage: stageCoverage,
       resolved_count: resolved.length,
       unresolved_property_count: unresolved_property.length,
       unresolved_category_count: unresolved_category.length,
@@ -5023,12 +5081,26 @@ router.post('/vantaca-violations/preview', upload.single('file'), async (req, re
     };
 
     // Check for existing violations (dedup at apply time)
-    const { data: existingV } = await supabase
-      .from('violations')
-      .select('property_id, primary_category_id, opened_at')
-      .eq('community_id', communityId)
-      .eq('source', 'vantaca_import');
-    const existingKeys = new Set((existingV || []).map((v) =>
+    // Existing imported violations — the dedup baseline. Paginated: a community
+    // with >1000 prior imports would silently lose dedup keys past row 1000 and
+    // let duplicates through on re-import (CLAUDE.md 1000-row scar).
+    const existingV = [];
+    {
+      let off = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('violations')
+          .select('property_id, primary_category_id, opened_at')
+          .eq('community_id', communityId)
+          .eq('source', 'vantaca_import')
+          .range(off, off + 999);
+        if (error) { console.warn('[vantaca-violations.preview] existingV page failed:', error.message); break; }
+        existingV.push(...(data || []));
+        if (!data || data.length < 1000) break;
+        off += 1000;
+      }
+    }
+    const existingKeys = new Set(existingV.map((v) =>
       `${v.property_id}::${v.primary_category_id}::${(v.opened_at || '').slice(0, 10)}`
     ));
 
