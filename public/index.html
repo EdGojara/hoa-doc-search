@@ -24718,7 +24718,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function inspVViApply() {
     if (!_inspVViPreviewData || !_inspVViPreviewData.resolved || _inspVViPreviewData.resolved.length === 0) return;
     const communityId = document.getElementById('inspVViCommunity').value;
-    if (!confirm(`Import ${_inspVViPreviewData.resolved.length} historical violation${_inspVViPreviewData.resolved.length === 1 ? '' : 's'}?\n\nThey'll be created with source='vantaca_import', confidence_weight=0.5, quality_status='unreviewed'. The escalation engine will count them at half-weight until staff verifies each one.`)) return;
+    if (!confirm(`Import ${_inspVViPreviewData.resolved.length} historical violation${_inspVViPreviewData.resolved.length === 1 ? '' : 's'}?\n\nThey'll be created with source='vantaca_import' at full weight (1.0) — Vantaca exports are Bedrock's own inspection data. The reconciler skips duplicates and never regresses a case below a live certified letter.`)) return;
     const btn = document.getElementById('inspVViApplyBtn');
     btn.disabled = true; btn.textContent = '⏳ Importing…';
     try {
@@ -24786,7 +24786,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div style="font-size:24px;">✓</div>
           <div>
             <div style="font-size:15px; font-weight:700; color:#14532d;">Imported ${inserted} historical violation${inserted === 1 ? '' : 's'}</div>
-            <div style="font-size:11.5px; color:#15803d;">Source: vantaca_import · Weight: 0.5 · Status: unreviewed</div>
+            <div style="font-size:11.5px; color:#15803d;">Source: vantaca_import · Weight: 1.0 (full trust — Bedrock's own inspection data) · Status: unreviewed</div>
           </div>
         </div>
         <div style="font-size:12.5px; color:#14532d; margin-top:8px; line-height:1.5;">
@@ -24798,9 +24798,8 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <span style="font-weight:600;">Reconciled:</span> ${advanced} existing case${advanced === 1 ? '' : 's'} advanced up the ladder · ${continued} already at or past Vantaca's stage (no duplicate created).
         </div>` : ''}
         <div style="font-size:12px; color:#14532d; margin-top:6px;">
-          <span style="font-weight:600;">Optional next step:</span> open any property's detail panel and click <strong>✓ Verify</strong>
-          on individual rows to promote them to full weight. You don't need to verify all —
-          half-weight is fine for context; full-weight is for hearings + disputes.
+          These count at <strong>full weight</strong> in the escalation engine immediately — Vantaca exports are Bedrock's own inspection data.
+          <span style="font-weight:600;">Optional:</span> open a property and click <strong>✓ Verify</strong> to mark a row reviewed for the audit trail; it doesn't change the weight.
         </div>
       </div>
       ${blocked.length > 0 ? `
