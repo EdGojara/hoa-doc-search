@@ -87,4 +87,50 @@ check('empty text → null', _parseSummaryText('') === null);
   check('no-date status → raw label, null date', noDate.stageLabel === 'Some Status With No Date' && noDate.date === null);
 }
 
+// ----------------------------------------------------------------------------
+// Grouped "Violation Report - Detail" parser: stage comes from the SECTION
+// HEADER (authoritative current status), date from the following status row.
+// ----------------------------------------------------------------------------
+{
+  const { _parseVantacaGroupedReport } = require('../lib/enforcement/vantaca_violation_import');
+  // Build an AOA mirroring the real layout: col0=$XN, col2=account, col3=owner,
+  // col5=address, col9=category (identity row) / status (status row).
+  const row = (cells) => { const a = []; for (const [i, v] of Object.entries(cells)) a[i] = v; return a; };
+  const aoa = [
+    ['Waterview Estates HOA'],
+    ['Violation Report - Detail for 1/1/2026 - 5/31/2026'],
+    ['SUMMARY'],
+    ['Closed', null, null, null, '$2'],
+    ['Closed (Total Count = 2)'],
+    row({ 0: 'XN', 2: 'Account', 3: 'Homeowner', 5: 'Address', 8: 'Hearing Date', 10: 'Details' }),
+    row({ 0: '$1', 2: '10110115', 3: 'John Doe', 5: '5307 Baldwin Elm Street', 9: 'Sod Yard' }),
+    [],
+    row({ 9: 'Closed - 01/14/2026 - Pennie Mancuso' }),
+    row({ 0: '$2', 2: '10110116', 3: 'Jane Roe', 5: '5319 Baldwin Elm Street', 9: 'Mow' }),
+    [],
+    row({ 9: 'Closed - 02/01/2026 - Pennie Mancuso' }),
+    ['First Notice (Total Count = 1)'],
+    row({ 0: 'XN', 2: 'Account', 3: 'Homeowner', 5: 'Address', 8: 'Hearing Date', 10: 'Details' }),
+    row({ 0: '$3', 2: '10110200', 3: 'Bob Smith', 5: '100 Main St', 9: 'Fences' }),
+    [],
+    row({ 9: 'First Notice - 05/06/2026 - Jen' }),
+    ['Certified Letter Notice (Total Count = 1)'],
+    row({ 0: 'XN', 2: 'Account', 3: 'Homeowner', 5: 'Address', 8: 'Hearing Date', 10: 'Details' }),
+    row({ 0: '$4', 2: '10110300', 3: 'Amy Lee', 5: '200 Oak Ave', 9: 'Mildew' }),
+    [],
+    row({ 9: 'Certified Letter Notice - 04/28/2026 - Liz' }),
+  ];
+  const out = _parseVantacaGroupedReport(aoa);
+  check('grouped: parsed 4 violations', out.rows.length === 4);
+  check('grouped: source tag set', out.mapping._source === 'vantaca_grouped_report');
+  const byAcct = Object.fromEntries(out.rows.map((r) => [r.vantaca_account_id, r]));
+  check('grouped: Closed row → cured (from section header)', byAcct['10110115'].stage === 'cured');
+  check('grouped: Closed row carries the closure date', byAcct['10110115'].opened_at === '2026-01-14');
+  check('grouped: Closed row has resolved_at', byAcct['10110115'].resolved_at === '2026-01-14');
+  check('grouped: First Notice → courtesy_1', byAcct['10110200'].stage === 'courtesy_1');
+  check('grouped: Certified → certified_209', byAcct['10110300'].stage === 'certified_209');
+  check('grouped: Certified uses the cert date', byAcct['10110300'].opened_at === '2026-04-28');
+  check('grouped: category from identity row', byAcct['10110300'].category_label === 'Mildew');
+}
+
 console.log(`\n${passed} assertions passed.`);
