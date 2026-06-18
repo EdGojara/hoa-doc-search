@@ -1437,10 +1437,11 @@ router.post('/:applicationId/master-plan/:masterPlanId/approve-at-community', ex
       .maybeSingle();
     if (!app || !app.community_id) return res.status(404).json({ error: 'application_or_community_not_found' });
 
-    // Look for existing approval row (including retired).
+    // master_plan_community_approvals has a composite PK (master_plan_id,
+    // community_id) -- no id column. Lookups and updates key on the pair.
     const { data: existing } = await supabase
       .from('master_plan_community_approvals')
-      .select('id, retired_at')
+      .select('retired_at')
       .eq('master_plan_id', req.params.masterPlanId)
       .eq('community_id', app.community_id)
       .maybeSingle();
@@ -1449,28 +1450,28 @@ router.post('/:applicationId/master-plan/:masterPlanId/approve-at-community', ex
       return res.json({ ok: true, no_change: true, message: 'Already approved at this community.' });
     }
     if (existing && existing.retired_at) {
-      // Un-retire
+      // Un-retire by clearing retired_at + retired_by + retired_reason.
       const { error: upErr } = await supabase
         .from('master_plan_community_approvals')
-        .update({ retired_at: null, updated_at: new Date().toISOString() })
-        .eq('id', existing.id);
+        .update({ retired_at: null, retired_by: null, retired_reason: null })
+        .eq('master_plan_id', req.params.masterPlanId)
+        .eq('community_id', app.community_id);
       if (upErr) return res.status(500).json({ error: upErr.message });
       console.log(`[builder_applications] master plan ${req.params.masterPlanId} un-retired at community ${app.community_id}`);
-      return res.json({ ok: true, action: 'unretired', approval_id: existing.id });
+      return res.json({ ok: true, action: 'unretired' });
     }
-    // Create new approval
-    const { data: created, error: insErr } = await supabase
+    // Create new approval row keyed on the composite PK.
+    const { error: insErr } = await supabase
       .from('master_plan_community_approvals')
       .insert({
         master_plan_id: req.params.masterPlanId,
         community_id: app.community_id,
         approved_at: new Date().toISOString(),
-      })
-      .select('id')
-      .single();
+        approved_by: 'ai-rec-inline-fix',
+      });
     if (insErr) return res.status(500).json({ error: insErr.message });
-    console.log(`[builder_applications] master plan ${req.params.masterPlanId} approved at community ${app.community_id} (approval_id=${created.id})`);
-    res.json({ ok: true, action: 'created', approval_id: created.id });
+    console.log(`[builder_applications] master plan ${req.params.masterPlanId} approved at community ${app.community_id}`);
+    res.json({ ok: true, action: 'created' });
   } catch (err) {
     console.error('[builder_applications] approve-at-community failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
