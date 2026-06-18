@@ -17587,6 +17587,37 @@ If you have questions or want to discuss alternatives, just reply or give us a c
       </div>
       <div id="inspIntStatus-${propIdForLog}" style="display:none; margin-top:8px; padding:8px 12px; border-radius:6px; font-size:12.5px;"></div>`;
 
+    // Open enforcement carried in from the last Vantaca report — the thing the
+    // inspector needs in-hand at the house. Each open case shows its stage, and
+    // for certified cases the §209 clock (days since cert / days left in the
+    // 180-day window) so they don't re-notice someone mid-cert and know the
+    // runway. Ed 2026-06-18.
+    const openVios = (d.violations || []).filter((v) => isOpenStage(v.current_stage));
+    const certBadge = (v) => {
+      const c = v.cert_clock;
+      if (!c) return '';
+      if (c.expired) {
+        return `<span style="display:inline-block; background:#fee2e2; color:#991b1b; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:700; margin-left:6px;">⏱ cert expired ${Math.abs(c.days_left)}d ago — eligible to escalate</span>`;
+      }
+      const soon = c.days_left <= 30;
+      return `<span style="display:inline-block; background:${soon ? '#fef3c7' : '#dcfce7'}; color:${soon ? '#92400e' : '#166534'}; padding:2px 8px; border-radius:99px; font-size:11px; font-weight:700; margin-left:6px;" title="Certified ${c.issued_at} · valid through ${c.valid_through}">⏱ certified ${c.days_since}d ago · ${c.days_left}d left</span>`;
+    };
+    const openEnforcementHtml = openVios.length === 0
+      ? `<div style="background:#f0fdf4; border:1px solid #bbf7d0; border-radius:8px; padding:10px 12px; margin-bottom:14px; font-size:12.5px; color:#166534;">✓ No open enforcement carried in — clean as of the last Vantaca report.</div>`
+      : `<div style="background:#fff7ed; border:1.5px solid #fdba74; border-radius:8px; padding:11px 13px; margin-bottom:14px;">
+           <div style="font-size:12px; font-weight:800; color:#9a3412; letter-spacing:0.03em; text-transform:uppercase; margin-bottom:8px;">⚖ Open enforcement carried in (${openVios.length}) — do not re-notice</div>
+           ${openVios.map((v) => {
+             const st = (v.current_stage || '').replace(/_/g, ' ');
+             return `<div style="display:flex; align-items:center; justify-content:space-between; gap:8px; padding:5px 0; border-bottom:1px solid #fed7aa; flex-wrap:wrap;">
+               <div style="font-size:12.5px; color:#0B1D34; font-weight:600;">${escapeHtml(v.category_label || v.category_code || '—')}</div>
+               <div style="display:flex; align-items:center; flex-wrap:wrap;">
+                 <span style="font-size:11.5px; color:#9a3412; font-weight:600; text-transform:capitalize;">${escapeHtml(st)}</span>
+                 ${certBadge(v)}
+               </div>
+             </div>`;
+           }).join('')}
+         </div>`;
+
     document.getElementById('inspPDBody').innerHTML = `
       <!-- Owner + residency block -->
       <div style="display:grid; grid-template-columns: 1fr 1fr; gap:14px; margin-bottom:14px;">
@@ -17618,6 +17649,9 @@ If you have questions or want to discuss alternatives, just reply or give us a c
         ${stat('Inspections', counts.inspections_lifetime || 0)}
         ${stat('Interactions', counts.interactions_lifetime || 0)}
       </div>
+
+      <!-- Open enforcement carried in (with §209 cert clock) -->
+      ${openEnforcementHtml}
 
       <!-- Escalation hint -->
       <div style="background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:9px 12px; font-size:12.5px; margin-bottom:14px;">

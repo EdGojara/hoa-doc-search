@@ -1920,6 +1920,33 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
       new Date(b.started_at || 0) - new Date(a.started_at || 0)
     );
 
+    // Cert clock — for the drive. When an inspector pulls up a house, any
+    // open certified case shows how far into the 180-day §209 window it is
+    // ("certified 140 days ago — 40 days left"), so they don't re-notice a
+    // homeowner mid-cert and know how much runway is left. CERT_VALID_DAYS is
+    // shared with the reconciliation engine so the two never drift.
+    const { CERT_VALID_DAYS, STAGE_RANK: LADDER_RANK } = require('../lib/enforcement/vantaca_reconcile');
+    const CERT_MIN_RANK = LADDER_RANK.certified_209;
+    const _certClock = (v) => {
+      // Only ranked open stages at/after certified carry the §209 clock.
+      if ((LADDER_RANK[v.current_stage] || 0) < CERT_MIN_RANK) return null;
+      const startedAt = v.current_stage_started_at || v.opened_at;
+      if (!startedAt) return null;
+      const startMs = Date.parse(String(startedAt).slice(0, 10));
+      if (Number.isNaN(startMs)) return null;
+      const todayMs = Date.parse(new Date().toISOString().slice(0, 10));
+      const daysSince = Math.floor((todayMs - startMs) / (24 * 60 * 60 * 1000));
+      const daysLeft = CERT_VALID_DAYS - daysSince;
+      return {
+        issued_at:     String(startedAt).slice(0, 10),
+        days_since:    daysSince,
+        days_left:     daysLeft,
+        expired:       daysLeft < 0,
+        valid_through: new Date(startMs + CERT_VALID_DAYS * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
+        window_days:   CERT_VALID_DAYS,
+      };
+    };
+
     // Counts (computed cheaply from the data we already have)
     const counts = {
       violations_lifetime:  violations.length,
@@ -1989,7 +2016,10 @@ router.get('/inspections/property-detail/:property_id', async (req, res) => {
         resolved_at:       v.resolved_at,
         resolved_via:      v.resolved_via,
         current_stage:     v.current_stage,
+        current_stage_started_at: v.current_stage_started_at,
         cure_period_ends_at: v.cure_period_ends_at,
+        // §209 cert clock for the drive (null unless certified or beyond).
+        cert_clock:        _certClock(v),
         board_priority_at_open: v.board_priority_at_open,
         // category_code is what the frontend display fallback expects;
         // in this schema the equivalent column is `slug` (no `code` column
