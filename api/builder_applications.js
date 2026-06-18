@@ -3662,6 +3662,37 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
     const communityId = req.body && req.body.community_id;
     if (!communityId) return res.status(400).json({ error: 'community_id required' });
 
+    // 0. Dedup: hash the PDF buffer and reject byte-identical re-uploads at
+    //    the same community within the last 24h. Catches Karla's 2026-06-17
+    //    multi-PDF-drop case where the same file appeared twice in the folder
+    //    selection and both got processed. 24h window lets a real revision
+    //    re-upload later without being blocked.
+    const crypto = require('crypto');
+    const pdfHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+    {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data: dup } = await supabase
+        .from('builder_applications')
+        .select('id, reference_number, street_address, created_at')
+        .eq('community_id', communityId)
+        .eq('source_pdf_sha256', pdfHash)
+        .gte('created_at', since)
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      if (dup) {
+        return res.status(409).json({
+          error: `Duplicate of ${dup.reference_number}${dup.street_address ? ' (' + dup.street_address + ')' : ''} — same PDF was uploaded ${new Date(dup.created_at).toLocaleString()}. Skipped to avoid a double entry.`,
+          duplicate_of: {
+            reference_number: dup.reference_number,
+            application_id: dup.id,
+            street_address: dup.street_address,
+            created_at: dup.created_at,
+          },
+        });
+      }
+    }
+
     // 1. Verify community exists + pull the slug for storage path.
     const { data: community, error: cErr } = await supabase
       .from('communities')
@@ -3913,6 +3944,7 @@ router.post('/upload-on-behalf', upload.single('submission_pdf'), async (req, re
         square_footage: extracted.square_footage_heated ? parseInt(extracted.square_footage_heated, 10) : null,
         application_data: applicationData,
         status: 'received',
+        source_pdf_sha256: pdfHash,
       };
 
       const insertResult = await supabase

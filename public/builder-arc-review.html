@@ -2020,6 +2020,20 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
       fd.append('community_id', communityId);
       const r = await fetch('/api/builder-applications/upload-on-behalf', { method: 'POST', headers: uploadHeaders, body: fd });
       const j = await r.json();
+      if (r.status === 409 && j.duplicate_of) {
+        // Byte-identical PDF already in this community within 24h. Not a
+        // failure -- the row exists -- but worth surfacing so the operator
+        // sees it didn't double-up.
+        results.push({
+          file: f,
+          ok: true,
+          dedup: true,
+          ref: j.duplicate_of.reference_number,
+          applicationId: j.duplicate_of.application_id,
+        });
+        setRow(i, `↺ duplicate of ${j.duplicate_of.reference_number}`, '#92400e');
+        continue;
+      }
       if (!r.ok) {
         const rawSnippet = j.raw_extracted ? ' · extracted: ' + String(j.raw_extracted).slice(0, 120).replace(/\s+/g, ' ') : '';
         throw new Error((j.error || 'Upload failed') + rawSnippet);
@@ -2048,6 +2062,16 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
   // when ALL succeeded with no flags worth eyeballing.
   if (single) {
     const result = results[0];
+    if (result.ok && result.dedup) {
+      status.style.color = '#92400e';
+      status.textContent = `↺ Duplicate of ${result.ref} — same PDF was already uploaded in the last 24h. Opening that submission…`;
+      setTimeout(async () => {
+        closeUploadSubmissionModal();
+        try { await loadQueue(); } catch (_) {}
+        try { await loadDetail(result.applicationId); } catch (_) {}
+      }, 1500);
+      return;
+    }
     if (result.ok) {
       status.style.color = '#15803d';
       const bm = result.builderMatch;
@@ -2082,7 +2106,8 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
   }
 
   // Multi-file summary.
-  const okRows = results.filter((r) => r.ok);
+  const okRows = results.filter((r) => r.ok && !r.dedup);
+  const dupRows = results.filter((r) => r.ok && r.dedup);
   const failRows = results.filter((r) => !r.ok);
   const flagged = okRows.filter((r) => {
     const t = r.builderMatch && r.builderMatch.match_type;
@@ -2090,8 +2115,13 @@ document.getElementById('uploadSubmissionForm').addEventListener('submit', async
   });
   status.style.color = failRows.length ? '#b45309' : '#15803d';
   const lines = [
-    `${okRows.length} of ${results.length} created${failRows.length ? ` · ${failRows.length} failed` : ''}${flagged.length ? ` · ${flagged.length} flagged for review` : ''}`,
+    `${okRows.length} of ${results.length} created${dupRows.length ? ` · ${dupRows.length} duplicate skipped` : ''}${failRows.length ? ` · ${failRows.length} failed` : ''}${flagged.length ? ` · ${flagged.length} flagged for review` : ''}`,
   ];
+  if (dupRows.length) {
+    lines.push('');
+    lines.push('Duplicates skipped (already in queue):');
+    dupRows.forEach((r) => lines.push(`  ↺ ${r.file.name} → ${r.ref}`));
+  }
   if (failRows.length) {
     lines.push('');
     lines.push('Failed:');
