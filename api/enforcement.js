@@ -5962,7 +5962,60 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
     if (rows.length === 0) return res.json({ inserted: 0, skipped: 0 });
 
     let inserted = 0;
+    let replaced = 0;
     const errors = [];
+
+    // ----- REPLACE MODE (Ed 2026-06-18, all-communities rollout) -----
+    // Clean re-import: wipe this community's PRIOR Vantaca import before
+    // inserting fresh, so a corrected report fully supersedes the old (possibly
+    // mis-staged) one. Only source='vantaca_import' rows are touched —
+    // inspection/manual/homeowner violations are never deleted. Aborts if any
+    // imported row carries real downstream state (a correction or a queued
+    // fine); continuation rows (the only RESTRICT blocker otherwise) are
+    // cleared first. Self-service so no engineer-run script is needed per
+    // community.
+    if (body.replace_existing) {
+      const oldIds = [];
+      let off = 0;
+      while (true) {
+        const { data, error } = await supabase
+          .from('violations').select('id')
+          .eq('community_id', communityId).eq('source', 'vantaca_import')
+          .range(off, off + 999);
+        if (error) return res.status(500).json({ error: `replace: ${error.message}` });
+        oldIds.push(...(data || []).map((r) => r.id));
+        if (!data || data.length < 1000) break;
+        off += 1000;
+      }
+      if (oldIds.length > 0) {
+        const chunk = (a, n) => { const o = []; for (let i = 0; i < a.length; i += n) o.push(a.slice(i, i + n)); return o; };
+        const countIn = async (table) => {
+          let c = 0;
+          for (const part of chunk(oldIds, 200)) {
+            const { count } = await supabase.from(table).select('violation_id', { count: 'exact', head: true }).in('violation_id', part);
+            c += count || 0;
+          }
+          return c;
+        };
+        const corrections = await countIn('violation_corrections');
+        const fines = await countIn('fine_posting_queue');
+        if (corrections > 0 || fines > 0) {
+          return res.status(409).json({
+            error: `Cannot clean-replace: ${corrections} correction(s) and ${fines} queued fine(s) reference the existing import. Resolve those first, or import without replace.`,
+          });
+        }
+        for (const part of chunk(oldIds, 200)) {
+          const { error: cErr } = await supabase.from('violation_continuations').delete().in('violation_id', part);
+          if (cErr) return res.status(500).json({ error: `replace (continuations): ${cErr.message}` });
+        }
+        for (const part of chunk(oldIds, 200)) {
+          const { error: vErr, count } = await supabase.from('violations').delete({ count: 'exact' }).in('id', part);
+          if (vErr) return res.status(500).json({ error: `replace (violations): ${vErr.message}` });
+          replaced += count || 0;
+        }
+        console.log(`[vantaca-violations.apply] replace mode: cleared ${replaced} prior imported violations for community ${communityId}`);
+      }
+    }
 
     // Rows that can't be written at all (no property/category/date match).
     // Separated from the reconciliation step so the human reasons stay clear.
@@ -6103,6 +6156,7 @@ router.post('/vantaca-violations/apply', express.json({ limit: '20mb' }), async 
 
     res.json({
       inserted,
+      replaced,
       advanced,
       continued: plan.continued.length,
       blocked_count: blocked.length,

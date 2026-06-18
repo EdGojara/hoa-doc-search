@@ -16481,6 +16481,10 @@ If you have questions or want to discuss alternatives, just reply or give us a c
             <button id="inspVViPreviewBtn" onclick="inspVViPreview()" style="background:#0B1D34; color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer;">🔍 Preview diff</button>
             <button id="inspVViApplyBtn" onclick="inspVViApply()" disabled style="background:#16a34a; color:#fff; border:none; padding:9px 16px; border-radius:6px; font-size:13px; font-weight:600; cursor:pointer; opacity:0.5;">✓ Apply import</button>
           </div>
+          <label style="display:flex; align-items:flex-start; gap:7px; margin-top:10px; font-size:12px; color:#475569; cursor:pointer;">
+            <input type="checkbox" id="inspVViReplace" style="margin-top:2px;">
+            <span><strong>Clean re-import</strong> — replace this community's previous Vantaca import before applying. Use this when re-importing a full report so the new one fully supersedes the old. Only Vantaca-imported rows are removed; inspection &amp; manual violations are untouched.</span>
+          </label>
           <div id="inspVViStatus" style="font-size:12.5px; margin-top:10px;"></div>
           <div id="inspVViDiff" style="margin-top:16px;"></div>
         </div>
@@ -24718,14 +24722,18 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   async function inspVViApply() {
     if (!_inspVViPreviewData || !_inspVViPreviewData.resolved || _inspVViPreviewData.resolved.length === 0) return;
     const communityId = document.getElementById('inspVViCommunity').value;
-    if (!confirm(`Import ${_inspVViPreviewData.resolved.length} historical violation${_inspVViPreviewData.resolved.length === 1 ? '' : 's'}?\n\nThey'll be created with source='vantaca_import' at full weight (1.0) — Vantaca exports are Bedrock's own inspection data. The reconciler skips duplicates and never regresses a case below a live certified letter.`)) return;
+    const replaceExisting = !!(document.getElementById('inspVViReplace') && document.getElementById('inspVViReplace').checked);
+    const replaceNote = replaceExisting
+      ? '\n\n⚠ CLEAN RE-IMPORT: this community\'s previous Vantaca import will be DELETED first, then replaced with this one. (Inspection & manual violations are untouched.)'
+      : '';
+    if (!confirm(`Import ${_inspVViPreviewData.resolved.length} historical violation${_inspVViPreviewData.resolved.length === 1 ? '' : 's'}?\n\nThey'll be created with source='vantaca_import' at full weight (1.0) — Vantaca exports are Bedrock's own inspection data. The reconciler skips duplicates and never regresses a case below a live certified letter.${replaceNote}`)) return;
     const btn = document.getElementById('inspVViApplyBtn');
     btn.disabled = true; btn.textContent = '⏳ Importing…';
     try {
       const r = await window._authFetch('/api/enforcement/vantaca-violations/apply', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ community_id: communityId, rows: _inspVViPreviewData.resolved }),
+        body: JSON.stringify({ community_id: communityId, rows: _inspVViPreviewData.resolved, replace_existing: replaceExisting }),
       });
       const j = await r.json();
       if (!r.ok) throw new Error(j.error || `HTTP ${r.status}`);
@@ -24747,6 +24755,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
   function inspVViRenderImportSummary(j) {
     const inserted = j.inserted || 0;
     const skipped = j.skipped || 0;
+    const replaced = j.replaced || 0;
     const advanced = j.advanced || 0;
     const continued = j.continued || 0;
     const blocked = j.blocked || [];
@@ -24787,6 +24796,7 @@ If you have questions or want to discuss alternatives, just reply or give us a c
           <div>
             <div style="font-size:15px; font-weight:700; color:#14532d;">Imported ${inserted} historical violation${inserted === 1 ? '' : 's'}</div>
             <div style="font-size:11.5px; color:#15803d;">Source: vantaca_import · Weight: 1.0 (full trust — Bedrock's own inspection data) · Status: unreviewed</div>
+            ${replaced > 0 ? `<div style="font-size:11.5px; color:#0369a1;">Clean re-import: replaced ${replaced} prior imported violation${replaced === 1 ? '' : 's'} for this community.</div>` : ''}
           </div>
         </div>
         <div style="font-size:12.5px; color:#14532d; margin-top:8px; line-height:1.5;">
