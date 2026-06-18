@@ -340,6 +340,40 @@
   .ai-rec-conditions ul { margin: 0; padding-left: 16px; }
   .ai-rec-conditions li { margin: 2px 0; }
 
+  .ai-rec-diagnostic {
+    margin-top: 10px;
+    padding: 10px 12px;
+    background: rgba(250, 204, 21, 0.06);
+    border: 1px solid rgba(250, 204, 21, 0.25);
+    border-left: 3px solid #facc15;
+    border-radius: 4px;
+    font-size: 12px; color: var(--ink-soft);
+  }
+  .ai-rec-diagnostic > strong {
+    display: block;
+    font-size: 11px; color: #facc15;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    margin-bottom: 4px; font-weight: 600;
+  }
+  .ai-rec-diag-sub {
+    font-size: 11.5px; color: var(--ink-soft);
+    margin-bottom: 6px;
+  }
+  .ai-rec-diag-subhead {
+    font-size: 10.5px; color: var(--ink-faint);
+    letter-spacing: 0.04em; text-transform: uppercase;
+    font-weight: 600; margin-top: 6px; margin-bottom: 3px;
+  }
+  .ai-rec-diag-list { margin: 0; padding-left: 16px; }
+  .ai-rec-diag-list > li { margin: 4px 0; }
+  .ai-rec-diag-mismatches { margin: 2px 0 0 0; padding-left: 14px; font-size: 11px; }
+  .ai-rec-diag-mismatches li { margin: 1px 0; color: var(--ink-faint); }
+  .ai-rec-diag-field {
+    color: var(--ink-soft);
+    font-weight: 600;
+    margin-right: 4px;
+  }
+
   .finalize-form input,
   .finalize-form textarea {
     width: 100%;
@@ -1476,7 +1510,7 @@ async function loadRecommendation(applicationId, panel) {
     if (!r.ok) throw new Error(`HTTP ${r.status}`);
     const data = await r.json();
     const rec = data.recommendation || {};
-    renderRecommendation(block, rec);
+    renderRecommendation(block, rec, data.master_plan_diagnostic || null);
     autoSelectFromRecommendation(rec, panel);
   } catch (err) {
     block.classList.remove('ai-rec-loading');
@@ -1488,7 +1522,7 @@ async function loadRecommendation(applicationId, panel) {
   }
 }
 
-function renderRecommendation(block, rec) {
+function renderRecommendation(block, rec, masterPlanDiagnostic) {
   const actionLabels = {
     approve: '✓ Approve',
     approve_with_conditions: '⚠ Approve with conditions',
@@ -1503,6 +1537,55 @@ function renderRecommendation(block, rec) {
 
   const sigClass = (tone) => tone === 'positive' ? 'ok' : tone === 'negative' ? 'bad' : tone === 'caution' ? 'warn' : '';
 
+  // Master plan diagnostic — only render when there are findings worth
+  // showing. If the rec says "no master plan match" and we found near-misses,
+  // explain exactly what differed; if we found a same-plan master plan tied
+  // to a DIFFERENT builder, flag the link-mismatch failure mode explicitly.
+  let diagnosticBlock = '';
+  if (masterPlanDiagnostic) {
+    const d = masterPlanDiagnostic;
+    const fieldLabel = (f) => ({
+      plan_number: 'Plan #',
+      elevation: 'Elevation',
+      status: 'Status',
+      community_approval: 'Community approval',
+      builder_status: 'Builder status',
+    })[f] || f;
+    const near = (d.near_matches || []).filter((m) => m.mismatches && m.mismatches.length > 0);
+    const cross = d.cross_builder_check || [];
+    if (near.length > 0 || cross.length > 0) {
+      diagnosticBlock = `
+        <div class="ai-rec-diagnostic">
+          <strong>Why didn't a master plan match?</strong>
+          <div class="ai-rec-diag-sub">Submitted: Plan <strong>${escapeHtml(d.submitted.plan_number || '?')}</strong> / Elevation <strong>${escapeHtml(d.submitted.elevation || '?')}</strong></div>
+          ${near.length > 0 ? `
+            <div class="ai-rec-diag-subhead">Close matches in the library (under this builder):</div>
+            <ul class="ai-rec-diag-list">
+              ${near.map((m) => `
+                <li>
+                  <strong>Plan ${escapeHtml(m.plan_number)} / ${escapeHtml(m.elevation)}</strong> ${escapeHtml(m.builder_name ? '— ' + m.builder_name : '')}
+                  <ul class="ai-rec-diag-mismatches">
+                    ${m.mismatches.map((mm) => `<li><span class="ai-rec-diag-field">${escapeHtml(fieldLabel(mm.field))}:</span> need <strong>${escapeHtml(String(mm.expected))}</strong> but found <strong>${escapeHtml(String(mm.got))}</strong></li>`).join('')}
+                  </ul>
+                </li>
+              `).join('')}
+            </ul>
+          ` : ''}
+          ${cross.length > 0 ? `
+            <div class="ai-rec-diag-subhead" style="color:#991b1b;">⚠ Plan exists but tied to a different builder row:</div>
+            <ul class="ai-rec-diag-list">
+              ${cross.map((m) => `
+                <li>
+                  <strong>Plan ${escapeHtml(m.plan_number)} / ${escapeHtml(m.elevation)}</strong> — currently linked to <strong>${escapeHtml(m.builder_name || '(unknown)')}</strong>${m.builder_status === 'inactive' ? ' <span style="color:#991b1b;">(inactive / merged duplicate)</span>' : ''}
+                  <div style="font-size:11px; color:#475569; margin-top:2px;">${escapeHtml(m.note || '')}</div>
+                </li>
+              `).join('')}
+            </ul>
+          ` : ''}
+        </div>`;
+    }
+  }
+
   block.classList.remove('ai-rec-loading');
   block.innerHTML = `
     <div class="ai-rec-label">
@@ -1516,6 +1599,7 @@ function renderRecommendation(block, rec) {
         ${signals.map((s) => `<span class="sig ${sigClass(s.tone)}">${escapeHtml(s.label || '')}</span>`).join('')}
       </div>
     ` : ''}
+    ${diagnosticBlock}
     ${conds.length ? `
       <div class="ai-rec-conditions">
         <strong>Suggested conditions (editable below)</strong>

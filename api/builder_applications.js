@@ -1328,13 +1328,111 @@ router.get('/:id/recommendation', async (req, res, next) => {
   try {
     const { data: app, error } = await supabase
       .from('builder_applications')
-      .select('id, fast_track, master_plan_id, plan_number, elevation, street_address, application_data')
+      .select('id, fast_track, master_plan_id, plan_number, elevation, street_address, application_data, community_id, builder_company_id')
       .eq('id', req.params.id)
       .maybeSingle();
     if (error) throw error;
     if (!app) return res.status(404).json({ error: 'application not found' });
     const recommendation = computeBuilderRecommendation(app);
-    res.json({ application_id: app.id, recommendation });
+
+    // When the recommendation says "no master plan match," surface WHY --
+    // search for near-misses (same plan_number with different elevation,
+    // same builder with different plan, etc.) and annotate each with the
+    // specific field that mismatched. Ed 2026-06-18: stop using staff as
+    // the SQL diagnostician. The UI should explain itself.
+    let masterPlanDiagnostic = null;
+    if (!app.master_plan_id && app.builder_company_id) {
+      try {
+        const { data: nearMatches } = await supabase
+          .from('master_plans')
+          .select(`
+            id, plan_number, elevation, status, builder_company_id,
+            builder:builder_company_id(id, company_name, status),
+            approvals:master_plan_community_approvals(community_id, retired_at)
+          `)
+          .eq('builder_company_id', app.builder_company_id)
+          .ilike('plan_number', `${(app.plan_number || '').replace(/[%_]/g, '')}%`)
+          .limit(20);
+
+        const submittedPN = String(app.plan_number || '').trim();
+        const submittedEv = String(app.elevation || '').trim();
+        const submittedPNLower = submittedPN.toLowerCase();
+        const submittedEvLower = submittedEv.toLowerCase();
+
+        const analyzed = (nearMatches || []).map((mp) => {
+          const mpPN = String(mp.plan_number || '').trim();
+          const mpEv = String(mp.elevation || '').trim();
+          const mismatches = [];
+          // Plan number compare (case-insensitive)
+          if (mpPN.toLowerCase() !== submittedPNLower) {
+            mismatches.push({ field: 'plan_number', expected: submittedPN, got: mpPN });
+          }
+          // Elevation compare (case-insensitive)
+          if (mpEv.toLowerCase() !== submittedEvLower) {
+            mismatches.push({ field: 'elevation', expected: submittedEv, got: mpEv });
+          }
+          // Status check
+          if (mp.status !== 'approved') {
+            mismatches.push({ field: 'status', expected: 'approved', got: mp.status });
+          }
+          // Community approval check
+          const approvalForThisCommunity = (mp.approvals || []).find((a) => a.community_id === app.community_id);
+          if (!approvalForThisCommunity) {
+            mismatches.push({ field: 'community_approval', expected: 'approved at this community', got: 'not approved here' });
+          } else if (approvalForThisCommunity.retired_at) {
+            mismatches.push({ field: 'community_approval', expected: 'active', got: `retired at ${approvalForThisCommunity.retired_at.slice(0, 10)}` });
+          }
+          // Builder status (could be inactive after consolidation)
+          if (mp.builder && mp.builder.status === 'inactive') {
+            mismatches.push({ field: 'builder_status', expected: 'active', got: 'inactive (merged duplicate)' });
+          }
+          return {
+            id: mp.id,
+            plan_number: mpPN,
+            elevation: mpEv,
+            status: mp.status,
+            builder_name: mp.builder?.company_name || null,
+            builder_status: mp.builder?.status || null,
+            mismatches,
+          };
+        });
+
+        masterPlanDiagnostic = {
+          submitted: { plan_number: submittedPN, elevation: submittedEv },
+          near_matches: analyzed,
+          // If no near-matches at all under the current builder, also check
+          // OTHER builders with the same plan_number -- helps catch the
+          // "master plan tied to a duplicate builder row" failure mode.
+          // Single fallback query, capped tight.
+          cross_builder_check: null,
+        };
+
+        if (analyzed.length === 0) {
+          const { data: crossBuilder } = await supabase
+            .from('master_plans')
+            .select('id, plan_number, elevation, status, builder_company_id, builder:builder_company_id(company_name, status)')
+            .eq('plan_number', submittedPN)
+            .eq('elevation', submittedEv)
+            .neq('builder_company_id', app.builder_company_id)
+            .limit(5);
+          if (crossBuilder && crossBuilder.length > 0) {
+            masterPlanDiagnostic.cross_builder_check = crossBuilder.map((m) => ({
+              id: m.id,
+              plan_number: m.plan_number,
+              elevation: m.elevation,
+              status: m.status,
+              builder_name: m.builder?.company_name || null,
+              builder_status: m.builder?.status || null,
+              note: 'Same plan_number + elevation EXIST in the library, but tied to a DIFFERENT builder_companies row. Likely the application is linked to the wrong DRB row (or this master plan is tied to an old duplicate).',
+            }));
+          }
+        }
+      } catch (diagErr) {
+        console.warn('[builder_applications] master plan diagnostic failed:', diagErr.message);
+      }
+    }
+
+    res.json({ application_id: app.id, recommendation, master_plan_diagnostic: masterPlanDiagnostic });
   } catch (err) {
     console.error('[builder_applications] recommendation failed:', err.message);
     res.status(500).json({ error: safeErrorMessage(err) });
